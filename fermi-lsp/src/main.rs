@@ -87,66 +87,106 @@ impl Backend {
 
         // Lexical analysis
         let lexer = Lexer::new(text);
-        let tokens = lexer.tokenize();
+        let tokens_result = lexer.tokenize();
 
-        // Check for lexer errors
-        for token in &tokens {
-            if token.token_type == fermi::TokenType::Error {
-                diagnostics.push(Diagnostic {
-                    range: Range {
-                        start: Position {
-                            line: (token.line - 1) as u32,
-                            character: token.column as u32,
+        // Handle lexer errors
+        let tokens = match tokens_result {
+            Ok(tokens) => tokens,
+            Err(errors) => {
+                // Convert lexer errors to diagnostics
+                for error in errors {
+                    let (line, column, message) = match error {
+                        fermi::LexerError::UnterminatedString { line, column } => {
+                            (line, column, "Unterminated string".to_string())
+                        }
+                        fermi::LexerError::InvalidNumber { lexeme, line, column } => {
+                            (line, column, format!("Invalid number: {}", lexeme))
+                        }
+                        fermi::LexerError::InvalidProbability { lexeme, line, column } => {
+                            (line, column, format!("Invalid probability: {}", lexeme))
+                        }
+                        fermi::LexerError::InvalidDate { lexeme, line, column } => {
+                            (line, column, format!("Invalid date: {}", lexeme))
+                        }
+                        fermi::LexerError::UnexpectedCharacter { char, line, column } => {
+                            (line, column, format!("Unexpected character: {}", char))
+                        }
+                        fermi::LexerError::InvalidEscape { char, line, column } => {
+                            (line, column, format!("Invalid escape sequence: \\{}", char))
+                        }
+                    };
+
+                    diagnostics.push(Diagnostic {
+                        range: Range {
+                            start: Position {
+                                line: (line - 1) as u32,
+                                character: column as u32,
+                            },
+                            end: Position {
+                                line: (line - 1) as u32,
+                                character: (column + 1) as u32,
+                            },
                         },
-                        end: Position {
-                            line: (token.line - 1) as u32,
-                            character: (token.column + token.lexeme.len()) as u32,
-                        },
-                    },
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    code: Some(NumberOrString::String("E001".to_string())),
-                    source: Some("fermi".to_string()),
-                    message: format!("Unexpected token: {}", token.lexeme),
-                    ..Default::default()
-                });
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        code: Some(NumberOrString::String("E001".to_string())),
+                        source: Some("fermi".to_string()),
+                        message,
+                        ..Default::default()
+                    });
+                }
+                return diagnostics;
             }
-        }
+        };
 
         // Syntax analysis
-        let mut parser = Parser::new(&tokens);
+        let mut parser = Parser::new(tokens);
         match parser.parse() {
             Ok(program) => {
                 // Semantic analysis
-                let mut analyzer = SemanticAnalyzer::new();
-                match analyzer.analyze(&program) {
-                    Ok(_) => {
-                        // Success - no errors
-                        self.client.log_message(
-                            MessageType::INFO,
-                            "Parse successful - no errors",
-                        );
-                    }
-                    Err(errors) => {
-                        // Semantic errors
-                        for error in errors {
-                            diagnostics.push(Diagnostic {
-                                range: Range {
-                                    start: Position {
-                                        line: 0,
-                                        character: 0,
-                                    },
-                                    end: Position {
-                                        line: 0,
-                                        character: 0,
-                                    },
+                let analyzer = SemanticAnalyzer::new();
+                let analysis = analyzer.analyze(&program);
+
+                if analysis.errors.is_empty() {
+                    // Success - no errors
+                    self.client.log_message(
+                        MessageType::INFO,
+                        "Parse successful - no errors",
+                    );
+                } else {
+                    // Semantic errors
+                    for error in analysis.errors {
+                        let message = match error {
+                            fermi::SemanticError::UndefinedSymbol { name, message } => {
+                                format!("Undefined symbol '{}': {}", name, message)
+                            }
+                            fermi::SemanticError::TypeMismatch { expected, found, message } => {
+                                format!("Type mismatch: expected {:?}, found {:?}. {}", expected, found, message)
+                            }
+                            fermi::SemanticError::DuplicateDefinition { name, message } => {
+                                format!("Duplicate definition of '{}': {}", name, message)
+                            }
+                            fermi::SemanticError::ValidationError { rule, message } => {
+                                format!("Validation error ({}): {}", rule, message)
+                            }
+                        };
+
+                        diagnostics.push(Diagnostic {
+                            range: Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 0,
                                 },
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                code: Some(NumberOrString::String("E003".to_string())),
-                                source: Some("fermi".to_string()),
-                                message: error.to_string(),
-                                ..Default::default()
-                            });
-                        }
+                                end: Position {
+                                    line: 0,
+                                    character: 0,
+                                },
+                            },
+                            severity: Some(DiagnosticSeverity::ERROR),
+                            code: Some(NumberOrString::String("E003".to_string())),
+                            source: Some("fermi".to_string()),
+                            message,
+                            ..Default::default()
+                        });
                     }
                 }
             }

@@ -10,6 +10,14 @@
     "fpl",
     "forecasting"
   ],
+  "files": [
+    "grammar.js",
+    "binding.gyp",
+    "prebuilds/**",
+    "bindings/node/*",
+    "queries/*",
+    "src/**"
+  ],
   "author": "Replicant Partners",
   "license": "MIT",
   "dependencies": {

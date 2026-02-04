@@ -63,7 +63,7 @@ echo "✅ Extension linked to: ${ZED_EXTENSIONS_DIR}/fermi"
 echo ""
 
 echo "⚙️  Step 4/4: Configuring Zed..."
-ZEDI_CONFIG="${HOME}/.config/zed/settings.json"
+ZED_CONFIG="${HOME}/.config/zed/settings.json"
 
 if [ ! -f "${ZED_CONFIG}" ]; then
     echo "Creating new Zed settings.json..."
