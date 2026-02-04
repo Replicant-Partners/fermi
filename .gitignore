@@ -50,4 +50,12 @@ site/
 # Fermi-specific
 examples/*.results.json
 *.fpl.results
+
+# Tree-sitter build artifacts
+tree-sitter-fpl/src/
+tree-sitter-fpl/binding.gyp
+tree-sitter-fpl/bindings/
+tree-sitter-fpl/build/
+
+# Vercel
 .vercel

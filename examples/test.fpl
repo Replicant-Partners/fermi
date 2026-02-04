@@ -1,0 +1,28 @@
+// Test FPL file for Zed extension
+// This file demonstrates all FPL syntax features
+
+forecast "AMD Q4 2024 Revenue Forecast" {
+    // GPU market size driver
+    driver gpu_market triangular(20000, 32000, 50000)
+
+    // Market share driver
+    driver market_share normal(0.15, 0.05)
+
+    // Average selling price
+    driver avg_price triangular(800, 1200, 2000)
+
+    // Revenue calculation
+    estimate gpu_market * market_share * avg_price
+}
+
+forecast "Simple Test" {
+    driver x uniform(0, 100)
+    driver y lognormal(50, 0.5)
+    estimate x + y
+}
+
+forecast "Beta Distribution Test" {
+    driver success_rate beta(2, 5, 0, 1)
+    driver impact triangular(1000, 5000, 10000)
+    estimate success_rate * impact
+}
