@@ -21,4 +21,4 @@ pub use types::{Type, TypeEnvironment, BinaryOp, UnaryOp};
 pub use symbol_table::{SymbolTable, SymbolTableBuilder, Symbol, SymbolType};
 pub use semantic::{SemanticAnalyzer, SemanticAnalysis, SemanticError};
 pub use evaluator::{EvaluationContext, evaluate, EvalError};
-pub use executor::{Executor, ExecutionResult, ExecutionError, execute_program, execute_program_with_seed};
+pub use executor::{Executor, ExecutionResults, ExecutionError};

@@ -635,12 +635,13 @@ impl Lexer {
     }
 
     fn add_token(&mut self, token_type: TokenType, lexeme: String) {
+        let lexeme_len = lexeme.len();
         let token = Token::new(
             token_type,
             lexeme,
             self.line,
-            self.column - lexeme.len(),
-            self.current - lexeme.len(),
+            self.column - lexeme_len,
+            self.current - lexeme_len,
         );
         self.tokens.push(token);
     }

@@ -214,10 +214,18 @@ impl Executor {
                     .map_err(|e| ExecutionError::EvaluationError(e.to_string()))?;
                 let beta_val = evaluate(beta, ctx)
                     .map_err(|e| ExecutionError::EvaluationError(e.to_string()))?;
-                let min_val = evaluate(min, ctx)
-                    .map_err(|e| ExecutionError::EvaluationError(e.to_string()))?;
-                let max_val = evaluate(max, ctx)
-                    .map_err(|e| ExecutionError::EvaluationError(e.to_string()))?;
+                let min_val = if let Some(min_expr) = min {
+                    evaluate(min_expr, ctx)
+                        .map_err(|e| ExecutionError::EvaluationError(e.to_string()))?
+                } else {
+                    0.0
+                };
+                let max_val = if let Some(max_expr) = max {
+                    evaluate(max_expr, ctx)
+                        .map_err(|e| ExecutionError::EvaluationError(e.to_string()))?
+                } else {
+                    1.0
+                };
                 Ok(sample_beta(&mut self.rng, alpha_val, beta_val, min_val, max_val))
             }
         }
