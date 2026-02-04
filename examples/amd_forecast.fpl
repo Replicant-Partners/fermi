@@ -1,0 +1,72 @@
+# AMD Stock Price Forecast
+# Will AMD reach $200 by end of 2026?
+
+question "Will AMD reach $200 by 2026-12-31?"
+
+# Market size driver - total addressable market
+driver market_size continuous {
+    distribution: triangular(500, 1200, 2500)
+    unit: "millions USD"
+    rationale: "TAM based on data center + gaming + embedded markets"
+}
+
+# Revenue growth rate
+driver growth_rate continuous {
+    distribution: normal(0.25, 0.05)
+    unit: "annual ratio"
+    rationale: "Historical growth with competition from NVIDIA"
+}
+
+# Market share capture
+driver market_share continuous {
+    distribution: triangular(0.15, 0.22, 0.35)
+    unit: "ratio"
+    rationale: "Current ~20% share, potential to gain from Intel losses"
+}
+
+# Binary driver - will they win major cloud contract?
+driver major_contract binary {
+    probability: 0.65p
+    impact_multiplier: 1.3
+    rationale: "Google/Amazon server chip deals in negotiation"
+}
+
+# Evidence from market research
+evidence gartner_report {
+    source: "Gartner Market Analysis Q3 2025"
+    summary: "Data center TAM projected at $2.1B by 2026"
+    relevance: 0.9p
+    date: 2025-09-15
+}
+
+evidence analyst_consensus {
+    source: "TipRanks Analyst Consensus"
+    summary: "Average price target $185, high $240, low $150"
+    relevance: 0.75p
+    date: 2025-11-20
+}
+
+evidence competitor_intel {
+    source: "NVIDIA Quarterly Report"
+    summary: "Market share stable at 78%, AMD at 20%"
+    relevance: 0.85p
+    date: 2025-10-30
+}
+
+# Research agent to monitor market
+agent market_monitor {
+    query: "AMD market share and revenue projections"
+    schedule: every 1 week
+}
+
+agent sentiment_tracker {
+    query: "AMD stock sentiment from financial news"
+    schedule: every 3 days
+}
+
+# Model combines drivers
+model: market_size * market_share * (1 + growth_rate) *
+       (if major_contract then 1.3 else 1.0)
+
+# Run Monte Carlo simulation
+simulate 10000 iterations
