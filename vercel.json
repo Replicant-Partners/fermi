@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "name": "fermi-backend",
+  "builds": [
+    {
+      "src": "api/**/*.rs",
+      "use": "@vercel/rust"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    }
+  ],
+  "env": {
+    "RUST_LOG": "info"
+  }
+}

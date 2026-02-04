@@ -1,0 +1,14 @@
+[package]
+name = "fermi-api"
+version = "0.4.0"
+edition = "2021"
+
+[dependencies]
+vercel_runtime = "1.1.0"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[lib]
+name = "fermi_api"
+path = "../src/lib.rs"
