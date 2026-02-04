@@ -166,11 +166,6 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
         }
 
         // Unary operators
-        Expression::Negate(operand) => {
-            let val = evaluate(operand, ctx)?;
-            Ok(-val)
-        }
-
         Expression::Not(operand) => {
             let val = evaluate(operand, ctx)?;
             Ok(if val == 0.0 { 1.0 } else { 0.0 })
@@ -429,8 +424,11 @@ mod tests {
     fn test_unary() {
         let ctx = EvaluationContext::new();
 
-        // -5 = -5
-        let expr = Expression::Negate(Box::new(Expression::Number(5.0)));
+        // -5 = -5 (using subtraction: 0 - 5)
+        let expr = Expression::Subtract(
+            Box::new(Expression::Number(0.0)),
+            Box::new(Expression::Number(5.0))
+        );
         assert_eq!(evaluate(&expr, &ctx).unwrap(), -5.0);
 
         // not true = false

@@ -5,8 +5,8 @@
 /// 2. Evaluating the model expression for each iteration
 /// 3. Collecting statistics from the results
 
-use crate::ast::{Program, Statement, DriverStmt, ModelStmt, SimulateStmt, Distribution};
-use crate::evaluator::{EvaluationContext, evaluate, EvalError};
+use crate::ast::{Program, Statement, DriverStmt, ModelStmt, Distribution};
+use crate::evaluator::{EvaluationContext, evaluate};
 use crate::distributions::{
     sample_triangular, sample_normal, sample_lognormal,
     sample_uniform, sample_beta, calculate_statistics

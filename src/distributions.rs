@@ -5,7 +5,6 @@
 
 use rand::Rng;
 use rand_distr::{Distribution, Normal, LogNormal, Uniform, Beta as BetaDist};
-use std::f64::consts::PI;
 
 /// Sample from a triangular distribution
 ///
