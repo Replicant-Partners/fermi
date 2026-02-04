@@ -27,6 +27,7 @@ rand_distr = "0.4"
 vercel_runtime = "2"
 tokio = { version = "1", features = ["full"] }
 http = "1"
+http-body-util = "0.1"
 
 [dev-dependencies]
 # For testing

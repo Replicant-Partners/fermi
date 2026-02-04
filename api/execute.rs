@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use vercel_runtime::{Error, Request, run, service_fn, Body};
+use vercel_runtime::{Error, Request, run, service_fn};
+use http_body_util::BodyExt;
 
 #[derive(Deserialize)]
 struct ExecuteRequest {
@@ -25,12 +26,12 @@ async fn main() -> Result<(), Error> {
 }
 
 async fn handler(req: Request) -> Result<Value, Error> {
-    // Read the request body
-    let body_bytes = match req.body() {
-        Body::Text(s) => s.as_bytes().to_vec(),
-        Body::Binary(b) => b.to_vec(),
-        Body::Empty => vec![],
-    };
+    // Collect request body bytes
+    let body_bytes = req
+        .into_body()
+        .collect()
+        .await?
+        .to_bytes();
 
     let execute_req: ExecuteRequest = match serde_json::from_slice(&body_bytes) {
         Ok(req) => req,
