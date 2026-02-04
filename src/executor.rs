@@ -5,14 +5,14 @@
 /// 2. Evaluating the model expression for each iteration
 /// 3. Collecting statistics from the results
 
-use crate::ast::{Program, Statement, DriverStmt, ModelStmt, Distribution};
+use crate::ast::{Program, Statement, Distribution};
 use crate::evaluator::{EvaluationContext, evaluate};
 use crate::distributions::{
     sample_triangular, sample_normal, sample_lognormal,
     sample_uniform, sample_beta, calculate_statistics
 };
 use rand::rngs::StdRng;
-use rand::{SeedableRng, Rng};
+use rand::SeedableRng;
 use std::collections::HashMap;
 
 pub type ExecutionResult2<T> = Result<T, ExecutionError>;
@@ -115,7 +115,9 @@ impl Executor {
         for stmt in &program.statements {
             match stmt {
                 Statement::Driver(driver) => {
-                    drivers.insert(driver.name.clone(), &driver.distribution);
+                    if let Some(ref dist) = driver.distribution {
+                        drivers.insert(driver.name.clone(), dist);
+                    }
                 }
                 Statement::Model(model) => {
                     model_expr = Some(&model.expression);
@@ -135,7 +137,7 @@ impl Executor {
 
             for (name, dist) in &drivers {
                 let sample = self.sample_distribution(dist, &ctx)?;
-                ctx.set_variable(name, sample);
+                ctx.set(name.clone(), sample);
             }
 
             // Evaluate model expression
@@ -146,7 +148,15 @@ impl Executor {
         }
 
         // Calculate statistics
-        let (mean, median, std_dev, p5, p25, p75, p95, min, max) = calculate_statistics(&samples);
+        let (mean, median, std_dev, min, max) = calculate_statistics(&samples);
+
+        // Calculate percentiles
+        let mut sorted = samples.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p5 = sorted[(sorted.len() as f64 * 0.05) as usize];
+        let p25 = sorted[(sorted.len() as f64 * 0.25) as usize];
+        let p75 = sorted[(sorted.len() as f64 * 0.75) as usize];
+        let p95 = sorted[(sorted.len() as f64 * 0.95) as usize];
 
         Ok(ExecutionResults {
             samples,
