@@ -9,9 +9,32 @@ echo "🔧 Installing Fermi Extension for Zed..."
 echo ""
 
 # Check prerequisites
-command -v cargo >/dev/null 2>&1 || { echo "❌ Error: cargo not found. Install Rust from https://rustup.rs"; exit 1; }
-command -v npm >/dev/null 2>&1 || { echo "❌ Error: npm not found. Install Node.js from https://nodejs.org"; exit 1; }
-command -v zed >/dev/null 2>&1 || { echo "⚠️  Warning: zed command not found. Make sure Zed is installed."; }
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "❌ Error: Rust not found"
+    echo ""
+    echo "Install Rust:"
+    echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    echo ""
+    echo "Then restart your terminal and run this script again."
+    exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+    echo "❌ Error: Node.js/npm not found"
+    echo ""
+    echo "Install Node.js from: https://nodejs.org"
+    echo "Or use nvm:"
+    echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
+    echo "  nvm install --lts"
+    exit 1
+fi
+
+if ! command -v zed >/dev/null 2>&1; then
+    echo "⚠️  Warning: zed command not found"
+    echo "Make sure Zed is installed: https://zed.dev"
+    echo ""
+    echo "Continuing anyway..."
+fi
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ZED_EXTENSIONS_DIR="${HOME}/.config/zed/extensions"
