@@ -174,7 +174,7 @@ impl Executor {
         // Extract iteration count
         for stmt in &program.statements {
             if let Statement::Simulate(sim) = stmt {
-                self.iterations = sim.iterations;
+                self.iterations = sim.iterations as usize;
                 break;
             }
         }

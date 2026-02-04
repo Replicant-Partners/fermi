@@ -237,7 +237,7 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
         }
 
         // These should not appear in model expressions
-        Expression::String(_) | Expression::Date(_) => {
+        Expression::String(_) => {
             Err(EvalError::TypeError(
                 "String and Date literals cannot be used in model expressions".to_string()
             ))
