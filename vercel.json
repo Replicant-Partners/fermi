@@ -2,11 +2,11 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/health.rs",
+      "src": "api/health/main.rs",
       "use": "@vercel/rust"
     },
     {
-      "src": "api/execute.rs",
+      "src": "api/execute/main.rs",
       "use": "@vercel/rust"
     }
   ],
