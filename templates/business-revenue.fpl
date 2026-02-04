@@ -1,0 +1,70 @@
+// Business Revenue Forecast Template
+// Use this for quarterly or annual revenue projections
+
+forecast "Q4 2024 SaaS Revenue" {
+    // Customer base drivers
+    driver existing_customers triangular(5000, 8000, 12000)
+    driver monthly_churn uniform(0.02, 0.05)
+    driver new_signups normal(500, 150)
+
+    // Pricing drivers
+    driver avg_plan_price triangular(49, 99, 299)
+    driver upsell_rate uniform(0.10, 0.25)
+    driver enterprise_deals triangular(2, 5, 10)
+    driver enterprise_value triangular(50000, 100000, 250000)
+
+    // Calculate components
+    driver net_customers estimate existing_customers * (1 - monthly_churn) + new_signups
+    driver base_mrr estimate net_customers * avg_plan_price
+    driver upsell_revenue estimate base_mrr * upsell_rate
+    driver enterprise_revenue estimate enterprise_deals * enterprise_value
+
+    // Final quarterly revenue
+    estimate (base_mrr + upsell_revenue) * 3 + enterprise_revenue
+}
+
+forecast "E-commerce Annual Revenue" {
+    // Traffic drivers
+    driver monthly_visitors triangular(50000, 100000, 200000)
+    driver conversion_rate normal(0.025, 0.005)
+    driver repeat_purchase_rate uniform(0.15, 0.35)
+
+    // Order value drivers
+    driver avg_order_value lognormal(75, 25)
+    driver seasonal_multiplier triangular(1.0, 1.3, 1.8)
+
+    // Calculate metrics
+    driver new_customers estimate monthly_visitors * conversion_rate
+    driver returning_customers estimate new_customers * repeat_purchase_rate
+    driver total_orders estimate (new_customers + returning_customers) * 12
+
+    // Annual revenue with seasonality
+    estimate total_orders * avg_order_value * seasonal_multiplier
+}
+
+forecast "B2B Sales Pipeline" {
+    // Lead generation
+    driver inbound_leads normal(300, 50)
+    driver outbound_leads triangular(100, 200, 400)
+    driver lead_qualification_rate uniform(0.20, 0.40)
+
+    // Sales stages
+    driver demo_conversion uniform(0.30, 0.50)
+    driver proposal_conversion uniform(0.40, 0.60)
+    driver close_rate normal(0.35, 0.10)
+
+    // Deal size
+    driver avg_deal_size lognormal(25000, 10000)
+    driver large_deal_probability uniform(0.05, 0.15)
+    driver large_deal_size triangular(100000, 250000, 500000)
+
+    // Pipeline calculation
+    driver qualified_leads estimate (inbound_leads + outbound_leads) * lead_qualification_rate
+    driver demos estimate qualified_leads * demo_conversion
+    driver proposals estimate demos * proposal_conversion
+    driver standard_deals estimate proposals * close_rate
+    driver large_deals estimate standard_deals * large_deal_probability
+
+    // Total revenue
+    estimate (standard_deals * avg_deal_size) + (large_deals * large_deal_size)
+}

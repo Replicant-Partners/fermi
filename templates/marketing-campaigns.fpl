@@ -1,0 +1,172 @@
+// Marketing Campaign Forecast Templates
+// ROI, conversions, and campaign performance
+
+forecast "Digital Marketing Campaign ROI" {
+    // Budget allocation
+    driver total_budget triangular(50000, 100000, 200000)
+    driver google_ads_pct uniform(0.30, 0.50)
+    driver facebook_ads_pct uniform(0.20, 0.35)
+    driver linkedin_ads_pct uniform(0.10, 0.20)
+    driver content_marketing_pct uniform(0.15, 0.25)
+
+    // Performance by channel
+    driver google_cpc normal(3.5, 1.0)
+    driver google_conversion uniform(0.03, 0.08)
+    driver facebook_cpm triangular(8, 12, 20)
+    driver facebook_ctr uniform(0.015, 0.035)
+    driver facebook_conversion uniform(0.02, 0.06)
+    driver linkedin_cpc normal(8, 2)
+    driver linkedin_conversion uniform(0.05, 0.12)
+
+    // Customer value
+    driver avg_customer_ltv lognormal(500, 200)
+    driver immediate_revenue_pct uniform(0.30, 0.50)
+
+    // Google Ads
+    driver google_budget estimate total_budget * google_ads_pct
+    driver google_clicks estimate google_budget / google_cpc
+    driver google_conversions estimate google_clicks * google_conversion
+
+    // Facebook Ads
+    driver facebook_budget estimate total_budget * facebook_ads_pct
+    driver facebook_impressions estimate (facebook_budget / facebook_cpm) * 1000
+    driver facebook_clicks estimate facebook_impressions * facebook_ctr
+    driver facebook_conversions estimate facebook_clicks * facebook_conversion
+
+    // LinkedIn Ads
+    driver linkedin_budget estimate total_budget * linkedin_ads_pct
+    driver linkedin_clicks estimate linkedin_budget / linkedin_cpc
+    driver linkedin_conversions estimate linkedin_clicks * linkedin_conversion
+
+    // Total campaign value
+    driver total_conversions estimate google_conversions + facebook_conversions + linkedin_conversions
+    driver total_ltv estimate total_conversions * avg_customer_ltv
+    driver immediate_revenue estimate total_ltv * immediate_revenue_pct
+
+    // ROI calculation
+    estimate (immediate_revenue - total_budget) / total_budget
+}
+
+forecast "Content Marketing Lead Generation" {
+    // Content production
+    driver blog_posts_per_month triangular(8, 12, 20)
+    driver avg_views_per_post lognormal(500, 200)
+    driver viral_post_probability uniform(0.05, 0.15)
+    driver viral_post_multiplier triangular(10, 25, 50)
+
+    // Lead capture
+    driver cta_conversion_rate uniform(0.02, 0.06)
+    driver email_list_growth normal(1.10, 0.05)
+    driver current_subscribers triangular(5000, 10000, 20000)
+
+    // Lead nurturing
+    driver email_open_rate normal(0.25, 0.08)
+    driver email_ctr uniform(0.03, 0.08)
+    driver lead_to_sql_rate uniform(0.10, 0.25)
+
+    // 6-month projection
+    driver months estimate 6
+    driver total_posts estimate blog_posts_per_month * months
+    driver regular_views estimate total_posts * avg_views_per_post
+    driver viral_posts estimate total_posts * viral_post_probability
+    driver viral_views estimate viral_posts * viral_post_multiplier * avg_views_per_post
+    driver total_views estimate regular_views + viral_views
+
+    // Lead generation
+    driver new_leads estimate total_views * cta_conversion_rate
+    driver end_subscribers estimate current_subscribers * (email_list_growth ^ months)
+    driver email_engagement estimate end_subscribers * email_open_rate * email_ctr
+
+    // SQL generation
+    driver content_sqls estimate new_leads * lead_to_sql_rate
+    driver email_sqls estimate email_engagement * months * lead_to_sql_rate
+
+    estimate content_sqls + email_sqls
+}
+
+forecast "Influencer Marketing Campaign" {
+    // Influencer partnerships
+    driver micro_influencers triangular(10, 15, 25)
+    driver micro_avg_followers triangular(10000, 50000, 100000)
+    driver micro_engagement_rate normal(0.05, 0.02)
+    driver micro_cost_per_post triangular(200, 500, 1000)
+
+    driver macro_influencers triangular(2, 5, 10)
+    driver macro_avg_followers triangular(250000, 500000, 1000000)
+    driver macro_engagement_rate normal(0.03, 0.01)
+    driver macro_cost_per_post triangular(2000, 5000, 10000)
+
+    // Campaign structure
+    driver posts_per_influencer triangular(2, 4, 6)
+    driver story_multiplier uniform(2, 4)
+
+    // Conversion funnel
+    driver profile_visit_rate uniform(0.10, 0.25)
+    driver link_click_rate uniform(0.15, 0.35)
+    driver conversion_rate uniform(0.02, 0.08)
+    driver avg_order_value triangular(50, 100, 200)
+
+    // Micro influencer impact
+    driver micro_reach estimate micro_influencers * micro_avg_followers
+    driver micro_engagement estimate micro_reach * micro_engagement_rate
+    driver micro_posts estimate micro_influencers * posts_per_influencer
+    driver micro_cost estimate micro_posts * micro_cost_per_post
+
+    // Macro influencer impact
+    driver macro_reach estimate macro_influencers * macro_avg_followers
+    driver macro_engagement estimate macro_reach * macro_engagement_rate
+    driver macro_posts estimate macro_influencers * posts_per_influencer
+    driver macro_cost estimate macro_posts * macro_cost_per_post
+
+    // Total campaign
+    driver total_engagement estimate (micro_engagement + macro_engagement) * story_multiplier
+    driver website_traffic estimate total_engagement * profile_visit_rate * link_click_rate
+    driver conversions estimate website_traffic * conversion_rate
+    driver revenue estimate conversions * avg_order_value
+    driver total_cost estimate micro_cost + macro_cost
+
+    // Campaign ROI
+    estimate (revenue - total_cost) / total_cost
+}
+
+forecast "Event Marketing - Conference ROI" {
+    // Event costs
+    driver booth_cost triangular(5000, 10000, 25000)
+    driver staff_travel triangular(3000, 6000, 10000)
+    driver marketing_materials triangular(2000, 4000, 8000)
+    driver sponsorship_tier_cost triangular(0, 15000, 50000)
+    driver total_event_cost estimate booth_cost + staff_travel + marketing_materials + sponsorship_tier_cost
+
+    // Attendee engagement
+    driver conference_attendees triangular(1000, 2500, 5000)
+    driver booth_traffic_pct uniform(0.15, 0.35)
+    driver meaningful_conversations_pct uniform(0.30, 0.60)
+    driver card_collection_rate uniform(0.70, 0.90)
+
+    // Follow-up conversion
+    driver response_rate uniform(0.30, 0.60)
+    driver meeting_booking_rate uniform(0.20, 0.45)
+    driver demo_conversion uniform(0.40, 0.70)
+    driver close_rate uniform(0.15, 0.35)
+
+    // Deal economics
+    driver avg_deal_size lognormal(25000, 15000)
+    driver avg_sales_cycle_months triangular(3, 6, 12)
+    driver first_year_revenue_pct uniform(0.30, 0.60)
+
+    // Pipeline calculation
+    driver booth_visitors estimate conference_attendees * booth_traffic_pct
+    driver quality_conversations estimate booth_visitors * meaningful_conversations_pct
+    driver leads estimate quality_conversations * card_collection_rate
+    driver responses estimate leads * response_rate
+    driver meetings estimate responses * meeting_booking_rate
+    driver demos estimate meetings * demo_conversion
+    driver closed_deals estimate demos * close_rate
+
+    // Revenue calculation
+    driver total_deal_value estimate closed_deals * avg_deal_size
+    driver first_year_revenue estimate total_deal_value * first_year_revenue_pct
+
+    // Event ROI
+    estimate (first_year_revenue - total_event_cost) / total_event_cost
+}

@@ -1,0 +1,200 @@
+// Hiring and Team Growth Forecast Templates
+// Cost projections for scaling teams
+
+forecast "Engineering Team Expansion - Annual Cost" {
+    // Current state
+    driver current_engineers triangular(10, 15, 20)
+    driver avg_current_salary lognormal(120000, 30000)
+
+    // Hiring plan
+    driver senior_engineers_needed triangular(3, 5, 8)
+    driver senior_salary lognormal(160000, 40000)
+    driver mid_level_needed triangular(5, 8, 12)
+    driver mid_level_salary lognormal(110000, 25000)
+    driver junior_needed triangular(4, 6, 10)
+    driver junior_salary lognormal(80000, 20000)
+
+    // Hiring costs
+    driver recruiter_fee_pct uniform(0.15, 0.25)
+    driver avg_hiring_time_months triangular(2, 3, 6)
+    driver offer_acceptance_rate uniform(0.60, 0.85)
+
+    // Benefits and overhead
+    driver benefits_pct uniform(0.25, 0.35)
+    driver equipment_per_person triangular(2000, 3500, 6000)
+    driver office_cost_per_person_monthly triangular(300, 500, 800)
+    driver software_licenses_per_person_annual triangular(2000, 4000, 8000)
+
+    // Recruitment costs
+    driver senior_recruitment estimate senior_engineers_needed / offer_acceptance_rate * senior_salary * recruiter_fee_pct
+    driver mid_recruitment estimate mid_level_needed / offer_acceptance_rate * mid_level_salary * recruiter_fee_pct
+    driver junior_recruitment estimate junior_needed / offer_acceptance_rate * junior_salary * recruiter_fee_pct
+    driver total_recruitment estimate senior_recruitment + mid_recruitment + junior_recruitment
+
+    // Salary costs (prorated for ramp-up)
+    driver senior_salary_annual estimate senior_engineers_needed * senior_salary * (12 - avg_hiring_time_months) / 12
+    driver mid_salary_annual estimate mid_level_needed * mid_level_salary * (12 - avg_hiring_time_months) / 12
+    driver junior_salary_annual estimate junior_needed * junior_salary * (12 - avg_hiring_time_months) / 12
+    driver new_hire_salaries estimate senior_salary_annual + mid_salary_annual + junior_salary_annual
+
+    driver existing_salaries estimate current_engineers * avg_current_salary
+    driver total_salaries estimate existing_salaries + new_hire_salaries
+
+    // Benefits and overhead
+    driver total_team_size estimate current_engineers + senior_engineers_needed + mid_level_needed + junior_needed
+    driver benefits_cost estimate total_salaries * benefits_pct
+    driver equipment_cost estimate (senior_engineers_needed + mid_level_needed + junior_needed) * equipment_per_person
+    driver office_cost estimate total_team_size * office_cost_per_person_monthly * 12
+    driver software_cost estimate total_team_size * software_licenses_per_person_annual
+
+    // Total first year cost
+    estimate total_recruitment + total_salaries + benefits_cost + equipment_cost + office_cost + software_cost
+}
+
+forecast "Sales Team Scaling - Break-Even Timeline" {
+    // Hiring plan
+    driver account_executives triangular(5, 8, 12)
+    driver ae_base_salary lognormal(80000, 20000)
+    driver ae_ote lognormal(160000, 40000)
+    driver ae_ramp_time_months triangular(3, 6, 9)
+
+    driver sdrs triangular(3, 5, 8)
+    driver sdr_base_salary lognormal(50000, 10000)
+    driver sdr_ote lognormal(70000, 15000)
+    driver sdr_ramp_time_months triangular(2, 4, 6)
+
+    driver sales_managers triangular(1, 2, 3)
+    driver manager_salary lognormal(140000, 30000)
+
+    // Performance metrics
+    driver ae_quota_monthly lognormal(40000, 15000)
+    driver ae_quota_attainment uniform(0.70, 1.20)
+    driver sdr_mql_per_month normal(20, 5)
+    driver mql_to_sql uniform(0.30, 0.60)
+    driver ae_close_rate uniform(0.20, 0.40)
+
+    // Cost structure
+    driver commission_rate uniform(0.08, 0.15)
+    driver benefits_overhead uniform(0.25, 0.35)
+    driver tech_stack_per_rep_monthly triangular(200, 400, 800)
+    driver travel_entertainment_per_rep_monthly triangular(500, 1000, 2000)
+
+    // Month 12 analysis (full team ramped)
+    driver ae_revenue_per_rep estimate ae_quota_monthly * ae_quota_attainment
+    driver total_ae_revenue estimate account_executives * ae_revenue_per_rep * 12
+
+    // Costs
+    driver ae_base_cost estimate account_executives * ae_base_salary
+    driver ae_commission estimate total_ae_revenue * commission_rate
+    driver sdr_base_cost estimate sdrs * sdr_base_salary
+    driver manager_cost estimate sales_managers * manager_salary
+
+    driver total_base_comp estimate ae_base_cost + sdr_base_cost + manager_cost
+    driver total_variable_comp estimate ae_commission
+    driver benefits estimate total_base_comp * benefits_overhead
+
+    driver total_team estimate account_executives + sdrs + sales_managers
+    driver tech_cost estimate total_team * tech_stack_per_rep_monthly * 12
+    driver travel_cost estimate (account_executives + sales_managers) * travel_entertainment_per_rep_monthly * 12
+
+    driver total_annual_cost estimate total_base_comp + total_variable_comp + benefits + tech_cost + travel_cost
+
+    // Break-even margin
+    estimate (total_ae_revenue - total_annual_cost) / total_ae_revenue
+}
+
+forecast "Customer Success Team - ROI on Retention" {
+    // Current metrics
+    driver current_customers triangular(200, 500, 1000)
+    driver avg_arr_per_customer lognormal(25000, 10000)
+    driver current_churn_rate_annual uniform(0.15, 0.30)
+    driver current_expansion_rate_annual uniform(0.10, 0.25)
+
+    // CS team structure
+    driver csms_to_hire triangular(3, 5, 8)
+    driver csm_salary lognormal(80000, 20000)
+    driver csm_accounts_per_rep triangular(50, 80, 120)
+    driver manager_needed triangular(0, 1, 1)
+    driver cs_manager_salary lognormal(120000, 25000)
+
+    // Expected improvements
+    driver churn_reduction uniform(0.20, 0.40)
+    driver expansion_increase uniform(0.25, 0.50)
+    driver upsell_rate_per_csm_annual uniform(0.05, 0.15)
+
+    // Cost calculations
+    driver csm_cost estimate csms_to_hire * csm_salary
+    driver manager_cost estimate manager_needed * cs_manager_salary
+    driver benefits estimate (csm_cost + manager_cost) * 0.30
+    driver tools_per_csm estimate 3000
+    driver tools_cost estimate csms_to_hire * tools_per_csm
+    driver total_cs_cost estimate csm_cost + manager_cost + benefits + tools_cost
+
+    // Revenue impact
+    driver baseline_arr estimate current_customers * avg_arr_per_customer
+    driver current_churn_loss estimate baseline_arr * current_churn_rate_annual
+    driver new_churn_rate estimate current_churn_rate_annual * (1 - churn_reduction)
+    driver new_churn_loss estimate baseline_arr * new_churn_rate
+    driver retained_revenue estimate current_churn_loss - new_churn_loss
+
+    // Expansion revenue
+    driver baseline_expansion estimate baseline_arr * current_expansion_rate_annual
+    driver new_expansion_rate estimate current_expansion_rate_annual * (1 + expansion_increase)
+    driver new_expansion estimate baseline_arr * new_expansion_rate
+    driver expansion_lift estimate new_expansion - baseline_expansion
+
+    // Upsell revenue
+    driver upsell_revenue estimate csms_to_hire * current_customers / csm_accounts_per_rep * avg_arr_per_customer * upsell_rate_per_csm_annual
+
+    // Total impact
+    driver total_revenue_impact estimate retained_revenue + expansion_lift + upsell_revenue
+
+    // CS team ROI
+    estimate (total_revenue_impact - total_cs_cost) / total_cs_cost
+}
+
+forecast "Marketing Team Build-Out - Quarterly Cost" {
+    // Team composition
+    driver content_marketers triangular(2, 3, 5)
+    driver content_salary lognormal(70000, 15000)
+
+    driver demand_gen_specialists triangular(1, 2, 3)
+    driver demand_gen_salary lognormal(85000, 20000)
+
+    driver designer triangular(1, 1, 2)
+    driver designer_salary lognormal(75000, 18000)
+
+    driver marketing_ops triangular(1, 1, 2)
+    driver ops_salary lognormal(90000, 20000)
+
+    driver marketing_manager triangular(1, 1, 1)
+    driver manager_salary lognormal(120000, 25000)
+
+    // Benefits and overhead
+    driver benefits_rate uniform(0.25, 0.35)
+    driver payroll_tax_rate uniform(0.08, 0.12)
+
+    // Marketing tools and software
+    driver marketing_automation triangular(2000, 4000, 8000)
+    driver analytics_tools triangular(1000, 2000, 4000)
+    driver design_tools triangular(500, 1000, 2000)
+    driver seo_tools triangular(500, 1500, 3000)
+    driver social_media_tools triangular(500, 1000, 2000)
+    driver quarterly_tool_cost estimate (marketing_automation + analytics_tools + design_tools + seo_tools + social_media_tools) / 4
+
+    // Quarterly salary costs
+    driver total_headcount estimate content_marketers + demand_gen_specialists + designer + marketing_ops + marketing_manager
+    driver quarterly_base_comp estimate (
+        (content_marketers * content_salary) +
+        (demand_gen_specialists * demand_gen_salary) +
+        (designer * designer_salary) +
+        (marketing_ops * ops_salary) +
+        (marketing_manager * manager_salary)
+    ) / 4
+
+    driver quarterly_benefits estimate quarterly_base_comp * benefits_rate
+    driver quarterly_payroll_tax estimate quarterly_base_comp * payroll_tax_rate
+
+    // Quarterly total
+    estimate quarterly_base_comp + quarterly_benefits + quarterly_payroll_tax + quarterly_tool_cost
+}
