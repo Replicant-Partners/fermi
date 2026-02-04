@@ -1,4 +1,5 @@
-use vercel_runtime::{run, Body, Error, Request, Response, StatusCode};
+use http::{StatusCode, header};
+use vercel_runtime::{run, Body, Error, Request, Response};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -29,10 +30,10 @@ async fn main() -> Result<(), Error> {
     run(handler).await
 }
 
-pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
-    // Parse request body
-    let body = req.body();
-    let execute_req: ExecuteRequest = match serde_json::from_slice(body) {
+async fn handler(req: Request) -> Result<Response<Body>, Error> {
+    let body_bytes = req.body();
+
+    let execute_req: ExecuteRequest = match serde_json::from_slice(body_bytes) {
         Ok(req) => req,
         Err(e) => {
             let error_response = ExecuteResponse {
@@ -42,13 +43,13 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             };
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
+                .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::Text(serde_json::to_string(&error_response)?))?)
         }
     };
 
     // TODO: Integrate actual FPL execution engine
-    // For now, return a placeholder response
+    // For now, return placeholder response
     let response = ExecuteResponse {
         success: true,
         result: Some(ExecuteResult {
@@ -64,6 +65,6 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
 
     Ok(Response::builder()
         .status(StatusCode::OK)
-        .header("Content-Type", "application/json")
+        .header(header::CONTENT_TYPE, "application/json")
         .body(Body::Text(serde_json::to_string(&response)?))?)
 }

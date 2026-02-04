@@ -1,15 +1,9 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/health/main.rs",
-      "use": "@vercel/rust"
-    },
-    {
-      "src": "api/execute/main.rs",
-      "use": "@vercel/rust"
+  "functions": {
+    "api/**/*.rs": {
+      "runtime": "vercel-rust@4.0.0"
     }
-  ],
+  },
   "routes": [
     {
       "src": "/api/health",
