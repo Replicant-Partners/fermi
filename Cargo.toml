@@ -23,6 +23,14 @@ clap = { version = "4.0", features = ["derive"] }
 rand = "0.8"
 rand_distr = "0.4"
 
+# Vercel runtime (for serverless functions)
+vercel_runtime = { version = "2", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+http = { version = "1", optional = true }
+
+[features]
+vercel = ["vercel_runtime", "tokio", "http"]
+
 [dev-dependencies]
 # For testing
 criterion = "0.5"
@@ -30,6 +38,17 @@ criterion = "0.5"
 [[bin]]
 name = "fermi"
 path = "src/main.rs"
+
+# Vercel API functions
+[[bin]]
+name = "health"
+path = "api/health.rs"
+required-features = ["vercel"]
+
+[[bin]]
+name = "execute"
+path = "api/execute.rs"
+required-features = ["vercel"]
 
 [lib]
 name = "fermi"
