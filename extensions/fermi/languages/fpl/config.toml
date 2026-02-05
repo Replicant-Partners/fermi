@@ -2,7 +2,6 @@ name = "FPL"
 grammar = "fpl"
 path_suffixes = ["fpl"]
 line_comments = ["// "]
-block_comment = { start = "/* ", end = " */" }
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },

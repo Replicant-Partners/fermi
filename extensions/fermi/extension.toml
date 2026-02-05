@@ -11,6 +11,10 @@ languages = ["languages/fpl"]
 kind = "Rust"
 version = "0.7.0"
 
+[grammars.fpl]
+repository = "https://github.com/Replicant-Partners/fermi"
+commit = "0c28d79"
+
 [language_servers.fermi-lsp]
 language = "FPL"
 languages = ["FPL"]
