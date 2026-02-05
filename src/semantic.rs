@@ -5,10 +5,9 @@
 /// - Symbol resolution
 /// - Validation rules
 /// - Constraint checking
-
 use crate::ast::*;
-use crate::types::*;
 use crate::symbol_table::*;
+use crate::types::*;
 use std::fmt;
 
 /// Semantic error types
@@ -39,8 +38,16 @@ impl fmt::Display for SemanticError {
             SemanticError::UndefinedSymbol { name, message } => {
                 write!(f, "Undefined symbol '{}': {}", name, message)
             }
-            SemanticError::TypeMismatch { expected, found, message } => {
-                write!(f, "Type mismatch: expected {}, found {}. {}", expected, found, message)
+            SemanticError::TypeMismatch {
+                expected,
+                found,
+                message,
+            } => {
+                write!(
+                    f,
+                    "Type mismatch: expected {}, found {}. {}",
+                    expected, found, message
+                )
             }
             SemanticError::ValidationError { rule, message } => {
                 write!(f, "Validation error ({}): {}", rule, message)
@@ -147,7 +154,10 @@ impl SemanticAnalyzer {
                 if driver.distribution.is_none() {
                     self.errors.push(SemanticError::ValidationError {
                         rule: "continuous_driver_requires_distribution".to_string(),
-                        message: format!("Continuous driver '{}' must have a distribution", driver.name),
+                        message: format!(
+                            "Continuous driver '{}' must have a distribution",
+                            driver.name
+                        ),
                     });
                 } else if let Some(dist) = &driver.distribution {
                     self.analyze_distribution(dist, &driver.name);
@@ -173,6 +183,59 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            DriverType::Discrete => {
+                // Must have values and weights
+                match (&driver.values, &driver.weights) {
+                    (None, _) => {
+                        self.errors.push(SemanticError::ValidationError {
+                            rule: "discrete_driver_requires_values".to_string(),
+                            message: format!("Discrete driver '{}' must have values", driver.name),
+                        });
+                    }
+                    (_, None) => {
+                        self.errors.push(SemanticError::ValidationError {
+                            rule: "discrete_driver_requires_weights".to_string(),
+                            message: format!("Discrete driver '{}' must have weights", driver.name),
+                        });
+                    }
+                    (Some(values), Some(weights)) => {
+                        // Check that values and weights have same length
+                        if values.len() != weights.len() {
+                            self.errors.push(SemanticError::ValidationError {
+                                rule: "discrete_values_weights_mismatch".to_string(),
+                                message: format!(
+                                    "Discrete driver '{}' has {} values but {} weights",
+                                    driver.name,
+                                    values.len(),
+                                    weights.len()
+                                ),
+                            });
+                        }
+
+                        // Check that weights sum to approximately 1.0
+                        let sum: f64 = weights.iter().sum();
+                        if (sum - 1.0).abs() > 0.001 {
+                            self.warnings.push(format!(
+                                "Discrete driver '{}' weights sum to {:.3}, should sum to 1.0",
+                                driver.name, sum
+                            ));
+                        }
+
+                        // Check that all weights are non-negative
+                        for (i, &weight) in weights.iter().enumerate() {
+                            if weight < 0.0 {
+                                self.errors.push(SemanticError::ValidationError {
+                                    rule: "discrete_negative_weight".to_string(),
+                                    message: format!(
+                                        "Discrete driver '{}' has negative weight at index {}: {}",
+                                        driver.name, i, weight
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -189,12 +252,17 @@ impl SemanticAnalyzer {
                     self.errors.push(SemanticError::TypeMismatch {
                         expected: Type::Number,
                         found: Type::Error,
-                        message: format!("Triangular distribution parameters for '{}' must be numeric", driver_name),
+                        message: format!(
+                            "Triangular distribution parameters for '{}' must be numeric",
+                            driver_name
+                        ),
                     });
                 }
 
                 // Validate ordering (if all are constant numbers)
-                if let (Expression::Number(v5), Expression::Number(v50), Expression::Number(v95)) = (p5, p50, p95) {
+                if let (Expression::Number(v5), Expression::Number(v50), Expression::Number(v95)) =
+                    (p5, p50, p95)
+                {
                     if !(*v5 <= *v50 && *v50 <= *v95) {
                         self.errors.push(SemanticError::ValidationError {
                             rule: "triangular_ordering".to_string(),
@@ -223,7 +291,10 @@ impl SemanticAnalyzer {
                     self.errors.push(SemanticError::TypeMismatch {
                         expected: Type::Number,
                         found: Type::Error,
-                        message: format!("Normal distribution parameters for '{}' must be numeric", driver_name),
+                        message: format!(
+                            "Normal distribution parameters for '{}' must be numeric",
+                            driver_name
+                        ),
                     });
                 }
 
@@ -232,7 +303,10 @@ impl SemanticAnalyzer {
                     if *std <= 0.0 {
                         self.errors.push(SemanticError::ValidationError {
                             rule: "positive_stddev".to_string(),
-                            message: format!("Standard deviation for '{}' must be positive, got {}", driver_name, std),
+                            message: format!(
+                                "Standard deviation for '{}' must be positive, got {}",
+                                driver_name, std
+                            ),
                         });
                     }
                 }
@@ -245,7 +319,10 @@ impl SemanticAnalyzer {
                     self.errors.push(SemanticError::TypeMismatch {
                         expected: Type::Number,
                         found: Type::Error,
-                        message: format!("Lognormal distribution parameters for '{}' must be numeric", driver_name),
+                        message: format!(
+                            "Lognormal distribution parameters for '{}' must be numeric",
+                            driver_name
+                        ),
                     });
                 }
 
@@ -254,7 +331,10 @@ impl SemanticAnalyzer {
                     if *sig <= 0.0 {
                         self.errors.push(SemanticError::ValidationError {
                             rule: "positive_sigma".to_string(),
-                            message: format!("Sigma for '{}' must be positive, got {}", driver_name, sig),
+                            message: format!(
+                                "Sigma for '{}' must be positive, got {}",
+                                driver_name, sig
+                            ),
                         });
                     }
                 }
@@ -267,7 +347,10 @@ impl SemanticAnalyzer {
                     self.errors.push(SemanticError::TypeMismatch {
                         expected: Type::Number,
                         found: Type::Error,
-                        message: format!("Uniform distribution parameters for '{}' must be numeric", driver_name),
+                        message: format!(
+                            "Uniform distribution parameters for '{}' must be numeric",
+                            driver_name
+                        ),
                     });
                 }
 
@@ -276,7 +359,10 @@ impl SemanticAnalyzer {
                     if l >= h {
                         self.errors.push(SemanticError::ValidationError {
                             rule: "uniform_ordering".to_string(),
-                            message: format!("Uniform distribution for '{}' must have low < high, got {} < {}", driver_name, l, h),
+                            message: format!(
+                                "Uniform distribution for '{}' must have low < high, got {} < {}",
+                                driver_name, l, h
+                            ),
                         });
                     }
                 }
@@ -289,7 +375,10 @@ impl SemanticAnalyzer {
                     self.errors.push(SemanticError::TypeMismatch {
                         expected: Type::Number,
                         found: Type::Error,
-                        message: format!("Beta distribution parameters for '{}' must be numeric", driver_name),
+                        message: format!(
+                            "Beta distribution parameters for '{}' must be numeric",
+                            driver_name
+                        ),
                     });
                 }
 
@@ -298,7 +387,10 @@ impl SemanticAnalyzer {
                     if *a <= 0.0 {
                         self.errors.push(SemanticError::ValidationError {
                             rule: "positive_alpha".to_string(),
-                            message: format!("Alpha for '{}' must be positive, got {}", driver_name, a),
+                            message: format!(
+                                "Alpha for '{}' must be positive, got {}",
+                                driver_name, a
+                            ),
                         });
                     }
                 }
@@ -306,7 +398,10 @@ impl SemanticAnalyzer {
                     if *b <= 0.0 {
                         self.errors.push(SemanticError::ValidationError {
                             rule: "positive_beta".to_string(),
-                            message: format!("Beta for '{}' must be positive, got {}", driver_name, b),
+                            message: format!(
+                                "Beta for '{}' must be positive, got {}",
+                                driver_name, b
+                            ),
                         });
                     }
                 }
@@ -380,7 +475,11 @@ impl SemanticAnalyzer {
                 let t = self.infer_type(e);
                 Type::unary_op_result(&t, UnaryOp::Not)
             }
-            Expression::If { condition, then_expr, else_expr } => {
+            Expression::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
                 let cond_ty = self.infer_type(condition);
                 if !cond_ty.is_boolean() && cond_ty != Type::Error {
                     self.errors.push(SemanticError::TypeMismatch {
@@ -421,7 +520,10 @@ impl SemanticAnalyzer {
             self.errors.push(SemanticError::TypeMismatch {
                 expected: Type::Number,
                 found: Type::Error,
-                message: format!("Cannot apply operator {:?} to types {} and {}", op, left_ty, right_ty),
+                message: format!(
+                    "Cannot apply operator {:?} to types {} and {}",
+                    op, left_ty, right_ty
+                ),
             });
         }
 
@@ -451,7 +553,10 @@ impl SemanticAnalyzer {
 
         // Rule: Should have a model if there are drivers
         if !self.symbol_table.drivers().is_empty() {
-            let has_model = program.statements.iter().any(|s| matches!(s, Statement::Model(_)));
+            let has_model = program
+                .statements
+                .iter()
+                .any(|s| matches!(s, Statement::Model(_)));
             if !has_model {
                 self.errors.push(SemanticError::ValidationError {
                     rule: "model_required".to_string(),
@@ -461,9 +566,13 @@ impl SemanticAnalyzer {
         }
 
         // Rule: Should have a question
-        let has_question = program.statements.iter().any(|s| matches!(s, Statement::Question(_)));
+        let has_question = program
+            .statements
+            .iter()
+            .any(|s| matches!(s, Statement::Question(_)));
         if !has_question {
-            self.warnings.push("Forecast should have a question statement".to_string());
+            self.warnings
+                .push("Forecast should have a question statement".to_string());
         }
 
         // Rule: Recommend having evidence
@@ -532,7 +641,10 @@ model: unknown_variable
 
         let analysis = analyze_source(source);
         assert!(!analysis.is_valid());
-        assert!(analysis.errors.iter().any(|e| matches!(e, SemanticError::UndefinedSymbol { .. })));
+        assert!(analysis
+            .errors
+            .iter()
+            .any(|e| matches!(e, SemanticError::UndefinedSymbol { .. })));
     }
 
     #[test]

@@ -151,6 +151,12 @@ fn process_source(source: &str) {
                         println!("   └─ Text: \"{}\"", q.text.bright_green());
                     }
                     Statement::Driver(d) => {
+                        if let Some(display_name) = &d.display_name {
+                            println!("   ├─ Display Name: \"{}\"", display_name.bright_cyan());
+                        }
+                        if let Some(description) = &d.description {
+                            println!("   ├─ Description: \"{}\"", description.bright_white());
+                        }
                         println!("   ├─ Type: {:?}", d.driver_type);
                         if let Some(dist) = &d.distribution {
                             println!(

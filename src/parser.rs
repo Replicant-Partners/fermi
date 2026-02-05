@@ -2,7 +2,6 @@
 ///
 /// Recursive descent parser that converts token stream into Abstract Syntax Tree (AST).
 /// Uses operator precedence climbing for expressions.
-
 use crate::ast::*;
 use crate::lexer::{Token, TokenType};
 use std::fmt;
@@ -34,17 +33,38 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ParseError::UnexpectedToken { expected, found, line, column } => {
-                write!(f, "Expected {} but found {:?} at {}:{}", expected, found, line, column)
+            ParseError::UnexpectedToken {
+                expected,
+                found,
+                line,
+                column,
+            } => {
+                write!(
+                    f,
+                    "Expected {} but found {:?} at {}:{}",
+                    expected, found, line, column
+                )
             }
             ParseError::UnexpectedEOF { expected } => {
                 write!(f, "Unexpected end of file, expected {}", expected)
             }
-            ParseError::InvalidExpression { message, line, column } => {
+            ParseError::InvalidExpression {
+                message,
+                line,
+                column,
+            } => {
                 write!(f, "Invalid expression: {} at {}:{}", message, line, column)
             }
-            ParseError::InvalidDistribution { message, line, column } => {
-                write!(f, "Invalid distribution: {} at {}:{}", message, line, column)
+            ParseError::InvalidDistribution {
+                message,
+                line,
+                column,
+            } => {
+                write!(
+                    f,
+                    "Invalid distribution: {} at {}:{}",
+                    message, line, column
+                )
             }
         }
     }
@@ -60,10 +80,7 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser {
-            tokens,
-            current: 0,
-        }
+        Parser { tokens, current: 0 }
     }
 
     /// Parse the entire program
@@ -89,7 +106,8 @@ impl Parser {
             TokenType::Model => Ok(Statement::Model(self.parse_model()?)),
             TokenType::Simulate => Ok(Statement::Simulate(self.parse_simulate()?)),
             _ => Err(ParseError::UnexpectedToken {
-                expected: "statement keyword (question, driver, evidence, agent, model, simulate)".to_string(),
+                expected: "statement keyword (question, driver, evidence, agent, model, simulate)"
+                    .to_string(),
                 found: token.token_type.clone(),
                 line: token.line,
                 column: token.column,
@@ -122,9 +140,11 @@ impl Parser {
             DriverType::Continuous
         } else if self.match_token(&TokenType::Binary) {
             DriverType::Binary
+        } else if self.match_token(&TokenType::Discrete) {
+            DriverType::Discrete
         } else {
             return Err(ParseError::UnexpectedToken {
-                expected: "driver type (continuous or binary)".to_string(),
+                expected: "driver type (continuous, binary, or discrete)".to_string(),
                 found: self.peek().token_type.clone(),
                 line: self.peek().line,
                 column: self.peek().column,
@@ -134,9 +154,13 @@ impl Parser {
         // Parse driver body
         self.consume_token(TokenType::LBrace, "{")?;
 
+        let mut display_name = None;
+        let mut description = None;
         let mut distribution = None;
         let mut probability = None;
         let mut impact_multiplier = None;
+        let mut values = None;
+        let mut weights = None;
         let mut unit = None;
         let mut rationale = None;
         let constraints = Vec::new();
@@ -147,6 +171,12 @@ impl Parser {
             self.consume_token(TokenType::Colon, ":")?;
 
             match field.as_str() {
+                "display_name" => {
+                    display_name = Some(self.consume_string()?);
+                }
+                "description" => {
+                    description = Some(self.consume_string()?);
+                }
                 "distribution" => {
                     distribution = Some(self.parse_distribution()?);
                 }
@@ -155,6 +185,12 @@ impl Parser {
                 }
                 "impact_multiplier" => {
                     impact_multiplier = Some(self.parse_number()?);
+                }
+                "values" => {
+                    values = Some(self.parse_number_array()?);
+                }
+                "weights" => {
+                    weights = Some(self.parse_number_array()?);
                 }
                 "unit" => {
                     unit = Some(self.consume_string()?);
@@ -173,10 +209,14 @@ impl Parser {
 
         Ok(DriverStmt {
             name,
+            display_name,
+            description,
             driver_type,
             distribution,
             probability,
             impact_multiplier,
+            values,
+            weights,
             unit,
             rationale,
             constraints,
@@ -264,10 +304,18 @@ impl Parser {
 
                 self.consume_token(TokenType::RParen, ")")?;
 
-                Ok(Distribution::Beta { alpha, beta, min, max })
+                Ok(Distribution::Beta {
+                    alpha,
+                    beta,
+                    min,
+                    max,
+                })
             }
             _ => Err(ParseError::InvalidDistribution {
-                message: format!("Expected distribution type, found {:?}", dist_type.token_type),
+                message: format!(
+                    "Expected distribution type, found {:?}",
+                    dist_type.token_type
+                ),
                 line: dist_type.line,
                 column: dist_type.column,
             }),
@@ -384,11 +432,13 @@ impl Parser {
                 "day" | "days" => TimeUnit::Day,
                 "week" | "weeks" => TimeUnit::Week,
                 "month" | "months" => TimeUnit::Month,
-                _ => return Err(ParseError::InvalidExpression {
-                    message: format!("Invalid time unit: {}", unit_str),
-                    line: self.peek().line,
-                    column: self.peek().column,
-                }),
+                _ => {
+                    return Err(ParseError::InvalidExpression {
+                        message: format!("Invalid time unit: {}", unit_str),
+                        line: self.peek().line,
+                        column: self.peek().column,
+                    })
+                }
             };
 
             Ok(Schedule::Every { interval, unit })
@@ -577,7 +627,7 @@ impl Parser {
             let expr = self.parse_unary()?;
             Ok(Expression::Subtract(
                 Box::new(Expression::Number(0.0)),
-                Box::new(expr)
+                Box::new(expr),
             ))
         } else if self.match_token(&TokenType::Not) {
             let expr = self.parse_unary()?;
@@ -785,9 +835,30 @@ impl Parser {
         }
     }
 
+    fn parse_number_array(&mut self) -> ParseResult<Vec<f64>> {
+        self.consume_token(TokenType::LBracket, "[")?;
+
+        let mut numbers = Vec::new();
+
+        while !self.check(&TokenType::RBracket) && !self.is_at_end() {
+            numbers.push(self.parse_number()?);
+
+            if !self.check(&TokenType::RBracket) {
+                self.consume_token(TokenType::Comma, ",")?;
+            }
+        }
+
+        self.consume_token(TokenType::RBracket, "]")?;
+        Ok(numbers)
+    }
+
     fn skip_until_newline_or_rbrace(&mut self) {
-        while !self.is_at_end() &&
-              !matches!(self.peek().token_type, TokenType::Newline | TokenType::RBrace) {
+        while !self.is_at_end()
+            && !matches!(
+                self.peek().token_type,
+                TokenType::Newline | TokenType::RBrace
+            )
+        {
             self.advance();
         }
     }

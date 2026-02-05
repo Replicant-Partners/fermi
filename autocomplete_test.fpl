@@ -1,0 +1,54 @@
+# Autocomplete Test File
+# This file demonstrates all the new autocomplete features
+
+# Try typing these to test autocomplete:
+# 1. Type "qu" at the top level -> should suggest "question"
+# 2. Type "dr" at the top level -> should suggest "driver"
+# 3. Inside a driver block, type "dis" -> should suggest "distribution"
+# 4. Type "triangular(" -> should show snippet with parameters
+# 5. In model line, type driver names -> should show defined drivers
+
+question "What will be the revenue in Q1 2026?"
+
+# Context-aware: Inside this driver block, you'll get driver property completions
+driver base_revenue continuous {
+    distribution: triangular(100000, 150000, 250000)
+    unit: "USD"
+    rationale: "Based on Q4 2025 historical data"
+}
+
+# Binary driver with impact multiplier
+driver major_contract binary {
+    probability: 0.7p
+    impact_multiplier: 1.5
+    rationale: "Enterprise contract in final negotiation"
+}
+
+# Try typing distribution functions - you'll get helpful descriptions
+driver growth_rate continuous {
+    distribution: normal(0.15, 0.05)
+    unit: "ratio"
+}
+
+# Evidence block - type properties like "source", "summary", "relevance"
+evidence market_report {
+    source: "Gartner Market Analysis 2025"
+    summary: "Market expected to grow 15-20% YoY"
+    relevance: 0.9p
+    date: 2025-12-15
+    url: "https://example.com/report"
+    strength: 0.85p
+}
+
+# Agent block - type "query" or "schedule"
+agent market_tracker {
+    query: "revenue forecasts 2026"
+    schedule: every 1 week
+}
+
+# Model line - type driver names and they'll autocomplete!
+# Also try math functions: sqrt, log, exp, pow, abs, min, max, round, floor, ceil
+# And operators: +, -, *, /, ^, %, ==, !=, <, >, <=, >=, and, or, not
+model: base_revenue * (1 + growth_rate) * (if major_contract then 1.5 else 1.0)
+
+simulate 10000 iterations

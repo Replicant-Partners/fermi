@@ -1,7 +1,6 @@
 /// Symbol Table
 ///
 /// Tracks all defined symbols (drivers, evidence, agents) in an FPL program.
-
 use crate::ast::*;
 use crate::types::Type;
 use std::collections::HashMap;
@@ -42,17 +41,26 @@ impl SymbolTable {
     }
 
     /// Define a new symbol
-    pub fn define(&mut self, name: String, symbol_type: SymbolType, ty: Type, line: Option<usize>) -> Result<(), String> {
+    pub fn define(
+        &mut self,
+        name: String,
+        symbol_type: SymbolType,
+        ty: Type,
+        line: Option<usize>,
+    ) -> Result<(), String> {
         if self.symbols.contains_key(&name) {
             return Err(format!("Symbol '{}' is already defined", name));
         }
 
-        self.symbols.insert(name.clone(), Symbol {
-            name,
-            symbol_type,
-            ty,
-            defined_at: line,
-        });
+        self.symbols.insert(
+            name.clone(),
+            Symbol {
+                name,
+                symbol_type,
+                ty,
+                defined_at: line,
+            },
+        );
 
         Ok(())
     }
@@ -143,14 +151,13 @@ impl SymbolTableBuilder {
                     let ty = match driver.driver_type {
                         DriverType::Continuous => Type::Number,
                         DriverType::Binary => Type::Boolean,
+                        DriverType::Discrete => Type::Number,
                     };
 
-                    if let Err(e) = self.table.define(
-                        driver.name.clone(),
-                        SymbolType::Driver,
-                        ty,
-                        None,
-                    ) {
+                    if let Err(e) =
+                        self.table
+                            .define(driver.name.clone(), SymbolType::Driver, ty, None)
+                    {
                         self.errors.push(e);
                     }
                 }
@@ -203,18 +210,31 @@ impl SymbolTableBuilder {
                     }
                 }
             }
-            Expression::Add(l, r) | Expression::Subtract(l, r) | Expression::Multiply(l, r) |
-            Expression::Divide(l, r) | Expression::Modulo(l, r) | Expression::Power(l, r) |
-            Expression::Equal(l, r) | Expression::NotEqual(l, r) | Expression::Greater(l, r) |
-            Expression::Less(l, r) | Expression::GreaterEqual(l, r) | Expression::LessEqual(l, r) |
-            Expression::And(l, r) | Expression::Or(l, r) => {
+            Expression::Add(l, r)
+            | Expression::Subtract(l, r)
+            | Expression::Multiply(l, r)
+            | Expression::Divide(l, r)
+            | Expression::Modulo(l, r)
+            | Expression::Power(l, r)
+            | Expression::Equal(l, r)
+            | Expression::NotEqual(l, r)
+            | Expression::Greater(l, r)
+            | Expression::Less(l, r)
+            | Expression::GreaterEqual(l, r)
+            | Expression::LessEqual(l, r)
+            | Expression::And(l, r)
+            | Expression::Or(l, r) => {
                 self.collect_identifiers(l);
                 self.collect_identifiers(r);
             }
             Expression::Not(e) => {
                 self.collect_identifiers(e);
             }
-            Expression::If { condition, then_expr, else_expr } => {
+            Expression::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
                 self.collect_identifiers(condition);
                 self.collect_identifiers(then_expr);
                 self.collect_identifiers(else_expr);
@@ -243,7 +263,9 @@ mod tests {
     fn test_symbol_definition() {
         let mut table = SymbolTable::new();
 
-        assert!(table.define("x".to_string(), SymbolType::Driver, Type::Number, None).is_ok());
+        assert!(table
+            .define("x".to_string(), SymbolType::Driver, Type::Number, None)
+            .is_ok());
         assert!(table.contains("x"));
         assert!(!table.contains("y"));
     }
@@ -252,16 +274,24 @@ mod tests {
     fn test_duplicate_definition() {
         let mut table = SymbolTable::new();
 
-        assert!(table.define("x".to_string(), SymbolType::Driver, Type::Number, None).is_ok());
-        assert!(table.define("x".to_string(), SymbolType::Driver, Type::Number, None).is_err());
+        assert!(table
+            .define("x".to_string(), SymbolType::Driver, Type::Number, None)
+            .is_ok());
+        assert!(table
+            .define("x".to_string(), SymbolType::Driver, Type::Number, None)
+            .is_err());
     }
 
     #[test]
     fn test_driver_tracking() {
         let mut table = SymbolTable::new();
 
-        table.define("x".to_string(), SymbolType::Driver, Type::Number, None).unwrap();
-        table.define("y".to_string(), SymbolType::Driver, Type::Number, None).unwrap();
+        table
+            .define("x".to_string(), SymbolType::Driver, Type::Number, None)
+            .unwrap();
+        table
+            .define("y".to_string(), SymbolType::Driver, Type::Number, None)
+            .unwrap();
 
         table.mark_driver_used("x".to_string());
 

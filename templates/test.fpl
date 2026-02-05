@@ -1,0 +1,7 @@
+question "will Germany win the Eurovision Song contest?"
+
+driver political-clim continuous {
+	distribution: triangular(5, 50, 75)
+	unit: "units"
+	rationale: "reasoning"
+}

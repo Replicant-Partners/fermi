@@ -1,0 +1,21 @@
+question "What will Q1 revenue be?"
+
+driver base_sales continuous {
+    display_name: "Base Sales Revenue"
+    description: "The baseline quarterly sales figure before any adjustments or special events"
+    distribution: triangular(10000, 15000, 25000)
+    unit: "USD"
+    rationale: "Based on historical Q4 2025 data and seasonal patterns"
+}
+
+driver success_multiplier binary {
+    display_name: "Major Client Renewal"
+    description: "Whether the Fortune 500 client renews their annual contract"
+    probability: 0.65p
+    impact_multiplier: 1.4
+    rationale: "Client has expressed strong interest, but budget approval is pending"
+}
+
+model: base_sales * (if success_multiplier then 1.4 else 1.0)
+
+simulate 10000 iterations

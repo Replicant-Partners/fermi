@@ -2,7 +2,6 @@
 ///
 /// The AST represents the hierarchical structure of an FPL program.
 /// Each node corresponds to a language construct (question, driver, etc.)
-
 use std::fmt;
 
 /// Root node - represents an entire FPL program
@@ -34,10 +33,14 @@ pub struct QuestionStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DriverStmt {
     pub name: String,
+    pub display_name: Option<String>, // Human-readable name
+    pub description: Option<String>,  // Natural language description
     pub driver_type: DriverType,
-    pub distribution: Option<Distribution>,
-    pub probability: Option<f64>,          // For binary drivers
-    pub impact_multiplier: Option<f64>,    // For binary drivers
+    pub distribution: Option<Distribution>, // For continuous drivers
+    pub probability: Option<f64>,           // For binary drivers
+    pub impact_multiplier: Option<f64>,     // For binary drivers
+    pub values: Option<Vec<f64>>,           // For discrete drivers
+    pub weights: Option<Vec<f64>>,          // For discrete drivers (must sum to 1)
     pub unit: Option<String>,
     pub rationale: Option<String>,
     pub constraints: Vec<Constraint>,
@@ -49,6 +52,7 @@ pub struct DriverStmt {
 pub enum DriverType {
     Continuous,
     Binary,
+    Discrete,
 }
 
 /// Distribution types for continuous drivers
@@ -102,7 +106,7 @@ pub struct EvidenceStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentStmt {
     pub name: String,
-    pub agent_type: Option<String>,  // research, sentiment, competitive, etc.
+    pub agent_type: Option<String>, // research, sentiment, competitive, etc.
     pub query: String,
     pub schedule: Option<Schedule>,
     pub driver_refs: Vec<String>,
@@ -237,8 +241,16 @@ impl fmt::Display for Expression {
             Expression::And(l, r) => write!(f, "({} and {})", l, r),
             Expression::Or(l, r) => write!(f, "({} or {})", l, r),
             Expression::Not(e) => write!(f, "(not {})", e),
-            Expression::If { condition, then_expr, else_expr } => {
-                write!(f, "(if {} then {} else {})", condition, then_expr, else_expr)
+            Expression::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                write!(
+                    f,
+                    "(if {} then {} else {})",
+                    condition, then_expr, else_expr
+                )
             }
             Expression::FunctionCall { name, args } => {
                 write!(f, "{}(", name)?;
@@ -284,7 +296,11 @@ impl Expression {
         Expression::Greater(Box::new(left), Box::new(right))
     }
 
-    pub fn if_then_else(condition: Expression, then_expr: Expression, else_expr: Expression) -> Expression {
+    pub fn if_then_else(
+        condition: Expression,
+        then_expr: Expression,
+        else_expr: Expression,
+    ) -> Expression {
         Expression::If {
             condition: Box::new(condition),
             then_expr: Box::new(then_expr),
@@ -303,15 +319,12 @@ mod tests {
 
     #[test]
     fn test_expression_builders() {
-        let expr = Expression::add(
-            Expression::Number(5.0),
-            Expression::Number(3.0)
-        );
+        let expr = Expression::add(Expression::Number(5.0), Expression::Number(3.0));
         assert_eq!(expr.to_string(), "(5 + 3)");
 
         let expr2 = Expression::multiply(
             Expression::Identifier("x".to_string()),
-            Expression::Number(2.0)
+            Expression::Number(2.0),
         );
         assert_eq!(expr2.to_string(), "(x * 2)");
     }
@@ -321,7 +334,7 @@ mod tests {
         let expr = Expression::if_then_else(
             Expression::Boolean(true),
             Expression::Number(1.0),
-            Expression::Number(0.0)
+            Expression::Number(0.0),
         );
         assert_eq!(expr.to_string(), "(if true then 1 else 0)");
     }
@@ -334,7 +347,7 @@ mod tests {
                 Expression::Number(500.0),
                 Expression::Number(1200.0),
                 Expression::Number(2500.0),
-            ]
+            ],
         );
         assert_eq!(expr.to_string(), "triangular(500, 1200, 2500)");
     }

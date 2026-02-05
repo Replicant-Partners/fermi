@@ -4,14 +4,14 @@
 /// 1. Sampling from driver distributions
 /// 2. Evaluating the model expression for each iteration
 /// 3. Collecting statistics from the results
-use crate::ast::{Distribution, Program, Statement};
+use crate::ast::{Distribution, DriverType, Program, Statement};
 use crate::distributions::{
     calculate_statistics, sample_beta, sample_lognormal, sample_normal, sample_triangular,
     sample_uniform,
 };
 use crate::evaluator::{evaluate, EvaluationContext};
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
 
 pub type ExecutionResult2<T> = Result<T, ExecutionError>;
@@ -109,16 +109,33 @@ impl Executor {
     /// Execute a Monte Carlo simulation on the given program
     pub fn execute(&mut self, program: &Program) -> ExecutionResult2<ExecutionResults> {
         // Find drivers and model
-        let mut drivers: HashMap<String, &Distribution> = HashMap::new();
+        let mut continuous_drivers: HashMap<String, &Distribution> = HashMap::new();
+        let mut binary_drivers: HashMap<String, f64> = HashMap::new();
+        let mut discrete_drivers: HashMap<String, (Vec<f64>, Vec<f64>)> = HashMap::new();
         let mut model_expr = None;
 
         for stmt in &program.statements {
             match stmt {
-                Statement::Driver(driver) => {
-                    if let Some(ref dist) = driver.distribution {
-                        drivers.insert(driver.name.clone(), dist);
+                Statement::Driver(driver) => match driver.driver_type {
+                    DriverType::Continuous => {
+                        if let Some(ref dist) = driver.distribution {
+                            continuous_drivers.insert(driver.name.clone(), dist);
+                        }
                     }
-                }
+                    DriverType::Binary => {
+                        if let Some(prob) = driver.probability {
+                            binary_drivers.insert(driver.name.clone(), prob);
+                        }
+                    }
+                    DriverType::Discrete => {
+                        if let (Some(ref values), Some(ref weights)) =
+                            (&driver.values, &driver.weights)
+                        {
+                            discrete_drivers
+                                .insert(driver.name.clone(), (values.clone(), weights.clone()));
+                        }
+                    }
+                },
                 Statement::Model(model) => {
                     model_expr = Some(&model.expression);
                 }
@@ -132,11 +149,28 @@ impl Executor {
         let mut samples = Vec::with_capacity(self.iterations);
 
         for _ in 0..self.iterations {
-            // Sample from each driver distribution
+            // Sample from each driver
             let mut ctx = EvaluationContext::new();
 
-            for (name, dist) in &drivers {
+            // Sample continuous drivers
+            for (name, dist) in &continuous_drivers {
                 let sample = self.sample_distribution(dist, &ctx)?;
+                ctx.set(name.clone(), sample);
+            }
+
+            // Sample binary drivers (Bernoulli trials)
+            for (name, prob) in &binary_drivers {
+                let sample = if self.rng.gen::<f64>() < *prob {
+                    1.0
+                } else {
+                    0.0
+                };
+                ctx.set(name.clone(), sample);
+            }
+
+            // Sample discrete drivers (categorical distribution)
+            for (name, (values, weights)) in &discrete_drivers {
+                let sample = self.sample_categorical(values, weights);
                 ctx.set(name.clone(), sample);
             }
 
@@ -258,6 +292,25 @@ impl Executor {
             }
         }
     }
+
+    /// Sample from a categorical (discrete) distribution
+    /// Uses inverse transform sampling with cumulative weights
+    fn sample_categorical(&mut self, values: &[f64], weights: &[f64]) -> f64 {
+        // Generate random number between 0 and 1
+        let r = self.rng.gen::<f64>();
+
+        // Compute cumulative sum
+        let mut cumulative = 0.0;
+        for (i, &weight) in weights.iter().enumerate() {
+            cumulative += weight;
+            if r < cumulative {
+                return values[i];
+            }
+        }
+
+        // Fallback to last value (handles floating-point rounding)
+        values[values.len() - 1]
+    }
 }
 
 #[cfg(test)]
@@ -281,6 +334,8 @@ mod tests {
                 }),
                 Statement::Driver(DriverStmt {
                     name: "x".to_string(),
+                    display_name: None,
+                    description: None,
                     driver_type: DriverType::Continuous,
                     distribution: Some(Distribution::Triangular {
                         p5: Expression::Number(10.0),
@@ -289,6 +344,8 @@ mod tests {
                     }),
                     probability: None,
                     impact_multiplier: None,
+                    values: None,
+                    weights: None,
                     unit: None,
                     rationale: None,
                     constraints: vec![],
@@ -333,6 +390,8 @@ mod tests {
                 }),
                 Statement::Driver(DriverStmt {
                     name: "x".to_string(),
+                    display_name: None,
+                    description: None,
                     driver_type: DriverType::Continuous,
                     distribution: Some(Distribution::Normal {
                         mean: Expression::Number(100.0),
@@ -340,6 +399,8 @@ mod tests {
                     }),
                     probability: None,
                     impact_multiplier: None,
+                    values: None,
+                    weights: None,
                     unit: None,
                     rationale: None,
                     constraints: vec![],
@@ -347,6 +408,8 @@ mod tests {
                 }),
                 Statement::Driver(DriverStmt {
                     name: "y".to_string(),
+                    display_name: None,
+                    description: None,
                     driver_type: DriverType::Continuous,
                     distribution: Some(Distribution::Normal {
                         mean: Expression::Number(50.0),
@@ -354,6 +417,8 @@ mod tests {
                     }),
                     probability: None,
                     impact_multiplier: None,
+                    values: None,
+                    weights: None,
                     unit: None,
                     rationale: None,
                     constraints: vec![],

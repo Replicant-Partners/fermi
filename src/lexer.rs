@@ -2,7 +2,6 @@
 ///
 /// Transforms raw FPL source code into a stream of tokens for the parser.
 /// Handles keywords, literals, operators, and provides rich error messages.
-
 use std::fmt;
 
 /// Token types in the FPL language
@@ -17,6 +16,7 @@ pub enum TokenType {
     Simulate,
     Continuous,
     Binary,
+    Discrete,
     Triangular,
     Normal,
     Lognormal,
@@ -31,46 +31,46 @@ pub enum TokenType {
     // Literals
     String(String),
     Number(f64),
-    Probability(f64),     // 0.5p or 75%
-    Date(String),         // YYYY-MM-DD format
+    Probability(f64), // 0.5p or 75%
+    Date(String),     // YYYY-MM-DD format
     Boolean(bool),
 
     // Identifiers
     Identifier(String),
 
     // Operators
-    Plus,                 // +
-    Minus,                // -
-    Star,                 // *
-    Slash,                // /
-    Percent,              // %
-    Caret,                // ^
+    Plus,    // +
+    Minus,   // -
+    Star,    // *
+    Slash,   // /
+    Percent, // %
+    Caret,   // ^
 
     // Comparison
-    Equals,               // =
-    DoubleEquals,         // ==
-    NotEquals,            // !=
-    Greater,              // >
-    Less,                 // <
-    GreaterEqual,         // >=
-    LessEqual,            // <=
+    Equals,       // =
+    DoubleEquals, // ==
+    NotEquals,    // !=
+    Greater,      // >
+    Less,         // <
+    GreaterEqual, // >=
+    LessEqual,    // <=
 
     // Logical
-    And,                  // and
-    Or,                   // or
-    Not,                  // not
+    And, // and
+    Or,  // or
+    Not, // not
 
     // Delimiters
-    LBrace,               // {
-    RBrace,               // }
-    LParen,               // (
-    RParen,               // )
-    LBracket,             // [
-    RBracket,             // ]
-    Comma,                // ,
-    Colon,                // :
-    Semicolon,            // ;
-    Arrow,                // ->
+    LBrace,    // {
+    RBrace,    // }
+    LParen,    // (
+    RParen,    // )
+    LBracket,  // [
+    RBracket,  // ]
+    Comma,     // ,
+    Colon,     // :
+    Semicolon, // ;
+    Arrow,     // ->
 
     // Special
     Newline,
@@ -90,7 +90,13 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(token_type: TokenType, lexeme: String, line: usize, column: usize, position: usize) -> Self {
+    pub fn new(
+        token_type: TokenType,
+        lexeme: String,
+        line: usize,
+        column: usize,
+        position: usize,
+    ) -> Self {
         Token {
             token_type,
             lexeme,
@@ -103,19 +109,46 @@ impl Token {
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} '{}' at {}:{}", self.token_type, self.lexeme, self.line, self.column)
+        write!(
+            f,
+            "{:?} '{}' at {}:{}",
+            self.token_type, self.lexeme, self.line, self.column
+        )
     }
 }
 
 /// Lexer error types
 #[derive(Debug, Clone)]
 pub enum LexerError {
-    UnterminatedString { line: usize, column: usize },
-    InvalidNumber { lexeme: String, line: usize, column: usize },
-    InvalidProbability { lexeme: String, line: usize, column: usize },
-    InvalidDate { lexeme: String, line: usize, column: usize },
-    UnexpectedCharacter { char: char, line: usize, column: usize },
-    InvalidEscape { char: char, line: usize, column: usize },
+    UnterminatedString {
+        line: usize,
+        column: usize,
+    },
+    InvalidNumber {
+        lexeme: String,
+        line: usize,
+        column: usize,
+    },
+    InvalidProbability {
+        lexeme: String,
+        line: usize,
+        column: usize,
+    },
+    InvalidDate {
+        lexeme: String,
+        line: usize,
+        column: usize,
+    },
+    UnexpectedCharacter {
+        char: char,
+        line: usize,
+        column: usize,
+    },
+    InvalidEscape {
+        char: char,
+        line: usize,
+        column: usize,
+    },
 }
 
 impl fmt::Display for LexerError {
@@ -124,20 +157,44 @@ impl fmt::Display for LexerError {
             LexerError::UnterminatedString { line, column } => {
                 write!(f, "Unterminated string at {}:{}", line, column)
             }
-            LexerError::InvalidNumber { lexeme, line, column } => {
+            LexerError::InvalidNumber {
+                lexeme,
+                line,
+                column,
+            } => {
                 write!(f, "Invalid number '{}' at {}:{}", lexeme, line, column)
             }
-            LexerError::InvalidProbability { lexeme, line, column } => {
-                write!(f, "Invalid probability '{}' at {}:{}. Use format like 0.5p or 75%", lexeme, line, column)
+            LexerError::InvalidProbability {
+                lexeme,
+                line,
+                column,
+            } => {
+                write!(
+                    f,
+                    "Invalid probability '{}' at {}:{}. Use format like 0.5p or 75%",
+                    lexeme, line, column
+                )
             }
-            LexerError::InvalidDate { lexeme, line, column } => {
-                write!(f, "Invalid date '{}' at {}:{}. Use YYYY-MM-DD format", lexeme, line, column)
+            LexerError::InvalidDate {
+                lexeme,
+                line,
+                column,
+            } => {
+                write!(
+                    f,
+                    "Invalid date '{}' at {}:{}. Use YYYY-MM-DD format",
+                    lexeme, line, column
+                )
             }
             LexerError::UnexpectedCharacter { char, line, column } => {
                 write!(f, "Unexpected character '{}' at {}:{}", char, line, column)
             }
             LexerError::InvalidEscape { char, line, column } => {
-                write!(f, "Invalid escape sequence '\\{}' at {}:{}", char, line, column)
+                write!(
+                    f,
+                    "Invalid escape sequence '\\{}' at {}:{}",
+                    char, line, column
+                )
             }
         }
     }
@@ -363,7 +420,10 @@ impl Lexer {
         }
 
         // Check for decimal point
-        if !self.is_at_end() && self.peek() == '.' && self.peek_next().map_or(false, |c| c.is_ascii_digit()) {
+        if !self.is_at_end()
+            && self.peek() == '.'
+            && self.peek_next().map_or(false, |c| c.is_ascii_digit())
+        {
             self.advance(); // consume '.'
 
             while !self.is_at_end() && self.peek().is_ascii_digit() {
@@ -559,6 +619,7 @@ impl Lexer {
             // Driver types
             "continuous" => TokenType::Continuous,
             "binary" => TokenType::Binary,
+            "discrete" => TokenType::Discrete,
 
             // Distribution types
             "triangular" => TokenType::Triangular,
@@ -821,11 +882,15 @@ simulate 10000 iterations
         assert!(matches!(tokens[0].token_type, TokenType::Question));
 
         // Find the driver keyword
-        let driver_pos = tokens.iter().position(|t| matches!(t.token_type, TokenType::Driver));
+        let driver_pos = tokens
+            .iter()
+            .position(|t| matches!(t.token_type, TokenType::Driver));
         assert!(driver_pos.is_some());
 
         // Find the simulate keyword
-        let simulate_pos = tokens.iter().position(|t| matches!(t.token_type, TokenType::Simulate));
+        let simulate_pos = tokens
+            .iter()
+            .position(|t| matches!(t.token_type, TokenType::Simulate));
         assert!(simulate_pos.is_some());
     }
 }

@@ -2,7 +2,8 @@ question revenue {
     distribution: triangular(100, 200, 300)
     unit: "dollars"
 }
+driver continuous { distribution: normal(50,30}
 
-driver continuous sales {
+driver continuous {
     distribution: normal(50, 10)
 }

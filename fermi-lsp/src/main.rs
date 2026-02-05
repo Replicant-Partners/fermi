@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -9,6 +10,124 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 struct DocumentState {
     text: String,
     drivers: HashMap<String, String>, // driver name -> distribution type
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ForecastResult {
+    success: bool,
+    error: Option<String>,
+    output: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompletionContext {
+    in_driver: bool,
+    in_evidence: bool,
+    in_agent: bool,
+    in_model: bool,
+    driver_type_position: bool,
+    top_level: bool,
+}
+
+impl CompletionContext {
+    fn analyze(text: &str, position: Position) -> Self {
+        let lines: Vec<&str> = text.lines().collect();
+        let line_idx = position.line as usize;
+
+        // Get current line and lines before
+        let current_line = lines.get(line_idx).unwrap_or(&"").trim();
+
+        // Check if we're in a block by looking backward for block start
+        let mut in_driver = false;
+        let mut in_evidence = false;
+        let mut in_agent = false;
+        let mut in_model = false;
+        let mut driver_type_position = false;
+        let mut brace_depth = 0;
+
+        // Scan backwards from current position to find context
+        for i in (0..=line_idx).rev() {
+            let line = lines[i].trim();
+
+            // Count braces to track block depth
+            let open_braces = line.matches('{').count();
+            let close_braces = line.matches('}').count();
+
+            if i == line_idx {
+                brace_depth = 0;
+            } else {
+                brace_depth += close_braces as i32;
+                brace_depth -= open_braces as i32;
+            }
+
+            // If we have more opening braces than closing (negative depth when scanning backwards), we're inside a block
+            if brace_depth < 0 {
+                if line.starts_with("driver ") {
+                    in_driver = true;
+                    break;
+                } else if line.starts_with("evidence ") {
+                    in_evidence = true;
+                    break;
+                } else if line.starts_with("agent ") {
+                    in_agent = true;
+                    break;
+                }
+            }
+        }
+
+        // Check if we're on a model line
+        if current_line.starts_with("model:") || current_line.starts_with("model ") {
+            in_model = true;
+        }
+
+        // Check if we're at a driver type position (right after "driver <name> ")
+        if current_line.starts_with("driver ") {
+            let parts: Vec<&str> = current_line.split_whitespace().collect();
+            if parts.len() == 2 {
+                // "driver <name>" - cursor is right after name
+                driver_type_position = true;
+            } else if parts.len() >= 3 && !current_line.contains('{') {
+                // "driver <name> <partial_type>" - user is typing the type
+                driver_type_position = true;
+            }
+        }
+
+        // Check if we're at top level (not in any block)
+        let top_level = !in_driver && !in_evidence && !in_agent && brace_depth == 0;
+
+        CompletionContext {
+            in_driver,
+            in_evidence,
+            in_agent,
+            in_model,
+            driver_type_position,
+            top_level,
+        }
+    }
+
+    fn is_in_driver(&self) -> bool {
+        self.in_driver
+    }
+
+    fn is_in_evidence(&self) -> bool {
+        self.in_evidence
+    }
+
+    fn is_in_agent(&self) -> bool {
+        self.in_agent
+    }
+
+    fn is_in_model(&self) -> bool {
+        self.in_model
+    }
+
+    fn is_driver_type(&self) -> bool {
+        self.driver_type_position
+    }
+
+    fn is_top_level(&self) -> bool {
+        self.top_level
+    }
 }
 
 #[derive(Debug)]
@@ -43,6 +162,14 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec!["fermi.runForecast".to_string()],
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                }),
+                code_lens_provider: Some(CodeLensOptions {
+                    resolve_provider: Some(false),
+                }),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 ..Default::default()
             },
         })
@@ -93,9 +220,258 @@ impl LanguageServer for Backend {
         let hover_info = self.get_hover_info(params).await;
         Ok(hover_info)
     }
+
+    async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
+        let uri = params.text_document.uri;
+
+        // Add a "Run Forecast" code lens at the top of the file
+        let code_lens = CodeLens {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+            command: Some(Command {
+                title: "▶ Run Forecast".to_string(),
+                command: "fermi.runForecast".to_string(),
+                arguments: Some(vec![serde_json::Value::String(uri.to_string())]),
+            }),
+            data: None,
+        };
+
+        Ok(Some(vec![code_lens]))
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let range = params.range;
+
+        let mut actions = Vec::new();
+
+        // Check if there are diagnostics in this range that we can fix
+        for diagnostic in &params.context.diagnostics {
+            // Add evidence block action
+            if diagnostic.message.contains("missing evidence")
+                || diagnostic.message.contains("Consider adding evidence")
+            {
+                let action = CodeAction {
+                    title: "Add evidence block".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![diagnostic.clone()]),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some([(
+                            uri.clone(),
+                            vec![TextEdit {
+                                range: Range {
+                                    start: Position {
+                                        line: range.end.line + 1,
+                                        character: 0,
+                                    },
+                                    end: Position {
+                                        line: range.end.line + 1,
+                                        character: 0,
+                                    },
+                                },
+                                new_text: "\nevidence source_name {\n    source: \"Source citation\"\n    summary: \"Brief summary of the evidence\"\n    relevance: 0.8\n    date: 2026-01-01\n}\n".to_string(),
+                            }],
+                        )]
+                        .into_iter()
+                        .collect()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                actions.push(CodeActionOrCommand::CodeAction(action));
+            }
+        }
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(actions))
+        }
+    }
+
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> Result<Option<serde_json::Value>> {
+        match params.command.as_str() {
+            "fermi.runForecast" => {
+                // Get the document URI from arguments
+                if let Some(args) = params.arguments.first() {
+                    if let Some(uri_str) = args.as_str() {
+                        let result = self.run_forecast(uri_str).await;
+                        return Ok(Some(serde_json::to_value(result).unwrap()));
+                    }
+                }
+
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        "No document URI provided for forecast execution",
+                    )
+                    .await;
+
+                Ok(None)
+            }
+            _ => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("Unknown command: {}", params.command),
+                    )
+                    .await;
+                Ok(None)
+            }
+        }
+    }
 }
 
 impl Backend {
+    async fn run_forecast(&self, uri_str: &str) -> ForecastResult {
+        // Get the document
+        let docs = self.documents.read().await;
+        let doc = match docs.get(uri_str) {
+            Some(d) => d,
+            None => {
+                return ForecastResult {
+                    success: false,
+                    error: Some("Document not found".to_string()),
+                    output: None,
+                };
+            }
+        };
+
+        // Log execution start
+        self.client
+            .log_message(MessageType::INFO, "Executing Fermi forecast...")
+            .await;
+
+        // Execute the FPL code
+        use fermi::{Executor, Lexer, Parser, SemanticAnalyzer};
+
+        // Lexical analysis
+        let lexer = Lexer::new(&doc.text);
+        let tokens = match lexer.tokenize() {
+            Ok(t) => t,
+            Err(errors) => {
+                let error_msg = format!("Lexer errors: {:?}", errors);
+                self.client
+                    .log_message(MessageType::ERROR, &error_msg)
+                    .await;
+                return ForecastResult {
+                    success: false,
+                    error: Some(error_msg),
+                    output: None,
+                };
+            }
+        };
+
+        // Syntax analysis
+        let parser = Parser::new(tokens);
+        let program = match parser.parse() {
+            Ok(p) => p,
+            Err(error) => {
+                let error_msg = format!("Parse error: {}", error);
+                self.client
+                    .log_message(MessageType::ERROR, &error_msg)
+                    .await;
+                return ForecastResult {
+                    success: false,
+                    error: Some(error_msg),
+                    output: None,
+                };
+            }
+        };
+
+        // Semantic analysis
+        let analyzer = SemanticAnalyzer::new();
+        let analysis = analyzer.analyze(&program);
+
+        if !analysis.errors.is_empty() {
+            let error_msg = format!("Semantic errors: {:?}", analysis.errors);
+            self.client
+                .log_message(MessageType::ERROR, &error_msg)
+                .await;
+            return ForecastResult {
+                success: false,
+                error: Some(error_msg),
+                output: None,
+            };
+        }
+
+        // Execute - default to 10,000 iterations
+        let mut executor = Executor::new(10_000);
+        match executor.execute(&program) {
+            Ok(result) => {
+                // Format a nice output summary
+                let summary = format!(
+                    "Forecast Results ({} iterations):\n\
+                     Mean: {:.2}\n\
+                     Median: {:.2}\n\
+                     Std Dev: {:.2}\n\
+                     95% CI: [{:.2}, {:.2}]\n\
+                     90% CI: [{:.2}, {:.2}]\n\
+                     50% CI: [{:.2}, {:.2}]\n\
+                     Min: {:.2}\n\
+                     Max: {:.2}",
+                    result.iterations,
+                    result.mean,
+                    result.median,
+                    result.std_dev,
+                    result.p5,
+                    result.p95,
+                    result.p5,
+                    result.p95,
+                    result.p25,
+                    result.p75,
+                    result.min,
+                    result.max
+                );
+
+                self.client
+                    .log_message(MessageType::INFO, "Forecast executed successfully!")
+                    .await;
+                self.client
+                    .show_message(
+                        MessageType::INFO,
+                        &format!(
+                            "Forecast complete! Mean: {:.2}, Median: {:.2}",
+                            result.mean, result.median
+                        ),
+                    )
+                    .await;
+
+                ForecastResult {
+                    success: true,
+                    error: None,
+                    output: Some(summary),
+                }
+            }
+            Err(error) => {
+                let error_msg = format!("Execution error: {}", error);
+                self.client
+                    .log_message(MessageType::ERROR, &error_msg)
+                    .await;
+                self.client
+                    .show_message(MessageType::ERROR, &error_msg)
+                    .await;
+
+                ForecastResult {
+                    success: false,
+                    error: Some(error_msg),
+                    output: None,
+                }
+            }
+        }
+    }
+
     async fn on_change(&self, uri: Url, text: String) {
         // Parse the FPL code and get diagnostics
         let diagnostics = self.parse_and_diagnose(&text);
@@ -184,7 +560,7 @@ impl Backend {
         };
 
         // Syntax analysis
-        let mut parser = Parser::new(tokens);
+        let parser = Parser::new(tokens);
         match parser.parse() {
             Ok(program) => {
                 // Semantic analysis
@@ -192,9 +568,7 @@ impl Backend {
                 let analysis = analyzer.analyze(&program);
 
                 if analysis.errors.is_empty() {
-                    // Success - no errors
-                    self.client
-                        .log_message(MessageType::INFO, "Parse successful - no errors");
+                    // Success - no errors (log message is async but we don't need to wait)
                 } else {
                     // Semantic errors
                     for error in analysis.errors {
@@ -265,232 +639,580 @@ impl Backend {
         diagnostics
     }
 
-    fn get_completions(&self, _params: CompletionParams) -> Vec<CompletionItem> {
+    fn get_completions(&self, params: CompletionParams) -> Vec<CompletionItem> {
         let mut completions = Vec::new();
 
-        // FPL keywords
-        completions.push(CompletionItem {
-            label: "question".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Define the forecast question".to_string()),
-            insert_text: Some("question \"${1:What is your question?}\"".to_string()),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        });
+        // Get context for context-aware completions
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
 
-        completions.push(CompletionItem {
-            label: "driver".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Define a forecast driver variable".to_string()),
-            insert_text: Some(
-                "driver ${1:name} continuous {\n\tdistribution: ${2:triangular(${3:min}, ${4:likely}, ${5:max})}\n}".to_string(),
-            ),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        });
+        // Try to get document context
+        let context = self.get_completion_context(&uri, position);
 
-        completions.push(CompletionItem {
-            label: "model".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Define the forecast model calculation".to_string()),
-            insert_text: Some("model: ${1:expression}".to_string()),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        });
-
-        completions.push(CompletionItem {
-            label: "simulate".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Run Monte Carlo simulation".to_string()),
-            insert_text: Some("simulate ${1:10000} iterations".to_string()),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        });
-
-        completions.push(CompletionItem {
-            label: "evidence".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Document evidence for the forecast".to_string()),
-            insert_text: Some(
-                "evidence ${1:name} {\n\tsource: \"${2:source}\"\n\tsummary: \"${3:summary}\"\n}"
-                    .to_string(),
-            ),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        });
-
-        completions.push(CompletionItem {
-            label: "agent".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Create an automated research agent".to_string()),
-            insert_text: Some("agent ${1:name} {\n\tquery: \"${2:search query}\"\n\tschedule: every ${3:1} ${4:day}\n}".to_string()),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        });
-
-        // Driver types
-        completions.push(CompletionItem {
-            label: "continuous".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Continuous distribution driver type".to_string()),
-            ..Default::default()
-        });
-
-        completions.push(CompletionItem {
-            label: "binary".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Binary (yes/no) driver type".to_string()),
-            ..Default::default()
-        });
-
-        completions.push(CompletionItem {
-            label: "discrete".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("Discrete values driver type".to_string()),
-            ..Default::default()
-        });
-
-        // Driver properties
-        let driver_props = vec![
-            (
-                "distribution",
-                "distribution: ${1:triangular(${2:min}, ${3:likely}, ${4:max})}",
-                "Probability distribution",
-            ),
-            (
-                "probability",
-                "probability: ${1:0.5}",
-                "Probability value (0-1 or percentage)",
-            ),
-            ("unit", "unit: \"${1:units}\"", "Unit of measurement"),
-            (
-                "rationale",
-                "rationale: \"${1:reasoning}\"",
-                "Explanation of estimate",
-            ),
-            (
-                "impact_multiplier",
-                "impact_multiplier: ${1:1.0}",
-                "Impact on final result",
-            ),
-        ];
-
-        for (name, snippet, desc) in driver_props {
+        // FPL keywords (top-level statements)
+        if context.is_top_level() {
             completions.push(CompletionItem {
-                label: name.to_string(),
-                kind: Some(CompletionItemKind::PROPERTY),
-                detail: Some(desc.to_string()),
-                insert_text: Some(snippet.to_string()),
+                label: "question".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some(
+                    "Define the forecast question - the core prediction you want to make"
+                        .to_string(),
+                ),
+                documentation: Some(Documentation::String(
+                    "Example:\nquestion \"Will AMD reach $200 by 2026-12-31?\"".to_string(),
+                )),
+                insert_text: Some("question \"${1:What is your forecast question?}\"".to_string()),
                 insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("00_question".to_string()),
+                ..Default::default()
+            });
+
+            completions.push(CompletionItem {
+                label: "driver".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Define a driver variable - a factor that influences the forecast".to_string()),
+                documentation: Some(Documentation::String(
+                    "Drivers can be continuous, binary, or discrete.\nExample:\ndriver market_size continuous {\n    distribution: triangular(100, 200, 500)\n    unit: \"millions\"\n}".to_string()
+                )),
+                insert_text: Some(
+                    "driver ${1:name} ${2|continuous,binary,discrete|} {\n\t${3:distribution: triangular(${4:min}, ${5:likely}, ${6:max})}\n\t${7:unit: \"${8:units}\"}\n\t${9:rationale: \"${10:reasoning}\"}\n}".to_string(),
+                ),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("01_driver".to_string()),
+                ..Default::default()
+            });
+
+            completions.push(CompletionItem {
+                label: "model".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Define the forecast model - mathematical expression combining drivers".to_string()),
+                documentation: Some(Documentation::String(
+                    "Use driver names and math operators.\nExample:\nmodel: revenue_per_user * num_users * growth_rate".to_string()
+                )),
+                insert_text: Some("model: ${1:expression}".to_string()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("02_model".to_string()),
+                ..Default::default()
+            });
+
+            completions.push(CompletionItem {
+                label: "simulate".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Run Monte Carlo simulation to generate probabilistic outcomes".to_string()),
+                documentation: Some(Documentation::String(
+                    "Higher iteration counts give more accurate results but take longer.\nExample:\nsimulate 10000 iterations".to_string()
+                )),
+                insert_text: Some("simulate ${1:10000} iterations".to_string()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("03_simulate".to_string()),
+                ..Default::default()
+            });
+
+            completions.push(CompletionItem {
+                label: "evidence".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Document evidence supporting your forecast assumptions".to_string()),
+                documentation: Some(Documentation::String(
+                    "Track sources, summaries, and relevance scores.\nExample:\nevidence analyst_report {\n    source: \"Morgan Stanley Q4 2025\"\n    summary: \"Projected 25% YoY growth\"\n    relevance: 0.85\n}".to_string()
+                )),
+                insert_text: Some(
+                    "evidence ${1:name} {\n\tsource: \"${2:source}\"\n\tsummary: \"${3:summary}\"\n\trelevance: ${4:0.8}\n\tdate: ${5:2026-01-01}\n}"
+                        .to_string(),
+                ),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("04_evidence".to_string()),
+                ..Default::default()
+            });
+
+            completions.push(CompletionItem {
+                label: "agent".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Create an automated research agent to track information over time".to_string()),
+                documentation: Some(Documentation::String(
+                    "Agents can search and monitor topics on a schedule.\nExample:\nagent market_monitor {\n    query: \"semiconductor market growth\"\n    schedule: every 1 week\n}".to_string()
+                )),
+                insert_text: Some("agent ${1:name} {\n\tquery: \"${2:search query}\"\n\tschedule: every ${3:1} ${4|day,week,month|}\n}".to_string()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("05_agent".to_string()),
                 ..Default::default()
             });
         }
 
-        // Evidence properties
-        let evidence_props = vec![
-            ("source", "source: \"${1:source}\"", "Evidence source"),
-            (
-                "summary",
-                "summary: \"${1:summary}\"",
-                "Summary of evidence",
-            ),
-            ("relevance", "relevance: ${1:0.8}", "Relevance score (0-1)"),
-            ("date", "date: ${1:2025-01-01}", "Date of evidence"),
-        ];
-
-        for (name, snippet, desc) in evidence_props {
+        // Driver types (after "driver <name> ")
+        if context.is_driver_type() {
             completions.push(CompletionItem {
-                label: name.to_string(),
-                kind: Some(CompletionItemKind::PROPERTY),
-                detail: Some(desc.to_string()),
-                insert_text: Some(snippet.to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                label: "continuous".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Continuous probability distribution - for numeric ranges".to_string()),
+                documentation: Some(Documentation::String(
+                    "Use for: prices, sizes, counts, rates, percentages.\nRequires a distribution function.".to_string()
+                )),
+                sort_text: Some("00_continuous".to_string()),
+                ..Default::default()
+            });
+
+            completions.push(CompletionItem {
+                label: "binary".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Binary outcome - yes/no, true/false".to_string()),
+                documentation: Some(Documentation::String(
+                    "Use for: will X happen? yes or no questions.\nRequires a probability value."
+                        .to_string(),
+                )),
+                sort_text: Some("01_binary".to_string()),
+                ..Default::default()
+            });
+
+            completions.push(CompletionItem {
+                label: "discrete".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Discrete values - specific options with probabilities".to_string()),
+                documentation: Some(Documentation::String(
+                    "Use for: multiple possible outcomes.\nExample: low (0.3), medium (0.5), high (0.2)".to_string()
+                )),
+                sort_text: Some("02_discrete".to_string()),
                 ..Default::default()
             });
         }
 
-        // Agent properties
-        completions.push(CompletionItem {
-            label: "query".to_string(),
-            kind: Some(CompletionItemKind::PROPERTY),
-            detail: Some("Search query for agent".to_string()),
-            insert_text: Some("query: \"${1:search query}\"".to_string()),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        });
+        // Driver properties (inside driver blocks)
+        if context.is_in_driver() {
+            let driver_props = vec![
+                (
+                    "display_name",
+                    "display_name: \"${1:Human Readable Name}\"",
+                    "Natural language name for this driver",
+                    "Makes simulation output more readable. Example: \"Base Sales Revenue\"",
+                    "00_display_name",
+                ),
+                (
+                    "description",
+                    "description: \"${1:Natural language description}\"",
+                    "Explain what this driver represents in plain English",
+                    "Example: \"The baseline sales figure before adjustments\"",
+                    "01_description",
+                ),
+                (
+                    "distribution",
+                    "distribution: ${1:triangular(${2:p5}, ${3:p50}, ${4:p95})}",
+                    "Probability distribution function for continuous drivers",
+                    "Choose from: triangular, normal, lognormal, uniform, beta",
+                    "02_distribution",
+                ),
+                (
+                    "probability",
+                    "probability: ${1:0.5}${2|,p|}",
+                    "Probability value for binary drivers (0-1 or with 'p' suffix)",
+                    "Example: probability: 0.65p for 65%",
+                    "03_probability",
+                ),
+                (
+                    "unit",
+                    "unit: \"${1:units}\"",
+                    "Unit of measurement for the driver",
+                    "Example: \"dollars\", \"percent\", \"millions\"",
+                    "04_unit",
+                ),
+                (
+                    "rationale",
+                    "rationale: \"${1:reasoning}\"",
+                    "Explanation of your estimate or assumptions",
+                    "Document why you chose these values",
+                    "05_rationale",
+                ),
+                (
+                    "impact_multiplier",
+                    "impact_multiplier: ${1:1.0}",
+                    "Multiplier for how this driver affects the model (for binary drivers)",
+                    "Example: 1.3 means 30% increase if true",
+                    "04_impact_multiplier",
+                ),
+                (
+                    "min",
+                    "min: ${1:0}",
+                    "Minimum value for the driver",
+                    "Hard lower bound",
+                    "05_min",
+                ),
+                (
+                    "max",
+                    "max: ${1:100}",
+                    "Maximum value for the driver",
+                    "Hard upper bound",
+                    "06_max",
+                ),
+                (
+                    "values",
+                    "values: [${1:value1}, ${2:value2}, ${3:value3}]",
+                    "List of possible values for discrete drivers",
+                    "Example: values: [10, 20, 30, 40]",
+                    "07_values",
+                ),
+                (
+                    "weights",
+                    "weights: [${1:0.25}, ${2:0.5}, ${3:0.25}]",
+                    "Probability weights for discrete driver values",
+                    "Must sum to 1.0",
+                    "08_weights",
+                ),
+            ];
 
-        completions.push(CompletionItem {
-            label: "schedule".to_string(),
-            kind: Some(CompletionItemKind::PROPERTY),
-            detail: Some("Agent execution schedule".to_string()),
-            insert_text: Some("schedule: every ${1:1} ${2:day}".to_string()),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        });
+            for (name, snippet, desc, doc, sort) in driver_props {
+                completions.push(CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::PROPERTY),
+                    detail: Some(desc.to_string()),
+                    documentation: Some(Documentation::String(doc.to_string())),
+                    insert_text: Some(snippet.to_string()),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    sort_text: Some(sort.to_string()),
+                    ..Default::default()
+                });
+            }
+        }
 
-        // Distribution functions
+        // Evidence properties (inside evidence blocks)
+        if context.is_in_evidence() {
+            let evidence_props = vec![
+                (
+                    "source",
+                    "source: \"${1:source}\"",
+                    "Citation or source of the evidence",
+                    "Example: \"Gartner Report Q3 2025\", \"Company 10-K filing\"",
+                    "00_source",
+                ),
+                (
+                    "summary",
+                    "summary: \"${1:summary}\"",
+                    "Brief summary of the evidence content",
+                    "Key findings or data points",
+                    "01_summary",
+                ),
+                (
+                    "relevance",
+                    "relevance: ${1:0.8}${2|,p|}",
+                    "Relevance score (0-1) - how relevant is this evidence?",
+                    "Higher = more directly relevant to your forecast",
+                    "02_relevance",
+                ),
+                (
+                    "date",
+                    "date: ${1:2026-01-01}",
+                    "Date of the evidence (YYYY-MM-DD format)",
+                    "When was this information published or observed?",
+                    "03_date",
+                ),
+                (
+                    "url",
+                    "url: \"${1:https://example.com}\"",
+                    "URL link to the evidence source",
+                    "Optional reference link",
+                    "04_url",
+                ),
+                (
+                    "strength",
+                    "strength: ${1:0.8}${2|,p|}",
+                    "Strength or quality score (0-1)",
+                    "How reliable or well-supported is this evidence?",
+                    "05_strength",
+                ),
+            ];
+
+            for (name, snippet, desc, doc, sort) in evidence_props {
+                completions.push(CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::PROPERTY),
+                    detail: Some(desc.to_string()),
+                    documentation: Some(Documentation::String(doc.to_string())),
+                    insert_text: Some(snippet.to_string()),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    sort_text: Some(sort.to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Agent properties (inside agent blocks)
+        if context.is_in_agent() {
+            completions.push(CompletionItem {
+                label: "query".to_string(),
+                kind: Some(CompletionItemKind::PROPERTY),
+                detail: Some("Search query string for the agent to monitor".to_string()),
+                documentation: Some(Documentation::String(
+                    "The agent will search for and track information matching this query.\nExample: \"Tesla revenue projections 2026\"".to_string()
+                )),
+                insert_text: Some("query: \"${1:search query}\"".to_string()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("00_query".to_string()),
+                ..Default::default()
+            });
+
+            completions.push(CompletionItem {
+                label: "schedule".to_string(),
+                kind: Some(CompletionItemKind::PROPERTY),
+                detail: Some("Execution schedule for the agent".to_string()),
+                documentation: Some(Documentation::String(
+                    "How often should the agent run?\nFormat: every <number> <unit>\nUnits: day, week, month".to_string()
+                )),
+                insert_text: Some("schedule: every ${1:1} ${2|day,week,month|}".to_string()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("01_schedule".to_string()),
+                ..Default::default()
+            });
+        }
+
+        // Distribution functions (always available in expressions)
         let distributions = vec![
             (
                 "triangular",
                 "triangular(${1:p5}, ${2:p50}, ${3:p95})",
-                "Three-point distribution (p5, p50, p95)",
+                "Three-point distribution using 5th, 50th, and 95th percentiles",
+                "Best for: Expert estimates with min/likely/max\nExample: triangular(1000, 2000, 5000)\nMost common choice for business forecasts",
             ),
             (
                 "normal",
                 "normal(${1:mean}, ${2:stddev})",
-                "Normal distribution (mean, standard deviation)",
+                "Normal (Gaussian) distribution with mean and standard deviation",
+                "Best for: Natural variations, measurement errors\nExample: normal(100, 15)\nSymmetric bell curve",
             ),
             (
                 "lognormal",
                 "lognormal(${1:median}, ${2:sigma})",
-                "Lognormal distribution (median, sigma)",
+                "Lognormal distribution - for positive values with right skew",
+                "Best for: Prices, incomes, project durations\nExample: lognormal(50000, 0.5)\nCannot be negative",
             ),
             (
                 "uniform",
                 "uniform(${1:low}, ${2:high})",
-                "Uniform distribution (low, high)",
+                "Uniform distribution - all values equally likely",
+                "Best for: Complete uncertainty within range\nExample: uniform(0, 100)\nFlat probability",
             ),
             (
                 "beta",
                 "beta(${1:alpha}, ${2:beta})",
-                "Beta distribution (alpha, beta)",
+                "Beta distribution - bounded between 0 and 1",
+                "Best for: Probabilities, percentages, proportions\nExample: beta(2, 5)\nFlexible shape",
+            ),
+            (
+                "exponential",
+                "exponential(${1:lambda})",
+                "Exponential distribution - for time between events",
+                "Best for: Wait times, lifetimes\nExample: exponential(0.5)\nMemoryless property",
             ),
         ];
 
-        for (name, snippet, desc) in distributions {
+        for (name, snippet, desc, doc) in distributions {
             completions.push(CompletionItem {
                 label: name.to_string(),
                 kind: Some(CompletionItemKind::FUNCTION),
                 detail: Some(desc.to_string()),
+                documentation: Some(Documentation::String(doc.to_string())),
                 insert_text: Some(snippet.to_string()),
                 insert_text_format: Some(InsertTextFormat::SNIPPET),
                 ..Default::default()
             });
         }
 
-        // Math functions
+        // Math functions (available in model expressions)
         let functions = vec![
-            ("sqrt", "sqrt(${1:x})", "Square root"),
-            ("log", "log(${1:x})", "Natural logarithm"),
-            ("exp", "exp(${1:x})", "Exponential (e^x)"),
-            ("pow", "pow(${1:base}, ${2:exponent})", "Power function"),
-            ("abs", "abs(${1:x})", "Absolute value"),
-            ("min", "min(${1:a}, ${2:b})", "Minimum of two values"),
-            ("max", "max(${1:a}, ${2:b})", "Maximum of two values"),
+            ("sqrt", "sqrt(${1:x})", "Square root", "Returns √x"),
+            (
+                "log",
+                "log(${1:x})",
+                "Natural logarithm",
+                "Returns ln(x), base e",
+            ),
+            (
+                "log10",
+                "log10(${1:x})",
+                "Base-10 logarithm",
+                "Returns log₁₀(x)",
+            ),
+            ("exp", "exp(${1:x})", "Exponential function", "Returns e^x"),
+            (
+                "pow",
+                "pow(${1:base}, ${2:exponent})",
+                "Power function",
+                "Returns base^exponent",
+            ),
+            ("abs", "abs(${1:x})", "Absolute value", "Returns |x|"),
+            (
+                "min",
+                "min(${1:a}, ${2:b})",
+                "Minimum of two values",
+                "Returns smaller value",
+            ),
+            (
+                "max",
+                "max(${1:a}, ${2:b})",
+                "Maximum of two values",
+                "Returns larger value",
+            ),
+            (
+                "round",
+                "round(${1:x})",
+                "Round to nearest integer",
+                "Returns rounded value",
+            ),
+            (
+                "floor",
+                "floor(${1:x})",
+                "Round down",
+                "Returns largest integer ≤ x",
+            ),
+            (
+                "ceil",
+                "ceil(${1:x})",
+                "Round up",
+                "Returns smallest integer ≥ x",
+            ),
+            (
+                "sin",
+                "sin(${1:x})",
+                "Sine function",
+                "Trigonometric sine (radians)",
+            ),
+            (
+                "cos",
+                "cos(${1:x})",
+                "Cosine function",
+                "Trigonometric cosine (radians)",
+            ),
+            (
+                "tan",
+                "tan(${1:x})",
+                "Tangent function",
+                "Trigonometric tangent (radians)",
+            ),
         ];
 
-        for (name, snippet, desc) in functions {
+        for (name, snippet, desc, doc) in functions {
             completions.push(CompletionItem {
                 label: name.to_string(),
                 kind: Some(CompletionItemKind::FUNCTION),
                 detail: Some(desc.to_string()),
+                documentation: Some(Documentation::String(doc.to_string())),
                 insert_text: Some(snippet.to_string()),
                 insert_text_format: Some(InsertTextFormat::SNIPPET),
                 ..Default::default()
             });
+        }
+
+        // Control flow keywords
+        completions.push(CompletionItem {
+            label: "if".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("Conditional expression".to_string()),
+            documentation: Some(Documentation::String(
+                "Ternary operator for conditional logic.\nSyntax: if <condition> then <true_value> else <false_value>".to_string()
+            )),
+            insert_text: Some("if ${1:condition} then ${2:true_value} else ${3:false_value}".to_string()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        });
+
+        completions.push(CompletionItem {
+            label: "then".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("Then clause of conditional".to_string()),
+            ..Default::default()
+        });
+
+        completions.push(CompletionItem {
+            label: "else".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("Else clause of conditional".to_string()),
+            ..Default::default()
+        });
+
+        // Time units
+        let time_units = vec![
+            ("day", "Time unit: day"),
+            ("week", "Time unit: week"),
+            ("month", "Time unit: month"),
+            ("year", "Time unit: year"),
+            ("days", "Time unit: days"),
+            ("weeks", "Time unit: weeks"),
+            ("months", "Time unit: months"),
+            ("years", "Time unit: years"),
+        ];
+
+        for (unit, desc) in time_units {
+            completions.push(CompletionItem {
+                label: unit.to_string(),
+                kind: Some(CompletionItemKind::UNIT),
+                detail: Some(desc.to_string()),
+                ..Default::default()
+            });
+        }
+
+        // Operators (for discovery)
+        let operators = vec![
+            ("+", "Addition operator"),
+            ("-", "Subtraction operator"),
+            ("*", "Multiplication operator"),
+            ("/", "Division operator"),
+            ("^", "Exponentiation operator"),
+            ("%", "Modulo operator"),
+            ("==", "Equality comparison"),
+            ("!=", "Inequality comparison"),
+            ("<", "Less than"),
+            (">", "Greater than"),
+            ("<=", "Less than or equal"),
+            (">=", "Greater than or equal"),
+            ("and", "Logical AND"),
+            ("or", "Logical OR"),
+            ("not", "Logical NOT"),
+        ];
+
+        for (op, desc) in operators {
+            completions.push(CompletionItem {
+                label: op.to_string(),
+                kind: Some(CompletionItemKind::OPERATOR),
+                detail: Some(desc.to_string()),
+                ..Default::default()
+            });
+        }
+
+        // Add context-aware driver name completions
+        if context.is_in_model() {
+            if let Some(driver_names) = self.get_driver_names(&uri) {
+                for driver_name in driver_names {
+                    completions.push(CompletionItem {
+                        label: driver_name.clone(),
+                        kind: Some(CompletionItemKind::VARIABLE),
+                        detail: Some(format!("Driver variable: {}", driver_name)),
+                        documentation: Some(Documentation::String(
+                            "Reference to a defined driver".to_string(),
+                        )),
+                        ..Default::default()
+                    });
+                }
+            }
         }
 
         completions
+    }
+
+    fn get_completion_context(&self, uri: &Url, position: Position) -> CompletionContext {
+        // Read document and analyze context (sync access for completion)
+        // Note: We use try_read() to avoid blocking, falling back to default context
+        if let Ok(docs) = self.documents.try_read() {
+            if let Some(doc) = docs.get(&uri.to_string()) {
+                return CompletionContext::analyze(&doc.text, position);
+            }
+        }
+        CompletionContext::default()
+    }
+
+    fn get_driver_names(&self, uri: &Url) -> Option<Vec<String>> {
+        // Sync access to driver names
+        if let Ok(docs) = self.documents.try_read() {
+            if let Some(doc) = docs.get(&uri.to_string()) {
+                return Some(doc.drivers.keys().cloned().collect());
+            }
+        }
+        None
     }
 
     async fn get_hover_info(&self, params: HoverParams) -> Option<Hover> {
@@ -505,18 +1227,71 @@ impl Backend {
 
         // Check if it's a distribution function
         let hover_text = match word.as_str() {
-            "triangular" => Some("**triangular(p5, p50, p95)**\n\nThree-point distribution using 5th, 50th, and 95th percentiles.\n\n**Example:** `triangular(1000, 2000, 5000)`\n\nUseful for: expert estimates with min/likely/max values"),
-            "normal" => Some("**normal(mean, stddev)**\n\nNormal (Gaussian) distribution.\n\n**Example:** `normal(100, 15)`\n\nUseful for: naturally occurring variations, measurement errors"),
-            "lognormal" => Some("**lognormal(median, sigma)**\n\nLognormal distribution - for positive-only values with right skew.\n\n**Example:** `lognormal(1000, 0.5)`\n\nUseful for: prices, incomes, sizes"),
-            "uniform" => Some("**uniform(low, high)**\n\nUniform distribution - all values equally likely.\n\n**Example:** `uniform(0, 100)`\n\nUseful for: complete uncertainty within range"),
-            "beta" => Some("**beta(alpha, beta)**\n\nBeta distribution - bounded between 0 and 1.\n\n**Example:** `beta(2, 5)`\n\nUseful for: probabilities, percentages"),
+            // Keywords
+            "question" => Some("**question** - Define the forecast question\n\nThe core prediction you want to make.\n\n**Syntax:** `question \"Will X happen by date Y?\"`\n\n**Example:**\n```fpl\nquestion \"Will AMD reach $200 by 2026-12-31?\"\n```"),
+            "driver" => Some("**driver** - Define a driver variable\n\nA factor that influences the forecast outcome.\n\n**Syntax:** `driver <name> <type> { ... }`\n\n**Types:** `continuous`, `binary`, `discrete`\n\n**Example:**\n```fpl\ndriver market_size continuous {\n    distribution: triangular(100, 200, 500)\n    unit: \"millions\"\n}\n```"),
+            "model" => Some("**model** - Define the forecast model\n\nMathematical expression combining drivers.\n\n**Syntax:** `model: <expression>`\n\n**Example:**\n```fpl\nmodel: base_revenue * growth_rate * market_multiplier\n```"),
+            "simulate" => Some("**simulate** - Run Monte Carlo simulation\n\nGenerate probabilistic outcomes from your model.\n\n**Syntax:** `simulate <n> iterations`\n\n**Example:**\n```fpl\nsimulate 10000 iterations\n```\n\nHigher iteration counts give more accurate results but take longer."),
+            "evidence" => Some("**evidence** - Document supporting evidence\n\nTrack sources and data that inform your forecast.\n\n**Syntax:** `evidence <name> { ... }`\n\n**Example:**\n```fpl\nevidence analyst_report {\n    source: \"Morgan Stanley Q4 2025\"\n    summary: \"Projected 25% YoY growth\"\n    relevance: 0.85\n}\n```"),
+            "agent" => Some("**agent** - Create automated research agent\n\nScheduled agent that monitors and tracks information over time.\n\n**Syntax:** `agent <name> { ... }`\n\n**Example:**\n```fpl\nagent market_monitor {\n    query: \"semiconductor market growth\"\n    schedule: every 1 week\n}\n```"),
+
+            // Driver types
+            "continuous" => Some("**continuous** - Continuous probability distribution\n\nFor numeric values that can vary across a range.\n\n**Use for:** prices, sizes, counts, rates, percentages\n\n**Requires:** `distribution` property with a distribution function\n\n**Example:**\n```fpl\ndriver revenue continuous {\n    distribution: triangular(1000, 2000, 5000)\n    unit: \"dollars\"\n}\n```"),
+            "binary" => Some("**binary** - Binary outcome (yes/no)\n\nFor true/false, will-it-happen questions.\n\n**Use for:** events that either happen or don't\n\n**Requires:** `probability` property (0-1)\n\n**Optional:** `impact_multiplier` for model effect\n\n**Example:**\n```fpl\ndriver major_deal binary {\n    probability: 0.65p\n    impact_multiplier: 1.4\n}\n```"),
+            "discrete" => Some("**discrete** - Discrete values with probabilities\n\nFor specific outcome options with assigned probabilities.\n\n**Use for:** categorical outcomes, multiple scenarios\n\n**Requires:** `values` array and `weights` array (must sum to 1)\n\n**Example:**\n```fpl\ndriver market_scenario discrete {\n    values: [\"low\", \"medium\", \"high\"]\n    weights: [0.2, 0.5, 0.3]\n}\n```"),
+
+            // Driver properties
+            "display_name" => Some("**display_name** - Natural language name for driver\n\nProvides a human-readable name that appears in simulation output.\n\n**Example:**\n```fpl\ndisplay_name: \"Base Sales Revenue\"\n```\n\n**Benefits:**\n- Makes output more readable\n- Easier to understand simulation results\n- Better communication with stakeholders"),
+            "description" => Some("**description** - Natural language description\n\nExplains what this driver represents in plain English.\n\n**Example:**\n```fpl\ndescription: \"The baseline sales figure before seasonal adjustments\"\n```\n\n**Best practice:** Write clear descriptions that non-technical users can understand"),
+            "distribution" => Some("**distribution** - Probability distribution function\n\nDefines how values are distributed for continuous drivers.\n\n**Available functions:**\n- `triangular(p5, p50, p95)` - Expert estimates\n- `normal(mean, stddev)` - Natural variations\n- `lognormal(median, sigma)` - Prices, incomes\n- `uniform(low, high)` - Complete uncertainty\n- `beta(alpha, beta)` - Probabilities\n- `exponential(lambda)` - Wait times"),
+            "probability" => Some("**probability** - Probability value for binary drivers\n\nChance that the binary outcome is true (0-1).\n\n**Format:** Decimal (0.65) or with 'p' suffix (0.65p for 65%)\n\n**Example:** `probability: 0.7p` means 70% chance"),
+            "unit" => Some("**unit** - Unit of measurement\n\nDescribes what the driver values represent.\n\n**Example:** \"dollars\", \"percent\", \"millions\", \"units per day\""),
+            "rationale" => Some("**rationale** - Explanation of estimate\n\nDocument why you chose these values or this distribution.\n\n**Best practice:** Include reasoning and key assumptions."),
+            "impact_multiplier" => Some("**impact_multiplier** - Multiplier for binary driver impact\n\nHow much this binary driver affects the model when true.\n\n**Example:** `1.3` means 30% increase if true\n\n**Only used with binary drivers in if-then-else expressions.**"),
+            "values" => Some("**values** - List of possible values for discrete drivers\n\nDefines the specific numeric outcomes for a discrete distribution.\n\n**Example:**\n```fpl\nvalues: [0.8, 1.0, 1.3]\n```\n\n**Must match:** Length must equal length of weights array\n\n**Use for:** Scenarios, market states, or categorical outcomes"),
+            "weights" => Some("**weights** - Probability weights for discrete driver\n\nDefines the probability of each value occurring.\n\n**Example:**\n```fpl\nweights: [0.2, 0.5, 0.3]\n```\n\n**Requirements:**\n- Must sum to 1.0\n- All weights must be non-negative\n- Length must match values array"),
+
+            // Distribution functions
+            "triangular" => Some("**triangular(p5, p50, p95)**\n\nThree-point distribution using 5th, 50th, and 95th percentiles.\n\n**Example:** `triangular(1000, 2000, 5000)`\n\n**Best for:** Expert estimates with min/likely/max values\n\n**Properties:** Asymmetric, bounded, intuitive for experts"),
+            "normal" => Some("**normal(mean, stddev)**\n\nNormal (Gaussian) distribution with mean and standard deviation.\n\n**Example:** `normal(100, 15)`\n\n**Best for:** Natural variations, measurement errors, averages\n\n**Properties:** Symmetric bell curve, unbounded, 68-95-99.7 rule"),
+            "lognormal" => Some("**lognormal(median, sigma)**\n\nLognormal distribution - for positive-only values with right skew.\n\n**Example:** `lognormal(50000, 0.5)`\n\n**Best for:** Prices, incomes, project durations, multiplicative processes\n\n**Properties:** Cannot be negative, right-skewed, median-based"),
+            "uniform" => Some("**uniform(low, high)**\n\nUniform distribution - all values equally likely.\n\n**Example:** `uniform(0, 100)`\n\n**Best for:** Complete uncertainty within range, random selection\n\n**Properties:** Flat probability, bounded, maximum entropy"),
+            "beta" => Some("**beta(alpha, beta)**\n\nBeta distribution - bounded between 0 and 1, flexible shape.\n\n**Example:** `beta(2, 5)` for right-skewed probability\n\n**Best for:** Probabilities, percentages, proportions\n\n**Properties:** Bounded [0,1], very flexible shape, conjugate prior"),
+            "exponential" => Some("**exponential(lambda)**\n\nExponential distribution for time between events.\n\n**Example:** `exponential(0.5)` for mean time of 2 units\n\n**Best for:** Wait times, time to failure, lifetimes\n\n**Properties:** Memoryless, right-skewed, λ = 1/mean"),
+
+            // Math functions
+            "sqrt" => Some("**sqrt(x)**\n\nSquare root function.\n\n**Returns:** √x\n\n**Example:** `sqrt(16)` = 4"),
+            "log" => Some("**log(x)**\n\nNatural logarithm (base e).\n\n**Returns:** ln(x)\n\n**Example:** `log(2.71828)` ≈ 1"),
+            "log10" => Some("**log10(x)**\n\nBase-10 logarithm.\n\n**Returns:** log₁₀(x)\n\n**Example:** `log10(100)` = 2"),
+            "exp" => Some("**exp(x)**\n\nExponential function.\n\n**Returns:** e^x\n\n**Example:** `exp(1)` ≈ 2.71828"),
+            "pow" => Some("**pow(base, exponent)**\n\nPower function.\n\n**Returns:** base^exponent\n\n**Example:** `pow(2, 8)` = 256"),
+            "abs" => Some("**abs(x)**\n\nAbsolute value.\n\n**Returns:** |x|\n\n**Example:** `abs(-5)` = 5"),
+            "min" => Some("**min(a, b)**\n\nMinimum of two values.\n\n**Example:** `min(10, 20)` = 10"),
+            "max" => Some("**max(a, b)**\n\nMaximum of two values.\n\n**Example:** `max(10, 20)` = 20"),
+            "round" => Some("**round(x)**\n\nRound to nearest integer.\n\n**Example:** `round(3.7)` = 4"),
+            "floor" => Some("**floor(x)**\n\nRound down to integer.\n\n**Example:** `floor(3.7)` = 3"),
+            "ceil" => Some("**ceil(x)**\n\nRound up to integer.\n\n**Example:** `ceil(3.2)` = 4"),
+            "sin" => Some("**sin(x)**\n\nSine function (trigonometry).\n\n**Input:** Angle in radians\n\n**Returns:** Sine value (-1 to 1)\n\n**Example:** `sin(1.5708)` ≈ 1"),
+            "cos" => Some("**cos(x)**\n\nCosine function (trigonometry).\n\n**Input:** Angle in radians\n\n**Returns:** Cosine value (-1 to 1)\n\n**Example:** `cos(0)` = 1"),
+            "tan" => Some("**tan(x)**\n\nTangent function (trigonometry).\n\n**Input:** Angle in radians\n\n**Returns:** Tangent value\n\n**Example:** `tan(0.785398)` ≈ 1"),
+
+            // Control flow
+            "if" => Some("**if-then-else**\n\nConditional expression.\n\n**Syntax:** `if condition then true_value else false_value`\n\n**Example:** `if revenue > 1000 then 1.2 else 1.0`"),
+            "then" => Some("**then** - True branch of conditional\n\nValue to use when condition is true.\n\n**Used in:** `if condition then <this_value> else other_value`"),
+            "else" => Some("**else** - False branch of conditional\n\nValue to use when condition is false.\n\n**Used in:** `if condition then other_value else <this_value>`"),
+
+            // Operators
+            "and" => Some("**and** - Logical AND operator\n\nReturns true only if both conditions are true.\n\n**Example:** `if price > 100 and volume > 1000 then ...`"),
+            "or" => Some("**or** - Logical OR operator\n\nReturns true if either condition is true.\n\n**Example:** `if scenario_a or scenario_b then ...`"),
+            "not" => Some("**not** - Logical NOT operator\n\nInverts a boolean value.\n\n**Example:** `if not failed then 1.0 else 0.5`"),
+
             _ => {
                 // Check if it's a driver
                 if let Some(dist) = doc.drivers.get(&word) {
                     return Some(Hover {
                         contents: HoverContents::Markup(MarkupContent {
                             kind: MarkupKind::Markdown,
-                            value: format!("**Driver:** `{}`\n\n**Distribution:** `{}`", word, dist),
+                            value: format!("**Driver:** `{}`\n\n**Type:** `{}`\n\nHover over the distribution function to see details.", word, dist),
                         }),
                         range: None,
                     });

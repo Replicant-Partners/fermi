@@ -1,0 +1,17 @@
+question "What will Q1 revenue be?"
+
+driver base_sales continuous {
+    distribution: triangular(10000, 15000, 25000)
+    unit: "USD"
+    rationale: "Based on historical Q4 data"
+}
+
+driver success_multiplier binary {
+    probability: 0.65p
+    impact_multiplier: 1.4
+    rationale: "Major client renewal pending"
+}
+
+model: base_sales * (if success_multiplier then 1.4 else 1.0)
+
+simulate 10000 iterations
