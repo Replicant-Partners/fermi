@@ -22,7 +22,40 @@ module.exports = grammar({
         $.simulate_statement,
       ),
 
-    question_statement: ($) => seq("question", field("text", $.string)),
+    question_statement: ($) =>
+      seq(
+        "question",
+        field("text", $.string),
+        optional(field("block", $.question_block)),
+      ),
+
+    question_block: ($) => seq("{", repeat($.question_property), "}"),
+
+    question_property: ($) =>
+      choice(
+        $.base_rate_property,
+        seq("target_date", ":", field("value", $.string)),
+        seq("resolution_criteria", ":", field("value", $.string)),
+      ),
+
+    base_rate_property: ($) =>
+      seq("base_rate", field("block", $.base_rate_block)),
+
+    base_rate_block: ($) => seq("{", repeat($.base_rate_field), "}"),
+
+    base_rate_field: ($) =>
+      choice(
+        seq("reference_class", ":", field("value", $.string)),
+        seq(
+          "historical_frequency",
+          ":",
+          field("value", choice($.probability, $.number)),
+        ),
+        seq("sample_size", ":", field("value", $.number)),
+        seq("source", ":", field("value", $.string)),
+        seq("reasoning", ":", field("value", $.string)),
+        seq("generated_by", ":", field("value", choice("human", $.identifier))),
+      ),
 
     driver_statement: ($) =>
       seq(

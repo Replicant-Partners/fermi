@@ -89,6 +89,69 @@
     }
   },
   {
+    "type": "base_rate_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "base_rate_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "base_rate_field",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "human",
+            "named": false
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "number",
+            "named": true
+          },
+          {
+            "type": "probability",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "base_rate_property",
+    "named": true,
+    "fields": {
+      "block": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "base_rate_block",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "beta_distribution",
     "named": true,
     "fields": {
@@ -596,9 +659,60 @@
     }
   },
   {
+    "type": "question_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "question_property",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "question_property",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "base_rate_property",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "question_statement",
     "named": true,
     "fields": {
+      "block": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "question_block",
+            "named": true
+          }
+        ]
+      },
       "text": {
         "multiple": false,
         "required": true,
@@ -646,6 +760,7 @@
   {
     "type": "source_file",
     "named": true,
+    "root": true,
     "fields": {},
     "children": {
       "multiple": true,
@@ -830,6 +945,10 @@
     "named": false
   },
   {
+    "type": "base_rate",
+    "named": false
+  },
+  {
     "type": "beta",
     "named": false
   },
@@ -839,7 +958,8 @@
   },
   {
     "type": "comment",
-    "named": true
+    "named": true,
+    "extra": true
   },
   {
     "type": "continuous",
@@ -883,6 +1003,18 @@
   },
   {
     "type": "evidence",
+    "named": false
+  },
+  {
+    "type": "generated_by",
+    "named": false
+  },
+  {
+    "type": "historical_frequency",
+    "named": false
+  },
+  {
+    "type": "human",
     "named": false
   },
   {
@@ -934,7 +1066,23 @@
     "named": false
   },
   {
+    "type": "reasoning",
+    "named": false
+  },
+  {
+    "type": "reference_class",
+    "named": false
+  },
+  {
     "type": "relevance",
+    "named": false
+  },
+  {
+    "type": "resolution_criteria",
+    "named": false
+  },
+  {
+    "type": "sample_size",
     "named": false
   },
   {
@@ -951,6 +1099,10 @@
   },
   {
     "type": "summary",
+    "named": false
+  },
+  {
+    "type": "target_date",
     "named": false
   },
   {

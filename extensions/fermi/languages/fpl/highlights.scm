@@ -33,6 +33,22 @@
 (agent_property "schedule" @keyword.control)
 (agent_property "every" @keyword.control)
 
+; Question properties
+(question_property "target_date" @keyword.control)
+(question_property "resolution_criteria" @keyword.control)
+
+; Base rate keywords
+(base_rate_property "base_rate" @keyword.control)
+(base_rate_field "reference_class" @keyword.control)
+(base_rate_field "historical_frequency" @keyword.control)
+(base_rate_field "sample_size" @keyword.control)
+(base_rate_field "source" @keyword.control)
+(base_rate_field "reasoning" @keyword.control)
+(base_rate_field "generated_by" @keyword.control)
+
+; Base rate values
+(base_rate_field value: "human" @constant.builtin)
+
 ; Distribution function names
 (triangular_distribution "triangular" @function.builtin)
 (normal_distribution "normal" @function.builtin)
