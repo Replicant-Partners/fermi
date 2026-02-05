@@ -1,5 +1,5 @@
-# Test file for ExecutorType enum
-# Tests all four executor types
+# Test file for Phase 1 Day 2-3 AST changes
+# Tests: ExecutorType, driver_refs, depends_on, confidence_threshold
 
 # Test 1: LLM executor with driver_refs
 agent llm_agent {
@@ -10,11 +10,12 @@ agent llm_agent {
     schedule: every 1 week
 }
 
-# Test 2: MCP executor
+# Test 2: MCP executor with confidence_threshold
 agent mcp_agent {
     type: "research"
     query: "Test MCP executor with external tools"
     executor: "mcp"
+    confidence_threshold: 0.8
     schedule: every 1 day
 }
 
@@ -25,18 +26,30 @@ agent manual_agent {
     executor: "manual"
 }
 
-# Test 4: Skill executor
+# Test 4: Skill executor with depends_on
 agent skill_agent {
     type: "sentiment"
     query: "Test skill executor for sentiment analysis"
     executor: "skill"
+    depends_on: ["llm_agent", "mcp_agent"]
     schedule: every 3 days
 }
 
-# Test 5: No executor specified (should work, optional field)
-agent no_executor {
+# Test 5: Complete agent with all fields
+agent complete_agent {
+    type: "competitive"
+    query: "Agent with all optional fields"
+    executor: "llm"
+    driver_refs: ["test_driver"]
+    depends_on: ["manual_agent"]
+    confidence_threshold: 0.75p
+    schedule: every 2 weeks
+}
+
+# Test 6: Minimal agent (backward compatibility)
+agent minimal_agent {
     type: "research"
-    query: "No executor specified - should parse successfully"
+    query: "Minimal agent - only required fields"
     schedule: every 1 week
 }
 
