@@ -43,6 +43,8 @@ pub fn get_property_hover(word: &str) -> Option<String> {
         // Agent properties
         "executor" => "**executor** - Agent execution backend\n\nSpecifies how this agent executes its query.\n\n**Values:**\n- `llm` - Use LLM (Claude) to research query\n- `mcp` - Call MCP tools for data\n- `manual` - Human-in-the-loop\n- `skill` - Invoke Anthropic skill\n\n**Example:**\n```fpl\nagent market_research {\n    executor: \"llm\"\n}\n```\n\n**Default:** llm (if not specified)",
 
+        "driver_refs" => "**driver_refs** - Drivers this agent informs\n\nList of driver names that this agent's research should update or inform.\n\n**Format:** Array of driver names\n\n**Example:**\n```fpl\nagent market_research {\n    type: \"research\"\n    query: \"AMD market share trends\"\n    driver_refs: [\"market_share\", \"growth_rate\"]\n}\n```\n\n**Used in:** agent blocks\n\n**Validation:** Driver names must exist in the forecast",
+
         // Base rate properties (Outside View - Tetlock methodology)
         "reference_class" => "**reference_class** - Reference class definition\n\nDefine the broader category of similar situations to establish a base rate.\n\n**Example:** `reference_class: \"Major tech acquisitions in semiconductor industry\"`\n\n**Used in:** base_rate blocks\n\n**Best practice:** Choose a class that is as similar as possible to your question while having enough historical data.",
 

@@ -626,7 +626,7 @@ impl Parser {
         let mut query = String::new();
         let mut executor = None;
         let mut schedule = None;
-        let driver_refs = Vec::new();
+        let mut driver_refs = Vec::new();
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
             // Match field tokens (can be keywords or identifiers)
@@ -666,6 +666,9 @@ impl Parser {
                 }
                 "schedule" => {
                     schedule = Some(self.parse_schedule()?);
+                }
+                "driver_refs" => {
+                    driver_refs = self.parse_string_array()?;
                 }
                 _ => {
                     self.skip_until_newline_or_rbrace();

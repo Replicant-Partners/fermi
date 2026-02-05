@@ -1,11 +1,12 @@
 # Test file for ExecutorType enum
 # Tests all four executor types
 
-# Test 1: LLM executor
+# Test 1: LLM executor with driver_refs
 agent llm_agent {
     type: "research"
     query: "Test LLM executor for market research"
     executor: "llm"
+    driver_refs: ["test_driver"]
     schedule: every 1 week
 }
 
