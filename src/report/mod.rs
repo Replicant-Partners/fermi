@@ -3,6 +3,7 @@
 /// Generates Markdown reports with Mermaid diagrams from simulation results
 use crate::ast::*;
 use crate::executor::ExecutionResults;
+use crate::sensitivity;
 use chrono::{DateTime, Utc};
 use std::fs;
 use std::path::Path;
@@ -20,13 +21,24 @@ pub fn generate_report(
     results: &ExecutionResults,
     output_dir: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    // Run sensitivity analysis
+    println!("Running sensitivity analysis...");
+    let sensitivity_analysis =
+        sensitivity::full_sensitivity_analysis(forecast, results.iterations)?;
+
     // Generate filename (W3C compliant)
     let timestamp = Utc::now();
     let filename = generate_filename(&forecast, &timestamp);
     let report_path = output_dir.join(&filename);
 
-    // Generate markdown content (pass output_dir for chart generation)
-    let markdown = markdown::generate(forecast, results, &timestamp, output_dir)?;
+    // Generate markdown content (pass output_dir for chart generation + sensitivity)
+    let markdown = markdown::generate(
+        forecast,
+        results,
+        &sensitivity_analysis,
+        &timestamp,
+        output_dir,
+    )?;
 
     // Write to file
     fs::write(&report_path, markdown)?;

@@ -1,7 +1,7 @@
 # Forecast Results: Will the refactored LSP work perfectly?
 
-**Generated:** 2026-02-05T06:27:43.041159048+00:00  
-**Mean:** 0.98 | **Median:** 0.99 | **90% CI:** [0.97, 0.99]  
+**Generated:** 2026-02-05T06:49:12.629365363+00:00  
+**Mean:** 0.97 | **Median:** 0.99 | **90% CI:** [0.95, 0.99]  
 **Distribution:** ▁████ Slightly left-skewed ←  
 
 ---
@@ -58,16 +58,16 @@ xychart-beta
 
 | Metric | Value | Visualization |
 |--------|-------|---------------|
-| Mean | 0.98 | |
+| Mean | 0.97 | |
 | Median | 0.99 | |
 | Std Dev | 0.07 | |
 | Distribution | | ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█ |
-| P5 | 0.97 | ├ |
+| P5 | 0.95 | ├ |
 | P25 | 0.99 | ├ |
 | P50 (Median) | 0.99 | █ |
 | P75 | 0.99 | ┤ |
 | P95 | 0.99 | ┤ |
-| Range | [0.44, 0.99] |                    ┤├ |
+| Range | [0.43, 0.99] |                    ┤├ |
 
 
 ---
@@ -211,11 +211,11 @@ xychart-beta
 }%%%%{init: {"theme": "base", "themeVariables": {"fontSize": "16px"}}}%%
 graph LR
     D0["Base Confidence Level"]
-    D0 -->|10| Model
+    D0 -->|32%| Model
     D1["Major Issues Discovered"]
-    D1 -->|5| Model
+    D1 -->|41%| Model
     D2["Code Quality Improvement"]
-    D2 -->|8| Model
+    D2 -->|27%| Model
     Model["Model<br/>Computation"]
     Model -->|Result| Output["Final<br/>Distribution"]
     classDef driverClass fill:#5CCFE6,stroke:#5C6773,stroke-width:2px,color:#1F2430
@@ -275,7 +275,7 @@ xychart-beta
   title "Driver Sensitivity Analysis"
   x-axis ["Base Confidence L...", "Major Issues Disc...", "Code Quality Impr..."]
   y-axis "Impact Magnitude" 0 --> 100
-  bar [75, 90, 60]
+  bar [38, 49, 33]
 ```
 
 </details>

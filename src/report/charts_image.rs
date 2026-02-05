@@ -5,6 +5,7 @@ use crate::report::mermaid::{
     generate_chart_markdown, generate_image, is_mmdc_available, ImageFormat,
 };
 use crate::report::theme::{generate_mermaid_theme_config, generate_xychart_theme, AYU_MIRAGE};
+use crate::sensitivity::SensitivityAnalysis;
 use std::path::Path;
 
 /// Generate histogram with image
@@ -71,9 +72,10 @@ fn generate_histogram_code(
 /// Generate Tornado chart with image (sensitivity analysis)
 pub fn generate_tornado_with_image(
     drivers: &[DriverStmt],
+    sensitivity: &SensitivityAnalysis,
     output_dir: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let mermaid_code = generate_tornado_code(drivers)?;
+    let mermaid_code = generate_tornado_code(drivers, sensitivity)?;
 
     if is_mmdc_available() {
         let image_path = generate_image(&mermaid_code, output_dir, "tornado", ImageFormat::PNG)?;
@@ -93,7 +95,10 @@ pub fn generate_tornado_with_image(
     }
 }
 
-fn generate_tornado_code(drivers: &[DriverStmt]) -> Result<String, Box<dyn std::error::Error>> {
+fn generate_tornado_code(
+    drivers: &[DriverStmt],
+    sensitivity: &SensitivityAnalysis,
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut chart = String::new();
 
     // Apply Ayu Mirage theme
@@ -119,41 +124,22 @@ fn generate_tornado_code(drivers: &[DriverStmt]) -> Result<String, Box<dyn std::
     chart.push_str("]\n");
     chart.push_str("  y-axis \"Impact Magnitude\" 0 --> 100\n");
 
-    // Calculate sensitivity scores based on driver type and impact
+    // Get actual sensitivity scores from analysis (total-order indices)
     chart.push_str("  bar [");
     for (i, driver) in drivers.iter().enumerate() {
         if i > 0 {
             chart.push_str(", ");
         }
 
-        // Estimate sensitivity based on driver characteristics
-        let sensitivity = match driver.driver_type {
-            DriverType::Continuous => {
-                // Higher sensitivity for continuous distributions
-                75
-            }
-            DriverType::Binary => {
-                // Binary drivers have high impact when they trigger
-                match &driver.impact_multiplier {
-                    Some(mult) => {
-                        if *mult < 1.0 {
-                            90 // Strong negative impact
-                        } else if *mult > 1.0 {
-                            85 // Strong positive impact
-                        } else {
-                            10 // No impact
-                        }
-                    }
-                    None => 50,
-                }
-            }
-            DriverType::Discrete => {
-                // Moderate sensitivity for discrete choices
-                60
-            }
-        };
+        // Get total-order Sobol index (scaled to 0-100)
+        let total_order = sensitivity
+            .get_driver_sensitivity(&driver.name)
+            .map(|s| s.total_order_index * 100.0)
+            .unwrap_or(10.0); // Default if not found
 
-        chart.push_str(&sensitivity.to_string());
+        let score = total_order.round() as i32;
+
+        chart.push_str(&score.to_string());
     }
     chart.push_str("]\n");
 
@@ -347,10 +333,10 @@ fn expr_has_conditional(expr: &Expression) -> bool {
 /// Generate Sankey diagram with image
 pub fn generate_sankey_with_image(
     drivers: &[DriverStmt],
-    results: &ExecutionResults,
+    sensitivity: &SensitivityAnalysis,
     output_dir: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let mermaid_code = generate_sankey_code(drivers, results)?;
+    let mermaid_code = generate_sankey_code(drivers, sensitivity)?;
 
     if is_mmdc_available() {
         let image_path = generate_image(&mermaid_code, output_dir, "sankey", ImageFormat::PNG)?;
@@ -372,7 +358,7 @@ pub fn generate_sankey_with_image(
 
 fn generate_sankey_code(
     drivers: &[DriverStmt],
-    _results: &ExecutionResults,
+    sensitivity: &SensitivityAnalysis,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut chart = String::new();
 
@@ -392,17 +378,24 @@ fn generate_sankey_code(
             name.clone()
         };
 
-        // Weight based on driver type (visual representation)
-        let weight = match driver.driver_type {
-            DriverType::Continuous => "10",
-            DriverType::Binary => "5",
-            DriverType::Discrete => "8",
+        // Get actual variance contribution from sensitivity analysis
+        let variance_contrib = sensitivity
+            .get_driver_sensitivity(&driver.name)
+            .map(|s| s.variance_contribution)
+            .unwrap_or(0.1);
+
+        // Scale to 1-100 for visual weight (multiply by 100)
+        let weight = (variance_contrib * 100.0).round() as i32;
+        let weight_str = if weight < 5 {
+            "5".to_string() // Minimum visible weight
+        } else {
+            weight.to_string()
         };
 
         chart.push_str(&format!("    D{}[\"{}\"]\n", i, short_name));
 
-        // Connect to model with weight
-        chart.push_str(&format!("    D{} -->|{}| Model\n", i, weight));
+        // Connect to model with actual variance contribution weight
+        chart.push_str(&format!("    D{} -->|{}%| Model\n", i, weight_str));
     }
 
     // Model node

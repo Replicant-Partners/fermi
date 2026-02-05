@@ -2,12 +2,14 @@
 use crate::ast::*;
 use crate::executor::ExecutionResults;
 use crate::report::{charts, charts_image, sparkline};
+use crate::sensitivity::SensitivityAnalysis;
 use chrono::{DateTime, Utc};
 use std::path::Path;
 
 pub fn generate(
     forecast: &Program,
     results: &ExecutionResults,
+    sensitivity: &SensitivityAnalysis,
     timestamp: &DateTime<Utc>,
     output_dir: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -108,7 +110,9 @@ pub fn generate(
     // Driver impact flow (Sankey) with image
     md.push_str("## 🌊 Driver Impact Flow\n\n");
     md.push_str(&charts_image::generate_sankey_with_image(
-        &drivers, results, output_dir,
+        &drivers,
+        sensitivity,
+        output_dir,
     )?);
     md.push_str("\n\n");
     md.push_str("---\n\n");
@@ -116,7 +120,9 @@ pub fn generate(
     // Sensitivity analysis (Tornado) with image
     md.push_str("## 🌪️ Sensitivity Analysis\n\n");
     md.push_str(&charts_image::generate_tornado_with_image(
-        &drivers, output_dir,
+        &drivers,
+        sensitivity,
+        output_dir,
     )?);
     md.push_str("\n\n");
     md.push_str("---\n\n");

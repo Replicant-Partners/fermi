@@ -10,6 +10,7 @@ pub mod lexer;
 pub mod parser;
 pub mod report;
 pub mod semantic;
+pub mod sensitivity;
 pub mod symbol_table;
 pub mod types;
 
