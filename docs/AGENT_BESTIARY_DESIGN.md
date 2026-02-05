@@ -37,11 +37,14 @@ The Agent Bestiary transforms Fermi from a static forecasting tool into a living
   - Agent identifies gap → Requests from human → Human provides
   - Agent identifies gap → Requests from other agent → Other agent provides (future AKP)
 
-### 4. **Git-Based Time Travel**
+### 4. **Git-Based Time Travel (Spacetime Worms)**
 - Every ontology change = git commit
-- Full history of agent learning
+- Every forecast update = git commit (NO OPT-OUT)
+- **Forecasts are spacetime worms:** They evolve over time, we MUST track this
+- Full history of agent learning AND forecast evolution
 - Revert bad learning, analyze patterns
 - Track correlation: ontology evolution → Brier score improvements
+- Track correlation: agent updates → forecast accuracy changes
 
 ### 5. **Modular Architecture**
 - Don't drown in complexity
@@ -565,33 +568,128 @@ git diff HEAD~5 agents/curated/market_research/ontology.mermaid
 git log --since="1 week ago" --grep="agent(market_research)"
 ```
 
-**2. Forecast Storage (Git)**
+**2. Forecast Storage (Git - MANDATORY)**
 
-**Decision:** Forecasts are version-controlled
+**Decision:** ALL forecasts MUST be version-controlled (NO OPT-OUT)
+
+**Why:** Forecasts are **spacetime worms** - they evolve over time as agents add evidence, update drivers, and refine estimates. We MUST track this evolution.
 
 ```
 forecasts/
   production/
-    amd_forecast.fpl              # Includes evidence inline
-  history/
+    amd_forecast.fpl              # Current state (includes evidence inline)
+  history/                        # Optional: Automatic snapshots
     amd_forecast_2026_02_01.fpl
     amd_forecast_2026_02_05.fpl
 ```
 
 **Benefits:**
-- Full history of forecast evolution
-- See when evidence was added
-- Track which agents contributed
-- Human-readable diffs
+- ✅ Full audit trail of forecast evolution
+- ✅ Every agent action traceable
+- ✅ See exactly when evidence was added
+- ✅ Track which agents contributed what
+- ✅ Correlate agent updates with Brier score changes
+- ✅ Revert bad agent suggestions
+- ✅ Analyze: "What made this forecast better?"
+- ✅ Human-readable diffs
+- ✅ Collaboration-ready (teams can share forecast repos)
+
+**Automated Forecast Commits:**
+
+Every time an agent updates a forecast, the system automatically commits:
+
+```rust
+impl ForecastManager {
+    pub fn update_forecast(
+        &self,
+        forecast_path: &Path,
+        agent_output: &AgentOutput,
+    ) -> Result<()> {
+        // 1. Parse current forecast
+        let mut forecast = self.parse_forecast(forecast_path)?;
+        
+        // 2. Apply agent updates
+        self.apply_agent_output(&mut forecast, agent_output)?;
+        
+        // 3. Write updated forecast
+        self.write_forecast(forecast_path, &forecast)?;
+        
+        // 4. Git commit (AUTOMATIC, NO OPT-OUT)
+        self.commit_forecast_update(forecast_path, agent_output)?;
+        
+        Ok(())
+    }
+    
+    fn commit_forecast_update(
+        &self,
+        forecast_path: &Path,
+        agent_output: &AgentOutput,
+    ) -> Result<()> {
+        // Git add
+        Command::new("git")
+            .args(&["add", forecast_path.to_str().unwrap()])
+            .output()?;
+        
+        // Detailed commit message
+        let message = format!(
+            "agent({}): updated {}\n\n\
+             Evidence added:\n- {} (confidence: {:.2})\n\n\
+             Driver updates:\n- {}: {:.2} → {:.2}\n\n\
+             Brier impact: {:+.3}\n\n\
+             Timestamp: {}",
+            agent_output.agent_name,
+            forecast_path.file_stem().unwrap().to_str().unwrap(),
+            agent_output.evidence[0].id,
+            agent_output.confidence,
+            // ... (build full message)
+        );
+        
+        Command::new("git")
+            .args(&["commit", "-m", &message])
+            .output()?;
+        
+        Ok(())
+    }
+}
+```
 
 **Example commit:**
 ```bash
-git commit -m "forecast: amd_forecast updated by agent market_research
+git commit -m "agent(market_research): updated amd_forecast
 
-- Added evidence: market_scan_2026_02_05
-- Updated driver: market_share (0.18 → 0.22)
-- Agent confidence: 0.85
-- Source: Q4 earnings + competitive analysis"
+Evidence added:
+- market_scan_2026_02_05 (confidence: 0.85)
+
+Driver updates:
+- market_share: 0.18 → 0.22 (+0.04)
+  Reasoning: AMD Q4 earnings showed 22% datacenter GPU share
+
+Brier score change: +0.03 (improvement)
+
+Agent: market_research
+Executor: llm  
+Timestamp: 2026-02-05T14:30:00Z"
+```
+
+**User Operations:**
+
+Users don't opt out, but they can:
+
+```bash
+# View forecast evolution
+git log forecasts/production/amd_forecast.fpl
+
+# Diff versions
+git diff HEAD~5 forecasts/production/amd_forecast.fpl
+
+# Revert bad update
+git revert HEAD
+
+# Restore to 1 week ago
+git checkout HEAD~7 forecasts/production/amd_forecast.fpl
+
+# Branch for experiments
+git checkout -b scenario/optimistic
 ```
 
 **3. Agent Card Updates**
