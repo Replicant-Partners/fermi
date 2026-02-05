@@ -1,239 +1,78 @@
-// Fundraising and Financial Scenarios
-// Runway, burn rate, and capital requirements
+# Fundraising Scenarios Forecast Template
+# Use this for runway and capital requirements planning
 
-forecast "Seed Round - 18 Month Runway" {
-    // Current state
-    driver current_cash triangular(50000, 150000, 300000)
-    driver monthly_revenue triangular(0, 10000, 30000)
-    driver revenue_growth_rate_monthly normal(1.15, 0.08)
+question "How much runway will a seed round provide?"
 
-    // Team costs
-    driver founders_salary_monthly triangular(0, 8000, 15000)
-    driver engineers triangular(2, 3, 5)
-    driver engineer_salary_monthly lognormal(10000, 3000)
-    driver contractor_budget_monthly triangular(2000, 5000, 10000)
-
-    // Operating costs
-    driver cloud_infrastructure_monthly triangular(500, 2000, 5000)
-    driver saas_tools_monthly triangular(500, 1500, 3000)
-    driver marketing_spend_monthly triangular(2000, 5000, 15000)
-    driver office_misc_monthly triangular(500, 1500, 3000)
-
-    // Legal and admin
-    driver legal_accounting_monthly triangular(1000, 2000, 4000)
-    driver insurance_monthly triangular(300, 600, 1200)
-
-    // Calculate monthly burn
-    driver personnel_cost estimate founders_salary_monthly + (engineers * engineer_salary_monthly) + contractor_budget_monthly
-    driver operating_cost estimate cloud_infrastructure_monthly + saas_tools_monthly +
-                                  marketing_spend_monthly + office_misc_monthly +
-                                  legal_accounting_monthly + insurance_monthly
-    driver monthly_burn estimate personnel_cost + operating_cost
-
-    // Runway calculation
-    driver months_target triangular(18, 18, 18)
-    driver month_18_revenue estimate monthly_revenue * (revenue_growth_rate_monthly ^ 18)
-    driver avg_monthly_burn estimate monthly_burn * 1.15
-    driver total_burn_18_months estimate avg_monthly_burn * months_target
-    driver total_revenue_18_months estimate monthly_revenue * ((revenue_growth_rate_monthly ^ 18) - 1) / (revenue_growth_rate_monthly - 1)
-
-    driver net_burn estimate total_burn_18_months - total_revenue_18_months
-    driver capital_needed estimate net_burn - current_cash
-
-    // Buffer for safety
-    driver safety_buffer_pct uniform(0.20, 0.35)
-    driver raise_amount estimate capital_needed * (1 + safety_buffer_pct)
-
-    estimate raise_amount
+# Fundraising parameters
+driver round_size continuous {
+    distribution: triangular(1000000, 2000000, 3000000)
+    unit: "USD"
+    rationale: "Target seed round size"
 }
 
-forecast "Series A - Growth Capital Requirements" {
-    // Current metrics
-    driver current_arr triangular(500000, 1000000, 2000000)
-    driver current_monthly_burn triangular(100000, 200000, 400000)
-    driver current_cash triangular(200000, 500000, 1000000)
-
-    // Growth targets
-    driver target_arr_24_months lognormal(5000000, 2000000)
-    driver arr_growth_rate_monthly normal(1.12, 0.05)
-
-    // Team scaling
-    driver current_headcount triangular(10, 15, 25)
-    driver target_headcount triangular(40, 60, 90)
-    driver avg_fully_loaded_cost_per_head lognormal(150000, 40000)
-    driver hiring_cost_per_head triangular(5000, 15000, 30000)
-
-    // Sales and marketing
-    driver sales_marketing_pct_of_arr uniform(0.80, 1.50)
-    driver cac_payback_months triangular(12, 18, 24)
-
-    // R&D and product
-    driver rd_pct_of_arr uniform(0.30, 0.60)
-
-    // Infrastructure scaling
-    driver current_infra_monthly triangular(5000, 15000, 40000)
-    driver infra_growth_rate_monthly normal(1.08, 0.04)
-
-    // Calculate 24-month requirements
-    driver new_hires estimate target_headcount - current_headcount
-    driver hiring_costs estimate new_hires * hiring_cost_per_head
-    driver avg_headcount estimate (current_headcount + target_headcount) / 2
-    driver annual_personnel_cost estimate avg_headcount * avg_fully_loaded_cost_per_head
-
-    driver month_24_arr estimate current_arr * (arr_growth_rate_monthly ^ 24)
-    driver avg_arr estimate (current_arr + month_24_arr) / 2
-    driver sales_marketing_spend estimate avg_arr * sales_marketing_pct_of_arr * 2
-    driver rd_spend estimate avg_arr * rd_pct_of_arr * 2
-
-    driver infra_24_months estimate current_infra_monthly * ((infra_growth_rate_monthly ^ 24) - 1) / (infra_growth_rate_monthly - 1)
-
-    // Total costs
-    driver total_operating_costs estimate hiring_costs + annual_personnel_cost * 2 +
-                                         sales_marketing_spend + rd_spend + infra_24_months
-
-    // Revenue projection
-    driver revenue_24_months estimate current_arr * ((arr_growth_rate_monthly ^ 24) - 1) / (arr_growth_rate_monthly - 1)
-
-    driver net_burn_24_months estimate total_operating_costs - revenue_24_months
-    driver capital_needed estimate net_burn_24_months - current_cash
-
-    // Add buffer and working capital
-    driver buffer_pct uniform(0.25, 0.40)
-    driver series_a_amount estimate capital_needed * (1 + buffer_pct)
-
-    estimate series_a_amount
+driver dilution continuous {
+    distribution: uniform(0.15, 0.25)
+    unit: "ratio"
+    rationale: "Expected dilution percentage"
 }
 
-forecast "Bridge Round - Runway Extension" {
-    // Current situation
-    driver current_cash triangular(50000, 200000, 500000)
-    driver monthly_burn triangular(150000, 250000, 400000)
-    driver current_runway_months estimate current_cash / monthly_burn
-
-    // Target metrics for next raise
-    driver months_to_next_milestone triangular(6, 9, 12)
-    driver target_arr_at_milestone lognormal(3000000, 1000000)
-    driver current_arr triangular(800000, 1500000, 2500000)
-
-    // Bridge round sizing
-    driver months_needed estimate months_to_next_milestone - current_runway_months
-    driver capital_gap estimate months_needed * monthly_burn
-
-    // Buffer for uncertainty
-    driver uncertainty_buffer_months triangular(2, 3, 4)
-    driver buffer_amount estimate uncertainty_buffer_months * monthly_burn
-
-    // Cost reduction potential
-    driver cost_reduction_pct uniform(0.05, 0.20)
-    driver reduced_burn estimate monthly_burn * (1 - cost_reduction_pct)
-    driver actual_capital_needed estimate (months_needed * reduced_burn) + buffer_amount
-
-    // Bridge terms
-    driver bridge_discount_pct uniform(0.15, 0.25)
-    driver implied_valuation_next_round lognormal(15000000, 8000000)
-    driver bridge_valuation estimate implied_valuation_next_round * (1 - bridge_discount_pct)
-
-    estimate actual_capital_needed
+driver fundraising_costs continuous {
+    distribution: triangular(50000, 100000, 150000)
+    unit: "USD"
+    rationale: "Legal fees, due diligence, founder travel"
 }
 
-forecast "Venture Debt - Complement to Equity Round" {
-    // Recent equity round
-    driver equity_raised triangular(5000000, 10000000, 20000000)
-    driver post_money_valuation lognormal(40000000, 20000000)
-    driver current_arr triangular(3000000, 6000000, 12000000)
-
-    // Venture debt sizing
-    driver debt_to_equity_ratio uniform(0.25, 0.40)
-    driver arr_multiple uniform(0.20, 0.40)
-
-    driver debt_option_1 estimate equity_raised * debt_to_equity_ratio
-    driver debt_option_2 estimate current_arr * arr_multiple
-
-    // Take more conservative
-    driver debt_amount estimate debt_option_1
-
-    // Debt terms
-    driver interest_rate_annual uniform(0.08, 0.14)
-    driver warrant_coverage_pct uniform(0.05, 0.15)
-    driver term_months triangular(36, 42, 48)
-    driver interest_only_months triangular(6, 12, 18)
-
-    // Cost analysis
-    driver total_interest estimate debt_amount * interest_rate_annual * (term_months / 12)
-    driver warrant_cost estimate debt_amount * warrant_coverage_pct
-    driver total_cost estimate total_interest + warrant_cost
-
-    // Effective cost
-    driver monthly_payment estimate (debt_amount + total_interest) / term_months
-    driver all_in_cost_pct estimate total_cost / debt_amount
-
-    estimate debt_amount
+# Monthly burn rate
+driver team_size continuous {
+    distribution: triangular(5, 8, 12)
+    unit: "people"
+    rationale: "Headcount during seed stage"
 }
 
-forecast "Revenue-Based Financing - Non-Dilutive Capital" {
-    // Current business metrics
-    driver monthly_recurring_revenue triangular(100000, 250000, 500000)
-    driver gross_margin_pct uniform(0.70, 0.90)
-    driver revenue_growth_rate_monthly normal(1.08, 0.04)
-
-    // RBF terms
-    driver advance_multiple uniform(1.5, 3.0)
-    driver mrr_multiple uniform(3, 6)
-    driver revenue_share_pct uniform(0.05, 0.15)
-
-    // Capital available
-    driver advance_amount estimate monthly_recurring_revenue * mrr_multiple
-    driver total_repayment estimate advance_amount * advance_multiple
-
-    // Repayment analysis
-    driver monthly_payment estimate monthly_recurring_revenue * revenue_share_pct
-    driver months_to_repay estimate total_repayment / monthly_payment
-
-    // Growth scenario
-    driver month_12_mrr estimate monthly_recurring_revenue * (revenue_growth_rate_monthly ^ 12)
-    driver month_12_payment estimate month_12_mrr * revenue_share_pct
-    driver avg_monthly_payment estimate (monthly_payment + month_12_payment) / 2
-    driver adjusted_payback_months estimate total_repayment / avg_monthly_payment
-
-    // Cost comparison to equity
-    driver implied_annual_cost_pct estimate ((advance_multiple - 1) / (adjusted_payback_months / 12)) * 100
-
-    estimate advance_amount
+driver avg_fully_loaded_cost continuous {
+    distribution: normal(12000, 3000)
+    unit: "USD/month/person"
+    rationale: "Fully loaded cost per employee (salary, benefits, equity, taxes)"
 }
 
-forecast "Profitability Path - Cash Flow Positive Timeline" {
-    // Current state
-    driver current_arr triangular(2000000, 4000000, 8000000)
-    driver current_gross_margin_pct uniform(0.65, 0.85)
-    driver current_operating_expense_monthly triangular(200000, 400000, 800000)
-
-    // Growth assumptions
-    driver arr_growth_rate_monthly normal(1.06, 0.03)
-    driver target_rule_of_40 triangular(40, 40, 60)
-
-    // Efficiency improvements
-    driver sales_efficiency_improvement_pct uniform(0.15, 0.30)
-    driver gross_margin_improvement_pct uniform(0.05, 0.15)
-    driver opex_growth_rate_monthly normal(1.03, 0.02)
-
-    // Calculate path to profitability
-    driver current_monthly_revenue estimate current_arr / 12
-    driver current_gross_profit estimate current_monthly_revenue * current_gross_margin_pct
-    driver current_monthly_burn estimate current_gross_profit - current_operating_expense_monthly
-
-    // Month 12 projections
-    driver month_12_arr estimate current_arr * (arr_growth_rate_monthly ^ 12)
-    driver month_12_mrr estimate month_12_arr / 12
-    driver month_12_gross_margin estimate current_gross_margin_pct * (1 + gross_margin_improvement_pct)
-    driver month_12_gross_profit estimate month_12_mrr * month_12_gross_margin
-    driver month_12_opex estimate current_operating_expense_monthly * (opex_growth_rate_monthly ^ 12)
-
-    // Break-even analysis
-    driver month_12_cash_flow estimate month_12_gross_profit - month_12_opex
-
-    // Months to profitability (approximate)
-    driver monthly_improvement estimate (month_12_cash_flow - current_monthly_burn) / 12
-    driver months_to_breakeven estimate -current_monthly_burn / monthly_improvement
-
-    estimate months_to_breakeven
+driver infrastructure_costs continuous {
+    distribution: triangular(2000, 5000, 10000)
+    unit: "USD/month"
+    rationale: "Cloud infrastructure, tools, software"
 }
+
+driver marketing_spend continuous {
+    distribution: triangular(5000, 10000, 20000)
+    unit: "USD/month"
+    rationale: "Marketing and customer acquisition"
+}
+
+driver other_operating continuous {
+    distribution: uniform(3000, 8000)
+    unit: "USD/month"
+    rationale: "Office, insurance, professional services, misc"
+}
+
+# Revenue (if any)
+driver monthly_revenue continuous {
+    distribution: triangular(0, 5000, 20000)
+    unit: "USD/month"
+    rationale: "Early revenue from pilot customers"
+}
+
+driver revenue_growth continuous {
+    distribution: normal(0.20, 0.10)
+    unit: "ratio/month"
+    rationale: "Month-over-month revenue growth rate"
+}
+
+# Calculate runway in months
+model: (round_size - fundraising_costs) / (
+    (team_size * avg_fully_loaded_cost) +
+    infrastructure_costs +
+    marketing_spend +
+    other_operating -
+    (monthly_revenue * (1 + revenue_growth))
+)
+
+simulate 10000 iterations

@@ -1,216 +1,75 @@
-// Infrastructure and Cloud Cost Forecast Templates
-// AWS, cloud services, and technical infrastructure costs
+# Infrastructure Costs Forecast Template
+# Use this for cloud infrastructure cost projections
 
-forecast "AWS Cloud Infrastructure - Annual Cost" {
-    // Compute resources
-    driver ec2_instances triangular(20, 40, 80)
-    driver avg_instance_cost_monthly lognormal(150, 50)
-    driver reserved_instance_discount uniform(0.25, 0.40)
-    driver spot_instance_usage_pct uniform(0.10, 0.30)
-    driver spot_discount uniform(0.60, 0.80)
+question "What will our AWS cloud infrastructure cost annually?"
 
-    // Database costs
-    driver rds_instances triangular(3, 5, 10)
-    driver rds_cost_monthly lognormal(500, 200)
-    driver dynamodb_monthly triangular(200, 500, 1500)
-    driver elasticache_monthly triangular(300, 600, 1200)
-
-    // Storage
-    driver s3_storage_tb triangular(5, 15, 40)
-    driver s3_cost_per_tb_monthly triangular(20, 25, 30)
-    driver ebs_volumes_gb triangular(5000, 10000, 25000)
-    driver ebs_cost_per_gb_monthly uniform(0.08, 0.12)
-    driver backup_storage_tb triangular(10, 25, 60)
-    driver backup_cost_per_tb_monthly triangular(15, 20, 25)
-
-    // Data transfer
-    driver data_transfer_out_tb_monthly triangular(10, 25, 60)
-    driver data_transfer_cost_per_tb triangular(80, 90, 100)
-
-    // Additional services
-    driver cloudfront_monthly triangular(500, 1500, 4000)
-    driver route53_monthly triangular(50, 100, 200)
-    driver cloudwatch_monthly triangular(200, 500, 1000)
-    driver lambda_monthly triangular(100, 300, 800)
-    driver ses_sns_monthly triangular(100, 250, 600)
-
-    // Growth factor
-    driver monthly_growth_rate normal(1.05, 0.02)
-
-    // Compute calculations
-    driver standard_instances estimate ec2_instances * (1 - spot_instance_usage_pct)
-    driver spot_instances estimate ec2_instances * spot_instance_usage_pct
-    driver standard_cost estimate standard_instances * avg_instance_cost_monthly * (1 - reserved_instance_discount)
-    driver spot_cost estimate spot_instances * avg_instance_cost_monthly * (1 - spot_discount)
-    driver monthly_compute estimate standard_cost + spot_cost
-
-    // Database costs
-    driver monthly_database estimate (rds_instances * rds_cost_monthly) + dynamodb_monthly + elasticache_monthly
-
-    // Storage costs
-    driver monthly_storage estimate (s3_storage_tb * s3_cost_per_tb_monthly) +
-                                   (ebs_volumes_gb * ebs_cost_per_gb_monthly) +
-                                   (backup_storage_tb * backup_cost_per_tb_monthly)
-
-    // Transfer and other services
-    driver monthly_transfer estimate data_transfer_out_tb_monthly * data_transfer_cost_per_tb
-    driver monthly_other estimate cloudfront_monthly + route53_monthly + cloudwatch_monthly + lambda_monthly + ses_sns_monthly
-
-    // Month 1 total
-    driver month_1_total estimate monthly_compute + monthly_database + monthly_storage + monthly_transfer + monthly_other
-
-    // Year total with growth
-    driver growth_factor estimate ((monthly_growth_rate ^ 12) - 1) / (monthly_growth_rate - 1)
-    estimate month_1_total * growth_factor
+# Compute resources
+driver ec2_instances continuous {
+    distribution: triangular(20, 50, 100)
+    unit: "instances"
+    rationale: "Number of EC2 instances needed for application workload"
 }
 
-forecast "SaaS Platform Infrastructure - Monthly Cost at Scale" {
-    // User base projections
-    driver monthly_active_users triangular(50000, 150000, 500000)
-    driver avg_requests_per_user_daily normal(50, 20)
-    driver peak_traffic_multiplier uniform(3, 6)
-
-    // Application servers
-    driver base_app_servers triangular(10, 20, 40)
-    driver users_per_server triangular(2000, 5000, 10000)
-    driver required_servers estimate monthly_active_users / users_per_server
-    driver server_cost_monthly triangular(100, 200, 400)
-    driver autoscaling_overhead uniform(1.2, 1.5)
-
-    // Database infrastructure
-    driver primary_db_cost triangular(800, 1500, 3000)
-    driver read_replicas triangular(2, 4, 8)
-    driver replica_cost triangular(400, 800, 1500)
-    driver database_backup_cost triangular(200, 500, 1200)
-
-    // Caching layer
-    driver redis_clusters triangular(2, 4, 8)
-    driver redis_cluster_cost triangular(200, 400, 800)
-    driver cache_hit_rate uniform(0.70, 0.90)
-
-    // CDN and static assets
-    driver cdn_bandwidth_tb triangular(5, 15, 40)
-    driver cdn_cost_per_tb triangular(80, 120, 200)
-    driver static_storage_cost triangular(100, 300, 800)
-
-    // Monitoring and logging
-    driver apm_tool_cost triangular(300, 600, 1200)
-    driver log_management_cost triangular(200, 500, 1500)
-    driver error_tracking_cost triangular(50, 100, 200)
-    driver synthetic_monitoring_cost triangular(100, 200, 400)
-
-    // Security
-    driver waf_cost triangular(200, 400, 800)
-    driver ddos_protection triangular(300, 600, 1200)
-    driver ssl_certificates triangular(50, 100, 200)
-    driver security_scanning triangular(100, 250, 500)
-
-    // Calculate totals
-    driver compute_cost estimate required_servers * server_cost_monthly * autoscaling_overhead
-    driver database_cost estimate primary_db_cost + (read_replicas * replica_cost) + database_backup_cost
-    driver cache_cost estimate redis_clusters * redis_cluster_cost
-    driver cdn_cost estimate (cdn_bandwidth_tb * cdn_cost_per_tb) + static_storage_cost
-    driver monitoring_cost estimate apm_tool_cost + log_management_cost + error_tracking_cost + synthetic_monitoring_cost
-    driver security_cost estimate waf_cost + ddos_protection + ssl_certificates + security_scanning
-
-    estimate compute_cost + database_cost + cache_cost + cdn_cost + monitoring_cost + security_cost
+driver instance_cost continuous {
+    distribution: normal(150, 50)
+    unit: "USD/month"
+    rationale: "Average cost per instance (m5.xlarge mixed reserved/on-demand)"
 }
 
-forecast "Kubernetes Cluster - Monthly Operating Cost" {
-    // Cluster configuration
-    driver worker_nodes triangular(15, 30, 60)
-    driver node_type_cost_monthly lognormal(200, 75)
-    driver master_nodes triangular(3, 3, 5)
-    driver master_node_cost_monthly triangular(150, 250, 400)
-
-    // Storage
-    driver persistent_volumes_gb triangular(2000, 5000, 15000)
-    driver pv_cost_per_gb_monthly uniform(0.10, 0.15)
-    driver backup_cost_monthly triangular(300, 600, 1200)
-
-    // Load balancing
-    driver load_balancers triangular(3, 6, 12)
-    driver lb_cost_monthly triangular(25, 50, 100)
-    driver data_processed_gb triangular(5000, 15000, 40000)
-    driver lb_data_cost_per_gb uniform(0.008, 0.012)
-
-    // Container registry
-    driver registry_storage_gb triangular(500, 1500, 4000)
-    driver registry_cost_per_gb_monthly uniform(0.10, 0.15)
-    driver registry_bandwidth_gb triangular(1000, 3000, 8000)
-    driver registry_bandwidth_cost_per_gb uniform(0.09, 0.12)
-
-    // Networking
-    driver nat_gateways triangular(2, 3, 6)
-    driver nat_cost_monthly triangular(45, 60, 80)
-    driver vpc_endpoints triangular(5, 10, 20)
-    driver endpoint_cost_monthly triangular(7, 10, 15)
-
-    // Management and monitoring
-    driver cluster_management_cost triangular(100, 200, 400)
-    driver prometheus_grafana_cost triangular(200, 400, 800)
-    driver logging_aggregation_cost triangular(300, 600, 1200)
-
-    // Calculate component costs
-    driver compute_cost estimate (worker_nodes * node_type_cost_monthly) + (master_nodes * master_node_cost_monthly)
-    driver storage_cost estimate (persistent_volumes_gb * pv_cost_per_gb_monthly) + backup_cost_monthly
-    driver lb_cost estimate (load_balancers * lb_cost_monthly) + (data_processed_gb * lb_data_cost_per_gb)
-    driver registry_cost estimate (registry_storage_gb * registry_cost_per_gb_monthly) +
-                                  (registry_bandwidth_gb * registry_bandwidth_cost_per_gb)
-    driver network_cost estimate (nat_gateways * nat_cost_monthly) + (vpc_endpoints * endpoint_cost_monthly)
-    driver management_cost estimate cluster_management_cost + prometheus_grafana_cost + logging_aggregation_cost
-
-    estimate compute_cost + storage_cost + lb_cost + registry_cost + network_cost + management_cost
+# Database
+driver rds_instances continuous {
+    distribution: triangular(2, 5, 10)
+    unit: "instances"
+    rationale: "Primary and replica database instances"
 }
 
-forecast "Multi-Region DR Infrastructure - Annual Cost" {
-    // Primary region
-    driver primary_compute_monthly triangular(5000, 10000, 20000)
-    driver primary_storage_monthly triangular(2000, 4000, 8000)
-    driver primary_database_monthly triangular(3000, 6000, 12000)
-    driver primary_networking_monthly triangular(1000, 2000, 4000)
-
-    // DR region configuration
-    driver dr_sizing_pct uniform(0.30, 0.60)
-    driver standby_compute_monthly estimate primary_compute_monthly * dr_sizing_pct
-    driver standby_database_monthly estimate primary_database_monthly * dr_sizing_pct
-
-    // Cross-region replication
-    driver db_replication_gb_monthly triangular(500, 1500, 4000)
-    driver replication_cost_per_gb uniform(0.02, 0.04)
-    driver storage_replication_tb_monthly triangular(5, 15, 40)
-    driver storage_replication_per_tb triangular(15, 25, 40)
-
-    // Backup and recovery
-    driver backup_storage_tb triangular(10, 30, 80)
-    driver backup_cost_per_tb_monthly triangular(10, 15, 25)
-    driver snapshot_frequency_daily triangular(4, 8, 24)
-    driver snapshot_cost_monthly triangular(500, 1500, 3000)
-
-    // Testing and failover
-    driver quarterly_dr_tests triangular(4, 4, 6)
-    driver test_compute_hours_per_test triangular(24, 48, 96)
-    driver test_cost_per_hour triangular(50, 100, 200)
-
-    // Monitoring and orchestration
-    driver dr_monitoring_tools_monthly triangular(300, 600, 1200)
-    driver orchestration_platform_monthly triangular(500, 1000, 2000)
-
-    // Monthly costs
-    driver monthly_primary estimate primary_compute_monthly + primary_storage_monthly +
-                                   primary_database_monthly + primary_networking_monthly
-    driver monthly_standby estimate standby_compute_monthly + standby_database_monthly
-    driver monthly_replication estimate (db_replication_gb_monthly * replication_cost_per_gb) +
-                                        (storage_replication_tb_monthly * storage_replication_per_tb)
-    driver monthly_backup estimate (backup_storage_tb * backup_cost_per_tb_monthly) + snapshot_cost_monthly
-    driver monthly_monitoring estimate dr_monitoring_tools_monthly + orchestration_platform_monthly
-
-    driver base_monthly estimate monthly_primary + monthly_standby + monthly_replication +
-                                 monthly_backup + monthly_monitoring
-
-    // Annual testing costs
-    driver annual_testing estimate quarterly_dr_tests * test_compute_hours_per_test * test_cost_per_hour
-
-    // Total annual cost
-    estimate (base_monthly * 12) + annual_testing
+driver rds_cost continuous {
+    distribution: triangular(300, 500, 800)
+    unit: "USD/month"
+    rationale: "RDS instance cost including storage and backups"
 }
+
+# Storage and data transfer
+driver s3_storage continuous {
+    distribution: lognormal(1000, 500)
+    unit: "GB"
+    rationale: "S3 storage for user uploads and backups"
+}
+
+driver data_transfer continuous {
+    distribution: triangular(500, 1000, 3000)
+    unit: "GB/month"
+    rationale: "Outbound data transfer"
+}
+
+driver transfer_cost_per_gb continuous {
+    distribution: uniform(0.08, 0.12)
+    unit: "USD/GB"
+    rationale: "AWS data transfer pricing"
+}
+
+# Additional services
+driver other_services continuous {
+    distribution: triangular(1000, 2000, 5000)
+    unit: "USD/month"
+    rationale: "CloudFront, Route53, Lambda, monitoring, etc"
+}
+
+# Growth factor
+driver monthly_growth continuous {
+    distribution: normal(0.10, 0.05)
+    unit: "ratio"
+    rationale: "Month-over-month infrastructure growth"
+}
+
+# Calculate annual cost with growth
+model: (
+    # Base monthly cost
+    (ec2_instances * instance_cost) +
+    (rds_instances * rds_cost) +
+    (s3_storage * 0.023) +  # S3 standard storage pricing
+    (data_transfer * transfer_cost_per_gb) +
+    other_services
+) * 12 * (1 + monthly_growth)
+
+simulate 10000 iterations

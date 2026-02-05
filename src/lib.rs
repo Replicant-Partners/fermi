@@ -1,24 +1,29 @@
+pub mod ast;
+pub mod distributions;
+pub mod evaluator;
+pub mod executor;
 /// Fermi - Forecasting Programming Language (FPL)
 ///
 /// This library implements the FPL language processing engine,
 /// including lexer, parser, semantic analyzer, and execution engine.
-
 pub mod lexer;
-pub mod ast;
 pub mod parser;
-pub mod types;
-pub mod symbol_table;
 pub mod semantic;
-pub mod distributions;
-pub mod evaluator;
-pub mod executor;
+pub mod symbol_table;
+pub mod types;
 
 // Re-export main types
-pub use lexer::{Lexer, Token, TokenType, LexerError};
 pub use ast::*;
-pub use parser::{Parser, ParseError};
-pub use types::{Type, TypeEnvironment, BinaryOp, UnaryOp};
-pub use symbol_table::{SymbolTable, SymbolTableBuilder, Symbol, SymbolType};
-pub use semantic::{SemanticAnalyzer, SemanticAnalysis, SemanticError};
-pub use evaluator::{EvaluationContext, evaluate, EvalError};
-pub use executor::{Executor, ExecutionResults, ExecutionError};
+pub use evaluator::{evaluate, EvalError, EvaluationContext};
+pub use executor::{ExecutionError, ExecutionResults, Executor};
+pub use lexer::{Lexer, LexerError, Token, TokenType};
+pub use parser::{ParseError, Parser};
+pub use semantic::{SemanticAnalysis, SemanticAnalyzer, SemanticError};
+pub use symbol_table::{Symbol, SymbolTable, SymbolTableBuilder, SymbolType};
+pub use types::{BinaryOp, Type, TypeEnvironment, UnaryOp};
+
+/// Convenience function to execute a program with default settings
+pub fn execute_program(program: &Program) -> Result<ExecutionResults, ExecutionError> {
+    let mut executor = Executor::new(10000);
+    executor.execute(program)
+}

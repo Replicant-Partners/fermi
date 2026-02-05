@@ -1,0 +1,19 @@
+qu "What will AMD Q4 2024 revenue be?"
+question "What is your question?"
+driver gpu_market continuous {
+    distribution: triangular(20000, 32000, 50000)
+
+driver market_share continuous {
+    distribution: normal(mean, stddev)(0.15, 0.05)
+}
+driver avg_price continuous {
+    distribution: triangular(800, 1200, 2000)
+}
+driver foo continuous {
+	distribution: triangular(90, 100, 120)
+}
+
+
+model: gpu_market * market_share * avg_price
+
+simulate 10000 iterations

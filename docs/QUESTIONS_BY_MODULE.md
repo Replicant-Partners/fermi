@@ -177,7 +177,7 @@ How to show that forecast is running?
 
 **Question:** What's the Zed-native way?
 
-D
+
 ---
 
 ## Module 3: Agent Bestiary UI

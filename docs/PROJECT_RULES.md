@@ -12,6 +12,95 @@
 3. **Documentation First** - All decisions captured in docs/ before implementation
 4. **Context Preservation** - Never lose architectural decisions or discussions
 5. **Git as Source of Truth** - All important artifacts version controlled
+6. **🚨 DSL STABILITY IS CRITICAL** - Changes to FPL syntax are **HIGHLY SENSITIVE** and **ILL-ADVISED**
+
+---
+
+## 🚨 DSL STABILITY RULE - READ THIS FIRST
+
+**FPL (Forecasting Programming Language) syntax changes are HIGHLY SENSITIVE and ILL-ADVISED.**
+
+### Why DSL Stability Matters
+
+Changing the DSL syntax has cascading effects across:
+1. **Parser** (`src/parser.rs`, `src/lexer.rs`, `src/ast.rs`) - Core language implementation
+2. **Tree-sitter Grammar** (`extensions/fermi/grammars/fpl/grammar.js`) - Syntax highlighting
+3. **LSP Server** (`fermi-lsp/`) - Autocompletion, hover, diagnostics
+4. **Templates** (`templates/*.fpl`) - All example files
+5. **Tests** (59+ test files) - Language test suite
+6. **Documentation** - All examples and guides
+7. **User Code** - Every `.fpl` file users have written
+
+### Before Changing FPL Syntax
+
+**STOP and ask:**
+1. Is this change absolutely necessary?
+2. Can we solve this problem WITHOUT changing syntax?
+3. Have we exhausted all alternatives?
+4. What is the migration path for existing users?
+5. Is this worth breaking everyone's code?
+
+### If You MUST Change Syntax
+
+Follow this process:
+
+1. **Create ADR** - Document why change is necessary
+2. **Design Migration** - How will old code be converted?
+3. **Version the Language** - FPL v1 vs FPL v2
+4. **Update Everything:**
+   - [ ] Lexer (`src/lexer.rs`)
+   - [ ] Parser (`src/parser.rs`)
+   - [ ] AST (`src/ast.rs`)
+   - [ ] Semantic analyzer (`src/semantic.rs`)
+   - [ ] Tree-sitter grammar (`extensions/fermi/grammars/fpl/grammar.js`)
+   - [ ] LSP completions (`fermi-lsp/src/main.rs`)
+   - [ ] All templates (`templates/*.fpl`)
+   - [ ] All tests (`src/*/tests/`)
+   - [ ] Examples (`examples/*.fpl`)
+   - [ ] Documentation
+5. **Test Everything** - All 59+ tests must pass
+6. **Communicate Change** - Announce in changelog, update docs
+
+### Current FPL Syntax (v0.4.0)
+
+**This is the stable syntax - DO NOT CHANGE without following the process above:**
+
+```fpl
+# Comment (also supports // and /* */)
+question "What is your forecast question?"
+
+driver name continuous {
+    distribution: triangular(min, likely, max)
+    unit: "description"
+    rationale: "why this matters"
+}
+
+driver binary_driver binary {
+    probability: 0.65p
+}
+
+evidence source_name {
+    source: "citation"
+    summary: "key findings"
+    relevance: 0.9p
+    date: 2026-01-15
+}
+
+agent agent_name {
+    query: "what to research"
+    schedule: every 1 week
+}
+
+model: mathematical_expression
+
+simulate 10000 iterations
+```
+
+### Syntax Change History
+
+- **2026-02-05**: Fixed grammar mismatch - standardized on `question`, driver blocks, `model:`, `simulate`
+- **Before**: Had inconsistent syntax between parser, grammar, and templates
+- **Lesson Learned**: This is why DSL stability matters!
 
 ---
 

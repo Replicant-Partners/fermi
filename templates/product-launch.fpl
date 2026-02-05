@@ -1,110 +1,39 @@
-// Product Launch Forecast Templates
-// Estimate adoption, revenue, and success metrics for new products
+# Product Launch Forecast Templates
+# Use these for new product user/revenue projections
 
-forecast "Mobile App Launch - First Year Users" {
-    // Launch phase (Month 1-3)
-    driver launch_marketing_spend triangular(50000, 100000, 200000)
-    driver cost_per_install normal(2.5, 0.8)
-    driver organic_multiplier uniform(1.5, 3.0)
-    driver launch_installs estimate launch_marketing_spend / cost_per_install
+question "How many users will our mobile app have in the first year?"
 
-    // Growth phase (Month 4-12)
-    driver monthly_growth_rate lognormal(1.15, 0.05)
-    driver viral_coefficient uniform(0.3, 0.8)
-    driver retention_rate normal(0.40, 0.10)
-
-    // Calculate user base
-    driver initial_users estimate launch_installs * organic_multiplier
-    driver month_3_users estimate initial_users * retention_rate
-    driver growth_months estimate 9
-    driver final_active_users estimate month_3_users * (monthly_growth_rate ^ growth_months)
-
-    estimate final_active_users
+# Market and awareness drivers
+driver target_market continuous {
+    distribution: triangular(1000000, 5000000, 10000000)
+    unit: "potential users"
+    rationale: "Total addressable market for mobile app"
 }
 
-forecast "SaaS Product Launch - MRR Projection" {
-    // Beta phase
-    driver beta_users triangular(50, 100, 200)
-    driver beta_conversion uniform(0.40, 0.70)
-    driver beta_plan_price triangular(29, 49, 99)
-
-    // Launch phase
-    driver launch_signups_month_1 normal(200, 50)
-    driver monthly_growth_rate normal(1.25, 0.10)
-    driver free_to_paid_conversion uniform(0.10, 0.25)
-
-    // Pricing tiers
-    driver basic_plan_pct uniform(0.50, 0.70)
-    driver basic_price triangular(29, 39, 49)
-    driver pro_plan_pct uniform(0.25, 0.40)
-    driver pro_price triangular(79, 99, 149)
-    driver enterprise_pct uniform(0.05, 0.15)
-    driver enterprise_price triangular(299, 499, 999)
-
-    // Month 6 MRR calculation
-    driver beta_mrr estimate beta_users * beta_conversion * beta_plan_price
-    driver growth_factor estimate monthly_growth_rate ^ 5
-    driver month_6_signups estimate launch_signups_month_1 * growth_factor
-    driver month_6_paid estimate month_6_signups * free_to_paid_conversion
-
-    driver basic_revenue estimate month_6_paid * basic_plan_pct * basic_price
-    driver pro_revenue estimate month_6_paid * pro_plan_pct * pro_price
-    driver enterprise_revenue estimate month_6_paid * enterprise_pct * enterprise_price
-
-    estimate beta_mrr + basic_revenue + pro_revenue + enterprise_revenue
+driver awareness_rate continuous {
+    distribution: normal(0.05, 0.02)
+    unit: "ratio"
+    rationale: "Percentage of market that becomes aware through marketing"
 }
 
-forecast "Hardware Product Launch - Units Sold" {
-    // Pre-orders and early adopters
-    driver preorder_campaign_reach triangular(100000, 250000, 500000)
-    driver preorder_conversion uniform(0.02, 0.08)
-    driver preorder_units estimate preorder_campaign_reach * preorder_conversion
-
-    // Retail launch
-    driver retail_stores triangular(500, 1000, 2000)
-    driver units_per_store_per_month normal(15, 5)
-    driver launch_months triangular(3, 6, 9)
-
-    // Online sales
-    driver monthly_web_traffic triangular(50000, 150000, 300000)
-    driver web_conversion uniform(0.005, 0.02)
-    driver online_growth_rate normal(1.20, 0.10)
-
-    // Calculate total
-    driver retail_units estimate retail_stores * units_per_store_per_month * launch_months
-    driver online_month_1 estimate monthly_web_traffic * web_conversion
-    driver online_total estimate online_month_1 * ((online_growth_rate ^ launch_months) - 1) / (online_growth_rate - 1)
-
-    estimate preorder_units + retail_units + online_total
+driver download_rate continuous {
+    distribution: triangular(0.10, 0.20, 0.40)
+    unit: "ratio"
+    rationale: "Percentage of aware users who download"
 }
 
-forecast "API Platform Launch - Developer Adoption" {
-    // Developer outreach
-    driver hackathon_participants triangular(200, 500, 1000)
-    driver hackathon_conversion uniform(0.30, 0.60)
-    driver documentation_visitors normal(5000, 1000)
-    driver docs_to_signup uniform(0.05, 0.15)
-
-    // Developer engagement
-    driver free_tier_users estimate (hackathon_participants * hackathon_conversion) + (documentation_visitors * docs_to_signup)
-    driver active_integration_rate uniform(0.20, 0.40)
-    driver paid_upgrade_rate uniform(0.05, 0.15)
-
-    // Revenue tiers
-    driver starter_tier_pct uniform(0.60, 0.80)
-    driver starter_price triangular(29, 49, 99)
-    driver growth_tier_pct uniform(0.15, 0.30)
-    driver growth_price triangular(199, 299, 499)
-    driver enterprise_tier_pct uniform(0.05, 0.15)
-    driver enterprise_price triangular(999, 1999, 4999)
-
-    // Calculate month 6 MRR
-    driver active_users estimate free_tier_users * active_integration_rate
-    driver paid_users estimate active_users * paid_upgrade_rate
-
-    driver starter_revenue estimate paid_users * starter_tier_pct * starter_price
-    driver growth_revenue estimate paid_users * growth_tier_pct * growth_price
-    driver enterprise_revenue estimate paid_users * enterprise_tier_pct * enterprise_price
-
-    estimate starter_revenue + growth_revenue + enterprise_revenue
+driver activation_rate continuous {
+    distribution: uniform(0.25, 0.50)
+    unit: "ratio"
+    rationale: "Users who complete onboarding"
 }
+
+driver retention_rate continuous {
+    distribution: normal(0.40, 0.10)
+    unit: "ratio"
+    rationale: "30-day retention rate"
+}
+
+model: target_market * awareness_rate * download_rate * activation_rate * retention_rate
+
+simulate 10000 iterations

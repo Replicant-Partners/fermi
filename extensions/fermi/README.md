@@ -1,231 +1,204 @@
-# Fermi Extension for Zed
+# Fermi Zed Extension
 
-Adds support for the Fermi Forecasting Programming Language (FPL) to Zed editor.
+Zed editor extension for the Fermi Forecasting Programming Language (FPL).
 
 ## Features
 
-- ✅ **Syntax Highlighting** - Color-coded FPL syntax
-- ✅ **LSP Integration** - Real-time diagnostics via fermi-lsp
-- ✅ **Auto-indentation** - Smart indentation for FPL code
-- ✅ **Bracket Matching** - Automatic bracket pairing
-- 🚧 **Sparklines** - Inline distribution visualizations (coming soon)
-- 🚧 **Execute Commands** - Run forecasts from editor (coming soon)
-- 🚧 **Results Panel** - View forecast results (coming soon)
+- **Syntax Highlighting**: Tree-sitter based syntax highlighting for `.fpl` files
+  - Keywords: `question`, `driver`, `evidence`, `agent`, `model`, `simulate`
+  - Driver types: `continuous`, `binary`, `discrete`
+  - Properties and functions with semantic highlighting
+  
+- **LSP Support**: Language server providing:
+  - Real-time diagnostics and error checking
+  - Intelligent autocomplete for keywords, types, and properties
+  - Hover documentation for distributions and functions
+  - Snippet expansion for common patterns
+
+- **Slash Commands**:
+  - `/run-forecast`: Execute the current FPL forecast
 
 ## Installation
 
-### From Zed Extension Gallery (Future)
-1. Open Zed
-2. Go to Extensions (Cmd+Shift+X)
-3. Search for "Fermi"
-4. Click Install
+### Quick Install
 
-### Manual Installation (Current)
-1. Clone the Fermi repository:
-   ```bash
-   git clone https://github.com/Replicant-Partners/fermi.git
-   cd fermi
-   ```
+From the project root:
 
-2. Build the LSP server:
-   ```bash
-   cd fermi-lsp
-   cargo build --release
-   ```
-
-3. Link the extension:
-   ```bash
-   ln -s $(pwd)/extensions/fermi ~/.config/zed/extensions/fermi
-   ```
-
-4. Configure LSP in Zed settings:
-   ```json
-   {
-     "lsp": {
-       "fermi-lsp": {
-         "binary": {
-           "path": "/path/to/fermi/target/release/fermi-lsp"
-         }
-       }
-     }
-   }
-   ```
-
-5. Restart Zed
-
-## Usage
-
-### Create a Forecast
-
-Create a new file with `.fpl` extension:
-
-```fpl
-forecast "AMD Q4 2024 Revenue" {
-    // Market drivers
-    driver gpu_market triangular(20000, 32000, 50000)
-    driver market_share normal(0.15, 0.05)
-    driver avg_price triangular(800, 1200, 2000)
-    
-    // Calculate revenue
-    estimate gpu_market * market_share * avg_price
-}
+```bash
+./scripts/install-extension.sh
 ```
 
-### Execute Forecast (Coming Soon)
+This will:
+1. Build the tree-sitter grammar
+2. Build the extension WASM module
+3. Build the LSP server
+4. Create version tracking
+5. Install to Zed via symlink
 
-Press `Cmd+Enter` to execute the forecast and see results.
+### Verify Installation
 
-## Configuration
-
-Configure the Fermi extension in your Zed settings:
-
-```json
-{
-  "fermi": {
-    "lsp": {
-      "enabled": true,
-      "diagnostics": true
-    },
-    "sparklines": {
-      "enabled": true,
-      "width": 7
-    },
-    "coaching": {
-      "enabled": true,
-      "verbosity": "adaptive"
-    }
-  }
-}
+```bash
+./scripts/verify-extension.sh
 ```
 
-## Language Server Features
+Checks that all components are properly installed and up-to-date.
 
-The extension connects to fermi-lsp which provides:
+### Manual Install
 
-- **Diagnostics** - Real-time error detection
-  - Lexical errors (unexpected characters)
-  - Syntax errors (malformed statements)
-  - Semantic errors (undefined variables, type mismatches)
+If you need to install manually:
 
-- **Hover Info** (Coming Soon)
-  - Distribution details
-  - Variable values
-  - Type information
+```bash
+# Build grammar
+cd extensions/fermi/grammars/fpl
+npm install
+./node_modules/.bin/tree-sitter generate
+./node_modules/.bin/tree-sitter build --wasm
+cp tree-sitter-fpl.wasm ../../grammars/fpl.wasm
 
-- **Autocompletion** (Coming Soon)
-  - Driver names
-  - Function names
-  - Keywords
+# Build extension
+cd ../..
+cargo build --target wasm32-wasip1 --release
+cp target/wasm32-wasip1/release/fermi_extension.wasm extension.wasm
 
-- **Code Actions** (Coming Soon)
-  - Quick fixes
-  - Refactorings
+# Build LSP
+cd ../../fermi-lsp
+cargo build --release
 
-## Architecture
-
+# Link to Zed
+ln -sf $(pwd)/../extensions/fermi ~/.config/zed/extensions/fermi
 ```
-┌─────────────────────────────────────────┐
-│           Zed Editor                    │
-├─────────────────────────────────────────┤
-│                                         │
-│  Extension (fermi)                     │
-│  ├── Syntax Highlighting (tree-sitter) │
-│  ├── Language Config                   │
-│  └── LSP Client                        │
-│         ↓                               │
-│  fermi-lsp (tower-lsp)                 │
-│  ├── Lexer                             │
-│  ├── Parser                            │
-│  ├── Semantic Analyzer                 │
-│  └── Diagnostics                       │
-│                                         │
-└─────────────────────────────────────────┘
-```
+
+## After Installation
+
+1. **Restart Zed** or reload extensions:
+   - Open command palette: `Cmd/Ctrl+Shift+P`
+   - Run: `zed: reload extensions`
+
+2. **Test the extension**:
+   - Open or create a `.fpl` file
+   - Type `question` - should show autocomplete
+   - Type `driver test continuous` - `continuous` should be highlighted
+   - Inside a driver block, type `distribution:` - should autocomplete
 
 ## Development
 
-### Building
+### Directory Structure
 
+```
+extensions/fermi/
+├── extension.toml           # Extension manifest
+├── extension.wasm          # Extension WASM binary
+├── Cargo.toml              # Rust build config
+├── src/                    # Extension Rust source
+│   └── lib.rs
+├── grammars/
+│   ├── fpl.wasm           # Compiled tree-sitter grammar
+│   └── fpl/
+│       ├── grammar.js     # Tree-sitter grammar definition
+│       ├── queries/
+│       │   └── highlights.scm  # Syntax highlighting queries
+│       └── ...
+└── languages/
+    └── fpl/
+        └── config.toml    # Language configuration
+```
+
+### Rebuilding After Changes
+
+**Grammar changes** (grammar.js or highlights.scm):
 ```bash
-# Build LSP server
+cd extensions/fermi/grammars/fpl
+./node_modules/.bin/tree-sitter generate
+./node_modules/.bin/tree-sitter build --wasm
+cp tree-sitter-fpl.wasm ../../grammars/fpl.wasm
+```
+
+**Extension changes** (src/lib.rs, extension.toml):
+```bash
+cd extensions/fermi
+cargo build --target wasm32-wasip1 --release
+cp target/wasm32-wasip1/release/fermi_extension.wasm extension.wasm
+```
+
+**LSP changes** (fermi-lsp/src/main.rs):
+```bash
 cd fermi-lsp
 cargo build --release
-
-# Generate tree-sitter parser
-cd tree-sitter-fpl
-npm install
-npm run build
 ```
 
-### Testing
+Then reload Zed extensions.
+
+### Using the Scripts
+
+The installation scripts provide version tracking:
 
 ```bash
-# Test LSP
-cd fermi-lsp
-cargo test
+# Full rebuild and install
+./scripts/install-extension.sh
 
-# Test grammar
-cd tree-sitter-fpl
-npm test
+# Verify current installation
+./scripts/verify-extension.sh
 ```
 
-### Debugging
+Version info is stored in `extensions/fermi/.version` with timestamps and build sizes.
 
-Enable LSP logging in Zed:
+## Troubleshooting
 
-```json
-{
-  "lsp": {
-    "fermi-lsp": {
-      "settings": {
-        "RUST_LOG": "debug"
-      }
-    }
-  }
-}
-```
+### Syntax highlighting not working
 
-View logs: `View → Debug → Language Server Logs`
+1. Verify grammar is built:
+   ```bash
+   ls -lh extensions/fermi/grammars/fpl.wasm
+   ```
+   Should be ~20-30KB
 
-## Architecture Decisions
+2. Check highlights file exists:
+   ```bash
+   cat extensions/fermi/grammars/fpl/queries/highlights.scm
+   ```
 
-This extension aligns with:
-- **ADR-001:** Architecture Option C (Standalone LSP)
-- **ADR-003:** Hybrid Fermi Coaching Integration
-- **ADR-006:** Tree-sitter Grammar Generation
-- **ADR-008:** Multi-Method Execute Command UX
-- **ADR-009:** Right Sidebar Results Panel
-- **ADR-010:** Rowan for Lossless Syntax Trees
+3. Rebuild grammar and reload Zed
 
-## Roadmap
+### Autocomplete not working
 
-### Phase 1: Core Experience ✅
-- [x] Syntax highlighting
-- [x] LSP integration
-- [x] Basic diagnostics
+1. Check LSP server is running:
+   - Look for `fermi-lsp` process: `ps aux | grep fermi-lsp`
+   
+2. Check Zed's language server logs:
+   - Open command palette: `zed: open log`
+   - Look for fermi-lsp errors
 
-### Phase 2: Enhanced Editing (Current)
-- [ ] Hover information
-- [ ] Autocompletion
-- [ ] Go to definition
-- [ ] Code actions
+3. Rebuild LSP server:
+   ```bash
+   cd fermi-lsp && cargo build --release
+   ```
 
-### Phase 3: Execution
-- [ ] Execute command (Cmd+Enter)
-- [ ] Results panel
-- [ ] Sparkline inlay hints
+### Extension not loading
 
-### Phase 4: Agent Integration
-- [ ] Agent bestiary panel
-- [ ] Agent coordination
-- [ ] Manual review UI
+1. Run verification:
+   ```bash
+   ./scripts/verify-extension.sh
+   ```
 
-## Support
+2. Check symlink:
+   ```bash
+   ls -la ~/.config/zed/extensions/fermi
+   ```
+   Should point to project directory
 
-- **Issues:** https://github.com/Replicant-Partners/fermi/issues
-- **Documentation:** See docs/ directory
-- **Contact:** Replicant Partners team
+3. Reinstall:
+   ```bash
+   ./scripts/install-extension.sh
+   ```
 
-## License
+4. Check Zed extension logs for errors
 
-[TBD]
+## Version Information
+
+Run `./scripts/verify-extension.sh` to see:
+- Build timestamp
+- Git commit hash
+- File sizes
+- Feature checklist
+
+The `.version` file tracks each build for debugging.

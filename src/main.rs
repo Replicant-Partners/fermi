@@ -1,18 +1,32 @@
+use colored::*;
 /// Fermi CLI - Interactive FPL REPL and Compiler
 ///
 /// This is the main entry point for the Fermi forecasting language.
-
-use fermi::{Lexer, Parser, TokenType, Statement, SemanticAnalyzer, execute_program};
-use colored::*;
+use fermi::{execute_program, Lexer, Parser, SemanticAnalyzer, Statement, TokenType};
 use std::fs;
 use std::io::{self, Write};
 
 fn main() {
-    println!("{}", "╔═══════════════════════════════════════════╗".bright_cyan());
-    println!("{}", "║   Fermi - Forecasting Language v0.4.0   ║".bright_cyan());
-    println!("{}", "║   Agent Fermi's Broca Brain              ║".bright_cyan());
-    println!("{}", "║   Now with Monte Carlo Execution!       ║".bright_cyan());
-    println!("{}", "╚═══════════════════════════════════════════╝".bright_cyan());
+    println!(
+        "{}",
+        "╔═══════════════════════════════════════════╗".bright_cyan()
+    );
+    println!(
+        "{}",
+        "║   Fermi - Forecasting Language v0.4.0   ║".bright_cyan()
+    );
+    println!(
+        "{}",
+        "║   Agent Fermi's Broca Brain              ║".bright_cyan()
+    );
+    println!(
+        "{}",
+        "║   Now with Monte Carlo Execution!       ║".bright_cyan()
+    );
+    println!(
+        "{}",
+        "╚═══════════════════════════════════════════╝".bright_cyan()
+    );
     println!();
 
     // Check if a file was provided
@@ -27,7 +41,12 @@ fn main() {
                 process_source(&source);
             }
             Err(e) => {
-                eprintln!("{} Could not read file '{}': {}", "Error:".bright_red(), filename, e);
+                eprintln!(
+                    "{} Could not read file '{}': {}",
+                    "Error:".bright_red(),
+                    filename,
+                    e
+                );
                 std::process::exit(1);
             }
         }
@@ -53,7 +72,11 @@ fn process_source(source: &str) {
             tokens
         }
         Err(errors) => {
-            println!("{} Tokenization failed with {} error(s):", "✗".bright_red(), errors.len());
+            println!(
+                "{} Tokenization failed with {} error(s):",
+                "✗".bright_red(),
+                errors.len()
+            );
             println!();
 
             for error in errors {
@@ -69,13 +92,23 @@ fn process_source(source: &str) {
 
     for token in &tokens {
         let category = match &token.token_type {
-            TokenType::Question | TokenType::Driver | TokenType::Evidence |
-            TokenType::Agent | TokenType::Model | TokenType::Simulate => "Statements",
-            TokenType::String(_) | TokenType::Number(_) | TokenType::Probability(_) |
-            TokenType::Date(_) | TokenType::Boolean(_) => "Literals",
+            TokenType::Question
+            | TokenType::Driver
+            | TokenType::Evidence
+            | TokenType::Agent
+            | TokenType::Model
+            | TokenType::Simulate => "Statements",
+            TokenType::String(_)
+            | TokenType::Number(_)
+            | TokenType::Probability(_)
+            | TokenType::Date(_)
+            | TokenType::Boolean(_) => "Literals",
             TokenType::Identifier(_) => "Identifiers",
-            TokenType::Triangular | TokenType::Normal | TokenType::Lognormal |
-            TokenType::Uniform | TokenType::Beta => "Distributions",
+            TokenType::Triangular
+            | TokenType::Normal
+            | TokenType::Lognormal
+            | TokenType::Uniform
+            | TokenType::Beta => "Distributions",
             TokenType::Plus | TokenType::Minus | TokenType::Star | TokenType::Slash => "Operators",
             TokenType::EOF => continue,
             _ => "Other",
@@ -89,7 +122,10 @@ fn process_source(source: &str) {
     }
 
     // Step 2: Parsing
-    println!("\n{}", "Stage 2: Syntax Analysis (Parsing)".bright_yellow().bold());
+    println!(
+        "\n{}",
+        "Stage 2: Syntax Analysis (Parsing)".bright_yellow().bold()
+    );
     println!("{}", "─".repeat(50));
 
     let parser = Parser::new(tokens);
@@ -103,7 +139,11 @@ fn process_source(source: &str) {
             println!("  {} statement(s) parsed\n", program.statements.len());
 
             for (i, stmt) in program.statements.iter().enumerate() {
-                println!("{}. {}", (i + 1).to_string().bright_white(), format!("{}", stmt).bright_cyan());
+                println!(
+                    "{}. {}",
+                    (i + 1).to_string().bright_white(),
+                    format!("{}", stmt).bright_cyan()
+                );
 
                 // Show details for each statement type
                 match stmt {
@@ -113,7 +153,10 @@ fn process_source(source: &str) {
                     Statement::Driver(d) => {
                         println!("   ├─ Type: {:?}", d.driver_type);
                         if let Some(dist) = &d.distribution {
-                            println!("   ├─ Distribution: {}", format!("{}", dist).bright_yellow());
+                            println!(
+                                "   ├─ Distribution: {}",
+                                format!("{}", dist).bright_yellow()
+                            );
                         }
                         if let Some(prob) = d.probability {
                             println!("   ├─ Probability: {}p", prob);
@@ -147,10 +190,16 @@ fn process_source(source: &str) {
                         }
                     }
                     Statement::Model(m) => {
-                        println!("   └─ Expression: {}", format!("{}", m.expression).bright_yellow());
+                        println!(
+                            "   └─ Expression: {}",
+                            format!("{}", m.expression).bright_yellow()
+                        );
                     }
                     Statement::Simulate(s) => {
-                        println!("   └─ Iterations: {}", s.iterations.to_string().bright_yellow());
+                        println!(
+                            "   └─ Iterations: {}",
+                            s.iterations.to_string().bright_yellow()
+                        );
                     }
                 }
                 println!();
@@ -166,7 +215,11 @@ fn process_source(source: &str) {
             if analysis.is_valid() {
                 println!("{} Semantic analysis passed!", "✓".bright_green());
             } else {
-                println!("{} Semantic analysis found {} error(s)", "✗".bright_red(), analysis.errors.len());
+                println!(
+                    "{} Semantic analysis found {} error(s)",
+                    "✗".bright_red(),
+                    analysis.errors.len()
+                );
             }
             println!();
 
@@ -178,12 +231,21 @@ fn process_source(source: &str) {
             if !drivers.is_empty() {
                 println!("  Drivers:");
                 for driver in drivers {
-                    let used = if analysis.symbol_table.drivers_used_in_model().contains(&driver.name) {
+                    let used = if analysis
+                        .symbol_table
+                        .drivers_used_in_model()
+                        .contains(&driver.name)
+                    {
                         "✓".bright_green()
                     } else {
                         "○".bright_yellow()
                     };
-                    println!("    {} {} : {}", used, driver.name.bright_white(), driver.ty);
+                    println!(
+                        "    {} {} : {}",
+                        used,
+                        driver.name.bright_white(),
+                        driver.ty
+                    );
                 }
             }
 
@@ -215,14 +277,20 @@ fn process_source(source: &str) {
 
             println!("\n{}", "=".repeat(50));
             if analysis.is_valid() {
-                println!("{} {} {}",
+                println!(
+                    "{} {} {}",
                     "✓".bright_green(),
                     "All checks passed!".bright_green().bold(),
                     "Ready for execution.".bright_blue()
                 );
 
                 // Step 4: Execution (Monte Carlo Simulation)
-                println!("\n{}", "Stage 4: Execution (Monte Carlo Simulation)".bright_yellow().bold());
+                println!(
+                    "\n{}",
+                    "Stage 4: Execution (Monte Carlo Simulation)"
+                        .bright_yellow()
+                        .bold()
+                );
                 println!("{}", "─".repeat(50));
 
                 match execute_program(&program) {
@@ -232,26 +300,41 @@ fn process_source(source: &str) {
 
                         // Display results
                         println!("{}", "Simulation Results:".bright_cyan().bold());
-                        println!("  {} {}", "Iterations:".bright_blue(), result.iterations.to_string().bright_white());
+                        println!(
+                            "  {} {}",
+                            "Iterations:".bright_blue(),
+                            result.iterations.to_string().bright_white()
+                        );
                         println!();
 
                         println!("{}", "  Statistics:".bright_cyan());
                         println!("    {} {:.2}", "Mean:".bright_blue(), result.mean);
-                        println!("    {} {:.2}", "Std Dev:".bright_blue(), result.stddev);
+                        println!("    {} {:.2}", "Std Dev:".bright_blue(), result.std_dev);
                         println!();
 
                         println!("{}", "  Percentiles:".bright_cyan());
-                        println!("    {} {:.2}", "10th:".bright_blue(), result.p10);
-                        println!("    {} {:.2}", "50th (Median):".bright_blue(), result.p50);
-                        println!("    {} {:.2}", "90th:".bright_blue(), result.p90);
+                        println!("    {} {:.2}", "5th:".bright_blue(), result.p5);
+                        println!(
+                            "    {} {:.2}",
+                            "50th (Median):".bright_blue(),
+                            result.median
+                        );
+                        println!("    {} {:.2}", "95th:".bright_blue(), result.p95);
                         println!();
 
-                        let (iqr_low, iqr_high) = result.interquartile_range();
                         println!("{}", "  Ranges:".bright_cyan());
-                        println!("    {} {:.2} to {:.2}",
-                            "80% CI (p10-p90):".bright_blue(), result.p10, result.p90);
-                        println!("    {} {:.2} to {:.2}",
-                            "IQR (p25-p75):".bright_blue(), iqr_low, iqr_high);
+                        println!(
+                            "    {} {:.2} to {:.2}",
+                            "90% CI (p5-p95):".bright_blue(),
+                            result.p5,
+                            result.p95
+                        );
+                        println!(
+                            "    {} {:.2} to {:.2}",
+                            "IQR (p25-p75):".bright_blue(),
+                            result.p25,
+                            result.p75
+                        );
                         println!();
 
                         // Visual distribution (simple ASCII histogram)
@@ -259,13 +342,14 @@ fn process_source(source: &str) {
                         print_histogram(&result.samples);
 
                         println!("\n{}", "=".repeat(50));
-                        println!("{} {} Mean: {:.2}, Median: {:.2}, Range: [{:.2}, {:.2}]",
+                        println!(
+                            "{} {} Mean: {:.2}, Median: {:.2}, Range: [{:.2}, {:.2}]",
                             "✓".bright_green(),
                             "Forecast Complete!".bright_green().bold(),
                             result.mean,
-                            result.p50,
-                            result.p10,
-                            result.p90
+                            result.median,
+                            result.p5,
+                            result.p95
                         );
                     }
                     Err(error) => {
@@ -277,7 +361,8 @@ fn process_source(source: &str) {
                     }
                 }
             } else {
-                println!("{} {} {}",
+                println!(
+                    "{} {} {}",
                     "✗".bright_red(),
                     "Semantic errors found.".bright_red().bold(),
                     "Please fix the errors above.".bright_yellow()
@@ -372,7 +457,8 @@ fn execute_repl_input(input: &str) {
     };
 
     // Filter out EOF for display
-    let display_tokens: Vec<_> = tokens.iter()
+    let display_tokens: Vec<_> = tokens
+        .iter()
         .filter(|t| !matches!(t.token_type, TokenType::EOF))
         .collect();
 
@@ -382,14 +468,22 @@ fn execute_repl_input(input: &str) {
         return;
     }
 
-    println!("{} Tokenized {} token(s)", "✓".bright_green(), display_tokens.len());
+    println!(
+        "{} Tokenized {} token(s)",
+        "✓".bright_green(),
+        display_tokens.len()
+    );
 
     // Try parsing
     let parser = Parser::new(tokens);
 
     match parser.parse() {
         Ok(program) => {
-            println!("{} Parsed {} statement(s)", "✓".bright_green(), program.statements.len());
+            println!(
+                "{} Parsed {} statement(s)",
+                "✓".bright_green(),
+                program.statements.len()
+            );
 
             for stmt in &program.statements {
                 println!("  • {}", stmt.to_string().bright_cyan());
@@ -413,11 +507,17 @@ fn print_help() {
     println!("{}", "FPL Language Examples:".bright_yellow().bold());
     println!();
     println!("  {}Define a question:{}", "1. ".bright_green(), "");
-    println!("     {}", r#"question "Will AMD reach $200 by 2026-12-31?""#.bright_white());
+    println!(
+        "     {}",
+        r#"question "Will AMD reach $200 by 2026-12-31?""#.bright_white()
+    );
     println!();
     println!("  {}Add a driver:{}", "2. ".bright_green(), "");
     println!("     {}", "driver market_size continuous {".bright_white());
-    println!("         {}", "distribution: triangular(500, 1200, 2500)".bright_white());
+    println!(
+        "         {}",
+        "distribution: triangular(500, 1200, 2500)".bright_white()
+    );
     println!("         {}", r#"unit: "millions USD""#.bright_white());
     println!("     {}", "}".bright_white());
     println!();
@@ -430,7 +530,10 @@ fn print_help() {
     println!("  {}Run simulation:{}", "4. ".bright_green(), "");
     println!("     {}", "simulate 10000 iterations".bright_white());
     println!();
-    println!("{}", "To execute multi-line code, press Enter twice after your last line.".bright_blue());
+    println!(
+        "{}",
+        "To execute multi-line code, press Enter twice after your last line.".bright_blue()
+    );
     println!();
 }
 
@@ -464,7 +567,8 @@ fn print_histogram(samples: &[f64]) {
         let bar_len = (count as f64 / max_count as f64 * BAR_WIDTH as f64) as usize;
         let bar = "█".repeat(bar_len);
 
-        println!("    {:8.1} - {:8.1} │ {:<50} {}",
+        println!(
+            "    {:8.1} - {:8.1} │ {:<50} {}",
             bin_start,
             bin_end,
             bar.bright_green(),

@@ -1,208 +1,46 @@
-// Market Sizing and TAM/SAM/SOM Forecast Templates
-// Total addressable market estimates
+# Market Sizing Forecast Template
+# Use this for TAM/SAM/SOM analysis
 
-forecast "B2B SaaS Market Size - TAM/SAM/SOM" {
-    // Total Addressable Market (TAM)
-    driver total_businesses_in_category triangular(500000, 1000000, 2000000)
-    driver avg_spend_per_business_annually lognormal(5000, 2000)
-    driver tam estimate total_businesses_in_category * avg_spend_per_business_annually
+question "What is the market opportunity for our B2B SaaS product?"
 
-    // Serviceable Addressable Market (SAM) - businesses we can reach
-    driver geographic_reach_pct uniform(0.20, 0.40)
-    driver size_filter_pct uniform(0.30, 0.50)
-    driver industry_fit_pct uniform(0.40, 0.70)
-    driver sam estimate tam * geographic_reach_pct * size_filter_pct * industry_fit_pct
-
-    // Serviceable Obtainable Market (SOM) - realistic capture
-    driver year_1_market_share_pct uniform(0.001, 0.005)
-    driver year_3_market_share_pct uniform(0.01, 0.03)
-    driver year_5_market_share_pct uniform(0.03, 0.08)
-
-    driver year_1_som estimate sam * year_1_market_share_pct
-    driver year_3_som estimate sam * year_3_market_share_pct
-    driver year_5_som estimate sam * year_5_market_share_pct
-
-    // 5-year projection (conservative)
-    estimate year_5_som
+# Total Addressable Market (TAM)
+driver total_companies continuous {
+    distribution: triangular(500000, 1000000, 2000000)
+    unit: "companies"
+    rationale: "Total companies in target industry globally"
 }
 
-forecast "Consumer Mobile App - Market Opportunity" {
-    // Target demographic
-    driver global_smartphone_users triangular(3000000000, 4000000000, 5000000000)
-    driver target_age_range_pct uniform(0.25, 0.45)
-    driver target_income_bracket_pct uniform(0.30, 0.50)
-    driver interest_alignment_pct uniform(0.10, 0.30)
-
-    // Total addressable users
-    driver tau estimate global_smartphone_users * target_age_range_pct *
-                         target_income_bracket_pct * interest_alignment_pct
-
-    // Serviceable market (reachable users)
-    driver app_store_visibility_reach_pct uniform(0.05, 0.15)
-    driver language_availability_pct uniform(0.60, 0.85)
-    driver device_compatibility_pct uniform(0.80, 0.95)
-    driver sau estimate tau * app_store_visibility_reach_pct *
-                        language_availability_pct * device_compatibility_pct
-
-    // Obtainable market
-    driver year_1_install_rate uniform(0.0001, 0.0005)
-    driver year_1_active_rate uniform(0.30, 0.50)
-    driver year_1_paying_rate uniform(0.02, 0.08)
-
-    driver year_1_installs estimate sau * year_1_install_rate
-    driver year_1_active estimate year_1_installs * year_1_active_rate
-    driver year_1_paying estimate year_1_active * year_1_paying_rate
-
-    // Revenue per paying user
-    driver annual_arpu lognormal(50, 20)
-
-    // Year 1 revenue opportunity
-    estimate year_1_paying * annual_arpu
+driver tam_avg_spend continuous {
+    distribution: lognormal(5000, 2000)
+    unit: "USD/year"
+    rationale: "Average annual spend on similar solutions"
 }
 
-forecast "E-commerce Vertical Market Size" {
-    // Market definition
-    driver us_online_shoppers triangular(200000000, 250000000, 300000000)
-    driver category_purchase_frequency_annual normal(3, 1)
-    driver avg_transaction_value triangular(50, 100, 200)
-
-    // Total category market
-    driver total_category_gmv estimate us_online_shoppers * category_purchase_frequency_annual * avg_transaction_value
-
-    // Market segmentation
-    driver our_niche_pct uniform(0.05, 0.15)
-    driver serviceable_market estimate total_category_gmv * our_niche_pct
-
-    // Competitive landscape
-    driver top_3_competitors_share uniform(0.40, 0.70)
-    driver remaining_market estimate serviceable_market * (1 - top_3_competitors_share)
-
-    // Our market capture (year 3)
-    driver our_share_of_remaining uniform(0.05, 0.15)
-    driver year_3_gmv estimate remaining_market * our_share_of_remaining
-
-    // Take rate
-    driver platform_take_rate uniform(0.10, 0.20)
-
-    // Year 3 revenue
-    estimate year_3_gmv * platform_take_rate
+# Serviceable Addressable Market (SAM)
+driver geographic_reach continuous {
+    distribution: uniform(0.30, 0.50)
+    unit: "ratio"
+    rationale: "Percentage of companies in regions we can serve"
 }
 
-forecast "Enterprise Software - Industry TAM" {
-    // Enterprise universe
-    driver fortune_5000_companies triangular(5000, 5000, 5000)
-    driver mid_market_companies triangular(100000, 200000, 400000)
-    driver smb_companies triangular(2000000, 5000000, 10000000)
-
-    // Problem applicability
-    driver enterprise_fit_rate uniform(0.30, 0.60)
-    driver mid_market_fit_rate uniform(0.15, 0.40)
-    driver smb_fit_rate uniform(0.05, 0.15)
-
-    // Pricing tiers
-    driver enterprise_contract_value lognormal(250000, 100000)
-    driver mid_market_contract_value lognormal(50000, 20000)
-    driver smb_contract_value lognormal(10000, 5000)
-
-    // TAM by segment
-    driver enterprise_tam estimate fortune_5000_companies * enterprise_fit_rate * enterprise_contract_value
-    driver mid_market_tam estimate mid_market_companies * mid_market_fit_rate * mid_market_contract_value
-    driver smb_tam estimate smb_companies * smb_fit_rate * smb_contract_value
-
-    // Total TAM
-    driver total_tam estimate enterprise_tam + mid_market_tam + smb_tam
-
-    // SAM (US only, established companies)
-    driver us_market_pct uniform(0.35, 0.50)
-    driver established_company_filter uniform(0.60, 0.80)
-    driver sam estimate total_tam * us_market_pct * established_company_filter
-
-    // SOM (realistic 5-year capture)
-    driver enterprise_penetration uniform(0.02, 0.08)
-    driver mid_market_penetration uniform(0.01, 0.05)
-    driver smb_penetration uniform(0.001, 0.01)
-
-    driver enterprise_som estimate enterprise_tam * us_market_pct * enterprise_penetration
-    driver mid_market_som estimate mid_market_tam * us_market_pct * mid_market_penetration
-    driver smb_som estimate smb_tam * us_market_pct * smb_penetration
-
-    // 5-year obtainable market
-    estimate enterprise_som + mid_market_som + smb_som
+driver company_size_fit continuous {
+    distribution: triangular(0.15, 0.25, 0.40)
+    unit: "ratio"
+    rationale: "Percentage of companies in our target size range (50-500 employees)"
 }
 
-forecast "API Platform - Developer Market" {
-    // Global developer population
-    driver global_developers triangular(25000000, 30000000, 40000000)
-    driver target_languages_pct uniform(0.30, 0.60)
-    driver target_use_cases_pct uniform(0.10, 0.30)
-    driver company_size_filter_pct uniform(0.40, 0.70)
-
-    // Addressable developers
-    driver addressable_developers estimate global_developers * target_languages_pct *
-                                          target_use_cases_pct * company_size_filter_pct
-
-    // Free tier adoption
-    driver free_tier_signup_rate uniform(0.01, 0.05)
-    driver free_tier_active_rate uniform(0.30, 0.60)
-    driver free_tier_users estimate addressable_developers * free_tier_signup_rate * free_tier_active_rate
-
-    // Conversion to paid
-    driver paid_conversion_rate uniform(0.05, 0.20)
-    driver paid_users estimate free_tier_users * paid_conversion_rate
-
-    // Revenue tiers
-    driver starter_tier_pct uniform(0.60, 0.80)
-    driver starter_arr lognormal(600, 200)
-    driver growth_tier_pct uniform(0.15, 0.30)
-    driver growth_arr lognormal(3000, 1000)
-    driver enterprise_tier_pct uniform(0.05, 0.15)
-    driver enterprise_arr lognormal(30000, 15000)
-
-    // Market size calculation
-    driver starter_revenue estimate paid_users * starter_tier_pct * starter_arr
-    driver growth_revenue estimate paid_users * growth_tier_pct * growth_arr
-    driver enterprise_revenue estimate paid_users * enterprise_tier_pct * enterprise_arr
-
-    // Total obtainable market (year 3)
-    estimate starter_revenue + growth_revenue + enterprise_revenue
+# Serviceable Obtainable Market (SOM)
+driver market_share_achievable continuous {
+    distribution: triangular(0.01, 0.03, 0.08)
+    unit: "ratio"
+    rationale: "Realistic market share in 3-5 years given competition"
 }
 
-forecast "Marketplace Platform - Two-Sided Market" {
-    // Supply side (sellers/providers)
-    driver total_potential_suppliers triangular(50000, 150000, 500000)
-    driver supplier_acquisition_rate uniform(0.02, 0.08)
-    driver supplier_activation_rate uniform(0.40, 0.70)
-    driver active_suppliers estimate total_potential_suppliers * supplier_acquisition_rate * supplier_activation_rate
+# Calculate TAM → SAM → SOM
+model: total_companies *
+       tam_avg_spend *
+       geographic_reach *
+       company_size_fit *
+       market_share_achievable
 
-    // Supply economics
-    driver avg_listings_per_supplier triangular(5, 15, 50)
-    driver listing_success_rate uniform(0.20, 0.50)
-    driver avg_transaction_value triangular(100, 250, 600)
-    driver transactions_per_listing_annual triangular(2, 6, 15)
-
-    // Demand side (buyers)
-    driver potential_buyers triangular(1000000, 5000000, 15000000)
-    driver buyer_activation_rate uniform(0.01, 0.05)
-    driver active_buyers estimate potential_buyers * buyer_activation_rate
-    driver repeat_purchase_rate uniform(0.30, 0.60)
-
-    // Marketplace dynamics
-    driver liquidity_ratio estimate active_buyers / active_suppliers
-    driver optimal_liquidity_adjustment uniform(0.80, 1.20)
-
-    // GMV calculation
-    driver total_listings estimate active_suppliers * avg_listings_per_supplier
-    driver successful_listings estimate total_listings * listing_success_rate
-    driver total_transactions estimate successful_listings * transactions_per_listing_annual
-    driver annual_gmv estimate total_transactions * avg_transaction_value * optimal_liquidity_adjustment
-
-    // Platform revenue
-    driver take_rate uniform(0.10, 0.25)
-    driver subscription_revenue_per_supplier_annual triangular(0, 200, 500)
-
-    driver transaction_revenue estimate annual_gmv * take_rate
-    driver subscription_revenue estimate active_suppliers * subscription_revenue_per_supplier_annual
-
-    // Total platform revenue
-    estimate transaction_revenue + subscription_revenue
-}
+simulate 10000 iterations

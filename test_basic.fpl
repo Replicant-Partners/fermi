@@ -1,0 +1,8 @@
+question revenue {
+    distribution: triangular(100, 200, 300)
+    unit: "dollars"
+}
+
+driver continuous sales {
+    distribution: normal(50, 10)
+}
