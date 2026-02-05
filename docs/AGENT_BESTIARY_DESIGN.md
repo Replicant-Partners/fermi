@@ -210,6 +210,37 @@ fermi-agent-backend/
     "avg_confidence": 0.82,
     "accuracy_rate": 0.89
   },
+  "usage": {
+    "total_executions": 152,
+    "successful_executions": 144,
+    "failed_executions": 8,
+    "total_tokens_used": 2847392,
+    "total_cost_usd": 142.37,
+    "avg_execution_time_ms": 3420,
+    "last_30_days": {
+      "executions": 23,
+      "tokens": 431045,
+      "cost_usd": 21.55
+    }
+  },
+  "wallet": {
+    "primary": {
+      "chain": "ethereum",
+      "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "purpose": "Revenue share / payments"
+    },
+    "secondary": {
+      "chain": "solana",
+      "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+      "purpose": "Micropayments / tips"
+    },
+    "payment_model": {
+      "type": "usage_based",
+      "rate_per_1k_tokens": 0.05,
+      "revenue_share_pct": 0.15,
+      "payment_threshold_usd": 10.0
+    }
+  },
   "ontology_stats": {
     "entities": 23,
     "relationships": 18,
@@ -223,6 +254,34 @@ fermi-agent-backend/
     "tags": ["market", "research", "competitive-analysis"]
   }
 }
+```
+
+**Usage/Cost Tracking:**
+- Track every execution (success/fail)
+- Token usage per execution
+- Cost tracking (USD)
+- Performance metrics (execution time)
+- Historical data (30-day windows)
+
+**Crypto Wallet Fields (Future Revenue Model):**
+- Support multiple chains (Ethereum, Solana, etc.)
+- Primary wallet for revenue share
+- Secondary for micropayments/tips
+- Payment model configuration:
+  - Usage-based pricing
+  - Revenue share percentage
+  - Payment threshold
+
+**Git Tracking:**
+Every agent card change = git commit:
+
+```bash
+git commit -m "agent(market_research): updated usage stats
+
+- Total executions: 152 (+5 since last update)
+- Cost this month: $21.55
+- Avg execution time: 3420ms
+- Success rate: 94.7%"
 ```
 
 **Two-Tier System:**
@@ -370,6 +429,116 @@ pub struct OntologyUpdate {
     pub reasoning: String,
 }
 ```
+
+**Automated Usage Tracking:**
+
+Every agent execution automatically updates usage stats and commits to git:
+
+```rust
+impl AgentRegistry {
+    pub fn record_execution(
+        &self,
+        agent_id: &str,
+        output: &AgentOutput,
+    ) -> Result<()> {
+        // 1. Load agent card
+        let mut card = self.load_agent_card(agent_id)?;
+        
+        // 2. Update usage stats
+        card.usage.total_executions += 1;
+        
+        match output.status {
+            AgentStatus::Success => {
+                card.usage.successful_executions += 1;
+            }
+            _ => {
+                card.usage.failed_executions += 1;
+            }
+        }
+        
+        // 3. Update cost/token tracking
+        if let Some(tokens) = output.metadata.tokens_used {
+            card.usage.total_tokens_used += tokens;
+            
+            // Calculate cost (model-specific rates)
+            let cost = self.calculate_cost(&card.capabilities.model, tokens);
+            card.usage.total_cost_usd += cost;
+        }
+        
+        // 4. Update execution time
+        card.usage.avg_execution_time_ms = 
+            (card.usage.avg_execution_time_ms * (card.usage.total_executions - 1) as u64 
+             + output.execution_time_ms) / card.usage.total_executions as u64;
+        
+        // 5. Update 30-day window (rolling)
+        self.update_rolling_stats(&mut card, output);
+        
+        // 6. Write updated card
+        self.write_agent_card(agent_id, &card)?;
+        
+        // 7. Git commit (AUTOMATIC)
+        self.commit_agent_card_update(agent_id, &card)?;
+        
+        Ok(())
+    }
+    
+    fn commit_agent_card_update(
+        &self,
+        agent_id: &str,
+        card: &AgentCard,
+    ) -> Result<()> {
+        let card_path = format!("agents/curated/{}/agent_card.json", agent_id);
+        
+        // Git add
+        Command::new("git")
+            .args(&["add", &card_path])
+            .output()?;
+        
+        // Commit message with usage stats
+        let message = format!(
+            "agent({}): updated usage stats\n\n\
+             Total executions: {} (+1)\n\
+             Success rate: {:.1}%\n\
+             Total cost: ${:.2}\n\
+             Avg execution time: {}ms\n\
+             Last 30 days: {} runs, ${:.2} cost",
+            agent_id,
+            card.usage.total_executions,
+            (card.usage.successful_executions as f64 / card.usage.total_executions as f64) * 100.0,
+            card.usage.total_cost_usd,
+            card.usage.avg_execution_time_ms,
+            card.usage.last_30_days.executions,
+            card.usage.last_30_days.cost_usd
+        );
+        
+        Command::new("git")
+            .args(&["commit", "-m", &message])
+            .output()?;
+        
+        Ok(())
+    }
+    
+    fn calculate_cost(&self, model: &str, tokens: u32) -> f64 {
+        // Model-specific pricing (per 1M tokens)
+        let rate_per_million = match model {
+            "claude-sonnet-4" => 3.0,      // $3/1M tokens
+            "claude-opus-4" => 15.0,       // $15/1M tokens
+            "claude-haiku-4" => 0.25,      // $0.25/1M tokens
+            _ => 3.0,                       // Default
+        };
+        
+        (tokens as f64 / 1_000_000.0) * rate_per_million
+    }
+}
+```
+
+**Benefits:**
+- ✅ Every execution tracked automatically
+- ✅ Cost monitoring per agent
+- ✅ Performance metrics (execution time, success rate)
+- ✅ Historical data (30-day rolling window)
+- ✅ Git audit trail of usage changes
+- ✅ Foundation for future billing/revenue share
 
 ### **3d. Scheduler**
 
