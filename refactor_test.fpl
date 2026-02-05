@@ -11,6 +11,13 @@ question "Will the refactored LSP work perfectly?" {
         generated_by: human
     }
 }
+driver foo continuous {
+    display_name: "foo"
+    description: "just a not to say foo"
+    distribution: triangular (0.2, 0.5, 0.9)
+    unit: "probability"
+    rationale: "foo foo foo"
+    }
 
 // Test continuous driver with all properties
 driver base_confidence continuous {
@@ -20,7 +27,6 @@ driver base_confidence continuous {
     unit: "probability"
     rationale: "We tested thoroughly and all 53 tests passed"
 }
-
 // Test binary driver
 driver major_issues_found binary {
     display_name: "Major Issues Discovered"

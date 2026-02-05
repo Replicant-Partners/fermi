@@ -270,6 +270,27 @@ impl SemanticAnalyzer {
                 }
             }
         }
+
+        // Validate evidence_refs
+        for evidence_ref in &driver.evidence_refs {
+            if !self.symbol_table.contains(evidence_ref) {
+                self.errors.push(SemanticError::UndefinedSymbol {
+                    name: evidence_ref.clone(),
+                    message: format!(
+                        "Driver '{}' references undefined evidence '{}'",
+                        driver.name, evidence_ref
+                    ),
+                });
+            }
+        }
+
+        // Suggest adding evidence if none provided
+        if driver.evidence_refs.is_empty() && driver.rationale.is_none() {
+            self.warnings.push(format!(
+                "Driver '{}' has no evidence_refs or rationale. Consider adding supporting evidence",
+                driver.name
+            ));
+        }
     }
 
     /// Analyze a distribution

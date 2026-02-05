@@ -24,6 +24,33 @@ pub fn get_property_hover(word: &str) -> Option<String> {
 
         "max" => "**max** - Maximum value\n\nHard upper bound for the driver.\n\n**Example:** `max: 100`",
 
+        "evidence_refs" => "**evidence_refs** - Link to supporting evidence\n\nReferences evidence blocks that support this driver's assumptions.\n\n**Example:**\n```fpl\nevidence_refs: [\"market_report\", \"internal_data\"]\n```\n\n**Best practice:** Link all major drivers to evidence sources for transparency",
+
+        "key_findings" => "**key_findings** - Key points from evidence\n\nList of important findings or data points from the evidence.\n\n**Example:**\n```fpl\nkey_findings: [\n    \"Revenue up 22% YoY\",\n    \"Customer count: 1,240\"\n]\n```\n\n**Used in:** evidence blocks to document specific insights",
+
+        "source" => "**source** - Evidence source name\n\nThe title or name of the evidence source.\n\n**Example:** `source: \"Gartner Market Analysis 2026\"`\n\n**Used in:** evidence blocks",
+
+        "summary" => "**summary** - Brief summary of evidence\n\nA concise summary of what the evidence shows.\n\n**Example:** `summary: \"Market expected to grow 15-18% in 2026\"`\n\n**Used in:** evidence blocks",
+
+        "url" => "**url** - Link to evidence source\n\nA URL link to the full evidence source.\n\n**Example:** `url: \"https://example.com/report-2026\"`\n\n**Used in:** evidence blocks",
+
+        "relevance" => "**relevance** - Evidence relevance score (0-1)\n\nHow relevant this evidence is to your forecast.\n\n**Example:** `relevance: 0.85` (85% relevant)\n\n**Used in:** evidence blocks\n\n**Display:** High (0.8+) = green, Medium (0.5-0.79) = yellow, Low (<0.5) = red",
+
+        "date" => "**date** - Evidence date\n\nWhen the evidence was published or collected.\n\n**Example:** `date: 2026-01-15` or `date: \"2026-01-15\"`\n\n**Used in:** evidence blocks",
+
+        "strength" => "**strength** - Evidence quality/strength score (0-1)\n\nHow strong or reliable this evidence is.\n\n**Example:** `strength: 0.9` (90% confidence in evidence quality)\n\n**Used in:** evidence blocks\n\n**Interpretation:** High (0.8+) = strong evidence, Medium (0.5-0.79) = moderate, Low (<0.5) = weak",
+
+        // Base rate properties (Outside View - Tetlock methodology)
+        "reference_class" => "**reference_class** - Reference class definition\n\nDefine the broader category of similar situations to establish a base rate.\n\n**Example:** `reference_class: \"Major tech acquisitions in semiconductor industry\"`\n\n**Used in:** base_rate blocks\n\n**Best practice:** Choose a class that is as similar as possible to your question while having enough historical data.",
+
+        "historical_frequency" => "**historical_frequency** - How often it happened before\n\nThe proportion of times the outcome occurred in the reference class.\n\n**Example:** `historical_frequency: 0.35p` (35% of the time)\n\n**Used in:** base_rate blocks\n\n**Format:** Probability value (0-1) with optional 'p' suffix",
+
+        "sample_size" => "**sample_size** - Number of historical cases\n\nHow many cases were examined to determine the base rate.\n\n**Example:** `sample_size: 127`\n\n**Used in:** base_rate blocks\n\n**Best practice:** Larger samples = more reliable base rates",
+
+        "reasoning" => "**reasoning** - Explanation of the analysis\n\nExplain why you chose this reference class and how you determined the frequency.\n\n**Example:** `reasoning: \"Analyzed all tech M&A deals over $1B since 2010\"`\n\n**Used in:** base_rate blocks and driver blocks",
+
+        "generated_by" => "**generated_by** - Source of the base rate\n\nWho or what generated this base rate estimate.\n\n**Values:** `human` or agent name\n\n**Example:** `generated_by: human`\n\n**Used in:** base_rate blocks",
+
         _ => return None,
     };
 

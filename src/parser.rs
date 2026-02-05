@@ -360,7 +360,7 @@ impl Parser {
         let mut unit = None;
         let mut rationale = None;
         let constraints = Vec::new();
-        let evidence_refs = Vec::new();
+        let mut evidence_refs = Vec::new();
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
             let field = self.consume_identifier()?;
@@ -393,6 +393,9 @@ impl Parser {
                 }
                 "rationale" => {
                     rationale = Some(self.consume_string()?);
+                }
+                "evidence_refs" => {
+                    evidence_refs = self.parse_string_array()?;
                 }
                 _ => {
                     // Skip unknown fields for now
@@ -531,7 +534,8 @@ impl Parser {
         let mut url = None;
         let mut relevance = None;
         let mut date = None;
-        let key_findings = Vec::new();
+        let mut strength = None;
+        let mut key_findings = Vec::new();
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
             // Match field tokens (can be keywords or identifiers)
@@ -577,7 +581,18 @@ impl Parser {
                     relevance = Some(self.parse_probability_value()?);
                 }
                 "date" => {
-                    date = Some(self.consume_date()?);
+                    // Accept either a Date token or a String token
+                    if let TokenType::Date(_) = &self.peek().token_type {
+                        date = Some(self.consume_date()?);
+                    } else {
+                        date = Some(self.consume_string()?);
+                    }
+                }
+                "strength" => {
+                    strength = Some(self.parse_probability_value()?);
+                }
+                "key_findings" => {
+                    key_findings = self.parse_string_array()?;
                 }
                 _ => {
                     self.skip_until_newline_or_rbrace();
@@ -594,6 +609,7 @@ impl Parser {
             url,
             relevance,
             date,
+            strength,
             key_findings,
         })
     }
@@ -1094,6 +1110,23 @@ impl Parser {
 
         self.consume_token(TokenType::RBracket, "]")?;
         Ok(numbers)
+    }
+
+    fn parse_string_array(&mut self) -> ParseResult<Vec<String>> {
+        self.consume_token(TokenType::LBracket, "[")?;
+
+        let mut strings = Vec::new();
+
+        while !self.check(&TokenType::RBracket) && !self.is_at_end() {
+            strings.push(self.consume_string()?);
+
+            if !self.check(&TokenType::RBracket) {
+                self.consume_token(TokenType::Comma, ",")?;
+            }
+        }
+
+        self.consume_token(TokenType::RBracket, "]")?;
+        Ok(strings)
     }
 
     fn skip_until_newline_or_rbrace(&mut self) {

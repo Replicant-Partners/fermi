@@ -118,6 +118,7 @@ pub struct EvidenceStmt {
     pub url: Option<String>,
     pub relevance: Option<f64>,
     pub date: Option<String>,
+    pub strength: Option<f64>,
     pub key_findings: Vec<String>,
 }
 

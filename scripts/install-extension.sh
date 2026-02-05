@@ -31,14 +31,26 @@ echo -e "${GREEN}✓ Grammar built: $(ls -lh "$EXTENSION_DIR/grammars/fpl.wasm" 
 
 echo -e "${YELLOW}Step 2: Building extension WASM...${NC}"
 cd "$EXTENSION_DIR"
+
+# Download WASI adapter if not present
+WASI_ADAPTER="$EXTENSION_DIR/wasi_snapshot_preview1.wasm"
+if [ ! -f "$WASI_ADAPTER" ]; then
+    echo -e "${YELLOW}Downloading WASI adapter...${NC}"
+    curl -L -o "$WASI_ADAPTER" "https://github.com/bytecodealliance/wasmtime/releases/download/v27.0.0/wasi_snapshot_preview1.reactor.wasm"
+    echo -e "${GREEN}✓ WASI adapter downloaded${NC}"
+fi
+
 cargo build --target wasm32-wasip1 --release --quiet
-cp target/wasm32-wasip1/release/fermi_extension.wasm extension.wasm
+# Convert WASM module to WASM component with WASI adapter (Zed requires components)
+wasm-tools component new target/wasm32-wasip1/release/fermi_extension.wasm -o extension.wasm --adapt "$WASI_ADAPTER"
 echo -e "${GREEN}✓ Extension built: $(ls -lh "$EXTENSION_DIR/extension.wasm" | awk '{print $5}')${NC}\n"
 
 echo -e "${YELLOW}Step 3: Building LSP server...${NC}"
 cd "$PROJECT_ROOT/fermi-lsp"
 cargo build --release --quiet
-echo -e "${GREEN}✓ LSP server built${NC}\n"
+# Copy LSP binary to extension directory
+cp "$PROJECT_ROOT/fermi-lsp/target/release/fermi-lsp" "$EXTENSION_DIR/fermi-lsp"
+echo -e "${GREEN}✓ LSP server built and copied${NC}\n"
 
 echo -e "${YELLOW}Step 4: Syncing highlights to languages directory...${NC}"
 # Zed looks for highlights.scm in languages/fpl/ not grammars/fpl/queries/

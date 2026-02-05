@@ -9,23 +9,59 @@ use tower_lsp::lsp_types::*;
 pub fn get_word_at_position(text: &str, position: Position) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     let line = lines.get(position.line as usize)?;
+
+    // Handle UTF-8 properly by converting to char indices
+    let chars: Vec<char> = line.chars().collect();
     let col = position.character as usize;
 
-    // Find word boundaries
-    let start = line[..col]
-        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    let end = line[col..]
-        .find(|c: char| !c.is_alphanumeric() && c != '_')
-        .map(|i| col + i)
-        .unwrap_or(line.len());
-
-    if start < end {
-        Some(line[start..end].to_string())
-    } else {
-        None
+    // Bounds check
+    if col > chars.len() {
+        return None;
     }
+
+    // If cursor is on whitespace or special char, try to find word nearby
+    let mut search_col = col;
+    if search_col < chars.len() {
+        let ch = chars[search_col];
+        if !ch.is_alphanumeric() && ch != '_' {
+            // Move back to find a word
+            if search_col > 0 {
+                search_col -= 1;
+            } else {
+                return None;
+            }
+        }
+    } else if search_col > 0 {
+        search_col = chars.len() - 1;
+    }
+
+    // Find word boundaries
+    let mut start = search_col;
+    while start > 0 {
+        let ch = chars[start - 1];
+        if !ch.is_alphanumeric() && ch != '_' {
+            break;
+        }
+        start -= 1;
+    }
+
+    let mut end = search_col;
+    while end < chars.len() {
+        let ch = chars[end];
+        if !ch.is_alphanumeric() && ch != '_' {
+            break;
+        }
+        end += 1;
+    }
+
+    if start < end && end <= chars.len() {
+        let word: String = chars[start..end].iter().collect();
+        if !word.is_empty() {
+            return Some(word);
+        }
+    }
+
+    None
 }
 
 /// Get hover information for a word

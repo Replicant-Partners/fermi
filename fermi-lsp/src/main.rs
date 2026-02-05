@@ -742,15 +742,52 @@ impl Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
+        // Log hover request for debugging
+        self.client
+            .log_message(
+                MessageType::INFO,
+                &format!("Hover request at {}:{}", position.line, position.character),
+            )
+            .await;
+
         // Get document
         let docs = self.documents.read().await;
-        let doc = docs.get(&uri.to_string())?;
+        let doc = match docs.get(&uri.to_string()) {
+            Some(d) => d,
+            None => {
+                self.client
+                    .log_message(MessageType::WARNING, "Document not found for hover")
+                    .await;
+                return None;
+            }
+        };
 
         // Get word at position
-        let word = hover::get_word_at_position(&doc.text, position)?;
+        let word = match hover::get_word_at_position(&doc.text, position) {
+            Some(w) => {
+                self.client
+                    .log_message(MessageType::INFO, &format!("Hover word: '{}'", w))
+                    .await;
+                w
+            }
+            None => {
+                self.client
+                    .log_message(MessageType::WARNING, "No word found at position")
+                    .await;
+                return None;
+            }
+        };
 
         // Get hover info from hover module
-        hover::get_hover_info(&word, &doc.drivers)
+        let result = hover::get_hover_info(&word, &doc.drivers);
+
+        if result.is_none() {
+            self.client
+                .log_message(MessageType::INFO, &format!("No hover info for '{}'", word))
+                .await;
+        }
+
+        result
     }
 
     // OLD IMPLEMENTATION REMOVED - Replaced with call to hover module

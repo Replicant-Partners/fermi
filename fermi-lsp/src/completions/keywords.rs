@@ -45,6 +45,13 @@ pub fn get_keyword_completions() -> Vec<CompletionItem> {
             .snippet("agent ${1:name} {\n\tquery: \"${2:search query}\"\n\tschedule: every ${3:1} ${4|day,week,month|}\n}")
             .sort("05_agent")
             .build(),
+
+        CompletionBuilder::keyword("base_rate")
+            .detail("Define base rate (outside view) - Tetlock superforecasting methodology")
+            .docs("Establish reference class and historical frequency.\nUsed inside question blocks.\nExample:\nbase_rate {\n    reference_class: \"Similar tech stocks\"\n    historical_frequency: 0.15p\n    source: \"Historical data 2015-2025\"\n    generated_by: human\n}")
+            .snippet("base_rate {\n\treference_class: \"${1:similar situations}\"\n\thistorical_frequency: ${2:0.5}p\n\tsample_size: ${3:100}\n\tsource: \"${4:data source}\"\n\treasoning: \"${5:explanation}\"\n\tgenerated_by: ${6|human,agent|}\n}")
+            .sort("06_base_rate")
+            .build(),
     ]
 }
 

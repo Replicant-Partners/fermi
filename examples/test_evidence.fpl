@@ -1,0 +1,78 @@
+question "What will be our Q2 2026 revenue?" {
+    target_date: "2026-06-30"
+    resolution_criteria: "Total revenue as reported in Q2 earnings"
+}
+
+// Define evidence sources
+evidence market_report {
+    source: "Gartner Market Analysis 2026"
+    summary: "Enterprise software market expected to grow 15-18% in 2026"
+    url: "https://example.com/gartner-2026"
+    relevance: 0.85
+    date: "2026-01-15"
+    key_findings: [
+        "SaaS adoption accelerating in mid-market",
+        "Average deal sizes up 22%",
+        "SMB segment showing 30% YoY growth"
+    ]
+}
+
+evidence competitor_data {
+    source: "Q4 2025 Competitive Analysis"
+    summary: "Top 3 competitors reported 12-20% growth"
+    relevance: 0.75
+    date: "2026-01-10"
+    key_findings: [
+        "Competitor A: +20% revenue growth",
+        "Competitor B: +15% revenue growth",
+        "Competitor C: +12% revenue growth"
+    ]
+}
+
+evidence internal_metrics {
+    source: "Internal Sales Pipeline Q1 2026"
+    summary: "Strong pipeline with $2.5M in qualified leads"
+    url: "https://internal.example.com/pipeline"
+    relevance: 0.95
+    date: "2026-02-01"
+    key_findings: [
+        "Pipeline up 35% vs last quarter",
+        "Conversion rate stable at 25%",
+        "Average deal size: $45K"
+    ]
+}
+
+// Base sales forecast with evidence
+driver base_sales continuous {
+    display_name: "Base Quarter Revenue"
+    description: "Expected revenue from current customer base and renewals"
+    distribution: triangular(800000, 1200000, 1800000)
+    unit: "USD"
+    rationale: "Based on historical renewal rates and existing contract values"
+    evidence_refs: ["internal_metrics"]
+}
+
+// New customer acquisition with multiple evidence sources
+driver new_customers continuous {
+    display_name: "New Customer Acquisitions"
+    description: "Revenue from new customer deals closing in Q2"
+    distribution: triangular(300000, 500000, 900000)
+    unit: "USD"
+    rationale: "Pipeline analysis plus market growth trends"
+    evidence_refs: ["market_report", "internal_metrics", "competitor_data"]
+}
+
+// Market conditions binary driver
+driver market_surge binary {
+    display_name: "Market Surge Event"
+    description: "Probability of exceptional market conditions"
+    probability: 0.15
+    impact_multiplier: 1.5
+    rationale: "Based on Gartner forecast and competitor performance"
+    evidence_refs: ["market_report", "competitor_data"]
+}
+
+// Model with conditional market surge
+model: base_sales + (if market_surge then new_customers * 1.5 else new_customers)
+
+simulate 10000

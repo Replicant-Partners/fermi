@@ -2,7 +2,7 @@ use colored::*;
 /// Fermi CLI - Interactive FPL REPL and Compiler
 ///
 /// This is the main entry point for the Fermi forecasting language.
-use fermi::{execute_program, Lexer, Parser, SemanticAnalyzer, Statement, TokenType};
+use fermi::{execute_program, EvidenceStmt, Lexer, Parser, SemanticAnalyzer, Statement, TokenType};
 use std::fs;
 use std::io::{self, Write};
 
@@ -170,6 +170,12 @@ fn process_source(source: &str) {
                         if let Some(mult) = d.impact_multiplier {
                             println!("   ├─ Impact: {}x", mult);
                         }
+                        if !d.evidence_refs.is_empty() {
+                            println!(
+                                "   ├─ Evidence: [{}]",
+                                d.evidence_refs.join(", ").bright_blue()
+                            );
+                        }
                         if let Some(unit) = &d.unit {
                             println!("   └─ Unit: \"{}\"", unit);
                         } else {
@@ -259,6 +265,72 @@ fn process_source(source: &str) {
                 println!("  Evidence:");
                 for ev in evidence {
                     println!("    • {}", ev.name.bright_white());
+                }
+            }
+            println!();
+
+            // Show detailed evidence with citations
+            let evidence_stmts: Vec<&EvidenceStmt> = program
+                .statements
+                .iter()
+                .filter_map(|s| match s {
+                    Statement::Evidence(e) => Some(e),
+                    _ => None,
+                })
+                .collect();
+
+            if !evidence_stmts.is_empty() {
+                println!("{}", "Evidence Details:".bright_cyan().bold());
+                for ev in evidence_stmts {
+                    println!("  {} {}", "📄".bright_blue(), ev.id.bright_white().bold());
+                    println!("     Source: {}", ev.source.bright_white());
+                    if let Some(summary) = &ev.summary {
+                        println!("     Summary: {}", summary);
+                    }
+                    if let Some(url) = &ev.url {
+                        println!("     URL: {}", url.bright_blue().underline());
+                    }
+                    if let Some(relevance) = ev.relevance {
+                        let relevance_pct = (relevance * 100.0) as u8;
+                        let relevance_str = format!("{}%", relevance_pct);
+                        let colored_relevance = if relevance_pct >= 80 {
+                            relevance_str.bright_green()
+                        } else if relevance_pct >= 50 {
+                            relevance_str.bright_yellow()
+                        } else {
+                            relevance_str.bright_red()
+                        };
+                        println!("     Relevance: {}", colored_relevance);
+                    }
+                    if let Some(date) = &ev.date {
+                        println!("     Date: {}", date.bright_white());
+                    }
+                    if !ev.key_findings.is_empty() {
+                        println!("     Key Findings:");
+                        for finding in &ev.key_findings {
+                            println!("       • {}", finding);
+                        }
+                    }
+
+                    // Show which drivers reference this evidence
+                    let referencing_drivers: Vec<&str> = program
+                        .statements
+                        .iter()
+                        .filter_map(|s| match s {
+                            Statement::Driver(d) if d.evidence_refs.contains(&ev.id) => {
+                                Some(d.name.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+
+                    if !referencing_drivers.is_empty() {
+                        println!(
+                            "     Referenced by: {}",
+                            referencing_drivers.join(", ").bright_cyan()
+                        );
+                    }
+                    println!();
                 }
             }
             println!();

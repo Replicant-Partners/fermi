@@ -14,6 +14,8 @@ pub fn get_keyword_hover(word: &str) -> Option<String> {
 
         "agent" => "**agent** - Create automated research agent\n\nScheduled agent that monitors and tracks information over time.\n\n**Syntax:** `agent <name> { ... }`\n\n**Example:**\n```fpl\nagent market_monitor {\n    query: \"semiconductor market growth\"\n    schedule: every 1 week\n}\n```",
 
+        "base_rate" => "**base_rate** - Define base rate (outside view)\n\nEstablish a reference class and historical frequency following Tetlock's superforecasting methodology.\n\n**Syntax:** Inside question block\n\n**Example:**\n```fpl\nquestion \"Will AMD reach $200?\" {\n    base_rate {\n        reference_class: \"Tech stocks doubling in 1 year\"\n        historical_frequency: 0.15p\n        sample_size: 100\n        source: \"Historical analysis 2015-2025\"\n        reasoning: \"Few tech stocks double quickly\"\n        generated_by: human\n    }\n}\n```\n\n**Key concept:** Start with how often similar things happened before (outside view) before adjusting for specifics (inside view).",
+
         // Driver types
         "continuous" => "**continuous** - Continuous probability distribution\n\nFor numeric values that can vary across a range.\n\n**Use for:** prices, sizes, counts, rates, percentages\n\n**Requires:** `distribution` property with a distribution function\n\n**Example:**\n```fpl\ndriver revenue continuous {\n    distribution: triangular(1000, 2000, 5000)\n    unit: \"dollars\"\n}\n```",
 
