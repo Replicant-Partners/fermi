@@ -152,6 +152,7 @@ pub struct AgentStmt {
     pub schedule: Option<Schedule>,
     pub driver_refs: Vec<String>,
     pub depends_on: Vec<String>, // Other agents this agent depends on
+    pub confidence_threshold: Option<f64>, // Minimum confidence (0.0-1.0) to accept agent output
 }
 
 /// Schedule for agent execution

@@ -628,6 +628,7 @@ impl Parser {
         let mut schedule = None;
         let mut driver_refs = Vec::new();
         let mut depends_on = Vec::new();
+        let mut confidence_threshold = None;
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
             // Match field tokens (can be keywords or identifiers)
@@ -674,6 +675,21 @@ impl Parser {
                 "depends_on" => {
                     depends_on = self.parse_string_array()?;
                 }
+                "confidence_threshold" => {
+                    let value = self.parse_probability_value()?;
+                    // Validate range [0.0, 1.0]
+                    if value < 0.0 || value > 1.0 {
+                        return Err(ParseError::InvalidExpression {
+                            message: format!(
+                                "confidence_threshold must be between 0.0 and 1.0, got {}",
+                                value
+                            ),
+                            line: self.peek().line,
+                            column: self.peek().column,
+                        });
+                    }
+                    confidence_threshold = Some(value);
+                }
                 _ => {
                     self.skip_until_newline_or_rbrace();
                 }
@@ -690,6 +706,7 @@ impl Parser {
             schedule,
             driver_refs,
             depends_on,
+            confidence_threshold,
         })
     }
 
