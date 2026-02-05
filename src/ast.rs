@@ -122,12 +122,33 @@ pub struct EvidenceStmt {
     pub key_findings: Vec<String>,
 }
 
+/// Executor type for agent execution
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExecutorType {
+    LLM,
+    MCP,
+    Manual,
+    Skill,
+}
+
+impl fmt::Display for ExecutorType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ExecutorType::LLM => write!(f, "llm"),
+            ExecutorType::MCP => write!(f, "mcp"),
+            ExecutorType::Manual => write!(f, "manual"),
+            ExecutorType::Skill => write!(f, "skill"),
+        }
+    }
+}
+
 /// Agent statement: defines a research agent
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentStmt {
     pub name: String,
     pub agent_type: Option<String>, // research, sentiment, competitive, etc.
     pub query: String,
+    pub executor: Option<ExecutorType>, // How agent executes (llm, mcp, manual, skill)
     pub schedule: Option<Schedule>,
     pub driver_refs: Vec<String>,
 }

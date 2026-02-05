@@ -1,0 +1,49 @@
+# Test file for ExecutorType enum
+# Tests all four executor types
+
+# Test 1: LLM executor
+agent llm_agent {
+    type: "research"
+    query: "Test LLM executor for market research"
+    executor: "llm"
+    schedule: every 1 week
+}
+
+# Test 2: MCP executor
+agent mcp_agent {
+    type: "research"
+    query: "Test MCP executor with external tools"
+    executor: "mcp"
+    schedule: every 1 day
+}
+
+# Test 3: Manual executor
+agent manual_agent {
+    type: "research"
+    query: "Test manual executor - human provides evidence"
+    executor: "manual"
+}
+
+# Test 4: Skill executor
+agent skill_agent {
+    type: "sentiment"
+    query: "Test skill executor for sentiment analysis"
+    executor: "skill"
+    schedule: every 3 days
+}
+
+# Test 5: No executor specified (should work, optional field)
+agent no_executor {
+    type: "research"
+    query: "No executor specified - should parse successfully"
+    schedule: every 1 week
+}
+
+# Minimal forecast to make file valid
+driver test_driver continuous {
+    distribution: triangular(1, 2, 3)
+}
+
+model: test_driver
+
+simulate 1000

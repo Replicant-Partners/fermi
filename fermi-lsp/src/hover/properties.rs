@@ -40,6 +40,9 @@ pub fn get_property_hover(word: &str) -> Option<String> {
 
         "strength" => "**strength** - Evidence quality/strength score (0-1)\n\nHow strong or reliable this evidence is.\n\n**Example:** `strength: 0.9` (90% confidence in evidence quality)\n\n**Used in:** evidence blocks\n\n**Interpretation:** High (0.8+) = strong evidence, Medium (0.5-0.79) = moderate, Low (<0.5) = weak",
 
+        // Agent properties
+        "executor" => "**executor** - Agent execution backend\n\nSpecifies how this agent executes its query.\n\n**Values:**\n- `llm` - Use LLM (Claude) to research query\n- `mcp` - Call MCP tools for data\n- `manual` - Human-in-the-loop\n- `skill` - Invoke Anthropic skill\n\n**Example:**\n```fpl\nagent market_research {\n    executor: \"llm\"\n}\n```\n\n**Default:** llm (if not specified)",
+
         // Base rate properties (Outside View - Tetlock methodology)
         "reference_class" => "**reference_class** - Reference class definition\n\nDefine the broader category of similar situations to establish a base rate.\n\n**Example:** `reference_class: \"Major tech acquisitions in semiconductor industry\"`\n\n**Used in:** base_rate blocks\n\n**Best practice:** Choose a class that is as similar as possible to your question while having enough historical data.",
 

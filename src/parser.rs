@@ -624,6 +624,7 @@ impl Parser {
 
         let mut agent_type = None;
         let mut query = String::new();
+        let mut executor = None;
         let mut schedule = None;
         let driver_refs = Vec::new();
 
@@ -660,6 +661,9 @@ impl Parser {
                 "query" => {
                     query = self.consume_string()?;
                 }
+                "executor" => {
+                    executor = Some(self.parse_executor_type()?);
+                }
                 "schedule" => {
                     schedule = Some(self.parse_schedule()?);
                 }
@@ -675,6 +679,7 @@ impl Parser {
             name,
             agent_type,
             query,
+            executor,
             schedule,
             driver_refs,
         })
@@ -704,6 +709,26 @@ impl Parser {
             Ok(Schedule::Every { interval, unit })
         } else {
             Ok(Schedule::Once)
+        }
+    }
+
+    /// Parse executor type
+    fn parse_executor_type(&mut self) -> ParseResult<ExecutorType> {
+        let executor_str = self.consume_string()?;
+
+        match executor_str.as_str() {
+            "llm" => Ok(ExecutorType::LLM),
+            "mcp" => Ok(ExecutorType::MCP),
+            "manual" => Ok(ExecutorType::Manual),
+            "skill" => Ok(ExecutorType::Skill),
+            _ => Err(ParseError::InvalidExpression {
+                message: format!(
+                    "Invalid executor type: '{}'. Valid values: llm, mcp, manual, skill",
+                    executor_str
+                ),
+                line: self.peek().line,
+                column: self.peek().column,
+            }),
         }
     }
 

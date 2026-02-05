@@ -41,8 +41,8 @@ pub fn get_keyword_completions() -> Vec<CompletionItem> {
 
         CompletionBuilder::keyword("agent")
             .detail("Create an automated research agent to track information over time")
-            .docs("Agents can search and monitor topics on a schedule.\nExample:\nagent market_monitor {\n    query: \"semiconductor market growth\"\n    schedule: every 1 week\n}")
-            .snippet("agent ${1:name} {\n\tquery: \"${2:search query}\"\n\tschedule: every ${3:1} ${4|day,week,month|}\n}")
+            .docs("Agents can search and monitor topics on a schedule.\nExample:\nagent market_monitor {\n    type: \"research\"\n    query: \"semiconductor market growth\"\n    executor: \"llm\"\n    schedule: every 1 week\n}")
+            .snippet("agent ${1:name} {\n\ttype: \"${2|research,sentiment,competitive,market|}\"\n\tquery: \"${3:search query}\"\n\texecutor: \"${4|llm,mcp,manual,skill|}\"\n\tschedule: every ${5:1} ${6|day,week,month|}\n}")
             .sort("05_agent")
             .build(),
 
