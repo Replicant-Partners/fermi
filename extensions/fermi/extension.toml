@@ -13,7 +13,7 @@ version = "0.7.0"
 
 [grammars.fpl]
 repository = "https://github.com/Replicant-Partners/fermi"
-commit = "1406fca"
+commit = "5c0ef2c"
 
 [language_servers.fermi-lsp]
 language = "FPL"
