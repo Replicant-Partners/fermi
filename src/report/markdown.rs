@@ -125,6 +125,38 @@ pub fn generate(
         output_dir,
     )?);
     md.push_str("\n\n");
+
+    // Add sensitivity indices table with confidence intervals
+    md.push_str("### Sobol Sensitivity Indices\n\n");
+    md.push_str("| Driver | First-Order S_i | Total-Order S_Ti | 95% CI | Std Error |\n");
+    md.push_str("|--------|-----------------|------------------|--------|----------|\n");
+
+    for driver in &drivers {
+        if let Some(sens) = sensitivity.get_driver_sensitivity(&driver.name) {
+            let name = driver.display_name.as_ref().unwrap_or(&driver.name);
+            let ci_lower = (sens.total_order_index - 1.96 * sens.standard_error).max(0.0);
+            let ci_upper = (sens.total_order_index + 1.96 * sens.standard_error).min(1.0);
+
+            md.push_str(&format!(
+                "| {} | {:.3} | {:.3} | [{:.3}, {:.3}] | {:.3} |\n",
+                name,
+                sens.first_order_index,
+                sens.total_order_index,
+                ci_lower,
+                ci_upper,
+                sens.standard_error
+            ));
+        }
+    }
+
+    md.push_str("\n**Interpretation:**\n");
+    md.push_str("- **First-Order (S_i):** Direct effect of the driver alone\n");
+    md.push_str(
+        "- **Total-Order (S_Ti):** Total effect including interactions with other drivers\n",
+    );
+    md.push_str("- **95% CI:** 95% confidence interval from bootstrap resampling\n");
+    md.push_str("- Higher values indicate greater influence on the forecast outcome\n\n");
+
     md.push_str("---\n\n");
 
     // Drivers detail

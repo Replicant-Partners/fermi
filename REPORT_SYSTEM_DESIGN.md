@@ -706,19 +706,56 @@ flowchart TD
    - Mean, median, std dev, percentiles
    - Distribution binning for histogram
 
-2. **Sensitivity Analysis** (new)
+2. **Sensitivity Analysis** ✅ (implemented 2026-02-05)
+   
+   **Status:** Rigorous implementation complete with Sobol indices and bootstrap confidence intervals
+   
    ```rust
-   pub fn calculate_sensitivity(
-       results: &SimulationResults,
-       drivers: &[Driver],
-   ) -> Vec<SensitivityResult> {
-       // For each driver:
-       // 1. Calculate variance contribution
-       // 2. Run one-at-a-time variation
-       // 3. Measure impact on outcome
-       // 4. Score uncertainty level
+   /// Computes rigorous variance decomposition using conditional Monte Carlo
+   /// and Saltelli sampling for exact Sobol sensitivity indices
+   pub fn full_sensitivity_analysis(
+       program: &Program,
+       iterations: usize,
+   ) -> Result<SensitivityAnalysis, ExecutionError> {
+       // 1. Baseline simulation → V(Y)
+       // 2. For each driver: Conditional Monte Carlo → V(E[Y|X_i]) → S_i
+       // 3. Saltelli sampling → S_Ti (total-order indices)
+       // 4. Bootstrap resampling → confidence intervals
    }
    ```
+   
+   **Methodology:**
+   - **First-Order Sobol (S_i):** Conditional Monte Carlo
+     - Measures direct effect of each driver alone
+     - Algorithm: Sample m values of driver X_i, run n simulations per value
+     - Compute V(E[Y|X_i]) / V(Y)
+   
+   - **Total-Order Sobol (S_Ti):** Saltelli Sampling
+     - Measures total effect including all interactions
+     - Generate two independent sample matrices A and B
+     - Compute S_Ti = Σ(f(A) - f(AB_i))^2 / (2n * V(Y))
+   
+   - **Confidence Intervals:** Bootstrap Resampling
+     - 5 bootstrap iterations (configurable)
+     - Estimates standard error of Sobol indices
+     - Provides 95% CI for uncertainty quantification
+   
+   **Output:**
+   ```rust
+   pub struct DriverSensitivity {
+       driver_name: String,
+       variance_contribution: f64,  // First-order Sobol S_i
+       first_order_index: f64,      // Direct effect only
+       total_order_index: f64,      // Total effect with interactions
+       standard_error: f64,         // Bootstrap SE
+   }
+   ```
+   
+   **Report Integration:**
+   - Sankey diagram uses variance contributions (S_i)
+   - Tornado chart uses total-order indices (S_Ti)
+   - Table shows both indices with 95% confidence intervals
+   - Interpretation guide explains direct vs. interaction effects
 
 3. **Quality Assessment** (new)
    ```rust

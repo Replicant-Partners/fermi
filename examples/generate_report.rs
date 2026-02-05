@@ -4,7 +4,14 @@ use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load and parse the forecast
-    let fpl_code = std::fs::read_to_string("refactor_test.fpl")?;
+    let args: Vec<String> = std::env::args().collect();
+    let file_path = if args.len() > 1 {
+        &args[1]
+    } else {
+        "refactor_test.fpl"
+    };
+
+    let fpl_code = std::fs::read_to_string(file_path)?;
 
     // Lexical analysis
     let lexer = Lexer::new(&fpl_code);

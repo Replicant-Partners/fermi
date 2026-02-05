@@ -22,12 +22,10 @@
   }
 }%%%%{init: {"theme": "base", "themeVariables": {"fontSize": "16px"}}}%%
 graph LR
-    D0["Base Confidence Level"]
-    D0 -->|32%| Model
-    D1["Major Issues Discovered"]
-    D1 -->|41%| Model
-    D2["Code Quality Improvement"]
-    D2 -->|27%| Model
+    D0["base_sales"]
+    D0 -->|33%| Model
+    D1["success_multiplier"]
+    D1 -->|34%| Model
     Model["Model<br/>Computation"]
     Model -->|Result| Output["Final<br/>Distribution"]
     classDef driverClass fill:#5CCFE6,stroke:#5C6773,stroke-width:2px,color:#1F2430
@@ -35,6 +33,5 @@ graph LR
     classDef outputClass fill:#FFCC66,stroke:#5C6773,stroke-width:3px,color:#1F2430
     class D0 driverClass
     class D1 driverClass
-    class D2 driverClass
     class Model modelClass
     class Output outputClass

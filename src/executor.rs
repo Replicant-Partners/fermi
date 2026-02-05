@@ -83,6 +83,9 @@ impl ExecutionResults {
 pub struct Executor {
     iterations: usize,
     rng: StdRng,
+    /// Optional fixed driver values for conditional execution
+    /// Map of driver_name -> fixed_value
+    fixed_drivers: std::collections::HashMap<String, f64>,
 }
 
 impl Default for Executor {
@@ -96,13 +99,37 @@ impl Executor {
         Self {
             iterations,
             rng: StdRng::from_entropy(),
+            fixed_drivers: std::collections::HashMap::new(),
         }
+    }
+
+    /// Create executor with fixed driver values for conditional simulation
+    pub fn with_fixed_drivers(
+        iterations: usize,
+        fixed: std::collections::HashMap<String, f64>,
+    ) -> Self {
+        Self {
+            iterations,
+            rng: StdRng::from_entropy(),
+            fixed_drivers: fixed,
+        }
+    }
+
+    /// Fix a specific driver at a given value
+    pub fn fix_driver(&mut self, driver_name: String, value: f64) {
+        self.fixed_drivers.insert(driver_name, value);
+    }
+
+    /// Clear all fixed drivers
+    pub fn clear_fixed_drivers(&mut self) {
+        self.fixed_drivers.clear();
     }
 
     pub fn with_seed(iterations: usize, seed: u64) -> Self {
         Self {
             iterations,
             rng: StdRng::seed_from_u64(seed),
+            fixed_drivers: std::collections::HashMap::new(),
         }
     }
 
@@ -152,15 +179,21 @@ impl Executor {
             // Sample from each driver
             let mut ctx = EvaluationContext::new();
 
-            // Sample continuous drivers
+            // Sample continuous drivers (or use fixed value if specified)
             for (name, dist) in &continuous_drivers {
-                let sample = self.sample_distribution(dist, &ctx)?;
+                let sample = if let Some(&fixed_value) = self.fixed_drivers.get(name) {
+                    fixed_value
+                } else {
+                    self.sample_distribution(dist, &ctx)?
+                };
                 ctx.set(name.clone(), sample);
             }
 
-            // Sample binary drivers (Bernoulli trials)
+            // Sample binary drivers (Bernoulli trials, or use fixed value)
             for (name, prob) in &binary_drivers {
-                let sample = if self.rng.gen::<f64>() < *prob {
+                let sample = if let Some(&fixed_value) = self.fixed_drivers.get(name) {
+                    fixed_value
+                } else if self.rng.gen::<f64>() < *prob {
                     1.0
                 } else {
                     0.0
@@ -168,9 +201,13 @@ impl Executor {
                 ctx.set(name.clone(), sample);
             }
 
-            // Sample discrete drivers (categorical distribution)
+            // Sample discrete drivers (categorical distribution, or use fixed value)
             for (name, (values, weights)) in &discrete_drivers {
-                let sample = self.sample_categorical(values, weights);
+                let sample = if let Some(&fixed_value) = self.fixed_drivers.get(name) {
+                    fixed_value
+                } else {
+                    self.sample_categorical(values, weights)
+                };
                 ctx.set(name.clone(), sample);
             }
 

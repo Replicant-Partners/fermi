@@ -22,16 +22,13 @@
   }
 }%%flowchart TD
     Start([Model Computation])
-    D0["Base Confidence Level"]
+    D0["base_sales"]
     Start --> D0
-    D1["Major Issues Discovered"]
+    D1["success_multiplier"]
     Start --> D1
-    D2["Code Quality Improvement"]
-    Start --> D2
     Expr{{Expression}}
     D0 --> Expr
     D1 --> Expr
-    D2 --> Expr
     Cond{Condition?}
     Expr --> Cond
     Cond -->|True| Then[Then Branch]
