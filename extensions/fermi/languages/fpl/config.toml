@@ -2,17 +2,10 @@ name = "FPL"
 grammar = "fpl"
 path_suffixes = ["fpl"]
 line_comments = ["// "]
-block_comment = ["/* ", " */"]
-
-[brackets]
-"(" = ")"
-"{" = "}"
-"[" = "]"
-"\"" = "\""
-
-[autoclose_before]
-line_breaks = true
-
-[code_actions_on_format]
-
-[overrides]
+block_comment = { start = "/* ", end = " */" }
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["comment", "string"] },
+]
