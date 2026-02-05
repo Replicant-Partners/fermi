@@ -38,13 +38,15 @@ The Agent Bestiary transforms Fermi from a static forecasting tool into a living
   - Agent identifies gap → Requests from other agent → Other agent provides (future AKP)
 
 ### 4. **Git-Based Time Travel (Spacetime Worms)**
-- Every ontology change = git commit
+- Every ontology change = git commit (NO OPT-OUT)
 - Every forecast update = git commit (NO OPT-OUT)
-- **Forecasts are spacetime worms:** They evolve over time, we MUST track this
-- Full history of agent learning AND forecast evolution
+- **Every agent card change = git commit (NO OPT-OUT)**
+- **Everything is spacetime:** Forecasts, ontologies, agent cards all evolve over time
+- Full history of agent learning, forecast evolution, AND agent performance
 - Revert bad learning, analyze patterns
 - Track correlation: ontology evolution → Brier score improvements
 - Track correlation: agent updates → forecast accuracy changes
+- Track correlation: agent usage/cost → forecast quality
 
 ### 5. **Modular Architecture**
 - Don't drown in complexity
@@ -652,6 +654,21 @@ agents/fermi/
 ---
 
 ## Git Strategy
+
+### **Core Principle: Everything in Git (NO OPT-OUT)**
+
+**Three things MUST be version-controlled:**
+1. ✅ **Forecasts** - Spacetime worms, evolve with evidence
+2. ✅ **Ontologies** - Agent perspectives, evolve with learning  
+3. ✅ **Agent Cards** - Capabilities, usage, cost, performance
+
+**Why:** We MUST track evolution to:
+- Understand what changed when
+- Correlate agent actions with outcomes
+- Revert bad changes
+- Analyze patterns (what makes forecasts better?)
+- Maintain audit trail
+- Enable collaboration
 
 ### **Repository Structure: Monorepo**
 
