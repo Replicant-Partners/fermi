@@ -1,35 +1,58 @@
 %%{
   init: {
-    'theme': 'dark',
+    'theme': 'base',
     'themeVariables': {
-      'darkMode': 'true',
-      'background': '#1F2430',
       'primaryColor': '#5CCFE6',
       'primaryTextColor': '#CBCCC6',
       'primaryBorderColor': '#5C6773',
       'lineColor': '#FFCC66',
       'secondaryColor': '#BAE67E',
       'tertiaryColor': '#FFAE57',
+      'background': '#1F2430',
+      'mainBkg': '#1F2430',
+      'secondBkg': '#1F2430',
+      'tertiaryBkg': '#1F2430',
       'textColor': '#CBCCC6',
-      'fontSize': '14px',
-      'xyChart': {
-        'backgroundColor': '#1F2430',
-        'titleColor': '#CBCCC6',
-        'xAxisLabelColor': '#CBCCC6',
-        'xAxisTitleColor': '#CBCCC6',
-        'xAxisTickColor': '#CBCCC6',
-        'xAxisLineColor': '#CBCCC6',
-        'yAxisLabelColor': '#CBCCC6',
-        'yAxisTitleColor': '#CBCCC6',
-        'yAxisTickColor': '#CBCCC6',
-        'yAxisLineColor': '#CBCCC6',
-        'plotColorPalette': '#5CCFE6, #BAE67E, #FFCC66, #FFAE57'
-      }
+      'border1': '#5C6773',
+      'border2': '#5C6773',
+      'arrowheadColor': '#FFCC66',
+      'fontFamily': 'ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      'fontSize': '14px'
     }
   }
-}%%
-xychart-beta
-  title "Sample Data"
-  x-axis ["Q1", "Q2", "Q3", "Q4"]
-  y-axis "Revenue" 0 --> 100
-  bar [45, 60, 75, 90]
+}%%flowchart TD
+    A[Simulation Complete] --> B{New Evidence Added?}
+    B -->|Yes| C{Adjustment Needed?}
+    B -->|No| D[Generate Report]
+    
+    C -->|Yes >5% shift| E[Flag: Adjustment Required]
+    C -->|No <5% shift| F[Signal: Strong Conviction]
+    
+    E --> G[Do NOT run simulation]
+    F --> G
+    
+    G --> D
+    
+    D --> H[Calculate Statistics]
+    H --> I[Run Sensitivity Analysis]
+    I --> J[Calculate Quality Scores]
+    J --> K[Generate Charts]
+    K --> L[Generate Interpretation]
+    L --> M[Assemble Markdown]
+    M --> N[Write to results/]
+    N --> O[Git Commit]
+    O --> P[Update Timeline]
+    
+    P --> Q{Forecast Expired?}
+    Q -->|Yes| R[Agent Suggests Resolution]
+    Q -->|No| S[Done]
+    
+    R --> T[Human Reviews]
+    T --> U{Resolve Now?}
+    U -->|Yes| V[Add Resolution Block]
+    U -->|No| S
+    
+    V --> W[Calculate Brier Score]
+    W --> X[Archive as Training Data]
+    X --> Y[Update Agent Learning]
+    Y --> S

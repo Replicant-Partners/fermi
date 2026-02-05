@@ -151,6 +151,7 @@ pub struct AgentStmt {
     pub executor: Option<ExecutorType>, // How agent executes (llm, mcp, manual, skill)
     pub schedule: Option<Schedule>,
     pub driver_refs: Vec<String>,
+    pub depends_on: Vec<String>, // Other agents this agent depends on
 }
 
 /// Schedule for agent execution

@@ -627,6 +627,7 @@ impl Parser {
         let mut executor = None;
         let mut schedule = None;
         let mut driver_refs = Vec::new();
+        let mut depends_on = Vec::new();
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
             // Match field tokens (can be keywords or identifiers)
@@ -670,6 +671,9 @@ impl Parser {
                 "driver_refs" => {
                     driver_refs = self.parse_string_array()?;
                 }
+                "depends_on" => {
+                    depends_on = self.parse_string_array()?;
+                }
                 _ => {
                     self.skip_until_newline_or_rbrace();
                 }
@@ -685,6 +689,7 @@ impl Parser {
             executor,
             schedule,
             driver_refs,
+            depends_on,
         })
     }
 

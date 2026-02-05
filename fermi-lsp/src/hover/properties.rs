@@ -45,6 +45,8 @@ pub fn get_property_hover(word: &str) -> Option<String> {
 
         "driver_refs" => "**driver_refs** - Drivers this agent informs\n\nList of driver names that this agent's research should update or inform.\n\n**Format:** Array of driver names\n\n**Example:**\n```fpl\nagent market_research {\n    type: \"research\"\n    query: \"AMD market share trends\"\n    driver_refs: [\"market_share\", \"growth_rate\"]\n}\n```\n\n**Used in:** agent blocks\n\n**Validation:** Driver names must exist in the forecast",
 
+        "depends_on" => "**depends_on** - Agent dependencies\n\nList of other agent names that must run before this agent.\n\n**Format:** Array of agent names\n\n**Example:**\n```fpl\nagent competitive_analysis {\n    type: \"competitive\"\n    query: \"Compare AMD vs competitors\"\n    depends_on: [\"market_research\", \"sentiment_analysis\"]\n}\n```\n\n**Used in:** agent blocks\n\n**Purpose:** Ensures agents run in correct order when one agent needs results from another\n\n**Validation:** Agent names must exist and no circular dependencies allowed",
+
         // Base rate properties (Outside View - Tetlock methodology)
         "reference_class" => "**reference_class** - Reference class definition\n\nDefine the broader category of similar situations to establish a base rate.\n\n**Example:** `reference_class: \"Major tech acquisitions in semiconductor industry\"`\n\n**Used in:** base_rate blocks\n\n**Best practice:** Choose a class that is as similar as possible to your question while having enough historical data.",
 
