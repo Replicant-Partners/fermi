@@ -58,6 +58,42 @@ impl zed::Extension for FermiExtension {
                     sections: vec![],
                 })
             }
+            "generate-report" => {
+                let file_path = args
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "your-forecast.fpl".to_string());
+
+                let root = worktree
+                    .map(|wt| wt.root_path())
+                    .unwrap_or_else(|| ".".to_string());
+
+                let output = format!(
+                    "# Generate FPL Report\n\n\
+                    To generate a detailed markdown report with visualizations:\n\n\
+                    ```bash\n\
+                    # From your project root:\n\
+                    cargo run --release --example generate_report {}\n\
+                    ```\n\n\
+                    **Current workspace:** `{}`\n\n\
+                    **Output location:** `results/prototype/`\n\n\
+                    The report will include:\n\
+                    - 📊 Distribution histogram (themed)\n\
+                    - 🧠 Forecast structure mindmap\n\
+                    - 🔄 Model flow diagram\n\
+                    - ✨ Sparklines throughout\n\
+                    - 📈 Statistical summary\n\
+                    - 📋 Detailed driver analysis\n\n\
+                    **Requirements:** Mermaid CLI (mmdc) for chart images\n\
+                    **Install:** `npm install -g @mermaid-js/mermaid-cli`",
+                    file_path, root
+                );
+
+                Ok(zed::SlashCommandOutput {
+                    text: output,
+                    sections: vec![],
+                })
+            }
             _ => Err(format!("Unknown command: {}", command.name))?,
         }
     }

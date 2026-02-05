@@ -1,0 +1,15 @@
+// This is a comment at the start
+question "Does comment support work?"
+
+// Test inline comment before driver
+driver test_value continuous {
+    // Comment inside a block
+    distribution: triangular(50, 100, 150)
+    unit: "units"
+}
+
+// Model with comment
+model: test_value * 2
+
+// Simulate with comment
+simulate 1000 iterations

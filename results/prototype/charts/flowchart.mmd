@@ -1,0 +1,41 @@
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#5CCFE6',
+      'primaryTextColor': '#CBCCC6',
+      'primaryBorderColor': '#5C6773',
+      'lineColor': '#FFCC66',
+      'secondaryColor': '#BAE67E',
+      'tertiaryColor': '#FFAE57',
+      'background': '#1F2430',
+      'mainBkg': '#1F2430',
+      'secondBkg': '#1F2430',
+      'tertiaryBkg': '#1F2430',
+      'textColor': '#CBCCC6',
+      'border1': '#5C6773',
+      'border2': '#5C6773',
+      'arrowheadColor': '#FFCC66',
+      'fontFamily': 'ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      'fontSize': '14px'
+    }
+  }
+}%%flowchart TD
+    Start([Model Computation])
+    D0["Base Confidence Level"]
+    Start --> D0
+    D1["Major Issues Discovered"]
+    Start --> D1
+    D2["Code Quality Improvement"]
+    Start --> D2
+    Expr{{Expression}}
+    D0 --> Expr
+    D1 --> Expr
+    D2 --> Expr
+    Cond{Condition?}
+    Expr --> Cond
+    Cond -->|True| Then[Then Branch]
+    Cond -->|False| Else[Else Branch]
+    Then --> Result
+    Else --> Result
+    Result([Final Result])

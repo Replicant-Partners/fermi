@@ -8,6 +8,7 @@ pub mod executor;
 /// including lexer, parser, semantic analyzer, and execution engine.
 pub mod lexer;
 pub mod parser;
+pub mod report;
 pub mod semantic;
 pub mod symbol_table;
 pub mod types;
@@ -18,6 +19,7 @@ pub use evaluator::{evaluate, EvalError, EvaluationContext};
 pub use executor::{ExecutionError, ExecutionResults, Executor};
 pub use lexer::{Lexer, LexerError, Token, TokenType};
 pub use parser::{ParseError, Parser};
+pub use report::generate_report;
 pub use semantic::{SemanticAnalysis, SemanticAnalyzer, SemanticError};
 pub use symbol_table::{Symbol, SymbolTable, SymbolTableBuilder, SymbolType};
 pub use types::{BinaryOp, Type, TypeEnvironment, UnaryOp};

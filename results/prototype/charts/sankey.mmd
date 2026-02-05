@@ -1,0 +1,40 @@
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#5CCFE6',
+      'primaryTextColor': '#CBCCC6',
+      'primaryBorderColor': '#5C6773',
+      'lineColor': '#FFCC66',
+      'secondaryColor': '#BAE67E',
+      'tertiaryColor': '#FFAE57',
+      'background': '#1F2430',
+      'mainBkg': '#1F2430',
+      'secondBkg': '#1F2430',
+      'tertiaryBkg': '#1F2430',
+      'textColor': '#CBCCC6',
+      'border1': '#5C6773',
+      'border2': '#5C6773',
+      'arrowheadColor': '#FFCC66',
+      'fontFamily': 'ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      'fontSize': '14px'
+    }
+  }
+}%%%%{init: {"theme": "base", "themeVariables": {"fontSize": "16px"}}}%%
+graph LR
+    D0["Base Confidence Level"]
+    D0 -->|10| Model
+    D1["Major Issues Discovered"]
+    D1 -->|5| Model
+    D2["Code Quality Improvement"]
+    D2 -->|8| Model
+    Model["Model<br/>Computation"]
+    Model -->|Result| Output["Final<br/>Distribution"]
+    classDef driverClass fill:#5CCFE6,stroke:#5C6773,stroke-width:2px,color:#1F2430
+    classDef modelClass fill:#BAE67E,stroke:#5C6773,stroke-width:3px,color:#1F2430
+    classDef outputClass fill:#FFCC66,stroke:#5C6773,stroke-width:3px,color:#1F2430
+    class D0 driverClass
+    class D1 driverClass
+    class D2 driverClass
+    class Model modelClass
+    class Output outputClass

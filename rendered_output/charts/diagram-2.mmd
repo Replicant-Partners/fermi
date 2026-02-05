@@ -1,0 +1,29 @@
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#5CCFE6',
+      'primaryTextColor': '#CBCCC6',
+      'primaryBorderColor': '#5C6773',
+      'lineColor': '#FFCC66',
+      'secondaryColor': '#BAE67E',
+      'tertiaryColor': '#FFAE57',
+      'background': '#1F2430',
+      'mainBkg': '#1F2430',
+      'secondBkg': '#1F2430',
+      'tertiaryBkg': '#1F2430',
+      'textColor': '#CBCCC6',
+      'border1': '#5C6773',
+      'border2': '#5C6773',
+      'arrowheadColor': '#FFCC66',
+      'fontFamily': 'ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      'fontSize': '14px'
+    }
+  }
+}%%flowchart TD
+    Start([Start]) --> Process[Process Data]
+    Process --> Decision{Is Valid?}
+    Decision -->|Yes| Success[Success]
+    Decision -->|No| Error[Error]
+    Success --> End([End])
+    Error --> End

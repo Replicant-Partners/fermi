@@ -275,7 +275,15 @@ impl Lexer {
             ';' => self.add_token_here(TokenType::Semicolon, c.to_string()),
             '+' => self.add_token_here(TokenType::Plus, c.to_string()),
             '*' => self.add_token_here(TokenType::Star, c.to_string()),
-            '/' => self.add_token_here(TokenType::Slash, c.to_string()),
+            '/' => {
+                // Check if this is a comment
+                if self.peek() == '/' {
+                    self.advance(); // consume second '/'
+                    self.scan_comment();
+                } else {
+                    self.add_token_here(TokenType::Slash, c.to_string());
+                }
+            }
             '%' => self.add_token_here(TokenType::Percent, c.to_string()),
             '^' => self.add_token_here(TokenType::Caret, c.to_string()),
 

@@ -25,3 +25,7 @@ FPL = "fpl"
 [slash_commands.run-forecast]
 description = "Execute the current FPL forecast"
 requires_argument = false
+
+[slash_commands.generate-report]
+description = "Generate a detailed markdown report with visualizations"
+requires_argument = false

@@ -304,7 +304,7 @@ fn process_source(source: &str) {
                         println!("{} Simulation completed successfully!", "✓".bright_green());
                         println!();
 
-                        // Display results
+                        // Display results with sparklines
                         println!("{}", "Simulation Results:".bright_cyan().bold());
                         println!(
                             "  {} {}",
@@ -313,19 +313,46 @@ fn process_source(source: &str) {
                         );
                         println!();
 
+                        // Generate sparklines
+                        use fermi::report::sparkline;
+                        let dist_sparkline = sparkline::generate(&[
+                            result.p5,
+                            result.p25,
+                            result.median,
+                            result.p75,
+                            result.p95,
+                        ]);
+                        let shape = sparkline::distribution_shape(
+                            result.mean,
+                            result.median,
+                            result.std_dev,
+                        );
+                        let histogram = result.histogram(20);
+                        let hist_sparkline = sparkline::from_histogram(&histogram);
+
                         println!("{}", "  Statistics:".bright_cyan());
                         println!("    {} {:.2}", "Mean:".bright_blue(), result.mean);
+                        println!("    {} {:.2}", "Median:".bright_blue(), result.median);
                         println!("    {} {:.2}", "Std Dev:".bright_blue(), result.std_dev);
+                        println!(
+                            "    {} {} {}",
+                            "Shape:".bright_blue(),
+                            dist_sparkline,
+                            shape
+                        );
+                        println!("    {} {}", "Distribution:".bright_blue(), hist_sparkline);
                         println!();
 
                         println!("{}", "  Percentiles:".bright_cyan());
-                        println!("    {} {:.2}", "5th:".bright_blue(), result.p5);
+                        println!("    {} {:.2}  ├", "5th:".bright_blue(), result.p5);
+                        println!("    {} {:.2}  ├", "25th:".bright_blue(), result.p25);
                         println!(
-                            "    {} {:.2}",
+                            "    {} {:.2}  █",
                             "50th (Median):".bright_blue(),
                             result.median
                         );
-                        println!("    {} {:.2}", "95th:".bright_blue(), result.p95);
+                        println!("    {} {:.2}  ┤", "75th:".bright_blue(), result.p75);
+                        println!("    {} {:.2}  ┤", "95th:".bright_blue(), result.p95);
                         println!();
 
                         println!("{}", "  Ranges:".bright_cyan());
