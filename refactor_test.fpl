@@ -1,7 +1,16 @@
 // Test forecast to verify refactored LSP functionality
 // Tests: completions, hover, diagnostics, and execution
 
-question "Will the refactored LSP work perfectly?"
+question "Will the refactored LSP work perfectly?" {
+    base_rate {
+        reference_class: "Major software refactoring projects with comprehensive test coverage"
+        historical_frequency: 0.75p
+        sample_size: 50
+        source: "Internal analysis of past refactoring projects (2020-2025)"
+        reasoning: "Projects with 95%+ test coverage and clean build typically succeed. However, edge cases and production issues can still emerge."
+        generated_by: human
+    }
+}
 
 // Test continuous driver with all properties
 driver base_confidence continuous {

@@ -28,6 +28,11 @@ pub enum ParseError {
         line: usize,
         column: usize,
     },
+    MissingField {
+        field: String,
+        context: String,
+        line: usize,
+    },
 }
 
 impl fmt::Display for ParseError {
@@ -64,6 +69,17 @@ impl fmt::Display for ParseError {
                     f,
                     "Invalid distribution: {} at {}:{}",
                     message, line, column
+                )
+            }
+            ParseError::MissingField {
+                field,
+                context,
+                line,
+            } => {
+                write!(
+                    f,
+                    "Missing required field '{}' in {} at line {}",
+                    field, context, line
                 )
             }
         }
@@ -121,11 +137,191 @@ impl Parser {
 
         let text = self.consume_string()?;
 
-        // Optional target date and resolution criteria can be added later
+        // Check if there's a block with base_rate (optional)
+        let mut base_rate = None;
+        let mut target_date = None;
+        let mut resolution_criteria = None;
+
+        if self.match_token(&TokenType::LBrace) {
+            // Parse question block with optional fields
+            while !self.check(&TokenType::RBrace) && !self.is_at_end() {
+                // Check for base_rate keyword
+                if self.match_token(&TokenType::BaseRate) {
+                    base_rate = Some(self.parse_base_rate()?);
+                } else if let TokenType::Identifier(field) = &self.peek().token_type.clone() {
+                    // Handle other optional fields
+                    let field_name = field.clone();
+                    self.advance();
+                    self.consume_token(TokenType::Colon, ":")?;
+
+                    match field_name.as_str() {
+                        "target_date" => {
+                            target_date = Some(self.consume_string()?);
+                        }
+                        "resolution_criteria" => {
+                            resolution_criteria = Some(self.consume_string()?);
+                        }
+                        _ => {
+                            // Skip unknown fields
+                            self.skip_until_newline_or_rbrace();
+                        }
+                    }
+                } else {
+                    // Skip unexpected tokens
+                    self.advance();
+                }
+            }
+
+            self.consume_token(TokenType::RBrace, "}")?;
+        }
+
         Ok(QuestionStmt {
             text,
-            target_date: None,
-            resolution_criteria: None,
+            base_rate,
+            target_date,
+            resolution_criteria,
+        })
+    }
+
+    /// Parse base_rate block
+    fn parse_base_rate(&mut self) -> ParseResult<BaseRate> {
+        use crate::ast::{BaseRate, GeneratedBy};
+
+        self.consume_token(TokenType::LBrace, "{")?;
+
+        let mut reference_class = None;
+        let mut historical_frequency = None;
+        let mut sample_size = None;
+        let mut source = None;
+        let mut reasoning = None;
+        let mut generated_by = None;
+
+        while !self.check(&TokenType::RBrace) && !self.is_at_end() {
+            // Match field tokens (can be keywords or identifiers)
+            let field_token = self.peek().token_type.clone();
+
+            let field_name: String = match &field_token {
+                TokenType::ReferenceClass => {
+                    self.advance();
+                    "reference_class".to_string()
+                }
+                TokenType::HistoricalFrequency => {
+                    self.advance();
+                    "historical_frequency".to_string()
+                }
+                TokenType::SampleSize => {
+                    self.advance();
+                    "sample_size".to_string()
+                }
+                TokenType::Source => {
+                    self.advance();
+                    "source".to_string()
+                }
+                TokenType::Reasoning => {
+                    self.advance();
+                    "reasoning".to_string()
+                }
+                TokenType::GeneratedBy => {
+                    self.advance();
+                    "generated_by".to_string()
+                }
+                TokenType::Identifier(id) => {
+                    let name = id.clone();
+                    self.advance();
+                    name
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "field name".to_string(),
+                        found: field_token,
+                        line: self.peek().line,
+                        column: self.peek().column,
+                    });
+                }
+            };
+
+            self.consume_token(TokenType::Colon, ":")?;
+
+            match field_name.as_str() {
+                "reference_class" => {
+                    reference_class = Some(self.consume_string()?);
+                }
+                "historical_frequency" => {
+                    historical_frequency = Some(self.parse_probability_value()?);
+                }
+                "sample_size" => {
+                    let size = self.parse_number()? as usize;
+                    sample_size = Some(size);
+                }
+                "source" => {
+                    source = Some(self.consume_string()?);
+                }
+                "reasoning" => {
+                    reasoning = Some(self.consume_string()?);
+                }
+                "generated_by" => {
+                    // Parse agent name or "human"
+                    if self.match_token(&TokenType::Human) {
+                        generated_by = Some(GeneratedBy::Human);
+                    } else if self.match_token(&TokenType::Agent) {
+                        // Expect agent name (identifier or string)
+                        generated_by = Some(GeneratedBy::Agent("agent".to_string()));
+                    } else if let TokenType::Identifier(agent_name) =
+                        &self.peek().token_type.clone()
+                    {
+                        generated_by = Some(GeneratedBy::Agent(agent_name.clone()));
+                        self.advance();
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "'human' or agent name".to_string(),
+                            found: self.peek().token_type.clone(),
+                            line: self.peek().line,
+                            column: self.peek().column,
+                        });
+                    }
+                }
+                _ => {
+                    // Skip unknown fields
+                    self.skip_until_newline_or_rbrace();
+                }
+            }
+        }
+
+        self.consume_token(TokenType::RBrace, "}")?;
+
+        // Validate required fields
+        let reference_class = reference_class.ok_or_else(|| ParseError::MissingField {
+            field: "reference_class".to_string(),
+            context: "base_rate".to_string(),
+            line: self.peek().line,
+        })?;
+
+        let historical_frequency =
+            historical_frequency.ok_or_else(|| ParseError::MissingField {
+                field: "historical_frequency".to_string(),
+                context: "base_rate".to_string(),
+                line: self.peek().line,
+            })?;
+
+        let source = source.ok_or_else(|| ParseError::MissingField {
+            field: "source".to_string(),
+            context: "base_rate".to_string(),
+            line: self.peek().line,
+        })?;
+
+        let generated_by = generated_by.ok_or_else(|| ParseError::MissingField {
+            field: "generated_by".to_string(),
+            context: "base_rate".to_string(),
+            line: self.peek().line,
+        })?;
+
+        Ok(BaseRate {
+            reference_class,
+            historical_frequency,
+            sample_size,
+            source,
+            reasoning,
+            generated_by,
         })
     }
 
@@ -338,7 +534,33 @@ impl Parser {
         let key_findings = Vec::new();
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
-            let field = self.consume_identifier()?;
+            // Match field tokens (can be keywords or identifiers)
+            let field_token = self.peek().token_type.clone();
+
+            let field: String = match &field_token {
+                TokenType::Source => {
+                    self.advance();
+                    "source".to_string()
+                }
+                TokenType::Reasoning => {
+                    self.advance();
+                    "reasoning".to_string()
+                }
+                TokenType::Identifier(id) => {
+                    let name = id.clone();
+                    self.advance();
+                    name
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "field name".to_string(),
+                        found: field_token,
+                        line: self.peek().line,
+                        column: self.peek().column,
+                    });
+                }
+            };
+
             self.consume_token(TokenType::Colon, ":")?;
 
             match field.as_str() {
@@ -390,7 +612,29 @@ impl Parser {
         let driver_refs = Vec::new();
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
-            let field = self.consume_identifier()?;
+            // Match field tokens (can be keywords or identifiers)
+            let field_token = self.peek().token_type.clone();
+
+            let field: String = match &field_token {
+                TokenType::Schedule => {
+                    self.advance();
+                    "schedule".to_string()
+                }
+                TokenType::Identifier(id) => {
+                    let name = id.clone();
+                    self.advance();
+                    name
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "field name".to_string(),
+                        found: field_token,
+                        line: self.peek().line,
+                        column: self.peek().column,
+                    });
+                }
+            };
+
             self.consume_token(TokenType::Colon, ":")?;
 
             match field.as_str() {

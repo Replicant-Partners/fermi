@@ -49,6 +49,11 @@ pub struct ExecutionResults {
     pub min: f64,
     pub max: f64,
     pub iterations: usize,
+
+    // Base rate and divergence (Tetlock methodology)
+    pub base_rate: Option<f64>, // Historical frequency from reference class
+    pub divergence_relative: Option<f64>, // (mean - base_rate) / base_rate
+    pub divergence_absolute: Option<f64>, // mean - base_rate
 }
 
 impl ExecutionResults {
@@ -135,14 +140,21 @@ impl Executor {
 
     /// Execute a Monte Carlo simulation on the given program
     pub fn execute(&mut self, program: &Program) -> ExecutionResult2<ExecutionResults> {
-        // Find drivers and model
+        // Find drivers, model, and base_rate
         let mut continuous_drivers: HashMap<String, &Distribution> = HashMap::new();
         let mut binary_drivers: HashMap<String, f64> = HashMap::new();
         let mut discrete_drivers: HashMap<String, (Vec<f64>, Vec<f64>)> = HashMap::new();
         let mut model_expr = None;
+        let mut base_rate: Option<f64> = None;
 
         for stmt in &program.statements {
             match stmt {
+                Statement::Question(question) => {
+                    // Extract base_rate if present
+                    if let Some(br) = &question.base_rate {
+                        base_rate = Some(br.historical_frequency);
+                    }
+                }
                 Statement::Driver(driver) => match driver.driver_type {
                     DriverType::Continuous => {
                         if let Some(ref dist) = driver.distribution {
@@ -232,6 +244,15 @@ impl Executor {
         let p75 = sorted[(sorted.len() as f64 * 0.75) as usize];
         let p95 = sorted[(sorted.len() as f64 * 0.95) as usize];
 
+        // Calculate divergence if base_rate is present
+        let (divergence_relative, divergence_absolute) = if let Some(br) = base_rate {
+            let div_abs = mean - br;
+            let div_rel = if br != 0.0 { div_abs / br } else { 0.0 };
+            (Some(div_rel), Some(div_abs))
+        } else {
+            (None, None)
+        };
+
         Ok(ExecutionResults {
             samples,
             mean,
@@ -244,6 +265,9 @@ impl Executor {
             min,
             max,
             iterations: self.iterations,
+            base_rate,
+            divergence_relative,
+            divergence_absolute,
         })
     }
 
@@ -366,6 +390,7 @@ mod tests {
             statements: vec![
                 Statement::Question(QuestionStmt {
                     text: "test".to_string(),
+                    base_rate: None,
                     target_date: None,
                     resolution_criteria: None,
                 }),
@@ -422,6 +447,7 @@ mod tests {
             statements: vec![
                 Statement::Question(QuestionStmt {
                     text: "test".to_string(),
+                    base_rate: None,
                     target_date: None,
                     resolution_criteria: None,
                 }),
@@ -491,6 +517,9 @@ mod tests {
             min: 1.0,
             max: 5.0,
             iterations: 5,
+            base_rate: None,
+            divergence_relative: None,
+            divergence_absolute: None,
         };
 
         let histogram = results.histogram(5);

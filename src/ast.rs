@@ -25,8 +25,27 @@ pub enum Statement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuestionStmt {
     pub text: String,
+    pub base_rate: Option<BaseRate>,
     pub target_date: Option<String>,
     pub resolution_criteria: Option<String>,
+}
+
+/// Base Rate (Outside View) - Tetlock methodology
+#[derive(Debug, Clone, PartialEq)]
+pub struct BaseRate {
+    pub reference_class: String,
+    pub historical_frequency: f64, // 0.0 to 1.0
+    pub sample_size: Option<usize>,
+    pub source: String,
+    pub reasoning: Option<String>,
+    pub generated_by: GeneratedBy,
+}
+
+/// Who generated the base rate
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeneratedBy {
+    Agent(String), // Agent name
+    Human,
 }
 
 /// Driver statement: defines a forecasting driver

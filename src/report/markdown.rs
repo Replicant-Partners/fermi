@@ -44,6 +44,90 @@ pub fn generate(
 
     md.push_str("---\n\n");
 
+    // Outside View vs Inside View (Base Rate & Divergence)
+    if let (Some(base_rate), Some(div_rel), Some(div_abs)) = (
+        results.base_rate,
+        results.divergence_relative,
+        results.divergence_absolute,
+    ) {
+        md.push_str("## 🎯 Outside View vs Inside View\n\n");
+
+        // Extract base rate details from question
+        let base_rate_info = extract_base_rate_info(forecast);
+
+        md.push_str("### Outside View (Base Rate)\n");
+        if let Some((ref_class, sample_size, source, reasoning)) = base_rate_info {
+            md.push_str(&format!("**Reference Class:** {}\n", ref_class));
+            md.push_str(&format!(
+                "**Historical Frequency:** {:.1}%\n",
+                base_rate * 100.0
+            ));
+            if let Some(n) = sample_size {
+                md.push_str(&format!("**Sample Size:** {} cases\n", n));
+            }
+            md.push_str(&format!("**Source:** {}\n", source));
+            if let Some(reasoning_text) = reasoning {
+                md.push_str(&format!("**Reasoning:** {}\n", reasoning_text));
+            }
+        } else {
+            md.push_str(&format!(
+                "**Historical Frequency:** {:.1}%\n",
+                base_rate * 100.0
+            ));
+        }
+        md.push_str("\n");
+
+        md.push_str("### Inside View (Your Forecast)\n");
+        md.push_str(&format!("**Mean:** {:.1}%\n", results.mean * 100.0));
+        md.push_str(&format!("**Median:** {:.1}%\n", results.median * 100.0));
+        md.push_str(&format!(
+            "**90% CI:** [{:.1}%, {:.1}%]\n\n",
+            results.p5 * 100.0,
+            results.p95 * 100.0
+        ));
+
+        md.push_str("### Divergence Analysis\n");
+        md.push_str(&format!(
+            "**Relative Divergence:** {:+.1}%\n",
+            div_rel * 100.0
+        ));
+        md.push_str(&format!(
+            "**Absolute Divergence:** {:+.1} percentage points\n\n",
+            div_abs * 100.0
+        ));
+
+        // Interpretation
+        let abs_div_rel = div_rel.abs();
+        let interpretation = if abs_div_rel < 0.10 {
+            "Your forecast closely aligns with conventional wisdom from the reference class."
+        } else if abs_div_rel < 0.30 {
+            "Your forecast shows minor divergence from the base rate."
+        } else if abs_div_rel < 0.75 {
+            "**Moderate divergence detected.** Your inside analysis suggests factors not captured by the reference class average."
+        } else if abs_div_rel < 1.50 {
+            "**Significant divergence.** You have a contrarian thesis or special knowledge."
+        } else {
+            "**Strong divergence.** Your view differs substantially from conventional wisdom. Verify your unique insights."
+        };
+
+        md.push_str(&format!("**Interpretation:** {}\n\n", interpretation));
+
+        if div_rel > 0.0 {
+            md.push_str(&format!(
+                "*Your forecast is {:.0}% higher than the base rate. ",
+                div_rel * 100.0
+            ));
+        } else {
+            md.push_str(&format!(
+                "*Your forecast is {:.0}% lower than the base rate. ",
+                div_rel.abs() * 100.0
+            ));
+        }
+        md.push_str("This divergence represents your assessment that specific drivers create outcomes different from the historical reference class.*\n\n");
+
+        md.push_str("---\n\n");
+    }
+
     // Statistics section with image
     md.push_str("## 📊 Distribution\n\n");
     md.push_str(&charts_image::generate_histogram_with_image(
@@ -257,6 +341,24 @@ fn extract_question(forecast: &Program) -> String {
         }
     }
     "Unknown Question".to_string()
+}
+
+fn extract_base_rate_info(
+    forecast: &Program,
+) -> Option<(String, Option<usize>, String, Option<String>)> {
+    for stmt in &forecast.statements {
+        if let Statement::Question(q) = stmt {
+            if let Some(br) = &q.base_rate {
+                return Some((
+                    br.reference_class.clone(),
+                    br.sample_size,
+                    br.source.clone(),
+                    br.reasoning.clone(),
+                ));
+            }
+        }
+    }
+    None
 }
 
 fn extract_drivers(forecast: &Program) -> Vec<DriverStmt> {

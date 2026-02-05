@@ -28,6 +28,16 @@ pub enum TokenType {
     Schedule,
     Every,
 
+    // Base Rate (Outside View)
+    BaseRate,
+    ReferenceClass,
+    HistoricalFrequency,
+    SampleSize,
+    Source,
+    Reasoning,
+    GeneratedBy,
+    Human,
+
     // Literals
     String(String),
     Number(f64),
@@ -623,6 +633,16 @@ impl Lexer {
             "agent" => TokenType::Agent,
             "model" => TokenType::Model,
             "simulate" => TokenType::Simulate,
+
+            // Base Rate (Outside View)
+            "base_rate" => TokenType::BaseRate,
+            "reference_class" => TokenType::ReferenceClass,
+            "historical_frequency" => TokenType::HistoricalFrequency,
+            "sample_size" => TokenType::SampleSize,
+            "source" => TokenType::Source,
+            "reasoning" => TokenType::Reasoning,
+            "generated_by" => TokenType::GeneratedBy,
+            "human" => TokenType::Human,
 
             // Driver types
             "continuous" => TokenType::Continuous,

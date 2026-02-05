@@ -304,6 +304,104 @@ fn process_source(source: &str) {
                         println!("{} Simulation completed successfully!", "✓".bright_green());
                         println!();
 
+                        // Display Outside View vs Inside View (Base Rate & Divergence)
+                        if let (Some(base_rate), Some(div_rel), Some(div_abs)) = (
+                            result.base_rate,
+                            result.divergence_relative,
+                            result.divergence_absolute,
+                        ) {
+                            println!("{}", "🎯 Outside View vs Inside View".bright_cyan().bold());
+                            println!("{}", "─".repeat(50));
+                            println!();
+
+                            // Extract base rate details from question
+                            let mut base_rate_info: Option<(
+                                String,
+                                Option<usize>,
+                                String,
+                                Option<String>,
+                            )> = None;
+                            for stmt in &program.statements {
+                                if let Statement::Question(q) = stmt {
+                                    if let Some(br) = &q.base_rate {
+                                        base_rate_info = Some((
+                                            br.reference_class.clone(),
+                                            br.sample_size,
+                                            br.source.clone(),
+                                            br.reasoning.clone(),
+                                        ));
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if let Some((ref_class, sample_size, source, reasoning)) =
+                                base_rate_info
+                            {
+                                println!("{}", "  Outside View (Base Rate)".bright_yellow().bold());
+                                println!("    {} {}", "Reference Class:".bright_blue(), ref_class);
+                                println!(
+                                    "    {} {:.1}%",
+                                    "Historical Frequency:".bright_blue(),
+                                    base_rate * 100.0
+                                );
+                                if let Some(size) = sample_size {
+                                    println!("    {} {}", "Sample Size:".bright_blue(), size);
+                                }
+                                println!("    {} {}", "Source:".bright_blue(), source);
+                                if let Some(reason) = reasoning {
+                                    println!("    {} {}", "Reasoning:".bright_blue(), reason);
+                                }
+                                println!();
+
+                                println!(
+                                    "{}",
+                                    "  Inside View (Your Forecast)".bright_green().bold()
+                                );
+                                println!("    {} {:.2}", "Mean:".bright_blue(), result.mean);
+                                println!("    {} {:.2}", "Median:".bright_blue(), result.median);
+                                println!(
+                                    "    {} [{:.2}, {:.2}]",
+                                    "90% CI:".bright_blue(),
+                                    result.p5,
+                                    result.p95
+                                );
+                                println!();
+
+                                println!("{}", "  Divergence Analysis".bright_magenta().bold());
+                                println!(
+                                    "    {} {:.1}%",
+                                    "Relative Divergence:".bright_blue(),
+                                    div_rel * 100.0
+                                );
+                                println!(
+                                    "    {} {:.2}",
+                                    "Absolute Divergence:".bright_blue(),
+                                    div_abs
+                                );
+
+                                // Interpretation
+                                let magnitude = div_rel.abs();
+                                let interpretation = if magnitude < 0.1 {
+                                    "Minor divergence - Your forecast aligns closely with the base rate"
+                                } else if magnitude < 0.3 {
+                                    "Moderate divergence - Your forecast differs somewhat from historical patterns"
+                                } else if magnitude < 0.5 {
+                                    "Significant divergence - Your forecast shows a strong thesis diverging from base rate"
+                                } else {
+                                    "Extreme divergence - Your forecast strongly contradicts historical patterns. Ensure you have exceptional evidence."
+                                };
+                                println!(
+                                    "    {} {}",
+                                    "Interpretation:".bright_blue(),
+                                    interpretation
+                                );
+                                println!();
+                                println!("{}", "─".repeat(50));
+                                println!();
+                            }
+                        }
+
                         // Display results with sparklines
                         println!("{}", "Simulation Results:".bright_cyan().bold());
                         println!(

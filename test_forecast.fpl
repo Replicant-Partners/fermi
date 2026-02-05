@@ -1,17 +1,26 @@
-question "What will Q1 revenue be?"
-
-driver base_sales continuous {
-    distribution: triangular(10000, 15000, 25000)
-    unit: "USD"
-    rationale: "Based on historical Q4 data"
+question "Will we meet the Q1 revenue target of $20,000?" {
+    base_rate {
+        reference_class: "SaaS companies with similar ARR in Q1 performance"
+        historical_frequency: 0.65p
+        sample_size: 200
+        source: "SaaS Capital Q1 Revenue Analysis (2020-2025)"
+        reasoning: "65% of similar-sized SaaS companies meet or exceed Q1 revenue targets when major renewals are pending"
+        generated_by: human
+    }
 }
 
-driver success_multiplier binary {
+driver baseline_probability continuous {
+    distribution: uniform(0.55, 0.75)
+    unit: "probability"
+    rationale: "Base probability of meeting target without major client"
+}
+
+driver major_client_renews binary {
     probability: 0.65p
-    impact_multiplier: 1.4
-    rationale: "Major client renewal pending"
+    impact_multiplier: 1.3
+    rationale: "Major client renewal pending - would boost success probability significantly"
 }
 
-model: base_sales * (if success_multiplier then 1.4 else 1.0)
+model: if major_client_renews then (baseline_probability * 1.3) else baseline_probability
 
 simulate 10000 iterations

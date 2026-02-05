@@ -140,8 +140,41 @@ impl SemanticAnalyzer {
             Statement::Agent(_) => {
                 // Agents are validated separately
             }
-            Statement::Question(_) => {
-                // Question is just metadata
+            Statement::Question(question) => {
+                self.analyze_question(question);
+            }
+        }
+    }
+
+    /// Analyze a question
+    fn analyze_question(&mut self, question: &QuestionStmt) {
+        // Validate base_rate if present
+        if let Some(base_rate) = &question.base_rate {
+            // Check historical_frequency range
+            if !(0.0..=1.0).contains(&base_rate.historical_frequency) {
+                self.errors.push(SemanticError::ValidationError {
+                    rule: "historical_frequency_range".to_string(),
+                    message: format!(
+                        "historical_frequency must be between 0.0 and 1.0, got {}",
+                        base_rate.historical_frequency
+                    ),
+                });
+            }
+
+            // Check that reference_class is not empty
+            if base_rate.reference_class.trim().is_empty() {
+                self.errors.push(SemanticError::ValidationError {
+                    rule: "empty_reference_class".to_string(),
+                    message: "reference_class cannot be empty".to_string(),
+                });
+            }
+
+            // Check that source is not empty
+            if base_rate.source.trim().is_empty() {
+                self.errors.push(SemanticError::ValidationError {
+                    rule: "empty_source".to_string(),
+                    message: "base_rate source cannot be empty".to_string(),
+                });
             }
         }
     }
@@ -566,13 +599,26 @@ impl SemanticAnalyzer {
         }
 
         // Rule: Should have a question
-        let has_question = program
-            .statements
-            .iter()
-            .any(|s| matches!(s, Statement::Question(_)));
-        if !has_question {
+        let question = program.statements.iter().find_map(|s| {
+            if let Statement::Question(q) = s {
+                Some(q)
+            } else {
+                None
+            }
+        });
+
+        if question.is_none() {
             self.warnings
                 .push("Forecast should have a question statement".to_string());
+        }
+
+        // Rule: Question should have base_rate (Tetlock methodology)
+        if let Some(q) = question {
+            if q.base_rate.is_none() {
+                self.warnings.push(
+                    "⚠️  Missing base_rate: Start with outside view (base rate from reference class) before inside analysis. This is essential for proper forecasting methodology.".to_string()
+                );
+            }
         }
 
         // Rule: Recommend having evidence
