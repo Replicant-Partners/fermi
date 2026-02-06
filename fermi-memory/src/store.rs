@@ -182,6 +182,45 @@ impl MemoryStore {
     }
 
     /// Get agent by name
+    /// Get agent by ID
+    pub async fn get_agent(&self, agent_id: Uuid) -> Result<Option<Agent>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                agent_id, agent_name, agent_type, version, tier,
+                executor_type, model, temperature, mcp_servers, description, author,
+                current_ontology_commit, current_ontology_snapshot_id,
+                last_consolidated_at
+            FROM agents
+            WHERE agent_id = $1
+            "#,
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(Agent {
+                agent_id: row.try_get("agent_id")?,
+                agent_name: row.try_get("agent_name")?,
+                agent_type: row.try_get("agent_type")?,
+                version: row.try_get("version")?,
+                tier: row.try_get("tier")?,
+                executor_type: row.try_get("executor_type")?,
+                model: row.try_get("model")?,
+                temperature: row.try_get("temperature")?,
+                mcp_servers: row.try_get("mcp_servers")?,
+                description: row.try_get("description")?,
+                author: row.try_get("author")?,
+                current_ontology_commit: row.try_get("current_ontology_commit")?,
+                current_ontology_snapshot_id: row.try_get("current_ontology_snapshot_id")?,
+                last_consolidated_at: row.try_get("last_consolidated_at")?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// Get agent by name
     pub async fn get_agent_by_name(&self, agent_name: &str) -> Result<Agent> {
         let row = sqlx::query(
             r#"

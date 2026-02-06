@@ -20,10 +20,53 @@
       'fontSize': '14px'
     }
   }
-}%%flowchart TD
-    Start([Start]) --> Process[Process Data]
-    Process --> Decision{Is Valid?}
-    Decision -->|Yes| Success[Success]
-    Decision -->|No| Error[Error]
-    Success --> End([End])
-    Error --> End
+}%%sequenceDiagram
+    participant F as Forecaster
+    participant FCA as FPL Assistant
+    participant Parser as FPL Parser
+    participant TypeChk as Type Checker
+    participant Orch as Validator Orchestrator
+    participant VA as Validation Agents
+    participant Eng as Fermi Engine
+    participant Sim as Monte Carlo
+    participant RA as Research Agents
+    
+    F->>FCA: "Will ASTS reach $200M revenue by 2026?"
+    FCA->>FCA: Suggest Fermi decomposition
+    FCA->>F: Generate FPL template with drivers
+    
+    F->>FCA: Populate drivers & distributions
+    FCA->>Parser: Submit for validation
+    
+    alt Syntax Error
+        Parser->>FCA: FPL syntax error
+        FCA->>F: Explain error + suggest fix
+    end
+    
+    Parser->>TypeChk: Valid FPL syntax
+    
+    alt Type Error
+        TypeChk->>FCA: Distribution/type error
+        FCA->>F: Type explanation + fix
+    end
+    
+    TypeChk->>Orch: Typed forecast model ready
+    
+    FCA->>Orch: Configure validation pipeline
+    
+    Orch->>VA: Distribute coherence checks
+    VA->>Orch: Validation results
+    
+    alt Coherence Violation
+        Orch->>FCA: Decomposition/agent issues
+        FCA->>F: Forecasting explanation
+    end
+    
+    Orch->>Eng: Load validated model
+    Eng->>Sim: Run Monte Carlo
+    Sim->>F: Probability distribution
+    
+    Eng->>RA: Activate research agents
+    RA->>Eng: Evidence updates
+    Eng->>Sim: Re-run simulation
+    Sim->>F: Updated forecast

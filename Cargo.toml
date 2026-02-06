@@ -1,3 +1,10 @@
+[workspace]
+members = [
+    ".",
+    "fermi-memory", "fermi-ontology",
+]
+resolver = "2"
+
 [package]
 name = "fermi"
 version = "0.1.0"
@@ -49,6 +56,9 @@ vercel_runtime = "2"
 tokio = { version = "1", features = ["full"] }
 http = "1"
 http-body-util = "0.1"
+
+# ADM Memory
+fermi-memory = { path = "fermi-memory" }
 
 [dev-dependencies]
 # For testing

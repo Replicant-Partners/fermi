@@ -20,247 +20,59 @@
       'fontSize': '14px'
     }
   }
-}%%erDiagram
-    FORECAST ||--o{ DRIVER : contains
-    FORECAST ||--o{ SIMULATION_RUN : produces
-    FORECAST ||--|| MODEL : defines
-    FORECAST ||--o{ FORECAST_VERSION : "has history"
-    FORECAST ||--o| RESOLUTION : "may be resolved"
+}%%flowchart TD
+    subgraph "Complete FPL Validation Pipeline"
+        A[Forecasting Question] --> B[FPL Coding Assistant]
+        
+        B --> C{Has Template?}
+        C -->|No| D[Generate Fermi Decomposition]
+        C -->|Yes| E[Load Forecast Template]
+        
+        D --> F[Interactive Driver Editor]
+        E --> F
+        
+        F --> G[Real-time Syntax Check]
+        G -.->|Invalid| B
+        
+        G --> H[Submit to FPL Parser]
+        H --> I{Syntactically<br/>Valid?}
+        I -->|No| J[Syntax Errors]
+        J --> B
+        
+        I -->|Yes| K[Type Compiler]
+        K --> L{Types<br/>Valid?}
+        L -->|No| M[Type Errors]
+        M --> B
+        
+        L -->|Yes| N[Compiled Forecast Model]
+        
+        B --> O[Coherence Router Config]
+        O -.->|Validator mapping| P[Validator Orchestrator]
+        
+        N --> P
+        
+        P --> Q[Validation Agent Pool]
+        Q --> R[Decomposition Agent]
+        Q --> S[Distribution Agent]
+        Q --> T[Agent Config Agent]
+        Q --> U[Model Consistency Agent]
+        
+        R --> V[Aggregate Results]
+        S --> V
+        T --> V
+        U --> V
+        
+        V --> W{Coherent<br/>Forecast?}
+        W -->|No| X[Coherence Report]
+        X --> B
+        
+        W -->|Yes| Y[Validated Forecast]
+        Y --> Z[Fermi Engine]
+        Z --> AA[Monte Carlo Simulation]
+        Z --> AB[Research Agent Orchestration]
+    end
     
-    DRIVER ||--o{ EVIDENCE : "contains (nested)"
-    DRIVER ||--|| DISTRIBUTION : "has type"
-    DRIVER ||--o{ AGENT_CONTRIBUTION : "updated by"
-    
-    EVIDENCE ||--|| AGENT : "found by"
-    EVIDENCE ||--|| QUALITY_SCORE : "has quality"
-    
-    AGENT ||--o{ AGENT_VERSION : "evolves over time"
-    AGENT ||--|| BESTIARY_CARD : "described in"
-    AGENT ||--o{ AGENT_CONTRIBUTION : "makes contributions"
-    
-    SIMULATION_RUN ||--|| REPORT : "generates"
-    SIMULATION_RUN ||--|| STATISTICS : "produces"
-    SIMULATION_RUN ||--o{ SENSITIVITY_ANALYSIS : "includes"
-    
-    REPORT ||--o{ CHART : "contains"
-    REPORT ||--|| INTERPRETATION : "includes"
-    REPORT ||--|| QUALITY_ASSESSMENT : "provides"
-    
-    RESOLUTION ||--|| BRIER_SCORE : "calculates"
-    BRIER_SCORE ||--o{ FORECAST : "informs future"
-    
-    FORECAST {
-        string id PK
-        string question
-        datetime created_at
-        datetime expires_at
-        string resolution_criteria
-        enum status "active|expired|resolved"
-        string git_hash
-    }
-    
-    DRIVER {
-        string id PK
-        string name
-        string display_name
-        string description
-        enum type "continuous|binary|discrete"
-        json distribution_params
-        string unit
-        string rationale
-        float quality_score
-        datetime last_updated
-        string updated_by_agent
-    }
-    
-    EVIDENCE {
-        string id PK
-        string driver_id FK
-        string source
-        string summary
-        float relevance
-        date evidence_date
-        string found_by_agent FK
-        string agent_version
-        datetime added_at
-        float quality_score
-        string bestiary_link
-    }
-    
-    AGENT {
-        string id PK
-        string name
-        string current_version
-        enum type "research|monitoring|analysis|scoring"
-        json configuration
-        string schedule "cron expression"
-        float reliability_score
-        int forecasts_contributed
-        datetime created_at
-    }
-    
-    AGENT_VERSION {
-        string id PK
-        string agent_id FK
-        string version
-        datetime created_at
-        string git_hash
-        string bestiary_path
-        json capabilities
-        float performance_score
-    }
-    
-    BESTIARY_CARD {
-        string id PK
-        string agent_id FK
-        string version
-        string markdown_content
-        json metadata
-        datetime created_at
-        string git_path
-    }
-    
-    AGENT_CONTRIBUTION {
-        string id PK
-        string agent_id FK
-        string agent_version
-        string target_type "driver|evidence|forecast"
-        string target_id
-        enum contribution_type "created|updated|validated|found_evidence"
-        datetime timestamp
-        json details
-    }
-    
-    SIMULATION_RUN {
-        string id PK
-        string forecast_id FK
-        datetime timestamp
-        int iterations
-        string git_hash
-        json driver_values "sampled driver stats"
-        bool adjustment_needed
-        string trigger "manual|agent|scheduled"
-    }
-    
-    STATISTICS {
-        string id PK
-        string run_id FK
-        float mean
-        float median
-        float std_dev
-        float p5
-        float p25
-        float p75
-        float p95
-        float min
-        float max
-        json distribution_bins
-    }
-    
-    SENSITIVITY_ANALYSIS {
-        string id PK
-        string run_id FK
-        string driver_id FK
-        float contribution_pct "% of variance explained"
-        float impact_score
-        float uncertainty_score
-        json one_at_time_results
-    }
-    
-    REPORT {
-        string id PK
-        string run_id FK
-        string markdown_path
-        datetime generated_at
-        string git_hash
-        json metadata
-    }
-    
-    CHART {
-        string id PK
-        string report_id FK
-        enum chart_type "sankey|histogram|flowchart|mindmap|timeline|quadrant|gitgraph|er"
-        string mermaid_code
-        int position
-    }
-    
-    INTERPRETATION {
-        string id PK
-        string report_id FK
-        enum section "overview|drivers|evidence|quality|recommendation"
-        string content
-        enum source "template|llm|human"
-        datetime generated_at
-    }
-    
-    QUALITY_ASSESSMENT {
-        string id PK
-        string run_id FK
-        float overall_score
-        float evidence_coverage
-        float driver_completeness
-        float uncertainty_level
-        float confidence
-        float predicted_brier
-        json heuristic_scores
-        string assessed_by "fermi_agent"
-        datetime assessed_at
-    }
-    
-    QUALITY_SCORE {
-        string id PK
-        string evidence_id FK
-        float score
-        json criteria
-        string scored_by
-        datetime scored_at
-    }
-    
-    FORECAST_VERSION {
-        string id PK
-        string forecast_id FK
-        int version_number
-        datetime timestamp
-        string git_hash
-        json diff "what changed"
-        string changed_by "human|agent_id"
-        string reason
-    }
-    
-    RESOLUTION {
-        string id PK
-        string forecast_id FK
-        datetime resolved_at
-        bool outcome "true|false for binary"
-        float outcome_value "for continuous"
-        string resolved_by
-        string resolution_source
-        json verification
-    }
-    
-    BRIER_SCORE {
-        string id PK
-        string resolution_id FK
-        string forecast_id FK
-        float score "0.0 to 1.0, lower is better"
-        float predicted_probability
-        bool actual_outcome
-        datetime calculated_at
-        json contributing_factors
-    }
-    
-    MODEL {
-        string id PK
-        string forecast_id FK
-        string expression "AST as string"
-        json parsed_ast
-        json dependencies "driver relationships"
-    }
-    
-    DISTRIBUTION {
-        string id PK
-        string driver_id FK
-        enum dist_type "triangular|normal|lognormal|uniform|beta|exponential"
-        json parameters
-        json sampled_stats "from simulation"
-    }
+    style B fill:#ffd700
+    style O fill:#ffd700
+    style Y fill:#e1ffe1
+    style Z fill:#90ee90

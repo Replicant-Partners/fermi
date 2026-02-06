@@ -1,0 +1,65 @@
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#5CCFE6',
+      'primaryTextColor': '#CBCCC6',
+      'primaryBorderColor': '#5C6773',
+      'lineColor': '#FFCC66',
+      'secondaryColor': '#BAE67E',
+      'tertiaryColor': '#FFAE57',
+      'background': '#1F2430',
+      'mainBkg': '#1F2430',
+      'secondBkg': '#1F2430',
+      'tertiaryBkg': '#1F2430',
+      'textColor': '#CBCCC6',
+      'border1': '#5C6773',
+      'border2': '#5C6773',
+      'arrowheadColor': '#FFCC66',
+      'fontFamily': 'ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      'fontSize': '14px'
+    }
+  }
+}%%flowchart TD
+    subgraph "Forecaster Interface Layer"
+        A[Forecaster] <--> B[FPL Coding Assistant]
+        B <--> C[Forecast Editor]
+    end
+    
+    subgraph "Knowledge Base"
+        D[FPL Grammar Specification]
+        E[Validator Agent Registry]
+        F[Forecasting Methodology Ontology]
+    end
+    
+    B -.->|Trained on| D
+    B -.->|Orchestrates| E
+    
+    subgraph "Validation Pipeline"
+        G[FPL Parser]
+        H[Type Compiler]
+        I[Coherence Analyzer]
+    end
+    
+    C --> G
+    G --> H
+    H --> I
+    
+    B -.->|Suggests fixes| G
+    B -.->|Configures| I
+    
+    I --> J{Coherent Forecast?}
+    J -->|Yes| K[Fermi Engine]
+    J -->|No| B
+    
+    K --> L[Monte Carlo Simulation]
+    L --> M[Research Agents]
+    M --> N[Evidence Updates]
+    N -.->|Learning| B
+    
+    style B fill:#ffd700
+    style G fill:#e1f5ff
+    style H fill:#fff4e1
+    style I fill:#f0e1ff
+    style K fill:#90ee90
+    style L fill:#e1ffe1

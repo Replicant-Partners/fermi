@@ -20,39 +20,43 @@
       'fontSize': '14px'
     }
   }
-}%%flowchart TD
-    A[Simulation Complete] --> B{New Evidence Added?}
-    B -->|Yes| C{Adjustment Needed?}
-    B -->|No| D[Generate Report]
+}%%graph TB
+    subgraph "Validator Orchestration for Fermi Decomposition"
+        A[FPL Coding Assistant] --> B{Analyze Forecast<br/>Structure}
+        
+        B --> C[Identify Forecast Elements]
+        
+        C --> D[Element 1:<br/>Question Definition]
+        C --> E[Element 2:<br/>Driver Decomposition]
+        C --> F[Element 3:<br/>Agent Configurations]
+        C --> G[Element 4:<br/>Model Equation]
+        C --> H[Element 5:<br/>Simulation Parameters]
+        
+        D --> I[Map to:<br/>Question Validator]
+        E --> J[Map to:<br/>Decomposition Validator]
+        F --> K[Map to:<br/>Agent Config Validator]
+        G --> L[Map to:<br/>Model Validator]
+        H --> M[Map to:<br/>Simulation Validator]
+        
+        I --> N[Service Registry]
+        J --> N
+        K --> N
+        L --> N
+        M --> N
+        
+        N --> O[Execution Plan]
+        O --> P[Sequential: Structure First]
+        O --> Q[Parallel: Driver Checks]
+        O --> R[Final: Model Consistency]
+        
+        P --> S[Results Aggregation]
+        Q --> S
+        R --> S
+        
+        S --> T[Fermi Engine Config]
+    end
     
-    C -->|Yes >5% shift| E[Flag: Adjustment Required]
-    C -->|No <5% shift| F[Signal: Strong Conviction]
-    
-    E --> G[Do NOT run simulation]
-    F --> G
-    
-    G --> D
-    
-    D --> H[Calculate Statistics]
-    H --> I[Run Sensitivity Analysis]
-    I --> J[Calculate Quality Scores]
-    J --> K[Generate Charts]
-    K --> L[Generate Interpretation]
-    L --> M[Assemble Markdown]
-    M --> N[Write to results/]
-    N --> O[Git Commit]
-    O --> P[Update Timeline]
-    
-    P --> Q{Forecast Expired?}
-    Q -->|Yes| R[Agent Suggests Resolution]
-    Q -->|No| S[Done]
-    
-    R --> T[Human Reviews]
-    T --> U{Resolve Now?}
-    U -->|Yes| V[Add Resolution Block]
-    U -->|No| S
-    
-    V --> W[Calculate Brier Score]
-    W --> X[Archive as Training Data]
-    X --> Y[Update Agent Learning]
-    Y --> S
+    style A fill:#ffd700
+    style N fill:#e1e1ff
+    style S fill:#e1ffe1
+    style T fill:#90ee90
