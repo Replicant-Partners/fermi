@@ -20,7 +20,7 @@ impl MemoryStore {
         Ok(Self { pool })
     }
 
-    /// Get access to the underlying database pool (for ConsolidationLock)
+    /// Get a reference to the connection pool
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }

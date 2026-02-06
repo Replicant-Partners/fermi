@@ -5,9 +5,9 @@ pub mod snapshot;
 pub mod types;
 
 pub use error::{OntologyError, Result};
-// pub use git::GitManager;
+pub use git::GitManager;
 pub use mermaid::MermaidGenerator;
-// pub use snapshot::SnapshotManager;
+pub use snapshot::{OntologySnapshot, SnapshotManager};
 pub use types::{
     Cardinality, DiagramMetadata, GitCommit, GitConfig, MermaidConfig, MermaidDiagram,
     OntologyStats,
