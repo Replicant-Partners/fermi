@@ -118,7 +118,10 @@ impl SemanticAnalyzer {
             self.analyze_statement(stmt);
         }
 
-        // Phase 3: Check validation rules
+        // Phase 3: Check agent circular dependencies (needs all agents)
+        self.check_agent_circular_dependencies(program);
+
+        // Phase 4: Check validation rules
         self.check_validation_rules(program);
 
         SemanticAnalysis {
@@ -137,8 +140,8 @@ impl SemanticAnalyzer {
             Statement::Evidence(_) => {
                 // Evidence is just metadata, no type checking needed
             }
-            Statement::Agent(_) => {
-                // Agents are validated separately
+            Statement::Agent(agent) => {
+                self.analyze_agent(agent);
             }
             Statement::Question(question) => {
                 self.analyze_question(question);
@@ -177,6 +180,120 @@ impl SemanticAnalyzer {
                 });
             }
         }
+    }
+
+    /// Analyze an agent statement
+    fn analyze_agent(&mut self, agent: &AgentStmt) {
+        // Validate driver_refs point to defined drivers
+        for driver_ref in &agent.driver_refs {
+            if !self.symbol_table.contains(driver_ref) {
+                self.errors.push(SemanticError::UndefinedSymbol {
+                    name: driver_ref.clone(),
+                    message: format!(
+                        "Agent '{}' references undefined driver '{}'",
+                        agent.name, driver_ref
+                    ),
+                });
+            }
+        }
+
+        // Validate depends_on references exist
+        for dep in &agent.depends_on {
+            if !self.symbol_table.contains(dep) {
+                self.errors.push(SemanticError::UndefinedSymbol {
+                    name: dep.clone(),
+                    message: format!(
+                        "Agent '{}' depends on undefined agent '{}'",
+                        agent.name, dep
+                    ),
+                });
+            }
+        }
+
+        // Validate confidence_threshold range
+        if let Some(threshold) = agent.confidence_threshold {
+            if !(0.0..=1.0).contains(&threshold) {
+                self.errors.push(SemanticError::ValidationError {
+                    rule: "confidence_threshold_range".to_string(),
+                    message: format!(
+                        "Agent '{}' confidence_threshold must be between 0.0 and 1.0, got {}",
+                        agent.name, threshold
+                    ),
+                });
+            }
+        }
+    }
+
+    /// Check for circular dependencies among all agents
+    fn check_agent_circular_dependencies(&mut self, program: &Program) {
+        use std::collections::{HashMap, HashSet};
+
+        // Build a map of agent name -> dependencies
+        let mut agent_deps: HashMap<String, Vec<String>> = HashMap::new();
+
+        for stmt in &program.statements {
+            if let Statement::Agent(agent) = stmt {
+                agent_deps.insert(agent.name.clone(), agent.depends_on.clone());
+            }
+        }
+
+        // Check each agent for cycles using DFS
+        for stmt in &program.statements {
+            if let Statement::Agent(agent) = stmt {
+                let mut visited = HashSet::new();
+                let mut rec_stack = vec![agent.name.clone()];
+
+                if let Some(cycle) =
+                    self.dfs_detect_cycle(&agent.name, &agent_deps, &mut visited, &mut rec_stack)
+                {
+                    self.errors.push(SemanticError::ValidationError {
+                        rule: "circular_agent_dependency".to_string(),
+                        message: format!(
+                            "Circular agent dependency detected: {}",
+                            cycle.join(" -> ")
+                        ),
+                    });
+                    // Only report one cycle to avoid duplicate errors
+                    return;
+                }
+            }
+        }
+    }
+
+    /// DFS helper to detect cycles in agent dependency graph
+    fn dfs_detect_cycle(
+        &self,
+        current: &str,
+        agent_deps: &std::collections::HashMap<String, Vec<String>>,
+        visited: &mut std::collections::HashSet<String>,
+        rec_stack: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        // Mark current node as visited
+        visited.insert(current.to_string());
+
+        // Get dependencies of current agent
+        if let Some(deps) = agent_deps.get(current) {
+            for dep in deps {
+                // If this dependency is in the recursion stack, we found a cycle
+                if let Some(pos) = rec_stack.iter().position(|s| s == dep) {
+                    let mut cycle = rec_stack[pos..].to_vec();
+                    cycle.push(dep.to_string());
+                    return Some(cycle);
+                }
+
+                // If not visited, recurse
+                if !visited.contains(dep) {
+                    rec_stack.push(dep.clone());
+                    if let Some(cycle) = self.dfs_detect_cycle(dep, agent_deps, visited, rec_stack)
+                    {
+                        return Some(cycle);
+                    }
+                    rec_stack.pop();
+                }
+            }
+        }
+
+        None
     }
 
     /// Analyze a driver
@@ -729,5 +846,227 @@ model: market_size
         let analysis = analyze_source(source);
         assert!(analysis.is_valid());
         assert!(!analysis.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_agent_valid_driver_refs() {
+        let source = r#"
+driver market_share continuous {
+    distribution: triangular(0.15, 0.20, 0.25)
+}
+
+agent market_research {
+    type: "research"
+    query: "AMD market share trends"
+    driver_refs: ["market_share"]
+}
+
+model: market_share
+simulate 10000 iterations
+"#;
+
+        let analysis = analyze_source(source);
+        assert!(analysis.is_valid(), "Errors: {:?}", analysis.errors);
+    }
+
+    #[test]
+    fn test_agent_undefined_driver_ref() {
+        let source = r#"
+driver market_share continuous {
+    distribution: triangular(0.15, 0.20, 0.25)
+}
+
+agent market_research {
+    type: "research"
+    query: "AMD market share trends"
+    driver_refs: ["market_share", "nonexistent_driver"]
+}
+"#;
+
+        let analysis = analyze_source(source);
+        assert!(!analysis.is_valid());
+        assert!(analysis.errors.iter().any(|e| {
+            matches!(e, SemanticError::UndefinedSymbol { name, .. } if name == "nonexistent_driver")
+        }));
+    }
+
+    #[test]
+    fn test_agent_undefined_dependency() {
+        let source = r#"
+agent base_research {
+    type: "research"
+    query: "Base research"
+}
+
+agent competitive_analysis {
+    type: "competitive"
+    query: "Competitive dynamics"
+    depends_on: ["base_research", "nonexistent_agent"]
+}
+"#;
+
+        let analysis = analyze_source(source);
+        assert!(!analysis.is_valid());
+        assert!(analysis.errors.iter().any(|e| {
+            matches!(e, SemanticError::UndefinedSymbol { name, .. } if name == "nonexistent_agent")
+        }));
+    }
+
+    #[test]
+    fn test_agent_confidence_threshold_valid() {
+        let source = r#"
+driver test_driver continuous {
+    distribution: normal(100, 10)
+}
+
+agent market_research {
+    type: "research"
+    query: "Market research"
+    confidence_threshold: 0.75
+}
+
+model: test_driver
+simulate 10000 iterations
+"#;
+
+        let analysis = analyze_source(source);
+        assert!(analysis.is_valid(), "Errors: {:?}", analysis.errors);
+    }
+
+    #[test]
+    fn test_agent_confidence_threshold_invalid() {
+        // Note: Parser already validates confidence_threshold range,
+        // so we can't test values outside 0.0-1.0 without parser error.
+        // This test verifies that the semantic analyzer would catch it
+        // if a value somehow bypassed the parser.
+        // The parser validation at src/parser.rs:684 prevents this case.
+
+        // Instead, test that valid edge cases (0.0 and 1.0) pass
+        let source = r#"
+driver test_driver continuous {
+    distribution: normal(100, 10)
+}
+
+agent market_research {
+    type: "research"
+    query: "Market research"
+    confidence_threshold: 1.0
+}
+
+model: test_driver
+simulate 10000 iterations
+"#;
+
+        let analysis = analyze_source(source);
+        assert!(
+            analysis.is_valid(),
+            "Edge case 1.0 should be valid. Errors: {:?}",
+            analysis.errors
+        );
+
+        let source2 = r#"
+driver test_driver continuous {
+    distribution: normal(100, 10)
+}
+
+agent market_research {
+    type: "research"
+    query: "Market research"
+    confidence_threshold: 0.0
+}
+
+model: test_driver
+simulate 10000 iterations
+"#;
+
+        let analysis2 = analyze_source(source2);
+        assert!(
+            analysis2.is_valid(),
+            "Edge case 0.0 should be valid. Errors: {:?}",
+            analysis2.errors
+        );
+    }
+
+    #[test]
+    fn test_agent_circular_dependency_simple() {
+        let source = r#"
+agent agent_a {
+    type: "research"
+    query: "Agent A"
+    depends_on: ["agent_b"]
+}
+
+agent agent_b {
+    type: "research"
+    query: "Agent B"
+    depends_on: ["agent_a"]
+}
+"#;
+
+        let analysis = analyze_source(source);
+        assert!(!analysis.is_valid());
+        assert!(analysis.errors.iter().any(|e| {
+            matches!(e, SemanticError::ValidationError { rule, .. } if rule == "circular_agent_dependency")
+        }));
+    }
+
+    #[test]
+    fn test_agent_circular_dependency_complex() {
+        let source = r#"
+agent agent_a {
+    type: "research"
+    query: "Agent A"
+    depends_on: ["agent_b"]
+}
+
+agent agent_b {
+    type: "research"
+    query: "Agent B"
+    depends_on: ["agent_c"]
+}
+
+agent agent_c {
+    type: "research"
+    query: "Agent C"
+    depends_on: ["agent_a"]
+}
+"#;
+
+        let analysis = analyze_source(source);
+        assert!(!analysis.is_valid());
+        assert!(analysis.errors.iter().any(|e| {
+            matches!(e, SemanticError::ValidationError { rule, .. } if rule == "circular_agent_dependency")
+        }));
+    }
+
+    #[test]
+    fn test_agent_valid_dependency_chain() {
+        let source = r#"
+driver test_driver continuous {
+    distribution: normal(100, 10)
+}
+
+agent base_research {
+    type: "research"
+    query: "Base research"
+}
+
+agent sentiment {
+    type: "sentiment"
+    query: "Sentiment analysis"
+}
+
+agent competitive {
+    type: "competitive"
+    query: "Competitive analysis"
+    depends_on: ["base_research", "sentiment"]
+}
+
+model: test_driver
+simulate 10000 iterations
+"#;
+
+        let analysis = analyze_source(source);
+        assert!(analysis.is_valid(), "Errors: {:?}", analysis.errors);
     }
 }

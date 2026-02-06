@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Fermi Agent Bestiary{% endblock %}</title>
+    <style>
+        :root {
+            --bg-primary: #1F2430;
+            --bg-secondary: #232834;
+            --bg-tertiary: #2A2F3A;
+            --fg-primary: #CBCCC6;
+            --fg-secondary: #707A8C;
+            --accent: #FFCC66;
+            --primary: #5CCFE6;
+            --secondary: #BAE67E;
+            --tertiary: #FFAE57;
+            --error: #FF3333;
+            --border: #3E4451;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+            background-color: var(--bg-primary);
+            color: var(--fg-primary);
+            line-height: 1.6;
+            font-size: 14px;
+        }
+        header {
+            background-color: var(--bg-secondary);
+            border-bottom: 2px solid var(--accent);
+            padding: 1.5rem 2rem;
+        }
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent);
+            text-decoration: none;
+        }
+        nav { display: flex; gap: 2rem; }
+        nav a {
+            color: var(--fg-primary);
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        nav a:hover { background-color: var(--bg-tertiary); color: var(--accent); }
+        nav a.active { color: var(--primary); background-color: var(--bg-tertiary); }
+        main { max-width: 1400px; margin: 2rem auto; padding: 0 2rem; }
+        .card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .btn {
+            display: inline-block;
+            padding: 0.5rem 1.25rem;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            font-family: inherit;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        .btn-primary { background-color: var(--primary); color: var(--bg-primary); }
+        .btn-primary:hover { background-color: #4FB8D4; }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+        th {
+            background-color: var(--bg-tertiary);
+            color: var(--accent);
+            text-align: left;
+            padding: 0.75rem 1rem;
+            font-weight: bold;
+            border-bottom: 2px solid var(--accent);
+        }
+        td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+        tr:hover { background-color: var(--bg-tertiary); }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <a href="/" class="logo">Fermi Agent Bestiary</a>
+            <nav>
+                <a href="/">Agents</a>
+                <a href="/dashboard">Dashboard</a>
+            </nav>
+        </div>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

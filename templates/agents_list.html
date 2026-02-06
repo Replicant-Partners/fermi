@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+
+{% block title %}Agents - Fermi Agent Bestiary{% endblock %}
+
+{% block content %}
+<h1 style="font-size: 2rem; color: var(--accent); margin-bottom: 2rem;">Available Agents</h1>
+
+<div class="card">
+    <p>Total Agents: {{ agents.len() }}</p>
+    <p>Total Executions: {{ total_executions }}</p>
+    <p>Total Cost: ${{ total_cost }}</p>
+    <p>Avg Success Rate: {{ avg_success_rate }}</p>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Agent ID</th>
+            <th>Type</th>
+            <th>Tier</th>
+            <th>Executions</th>
+            <th>Cost</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for agent in agents %}
+        <tr>
+            <td><a href="/agents/{{ agent.agent_id }}" style="color: var(--primary);">{{ agent.agent_id }}</a></td>
+            <td>{{ agent.agent_type }}</td>
+            <td>{{ agent.tier }}</td>
+            <td>{{ agent.usage.total_executions }}</td>
+            <td>${{ agent.usage.total_cost_usd }}</td>
+            <td>
+                <a href="/agents/{{ agent.agent_id }}/execute" class="btn btn-primary">Execute</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endblock %}

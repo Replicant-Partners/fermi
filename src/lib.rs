@@ -1,11 +1,11 @@
-pub mod ast;
-pub mod distributions;
-pub mod evaluator;
-pub mod executor;
 /// Fermi - Forecasting Programming Language (FPL)
 ///
 /// This library implements the FPL language processing engine,
 /// including lexer, parser, semantic analyzer, and execution engine.
+pub mod ast;
+pub mod distributions;
+pub mod evaluator;
+pub mod executor;
 pub mod lexer;
 pub mod parser;
 pub mod report;
@@ -13,6 +13,12 @@ pub mod semantic;
 pub mod sensitivity;
 pub mod symbol_table;
 pub mod types;
+
+// Agent Backend (Phase 2)
+pub mod agent_backend;
+
+// REST API (Phase 2)
+pub mod api;
 
 // Re-export main types
 pub use ast::*;

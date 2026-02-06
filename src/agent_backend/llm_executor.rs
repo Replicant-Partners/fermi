@@ -1,0 +1,239 @@
+/// LLM Executor - Real Claude API Integration
+///
+/// Calls Anthropic Claude API to generate evidence for forecasts.
+use crate::agent_backend::executor::{
+    AgentExecutor, AgentMetadata, AgentOutput, AgentStatus, ExecutionContext, ExecutionError,
+};
+use crate::ast::{AgentStmt, EvidenceStmt};
+use async_trait::async_trait;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::time::Instant;
+
+/// LLM Executor using Anthropic Claude API
+pub struct LLMExecutor {
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl LLMExecutor {
+    /// Create new LLM executor with API key
+    pub fn new(api_key: String) -> Self {
+        LLMExecutor {
+            api_key,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Create from environment variable ANTHROPIC_API_KEY
+    pub fn from_env() -> Result<Self, ExecutionError> {
+        let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+            ExecutionError::ExecutionFailed(
+                "ANTHROPIC_API_KEY environment variable not set".to_string(),
+            )
+        })?;
+        Ok(Self::new(api_key))
+    }
+
+    /// Build structured prompt for forecasting context
+    fn build_prompt(&self, agent: &AgentStmt, context: &ExecutionContext) -> String {
+        let mut prompt = String::new();
+
+        prompt.push_str("You are a forecasting research agent helping to generate evidence for probabilistic forecasts.\n\n");
+
+        prompt.push_str(&format!(
+            "AGENT TYPE: {}\n",
+            agent.agent_type.as_ref().unwrap_or(&"research".to_string())
+        ));
+        prompt.push_str(&format!("RESEARCH QUERY: {}\n\n", agent.query));
+
+        if !agent.driver_refs.is_empty() {
+            prompt.push_str("RELEVANT FORECAST DRIVERS:\n");
+            for driver_ref in &agent.driver_refs {
+                prompt.push_str(&format!("  - {}\n", driver_ref));
+            }
+            prompt.push_str("\n");
+        }
+
+        prompt.push_str("YOUR TASK:\n");
+        prompt.push_str("1. Research and analyze information relevant to the query\n");
+        prompt.push_str(
+            "2. Provide 3-5 key findings that would help inform a probabilistic forecast\n",
+        );
+        prompt.push_str("3. Cite specific sources where possible\n");
+        prompt.push_str("4. Be objective and focus on concrete, quantifiable information\n");
+        prompt.push_str("5. Express your confidence level (0.0 to 1.0) in the findings\n\n");
+
+        prompt.push_str("Respond in the following JSON format:\n");
+        prompt.push_str("{\n");
+        prompt.push_str("  \"key_findings\": [\"finding 1\", \"finding 2\", \"finding 3\"],\n");
+        prompt.push_str("  \"summary\": \"Brief summary of research\",\n");
+        prompt.push_str("  \"sources\": [\"source 1\", \"source 2\"],\n");
+        prompt.push_str("  \"confidence\": 0.85,\n");
+        prompt.push_str("  \"reasoning\": \"Why you have this confidence level\"\n");
+        prompt.push_str("}\n");
+
+        prompt
+    }
+
+    /// Parse Claude response into structured evidence
+    fn parse_response(
+        &self,
+        response: &ClaudeResponse,
+        agent_name: &str,
+    ) -> Result<EvidenceStmt, ExecutionError> {
+        // Extract text from response
+        let text = response
+            .content
+            .first()
+            .ok_or_else(|| ExecutionError::ExecutionFailed("Empty response".to_string()))?
+            .text
+            .clone();
+
+        // Try to parse as JSON
+        let evidence_data: EvidenceData = serde_json::from_str(&text).map_err(|e| {
+            ExecutionError::ExecutionFailed(format!("Failed to parse JSON response: {}", e))
+        })?;
+
+        Ok(EvidenceStmt {
+            id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
+            source: format!("Agent: {} (Claude API)", agent_name),
+            summary: Some(evidence_data.summary),
+            url: None,
+            relevance: Some(evidence_data.confidence),
+            date: Some(Utc::now().format("%Y-%m-%d").to_string()),
+            strength: Some(evidence_data.confidence),
+            key_findings: evidence_data.key_findings,
+        })
+    }
+}
+
+#[async_trait]
+impl AgentExecutor for LLMExecutor {
+    async fn execute(
+        &self,
+        agent: &AgentStmt,
+        context: &ExecutionContext,
+    ) -> Result<AgentOutput, ExecutionError> {
+        let start = Instant::now();
+
+        // Build prompt
+        let prompt = self.build_prompt(agent, context);
+
+        // Prepare Claude API request
+        let request = ClaudeRequest {
+            model: context.agent_card.capabilities.model.clone(),
+            max_tokens: 2048,
+            temperature: context.agent_card.capabilities.temperature,
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: prompt,
+            }],
+        };
+
+        // Call Claude API
+        let response = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| ExecutionError::ExecutionFailed(format!("API request failed: {}", e)))?;
+
+        // Check for errors
+        if !response.status().is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(ExecutionError::ExecutionFailed(format!(
+                "API error: {}",
+                error_text
+            )));
+        }
+
+        // Parse response
+        let claude_response: ClaudeResponse = response.json().await.map_err(|e| {
+            ExecutionError::ExecutionFailed(format!("Failed to parse response: {}", e))
+        })?;
+
+        // Extract evidence
+        let evidence = self.parse_response(&claude_response, &agent.name)?;
+        let confidence = evidence.strength.unwrap_or(0.5);
+
+        let elapsed = start.elapsed();
+
+        Ok(AgentOutput {
+            agent_name: agent.name.clone(),
+            agent_type: agent.agent_type.clone().unwrap_or_default(),
+            timestamp: Utc::now(),
+            status: AgentStatus::Success,
+            evidence: vec![evidence],
+            confidence,
+            sources_consulted: vec!["claude-api".to_string()],
+            execution_time_ms: elapsed.as_millis() as u64,
+            tokens_used: Some(
+                claude_response.usage.input_tokens + claude_response.usage.output_tokens,
+            ),
+            metadata: AgentMetadata {
+                model_used: Some(claude_response.model),
+                temperature: Some(request.temperature),
+                reasoning: None,
+            },
+        })
+    }
+
+    fn name(&self) -> &str {
+        "llm"
+    }
+}
+
+/// Claude API request structure
+#[derive(Debug, Serialize)]
+struct ClaudeRequest {
+    model: String,
+    max_tokens: u32,
+    temperature: f64,
+    messages: Vec<Message>,
+}
+
+#[derive(Debug, Serialize)]
+struct Message {
+    role: String,
+    content: String,
+}
+
+/// Claude API response structure
+#[derive(Debug, Deserialize)]
+struct ClaudeResponse {
+    id: String,
+    model: String,
+    content: Vec<Content>,
+    usage: Usage,
+}
+
+#[derive(Debug, Deserialize)]
+struct Content {
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Usage {
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
+/// Parsed evidence data from LLM response
+#[derive(Debug, Deserialize)]
+struct EvidenceData {
+    key_findings: Vec<String>,
+    summary: String,
+    #[serde(default)]
+    sources: Vec<String>,
+    confidence: f64,
+    #[serde(default)]
+    reasoning: String,
+}

@@ -1,0 +1,27 @@
+{% extends "layout.html" %}
+
+{% block title %}Execute {{ agent.agent_id }} - Fermi Agent Bestiary{% endblock %}
+
+{% block content %}
+<p><a href="/agents/{{ agent.agent_id }}" style="color: var(--fg-secondary);">&larr; Back</a></p>
+
+<h1 style="font-size: 2rem; color: var(--accent); margin-bottom: 2rem;">Execute: {{ agent.agent_id }}</h1>
+
+<div class="card">
+    <form action="/api/agents/{{ agent.agent_id }}/execute" method="POST">
+        <div style="margin-bottom: 1rem;">
+            <label for="query" style="display: block; margin-bottom: 0.5rem;">Query:</label>
+            <textarea id="query" name="query" style="width: 100%; padding: 0.75rem; background-color: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px; color: var(--fg-primary); font-family: inherit; min-height: 120px;" required></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Execute Agent</button>
+    </form>
+</div>
+
+<div id="results" style="display: none; margin-top: 2rem;">
+    <div class="card">
+        <h2 style="color: var(--accent);">Results</h2>
+        <div id="results-content"></div>
+    </div>
+</div>
+
+{% endblock %}

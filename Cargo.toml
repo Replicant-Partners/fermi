@@ -7,7 +7,7 @@ description = "Forecasting Programming Language (FPL) - Agent Fermi's Broca Brai
 
 [dependencies]
 # For date/time handling
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 
 # For better error messages
 colored = "2.0"
@@ -16,8 +16,26 @@ colored = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# For REST API
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# For LLM integration
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+async-trait = "0.1"
+
 # For CLI (will use later)
 clap = { version = "4.0", features = ["derive"] }
+
+# For MCP server
+rust-mcp-sdk = { version = "0.8", features = ["server", "stdio"] }
+
+# For Web UI
+askama = { version = "0.12", features = ["with-axum"] }
+askama_axum = "0.4"
 
 # For random number generation (Monte Carlo simulation)
 rand = "0.8"
@@ -39,6 +57,18 @@ criterion = "0.5"
 [[bin]]
 name = "fermi"
 path = "src/main.rs"
+
+[[bin]]
+name = "agent-server"
+path = "src/bin/agent-server.rs"
+
+[[bin]]
+name = "agent-mcp-server"
+path = "src/bin/agent-mcp-server.rs"
+
+[[bin]]
+name = "agent-web-ui"
+path = "src/bin/agent-web-ui.rs"
 
 # Vercel API functions
 [[bin]]

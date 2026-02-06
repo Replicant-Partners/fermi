@@ -1,0 +1,205 @@
+{% extends "base.html" %} {% block title %}Dashboard - Fermi Agent Bestiary{%
+endblock %} {% block content %}
+<h1 style="font-size: 2rem; color: var(--accent); margin-bottom: 2rem">
+  Performance Dashboard
+</h1>
+
+<!-- Overall Stats -->
+<div class="card mb-3">
+  <div class="card-header">
+    <h2 class="card-title">System Overview</h2>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Agents</div>
+      <div class="stat-value">{{ total_agents }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Executions</div>
+      <div class="stat-value">{{ total_executions }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Tokens</div>
+      <div class="stat-value">{{ total_tokens }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Cost</div>
+      <div class="stat-value">${{ total_cost }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Success Rate</div>
+      <div class="stat-value">
+        {{ avg_success_rate * 100.0 }}<span class="stat-unit">%</span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Confidence</div>
+      <div class="stat-value">{{ avg_confidence }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Agent Performance Table -->
+<div class="card mb-3">
+  <div class="card-header">
+    <h2 class="card-title">Agent Performance</h2>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Agent</th>
+        <th>Tier</th>
+        <th>Executions</th>
+        <th>Success Rate</th>
+        <th>Avg Confidence</th>
+        <th>Total Tokens</th>
+        <th>Total Cost</th>
+        <th>Avg Time (ms)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for agent in agents %}
+      <tr
+        onclick="window.location='/agents/{{ agent.agent_id }}'"
+        style="cursor: pointer"
+      >
+        <td>
+          <a
+            href="/agents/{{ agent.agent_id }}"
+            style="
+              color: var(--primary);
+              text-decoration: none;
+              font-weight: 500;
+            "
+          >
+            {{ agent.agent_id }}
+          </a>
+        </td>
+        <td>
+          <span class="badge badge-{{ agent.tier|lower }}"
+            >{{ agent.tier }}</span
+          >
+        </td>
+        <td style="color: var(--fg-primary); font-weight: 500">
+          {{ agent.usage.total_executions }}
+        </td>
+        <td style="color: var(--secondary); font-weight: 500">
+          {{ agent.performance.accuracy_rate * 100.0 }}%
+        </td>
+        <td style="color: var(--accent); font-weight: 500">
+          {{ agent.performance.avg_confidence }}
+        </td>
+        <td style="color: var(--fg-primary)">
+          {{ agent.usage.total_tokens_used }}
+        </td>
+        <td style="color: var(--accent)">${{ agent.usage.total_cost_usd }}</td>
+        <td style="color: var(--primary)">
+          {{ agent.usage.avg_execution_time_ms }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Cost Breakdown -->
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Cost by Agent</h2>
+    </div>
+
+    {% for agent in agents %}
+    <div style="margin-bottom: 1rem">
+      <div class="flex-between mb-1">
+        <span style="color: var(--fg-primary)">{{ agent.agent_id }}</span>
+        <span style="color: var(--accent); font-weight: bold"
+          >${{ agent.usage.total_cost_usd }}</span
+        >
+      </div>
+      <div
+        style="
+          background-color: var(--bg-tertiary);
+          height: 8px;
+          border-radius: 4px;
+          overflow: hidden;
+        "
+      >
+        <div
+          style="
+            background: linear-gradient(90deg, var(--accent), var(--tertiary));
+            height: 100%;
+            width: 50%;
+          "
+        ></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Executions by Agent</h2>
+    </div>
+
+    {% for agent in agents %}
+    <div style="margin-bottom: 1rem">
+      <div class="flex-between mb-1">
+        <span style="color: var(--fg-primary)">{{ agent.agent_id }}</span>
+        <span style="color: var(--primary); font-weight: bold"
+          >{{ agent.usage.total_executions }}</span
+        >
+      </div>
+      <div
+        style="
+          background-color: var(--bg-tertiary);
+          height: 8px;
+          border-radius: 4px;
+          overflow: hidden;
+        "
+      >
+        <div
+          style="
+            background: linear-gradient(
+              90deg,
+              var(--primary),
+              var(--secondary)
+            );
+            height: 100%;
+            width: 75%;
+          "
+        ></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Ontology Stats -->
+<div class="card mt-3">
+  <div class="card-header">
+    <h2 class="card-title">Ontology Statistics</h2>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Entities</div>
+      <div class="stat-value">{{ total_entities }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Relationships</div>
+      <div class="stat-value">{{ total_relationships }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Evolution Commits</div>
+      <div class="stat-value">{{ evolution_commits }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Forecasts</div>
+      <div class="stat-value">{{ total_forecasts }}</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

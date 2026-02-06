@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+
+{% block title %}{{ agent.agent_id }} - Fermi Agent Bestiary{% endblock %}
+
+{% block content %}
+<p><a href="/" style="color: var(--fg-secondary);">&larr; Back</a></p>
+
+<h1 style="font-size: 2rem; color: var(--accent); margin-bottom: 1rem;">{{ agent.agent_id }}</h1>
+<p style="color: var(--fg-secondary); margin-bottom: 2rem;">{{ agent.metadata.description }}</p>
+
+<div class="card">
+    <h2 style="color: var(--accent); margin-bottom: 1rem;">Stats</h2>
+    <p>Total Executions: {{ agent.usage.total_executions }}</p>
+    <p>Successful: {{ agent.usage.successful_executions }}</p>
+    <p>Failed: {{ agent.usage.failed_executions }}</p>
+    <p>Total Cost: ${{ agent.usage.total_cost_usd }}</p>
+    <p>Avg Time: {{ agent.usage.avg_execution_time_ms }}ms</p>
+</div>
+
+<div style="margin-top: 1rem;">
+    <a href="/agents/{{ agent.agent_id }}/execute" class="btn btn-primary">Execute Agent</a>
+</div>
+
+{% endblock %}

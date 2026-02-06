@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+
+{% block title %}Dashboard - Fermi Agent Bestiary{% endblock %}
+
+{% block content %}
+<h1 style="font-size: 2rem; color: var(--accent); margin-bottom: 2rem;">Performance Dashboard</h1>
+
+<div class="card">
+    <h2 style="color: var(--accent); margin-bottom: 1rem;">System Overview</h2>
+    <p>Total Agents: {{ total_agents }}</p>
+    <p>Total Executions: {{ total_executions }}</p>
+    <p>Total Tokens: {{ total_tokens }}</p>
+    <p>Total Cost: ${{ total_cost }}</p>
+    <p>Avg Success Rate: {{ avg_success_rate }}</p>
+    <p>Avg Confidence: {{ avg_confidence }}</p>
+</div>
+
+<div class="card">
+    <h2 style="color: var(--accent); margin-bottom: 1rem;">Agent Performance</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Agent</th>
+                <th>Tier</th>
+                <th>Executions</th>
+                <th>Success Rate</th>
+                <th>Tokens</th>
+                <th>Cost</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for agent in agents %}
+            <tr>
+                <td><a href="/agents/{{ agent.agent_id }}" style="color: var(--primary);">{{ agent.agent_id }}</a></td>
+                <td>{{ agent.tier }}</td>
+                <td>{{ agent.usage.total_executions }}</td>
+                <td>{{ agent.performance.accuracy_rate }}</td>
+                <td>{{ agent.usage.total_tokens_used }}</td>
+                <td>${{ agent.usage.total_cost_usd }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

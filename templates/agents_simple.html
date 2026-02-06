@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Agents - Fermi Agent Bestiary{% endblock %}
+
+{% block content %}
+<h1>Available Agents</h1>
+
+<p>Total agents: {{ agents.len() }}</p>
+
+{% for agent in agents %}
+<div>
+    <h3>{{ agent.agent_id }}</h3>
+    <p>{{ agent.agent_type }}</p>
+</div>
+{% endfor %}
+
+{% endblock %}

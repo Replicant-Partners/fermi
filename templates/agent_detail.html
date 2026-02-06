@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+
+{% block title %}{{ agent.agent_id }} - Fermi Agent Bestiary{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-2">
+    <div class="flex gap-2" style="align-items: center;">
+        <a href="/" style="color: var(--fg-secondary); text-decoration: none;">&larr; Back</a>
+        <h1 style="font-size: 2rem; color: var(--accent);">{{ agent.agent_id }}</h1>
+        <span class="badge badge-{{ agent.tier|lower }}">{{ agent.tier }}</span>
+    </div>
+    <div class="flex gap-2">
+        <a href="/agents/{{ agent.agent_id }}/execute" class="btn btn-primary">Execute Agent</a>
+        <a href="/agents/{{ agent.agent_id }}/edit" class="btn btn-secondary">Edit</a>
+    </div>
+</div>
+
+<p class="text-muted mb-3" style="font-size: 1.1rem;">{{ agent.metadata.description }}</p>
+
+<!-- Overview Stats -->
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <div class="stat-label">Total Executions</div>
+        <div class="stat-value">{{ agent.usage.total_executions }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Success Rate</div>
+        <div class="stat-value">{{ agent.performance.accuracy_rate * 100.0 }}<span class="stat-unit">%</span></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Confidence</div>
+        <div class="stat-value">{{ agent.performance.avg_confidence }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Total Cost</div>
+        <div class="stat-value">${{ agent.usage.total_cost_usd }}</div>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+    <!-- Main Info -->
+    <div>
+        <!-- Capabilities -->
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Capabilities</h2>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                <div>
+                    <div class="text-muted mb-1">Executor</div>
+                    <div style="color: var(--primary); font-weight: 500;">{{ agent.capabilities.executor }}</div>
+                </div>
+                <div>
+                    <div class="text-muted mb-1">Model</div>
+                    <div style="color: var(--primary); font-weight: 500;">{{ agent.capabilities.model }}</div>
+                </div>
+                <div>
+                    <div class="text-muted mb-1">Temperature</div>
+                    <div style="color: var(--primary); font-weight: 500;">{{ agent.capabilities.temperature }}</div>
+                </div>
+                <div>
+                    <div class="text-muted mb-1">Skills</div>
+                    <div style="color: var(--primary); font-weight: 500;">{{ agent.capabilities.skills.len() }}</div>
+                </div>
+            </div>
+
+            {% if !agent.capabilities.skills.is_empty() %}
+            <div class="mt-2">
+                <div class="text-muted mb-1">Available Skills</div>
+                <div class="flex gap-1" style="flex-wrap: wrap;">
+                    {% for skill in agent.capabilities.skills %}
+                    <span style="background-color: var(--bg-tertiary); color: var(--secondary); padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.85rem; border: 1px solid var(--border);">{{ skill }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if !agent.capabilities.mcp_tools.is_empty() %}
+            <div class="mt-2">
+                <div class="text-muted mb-1">MCP Tools</div>
+                <div class="flex gap-1" style="flex-wrap: wrap;">
+                    {% for tool in agent.capabilities.mcp_tools %}
+                    <span style="background-color: var(--bg-tertiary); color: var(--primary); padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.85rem; border: 1px solid var(--border);">{{ tool }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Performance Metrics -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h2 class="card-title">Performance Metrics</h2>
+            </div>
+
+            <table>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Forecasts Contributed</td>
+                    <td style="color: var(--accent); font-weight: bold;">{{ agent.performance.forecasts_contributed }}</td>
+                </tr>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Average Brier Impact</td>
+                    <td style="color: var(--primary); font-weight: bold;">{{ agent.performance.avg_brier_impact }}</td>
+                </tr>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Average Confidence</td>
+                    <td style="color: var(--secondary); font-weight: bold;">{{ agent.performance.avg_confidence }}</td>
+                </tr>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Accuracy Rate</td>
+                    <td style="color: var(--secondary); font-weight: bold;">{{ agent.performance.accuracy_rate * 100.0 }}%</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Usage Statistics -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h2 class="card-title">Usage Statistics</h2>
+            </div>
+
+            <table>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Total Executions</td>
+                    <td style="color: var(--primary); font-weight: bold;">{{ agent.usage.total_executions }}</td>
+                </tr>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Successful Executions</td>
+                    <td style="color: var(--secondary); font-weight: bold;">{{ agent.usage.successful_executions }}</td>
+                </tr>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Failed Executions</td>
+                    <td style="color: var(--error); font-weight: bold;">{{ agent.usage.failed_executions }}</td>
+                </tr>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Total Tokens Used</td>
+                    <td style="color: var(--accent); font-weight: bold;">{{ agent.usage.total_tokens_used }}</td>
+                </tr>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Total Cost</td>
+                    <td style="color: var(--accent); font-weight: bold;">${{ agent.usage.total_cost_usd }}</td>
+                </tr>
+                <tr>
+                    <td style="color: var(--fg-secondary);">Average Execution Time</td>
+                    <td style="color: var(--primary); font-weight: bold;">{{ agent.usage.avg_execution_time_ms }}ms</td>
+                </tr>
+            </table>
+
+            <div class="mt-2" style="padding: 1rem; background-color: var(--bg-tertiary); border-radius: 4px;">
+                <div style="font-weight: bold; color: var(--accent); margin-bottom: 0.5rem;">Last 30 Days</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+                    <div>
+                        <div class="text-muted" style="font-size: 0.85rem;">Executions</div>
+                        <div style="color: var(--primary); font-weight: bold;">{{ agent.usage.last_30_days.executions }}</div>
+                    </div>
+                    <div>
+                        <div class="text-muted" style="font-size: 0.85rem;">Tokens</div>
+                        <div style="color: var(--accent); font-weight: bold;">{{ agent.usage.last_30_days.tokens }}</div>
+                    </div>
+                    <div>
+                        <div class="text-muted" style="font-size: 0.85rem;">Cost</div>
+                        <div style="color: var(--accent); font-weight: bold;">${{ agent.usage.last_30_days.cost_usd }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div>
+        <!-- Metadata -->
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Metadata</h2>
+            </div>
+
+            <div class="mb-2">
+                <div class="text-muted" style="font-size: 0.85rem;">Version</div>
+                <div style="color: var(--fg-primary);">{{ agent.version }}</div>
+            </div>
+
+            <div class="mb-2">
+                <div class="text-muted" style="font-size: 0.85rem;">Author</div>
+                <div style="color: var(--fg-primary);">{{ agent.metadata.author }}</div>
+            </div>
+
+            <div class="mb-2">
+                <div class="text-muted" style="font-size: 0.85rem;">License</div>
+                <div style="color: var(--fg-primary);">{{ agent.metadata.author }}</div>
+            </div>
+
+            <div class="mb-2">
+                <div class="text-muted" style="font-size: 0.85rem;">Created</div>
+                <div style="color: var(--fg-primary); font-size: 0.85rem;">{{ agent.metadata.created }}</div>
+            </div>
+
+            <div class="mb-2">
+                <div class="text-muted" style="font-size: 0.85rem;">Last Updated</div>
+                <div style="color: var(--fg-primary); font-size: 0.85rem;">{{ agent.metadata.created }}</div>
+            </div>
+
+            {% if !agent.metadata.tags.is_empty() %}
+            <div class="mt-2">
+                <div class="text-muted mb-1" style="font-size: 0.85rem;">Tags</div>
+                <div class="flex gap-1" style="flex-wrap: wrap;">
+                    {% for tag in agent.metadata.tags %}
+                    <span style="background-color: var(--bg-tertiary); color: var(--fg-secondary); padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.7rem;">{{ tag }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Ontology Stats -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h2 class="card-title">Ontology</h2>
+            </div>
+
+            <div class="mb-2">
+                <div class="text-muted" style="font-size: 0.85rem;">Entities</div>
+                <div style="color: var(--primary); font-weight: bold; font-size: 1.25rem;">{{ agent.ontology_stats.entities }}</div>
+            </div>
+
+            <div class="mb-2">
+                <div class="text-muted" style="font-size: 0.85rem;">Relationships</div>
+                <div style="color: var(--secondary); font-weight: bold; font-size: 1.25rem;">{{ agent.ontology_stats.relationships }}</div>
+            </div>
+
+            <div>
+                <div class="text-muted" style="font-size: 0.85rem;">Evolution Commits</div>
+                <div style="color: var(--accent); font-weight: bold; font-size: 1.25rem;">{{ agent.ontology_stats.evolution_commits }}</div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h2 class="card-title">Actions</h2>
+            </div>
+
+            <a href="/agents/{{ agent.agent_id }}/execute" class="btn btn-primary" style="width: 100%; margin-bottom: 0.5rem; text-align: center;">Execute Query</a>
+            <a href="/agents/{{ agent.agent_id }}/save" class="btn btn-secondary" style="width: 100%; margin-bottom: 0.5rem; text-align: center;">Save to Git</a>
+            <a href="/agents/{{ agent.agent_id }}/edit" class="btn btn-accent" style="width: 100%; text-align: center;">Edit Agent</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

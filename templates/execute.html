@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block title %}Execute {{ agent.agent_id }} - Fermi Agent Bestiary{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-3">
+    <div class="flex gap-2" style="align-items: center;">
+        <a href="/agents/{{ agent.agent_id }}" style="color: var(--fg-secondary); text-decoration: none;">&larr; Back</a>
+        <h1 style="font-size: 2rem; color: var(--accent);">Execute: {{ agent.agent_id }}</h1>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+    <!-- Execution Form -->
+    <div>
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Research Query</h2>
+            </div>
+
+            <form id="executeForm" action="/agents/{{ agent.agent_id }}/execute" method="POST">
+                <div class="form-group">
+                    <label for="query">Query</label>
+                    <textarea
+                        id="query"
+                        name="query"
+                        placeholder="Enter your research question or forecasting query..."
+                        required
+                        style="min-height: 150px;"></textarea>
+                    <div class="mt-1 text-muted" style="font-size: 0.85rem;">
+                        Be specific and detailed for better results
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary" style="width: 100%;" id="executeBtn">
+                    <span id="btnText">Execute Agent</span>
+                    <span id="btnLoading" style="display: none;" class="flex gap-1" style="align-items: center; justify-content: center;">
+                        <span class="loading"></span>
+                        Executing...
+                    </span>
+                </button>
+            </form>
+        </div>
+
+        <!-- Agent Info -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h2 class="card-title">Agent Info</h2>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div>
+                    <div class="text-muted" style="font-size: 0.85rem;">Model</div>
+                    <div style="color: var(--primary);">{{ agent.capabilities.model }}</div>
+                </div>
+                <div>
+                    <div class="text-muted" style="font-size: 0.85rem;">Temperature</div>
+                    <div style="color: var(--primary);">{{ agent.capabilities.temperature }}</div>
+                </div>
+                <div>
+                    <div class="text-muted" style="font-size: 0.85rem;">Avg Confidence</div>
+                    <div style="color: var(--secondary);">{{ agent.performance.avg_confidence }}</div>
+                </div>
+                <div>
+                    <div class="text-muted" style="font-size: 0.85rem;">Success Rate</div>
+                    <div style="color: var(--secondary);">{{ agent.performance.accuracy_rate * 100.0 }}%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Area -->
+    <div>
+        <div class="card" id="resultsCard" style="display: none;">
+            <div class="card-header">
+                <h2 class="card-title">Results</h2>
+                <span class="badge badge-success" id="statusBadge">Success</span>
+            </div>
+
+            <div style="margin-bottom: 1.5rem;">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Confidence</div>
+                        <div class="stat-value" id="resultConfidence">0.00</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Execution Time</div>
+                        <div class="stat-value" id="resultTime">0<span class="stat-unit">ms</span></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Tokens Used</div>
+                        <div class="stat-value" id="resultTokens">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="evidenceContainer"></div>
+        </div>
+
+        <div class="card" id="placeholderCard">
+            <div style="text-align: center; padding: 3rem; color: var(--fg-secondary);">
+                <p style="font-size: 1.25rem;">No results yet</p>
+                <p class="mt-2" style="font-size: 0.9rem;">Enter a query and execute the agent to see results here</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('executeForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const btn = document.getElementById('executeBtn');
+    const btnText = document.getElementById('btnText');
+    const btnLoading = document.getElementById('btnLoading');
+    const query = document.getElementById('query').value;
+
+    // Show loading state
+    btn.disabled = true;
+    btnText.style.display = 'none';
+    btnLoading.style.display = 'flex';
+
+    try {
+        const response = await fetch('/api/agents/{{ agent.agent_id }}/execute', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ query })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            displayResults(result);
+        } else {
+            displayError(result.error || 'Execution failed');
+        }
+    } catch (error) {
+        displayError('Network error: ' + error.message);
+    } finally {
+        // Reset button
+        btn.disabled = false;
+        btnText.style.display = 'inline';
+        btnLoading.style.display = 'none';
+    }
+});
+
+function displayResults(result) {
+    // Hide placeholder, show results
+    document.getElementById('placeholderCard').style.display = 'none';
+    document.getElementById('resultsCard').style.display = 'block';
+
+    // Update stats
+    document.getElementById('resultConfidence').textContent = parseFloat(result.confidence).toFixed(2);
+    document.getElementById('resultTime').innerHTML = result.execution_time_ms + '<span class="stat-unit">ms</span>';
+    document.getElementById('resultTokens').textContent = result.tokens_used;
+
+    // Update status
+    const statusBadge = document.getElementById('statusBadge');
+    statusBadge.textContent = result.status;
+    statusBadge.className = 'badge ' + (result.status === 'Success' ? 'badge-success' : 'badge-error');
+
+    // Display evidence
+    const container = document.getElementById('evidenceContainer');
+    container.innerHTML = '<h3 style="color: var(--accent); margin-bottom: 1rem;">Evidence</h3>';
+
+    if (result.evidence && result.evidence.length > 0) {
+        result.evidence.forEach((ev, idx) => {
+            const evidenceCard = `
+                <div style="background-color: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
+                        <div style="color: var(--primary); font-weight: bold;">Evidence ${idx + 1}</div>
+                        <span style="background-color: var(--bg-primary); color: var(--accent); padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.75rem;">
+                            Relevance: ${(ev.relevance || 0).toFixed(2)}
+                        </span>
+                    </div>
+                    <div style="color: var(--fg-secondary); font-size: 0.85rem; margin-bottom: 0.5rem;">${ev.source}</div>
+                    <div style="color: var(--fg-primary); margin-bottom: 0.75rem;">${ev.summary}</div>
+                    ${ev.key_findings && ev.key_findings.length > 0 ? `
+                        <div style="margin-top: 0.75rem;">
+                            <div style="color: var(--fg-secondary); font-size: 0.85rem; margin-bottom: 0.5rem;">Key Findings:</div>
+                            <ul style="margin-left: 1.25rem; color: var(--fg-primary);">
+                                ${ev.key_findings.map(f => `<li style="margin-bottom: 0.25rem;">${f}</li>`).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+            container.innerHTML += evidenceCard;
+        });
+    } else {
+        container.innerHTML += '<div style="color: var(--fg-secondary); text-align: center; padding: 2rem;">No evidence returned</div>';
+    }
+}
+
+function displayError(message) {
+    document.getElementById('placeholderCard').style.display = 'none';
+    document.getElementById('resultsCard').style.display = 'block';
+
+    document.getElementById('statusBadge').textContent = 'Error';
+    document.getElementById('statusBadge').className = 'badge badge-error';
+
+    const container = document.getElementById('evidenceContainer');
+    container.innerHTML = `
+        <div style="background-color: rgba(255, 51, 51, 0.1); border: 1px solid var(--error); border-radius: 6px; padding: 1.5rem; color: var(--error);">
+            <div style="font-weight: bold; margin-bottom: 0.5rem;">Execution Failed</div>
+            <div>${message}</div>
+        </div>
+    `;
+}
+</script>
+{% endblock %}

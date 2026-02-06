@@ -123,7 +123,8 @@ pub struct EvidenceStmt {
 }
 
 /// Executor type for agent execution
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ExecutorType {
     LLM,
     MCP,

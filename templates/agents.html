@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Agents - Fermi Agent Bestiary{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-3">
+    <h1 style="font-size: 2rem; color: var(--accent);">Available Agents</h1>
+    <a href="/agents/new" class="btn btn-accent">+ Create Agent</a>
+</div>
+
+{% if agents.is_empty() %}
+<div class="card">
+    <div style="text-align: center; padding: 3rem;">
+        <p style="font-size: 1.25rem; color: var(--fg-secondary);">No agents found</p>
+        <p class="mt-2 text-muted">Create your first agent or load curated agents from the filesystem.</p>
+        <a href="/agents/new" class="btn btn-primary mt-3">Create Your First Agent</a>
+    </div>
+</div>
+{% else %}
+
+<div class="stats-grid mb-3">
+    <div class="stat-card">
+        <div class="stat-label">Total Agents</div>
+        <div class="stat-value">{{ agents.len() }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Total Executions</div>
+        <div class="stat-value">{{ total_executions }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Total Cost</div>
+        <div class="stat-value">${{ total_cost }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Success Rate</div>
+        <div class="stat-value">{{ avg_success_rate * 100.0 }}<span class="stat-unit">%</span></div>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 1.5rem;">
+    {% for agent in agents %}
+    <div class="card" style="cursor: pointer; transition: all 0.2s;" onclick="window.location='/agents/{{ agent.agent_id }}'">
+        <div class="card-header">
+            <div>
+                <h3 style="color: var(--primary); font-size: 1.1rem; margin-bottom: 0.25rem;">{{ agent.agent_id }}</h3>
+                <p class="text-muted" style="font-size: 0.85rem;">{{ agent.agent_type }}</p>
+            </div>
+            <span class="badge badge-{{ agent.tier|lower }}">{{ agent.tier }}</span>
+        </div>
+
+        <p style="color: var(--fg-primary); margin-bottom: 1rem; min-height: 3rem;">
+            {{ agent.metadata.description }}
+        </p>
+
+        <div style="display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 0.85rem;">
+            <div style="flex: 1;">
+                <div class="text-muted">Model</div>
+                <div style="color: var(--fg-primary); font-weight: 500;">{{ agent.capabilities.model|truncate(20) }}</div>
+            </div>
+            <div style="flex: 1;">
+                <div class="text-muted">Skills</div>
+                <div style="color: var(--fg-primary); font-weight: 500;">{{ agent.capabilities.skills.len() }}</div>
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+            <div>
+                <div class="text-muted" style="font-size: 0.75rem;">Executions</div>
+                <div style="color: var(--primary); font-weight: bold;">{{ agent.usage.total_executions }}</div>
+            </div>
+            <div>
+                <div class="text-muted" style="font-size: 0.75rem;">Accuracy</div>
+                <div style="color: var(--secondary); font-weight: bold;">{{ agent.performance.accuracy_rate * 100.0 }}%</div>
+            </div>
+            <div>
+                <div class="text-muted" style="font-size: 0.75rem;">Cost</div>
+                <div style="color: var(--accent); font-weight: bold;">${{ agent.usage.total_cost_usd }}</div>
+            </div>
+        </div>
+
+        <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            {% for tag in agent.metadata.tags %}
+            <span style="background-color: var(--bg-tertiary); color: var(--fg-secondary); padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.7rem;">{{ tag }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(92, 207, 230, 0.2);
+        border-color: var(--primary);
+    }
+</style>
+{% endblock %}
