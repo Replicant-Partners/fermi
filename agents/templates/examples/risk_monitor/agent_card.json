@@ -1,0 +1,70 @@
+{
+  "agent_id": "550e8400-e29b-41d4-a716-446655440003",
+  "agent_name": "risk_monitor",
+  "agent_type": "risk_assessment",
+  "version": "1.0.0",
+  "tier": "specialist",
+  "executor": {
+    "type": "mcp",
+    "primary_action": "assess_security_risks",
+    "fallback_strategy": "manual_review"
+  },
+  "mcp_servers": [
+    {
+      "name": "cve_database",
+      "description": "National Vulnerability Database (NVD) API for CVE lookups",
+      "endpoint": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+      "auth_type": "api_key",
+      "required": true,
+      "rate_limit": "5000/day"
+    },
+    {
+      "name": "threat_intelligence",
+      "description": "MITRE ATT&CK framework API for threat techniques",
+      "endpoint": "https://attack.mitre.org/api/",
+      "auth_type": "none",
+      "required": true,
+      "rate_limit": "unlimited"
+    },
+    {
+      "name": "github_security",
+      "description": "GitHub Security Advisories API",
+      "endpoint": "https://api.github.com/advisories",
+      "auth_type": "bearer_token",
+      "required": false,
+      "rate_limit": "5000/hour"
+    }
+  ],
+  "llm_config": {
+    "model": "claude-sonnet-4-5",
+    "temperature": 0.2,
+    "max_tokens": 4096,
+    "system_prompt": "You are a cybersecurity risk assessment agent. Analyze vulnerability data from NVD and MITRE ATT&CK to assess security risks. Provide evidence-based risk ratings (Critical/High/Medium/Low) with detailed justification. Focus on impact, exploitability, and mitigation availability."
+  },
+  "description": "Monitors security vulnerabilities, assesses risk levels, and tracks threat intelligence for software dependencies and infrastructure components.",
+  "author": "Fermi Security Team",
+  "performance": {
+    "accuracy_rate": 0.91,
+    "avg_confidence": 0.88,
+    "execution_count": 1247,
+    "avg_execution_time_ms": 3500,
+    "last_calibration": "2026-01-15T10:00:00Z"
+  },
+  "capabilities": {
+    "handles_uncertainty": true,
+    "confidence_threshold": 0.75,
+    "supports_streaming": false,
+    "max_retries": 3
+  },
+  "ontology": {
+    "version": "1.0.0",
+    "last_updated": "2026-01-20T12:00:00Z",
+    "entity_count": 156,
+    "relationship_count": 423,
+    "commit_hash": "abc123def456"
+  },
+  "tags": ["security", "risk_assessment", "vulnerabilities", "threat_intelligence", "cve"],
+  "dependencies": [],
+  "created_at": "2026-01-10T08:00:00Z",
+  "updated_at": "2026-01-20T12:00:00Z"
+}

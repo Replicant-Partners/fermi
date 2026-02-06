@@ -1,0 +1,68 @@
+{
+  "agent_id": "market_research",
+  "agent_type": "research",
+  "version": "1.2.0",
+  "tier": "curated",
+
+  "capabilities": {
+    "executor": "llm",
+    "model": "claude-3-sonnet-20240229",
+    "temperature": 0.3,
+    "mcp_servers": [
+      {
+        "name": "yahoo_finance",
+        "command": "node",
+        "args": ["servers/yahoo-finance/index.js"],
+        "env": {
+          "API_KEY": "${YAHOO_FINANCE_API_KEY}",
+          "RATE_LIMIT": "100"
+        }
+      },
+      {
+        "name": "sec_api",
+        "command": "python",
+        "args": ["-m", "sec_api_server"],
+        "env": {
+          "SEC_API_KEY": "${SEC_API_KEY}",
+          "CACHE_DIR": "/tmp/sec_cache"
+        }
+      }
+    ],
+    "skills": []
+  },
+
+  "metadata": {
+    "created": "2025-12-01",
+    "author": "Fermi Team",
+    "description": "Researches market trends, competitive dynamics, and financial performance for technology companies",
+    "tags": ["market", "research", "competitive-analysis", "finance", "tech"]
+  },
+
+  "performance": {
+    "forecasts_contributed": 47,
+    "avg_brier_impact": 0.04,
+    "avg_confidence": 0.82,
+    "accuracy_rate": 0.89
+  },
+
+  "usage": {
+    "total_executions": 152,
+    "successful_executions": 144,
+    "failed_executions": 8,
+    "total_tokens_used": 2847392,
+    "total_cost_usd": 142.37,
+    "avg_execution_time_ms": 3420,
+    "last_30_days": {
+      "executions": 23,
+      "tokens": 431045,
+      "cost_usd": 21.55
+    }
+  },
+
+  "ontology_stats": {
+    "entities": 23,
+    "relationships": 18,
+    "last_updated": "2026-02-05T12:00:00Z",
+    "evolution_commits": 15
+  }
+}

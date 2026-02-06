@@ -1,0 +1,62 @@
+erDiagram
+    COMPANY ||--o{ PRODUCT : produces
+    COMPANY }o--|| MARKET_SEGMENT : competes_in
+    COMPANY ||--o{ FINANCIAL_REPORT : publishes
+    MARKET_SEGMENT ||--o{ COMPETITOR : contains
+    PRODUCT }o--o{ TECHNOLOGY : uses
+    PRODUCT }o--|| CATEGORY : belongs_to
+    FINANCIAL_REPORT }o--|| QUARTER : reported_in
+
+    COMPANY {
+        string name
+        string ticker
+        float market_cap_usd
+        string sector
+        string headquarters
+        date founded
+    }
+
+    PRODUCT {
+        string name
+        string category
+        date launch_date
+        string status
+    }
+
+    MARKET_SEGMENT {
+        string name
+        float size_usd
+        float growth_rate
+        string maturity
+    }
+
+    COMPETITOR {
+        string company_name
+        float market_share
+        string competitive_position
+    }
+
+    TECHNOLOGY {
+        string name
+        string category
+        int generation
+    }
+
+    CATEGORY {
+        string name
+        string parent_category
+    }
+
+    FINANCIAL_REPORT {
+        float revenue_usd
+        float profit_usd
+        float margin_pct
+        date report_date
+    }
+
+    QUARTER {
+        int year
+        int quarter_num
+        date start_date
+        date end_date
+    }

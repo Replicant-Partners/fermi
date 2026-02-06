@@ -1,0 +1,124 @@
+{
+  "//": "==================== FERMI AGENT CARD TEMPLATE ====================",
+  "//": "This template helps you create a new Fermi agent.",
+  "//": "Replace ALL_CAPS placeholders with your agent's details.",
+  "//": "Remove comments (lines starting with //) before using.",
+  "//": "For complete documentation, see: docs/guides/AGENT_CARD_SPECIFICATION.md",
+
+  "//": "==================== BASIC INFORMATION ====================",
+
+  "agent_id": "YOUR_AGENT_NAME",
+  "//": "Unique identifier (lowercase, underscores). Example: market_research, sentiment_analyzer",
+
+  "agent_type": "research",
+  "//": "Agent type - choose one:",
+  "//": "  - research: General research/data gathering",
+  "//": "  - sentiment: Sentiment analysis (social, news, reviews)",
+  "//": "  - competitive: Competitive analysis",
+  "//": "  - market: Market/trend monitoring",
+  "//": "  - technical: Technical indicator analysis",
+  "//": "  - risk: Risk assessment",
+  "//": "  - validator: Cross-check other forecasts",
+
+  "version": "1.0.0",
+  "//": "Semantic version (major.minor.patch)",
+
+  "tier": "community",
+  "//": "Tier: 'curated' (Fermi team) or 'community' (user-contributed)",
+
+  "//": "==================== CAPABILITIES ====================",
+
+  "capabilities": {
+    "executor": "llm",
+    "//": "Executor type - choose one:",
+    "//": "  - llm: Call LLM with query (RECOMMENDED for starting)",
+    "//": "  - mcp: Use MCP tools (requires MCP servers below)",
+    "//": "  - manual: Human-in-the-loop",
+    "//": "  - skill: Invoke Anthropic skills (advanced)",
+
+    "model": "claude-3-haiku-20240307",
+    "//": "LLM model - common choices:",
+    "//": "  - claude-3-haiku-20240307: Fast, cheap ($0.25/1M tokens)",
+    "//": "  - claude-3-sonnet-20240229: Balanced ($3/1M tokens)",
+    "//": "  - claude-3-opus-20240229: Most capable ($15/1M tokens)",
+    "//": "  - gpt-4: Via OpenRouter",
+
+    "temperature": 0.3,
+    "//": "Temperature (0.0-1.0):",
+    "//": "  - 0.0-0.3: Factual, consistent (good for data extraction)",
+    "//": "  - 0.4-0.7: Balanced (good for analysis)",
+    "//": "  - 0.7-1.0: Creative (good for brainstorming)",
+
+    "mcp_servers": [
+      {
+        "//": "Optional: MCP servers this agent needs",
+        "//": "Remove this entire array if you don't need MCP servers",
+        "//": "Each MCP server provides tools/APIs for your agent",
+
+        "name": "example_api",
+        "//": "Unique name for this MCP server",
+
+        "command": "node",
+        "//": "Command to run: node, python, npx, etc.",
+
+        "args": ["path/to/server.js"],
+        "//": "Arguments to the command",
+
+        "env": {
+          "API_KEY": "${YOUR_API_KEY_ENV_VAR}",
+          "//": "Environment variables (use ${VAR} for secrets)",
+          "TIMEOUT": "30000"
+        }
+      }
+    ],
+
+    "skills": [],
+    "//": "Optional: Anthropic skills this agent can invoke",
+    "//": "Leave empty for most agents"
+  },
+
+  "//": "==================== METADATA ====================",
+
+  "metadata": {
+    "created": "2026-02-06",
+    "//": "Date in YYYY-MM-DD format",
+
+    "author": "YOUR_NAME",
+    "//": "Your name or username",
+
+    "description": "BRIEF_ONE_SENTENCE_DESCRIPTION",
+    "//": "One sentence: What does this agent do?",
+    "//": "Example: 'Analyzes market trends and competitive dynamics for tech companies'",
+
+    "tags": ["tag1", "tag2", "tag3"],
+    "//": "Searchable tags for categorization",
+    "//": "Examples: market, sentiment, competitive-analysis, finance, tech"
+  },
+
+  "//": "==================== PERFORMANCE (Auto-Updated) ====================",
+  "//": "These fields are automatically updated by the system as your agent runs.",
+  "//": "You can leave them out when creating a new agent.",
+
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0
+  },
+
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": null,
+    "evolution_commits": 0
+  }
+}

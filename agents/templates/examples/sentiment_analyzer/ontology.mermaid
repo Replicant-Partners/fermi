@@ -1,0 +1,45 @@
+erDiagram
+    ENTITY }o--o{ SENTIMENT_EVENT : has
+    ENTITY }o--|| OVERALL_SENTIMENT : current
+    SENTIMENT_EVENT }o--|| SOURCE_TYPE : from
+    SENTIMENT_EVENT }o--|| TIME_PERIOD : occurred_in
+    OVERALL_SENTIMENT }o--|| TREND : shows
+
+    ENTITY {
+        string name
+        string type
+        string ticker
+    }
+
+    SENTIMENT_EVENT {
+        date timestamp
+        string sentiment
+        float score
+        string text_summary
+        string source_url
+    }
+
+    SOURCE_TYPE {
+        string name
+        float reliability
+        string category
+    }
+
+    OVERALL_SENTIMENT {
+        string current_sentiment
+        float score
+        int sample_size
+        date last_updated
+    }
+
+    TIME_PERIOD {
+        date start_date
+        date end_date
+        string period_name
+    }
+
+    TREND {
+        string direction
+        float change_rate
+        string confidence
+    }
