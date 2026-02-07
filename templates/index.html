@@ -312,23 +312,23 @@
     </div>
 
     <script>
-      async function generatePortrait(specimenId) {
+      async function generateAvatar(agentId) {
         try {
           const response = await fetch(
-            `/api/specimens/${encodeURIComponent(specimenId)}/portrait`,
+            `/api/agents/${encodeURIComponent(agentId)}/avatar`,
           );
-          if (!response.ok) throw new Error("Portrait generation failed");
+          if (!response.ok) throw new Error("Avatar generation failed");
           const data = await response.json();
           return `data:${data.image.mime_type};base64,${data.image.data}`;
         } catch (error) {
-          console.error(`Error generating portrait for ${specimenId}:`, error);
+          console.error(`Error generating avatar for ${agentId}:`, error);
           return null;
         }
       }
 
-      async function loadSpecimens() {
+      async function loadAgents() {
         try {
-          const response = await fetch("/api/specimens");
+          const response = await fetch("/api/agents");
           const data = await response.json();
 
           document.getElementById("total-agents").textContent = data.total;
@@ -384,13 +384,13 @@
             `;
 
             card.addEventListener("click", () => {
-              window.location.href = `/specimen/${agentId}`;
+              window.location.href = `/agent/${agentId}`;
             });
 
             grid.appendChild(card);
 
-            // Generate portrait asynchronously
-            generatePortrait(agentId).then((avatarUrl) => {
+            // Generate avatar asynchronously
+            generateAvatar(agentId).then((avatarUrl) => {
               const avatarDiv = document.getElementById(
                 `avatar-${CSS.escape(agentId)}`,
               );
@@ -408,7 +408,7 @@
         }
       }
 
-      loadSpecimens();
+      loadAgents();
     </script>
   </body>
 </html>

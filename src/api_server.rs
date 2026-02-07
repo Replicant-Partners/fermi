@@ -93,12 +93,8 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index))
-        .route("/specimen/:agent_id", get(agent_detail))
-        .route("/api/health", get(health))
-        .route("/api/specimens", get(list_agents))
-        .route("/api/specimens/:agent_id/portrait", get(generate_avatar))
-        // Legacy routes for backwards compatibility
         .route("/agent/:agent_id", get(agent_detail))
+        .route("/api/health", get(health))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:agent_id/avatar", get(generate_avatar))
         .with_state(state);

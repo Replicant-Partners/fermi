@@ -326,15 +326,15 @@
     </div>
 
     <script>
-      async function loadSpecimenDetail() {
+      async function loadAgentDetail() {
         const pathParts = window.location.pathname.split("/");
-        const specimenId = pathParts[pathParts.length - 1];
+        const agentId = pathParts[pathParts.length - 1];
 
         try {
-          const response = await fetch("/api/specimens");
+          const response = await fetch("/api/agents");
           const data = await response.json();
 
-          const agent = data.agents.find((a) => a.agent_id === specimenId);
+          const agent = data.agents.find((a) => a.agent_id === agentId);
 
           if (!agent) {
             document.getElementById("agent-content").innerHTML = `
@@ -345,10 +345,8 @@
             return;
           }
 
-          // Load portrait
-          const avatarResponse = await fetch(
-            `/api/specimens/${specimenId}/portrait`,
-          );
+          // Load avatar
+          const avatarResponse = await fetch(`/api/agents/${agentId}/avatar`);
           let avatarUrl = null;
           if (avatarResponse.ok) {
             const avatarData = await avatarResponse.json();
@@ -376,10 +374,10 @@
           document.getElementById("agent-content").innerHTML = `
             <div class="specimen-header">
               <div class="specimen-avatar-large ${!avatarUrl ? "loading" : ""}" id="avatar">
-                ${avatarUrl ? `<img src="${avatarUrl}" alt="${specimenId}">` : '<span class="placeholder">◈</span>'}
+                ${avatarUrl ? `<img src="${avatarUrl}" alt="${agentId}">` : '<span class="placeholder">◈</span>'}
               </div>
               <div class="specimen-header-info">
-                <div class="specimen-title">${specimenId.replace(/_/g, " ")}</div>
+                <div class="specimen-title">${agentId.replace(/_/g, " ")}</div>
                 <div class="specimen-description">${agent.metadata?.description || "A mysterious agent whose purpose is yet unknown."}</div>
                 <div>
                   <span class="badge">${agent.tier || "curated"}</span>
@@ -480,7 +478,7 @@
               ${
                 ontology.entities > 0
                   ? `
-              <a href="/specimen/${specimenId}/ontology" class="view-link">
+              <a href="/agent/${agentId}/ontology" class="view-link">
                 View Knowledge Graph →
               </a>
               `
@@ -628,7 +626,7 @@
         }
       }
 
-      loadSpecimenDetail();
+      loadAgentDetail();
     </script>
   </body>
 </html>
