@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="theme-hasui">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -266,6 +266,75 @@
       .tooltip.visible {
         opacity: 1;
       }
+
+      /* OP-1 Theme */
+      .theme-op1 {
+        --bg0-hard: #f5f5f0;
+        --bg0: #ffffff;
+        --bg1: #f0f0eb;
+        --bg2: #e0e0db;
+        --bg3: #c8c8c3;
+        --fg0: #1a1a1a;
+        --fg1: #2d2d2d;
+        --fg2: #4a4a4a;
+        --fg3: #6b6b6b;
+        --yellow: #ff6b00;
+        --green: #00c853;
+        --red: #ff1744;
+        --blue: #5ac8fa;
+        --purple: #af52de;
+        --aqua: #00b8d4;
+        --orange: #ff9500;
+        --gray: #9e9e9e;
+      }
+
+      .theme-op1 .node {
+        fill: var(--bg2);
+        stroke: var(--yellow);
+      }
+
+      .theme-op1 .node-label {
+        fill: var(--fg1);
+      }
+
+      .theme-op1 .link {
+        stroke: var(--bg3);
+      }
+
+      .theme-op1 .link-label {
+        fill: var(--gray);
+      }
+
+      .theme-op1 .sidebar {
+        border-radius: 0;
+      }
+
+      .theme-op1 .graph-container {
+        border-radius: 0;
+      }
+
+      .theme-op1 .entity-item {
+        border-radius: 0;
+      }
+
+      /* Theme Toggle */
+      .theme-toggle-btn {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        padding: 6px 14px;
+        cursor: pointer;
+        font-size: 0.85em;
+        color: var(--fg3);
+        transition: all 0.2s ease;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        border-radius: 4px;
+      }
+
+      .theme-toggle-btn:hover {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
     </style>
     <script src="https://d3js.org/d3.v7.min.js"></script>
   </head>
@@ -277,6 +346,13 @@
           <span>Back to Specimen</span>
         </a>
         <div class="page-title">Knowledge Graph</div>
+        <button
+          id="theme-toggle"
+          class="theme-toggle-btn"
+          title="Toggle Theme (Ctrl+T)"
+        >
+          OP-1
+        </button>
       </div>
 
       <div class="agent-info" id="agent-info">
@@ -334,10 +410,16 @@
           const ontology = await response.json();
 
           // Update header info
-          document.getElementById("agent-name").textContent = agentId.replace(/_/g, " ");
-          document.getElementById("entity-count").textContent = ontology.entities?.length || 0;
-          document.getElementById("relationship-count").textContent = ontology.relationships?.length || 0;
-          document.getElementById("commit-count").textContent = ontology.evolution_commits || 0;
+          document.getElementById("agent-name").textContent = agentId.replace(
+            /_/g,
+            " ",
+          );
+          document.getElementById("entity-count").textContent =
+            ontology.entities?.length || 0;
+          document.getElementById("relationship-count").textContent =
+            ontology.relationships?.length || 0;
+          document.getElementById("commit-count").textContent =
+            ontology.evolution_commits || 0;
 
           // Populate entity list
           const entityList = document.getElementById("entity-list");
@@ -377,35 +459,44 @@
         const height = container.clientHeight;
 
         // Create SVG
-        const svg = d3.select("#graph-canvas")
+        const svg = d3
+          .select("#graph-canvas")
           .append("svg")
           .attr("width", width)
           .attr("height", height);
 
         // Create force simulation
-        const simulation = d3.forceSimulation()
-          .force("link", d3.forceLink().id(d => d.id).distance(150))
+        const simulation = d3
+          .forceSimulation()
+          .force(
+            "link",
+            d3
+              .forceLink()
+              .id((d) => d.id)
+              .distance(150),
+          )
           .force("charge", d3.forceManyBody().strength(-300))
           .force("center", d3.forceCenter(width / 2, height / 2))
           .force("collision", d3.forceCollide().radius(50));
 
         // Prepare data
-        const nodes = ontology.entities.map(e => ({
+        const nodes = ontology.entities.map((e) => ({
           id: e.id,
           name: e.name,
           type: e.type,
-          properties: e.properties
+          properties: e.properties,
         }));
 
-        const links = ontology.relationships.map(r => ({
+        const links = ontology.relationships.map((r) => ({
           source: r.from,
           target: r.to,
           type: r.type,
-          properties: r.properties
+          properties: r.properties,
         }));
 
         // Draw links
-        const link = svg.append("g")
+        const link = svg
+          .append("g")
           .selectAll("path")
           .data(links)
           .join("path")
@@ -413,15 +504,17 @@
           .attr("marker-end", "url(#arrowhead)");
 
         // Draw link labels
-        const linkLabel = svg.append("g")
+        const linkLabel = svg
+          .append("g")
           .selectAll("text")
           .data(links)
           .join("text")
           .attr("class", "link-label")
-          .text(d => d.type);
+          .text((d) => d.type);
 
         // Draw nodes
-        const node = svg.append("g")
+        const node = svg
+          .append("g")
           .selectAll("circle")
           .data(nodes)
           .join("circle")
@@ -432,16 +525,19 @@
           .on("mouseout", hideTooltip);
 
         // Draw node labels
-        const nodeLabel = svg.append("g")
+        const nodeLabel = svg
+          .append("g")
           .selectAll("text")
           .data(nodes)
           .join("text")
           .attr("class", "node-label")
           .attr("dy", 35)
-          .text(d => d.name);
+          .text((d) => d.name);
 
         // Define arrowhead marker
-        svg.append("defs").append("marker")
+        svg
+          .append("defs")
+          .append("marker")
           .attr("id", "arrowhead")
           .attr("viewBox", "-0 -5 10 10")
           .attr("refX", 25)
@@ -455,7 +551,7 @@
 
         // Update positions on tick
         simulation.nodes(nodes).on("tick", () => {
-          link.attr("d", d => {
+          link.attr("d", (d) => {
             const dx = d.target.x - d.source.x;
             const dy = d.target.y - d.source.y;
             const dr = Math.sqrt(dx * dx + dy * dy);
@@ -463,16 +559,12 @@
           });
 
           linkLabel
-            .attr("x", d => (d.source.x + d.target.x) / 2)
-            .attr("y", d => (d.source.y + d.target.y) / 2);
+            .attr("x", (d) => (d.source.x + d.target.x) / 2)
+            .attr("y", (d) => (d.source.y + d.target.y) / 2);
 
-          node
-            .attr("cx", d => d.x)
-            .attr("cy", d => d.y);
+          node.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
 
-          nodeLabel
-            .attr("x", d => d.x)
-            .attr("y", d => d.y);
+          nodeLabel.attr("x", (d) => d.x).attr("y", (d) => d.y);
         });
 
         simulation.force("link").links(links);
@@ -496,7 +588,8 @@
           event.subject.fy = null;
         }
 
-        return d3.drag()
+        return d3
+          .drag()
           .on("start", dragstarted)
           .on("drag", dragged)
           .on("end", dragended);
@@ -509,8 +602,8 @@
           <div style="color: var(--gray); font-size: 0.8em; margin-bottom: 6px;">${d.type}</div>
           ${d.properties?.definition ? `<div style="font-size: 0.85em;">${d.properties.definition}</div>` : ""}
         `;
-        tooltip.style.left = (event.pageX + 10) + "px";
-        tooltip.style.top = (event.pageY + 10) + "px";
+        tooltip.style.left = event.pageX + 10 + "px";
+        tooltip.style.top = event.pageY + 10 + "px";
         tooltip.classList.add("visible");
       }
 
@@ -525,6 +618,28 @@
 
       // Load ontology on page load
       loadOntology();
+    </script>
+
+    <script>
+      const themes = ["hasui", "op1"];
+      const labels = { hasui: "OP-1", op1: "HASUI" };
+      function setTheme(theme) {
+        document.documentElement.className = "theme-" + theme;
+        localStorage.setItem("fermi-theme", theme);
+        document.getElementById("theme-toggle").textContent = labels[theme];
+      }
+      const saved = localStorage.getItem("fermi-theme");
+      if (saved && themes.includes(saved)) setTheme(saved);
+      document.getElementById("theme-toggle").addEventListener("click", () => {
+        const current = localStorage.getItem("fermi-theme") || "hasui";
+        setTheme(current === "hasui" ? "op1" : "hasui");
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.ctrlKey && e.key === "t") {
+          e.preventDefault();
+          document.getElementById("theme-toggle").click();
+        }
+      });
     </script>
   </body>
 </html>
