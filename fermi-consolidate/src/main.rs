@@ -86,6 +86,20 @@ async fn main() -> Result<()> {
     info!("Database: {}", args.database_url);
     info!("Ontology repo: {}", args.ontology_repo_path);
 
+    // Validate embedding dimensions match schema
+    if args.embedding_dimensions != 1024 {
+        error!(
+            "⚠️  WARNING: Embedding dimensions set to {}, but PostgreSQL schema uses 1024d vectors",
+            args.embedding_dimensions
+        );
+        error!("   This will cause database errors unless you've migrated the schema.");
+        error!("   See docs/guides/EMBEDDING_MIGRATION.md for schema migration instructions.");
+        bail!(
+            "Embedding dimension mismatch: specified {}d, schema requires 1024d",
+            args.embedding_dimensions
+        );
+    }
+
     // Initialize memory store
     let store = Arc::new(MemoryStore::new(&args.database_url).await?);
     info!("Connected to database");
@@ -98,7 +112,21 @@ async fn main() -> Result<()> {
             })?;
             let model = args
                 .embedding_model
+                .clone()
                 .unwrap_or_else(|| "voyage-2".to_string());
+
+            // Warn about models with non-1024d native dimensions
+            if (model == "voyage-large-2" || model == "voyage-code-2")
+                && args.embedding_dimensions == 1024
+            {
+                error!(
+                    "⚠️  WARNING: Model {} natively produces 1536d embeddings",
+                    model
+                );
+                error!("   Anthropic API doesn't support dimension reduction.");
+                error!("   Results may be truncated or padded. Consider using voyage-2 (1024d native).");
+            }
+
             info!(
                 "Using Anthropic embeddings: model={}, dims={}",
                 model, args.embedding_dimensions

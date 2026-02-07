@@ -35,7 +35,7 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-feature
 async-trait = "0.1"
 
 # For CLI (will use later)
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.0", features = ["derive", "env"] }
 
 # For MCP server
 rust-mcp-sdk = { version = "0.8", features = ["server", "stdio"] }
@@ -60,6 +60,10 @@ http-body-util = "0.1"
 # ADM Memory
 fermi-memory = { path = "fermi-memory" }
 
+# For migration scripts
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid"] }
+anyhow = "1.0"
+
 [dev-dependencies]
 # For testing
 criterion = "0.5"
@@ -79,6 +83,10 @@ path = "src/bin/agent-mcp-server.rs"
 [[bin]]
 name = "agent-web-ui"
 path = "src/bin/agent-web-ui.rs"
+
+[[bin]]
+name = "migrate-embedding-dimensions"
+path = "scripts/migrate_embedding_dimensions.rs"
 
 # Vercel API functions
 [[bin]]

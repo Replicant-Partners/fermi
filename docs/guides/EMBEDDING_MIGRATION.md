@@ -150,7 +150,38 @@ ALTER TABLE episodes ADD COLUMN embedding_new vector(1024);
 
 ### Phase 3: Re-Embedding
 
-#### Option A: Using Migration Script (Recommended)
+#### Option A: Using Automated Migration Script (Recommended for Dimension Changes)
+
+If you're changing embedding dimensions, use the automated migration script:
+
+```bash
+# Dry run first to see what will happen
+cargo run --bin migrate-embedding-dimensions -- \
+  --database-url $DATABASE_URL \
+  --old-dimensions 1024 \
+  --new-dimensions 1536 \
+  --dry-run
+
+# Execute the migration
+cargo run --bin migrate-embedding-dimensions -- \
+  --database-url $DATABASE_URL \
+  --old-dimensions 1024 \
+  --new-dimensions 1536 \
+  --confirm
+```
+
+This script will:
+1. Validate current schema dimensions
+2. Drop vector indexes
+3. Alter all embedding columns to new dimensions
+4. Clear all embeddings (set to NULL)
+5. Recreate indexes
+
+See [scripts/README.md](../../scripts/README.md) for detailed documentation.
+
+After running the script, proceed to re-embedding (Option B below).
+
+#### Option B: Manual Re-Embedding Script
 
 Create a migration script `scripts/migrate_embeddings.rs`:
 
@@ -285,9 +316,9 @@ export AGENT_ID="uuid-here"
 cargo run --bin migrate_embeddings
 ```
 
-#### Option B: Using fermi-consolidate
+#### Option C: Using fermi-consolidate
 
-If you just need to re-embed and reconsolidate:
+If you're changing providers but keeping the same dimensions (1024d), you can just re-run consolidation:
 
 ```bash
 # 1. Clear semantic memory (optional - forces full reconsolidation)

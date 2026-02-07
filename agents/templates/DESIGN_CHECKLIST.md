@@ -123,9 +123,11 @@ Fermi ADM uses embeddings to store episodic and semantic memory. You can choose 
   - [ ] Custom model: _________________________________________
 
 - [ ] **Embedding dimensions:**
-  - [ ] 1024 (default, good balance of speed/quality)
-  - [ ] 1536 (higher quality)
-  - [ ] 3072 (maximum quality, OpenAI only)
+  - [ ] **1024 (REQUIRED - matches current PostgreSQL schema)** ✅
+  - [ ] 1536 (requires schema migration)
+  - [ ] 3072 (requires schema migration, OpenAI only)
+  
+  ⚠️ **Note**: The database schema currently uses 1024-dimensional vectors. All embedding models must output 1024 dimensions. OpenAI models can be configured to 1024d via the API. If you need different dimensions, see the [Embedding Migration Guide](../../docs/guides/EMBEDDING_MIGRATION.md).
 
 - [ ] **Language considerations:**
   - [ ] English-only → Anthropic or OpenAI recommended

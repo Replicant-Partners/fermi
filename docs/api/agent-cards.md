@@ -651,6 +651,8 @@ default_schedule = "weekly"
 
 Fermi ADM supports multiple embedding providers, allowing you to choose the best model for your agent's needs. When designing an agent, you can specify both the embedding provider and model in the agent configuration.
 
+⚠️ **Important**: The current PostgreSQL schema uses **1024-dimensional vectors** for all embeddings. All embedding models must be configured to output 1024 dimensions. Models with different native dimensions (1536d, 3072d) can be configured to output 1024d, or you can migrate the schema to support different dimensions (see [Embedding Migration Guide](../guides/EMBEDDING_MIGRATION.md)).
+
 ### Supported Providers
 
 #### 1. Anthropic (Default) - Voyage AI
@@ -663,9 +665,9 @@ dimensions = 1024
 ```
 
 **Models:**
-- `voyage-2` - General purpose, 1024 dimensions (default)
-- `voyage-large-2` - Higher quality, 1536 dimensions
-- `voyage-code-2` - Optimized for code, 1536 dimensions
+- `voyage-2` - General purpose, 1024 dimensions (default) ✅
+- `voyage-large-2` - Higher quality, 1536 dimensions native (use 1024d or migrate schema)
+- `voyage-code-2` - Optimized for code, 1536 dimensions native (use 1024d or migrate schema)
 
 **Advantages:**
 - Optimized for retrieval tasks
@@ -684,9 +686,9 @@ dimensions = 1024
 ```
 
 **Models:**
-- `text-embedding-3-small` - Cost-effective, 1536 dimensions
-- `text-embedding-3-large` - High quality, 3072 dimensions (configurable)
-- `text-embedding-ada-002` - Legacy model, 1536 dimensions
+- `text-embedding-3-small` - Cost-effective, 1536d native (configure to 1024d) ✅
+- `text-embedding-3-large` - High quality, 3072d native (configure to 1024d) ✅
+- `text-embedding-ada-002` - Legacy model, 1536d native (configure to 1024d)
 
 **Advantages:**
 - Widely tested and documented
@@ -705,7 +707,7 @@ dimensions = 1024
 ```
 
 **Models:**
-- `mistral-embed` - General purpose, 1024 dimensions
+- `mistral-embed` - General purpose, 1024 dimensions ✅
 
 **Advantages:**
 - European data residency options
@@ -724,8 +726,8 @@ dimensions = 1024
 ```
 
 **Models:**
-- `text-embedding-v3` - Latest generation, 1024 dimensions
-- `text-embedding-v2` - Previous generation, 1536 dimensions
+- `text-embedding-v3` - Latest generation, 1024 dimensions ✅
+- `text-embedding-v2` - Previous generation, 1536 dimensions (migrate schema required)
 
 **Advantages:**
 - Strong multilingual support (especially Chinese)
@@ -758,8 +760,10 @@ dimensions = 1024
    - Anthropic/OpenAI: US-based
 
 5. **Dimensionality**
-   - 1024d: Faster, lower storage, good for most use cases
-   - 1536-3072d: Higher quality, more storage/compute
+   - **1024d (Current Schema)**: Required for default setup ✅
+   - 1536-3072d: Requires schema migration (see Migration Guide)
+   - OpenAI models support configurable dimensions via API
+   - Anthropic Voyage-2 and Mistral are natively 1024d
 
 ### Usage in fermi-consolidate
 
