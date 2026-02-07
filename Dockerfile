@@ -11,6 +11,10 @@ COPY rust-toolchain.toml ./
 COPY src ./src
 COPY agent-bestiary ./agent-bestiary
 
+# Downgrade incompatible dependencies for Rust 1.85
+RUN cargo update time --precise 0.3.36 && \
+    cargo update home --precise 0.5.9
+
 # Build the api-server binary
 RUN cargo build --release --bin api-server
 
