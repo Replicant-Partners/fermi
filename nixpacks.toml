@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["rust", "cargo"]
+
+[phases.build]
+cmds = ["cargo build --release --bin api-server"]
+
+[start]
+cmd = "./target/release/api-server"
