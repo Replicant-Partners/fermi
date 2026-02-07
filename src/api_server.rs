@@ -110,9 +110,25 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn index() -> Html<&'static str> {
-    println!("=== INDEX ROUTE WAS CALLED ===");
-    Html("<h1>Hello from Agent Bestiary!</h1><p>If you see this, the route works!</p>")
+async fn index() -> Html<String> {
+    println!("Index route called");
+    let html = match std::fs::read_to_string("templates/index.html") {
+        Ok(content) => {
+            println!(
+                "Successfully loaded templates/index.html ({} bytes)",
+                content.len()
+            );
+            content
+        }
+        Err(e) => {
+            eprintln!("Error loading templates/index.html: {}", e);
+            format!(
+                "<h1>Agent Bestiary</h1><p>Error loading template: {}</p>",
+                e
+            )
+        }
+    };
+    Html(html)
 }
 
 async fn health() -> Json<Value> {
