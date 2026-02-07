@@ -72,7 +72,14 @@ impl SnapshotManager {
 
         // Store snapshot in database
         let snapshot_id = self
-            .store_snapshot(agent_id, &diagram.content, &git_commit.sha, job_id)
+            .store_snapshot(
+                agent_id,
+                &diagram.content,
+                &git_commit.sha,
+                git_commit.github_url.as_deref(),
+                git_commit.pushed_to_remote,
+                job_id,
+            )
             .await?;
 
         // Update agent's current ontology references
@@ -88,23 +95,63 @@ impl SnapshotManager {
         agent_id: Uuid,
         mermaid_content: &str,
         git_commit_sha: &str,
+        github_url: Option<&str>,
+        pushed_to_remote: bool,
         job_id: Option<Uuid>,
     ) -> Result<Uuid> {
         let snapshot_id = Uuid::new_v4();
 
+        // Get stats for this snapshot
+        let (entity_count, fact_count) = self.mermaid_generator.get_stats(agent_id).await?;
+        let rules = self.store.get_agent_semantic_rules(agent_id).await?;
+        let rule_count = rules.len() as i32;
+
+        // Get community count
+        let community_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM communities WHERE agent_id = $1")
+                .bind(agent_id)
+                .fetch_one(self.store.pool())
+                .await?;
+
+        // Get previous version for this agent
+        let previous_version: Option<(i32,)> =
+            sqlx::query_as("SELECT MAX(version) FROM ontology_snapshots WHERE agent_id = $1")
+                .bind(agent_id)
+                .fetch_optional(self.store.pool())
+                .await?;
+
+        let version = match previous_version {
+            Some((v,)) => v + 1,
+            None => 1,
+        };
+
+        let git_repository = github_url.unwrap_or("local");
+        let git_path = "ontology.mermaid".to_string();
+
         sqlx::query(
             r#"
             INSERT INTO ontology_snapshots (
-                snapshot_id, agent_id, git_commit_sha, mermaid_content,
-                consolidation_job_id, created_at
+                snapshot_id, agent_id, git_commit_sha, git_repository, git_path,
+                github_url, pushed_to_remote, mermaid_content,
+                entity_count, fact_count, community_count, rule_count,
+                version, consolidation_job_id, created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             "#,
         )
         .bind(snapshot_id)
         .bind(agent_id)
         .bind(git_commit_sha)
+        .bind(git_repository)
+        .bind(git_path)
+        .bind(github_url)
+        .bind(pushed_to_remote)
         .bind(mermaid_content)
+        .bind(entity_count)
+        .bind(fact_count)
+        .bind(community_count.0 as i32)
+        .bind(rule_count)
+        .bind(version)
         .bind(job_id)
         .bind(Utc::now())
         .execute(self.store.pool())

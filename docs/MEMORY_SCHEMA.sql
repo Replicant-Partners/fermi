@@ -247,7 +247,9 @@ CREATE TABLE ontology_snapshots (
     -- Git tracking
     git_commit_sha TEXT NOT NULL,
     git_repository TEXT NOT NULL,
-    git_path TEXT NOT NULL, -- e.g., 'agents/curated/market_research/ontology.mermaid'
+    git_path TEXT NOT NULL, -- e.g., 'agents/market_research/ontology.mermaid' (per-agent repo)
+    github_url TEXT, -- GitHub URL e.g., 'https://github.com/Replicant-Partners/fermi-agent-market-research'
+    pushed_to_remote BOOLEAN NOT NULL DEFAULT false, -- Whether successfully pushed to GitHub
 
     -- Snapshot metadata
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -270,6 +272,7 @@ CREATE TABLE ontology_snapshots (
 CREATE INDEX idx_ontology_snapshots_agent ON ontology_snapshots(agent_id, created_at DESC);
 CREATE INDEX idx_ontology_snapshots_commit ON ontology_snapshots(git_commit_sha);
 CREATE UNIQUE INDEX idx_ontology_snapshots_unique ON ontology_snapshots(agent_id, git_commit_sha);
+CREATE INDEX idx_ontology_snapshots_github_url ON ontology_snapshots(github_url) WHERE github_url IS NOT NULL;
 
 -- ============================================================================
 -- CONSOLIDATION JOBS (Sleep Phase Tracking)

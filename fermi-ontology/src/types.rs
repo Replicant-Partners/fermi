@@ -49,8 +49,15 @@ pub struct GitCommit {
     /// Agent name (used for file naming)
     pub agent_name: String,
 
-    /// Path to the ontology file in the repo
+    /// Path to the ontology file in the repo (relative to repo root)
     pub file_path: String,
+
+    /// GitHub repository URL (if pushed to GitHub)
+    /// Example: "https://github.com/Replicant-Partners/fermi-agent-market-research"
+    pub github_url: Option<String>,
+
+    /// Whether this commit was successfully pushed to remote
+    pub pushed_to_remote: bool,
 }
 
 /// Statistics about an ontology snapshot
@@ -98,8 +105,9 @@ impl OntologyStats {
 /// Configuration for git repository management
 #[derive(Debug, Clone)]
 pub struct GitConfig {
-    /// Path to the git repository
-    pub repo_path: String,
+    /// Base path where agent repos are stored
+    /// Each agent gets its own subdirectory: {base_path}/{agent_name}/
+    pub base_path: String,
 
     /// Git author name
     pub author_name: String,
@@ -109,15 +117,31 @@ pub struct GitConfig {
 
     /// Branch to commit to (default: "main")
     pub branch: String,
+
+    /// GitHub organization or user (e.g., "Replicant-Partners")
+    pub github_org: Option<String>,
+
+    /// GitHub personal access token (for pushing)
+    pub github_token: Option<String>,
+
+    /// Whether to automatically push to GitHub after each commit
+    pub auto_push: bool,
+
+    /// Remote name (default: "origin")
+    pub remote_name: String,
 }
 
 impl Default for GitConfig {
     fn default() -> Self {
         Self {
-            repo_path: "./ontologies".to_string(),
+            base_path: "./agents".to_string(),
             author_name: "Fermi ADM".to_string(),
             author_email: "adm@fermi.ai".to_string(),
             branch: "main".to_string(),
+            github_org: None,
+            github_token: None,
+            auto_push: false,
+            remote_name: "origin".to_string(),
         }
     }
 }

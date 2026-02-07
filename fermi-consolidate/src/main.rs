@@ -48,9 +48,21 @@ struct Args {
     #[arg(long, env, default_value = "1024")]
     embedding_dimensions: usize,
 
-    /// Git repository path for ontologies
-    #[arg(long, default_value = "./ontologies")]
-    ontology_repo_path: String,
+    /// Base path for agent git repositories
+    #[arg(long, env, default_value = "./agents")]
+    agents_base_path: String,
+
+    /// GitHub organization (e.g., "Replicant-Partners")
+    #[arg(long, env)]
+    github_org: Option<String>,
+
+    /// GitHub personal access token
+    #[arg(long, env)]
+    github_token: Option<String>,
+
+    /// Auto-push to GitHub after each commit
+    #[arg(long, env)]
+    auto_push_github: bool,
 
     /// DBSCAN epsilon parameter
     #[arg(long, default_value = "0.3")]
@@ -84,7 +96,11 @@ async fn main() -> Result<()> {
     info!("Starting Fermi consolidation worker");
     info!("Worker ID: {}", args.worker_id);
     info!("Database: {}", args.database_url);
-    info!("Ontology repo: {}", args.ontology_repo_path);
+    info!("Agent repos base: {}", args.agents_base_path);
+    if let Some(ref org) = args.github_org {
+        info!("GitHub org: {}", org);
+        info!("Auto-push: {}", args.auto_push_github);
+    }
 
     // Validate embedding dimensions match schema
     if args.embedding_dimensions != 1024 {
@@ -221,10 +237,14 @@ async fn main() -> Result<()> {
 
     let ontology_store2 = MemoryStore::new(&args.database_url).await?;
     let git_config = GitConfig {
-        repo_path: args.ontology_repo_path.clone(),
+        base_path: args.agents_base_path.clone(),
         author_name: "Fermi ADM".to_string(),
         author_email: "adm@fermi.ai".to_string(),
         branch: "main".to_string(),
+        github_org: args.github_org.clone(),
+        github_token: args.github_token.clone(),
+        auto_push: args.auto_push_github,
+        remote_name: "origin".to_string(),
     };
     let git_manager = GitManager::new(git_config)?;
     let snapshot_manager = Arc::new(SnapshotManager::new(
