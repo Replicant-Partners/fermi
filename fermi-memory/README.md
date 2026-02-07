@@ -4,8 +4,11 @@ Core memory infrastructure for Fermi forecasting agents.
 
 ## Phase 1 Progress: Foundation (Days 1-2) ✅
 
-**Status:** Core types and structure complete  
-**Completion:** ~80% of Phase 1 Day 1-2 objectives
+**Status:** Core types, structure, and database connected  
+**Completion:** ~90% of Phase 1 Day 1-2 objectives
+
+**Database:** Connected to Neon PostgreSQL (shared with Agent Bestiary)  
+**Schema:** All ADM tables deployed and verified
 
 ### Completed
 - ✅ Crate structure created (`fermi-memory/`)
@@ -121,10 +124,22 @@ See `/docs/agent-bestiary/MEMORY_SCHEMA.sql` for complete PostgreSQL schema incl
 - Uses workspace-level patches for `time` and `home` dependencies
 - Compatible with Railway deployment environment
 
-**SQLx Offline Mode:**
-- Requires database connection to generate query metadata
-- Run `cargo sqlx prepare` after database setup
-- Offline data stored in `.sqlx/` directory
+**SQLx Compile-Time Checking (Known Issue):**
+- `sqlx::query!()` macros require compile-time database verification
+- Currently blocked by `sqlx-cli` requiring Rust 1.88+ (we use 1.85 for Railway)
+- **Workaround:** Tests use runtime queries via `sqlx::query()` instead
+- **Status:** Functional for development, will resolve post-Railway migration to newer Rust
+
+**Alternative Approach (if needed):**
+```rust
+// Instead of compile-time checked:
+let result = sqlx::query!("SELECT * FROM episodes").fetch_all(&pool).await?;
+
+// Use runtime queries:
+let result = sqlx::query("SELECT * FROM episodes")
+    .fetch_all(&pool)
+    .await?;
+```
 
 **Testing:**
 - Integration tests marked with `#[ignore]` until database available
