@@ -78,8 +78,9 @@ async fn list_agents(_req: Request) -> Result<Response<Body>, Error> {
 
 async fn create_agent(req: Request) -> Result<Response<Body>, Error> {
     // Parse request body
-    let body_bytes = req.body();
-    let create_req: CreateAgentRequest = serde_json::from_slice(body_bytes)
+    use http_body_util::BodyExt;
+    let body_bytes = req.into_body().collect().await?.to_bytes();
+    let create_req: CreateAgentRequest = serde_json::from_slice(&body_bytes)
         .map_err(|e| Error::from(format!("Invalid request body: {}", e)))?;
 
     // Get database URL
