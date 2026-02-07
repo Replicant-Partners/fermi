@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fermi Agent Bestiary</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family:
+          ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+          monospace;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 40px;
+      }
+
+      h1 {
+        color: white;
+        font-size: 3em;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        margin-bottom: 10px;
+      }
+
+      .subtitle {
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 1.2em;
+      }
+
+      .stats {
+        background: white;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+        display: flex;
+        justify-content: space-around;
+      }
+
+      .stat {
+        text-align: center;
+      }
+
+      .stat-value {
+        font-size: 2.5em;
+        font-weight: bold;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      .stat-label {
+        color: #666;
+        margin-top: 5px;
+        text-transform: uppercase;
+        font-size: 0.9em;
+        letter-spacing: 1px;
+      }
+
+      .agents-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 25px;
+      }
+
+      .agent-card {
+        background: white;
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+        transition: all 0.3s ease;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+      }
+
+      .agent-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+      }
+
+      .agent-avatar {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        margin-bottom: 20px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      }
+
+      .agent-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .agent-avatar.loading {
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .agent-name {
+        font-size: 1.5em;
+        font-weight: bold;
+        color: #333;
+        margin-bottom: 15px;
+        word-break: break-word;
+      }
+
+      .agent-info {
+        color: #666;
+        margin: 5px 0;
+        font-size: 0.95em;
+      }
+
+      .agent-meta {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      .badge {
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 0.8em;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .badge-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      .loading {
+        text-align: center;
+        color: white;
+        font-size: 1.5em;
+        padding: 40px;
+        grid-column: 1 / -1;
+      }
+
+      .error {
+        background: #ff6b6b;
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        margin: 20px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🤖 Fermi Agent Bestiary</h1>
+        <div class="subtitle">
+          AI-Powered Forecasting Agents with Nano Banana Avatars
+        </div>
+      </header>
+
+      <div class="stats" id="stats">
+        <div class="stat">
+          <div class="stat-value" id="total-agents">-</div>
+          <div class="stat-label">Total Agents</div>
+        </div>
+      </div>
+
+      <div class="agents-grid" id="agents-grid">
+        <div class="loading">Loading agents...</div>
+      </div>
+    </div>
+
+    <script>
+      async function generateAvatar(agentId) {
+        try {
+          const response = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/avatar`,
+          );
+          if (!response.ok) throw new Error("Avatar generation failed");
+          const data = await response.json();
+          return `data:${data.image.mime_type};base64,${data.image.data}`;
+        } catch (error) {
+          console.error(`Error generating avatar for ${agentId}:`, error);
+          return null;
+        }
+      }
+
+      async function loadAgents() {
+        try {
+          const response = await fetch("/api/agents");
+          const data = await response.json();
+
+          document.getElementById("total-agents").textContent = data.total;
+
+          const grid = document.getElementById("agents-grid");
+          grid.innerHTML = "";
+
+          if (data.agents.length === 0) {
+            grid.innerHTML = '<div class="loading">No agents found</div>';
+            return;
+          }
+
+          // Create cards first without avatars
+          const agentCards = data.agents.map((agent) => {
+            const card = document.createElement("div");
+            card.className = "agent-card";
+            const agentId = agent.agent_id || agent.agent_name || "unknown";
+
+            card.innerHTML = `
+                        <div class="agent-avatar loading" id="avatar-${CSS.escape(agentId)}">
+                            <span style="font-size: 3em;">🤖</span>
+                        </div>
+                        <div class="agent-name">${agentId}</div>
+                        ${agent.agent_name ? `<div class="agent-info">📝 ${agent.agent_name}</div>` : ""}
+                        ${agent.created_at ? `<div class="agent-info">📅 ${new Date(agent.created_at).toLocaleDateString()}</div>` : ""}
+                        <div class="agent-meta">
+                            <span class="badge badge-primary">AI Agent</span>
+                        </div>
+                    `;
+
+            grid.appendChild(card);
+
+            // Generate avatar asynchronously
+            generateAvatar(agentId).then((avatarUrl) => {
+              const avatarDiv = document.getElementById(
+                `avatar-${CSS.escape(agentId)}`,
+              );
+              if (avatarDiv && avatarUrl) {
+                avatarDiv.innerHTML = `<img src="${avatarUrl}" alt="${agentId} avatar">`;
+                avatarDiv.classList.remove("loading");
+              }
+            });
+
+            return card;
+          });
+        } catch (error) {
+          console.error("Error loading agents:", error);
+          const grid = document.getElementById("agents-grid");
+          grid.innerHTML =
+            '<div class="error">❌ Error loading agents. Please try again later.</div>';
+        }
+      }
+
+      // Load agents on page load
+      loadAgents();
+    </script>
+  </body>
+</html>
