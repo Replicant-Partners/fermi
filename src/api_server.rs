@@ -1,8 +1,8 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     middleware,
-    response::{AppendHeaders, Html, IntoResponse, Redirect},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -434,7 +434,7 @@ async fn auth_github(State(state): State<AppState>) -> Result<Redirect, (StatusC
 async fn auth_callback(
     State(state): State<AppState>,
     Query(params): Query<AuthCallbackQuery>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
     let map_err = |e: fermi_auth::AuthError| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
 
     // Determine provider from state prefix
@@ -482,24 +482,25 @@ async fn auth_callback(
         token
     );
 
-    Ok((
-        StatusCode::SEE_OTHER,
-        AppendHeaders([("set-cookie", cookie), ("location", "/".to_string())]),
-    ))
+    Ok(Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, "/")
+        .header(header::SET_COOKIE, cookie)
+        .body(axum::body::Body::empty())
+        .unwrap())
 }
 
 /// Logout — clear session cookie
-async fn auth_logout() -> impl IntoResponse {
-    (
-        StatusCode::SEE_OTHER,
-        AppendHeaders([
-            (
-                "set-cookie",
-                "abw_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0".to_string(),
-            ),
-            ("location", "/".to_string()),
-        ]),
-    )
+async fn auth_logout() -> Response {
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, "/")
+        .header(
+            header::SET_COOKIE,
+            "abw_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+        )
+        .body(axum::body::Body::empty())
+        .unwrap()
 }
 
 /// Get current authenticated user
