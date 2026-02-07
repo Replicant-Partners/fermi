@@ -94,9 +94,11 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index))
         .route("/agent/:agent_id", get(agent_detail))
+        .route("/agent/:agent_id/ontology", get(ontology_view))
         .route("/api/health", get(health))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:agent_id/avatar", get(generate_avatar))
+        .route("/api/agents/:agent_id/ontology", get(get_ontology))
         .with_state(state);
 
     let port = std::env::var("PORT")
@@ -139,6 +141,20 @@ async fn agent_detail() -> Html<String> {
             eprintln!("Error loading templates/agent_detail.html: {}", e);
             format!(
                 "<h1>Agent Bestiary</h1><p>Error loading template: {}</p>",
+                e
+            )
+        }
+    };
+    Html(html)
+}
+
+async fn ontology_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/ontology.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/ontology.html: {}", e);
+            format!(
+                "<h1>Knowledge Graph</h1><p>Error loading template: {}</p>",
                 e
             )
         }
@@ -292,4 +308,31 @@ async fn generate_avatar(
         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "No image generated".to_string(),
     ))
+}
+
+async fn get_ontology(
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (axum::http::StatusCode, String)> {
+    // Try to load from ontologies/samples directory first
+    let sample_path = format!("ontologies/samples/{}_ontology.json", agent_id);
+
+    if let Ok(content) = std::fs::read_to_string(&sample_path) {
+        if let Ok(ontology) = serde_json::from_str::<Value>(&content) {
+            return Ok(Json(ontology));
+        }
+    }
+
+    // Fallback: generate empty ontology structure
+    Ok(Json(json!({
+        "ontology_id": format!("{}_ontology", agent_id),
+        "agent_id": agent_id,
+        "version": "1.0.0",
+        "entities": [],
+        "relationships": [],
+        "evolution_commits": 0,
+        "metadata": {
+            "status": "empty",
+            "message": "No ontology data available for this agent"
+        }
+    })))
 }

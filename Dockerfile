@@ -39,6 +39,9 @@ COPY templates /app/templates
 # Copy agents directory
 COPY agents /app/agents
 
+# Copy ontologies directory
+COPY ontologies /app/ontologies
+
 # Create avatars cache directory
 RUN mkdir -p /app/avatars_cache
 

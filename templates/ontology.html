@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Knowledge Graph - Agent Bestiary</title>
+    <style>
+      /* Gruvbox Dark Theme Colors */
+      :root {
+        --bg0-hard: #1d2021;
+        --bg0: #282828;
+        --bg1: #3c3836;
+        --bg2: #504945;
+        --bg3: #665c54;
+        --fg0: #fbf1c7;
+        --fg1: #ebdbb2;
+        --fg2: #d5c4a1;
+        --fg3: #bdae93;
+        --red: #fb4934;
+        --green: #b8bb26;
+        --yellow: #fabd2f;
+        --blue: #83a598;
+        --purple: #d3869b;
+        --aqua: #8ec07c;
+        --orange: #fe8019;
+        --gray: #928374;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+        background: var(--bg0-hard);
+        color: var(--fg1);
+        min-height: 100vh;
+        padding: 20px;
+        line-height: 1.5;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--bg2);
+      }
+
+      .back-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--fg3);
+        text-decoration: none;
+        font-size: 0.85em;
+        padding: 6px 12px;
+        background: transparent;
+        border: 1px solid var(--bg2);
+        border-radius: 4px;
+        transition: all 0.2s ease;
+        font-weight: 400;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .back-button:hover {
+        background: var(--bg1);
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+
+      .page-title {
+        font-size: 1.4em;
+        font-weight: 400;
+        color: var(--fg0);
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+
+      .agent-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 4px;
+        margin-bottom: 20px;
+      }
+
+      .agent-name {
+        font-size: 1em;
+        color: var(--fg1);
+        text-transform: capitalize;
+      }
+
+      .stats-bar {
+        display: flex;
+        gap: 16px;
+        margin-left: auto;
+        color: var(--gray);
+        font-size: 0.85em;
+      }
+
+      .stat-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .stat-value {
+        color: var(--yellow);
+        font-weight: 500;
+      }
+
+      .content-grid {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 20px;
+        height: calc(100vh - 200px);
+      }
+
+      .sidebar {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 4px;
+        padding: 16px;
+        overflow-y: auto;
+      }
+
+      .sidebar-section {
+        margin-bottom: 20px;
+      }
+
+      .sidebar-title {
+        font-size: 0.85em;
+        font-weight: 400;
+        color: var(--fg0);
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        margin-bottom: 12px;
+      }
+
+      .entity-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .entity-item {
+        padding: 8px 10px;
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        border-radius: 3px;
+        font-size: 0.85em;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .entity-item:hover {
+        background: var(--bg2);
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+
+      .entity-type {
+        color: var(--gray);
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        margin-top: 2px;
+      }
+
+      .graph-container {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 4px;
+        padding: 20px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      #graph-canvas {
+        width: 100%;
+        height: 100%;
+        min-height: 500px;
+      }
+
+      .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--fg3);
+        font-size: 1.1em;
+      }
+
+      .error {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--red);
+        font-size: 1em;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .node {
+        fill: var(--bg3);
+        stroke: var(--yellow);
+        stroke-width: 2px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .node:hover {
+        fill: var(--bg2);
+        stroke: var(--orange);
+        stroke-width: 3px;
+      }
+
+      .node-label {
+        fill: var(--fg1);
+        font-size: 12px;
+        pointer-events: none;
+        text-anchor: middle;
+      }
+
+      .link {
+        stroke: var(--bg3);
+        stroke-width: 1.5px;
+        stroke-opacity: 0.6;
+        fill: none;
+      }
+
+      .link-label {
+        fill: var(--gray);
+        font-size: 10px;
+        text-anchor: middle;
+      }
+
+      .tooltip {
+        position: absolute;
+        background: var(--bg0);
+        border: 1px solid var(--bg3);
+        border-radius: 4px;
+        padding: 8px 12px;
+        font-size: 0.85em;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        z-index: 100;
+      }
+
+      .tooltip.visible {
+        opacity: 1;
+      }
+    </style>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <a href="#" class="back-button" id="back-button">
+          <span>←</span>
+          <span>Back to Specimen</span>
+        </a>
+        <div class="page-title">Knowledge Graph</div>
+      </div>
+
+      <div class="agent-info" id="agent-info">
+        <div class="agent-name" id="agent-name">Loading...</div>
+        <div class="stats-bar">
+          <div class="stat-item">
+            <span>Entities:</span>
+            <span class="stat-value" id="entity-count">0</span>
+          </div>
+          <div class="stat-item">
+            <span>Relationships:</span>
+            <span class="stat-value" id="relationship-count">0</span>
+          </div>
+          <div class="stat-item">
+            <span>Evolution Commits:</span>
+            <span class="stat-value" id="commit-count">0</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="content-grid">
+        <div class="sidebar">
+          <div class="sidebar-section">
+            <div class="sidebar-title">Entities</div>
+            <div class="entity-list" id="entity-list">
+              <!-- Entities will be populated here -->
+            </div>
+          </div>
+        </div>
+
+        <div class="graph-container">
+          <div id="graph-canvas">
+            <div class="loading">Loading knowledge graph...</div>
+          </div>
+          <div class="tooltip" id="tooltip"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const pathParts = window.location.pathname.split("/");
+      const agentId = pathParts[2]; // /agent/:id/ontology
+
+      document.getElementById("back-button").href = `/agent/${agentId}`;
+
+      async function loadOntology() {
+        try {
+          // Load ontology data
+          const response = await fetch(`/api/agents/${agentId}/ontology`);
+
+          if (!response.ok) {
+            throw new Error("Ontology not found");
+          }
+
+          const ontology = await response.json();
+
+          // Update header info
+          document.getElementById("agent-name").textContent = agentId.replace(/_/g, " ");
+          document.getElementById("entity-count").textContent = ontology.entities?.length || 0;
+          document.getElementById("relationship-count").textContent = ontology.relationships?.length || 0;
+          document.getElementById("commit-count").textContent = ontology.evolution_commits || 0;
+
+          // Populate entity list
+          const entityList = document.getElementById("entity-list");
+          entityList.innerHTML = "";
+
+          if (ontology.entities) {
+            ontology.entities.forEach((entity) => {
+              const item = document.createElement("div");
+              item.className = "entity-item";
+              item.innerHTML = `
+                <div>${entity.name}</div>
+                <div class="entity-type">${entity.type}</div>
+              `;
+              item.onclick = () => highlightNode(entity.id);
+              entityList.appendChild(item);
+            });
+          }
+
+          // Render graph
+          renderGraph(ontology);
+        } catch (error) {
+          console.error("Error loading ontology:", error);
+          document.getElementById("graph-canvas").innerHTML = `
+            <div class="error">
+              <div>Failed to load knowledge graph</div>
+              <div style="font-size: 0.85em; color: var(--fg3);">${error.message}</div>
+            </div>
+          `;
+        }
+      }
+
+      function renderGraph(ontology) {
+        const container = document.getElementById("graph-canvas");
+        container.innerHTML = "";
+
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+
+        // Create SVG
+        const svg = d3.select("#graph-canvas")
+          .append("svg")
+          .attr("width", width)
+          .attr("height", height);
+
+        // Create force simulation
+        const simulation = d3.forceSimulation()
+          .force("link", d3.forceLink().id(d => d.id).distance(150))
+          .force("charge", d3.forceManyBody().strength(-300))
+          .force("center", d3.forceCenter(width / 2, height / 2))
+          .force("collision", d3.forceCollide().radius(50));
+
+        // Prepare data
+        const nodes = ontology.entities.map(e => ({
+          id: e.id,
+          name: e.name,
+          type: e.type,
+          properties: e.properties
+        }));
+
+        const links = ontology.relationships.map(r => ({
+          source: r.from,
+          target: r.to,
+          type: r.type,
+          properties: r.properties
+        }));
+
+        // Draw links
+        const link = svg.append("g")
+          .selectAll("path")
+          .data(links)
+          .join("path")
+          .attr("class", "link")
+          .attr("marker-end", "url(#arrowhead)");
+
+        // Draw link labels
+        const linkLabel = svg.append("g")
+          .selectAll("text")
+          .data(links)
+          .join("text")
+          .attr("class", "link-label")
+          .text(d => d.type);
+
+        // Draw nodes
+        const node = svg.append("g")
+          .selectAll("circle")
+          .data(nodes)
+          .join("circle")
+          .attr("class", "node")
+          .attr("r", 20)
+          .call(drag(simulation))
+          .on("mouseover", showTooltip)
+          .on("mouseout", hideTooltip);
+
+        // Draw node labels
+        const nodeLabel = svg.append("g")
+          .selectAll("text")
+          .data(nodes)
+          .join("text")
+          .attr("class", "node-label")
+          .attr("dy", 35)
+          .text(d => d.name);
+
+        // Define arrowhead marker
+        svg.append("defs").append("marker")
+          .attr("id", "arrowhead")
+          .attr("viewBox", "-0 -5 10 10")
+          .attr("refX", 25)
+          .attr("refY", 0)
+          .attr("orient", "auto")
+          .attr("markerWidth", 8)
+          .attr("markerHeight", 8)
+          .append("path")
+          .attr("d", "M 0,-5 L 10,0 L 0,5")
+          .attr("fill", "#665c54");
+
+        // Update positions on tick
+        simulation.nodes(nodes).on("tick", () => {
+          link.attr("d", d => {
+            const dx = d.target.x - d.source.x;
+            const dy = d.target.y - d.source.y;
+            const dr = Math.sqrt(dx * dx + dy * dy);
+            return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+          });
+
+          linkLabel
+            .attr("x", d => (d.source.x + d.target.x) / 2)
+            .attr("y", d => (d.source.y + d.target.y) / 2);
+
+          node
+            .attr("cx", d => d.x)
+            .attr("cy", d => d.y);
+
+          nodeLabel
+            .attr("x", d => d.x)
+            .attr("y", d => d.y);
+        });
+
+        simulation.force("link").links(links);
+      }
+
+      function drag(simulation) {
+        function dragstarted(event) {
+          if (!event.active) simulation.alphaTarget(0.3).restart();
+          event.subject.fx = event.subject.x;
+          event.subject.fy = event.subject.y;
+        }
+
+        function dragged(event) {
+          event.subject.fx = event.x;
+          event.subject.fy = event.y;
+        }
+
+        function dragended(event) {
+          if (!event.active) simulation.alphaTarget(0);
+          event.subject.fx = null;
+          event.subject.fy = null;
+        }
+
+        return d3.drag()
+          .on("start", dragstarted)
+          .on("drag", dragged)
+          .on("end", dragended);
+      }
+
+      function showTooltip(event, d) {
+        const tooltip = document.getElementById("tooltip");
+        tooltip.innerHTML = `
+          <div style="font-weight: 500; margin-bottom: 4px;">${d.name}</div>
+          <div style="color: var(--gray); font-size: 0.8em; margin-bottom: 6px;">${d.type}</div>
+          ${d.properties?.definition ? `<div style="font-size: 0.85em;">${d.properties.definition}</div>` : ""}
+        `;
+        tooltip.style.left = (event.pageX + 10) + "px";
+        tooltip.style.top = (event.pageY + 10) + "px";
+        tooltip.classList.add("visible");
+      }
+
+      function hideTooltip() {
+        document.getElementById("tooltip").classList.remove("visible");
+      }
+
+      function highlightNode(nodeId) {
+        // TODO: Implement node highlighting
+        console.log("Highlight node:", nodeId);
+      }
+
+      // Load ontology on page load
+      loadOntology();
+    </script>
+  </body>
+</html>
