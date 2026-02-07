@@ -3,7 +3,7 @@ members = [
     ".",
     "agent-bestiary/memory",
     "agent-bestiary/ontology",
-    "agent-bestiary/consolidate", "fermi-memory",
+    "agent-bestiary/consolidate", "fermi-memory", "fermi-auth",
 ]
 resolver = "2"
 
