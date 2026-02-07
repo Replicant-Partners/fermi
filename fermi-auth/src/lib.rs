@@ -4,7 +4,9 @@ pub mod jwt;
 pub mod middleware;
 pub mod oidc;
 pub mod siwe;
+pub mod teams;
 pub mod types;
+pub mod visibility;
 
 // Re-export commonly used types
 pub use error::AuthError;
@@ -19,4 +21,13 @@ pub use siwe::{
     cleanup_expired_nonces, create_challenge, verify_signature, SiweChallenge,
     SiweChallengeResponse, SiweVerify, SiweVerifyResponse,
 };
-pub use types::{ApiKey, AuthPrincipal, AuthProvider, User, UserRole};
+pub use teams::{
+    add_team_member, create_team, delete_team, get_member_role, get_team, get_team_members,
+    get_user_teams, list_object_shares, remove_team_member, revoke_share, share_object,
+    update_member_role,
+};
+pub use types::{
+    ApiKey, AuthPrincipal, AuthProvider, MemberType, ObjectShare, ObjectType, Permission,
+    ShareType, Team, TeamMember, TeamRole, User, UserRole, Visibility,
+};
+pub use visibility::{can_access, can_access_anonymous, can_edit, can_view, AccessLevel};

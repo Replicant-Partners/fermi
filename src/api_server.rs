@@ -3,13 +3,14 @@ use axum::{
     http::{header, StatusCode},
     middleware,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use fermi_auth::{
     api_keys, auth_middleware, build_github_auth_url, build_google_auth_url, create_session_token,
     generate_state, github_exchange_code, github_fetch_user_info, google_exchange_code,
-    google_fetch_user_info, sync_user, AuthPrincipal, AuthState, OAuthConfig,
+    google_fetch_user_info, sync_user, teams, AuthPrincipal, AuthState, MemberType, OAuthConfig,
+    ObjectType, Permission, ShareType, TeamRole,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -85,6 +86,27 @@ struct GeminiInlineData {
     data: String,
 }
 
+/// Run SQL migration files on startup (idempotent — uses IF NOT EXISTS).
+async fn run_migrations(db: &PgPool) {
+    let migration_files = ["migrations/009_add_teams_and_sharing.sql"];
+
+    for file in &migration_files {
+        match std::fs::read_to_string(file) {
+            Ok(sql) => {
+                println!("Running migration: {}", file);
+                match sqlx::raw_sql(&sql).execute(db).await {
+                    Ok(_) => println!("Migration {} completed", file),
+                    Err(e) => {
+                        // Don't panic — tables may already exist
+                        eprintln!("Migration {} warning: {}", file, e);
+                    }
+                }
+            }
+            Err(e) => eprintln!("Could not read migration {}: {}", file, e),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -102,6 +124,9 @@ async fn main() {
         .expect("Failed to connect to database");
 
     println!("Connected to database successfully");
+
+    // Run pending migrations on startup
+    run_migrations(&db).await;
 
     let gemini_api_key =
         std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY environment variable must be set");
@@ -151,6 +176,24 @@ async fn main() {
         .route("/api/auth/api-keys", get(list_api_keys))
         .route("/api/auth/api-keys", post(create_api_key))
         .route("/api/auth/api-keys/:key_id", delete(revoke_api_key))
+        // Team routes
+        .route("/api/teams", post(create_team_handler))
+        .route("/api/teams", get(list_teams_handler))
+        .route("/api/teams/:team_id", get(get_team_handler))
+        .route("/api/teams/:team_id", delete(delete_team_handler))
+        .route("/api/teams/:team_id/members", post(add_member_handler))
+        .route("/api/teams/:team_id/members", get(list_members_handler))
+        .route(
+            "/api/teams/:team_id/members/:member_id",
+            delete(remove_member_handler),
+        )
+        .route(
+            "/api/teams/:team_id/members/:member_id",
+            put(update_member_role_handler),
+        )
+        // Sharing routes
+        .route("/api/shares", post(share_object_handler))
+        .route("/api/shares/:share_id", delete(revoke_share_handler))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,
@@ -568,6 +611,279 @@ async fn revoke_api_key(
     Path(key_id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     api_keys::revoke_api_key(&state.db, &principal.user_id(), key_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "status": "revoked" })))
+}
+
+// ─── Team management ───────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct CreateTeamRequest {
+    name: String,
+    slug: String,
+    description: Option<String>,
+}
+
+async fn create_team_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(body): Json<CreateTeamRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    let team = teams::create_team(
+        &state.db,
+        &body.name,
+        &body.slug,
+        body.description.as_deref(),
+        &principal.user_id(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok((StatusCode::CREATED, Json(json!(team))))
+}
+
+async fn list_teams_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_teams = teams::get_user_teams(&state.db, &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "teams": user_teams })))
+}
+
+async fn get_team_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(team_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Verify membership
+    let role = teams::get_member_role(&state.db, team_id, &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if role.is_none() && !principal.can_admin() {
+        return Err((StatusCode::FORBIDDEN, "Not a team member".to_string()));
+    }
+
+    let team = teams::get_team(&state.db, team_id)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+
+    let members = teams::get_team_members(&state.db, team_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "team": team,
+        "members": members,
+    })))
+}
+
+async fn delete_team_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(team_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    teams::delete_team(&state.db, team_id, &principal.user_id())
+        .await
+        .map_err(|e| match e {
+            fermi_auth::AuthError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(json!({ "status": "deleted" })))
+}
+
+// ─── Team membership ───────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct AddMemberRequest {
+    member_id: String,
+    member_type: Option<String>,
+    role: Option<String>,
+}
+
+async fn add_member_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(team_id): Path<uuid::Uuid>,
+    Json(body): Json<AddMemberRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    // Check requester has invite permission (admin or owner)
+    let requester_role = teams::get_member_role(&state.db, team_id, &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a team member".to_string()))?;
+
+    if !requester_role.can_invite() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only admins and owners can invite members".to_string(),
+        ));
+    }
+
+    let member_type = match body.member_type.as_deref() {
+        Some("agent") => MemberType::Agent,
+        _ => MemberType::User,
+    };
+
+    let role = match body.role.as_deref() {
+        Some("admin") => TeamRole::Admin,
+        Some("viewer") => TeamRole::Viewer,
+        _ => TeamRole::Member,
+    };
+
+    teams::add_team_member(
+        &state.db,
+        team_id,
+        member_type,
+        &body.member_id,
+        role,
+        &principal.user_id(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok((StatusCode::CREATED, Json(json!({ "status": "added" }))))
+}
+
+async fn list_members_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(team_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Verify membership
+    let role = teams::get_member_role(&state.db, team_id, &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if role.is_none() && !principal.can_admin() {
+        return Err((StatusCode::FORBIDDEN, "Not a team member".to_string()));
+    }
+
+    let members = teams::get_team_members(&state.db, team_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "members": members })))
+}
+
+async fn remove_member_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path((team_id, member_id)): Path<(uuid::Uuid, String)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let requester_role = teams::get_member_role(&state.db, team_id, &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a team member".to_string()))?;
+
+    // Members can remove themselves; admins/owners can remove others
+    if member_id != principal.user_id() && !requester_role.can_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only admins can remove other members".to_string(),
+        ));
+    }
+
+    teams::remove_team_member(&state.db, team_id, &member_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "status": "removed" })))
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateRoleRequest {
+    role: String,
+}
+
+async fn update_member_role_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path((team_id, member_id)): Path<(uuid::Uuid, String)>,
+    Json(body): Json<UpdateRoleRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let requester_role = teams::get_member_role(&state.db, team_id, &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a team member".to_string()))?;
+
+    if !requester_role.can_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only admins and owners can change roles".to_string(),
+        ));
+    }
+
+    let new_role = TeamRole::from_str(&body.role);
+
+    teams::update_member_role(&state.db, team_id, &member_id, new_role)
+        .await
+        .map_err(|e| match e {
+            fermi_auth::AuthError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(json!({ "status": "updated" })))
+}
+
+// ─── Object sharing ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ShareObjectRequest {
+    object_type: String,
+    object_id: String,
+    share_type: String,
+    share_target: String,
+    permission: Option<String>,
+}
+
+async fn share_object_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(body): Json<ShareObjectRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    let object_type = ObjectType::from_str(&body.object_type)
+        .ok_or((StatusCode::BAD_REQUEST, "Invalid object_type".to_string()))?;
+
+    let share_type = match body.share_type.as_str() {
+        "team" => ShareType::Team,
+        "user" => ShareType::User,
+        _ => return Err((StatusCode::BAD_REQUEST, "Invalid share_type".to_string())),
+    };
+
+    let permission = match body.permission.as_deref() {
+        Some("edit") => Permission::Edit,
+        Some("admin") => Permission::Admin,
+        _ => Permission::View,
+    };
+
+    let share = teams::share_object(
+        &state.db,
+        object_type,
+        &body.object_id,
+        share_type,
+        &body.share_target,
+        permission,
+        &principal.user_id(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok((StatusCode::CREATED, Json(json!(share))))
+}
+
+async fn revoke_share_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(share_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    teams::revoke_share(&state.db, share_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
