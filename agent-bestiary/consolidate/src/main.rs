@@ -1,10 +1,10 @@
 use anyhow::{bail, Result};
 use clap::Parser;
-use fermi_memory::{
+use agent_bestiary_memory::{
     AnthropicEmbeddings, AnthropicProvider, ConsolidationLock, ConsolidationWorker,
     EmbeddingGenerator, MemoryStore, MistralEmbeddings, OpenAIEmbeddings, QwenEmbeddings,
 };
-use fermi_ontology::{GitConfig, GitManager, MermaidGenerator, SnapshotManager};
+use agent_bestiary_ontology::{GitConfig, GitManager, MermaidGenerator, SnapshotManager};
 use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -369,8 +369,8 @@ struct ConsolidationResult {
     pub snapshot_id: Option<Uuid>,
 }
 
-impl From<fermi_memory::ConsolidationResult> for ConsolidationResult {
-    fn from(r: fermi_memory::ConsolidationResult) -> Self {
+impl From<agent_bestiary_memory::ConsolidationResult> for ConsolidationResult {
+    fn from(r: agent_bestiary_memory::ConsolidationResult) -> Self {
         Self {
             episodes_processed: r.episodes_processed,
             clusters_identified: r.clusters_identified,

@@ -3,7 +3,7 @@ use crate::git::GitManager;
 use crate::mermaid::MermaidGenerator;
 use crate::types::OntologyStats;
 use chrono::Utc;
-use fermi_memory::MemoryStore;
+use agent_bestiary_memory::MemoryStore;
 use sqlx::Row;
 use uuid::Uuid;
 

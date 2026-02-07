@@ -1,5 +1,5 @@
 [package]
-name = "fermi-consolidate"
+name = "agent-bestiary-consolidate"
 version = "0.1.0"
 edition = "2021"
 authors = ["Fermi Team"]
@@ -7,8 +7,8 @@ description = "Consolidation worker for Fermi Active Dreaming Memory"
 
 [dependencies]
 # Fermi crates
-fermi-memory = { path = "../fermi-memory" }
-fermi-ontology = { path = "../fermi-ontology" }
+agent-bestiary-memory = { path = "../memory" }
+agent-bestiary-ontology = { path = "../ontology" }
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }

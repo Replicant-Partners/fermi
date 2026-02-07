@@ -1,7 +1,7 @@
 use crate::error::{OntologyError, Result};
 use crate::types::{DiagramMetadata, MermaidConfig, MermaidDiagram};
 use chrono::Utc;
-use fermi_memory::MemoryStore;
+use agent_bestiary_memory::MemoryStore;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -56,7 +56,7 @@ impl MermaidGenerator {
         };
 
         // Build entity lookup map
-        let entity_map: HashMap<Uuid, &fermi_memory::types::Entity> =
+        let entity_map: HashMap<Uuid, &agent_bestiary_memory::types::Entity> =
             entities.iter().map(|e| (e.entity_id, e)).collect();
 
         // Generate Mermaid content

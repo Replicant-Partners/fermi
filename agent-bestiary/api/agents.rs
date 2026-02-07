@@ -1,5 +1,5 @@
+use agent_bestiary_memory::MemoryStore;
 use chrono::Utc;
-use fermi_memory::MemoryStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
@@ -92,7 +92,7 @@ async fn create_agent(req: Request) -> Result<Response<Body>, Error> {
         .map_err(|e| Error::from(format!("Database connection failed: {}", e)))?;
 
     // Build agent struct
-    let agent = fermi_memory::Agent {
+    let agent = agent_bestiary_memory::Agent {
         agent_id: Uuid::new_v4(),
         agent_name: create_req.agent_name.clone(),
         agent_type: create_req.agent_type,

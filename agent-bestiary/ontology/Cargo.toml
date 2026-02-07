@@ -1,5 +1,5 @@
 [package]
-name = "fermi-ontology"
+name = "agent-bestiary-ontology"
 version = "0.1.0"
 edition = "2021"
 authors = ["Fermi Team"]
@@ -7,7 +7,7 @@ description = "Mermaid ER diagram generation and git-based ontology versioning f
 
 [dependencies]
 # Fermi crates
-fermi-memory = { path = "../fermi-memory" }
+agent-bestiary-memory = { path = "../memory" }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }

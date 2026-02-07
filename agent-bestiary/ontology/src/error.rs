@@ -9,7 +9,7 @@ pub enum OntologyError {
     GitError(#[from] git2::Error),
 
     #[error("Memory store error: {0}")]
-    MemoryError(#[from] fermi_memory::error::MemoryError),
+    MemoryError(#[from] agent_bestiary_memory::error::MemoryError),
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),

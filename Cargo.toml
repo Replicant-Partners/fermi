@@ -1,7 +1,9 @@
 [workspace]
 members = [
-    ".", "fermi-consolidate",
-    "fermi-memory", "fermi-ontology",
+    ".",
+    "agent-bestiary/memory",
+    "agent-bestiary/ontology",
+    "agent-bestiary/consolidate",
 ]
 resolver = "2"
 
@@ -59,7 +61,7 @@ http = "1"
 http-body-util = "0.1"
 
 # ADM Memory
-fermi-memory = { path = "fermi-memory" }
+agent-bestiary-memory = { path = "agent-bestiary/memory" }
 
 # For migration scripts
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid"] }

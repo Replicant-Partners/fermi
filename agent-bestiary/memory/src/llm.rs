@@ -83,7 +83,7 @@ pub trait LLMProvider: Send + Sync {
 ///
 /// # Example
 /// ```rust,no_run
-/// # use fermi_memory::*;
+/// # use agent_bestiary_memory::*;
 /// # async fn example(llm: Arc<dyn LLMProvider>) -> Result<()> {
 /// #[derive(serde::Deserialize)]
 /// struct Response {

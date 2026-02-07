@@ -1,4 +1,4 @@
-use fermi_memory::{
+use agent_bestiary_memory::{
     AnthropicProvider, GenerationConfig, LLMProvider, LLMProviderConfig, LLMProviderFactory,
     Message, MessageRole, MistralProvider, OpenRouterProvider, ProviderType, QwenProvider,
 };
@@ -313,7 +313,7 @@ async fn test_llm_integration_with_consolidation() {
     // This test verifies that the LLM can be used for rule extraction
     // It's a mock test that doesn't require real API keys
 
-    use fermi_memory::{ConsolidationLock, ConsolidationWorker, MemoryStore, MockEmbeddings};
+    use agent_bestiary_memory::{ConsolidationLock, ConsolidationWorker, MemoryStore, MockEmbeddings};
 
     dotenvy::dotenv().ok();
     let database_url = match std::env::var("DATABASE_URL") {
@@ -364,7 +364,7 @@ async fn test_llm_integration_with_consolidation() {
 
 #[tokio::test]
 async fn test_generate_structured() {
-    use fermi_memory::{
+    use agent_bestiary_memory::{
         generate_structured, AnthropicProvider, GenerationConfig, Message, MessageRole,
     };
 
