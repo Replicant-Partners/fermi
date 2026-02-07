@@ -1,249 +1,632 @@
-{% extends "base.html" %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Specimen Details - Agent Bestiary</title>
+    <style>
+      /* Gruvbox Dark Theme Colors */
+      :root {
+        --bg0-hard: #1d2021;
+        --bg0: #282828;
+        --bg1: #3c3836;
+        --bg2: #504945;
+        --bg3: #665c54;
+        --fg0: #fbf1c7;
+        --fg1: #ebdbb2;
+        --fg2: #d5c4a1;
+        --fg3: #bdae93;
+        --red: #fb4934;
+        --green: #b8bb26;
+        --yellow: #fabd2f;
+        --blue: #83a598;
+        --purple: #d3869b;
+        --aqua: #8ec07c;
+        --orange: #fe8019;
+        --gray: #928374;
+      }
 
-{% block title %}{{ agent.agent_id }} - Fermi Agent Bestiary{% endblock %}
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
 
-{% block content %}
-<div class="flex-between mb-2">
-    <div class="flex gap-2" style="align-items: center;">
-        <a href="/" style="color: var(--fg-secondary); text-decoration: none;">&larr; Back</a>
-        <h1 style="font-size: 2rem; color: var(--accent);">{{ agent.agent_id }}</h1>
-        <span class="badge badge-{{ agent.tier|lower }}">{{ agent.tier }}</span>
-    </div>
-    <div class="flex gap-2">
-        <a href="/agents/{{ agent.agent_id }}/execute" class="btn btn-primary">Execute Agent</a>
-        <a href="/agents/{{ agent.agent_id }}/edit" class="btn btn-secondary">Edit</a>
-    </div>
-</div>
+      body {
+        font-family: "Georgia", "Palatino", "Times New Roman", serif;
+        background: var(--bg0-hard);
+        color: var(--fg1);
+        min-height: 100vh;
+        padding: 40px 20px;
+      }
 
-<p class="text-muted mb-3" style="font-size: 1.1rem;">{{ agent.metadata.description }}</p>
+      .page-wrapper {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        box-shadow: 0 0 60px rgba(0, 0, 0, 0.5);
+        min-height: calc(100vh - 80px);
+      }
 
-<!-- Overview Stats -->
-<div class="stats-grid mb-3">
-    <div class="stat-card">
-        <div class="stat-label">Total Executions</div>
-        <div class="stat-value">{{ agent.usage.total_executions }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Success Rate</div>
-        <div class="stat-value">{{ agent.performance.accuracy_rate * 100.0 }}<span class="stat-unit">%</span></div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Avg Confidence</div>
-        <div class="stat-value">{{ agent.performance.avg_confidence }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Total Cost</div>
-        <div class="stat-value">${{ agent.usage.total_cost_usd }}</div>
-    </div>
-</div>
+      .page-content {
+        padding: 60px;
+      }
 
-<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
-    <!-- Main Info -->
-    <div>
-        <!-- Capabilities -->
-        <div class="card">
-            <div class="card-header">
-                <h2 class="card-title">Capabilities</h2>
-            </div>
+      .back-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--yellow);
+        text-decoration: none;
+        font-size: 1em;
+        margin-bottom: 40px;
+        padding: 10px 20px;
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        border-radius: 3px;
+        transition: all 0.3s ease;
+        font-family: "Helvetica", "Arial", sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-size: 0.9em;
+      }
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-                <div>
-                    <div class="text-muted mb-1">Executor</div>
-                    <div style="color: var(--primary); font-weight: 500;">{{ agent.capabilities.executor }}</div>
-                </div>
-                <div>
-                    <div class="text-muted mb-1">Model</div>
-                    <div style="color: var(--primary); font-weight: 500;">{{ agent.capabilities.model }}</div>
-                </div>
-                <div>
-                    <div class="text-muted mb-1">Temperature</div>
-                    <div style="color: var(--primary); font-weight: 500;">{{ agent.capabilities.temperature }}</div>
-                </div>
-                <div>
-                    <div class="text-muted mb-1">Skills</div>
-                    <div style="color: var(--primary); font-weight: 500;">{{ agent.capabilities.skills.len() }}</div>
-                </div>
-            </div>
+      .back-button:hover {
+        background: var(--bg2);
+        border-color: var(--yellow);
+      }
 
-            {% if !agent.capabilities.skills.is_empty() %}
-            <div class="mt-2">
-                <div class="text-muted mb-1">Available Skills</div>
-                <div class="flex gap-1" style="flex-wrap: wrap;">
-                    {% for skill in agent.capabilities.skills %}
-                    <span style="background-color: var(--bg-tertiary); color: var(--secondary); padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.85rem; border: 1px solid var(--border);">{{ skill }}</span>
-                    {% endfor %}
-                </div>
-            </div>
-            {% endif %}
+      .specimen-header {
+        display: grid;
+        grid-template-columns: 250px 1fr;
+        gap: 50px;
+        margin-bottom: 50px;
+        padding-bottom: 40px;
+        border-bottom: 2px solid var(--bg2);
+      }
 
-            {% if !agent.capabilities.mcp_tools.is_empty() %}
-            <div class="mt-2">
-                <div class="text-muted mb-1">MCP Tools</div>
-                <div class="flex gap-1" style="flex-wrap: wrap;">
-                    {% for tool in agent.capabilities.mcp_tools %}
-                    <span style="background-color: var(--bg-tertiary); color: var(--primary); padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.85rem; border: 1px solid var(--border);">{{ tool }}</span>
-                    {% endfor %}
-                </div>
-            </div>
-            {% endif %}
+      .specimen-avatar-large {
+        width: 250px;
+        height: 250px;
+        border-radius: 50%;
+        background: var(--bg2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        border: 4px solid var(--bg3);
+      }
+
+      .specimen-avatar-large img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        filter: sepia(20%) saturate(80%);
+      }
+
+      .specimen-avatar-large.loading {
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      .specimen-avatar-large .placeholder {
+        font-size: 6em;
+        filter: grayscale(100%);
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .specimen-header-info {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .specimen-title {
+        font-family: "Palatino", "Georgia", serif;
+        font-size: 3em;
+        font-weight: 400;
+        color: var(--fg0);
+        margin-bottom: 20px;
+        text-transform: capitalize;
+        font-variant: small-caps;
+        letter-spacing: 2px;
+      }
+
+      .specimen-description {
+        color: var(--fg2);
+        line-height: 1.8;
+        font-size: 1.15em;
+        margin-bottom: 25px;
+        text-align: justify;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 6px 16px;
+        background: var(--bg3);
+        color: var(--yellow);
+        border-radius: 3px;
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-family: "Helvetica", "Arial", sans-serif;
+        margin-right: 10px;
+      }
+
+      .section {
+        margin-bottom: 50px;
+      }
+
+      .section-title {
+        font-family: "Palatino", "Georgia", serif;
+        font-size: 1.8em;
+        font-weight: 400;
+        color: var(--fg0);
+        margin-bottom: 25px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--bg3);
+        text-transform: uppercase;
+        font-variant: small-caps;
+        letter-spacing: 2px;
+      }
+
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 20px;
+      }
+
+      .field-card {
+        background: var(--bg1);
+        padding: 20px;
+        border: 1px solid var(--bg3);
+      }
+
+      .field-label {
+        color: var(--gray);
+        text-transform: uppercase;
+        font-size: 0.8em;
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+        font-family: "Helvetica", "Arial", sans-serif;
+      }
+
+      .field-value {
+        color: var(--fg1);
+        font-size: 1.1em;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 20px;
+      }
+
+      .stat-card {
+        background: var(--bg1);
+        padding: 25px;
+        border: 1px solid var(--bg3);
+        text-align: center;
+      }
+
+      .stat-value {
+        font-size: 2.5em;
+        font-weight: 400;
+        color: var(--yellow);
+        font-family: "Georgia", serif;
+      }
+
+      .stat-label {
+        color: var(--fg3);
+        margin-top: 10px;
+        text-transform: uppercase;
+        font-size: 0.75em;
+        letter-spacing: 1px;
+        font-family: "Helvetica", "Arial", sans-serif;
+      }
+
+      .tags-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .tag {
+        background: var(--bg2);
+        color: var(--aqua);
+        padding: 8px 16px;
+        border: 1px solid var(--bg3);
+        border-radius: 3px;
+        font-size: 0.9em;
+        font-family: "Helvetica", "Arial", sans-serif;
+      }
+
+      .notice-box {
+        background: var(--bg1);
+        border-left: 4px solid var(--orange);
+        padding: 20px;
+        margin-top: 15px;
+        color: var(--fg2);
+        line-height: 1.6;
+      }
+
+      .notice-box strong {
+        color: var(--orange);
+      }
+
+      .view-link {
+        display: inline-block;
+        padding: 12px 24px;
+        background: var(--bg2);
+        color: var(--yellow);
+        text-decoration: none;
+        border: 1px solid var(--bg3);
+        border-radius: 3px;
+        font-family: "Helvetica", "Arial", sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-size: 0.9em;
+        transition: all 0.3s ease;
+        margin-top: 15px;
+      }
+
+      .view-link:hover {
+        background: var(--bg3);
+        border-color: var(--yellow);
+      }
+
+      .loading-spinner {
+        text-align: center;
+        color: var(--fg3);
+        font-size: 1.5em;
+        padding: 60px;
+        font-style: italic;
+      }
+
+      .error-message {
+        background: var(--bg1);
+        border: 1px solid var(--red);
+        color: var(--red);
+        padding: 40px;
+        border-radius: 4px;
+        text-align: center;
+        font-size: 1.2em;
+      }
+
+      .ornament {
+        text-align: center;
+        color: var(--bg3);
+        font-size: 1.5em;
+        margin: 40px 0;
+        letter-spacing: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-wrapper">
+      <div class="page-content">
+        <a href="/" class="back-button">
+          <span>←</span>
+          <span>Return to Catalogue</span>
+        </a>
+
+        <div id="agent-content">
+          <div class="loading-spinner">Retrieving specimen details...</div>
         </div>
+      </div>
+    </div>
 
-        <!-- Performance Metrics -->
-        <div class="card mt-3">
-            <div class="card-header">
-                <h2 class="card-title">Performance Metrics</h2>
+    <script>
+      async function loadAgentDetail() {
+        const pathParts = window.location.pathname.split("/");
+        const agentId = pathParts[pathParts.length - 1];
+
+        try {
+          const response = await fetch("/api/agents");
+          const data = await response.json();
+
+          const agent = data.agents.find((a) => a.agent_id === agentId);
+
+          if (!agent) {
+            document.getElementById("agent-content").innerHTML = `
+              <div class="error-message">
+                Specimen not found in catalogue
+              </div>
+            `;
+            return;
+          }
+
+          // Load avatar
+          const avatarResponse = await fetch(`/api/agents/${agentId}/avatar`);
+          let avatarUrl = null;
+          if (avatarResponse.ok) {
+            const avatarData = await avatarResponse.json();
+            avatarUrl = `data:${avatarData.image.mime_type};base64,${avatarData.image.data}`;
+          }
+
+          const skills = agent.capabilities?.skills || [];
+          const mcpTools = agent.capabilities?.mcp_tools || [];
+          const model = agent.capabilities?.model || "N/A";
+          const executor = agent.capabilities?.executor || "N/A";
+          const temperature = agent.capabilities?.temperature || "N/A";
+
+          const totalExec = agent.usage?.total_executions || 0;
+          const successExec = agent.usage?.successful_executions || 0;
+          const failedExec = agent.usage?.failed_executions || 0;
+          const accuracy = agent.performance?.accuracy_rate || 0;
+          const confidence = agent.performance?.avg_confidence || 0;
+          const cost = agent.usage?.total_cost_usd || 0;
+          const avgTime = agent.usage?.avg_execution_time_ms || 0;
+
+          const ontology = agent.ontology_stats || {};
+          const wallet = agent.wallet || null;
+          const secrets = agent.secrets || null;
+
+          document.getElementById("agent-content").innerHTML = `
+            <div class="specimen-header">
+              <div class="specimen-avatar-large ${!avatarUrl ? "loading" : ""}" id="avatar">
+                ${avatarUrl ? `<img src="${avatarUrl}" alt="${agentId}">` : '<span class="placeholder">◈</span>'}
+              </div>
+              <div class="specimen-header-info">
+                <div class="specimen-title">${agentId.replace(/_/g, " ")}</div>
+                <div class="specimen-description">${agent.metadata?.description || "A mysterious agent whose purpose is yet unknown."}</div>
+                <div>
+                  <span class="badge">${agent.tier || "curated"}</span>
+                  <span class="badge">v${agent.version || "1.0.0"}</span>
+                  ${agent.metadata?.author ? `<span class="badge">${agent.metadata.author}</span>` : ""}
+                </div>
+              </div>
             </div>
 
-            <table>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Forecasts Contributed</td>
-                    <td style="color: var(--accent); font-weight: bold;">{{ agent.performance.forecasts_contributed }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Average Brier Impact</td>
-                    <td style="color: var(--primary); font-weight: bold;">{{ agent.performance.avg_brier_impact }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Average Confidence</td>
-                    <td style="color: var(--secondary); font-weight: bold;">{{ agent.performance.avg_confidence }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Accuracy Rate</td>
-                    <td style="color: var(--secondary); font-weight: bold;">{{ agent.performance.accuracy_rate * 100.0 }}%</td>
-                </tr>
-            </table>
-        </div>
+            <div class="ornament">❦</div>
 
-        <!-- Usage Statistics -->
-        <div class="card mt-3">
-            <div class="card-header">
-                <h2 class="card-title">Usage Statistics</h2>
+            <div class="section">
+              <div class="section-title">Behavioral Statistics</div>
+              <div class="stats-grid">
+                <div class="stat-card">
+                  <div class="stat-value">${totalExec}</div>
+                  <div class="stat-label">Total Encounters</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${successExec}</div>
+                  <div class="stat-label">Successful</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${failedExec}</div>
+                  <div class="stat-label">Failed</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${(accuracy * 100).toFixed(1)}%</div>
+                  <div class="stat-label">Accuracy</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${confidence.toFixed(2)}</div>
+                  <div class="stat-label">Avg Confidence</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${avgTime}</div>
+                  <div class="stat-label">Avg Time (ms)</div>
+                </div>
+              </div>
             </div>
 
-            <table>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Total Executions</td>
-                    <td style="color: var(--primary); font-weight: bold;">{{ agent.usage.total_executions }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Successful Executions</td>
-                    <td style="color: var(--secondary); font-weight: bold;">{{ agent.usage.successful_executions }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Failed Executions</td>
-                    <td style="color: var(--error); font-weight: bold;">{{ agent.usage.failed_executions }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Total Tokens Used</td>
-                    <td style="color: var(--accent); font-weight: bold;">{{ agent.usage.total_tokens_used }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Total Cost</td>
-                    <td style="color: var(--accent); font-weight: bold;">${{ agent.usage.total_cost_usd }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--fg-secondary);">Average Execution Time</td>
-                    <td style="color: var(--primary); font-weight: bold;">{{ agent.usage.avg_execution_time_ms }}ms</td>
-                </tr>
-            </table>
+            <div class="ornament">❦</div>
 
-            <div class="mt-2" style="padding: 1rem; background-color: var(--bg-tertiary); border-radius: 4px;">
-                <div style="font-weight: bold; color: var(--accent); margin-bottom: 0.5rem;">Last 30 Days</div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
-                    <div>
-                        <div class="text-muted" style="font-size: 0.85rem;">Executions</div>
-                        <div style="color: var(--primary); font-weight: bold;">{{ agent.usage.last_30_days.executions }}</div>
+            <div class="section">
+              <div class="section-title">Cognitive Attributes</div>
+              <div class="field-grid">
+                <div class="field-card">
+                  <div class="field-label">Executor Type</div>
+                  <div class="field-value">${executor}</div>
+                </div>
+                <div class="field-card">
+                  <div class="field-label">Neural Model</div>
+                  <div class="field-value">${model}</div>
+                </div>
+                <div class="field-card">
+                  <div class="field-label">Temperature</div>
+                  <div class="field-value">${temperature}</div>
+                </div>
+                <div class="field-card">
+                  <div class="field-label">Classification</div>
+                  <div class="field-value">${agent.agent_type || "N/A"}</div>
+                </div>
+                <div class="field-card">
+                  <div class="field-label">First Observed</div>
+                  <div class="field-value">${agent.metadata?.created || "N/A"}</div>
+                </div>
+                <div class="field-card">
+                  <div class="field-label">Researcher</div>
+                  <div class="field-value">${agent.metadata?.author || "N/A"}</div>
+                </div>
+              </div>
+            </div>
+
+            ${
+              ontology && (ontology.entities > 0 || ontology.relationships > 0)
+                ? `
+            <div class="ornament">❦</div>
+            <div class="section">
+              <div class="section-title">Knowledge Graph</div>
+              <div class="field-grid">
+                <div class="field-card">
+                  <div class="field-label">Entities</div>
+                  <div class="field-value">${ontology.entities || 0}</div>
+                </div>
+                <div class="field-card">
+                  <div class="field-label">Relationships</div>
+                  <div class="field-value">${ontology.relationships || 0}</div>
+                </div>
+                <div class="field-card">
+                  <div class="field-label">Evolution Commits</div>
+                  <div class="field-value">${ontology.evolution_commits || 0}</div>
+                </div>
+                <div class="field-card">
+                  <div class="field-label">Last Updated</div>
+                  <div class="field-value">${new Date(ontology.last_updated).toLocaleDateString()}</div>
+                </div>
+              </div>
+              ${
+                ontology.entities > 0
+                  ? `
+              <a href="/agent/${agentId}/ontology" class="view-link">
+                View Knowledge Graph →
+              </a>
+              `
+                  : ""
+              }
+            </div>
+            `
+                : ""
+            }
+
+            ${
+              mcpTools.length > 0
+                ? `
+            <div class="ornament">❦</div>
+            <div class="section">
+              <div class="section-title">MCP Tools</div>
+              <div class="field-grid">
+                ${mcpTools
+                  .map(
+                    (tool) => `
+                  <div class="field-card">
+                    <div class="field-label">${tool.name || tool}</div>
+                    <div class="field-value" style="font-size: 0.9em;">${tool.description || "MCP Tool"}</div>
+                  </div>
+                `,
+                  )
+                  .join("")}
+              </div>
+            </div>
+            `
+                : ""
+            }
+
+            ${
+              wallet
+                ? `
+            <div class="ornament">❦</div>
+            <div class="section">
+              <div class="section-title">Economic Ledger</div>
+              <div class="field-grid">
+                ${
+                  wallet.address
+                    ? `
+                <div class="field-card">
+                  <div class="field-label">Address</div>
+                  <div class="field-value" style="font-family: monospace; font-size: 0.85em; word-break: break-all;">${wallet.address}</div>
+                </div>
+                `
+                    : ""
+                }
+                ${
+                  wallet.balance !== undefined
+                    ? `
+                <div class="field-card">
+                  <div class="field-label">Balance</div>
+                  <div class="field-value">${wallet.balance} ${wallet.currency || "USD"}</div>
+                </div>
+                `
+                    : ""
+                }
+                ${
+                  wallet.budget
+                    ? `
+                <div class="field-card">
+                  <div class="field-label">Budget Allocation</div>
+                  <div class="field-value">${wallet.budget} ${wallet.currency || "USD"}</div>
+                </div>
+                `
+                    : ""
+                }
+              </div>
+              <div class="stat-card" style="margin-top: 20px;">
+                <div class="stat-value">$${cost.toFixed(4)}</div>
+                <div class="stat-label">Total Expenditure</div>
+              </div>
+            </div>
+            `
+                : ""
+            }
+
+            ${
+              secrets
+                ? `
+            <div class="ornament">❦</div>
+            <div class="section">
+              <div class="section-title">Credentials Registry</div>
+              <div class="notice-box">
+                <strong>Security Notice:</strong> This specimen requires ${Object.keys(secrets).length} credential(s) to operate.
+                <div style="margin-top: 15px;">
+                  ${Object.keys(secrets)
+                    .map(
+                      (key) => `
+                    <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center; padding: 8px; background: var(--bg2); border: 1px solid var(--bg3);">
+                      <span style="font-family: monospace; color: var(--fg1);">${key}</span>
+                      ${secrets[key] ? '<span style="color: var(--green);">✓ Configured</span>' : '<span style="color: var(--red);">✗ Missing</span>'}
                     </div>
-                    <div>
-                        <div class="text-muted" style="font-size: 0.85rem;">Tokens</div>
-                        <div style="color: var(--accent); font-weight: bold;">{{ agent.usage.last_30_days.tokens }}</div>
-                    </div>
-                    <div>
-                        <div class="text-muted" style="font-size: 0.85rem;">Cost</div>
-                        <div style="color: var(--accent); font-weight: bold;">${{ agent.usage.last_30_days.cost_usd }}</div>
-                    </div>
+                  `,
+                    )
+                    .join("")}
                 </div>
+              </div>
             </div>
-        </div>
-    </div>
+            `
+                : ""
+            }
 
-    <!-- Sidebar -->
-    <div>
-        <!-- Metadata -->
-        <div class="card">
-            <div class="card-header">
-                <h2 class="card-title">Metadata</h2>
+            ${
+              skills.length > 0 || agent.metadata?.tags
+                ? `
+            <div class="ornament">❦</div>
+            <div class="section">
+              <div class="section-title">Taxonomic Classifications</div>
+              ${
+                skills.length > 0
+                  ? `
+              <div class="field-label" style="margin-bottom: 10px;">Skills</div>
+              <div class="tags-list">
+                ${skills.map((skill) => `<span class="tag">${skill}</span>`).join("")}
+              </div>
+              `
+                  : ""
+              }
+              ${
+                agent.metadata?.tags
+                  ? `
+              <div class="field-label" style="margin-top: 25px; margin-bottom: 10px;">Tags</div>
+              <div class="tags-list">
+                ${agent.metadata.tags.map((tag) => `<span class="tag">${tag}</span>`).join("")}
+              </div>
+              `
+                  : ""
+              }
             </div>
-
-            <div class="mb-2">
-                <div class="text-muted" style="font-size: 0.85rem;">Version</div>
-                <div style="color: var(--fg-primary);">{{ agent.version }}</div>
+            `
+                : ""
+            }
+          `;
+        } catch (error) {
+          console.error("Error loading agent:", error);
+          document.getElementById("agent-content").innerHTML = `
+            <div class="error-message">
+              Error retrieving specimen details. Please try again later.
             </div>
+          `;
+        }
+      }
 
-            <div class="mb-2">
-                <div class="text-muted" style="font-size: 0.85rem;">Author</div>
-                <div style="color: var(--fg-primary);">{{ agent.metadata.author }}</div>
-            </div>
-
-            <div class="mb-2">
-                <div class="text-muted" style="font-size: 0.85rem;">License</div>
-                <div style="color: var(--fg-primary);">{{ agent.metadata.author }}</div>
-            </div>
-
-            <div class="mb-2">
-                <div class="text-muted" style="font-size: 0.85rem;">Created</div>
-                <div style="color: var(--fg-primary); font-size: 0.85rem;">{{ agent.metadata.created }}</div>
-            </div>
-
-            <div class="mb-2">
-                <div class="text-muted" style="font-size: 0.85rem;">Last Updated</div>
-                <div style="color: var(--fg-primary); font-size: 0.85rem;">{{ agent.metadata.created }}</div>
-            </div>
-
-            {% if !agent.metadata.tags.is_empty() %}
-            <div class="mt-2">
-                <div class="text-muted mb-1" style="font-size: 0.85rem;">Tags</div>
-                <div class="flex gap-1" style="flex-wrap: wrap;">
-                    {% for tag in agent.metadata.tags %}
-                    <span style="background-color: var(--bg-tertiary); color: var(--fg-secondary); padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.7rem;">{{ tag }}</span>
-                    {% endfor %}
-                </div>
-            </div>
-            {% endif %}
-        </div>
-
-        <!-- Ontology Stats -->
-        <div class="card mt-3">
-            <div class="card-header">
-                <h2 class="card-title">Ontology</h2>
-            </div>
-
-            <div class="mb-2">
-                <div class="text-muted" style="font-size: 0.85rem;">Entities</div>
-                <div style="color: var(--primary); font-weight: bold; font-size: 1.25rem;">{{ agent.ontology_stats.entities }}</div>
-            </div>
-
-            <div class="mb-2">
-                <div class="text-muted" style="font-size: 0.85rem;">Relationships</div>
-                <div style="color: var(--secondary); font-weight: bold; font-size: 1.25rem;">{{ agent.ontology_stats.relationships }}</div>
-            </div>
-
-            <div>
-                <div class="text-muted" style="font-size: 0.85rem;">Evolution Commits</div>
-                <div style="color: var(--accent); font-weight: bold; font-size: 1.25rem;">{{ agent.ontology_stats.evolution_commits }}</div>
-            </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="card mt-3">
-            <div class="card-header">
-                <h2 class="card-title">Actions</h2>
-            </div>
-
-            <a href="/agents/{{ agent.agent_id }}/execute" class="btn btn-primary" style="width: 100%; margin-bottom: 0.5rem; text-align: center;">Execute Query</a>
-            <a href="/agents/{{ agent.agent_id }}/save" class="btn btn-secondary" style="width: 100%; margin-bottom: 0.5rem; text-align: center;">Save to Git</a>
-            <a href="/agents/{{ agent.agent_id }}/edit" class="btn btn-accent" style="width: 100%; text-align: center;">Edit Agent</a>
-        </div>
-    </div>
-</div>
-{% endblock %}
+      loadAgentDetail();
+    </script>
+  </body>
+</html>

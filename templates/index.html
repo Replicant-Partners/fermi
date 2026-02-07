@@ -3,8 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Fermi Agent Bestiary</title>
+    <title>Agent Bestiary - Make your agents dreams come true</title>
     <style>
+      /* Gruvbox Dark Theme Colors */
+      :root {
+        --bg0-hard: #1d2021;
+        --bg0: #282828;
+        --bg1: #3c3836;
+        --bg2: #504945;
+        --bg3: #665c54;
+        --fg0: #fbf1c7;
+        --fg1: #ebdbb2;
+        --fg2: #d5c4a1;
+        --fg3: #bdae93;
+        --red: #fb4934;
+        --green: #b8bb26;
+        --yellow: #fabd2f;
+        --blue: #83a598;
+        --purple: #d3869b;
+        --aqua: #8ec07c;
+        --orange: #fe8019;
+        --gray: #928374;
+      }
+
       * {
         margin: 0;
         padding: 0;
@@ -12,111 +33,145 @@
       }
 
       body {
-        font-family:
-          ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-          monospace;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        font-family: "Georgia", "Palatino", "Times New Roman", serif;
+        background: var(--bg0-hard);
+        color: var(--fg1);
         min-height: 100vh;
-        padding: 20px;
+        padding: 40px 20px;
       }
 
-      .container {
-        max-width: 1400px;
+      .page-wrapper {
+        max-width: 1200px;
         margin: 0 auto;
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        box-shadow: 0 0 60px rgba(0, 0, 0, 0.5);
+        min-height: calc(100vh - 80px);
+      }
+
+      .page-content {
+        padding: 60px;
       }
 
       header {
         text-align: center;
-        margin-bottom: 40px;
+        margin-bottom: 60px;
+        padding-bottom: 40px;
+        border-bottom: 2px solid var(--bg2);
       }
 
       h1 {
-        color: white;
-        font-size: 3em;
-        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-        margin-bottom: 10px;
+        font-family: "Palatino", "Georgia", serif;
+        font-size: 3.5em;
+        font-weight: 400;
+        color: var(--fg0);
+        margin-bottom: 15px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        font-variant: small-caps;
       }
 
       .subtitle {
-        color: rgba(255, 255, 255, 0.9);
-        font-size: 1.2em;
+        color: var(--fg3);
+        font-size: 1.1em;
+        font-style: italic;
+        letter-spacing: 1px;
       }
 
       .stats {
-        background: white;
+        background: var(--bg1);
         padding: 30px;
-        border-radius: 15px;
-        margin-bottom: 30px;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
-        display: flex;
-        justify-content: space-around;
-      }
-
-      .stat {
+        border-radius: 4px;
+        margin-bottom: 50px;
+        border: 1px solid var(--bg3);
         text-align: center;
       }
 
       .stat-value {
-        font-size: 2.5em;
-        font-weight: bold;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
+        font-size: 3em;
+        font-weight: 400;
+        color: var(--yellow);
+        font-family: "Georgia", serif;
       }
 
       .stat-label {
-        color: #666;
-        margin-top: 5px;
+        color: var(--fg3);
+        margin-top: 10px;
         text-transform: uppercase;
-        font-size: 0.9em;
-        letter-spacing: 1px;
+        font-size: 0.85em;
+        letter-spacing: 2px;
+        font-family: "Helvetica", "Arial", sans-serif;
       }
 
-      .agents-grid {
+      .section-title {
+        font-family: "Palatino", "Georgia", serif;
+        font-size: 1.8em;
+        font-weight: 400;
+        color: var(--fg0);
+        margin-bottom: 30px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--bg3);
+        text-transform: uppercase;
+        font-variant: small-caps;
+        letter-spacing: 2px;
+      }
+
+      .specimens-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-        gap: 25px;
+        grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+        gap: 40px;
+        margin-top: 40px;
       }
 
-      .agent-card {
-        background: white;
-        padding: 25px;
-        border-radius: 15px;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+      .specimen-card {
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        padding: 0;
         transition: all 0.3s ease;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .specimen-card:hover {
+        border-color: var(--yellow);
+        box-shadow: 0 0 20px rgba(250, 189, 47, 0.2);
+      }
+
+      .specimen-header {
+        padding: 30px;
         text-align: center;
+        border-bottom: 1px solid var(--bg3);
       }
 
-      .agent-card:hover {
-        transform: translateY(-8px);
-        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
-      }
-
-      .agent-avatar {
-        width: 120px;
-        height: 120px;
+      .specimen-avatar {
+        width: 180px;
+        height: 180px;
+        margin: 0 auto 20px;
         border-radius: 50%;
-        margin-bottom: 20px;
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        background: var(--bg2);
         display: flex;
         align-items: center;
         justify-content: center;
         overflow: hidden;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        border: 3px solid var(--bg3);
+        position: relative;
       }
 
-      .agent-avatar img {
+      .specimen-avatar img {
         width: 100%;
         height: 100%;
         object-fit: cover;
+        filter: sepia(20%) saturate(80%);
       }
 
-      .agent-avatar.loading {
+      .specimen-avatar.loading {
         animation: pulse 2s ease-in-out infinite;
+      }
+
+      .specimen-avatar .placeholder {
+        font-size: 4em;
+        filter: grayscale(100%);
       }
 
       @keyframes pulse {
@@ -129,77 +184,130 @@
         }
       }
 
-      .agent-name {
-        font-size: 1.5em;
-        font-weight: bold;
-        color: #333;
+      .specimen-name {
+        font-family: "Palatino", "Georgia", serif;
+        font-size: 1.6em;
+        font-weight: 400;
+        color: var(--fg0);
         margin-bottom: 15px;
-        word-break: break-word;
+        text-transform: capitalize;
+        font-variant: small-caps;
+        letter-spacing: 1px;
       }
 
-      .agent-info {
-        color: #666;
-        margin: 5px 0;
-        font-size: 0.95em;
+      .specimen-body {
+        padding: 30px;
       }
 
-      .agent-meta {
+      .specimen-description {
+        color: var(--fg2);
+        line-height: 1.8;
+        font-size: 1em;
+        margin-bottom: 20px;
+        text-align: justify;
+      }
+
+      .specimen-meta {
         display: flex;
-        gap: 10px;
-        margin-top: 15px;
-        flex-wrap: wrap;
-        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+        font-size: 0.9em;
+        color: var(--fg3);
+        font-family: "Helvetica", "Arial", sans-serif;
+      }
+
+      .meta-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px dotted var(--bg3);
+      }
+
+      .meta-label {
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-size: 0.85em;
+      }
+
+      .meta-value {
+        color: var(--fg2);
       }
 
       .badge {
-        padding: 5px 12px;
-        border-radius: 20px;
-        font-size: 0.8em;
-        font-weight: 600;
+        display: inline-block;
+        padding: 4px 12px;
+        background: var(--bg3);
+        color: var(--yellow);
+        border-radius: 3px;
+        font-size: 0.85em;
         text-transform: uppercase;
-      }
-
-      .badge-primary {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+        letter-spacing: 1px;
+        font-family: "Helvetica", "Arial", sans-serif;
       }
 
       .loading {
         text-align: center;
-        color: white;
-        font-size: 1.5em;
-        padding: 40px;
-        grid-column: 1 / -1;
+        color: var(--fg3);
+        font-size: 1.3em;
+        padding: 60px;
+        font-style: italic;
       }
 
       .error {
-        background: #ff6b6b;
-        color: white;
-        padding: 20px;
-        border-radius: 10px;
+        background: var(--bg1);
+        border: 1px solid var(--red);
+        color: var(--red);
+        padding: 30px;
+        border-radius: 4px;
         text-align: center;
-        margin: 20px 0;
+        font-size: 1.1em;
+      }
+
+      /* Decorative elements */
+      .page-wrapper::before,
+      .page-wrapper::after {
+        content: "";
+        position: absolute;
+        width: 100%;
+        height: 2px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--bg3),
+          transparent
+        );
+      }
+
+      .ornament {
+        text-align: center;
+        color: var(--bg3);
+        font-size: 1.5em;
+        margin: 40px 0;
+        letter-spacing: 10px;
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>🤖 Fermi Agent Bestiary</h1>
-        <div class="subtitle">
-          AI-Powered Forecasting Agents with Nano Banana Avatars
-        </div>
-      </header>
+    <div class="page-wrapper">
+      <div class="page-content">
+        <header>
+          <h1>Agent Bestiary</h1>
+          <div class="subtitle">Make your agents dreams come true</div>
+        </header>
 
-      <div class="stats" id="stats">
-        <div class="stat">
-          <div class="stat-value" id="total-agents">-</div>
-          <div class="stat-label">Total Agents</div>
+        <div class="stats">
+          <div class="stat-value" id="total-agents">—</div>
+          <div class="stat-label">Documented Specimens</div>
         </div>
-      </div>
 
-      <div class="agents-grid" id="agents-grid">
-        <div class="loading">Loading agents...</div>
+        <div class="ornament">❦ ❦ ❦</div>
+
+        <h2 class="section-title">Catalogue of Specimens</h2>
+
+        <div class="specimens-grid" id="specimens-grid">
+          <div class="loading">Cataloguing specimens...</div>
+        </div>
       </div>
     </div>
 
@@ -225,31 +333,59 @@
 
           document.getElementById("total-agents").textContent = data.total;
 
-          const grid = document.getElementById("agents-grid");
+          const grid = document.getElementById("specimens-grid");
           grid.innerHTML = "";
 
           if (data.agents.length === 0) {
-            grid.innerHTML = '<div class="loading">No agents found</div>';
+            grid.innerHTML =
+              '<div class="loading">No specimens catalogued</div>';
             return;
           }
 
-          // Create cards first without avatars
-          const agentCards = data.agents.map((agent) => {
+          data.agents.forEach((agent) => {
             const card = document.createElement("div");
-            card.className = "agent-card";
-            const agentId = agent.agent_id || agent.agent_name || "unknown";
+            card.className = "specimen-card";
+            const agentId = agent.agent_id || "unknown";
+            const description =
+              agent.metadata?.description || "A mysterious agent";
+            const tier = agent.tier || "curated";
+            const created = agent.metadata?.created || "";
+            const executions = agent.usage?.total_executions || 0;
+            const model = agent.capabilities?.model || "unknown";
 
             card.innerHTML = `
-                        <div class="agent-avatar loading" id="avatar-${CSS.escape(agentId)}">
-                            <span style="font-size: 3em;">🤖</span>
-                        </div>
-                        <div class="agent-name">${agentId}</div>
-                        ${agent.agent_name ? `<div class="agent-info">📝 ${agent.agent_name}</div>` : ""}
-                        ${agent.created_at ? `<div class="agent-info">📅 ${new Date(agent.created_at).toLocaleDateString()}</div>` : ""}
-                        <div class="agent-meta">
-                            <span class="badge badge-primary">AI Agent</span>
-                        </div>
-                    `;
+              <div class="specimen-header">
+                <div class="specimen-avatar loading" id="avatar-${CSS.escape(agentId)}">
+                  <span class="placeholder">◈</span>
+                </div>
+                <div class="specimen-name">${agentId.replace(/_/g, " ")}</div>
+              </div>
+              <div class="specimen-body">
+                <div class="specimen-description">${description}</div>
+                <div class="specimen-meta">
+                  <div class="meta-row">
+                    <span class="meta-label">Classification</span>
+                    <span class="meta-value"><span class="badge">${tier}</span></span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">First Observed</span>
+                    <span class="meta-value">${created || "—"}</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Encounters</span>
+                    <span class="meta-value">${executions}</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Cognitive Model</span>
+                    <span class="meta-value">${model.replace("claude-3-", "").replace("-20240307", "")}</span>
+                  </div>
+                </div>
+              </div>
+            `;
+
+            card.addEventListener("click", () => {
+              window.location.href = `/agent/${agentId}`;
+            });
 
             grid.appendChild(card);
 
@@ -259,22 +395,19 @@
                 `avatar-${CSS.escape(agentId)}`,
               );
               if (avatarDiv && avatarUrl) {
-                avatarDiv.innerHTML = `<img src="${avatarUrl}" alt="${agentId} avatar">`;
+                avatarDiv.innerHTML = `<img src="${avatarUrl}" alt="${agentId}">`;
                 avatarDiv.classList.remove("loading");
               }
             });
-
-            return card;
           });
         } catch (error) {
           console.error("Error loading agents:", error);
-          const grid = document.getElementById("agents-grid");
+          const grid = document.getElementById("specimens-grid");
           grid.innerHTML =
-            '<div class="error">❌ Error loading agents. Please try again later.</div>';
+            '<div class="error">Error cataloguing specimens. Please try again later.</div>';
         }
       }
 
-      // Load agents on page load
       loadAgents();
     </script>
   </body>

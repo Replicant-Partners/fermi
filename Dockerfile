@@ -36,6 +36,12 @@ COPY --from=builder /app/target/release/api-server /app/api-server
 # Copy templates directory
 COPY templates /app/templates
 
+# Copy agents directory
+COPY agents /app/agents
+
+# Create avatars cache directory
+RUN mkdir -p /app/avatars_cache
+
 # Set the PORT environment variable (Railway will override this)
 ENV PORT=3000
 

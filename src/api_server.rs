@@ -93,6 +93,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/agent/:agent_id", get(agent_detail))
         .route("/api/health", get(health))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:agent_id/avatar", get(generate_avatar))
@@ -131,6 +132,20 @@ async fn index() -> Html<String> {
     Html(html)
 }
 
+async fn agent_detail() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/agent_detail.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/agent_detail.html: {}", e);
+            format!(
+                "<h1>Agent Bestiary</h1><p>Error loading template: {}</p>",
+                e
+            )
+        }
+    };
+    Html(html)
+}
+
 async fn health() -> Json<Value> {
     Json(json!({
         "status": "ok",
@@ -141,65 +156,50 @@ async fn health() -> Json<Value> {
     }))
 }
 
-async fn list_agents(State(state): State<AppState>) -> Json<Value> {
-    // Query agents from database - using SELECT * to get all columns
-    let result = sqlx::query(
-        r#"
-        SELECT *
-        FROM agents
-        ORDER BY created_at DESC
-        LIMIT 100
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await;
+async fn list_agents(State(_state): State<AppState>) -> Json<Value> {
+    // Load agents from filesystem instead of database
+    let agents_dir = "agents/curated";
 
-    match result {
-        Ok(rows) => {
-            let agents: Vec<Value> = rows
-                .iter()
-                .map(|row| {
-                    // Get column names and values dynamically
-                    let mut agent = serde_json::Map::new();
+    let mut agents = Vec::new();
 
-                    // Try common column names
-                    if let Ok(val) = row.try_get::<String, _>("agent_id") {
-                        agent.insert("agent_id".to_string(), json!(val));
+    if let Ok(entries) = std::fs::read_dir(agents_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let card_path = path.join("agent_card.json");
+                if card_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&card_path) {
+                        if let Ok(card) = serde_json::from_str::<Value>(&content) {
+                            agents.push(card);
+                        }
                     }
-                    if let Ok(val) = row.try_get::<String, _>("agent_name") {
-                        agent.insert("agent_name".to_string(), json!(val));
-                    }
-                    if let Ok(val) = row.try_get::<chrono::NaiveDateTime, _>("created_at") {
-                        agent.insert("created_at".to_string(), json!(val));
-                    }
-                    if let Ok(val) = row.try_get::<chrono::NaiveDateTime, _>("updated_at") {
-                        agent.insert("updated_at".to_string(), json!(val));
-                    }
-
-                    json!(agent)
-                })
-                .collect();
-
-            Json(json!({
-                "agents": agents,
-                "total": agents.len()
-            }))
-        }
-        Err(e) => {
-            eprintln!("Database error: {}", e);
-            Json(json!({
-                "agents": [],
-                "total": 0,
-                "error": format!("Database error: {}", e)
-            }))
+                }
+            }
         }
     }
+
+    Json(json!({
+        "agents": agents,
+        "total": agents.len()
+    }))
 }
 
 async fn generate_avatar(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (axum::http::StatusCode, String)> {
+    // Check if cached avatar exists
+    let cache_dir = "avatars_cache";
+    std::fs::create_dir_all(cache_dir).ok();
+    let cache_path = format!("{}/{}.json", cache_dir, agent_id);
+
+    if let Ok(cached) = std::fs::read_to_string(&cache_path) {
+        if let Ok(cached_data) = serde_json::from_str::<Value>(&cached) {
+            println!("Using cached avatar for {}", agent_id);
+            return Ok(Json(cached_data));
+        }
+    }
+
     // Use agent_id to deterministically select beast and scene
     let beasts = [
         "fox", "crane", "tiger", "dragon", "owl", "wolf", "bear", "phoenix",
@@ -271,13 +271,19 @@ async fn generate_avatar(
     if let Some(candidate) = gemini_response.candidates.first() {
         for part in &candidate.content.parts {
             if let Some(inline_data) = &part.inline_data {
-                return Ok(Json(json!({
+                let result = json!({
                     "agent_id": agent_id,
                     "image": {
                         "mime_type": inline_data.mime_type,
                         "data": inline_data.data
                     }
-                })));
+                });
+
+                // Cache the result
+                std::fs::write(&cache_path, serde_json::to_string(&result).unwrap()).ok();
+                println!("Cached new avatar for {}", agent_id);
+
+                return Ok(Json(result));
             }
         }
     }
