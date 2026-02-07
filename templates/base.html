@@ -1,9 +1,14 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="theme-hasui">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{% block title %}Fermi Agent Bestiary{% endblock %}</title>
+
+    <!-- Theme CSS Files -->
+    <link rel="stylesheet" href="/static/css/theme-hasui.css" />
+    <link rel="stylesheet" href="/static/css/theme-op1.css" />
+
     <style>
       /* Ayu Mirage Theme - Matching Report System */
       :root {
@@ -421,6 +426,9 @@
         <a href="/docs/mcp">MCP Integration</a>
       </p>
     </footer>
+
+    <!-- Theme Toggle Script -->
+    <script src="/static/js/theme-toggle.js"></script>
 
     {% block extra_js %}{% endblock %}
   </body>
