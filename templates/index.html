@@ -33,136 +33,118 @@
       }
 
       body {
-        font-family: "Georgia", "Palatino", "Times New Roman", serif;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
         background: var(--bg0-hard);
         color: var(--fg1);
         min-height: 100vh;
-        padding: 40px 20px;
+        padding: 20px;
+        line-height: 1.5;
       }
 
-      .page-wrapper {
-        max-width: 1200px;
+      .container {
+        max-width: 1400px;
         margin: 0 auto;
-        background: var(--bg0);
-        border: 1px solid var(--bg2);
-        box-shadow: 0 0 60px rgba(0, 0, 0, 0.5);
-        min-height: calc(100vh - 80px);
-      }
-
-      .page-content {
-        padding: 60px;
       }
 
       header {
-        text-align: center;
-        margin-bottom: 60px;
-        padding-bottom: 40px;
-        border-bottom: 2px solid var(--bg2);
+        margin-bottom: 40px;
       }
 
       h1 {
-        font-family: "Palatino", "Georgia", serif;
-        font-size: 3.5em;
-        font-weight: 400;
+        font-size: 2em;
+        font-weight: 600;
         color: var(--fg0);
-        margin-bottom: 15px;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        font-variant: small-caps;
+        margin-bottom: 8px;
+        letter-spacing: -0.02em;
       }
 
       .subtitle {
         color: var(--fg3);
-        font-size: 1.1em;
-        font-style: italic;
-        letter-spacing: 1px;
+        font-size: 0.95em;
       }
 
       .stats {
         background: var(--bg1);
-        padding: 30px;
-        border-radius: 4px;
-        margin-bottom: 50px;
-        border: 1px solid var(--bg3);
-        text-align: center;
+        padding: 20px 24px;
+        border-radius: 6px;
+        margin-bottom: 32px;
+        border: 1px solid var(--bg2);
+        display: inline-block;
       }
 
       .stat-value {
-        font-size: 3em;
-        font-weight: 400;
+        font-size: 2.5em;
+        font-weight: 600;
         color: var(--yellow);
-        font-family: "Georgia", serif;
+        line-height: 1;
       }
 
       .stat-label {
         color: var(--fg3);
-        margin-top: 10px;
+        margin-top: 6px;
         text-transform: uppercase;
-        font-size: 0.85em;
-        letter-spacing: 2px;
-        font-family: "Helvetica", "Arial", sans-serif;
+        font-size: 0.75em;
+        letter-spacing: 0.5px;
+        font-weight: 500;
       }
 
       .section-title {
-        font-family: "Palatino", "Georgia", serif;
-        font-size: 1.8em;
-        font-weight: 400;
+        font-size: 1.1em;
+        font-weight: 600;
         color: var(--fg0);
-        margin-bottom: 30px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid var(--bg3);
-        text-transform: uppercase;
-        font-variant: small-caps;
-        letter-spacing: 2px;
+        margin-bottom: 20px;
+        letter-spacing: -0.01em;
       }
 
       .specimens-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-        gap: 40px;
-        margin-top: 40px;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 16px;
       }
 
       .specimen-card {
         background: var(--bg1);
-        border: 1px solid var(--bg3);
+        border: 1px solid var(--bg2);
         padding: 0;
-        transition: all 0.3s ease;
+        transition: all 0.2s ease;
         cursor: pointer;
-        position: relative;
+        border-radius: 6px;
         overflow: hidden;
       }
 
       .specimen-card:hover {
         border-color: var(--yellow);
-        box-shadow: 0 0 20px rgba(250, 189, 47, 0.2);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
       }
 
       .specimen-header {
-        padding: 30px;
-        text-align: center;
-        border-bottom: 1px solid var(--bg3);
+        padding: 20px;
+        border-bottom: 1px solid var(--bg2);
+        display: flex;
+        align-items: center;
+        gap: 16px;
       }
 
       .specimen-avatar {
-        width: 180px;
-        height: 180px;
-        margin: 0 auto 20px;
-        border-radius: 50%;
+        width: 64px;
+        height: 64px;
+        border-radius: 6px;
         background: var(--bg2);
         display: flex;
         align-items: center;
         justify-content: center;
         overflow: hidden;
-        border: 3px solid var(--bg3);
-        position: relative;
+        border: 1px solid var(--bg3);
+        flex-shrink: 0;
       }
 
       .specimen-avatar img {
         width: 100%;
         height: 100%;
         object-fit: cover;
-        filter: sepia(20%) saturate(80%);
+        filter: sepia(10%) saturate(90%);
       }
 
       .specimen-avatar.loading {
@@ -170,7 +152,7 @@
       }
 
       .specimen-avatar .placeholder {
-        font-size: 4em;
+        font-size: 2em;
         filter: grayscale(100%);
       }
 
@@ -185,49 +167,41 @@
       }
 
       .specimen-name {
-        font-family: "Palatino", "Georgia", serif;
-        font-size: 1.6em;
-        font-weight: 400;
+        font-size: 1.1em;
+        font-weight: 600;
         color: var(--fg0);
-        margin-bottom: 15px;
         text-transform: capitalize;
-        font-variant: small-caps;
-        letter-spacing: 1px;
+        letter-spacing: -0.01em;
       }
 
       .specimen-body {
-        padding: 30px;
+        padding: 16px 20px 20px;
       }
 
       .specimen-description {
         color: var(--fg2);
-        line-height: 1.8;
-        font-size: 1em;
-        margin-bottom: 20px;
-        text-align: justify;
+        font-size: 0.9em;
+        margin-bottom: 16px;
+        line-height: 1.5;
       }
 
       .specimen-meta {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        font-size: 0.9em;
-        color: var(--fg3);
-        font-family: "Helvetica", "Arial", sans-serif;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        font-size: 0.85em;
       }
 
-      .meta-row {
+      .meta-item {
         display: flex;
         justify-content: space-between;
-        padding: 8px 0;
-        border-bottom: 1px dotted var(--bg3);
+        padding: 6px 0;
+        border-bottom: 1px solid var(--bg2);
       }
 
       .meta-label {
         color: var(--gray);
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        font-size: 0.85em;
+        font-weight: 500;
       }
 
       .meta-value {
@@ -236,78 +210,49 @@
 
       .badge {
         display: inline-block;
-        padding: 4px 12px;
+        padding: 3px 8px;
         background: var(--bg3);
         color: var(--yellow);
         border-radius: 3px;
-        font-size: 0.85em;
+        font-size: 0.75em;
         text-transform: uppercase;
-        letter-spacing: 1px;
-        font-family: "Helvetica", "Arial", sans-serif;
+        letter-spacing: 0.5px;
+        font-weight: 600;
       }
 
       .loading {
         text-align: center;
         color: var(--fg3);
-        font-size: 1.3em;
-        padding: 60px;
-        font-style: italic;
+        font-size: 1.1em;
+        padding: 40px;
       }
 
       .error {
         background: var(--bg1);
         border: 1px solid var(--red);
         color: var(--red);
-        padding: 30px;
-        border-radius: 4px;
+        padding: 20px;
+        border-radius: 6px;
         text-align: center;
-        font-size: 1.1em;
-      }
-
-      /* Decorative elements */
-      .page-wrapper::before,
-      .page-wrapper::after {
-        content: "";
-        position: absolute;
-        width: 100%;
-        height: 2px;
-        background: linear-gradient(
-          90deg,
-          transparent,
-          var(--bg3),
-          transparent
-        );
-      }
-
-      .ornament {
-        text-align: center;
-        color: var(--bg3);
-        font-size: 1.5em;
-        margin: 40px 0;
-        letter-spacing: 10px;
       }
     </style>
   </head>
   <body>
-    <div class="page-wrapper">
-      <div class="page-content">
-        <header>
-          <h1>Agent Bestiary</h1>
-          <div class="subtitle">Make your agents dreams come true</div>
-        </header>
+    <div class="container">
+      <header>
+        <h1>Agent Bestiary</h1>
+        <div class="subtitle">Make your agents dreams come true</div>
+      </header>
 
-        <div class="stats">
-          <div class="stat-value" id="total-agents">—</div>
-          <div class="stat-label">Documented Specimens</div>
-        </div>
+      <div class="stats">
+        <div class="stat-value" id="total-agents">—</div>
+        <div class="stat-label">Documented Specimens</div>
+      </div>
 
-        <div class="ornament">❦ ❦ ❦</div>
+      <h2 class="section-title">Catalogue</h2>
 
-        <h2 class="section-title">Catalogue of Specimens</h2>
-
-        <div class="specimens-grid" id="specimens-grid">
-          <div class="loading">Cataloguing specimens...</div>
-        </div>
+      <div class="specimens-grid" id="specimens-grid">
+        <div class="loading">Loading...</div>
       </div>
     </div>
 
@@ -351,33 +296,39 @@
             const tier = agent.tier || "curated";
             const created = agent.metadata?.created || "";
             const executions = agent.usage?.total_executions || 0;
-            const model = agent.capabilities?.model || "unknown";
+            const model =
+              agent.capabilities?.model
+                ?.replace("claude-3-", "")
+                .replace("-20240307", "") || "unknown";
 
             card.innerHTML = `
               <div class="specimen-header">
                 <div class="specimen-avatar loading" id="avatar-${CSS.escape(agentId)}">
                   <span class="placeholder">◈</span>
                 </div>
-                <div class="specimen-name">${agentId.replace(/_/g, " ")}</div>
+                <div>
+                  <div class="specimen-name">${agentId.replace(/_/g, " ")}</div>
+                  <span class="badge">${tier}</span>
+                </div>
               </div>
               <div class="specimen-body">
                 <div class="specimen-description">${description}</div>
                 <div class="specimen-meta">
-                  <div class="meta-row">
-                    <span class="meta-label">Classification</span>
-                    <span class="meta-value"><span class="badge">${tier}</span></span>
-                  </div>
-                  <div class="meta-row">
+                  <div class="meta-item">
                     <span class="meta-label">First Observed</span>
                     <span class="meta-value">${created || "—"}</span>
                   </div>
-                  <div class="meta-row">
+                  <div class="meta-item">
                     <span class="meta-label">Encounters</span>
                     <span class="meta-value">${executions}</span>
                   </div>
-                  <div class="meta-row">
-                    <span class="meta-label">Cognitive Model</span>
-                    <span class="meta-value">${model.replace("claude-3-", "").replace("-20240307", "")}</span>
+                  <div class="meta-item">
+                    <span class="meta-label">Model</span>
+                    <span class="meta-value">${model}</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Type</span>
+                    <span class="meta-value">${agent.agent_type || "—"}</span>
                   </div>
                 </div>
               </div>
@@ -404,7 +355,7 @@
           console.error("Error loading agents:", error);
           const grid = document.getElementById("specimens-grid");
           grid.innerHTML =
-            '<div class="error">Error cataloguing specimens. Please try again later.</div>';
+            '<div class="error">Error loading specimens. Please try again later.</div>';
         }
       }
 

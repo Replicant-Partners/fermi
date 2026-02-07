@@ -33,76 +33,68 @@
       }
 
       body {
-        font-family: "Georgia", "Palatino", "Times New Roman", serif;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
         background: var(--bg0-hard);
         color: var(--fg1);
         min-height: 100vh;
-        padding: 40px 20px;
+        padding: 20px;
+        line-height: 1.5;
       }
 
-      .page-wrapper {
+      .container {
         max-width: 1200px;
         margin: 0 auto;
-        background: var(--bg0);
-        border: 1px solid var(--bg2);
-        box-shadow: 0 0 60px rgba(0, 0, 0, 0.5);
-        min-height: calc(100vh - 80px);
-      }
-
-      .page-content {
-        padding: 60px;
       }
 
       .back-button {
         display: inline-flex;
         align-items: center;
-        gap: 10px;
-        color: var(--yellow);
+        gap: 8px;
+        color: var(--fg2);
         text-decoration: none;
-        font-size: 1em;
-        margin-bottom: 40px;
-        padding: 10px 20px;
-        background: var(--bg1);
-        border: 1px solid var(--bg3);
-        border-radius: 3px;
-        transition: all 0.3s ease;
-        font-family: "Helvetica", "Arial", sans-serif;
-        text-transform: uppercase;
-        letter-spacing: 1px;
         font-size: 0.9em;
+        margin-bottom: 24px;
+        padding: 8px 16px;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 6px;
+        transition: all 0.2s ease;
+        font-weight: 500;
       }
 
       .back-button:hover {
         background: var(--bg2);
         border-color: var(--yellow);
+        color: var(--yellow);
       }
 
       .specimen-header {
-        display: grid;
-        grid-template-columns: 250px 1fr;
-        gap: 50px;
-        margin-bottom: 50px;
-        padding-bottom: 40px;
-        border-bottom: 2px solid var(--bg2);
+        display: flex;
+        gap: 24px;
+        margin-bottom: 32px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid var(--bg2);
       }
 
       .specimen-avatar-large {
-        width: 250px;
-        height: 250px;
-        border-radius: 50%;
+        width: 120px;
+        height: 120px;
+        border-radius: 8px;
         background: var(--bg2);
         display: flex;
         align-items: center;
         justify-content: center;
         overflow: hidden;
-        border: 4px solid var(--bg3);
+        border: 1px solid var(--bg3);
+        flex-shrink: 0;
       }
 
       .specimen-avatar-large img {
         width: 100%;
         height: 100%;
         object-fit: cover;
-        filter: sepia(20%) saturate(80%);
+        filter: sepia(10%) saturate(90%);
       }
 
       .specimen-avatar-large.loading {
@@ -110,7 +102,7 @@
       }
 
       .specimen-avatar-large .placeholder {
-        font-size: 6em;
+        font-size: 4em;
         filter: grayscale(100%);
       }
 
@@ -125,158 +117,193 @@
       }
 
       .specimen-header-info {
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
+        flex: 1;
       }
 
       .specimen-title {
-        font-family: "Palatino", "Georgia", serif;
-        font-size: 3em;
-        font-weight: 400;
+        font-size: 2em;
+        font-weight: 600;
         color: var(--fg0);
-        margin-bottom: 20px;
+        margin-bottom: 12px;
         text-transform: capitalize;
-        font-variant: small-caps;
-        letter-spacing: 2px;
+        letter-spacing: -0.02em;
       }
 
       .specimen-description {
         color: var(--fg2);
-        line-height: 1.8;
-        font-size: 1.15em;
-        margin-bottom: 25px;
-        text-align: justify;
+        font-size: 0.95em;
+        margin-bottom: 16px;
+        line-height: 1.6;
+      }
+
+      .badges {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
       }
 
       .badge {
         display: inline-block;
-        padding: 6px 16px;
+        padding: 4px 12px;
         background: var(--bg3);
         color: var(--yellow);
-        border-radius: 3px;
-        font-size: 0.85em;
+        border-radius: 4px;
+        font-size: 0.8em;
         text-transform: uppercase;
-        letter-spacing: 1px;
-        font-family: "Helvetica", "Arial", sans-serif;
-        margin-right: 10px;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+      }
+
+      .sections {
+        display: grid;
+        gap: 24px;
       }
 
       .section {
-        margin-bottom: 50px;
+        background: var(--bg1);
+        padding: 20px;
+        border-radius: 6px;
+        border: 1px solid var(--bg2);
       }
 
       .section-title {
-        font-family: "Palatino", "Georgia", serif;
-        font-size: 1.8em;
-        font-weight: 400;
+        font-size: 1.1em;
+        font-weight: 600;
         color: var(--fg0);
-        margin-bottom: 25px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid var(--bg3);
-        text-transform: uppercase;
-        font-variant: small-caps;
-        letter-spacing: 2px;
+        margin-bottom: 16px;
+        letter-spacing: -0.01em;
       }
 
       .field-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-        gap: 20px;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 12px;
       }
 
-      .field-card {
-        background: var(--bg1);
-        padding: 20px;
-        border: 1px solid var(--bg3);
+      .field-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
       }
 
       .field-label {
         color: var(--gray);
+        font-size: 0.75em;
         text-transform: uppercase;
-        font-size: 0.8em;
-        letter-spacing: 1px;
-        margin-bottom: 8px;
-        font-family: "Helvetica", "Arial", sans-serif;
+        letter-spacing: 0.5px;
+        font-weight: 600;
       }
 
       .field-value {
         color: var(--fg1);
-        font-size: 1.1em;
+        font-size: 0.95em;
+        word-break: break-word;
       }
 
       .stats-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-        gap: 20px;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 16px;
       }
 
       .stat-card {
-        background: var(--bg1);
-        padding: 25px;
-        border: 1px solid var(--bg3);
         text-align: center;
+        padding: 16px;
+        background: var(--bg0);
+        border-radius: 6px;
+        border: 1px solid var(--bg2);
       }
 
       .stat-value {
-        font-size: 2.5em;
-        font-weight: 400;
+        font-size: 2em;
+        font-weight: 600;
         color: var(--yellow);
-        font-family: "Georgia", serif;
+        line-height: 1;
       }
 
       .stat-label {
         color: var(--fg3);
-        margin-top: 10px;
-        text-transform: uppercase;
+        margin-top: 8px;
         font-size: 0.75em;
-        letter-spacing: 1px;
-        font-family: "Helvetica", "Arial", sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 500;
       }
 
-      .tags-list {
+      .tags {
         display: flex;
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 8px;
       }
 
       .tag {
         background: var(--bg2);
         color: var(--aqua);
-        padding: 8px 16px;
+        padding: 6px 12px;
         border: 1px solid var(--bg3);
-        border-radius: 3px;
-        font-size: 0.9em;
-        font-family: "Helvetica", "Arial", sans-serif;
+        border-radius: 4px;
+        font-size: 0.85em;
+        font-weight: 500;
       }
 
       .notice-box {
-        background: var(--bg1);
-        border-left: 4px solid var(--orange);
-        padding: 20px;
-        margin-top: 15px;
+        background: var(--bg0);
+        border-left: 3px solid var(--orange);
+        padding: 16px;
+        margin-top: 12px;
         color: var(--fg2);
-        line-height: 1.6;
+        font-size: 0.9em;
+        border-radius: 0 4px 4px 0;
       }
 
       .notice-box strong {
         color: var(--orange);
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .credential-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        background: var(--bg2);
+        border: 1px solid var(--bg3);
+        border-radius: 4px;
+        margin-top: 8px;
+        font-size: 0.9em;
+      }
+
+      .credential-key {
+        font-family: "SF Mono", "Monaco", "Courier New", monospace;
+        color: var(--fg1);
+        font-size: 0.9em;
+      }
+
+      .status-ok {
+        color: var(--green);
+        font-weight: 600;
+      }
+
+      .status-missing {
+        color: var(--red);
+        font-weight: 600;
       }
 
       .view-link {
-        display: inline-block;
-        padding: 12px 24px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 16px;
         background: var(--bg2);
         color: var(--yellow);
         text-decoration: none;
         border: 1px solid var(--bg3);
-        border-radius: 3px;
-        font-family: "Helvetica", "Arial", sans-serif;
-        text-transform: uppercase;
-        letter-spacing: 1px;
+        border-radius: 4px;
         font-size: 0.9em;
-        transition: all 0.3s ease;
-        margin-top: 15px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        margin-top: 12px;
       }
 
       .view-link:hover {
@@ -287,41 +314,35 @@
       .loading-spinner {
         text-align: center;
         color: var(--fg3);
-        font-size: 1.5em;
-        padding: 60px;
-        font-style: italic;
+        font-size: 1.2em;
+        padding: 40px;
       }
 
       .error-message {
         background: var(--bg1);
         border: 1px solid var(--red);
         color: var(--red);
-        padding: 40px;
-        border-radius: 4px;
+        padding: 30px;
+        border-radius: 6px;
         text-align: center;
-        font-size: 1.2em;
       }
 
-      .ornament {
-        text-align: center;
-        color: var(--bg3);
-        font-size: 1.5em;
-        margin: 40px 0;
-        letter-spacing: 10px;
+      .empty-state {
+        color: var(--gray);
+        font-size: 0.9em;
+        font-style: italic;
       }
     </style>
   </head>
   <body>
-    <div class="page-wrapper">
-      <div class="page-content">
-        <a href="/" class="back-button">
-          <span>←</span>
-          <span>Return to Catalogue</span>
-        </a>
+    <div class="container">
+      <a href="/" class="back-button">
+        <span>←</span>
+        <span>Back to Catalogue</span>
+      </a>
 
-        <div id="agent-content">
-          <div class="loading-spinner">Retrieving specimen details...</div>
-        </div>
+      <div id="agent-content">
+        <div class="loading-spinner">Loading specimen details...</div>
       </div>
     </div>
 
@@ -378,8 +399,8 @@
               </div>
               <div class="specimen-header-info">
                 <div class="specimen-title">${agentId.replace(/_/g, " ")}</div>
-                <div class="specimen-description">${agent.metadata?.description || "A mysterious agent whose purpose is yet unknown."}</div>
-                <div>
+                <div class="specimen-description">${agent.metadata?.description || "A mysterious agent"}</div>
+                <div class="badges">
                   <span class="badge">${agent.tier || "curated"}</span>
                   <span class="badge">v${agent.version || "1.0.0"}</span>
                   ${agent.metadata?.author ? `<span class="badge">${agent.metadata.author}</span>` : ""}
@@ -387,240 +408,222 @@
               </div>
             </div>
 
-            <div class="ornament">❦</div>
-
-            <div class="section">
-              <div class="section-title">Behavioral Statistics</div>
-              <div class="stats-grid">
-                <div class="stat-card">
-                  <div class="stat-value">${totalExec}</div>
-                  <div class="stat-label">Total Encounters</div>
-                </div>
-                <div class="stat-card">
-                  <div class="stat-value">${successExec}</div>
-                  <div class="stat-label">Successful</div>
-                </div>
-                <div class="stat-card">
-                  <div class="stat-value">${failedExec}</div>
-                  <div class="stat-label">Failed</div>
-                </div>
-                <div class="stat-card">
-                  <div class="stat-value">${(accuracy * 100).toFixed(1)}%</div>
-                  <div class="stat-label">Accuracy</div>
-                </div>
-                <div class="stat-card">
-                  <div class="stat-value">${confidence.toFixed(2)}</div>
-                  <div class="stat-label">Avg Confidence</div>
-                </div>
-                <div class="stat-card">
-                  <div class="stat-value">${avgTime}</div>
-                  <div class="stat-label">Avg Time (ms)</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="ornament">❦</div>
-
-            <div class="section">
-              <div class="section-title">Cognitive Attributes</div>
-              <div class="field-grid">
-                <div class="field-card">
-                  <div class="field-label">Executor Type</div>
-                  <div class="field-value">${executor}</div>
-                </div>
-                <div class="field-card">
-                  <div class="field-label">Neural Model</div>
-                  <div class="field-value">${model}</div>
-                </div>
-                <div class="field-card">
-                  <div class="field-label">Temperature</div>
-                  <div class="field-value">${temperature}</div>
-                </div>
-                <div class="field-card">
-                  <div class="field-label">Classification</div>
-                  <div class="field-value">${agent.agent_type || "N/A"}</div>
-                </div>
-                <div class="field-card">
-                  <div class="field-label">First Observed</div>
-                  <div class="field-value">${agent.metadata?.created || "N/A"}</div>
-                </div>
-                <div class="field-card">
-                  <div class="field-label">Researcher</div>
-                  <div class="field-value">${agent.metadata?.author || "N/A"}</div>
+            <div class="sections">
+              <div class="section">
+                <div class="section-title">Performance Statistics</div>
+                <div class="stats-grid">
+                  <div class="stat-card">
+                    <div class="stat-value">${totalExec}</div>
+                    <div class="stat-label">Total</div>
+                  </div>
+                  <div class="stat-card">
+                    <div class="stat-value">${successExec}</div>
+                    <div class="stat-label">Success</div>
+                  </div>
+                  <div class="stat-card">
+                    <div class="stat-value">${failedExec}</div>
+                    <div class="stat-label">Failed</div>
+                  </div>
+                  <div class="stat-card">
+                    <div class="stat-value">${(accuracy * 100).toFixed(1)}%</div>
+                    <div class="stat-label">Accuracy</div>
+                  </div>
+                  <div class="stat-card">
+                    <div class="stat-value">${confidence.toFixed(2)}</div>
+                    <div class="stat-label">Confidence</div>
+                  </div>
+                  <div class="stat-card">
+                    <div class="stat-value">${avgTime}</div>
+                    <div class="stat-label">Avg Time (ms)</div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            ${
-              ontology && (ontology.entities > 0 || ontology.relationships > 0)
-                ? `
-            <div class="ornament">❦</div>
-            <div class="section">
-              <div class="section-title">Knowledge Graph</div>
-              <div class="field-grid">
-                <div class="field-card">
-                  <div class="field-label">Entities</div>
-                  <div class="field-value">${ontology.entities || 0}</div>
-                </div>
-                <div class="field-card">
-                  <div class="field-label">Relationships</div>
-                  <div class="field-value">${ontology.relationships || 0}</div>
-                </div>
-                <div class="field-card">
-                  <div class="field-label">Evolution Commits</div>
-                  <div class="field-value">${ontology.evolution_commits || 0}</div>
-                </div>
-                <div class="field-card">
-                  <div class="field-label">Last Updated</div>
-                  <div class="field-value">${new Date(ontology.last_updated).toLocaleDateString()}</div>
+              <div class="section">
+                <div class="section-title">Configuration</div>
+                <div class="field-grid">
+                  <div class="field-item">
+                    <div class="field-label">Executor</div>
+                    <div class="field-value">${executor}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Model</div>
+                    <div class="field-value">${model}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Temperature</div>
+                    <div class="field-value">${temperature}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Type</div>
+                    <div class="field-value">${agent.agent_type || "N/A"}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">First Observed</div>
+                    <div class="field-value">${agent.metadata?.created || "N/A"}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Researcher</div>
+                    <div class="field-value">${agent.metadata?.author || "N/A"}</div>
+                  </div>
                 </div>
               </div>
+
+              <div class="section">
+                <div class="section-title">Knowledge Graph (Ontology)</div>
+                <div class="field-grid">
+                  <div class="field-item">
+                    <div class="field-label">Entities</div>
+                    <div class="field-value">${ontology.entities || 0}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Relationships</div>
+                    <div class="field-value">${ontology.relationships || 0}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Evolution Commits</div>
+                    <div class="field-value">${ontology.evolution_commits || 0}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Last Updated</div>
+                    <div class="field-value">${ontology.last_updated ? new Date(ontology.last_updated).toLocaleDateString() : "N/A"}</div>
+                  </div>
+                </div>
+                <a href="/agent/${agentId}/ontology" class="view-link">
+                  View Knowledge Graph →
+                </a>
+              </div>
+
               ${
-                ontology.entities > 0
+                wallet || cost > 0
                   ? `
-              <a href="/agent/${agentId}/ontology" class="view-link">
-                View Knowledge Graph →
-              </a>
+              <div class="section">
+                <div class="section-title">Economic Ledger</div>
+                <div class="field-grid">
+                  ${
+                    wallet?.address
+                      ? `
+                  <div class="field-item" style="grid-column: span 2;">
+                    <div class="field-label">Wallet Address</div>
+                    <div class="field-value" style="font-family: 'SF Mono', monospace; font-size: 0.85em;">${wallet.address}</div>
+                  </div>
+                  `
+                      : ""
+                  }
+                  ${
+                    wallet?.balance !== undefined
+                      ? `
+                  <div class="field-item">
+                    <div class="field-label">Balance</div>
+                    <div class="field-value">${wallet.balance} ${wallet.currency || "USD"}</div>
+                  </div>
+                  `
+                      : ""
+                  }
+                  ${
+                    wallet?.budget
+                      ? `
+                  <div class="field-item">
+                    <div class="field-label">Budget</div>
+                    <div class="field-value">${wallet.budget} ${wallet.currency || "USD"}</div>
+                  </div>
+                  `
+                      : ""
+                  }
+                  <div class="field-item">
+                    <div class="field-label">Total Cost</div>
+                    <div class="field-value">$${cost.toFixed(6)}</div>
+                  </div>
+                </div>
+              </div>
               `
                   : ""
               }
-            </div>
-            `
-                : ""
-            }
 
-            ${
-              mcpTools.length > 0
-                ? `
-            <div class="ornament">❦</div>
-            <div class="section">
-              <div class="section-title">MCP Tools</div>
-              <div class="field-grid">
-                ${mcpTools
-                  .map(
-                    (tool) => `
-                  <div class="field-card">
-                    <div class="field-label">${tool.name || tool}</div>
-                    <div class="field-value" style="font-size: 0.9em;">${tool.description || "MCP Tool"}</div>
-                  </div>
-                `,
-                  )
-                  .join("")}
-              </div>
-            </div>
-            `
-                : ""
-            }
-
-            ${
-              wallet
-                ? `
-            <div class="ornament">❦</div>
-            <div class="section">
-              <div class="section-title">Economic Ledger</div>
-              <div class="field-grid">
-                ${
-                  wallet.address
-                    ? `
-                <div class="field-card">
-                  <div class="field-label">Address</div>
-                  <div class="field-value" style="font-family: monospace; font-size: 0.85em; word-break: break-all;">${wallet.address}</div>
-                </div>
-                `
-                    : ""
-                }
-                ${
-                  wallet.balance !== undefined
-                    ? `
-                <div class="field-card">
-                  <div class="field-label">Balance</div>
-                  <div class="field-value">${wallet.balance} ${wallet.currency || "USD"}</div>
-                </div>
-                `
-                    : ""
-                }
-                ${
-                  wallet.budget
-                    ? `
-                <div class="field-card">
-                  <div class="field-label">Budget Allocation</div>
-                  <div class="field-value">${wallet.budget} ${wallet.currency || "USD"}</div>
-                </div>
-                `
-                    : ""
-                }
-              </div>
-              <div class="stat-card" style="margin-top: 20px;">
-                <div class="stat-value">$${cost.toFixed(4)}</div>
-                <div class="stat-label">Total Expenditure</div>
-              </div>
-            </div>
-            `
-                : ""
-            }
-
-            ${
-              secrets
-                ? `
-            <div class="ornament">❦</div>
-            <div class="section">
-              <div class="section-title">Credentials Registry</div>
-              <div class="notice-box">
-                <strong>Security Notice:</strong> This specimen requires ${Object.keys(secrets).length} credential(s) to operate.
-                <div style="margin-top: 15px;">
-                  ${Object.keys(secrets)
+              ${
+                mcpTools.length > 0
+                  ? `
+              <div class="section">
+                <div class="section-title">MCP Tools</div>
+                <div class="field-grid">
+                  ${mcpTools
                     .map(
-                      (key) => `
-                    <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center; padding: 8px; background: var(--bg2); border: 1px solid var(--bg3);">
-                      <span style="font-family: monospace; color: var(--fg1);">${key}</span>
-                      ${secrets[key] ? '<span style="color: var(--green);">✓ Configured</span>' : '<span style="color: var(--red);">✗ Missing</span>'}
+                      (tool) => `
+                    <div class="field-item">
+                      <div class="field-label">${tool.name || tool}</div>
+                      <div class="field-value">${tool.description || "MCP Tool"}</div>
                     </div>
                   `,
                     )
                     .join("")}
                 </div>
               </div>
-            </div>
-            `
-                : ""
-            }
+              `
+                  : ""
+              }
 
-            ${
-              skills.length > 0 || agent.metadata?.tags
-                ? `
-            <div class="ornament">❦</div>
-            <div class="section">
-              <div class="section-title">Taxonomic Classifications</div>
               ${
-                skills.length > 0
+                secrets
                   ? `
-              <div class="field-label" style="margin-bottom: 10px;">Skills</div>
-              <div class="tags-list">
-                ${skills.map((skill) => `<span class="tag">${skill}</span>`).join("")}
+              <div class="section">
+                <div class="section-title">Credentials Registry</div>
+                <div class="notice-box">
+                  <strong>Security Notice</strong>
+                  This specimen requires ${Object.keys(secrets).length} credential(s) to operate.
+                </div>
+                ${Object.keys(secrets)
+                  .map(
+                    (key) => `
+                  <div class="credential-item">
+                    <span class="credential-key">${key}</span>
+                    <span class="${secrets[key] ? "status-ok" : "status-missing"}">
+                      ${secrets[key] ? "✓ Configured" : "✗ Missing"}
+                    </span>
+                  </div>
+                `,
+                  )
+                  .join("")}
               </div>
               `
                   : ""
               }
+
               ${
-                agent.metadata?.tags
+                skills.length > 0 || agent.metadata?.tags
                   ? `
-              <div class="field-label" style="margin-top: 25px; margin-bottom: 10px;">Tags</div>
-              <div class="tags-list">
-                ${agent.metadata.tags.map((tag) => `<span class="tag">${tag}</span>`).join("")}
+              <div class="section">
+                <div class="section-title">Taxonomic Classifications</div>
+                ${
+                  skills.length > 0
+                    ? `
+                <div class="field-label" style="margin-bottom: 8px;">Skills</div>
+                <div class="tags">
+                  ${skills.map((skill) => `<span class="tag">${skill}</span>`).join("")}
+                </div>
+                `
+                    : ""
+                }
+                ${
+                  agent.metadata?.tags
+                    ? `
+                <div class="field-label" style="margin-top: 16px; margin-bottom: 8px;">Tags</div>
+                <div class="tags">
+                  ${agent.metadata.tags.map((tag) => `<span class="tag">${tag}</span>`).join("")}
+                </div>
+                `
+                    : ""
+                }
               </div>
               `
                   : ""
               }
             </div>
-            `
-                : ""
-            }
           `;
         } catch (error) {
           console.error("Error loading agent:", error);
           document.getElementById("agent-content").innerHTML = `
             <div class="error-message">
-              Error retrieving specimen details. Please try again later.
+              Error loading specimen details. Please try again later.
             </div>
           `;
         }
