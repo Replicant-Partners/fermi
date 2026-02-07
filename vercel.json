@@ -1,25 +1,29 @@
 {
   "functions": {
-    "api/**/*.rs": {
+    "agent-bestiary/api/**/*.rs": {
       "runtime": "vercel-rust@4.0.0"
     }
   },
   "routes": [
     {
       "src": "/api/health",
-      "dest": "/api/health.rs"
+      "dest": "/agent-bestiary/api/health.rs"
     },
     {
       "src": "/api/agents",
-      "dest": "/api/agents.rs"
+      "dest": "/agent-bestiary/api/agents.rs"
     },
     {
       "src": "/api/agents/([^/]+)",
-      "dest": "/api/agents/[agent_id].rs"
+      "dest": "/agent-bestiary/api/agents/[agent_id].rs"
     },
     {
       "src": "/api/agents/([^/]+)/ontology",
-      "dest": "/api/agents/[agent_id]/ontology.rs"
+      "dest": "/agent-bestiary/api/agents/[agent_id]/ontology.rs"
+    },
+    {
+      "src": "/api/execute",
+      "dest": "/agent-bestiary/api/execute.rs"
     }
   ],
   "env": {
