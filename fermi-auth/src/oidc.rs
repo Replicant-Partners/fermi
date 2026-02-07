@@ -15,7 +15,6 @@ struct UserRecord {
     display_name: Option<String>,
     avatar_url: Option<String>,
     role: String,
-    zitadel_org_id: Option<String>,
     auth_provider: Option<String>,
     github_username: Option<String>,
     google_id: Option<String>,
@@ -23,40 +22,66 @@ struct UserRecord {
     ens_name: Option<String>,
 }
 
-/// OAuth provider configuration
+/// Google OAuth2 configuration
 #[derive(Debug, Clone)]
-pub struct OidcConfig {
-    pub issuer: String,
+pub struct GoogleOAuthConfig {
     pub client_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
 }
 
-impl OidcConfig {
-    /// Load OIDC config from environment variables
+impl GoogleOAuthConfig {
     pub fn from_env() -> Result<Self, AuthError> {
         Ok(Self {
-            issuer: env::var("ZITADEL_ISSUER").map_err(|_| AuthError::ConfigError)?,
-            client_id: env::var("ZITADEL_CLIENT_ID").map_err(|_| AuthError::ConfigError)?,
-            client_secret: env::var("ZITADEL_CLIENT_SECRET").map_err(|_| AuthError::ConfigError)?,
-            redirect_uri: env::var("ZITADEL_REDIRECT_URI").map_err(|_| AuthError::ConfigError)?,
+            client_id: env::var("GOOGLE_CLIENT_ID").map_err(|_| AuthError::ConfigError)?,
+            client_secret: env::var("GOOGLE_CLIENT_SECRET").map_err(|_| AuthError::ConfigError)?,
+            redirect_uri: env::var("OAUTH_REDIRECT_URI").map_err(|_| AuthError::ConfigError)?,
         })
     }
 }
 
-/// OAuth authorization request parameters
-#[derive(Debug, Serialize)]
-pub struct AuthorizationRequest {
-    pub response_type: String,
+/// GitHub OAuth2 configuration
+#[derive(Debug, Clone)]
+pub struct GitHubOAuthConfig {
     pub client_id: String,
+    pub client_secret: String,
     pub redirect_uri: String,
-    pub scope: String,
-    pub state: String,
-    pub nonce: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub login_hint: Option<String>,
+}
+
+impl GitHubOAuthConfig {
+    pub fn from_env() -> Result<Self, AuthError> {
+        Ok(Self {
+            client_id: env::var("GITHUB_CLIENT_ID").map_err(|_| AuthError::ConfigError)?,
+            client_secret: env::var("GITHUB_CLIENT_SECRET").map_err(|_| AuthError::ConfigError)?,
+            redirect_uri: env::var("OAUTH_REDIRECT_URI").map_err(|_| AuthError::ConfigError)?,
+        })
+    }
+}
+
+/// Multi-provider OAuth config
+#[derive(Debug, Clone)]
+pub struct OAuthConfig {
+    pub google: Option<GoogleOAuthConfig>,
+    pub github: Option<GitHubOAuthConfig>,
+}
+
+impl OAuthConfig {
+    /// Load all available OAuth configs from environment.
+    /// Does not fail if a provider is not configured — just skips it.
+    pub fn from_env() -> Self {
+        Self {
+            google: GoogleOAuthConfig::from_env().ok(),
+            github: GitHubOAuthConfig::from_env().ok(),
+        }
+    }
+
+    pub fn google(&self) -> Result<&GoogleOAuthConfig, AuthError> {
+        self.google.as_ref().ok_or(AuthError::ConfigError)
+    }
+
+    pub fn github(&self) -> Result<&GitHubOAuthConfig, AuthError> {
+        self.github.as_ref().ok_or(AuthError::ConfigError)
+    }
 }
 
 /// OAuth callback query parameters
@@ -66,131 +91,121 @@ pub struct CallbackParams {
     pub state: String,
 }
 
-/// Token exchange request
-#[derive(Debug, Serialize)]
-pub struct TokenRequest {
-    pub grant_type: String,
-    pub code: String,
-    pub redirect_uri: String,
-    pub client_id: String,
-    pub client_secret: String,
-}
-
-/// Token response from Zitadel
+/// Google token response
 #[derive(Debug, Deserialize)]
-pub struct TokenResponse {
+pub struct GoogleTokenResponse {
     pub access_token: String,
     pub token_type: String,
     pub expires_in: u64,
-    pub id_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_token: Option<String>,
     pub refresh_token: Option<String>,
 }
 
-/// Generate authorization URL for OAuth flow
-pub fn build_authorization_url(
-    config: &OidcConfig,
-    provider: AuthProvider,
-    state: String,
-    nonce: String,
-) -> Result<String, AuthError> {
-    let auth_endpoint = format!("{}/oauth/v2/authorize", config.issuer);
-
-    let mut params = AuthorizationRequest {
-        response_type: "code".to_string(),
-        client_id: config.client_id.clone(),
-        redirect_uri: config.redirect_uri.clone(),
-        scope: "openid email profile".to_string(),
-        state,
-        nonce,
-        prompt: None,
-        login_hint: None,
-    };
-
-    // Add provider-specific hints
-    match provider {
-        AuthProvider::GitHub => {
-            params.login_hint = Some("github".to_string());
-        }
-        AuthProvider::Google => {
-            params.login_hint = Some("google".to_string());
-        }
-        AuthProvider::Email => {
-            // Default Zitadel login
-        }
-        AuthProvider::Ethereum => {
-            return Err(AuthError::ConfigError); // SIWE uses different flow
-        }
-    }
-
-    // Build query string
-    let query = serde_urlencoded::to_string(&params).map_err(|_| AuthError::ConfigError)?;
-
-    Ok(format!("{}?{}", auth_endpoint, query))
+/// GitHub token response
+#[derive(Debug, Deserialize)]
+pub struct GitHubTokenResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub scope: Option<String>,
 }
 
-/// Exchange authorization code for tokens
-pub async fn exchange_code_for_token(
-    config: &OidcConfig,
-    code: String,
-) -> Result<TokenResponse, AuthError> {
-    let token_endpoint = format!("{}/oauth/v2/token", config.issuer);
+/// Unified user info from either provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserInfoResponse {
+    pub provider_id: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub provider: AuthProvider,
+    // Provider-specific fields
+    pub github_username: Option<String>,
+    pub github_id: Option<String>,
+    pub google_id: Option<String>,
+}
 
-    let token_request = TokenRequest {
-        grant_type: "authorization_code".to_string(),
-        code,
-        redirect_uri: config.redirect_uri.clone(),
-        client_id: config.client_id.clone(),
-        client_secret: config.client_secret.clone(),
-    };
+/// Google userinfo API response
+#[derive(Debug, Deserialize)]
+struct GoogleUserInfo {
+    id: String,
+    email: Option<String>,
+    verified_email: Option<bool>,
+    name: Option<String>,
+    picture: Option<String>,
+}
 
+/// GitHub user API response
+#[derive(Debug, Deserialize)]
+struct GitHubUserInfo {
+    id: i64,
+    login: String,
+    name: Option<String>,
+    email: Option<String>,
+    avatar_url: Option<String>,
+}
+
+/// GitHub email API response (for getting primary email)
+#[derive(Debug, Deserialize)]
+struct GitHubEmail {
+    email: String,
+    primary: bool,
+    verified: bool,
+}
+
+// --- Google OAuth2 flow ---
+
+/// Build Google OAuth2 authorization URL
+pub fn build_google_auth_url(config: &GoogleOAuthConfig, state: &str) -> String {
+    let params = [
+        ("response_type", "code"),
+        ("client_id", &config.client_id),
+        ("redirect_uri", &config.redirect_uri),
+        ("scope", "openid email profile"),
+        ("state", state),
+        ("access_type", "offline"),
+        ("prompt", "consent"),
+    ];
+    let query = serde_urlencoded::to_string(&params).unwrap_or_default();
+    format!("https://accounts.google.com/o/oauth2/v2/auth?{}", query)
+}
+
+/// Exchange Google authorization code for tokens
+pub async fn google_exchange_code(
+    config: &GoogleOAuthConfig,
+    code: &str,
+) -> Result<GoogleTokenResponse, AuthError> {
     let client = reqwest::Client::new();
     let response = client
-        .post(&token_endpoint)
-        .form(&token_request)
+        .post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", &config.redirect_uri),
+            ("client_id", &config.client_id),
+            ("client_secret", &config.client_secret),
+        ])
         .send()
         .await
         .map_err(|e| AuthError::OAuthError(e.to_string()))?;
 
     if !response.status().is_success() {
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response.text().await.unwrap_or_default();
         return Err(AuthError::OAuthError(format!(
-            "Token exchange failed: {}",
+            "Google token exchange failed: {}",
             error_text
         )));
     }
 
     response
-        .json::<TokenResponse>()
+        .json::<GoogleTokenResponse>()
         .await
         .map_err(|e| AuthError::OAuthError(e.to_string()))
 }
 
-/// Fetch user info from Zitadel userinfo endpoint
-#[derive(Debug, Deserialize)]
-pub struct UserInfoResponse {
-    pub sub: String,
-    pub email: Option<String>,
-    pub email_verified: Option<bool>,
-    pub name: Option<String>,
-    pub preferred_username: Option<String>,
-    pub picture: Option<String>,
-    #[serde(rename = "urn:zitadel:iam:org:id")]
-    pub org_id: Option<String>,
-}
-
-pub async fn fetch_user_info(
-    config: &OidcConfig,
-    access_token: &str,
-) -> Result<UserInfoResponse, AuthError> {
-    let userinfo_endpoint = format!("{}/oidc/v1/userinfo", config.issuer);
-
+/// Fetch user info from Google
+pub async fn google_fetch_user_info(access_token: &str) -> Result<UserInfoResponse, AuthError> {
     let client = reqwest::Client::new();
     let response = client
-        .get(&userinfo_endpoint)
+        .get("https://www.googleapis.com/oauth2/v2/userinfo")
         .bearer_auth(access_token)
         .send()
         .await
@@ -198,92 +213,255 @@ pub async fn fetch_user_info(
 
     if !response.status().is_success() {
         return Err(AuthError::OAuthError(
-            "Failed to fetch user info".to_string(),
+            "Failed to fetch Google user info".to_string(),
         ));
     }
 
+    let info: GoogleUserInfo = response
+        .json()
+        .await
+        .map_err(|e| AuthError::OAuthError(e.to_string()))?;
+
+    Ok(UserInfoResponse {
+        provider_id: info.id.clone(),
+        email: info.email,
+        name: info.name,
+        avatar_url: info.picture,
+        provider: AuthProvider::Google,
+        github_username: None,
+        github_id: None,
+        google_id: Some(info.id),
+    })
+}
+
+// --- GitHub OAuth2 flow ---
+
+/// Build GitHub OAuth2 authorization URL
+pub fn build_github_auth_url(config: &GitHubOAuthConfig, state: &str) -> String {
+    let params = [
+        ("client_id", config.client_id.as_str()),
+        ("redirect_uri", config.redirect_uri.as_str()),
+        ("scope", "user:email read:user"),
+        ("state", state),
+    ];
+    let query = serde_urlencoded::to_string(&params).unwrap_or_default();
+    format!("https://github.com/login/oauth/authorize?{}", query)
+}
+
+/// Exchange GitHub authorization code for tokens
+pub async fn github_exchange_code(
+    config: &GitHubOAuthConfig,
+    code: &str,
+) -> Result<GitHubTokenResponse, AuthError> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://github.com/login/oauth/access_token")
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", config.client_id.as_str()),
+            ("client_secret", config.client_secret.as_str()),
+            ("code", code),
+            ("redirect_uri", config.redirect_uri.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| AuthError::OAuthError(e.to_string()))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(AuthError::OAuthError(format!(
+            "GitHub token exchange failed: {}",
+            error_text
+        )));
+    }
+
     response
-        .json::<UserInfoResponse>()
+        .json::<GitHubTokenResponse>()
         .await
         .map_err(|e| AuthError::OAuthError(e.to_string()))
 }
 
-/// Sync or create user in our database from Zitadel user info
-pub async fn sync_user(
-    pool: &PgPool,
-    user_info: UserInfoResponse,
-    provider: AuthProvider,
-) -> Result<User, AuthError> {
+/// Fetch user info from GitHub
+pub async fn github_fetch_user_info(access_token: &str) -> Result<UserInfoResponse, AuthError> {
+    let client = reqwest::Client::new();
+
+    // Fetch user profile
+    let user_response = client
+        .get("https://api.github.com/user")
+        .header("User-Agent", "fermi-auth")
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| AuthError::OAuthError(e.to_string()))?;
+
+    if !user_response.status().is_success() {
+        return Err(AuthError::OAuthError(
+            "Failed to fetch GitHub user info".to_string(),
+        ));
+    }
+
+    let user: GitHubUserInfo = user_response
+        .json()
+        .await
+        .map_err(|e| AuthError::OAuthError(e.to_string()))?;
+
+    // If email is not public, fetch from /user/emails
+    let email = if user.email.is_some() {
+        user.email.clone()
+    } else {
+        let emails_response = client
+            .get("https://api.github.com/user/emails")
+            .header("User-Agent", "fermi-auth")
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(|e| AuthError::OAuthError(e.to_string()))?;
+
+        if emails_response.status().is_success() {
+            let emails: Vec<GitHubEmail> = emails_response.json().await.unwrap_or_default();
+            emails
+                .into_iter()
+                .find(|e| e.primary && e.verified)
+                .map(|e| e.email)
+        } else {
+            None
+        }
+    };
+
+    let github_id = user.id.to_string();
+    Ok(UserInfoResponse {
+        provider_id: github_id.clone(),
+        email,
+        name: user.name.or(Some(user.login.clone())),
+        avatar_url: user.avatar_url,
+        provider: AuthProvider::GitHub,
+        github_username: Some(user.login),
+        github_id: Some(github_id),
+        google_id: None,
+    })
+}
+
+// --- User sync (shared across providers) ---
+
+/// Sync or create user in our database from OAuth user info
+pub async fn sync_user(pool: &PgPool, user_info: &UserInfoResponse) -> Result<User, AuthError> {
     let email = user_info
         .email
+        .as_ref()
         .ok_or(AuthError::OAuthError("No email provided".to_string()))?;
 
-    // Try to find existing user by user_id or email
-    let existing = sqlx::query_as::<_, UserRecord>(
-        r#"
-        SELECT id, user_id, email, display_name, avatar_url, role, zitadel_org_id, auth_provider,
-               github_username, google_id, ethereum_address, ens_name
-        FROM users
-        WHERE user_id = $1 OR email = $2
-        LIMIT 1
-        "#,
-    )
-    .bind(&user_info.sub)
-    .bind(&email)
-    .fetch_optional(pool)
-    .await
+    let provider_str = match user_info.provider {
+        AuthProvider::Google => "google",
+        AuthProvider::GitHub => "github",
+        AuthProvider::Ethereum => "ethereum",
+        AuthProvider::Email => "email",
+    };
+
+    // Try to find existing user by provider-specific ID or email
+    let existing = match user_info.provider {
+        AuthProvider::Google => {
+            sqlx::query_as::<_, UserRecord>(
+                r#"
+                SELECT id, user_id, email, display_name, avatar_url, role, auth_provider,
+                       github_username, google_id, ethereum_address, ens_name
+                FROM users
+                WHERE google_id = $1 OR email = $2
+                LIMIT 1
+                "#,
+            )
+            .bind(&user_info.google_id)
+            .bind(email)
+            .fetch_optional(pool)
+            .await
+        }
+        AuthProvider::GitHub => {
+            sqlx::query_as::<_, UserRecord>(
+                r#"
+                SELECT id, user_id, email, display_name, avatar_url, role, auth_provider,
+                       github_username, google_id, ethereum_address, ens_name
+                FROM users
+                WHERE github_id = $1 OR email = $2
+                LIMIT 1
+                "#,
+            )
+            .bind(&user_info.github_id)
+            .bind(email)
+            .fetch_optional(pool)
+            .await
+        }
+        _ => {
+            sqlx::query_as::<_, UserRecord>(
+                r#"
+                SELECT id, user_id, email, display_name, avatar_url, role, auth_provider,
+                       github_username, google_id, ethereum_address, ens_name
+                FROM users
+                WHERE email = $1
+                LIMIT 1
+                "#,
+            )
+            .bind(email)
+            .fetch_optional(pool)
+            .await
+        }
+    }
     .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
     let record = if let Some(existing_user) = existing {
-        // Update existing user
+        // Update existing user with latest info from provider
         sqlx::query_as::<_, UserRecord>(
             r#"
             UPDATE users
-            SET user_id = $1,
-                email = $2,
-                display_name = $3,
-                avatar_url = $4,
-                auth_provider = $5,
-                zitadel_org_id = $6,
+            SET email = $1,
+                display_name = COALESCE($2, display_name),
+                avatar_url = COALESCE($3, avatar_url),
+                auth_provider = $4,
+                github_username = COALESCE($5, github_username),
+                github_id = COALESCE($6, github_id),
+                google_id = COALESCE($7, google_id),
                 last_login_at = NOW(),
                 updated_at = NOW()
-            WHERE id = $7
-            RETURNING id, user_id, email, display_name, avatar_url, role, zitadel_org_id, auth_provider,
+            WHERE id = $8
+            RETURNING id, user_id, email, display_name, avatar_url, role, auth_provider,
                       github_username, google_id, ethereum_address, ens_name
-            "#
+            "#,
         )
-        .bind(&user_info.sub)
-        .bind(&email)
-        .bind(user_info.name.as_ref().or(user_info.preferred_username.as_ref()))
-        .bind(&user_info.picture)
-        .bind(format!("{:?}", provider).to_lowercase())
-        .bind(&user_info.org_id)
+        .bind(email)
+        .bind(&user_info.name)
+        .bind(&user_info.avatar_url)
+        .bind(provider_str)
+        .bind(&user_info.github_username)
+        .bind(&user_info.github_id)
+        .bind(&user_info.google_id)
         .bind(existing_user.id)
         .fetch_one(pool)
         .await
         .map_err(|e| AuthError::DatabaseError(e.to_string()))?
     } else {
         // Create new user
+        let new_user_id = Uuid::new_v4().to_string();
         sqlx::query_as::<_, UserRecord>(
             r#"
-            INSERT INTO users (user_id, email, display_name, avatar_url, auth_provider, zitadel_org_id, last_login_at, password_hash, password_salt)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW(), '', '')
-            RETURNING id, user_id, email, display_name, avatar_url, role, zitadel_org_id, auth_provider,
+            INSERT INTO users (user_id, email, display_name, avatar_url, auth_provider,
+                               github_username, github_id, google_id,
+                               last_login_at, password_hash, password_salt)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), '', '')
+            RETURNING id, user_id, email, display_name, avatar_url, role, auth_provider,
                       github_username, google_id, ethereum_address, ens_name
-            "#
+            "#,
         )
-        .bind(&user_info.sub)
-        .bind(&email)
-        .bind(user_info.name.as_ref().or(user_info.preferred_username.as_ref()))
-        .bind(&user_info.picture)
-        .bind(format!("{:?}", provider).to_lowercase())
-        .bind(&user_info.org_id)
+        .bind(&new_user_id)
+        .bind(email)
+        .bind(&user_info.name)
+        .bind(&user_info.avatar_url)
+        .bind(provider_str)
+        .bind(&user_info.github_username)
+        .bind(&user_info.github_id)
+        .bind(&user_info.google_id)
         .fetch_one(pool)
         .await
         .map_err(|e| AuthError::DatabaseError(e.to_string()))?
     };
 
-    // Parse role
     let role = match record.role.as_str() {
         "admin" => UserRole::Admin,
         "developer" => UserRole::Developer,
@@ -291,7 +469,6 @@ pub async fn sync_user(
         _ => UserRole::Developer,
     };
 
-    // Parse auth provider
     let auth_provider = match record.auth_provider.as_deref() {
         Some("github") => AuthProvider::GitHub,
         Some("google") => AuthProvider::Google,
@@ -304,7 +481,6 @@ pub async fn sync_user(
         email: record.email,
         display_name: record.display_name,
         role,
-        org_id: record.zitadel_org_id,
         auth_provider,
         github_username: record.github_username,
         google_id: record.google_id,
@@ -336,25 +512,33 @@ mod tests {
     }
 
     #[test]
-    fn test_authorization_url_github() {
-        let config = OidcConfig {
-            issuer: "https://test.zitadel.cloud".to_string(),
-            client_id: "test-client".to_string(),
+    fn test_google_auth_url() {
+        let config = GoogleOAuthConfig {
+            client_id: "test-google-client".to_string(),
             client_secret: "secret".to_string(),
-            redirect_uri: "https://fermi.systems/auth/callback".to_string(),
+            redirect_uri: "https://agent-bestiary.world/auth/callback".to_string(),
         };
 
-        let url = build_authorization_url(
-            &config,
-            AuthProvider::GitHub,
-            "test-state".to_string(),
-            "test-nonce".to_string(),
-        )
-        .unwrap();
+        let url = build_google_auth_url(&config, "test-state");
 
-        assert!(url.contains("oauth/v2/authorize"));
-        assert!(url.contains("client_id=test-client"));
+        assert!(url.contains("accounts.google.com"));
+        assert!(url.contains("client_id=test-google-client"));
         assert!(url.contains("state=test-state"));
-        assert!(url.contains("login_hint=github"));
+        assert!(url.contains("scope=openid+email+profile"));
+    }
+
+    #[test]
+    fn test_github_auth_url() {
+        let config = GitHubOAuthConfig {
+            client_id: "test-github-client".to_string(),
+            client_secret: "secret".to_string(),
+            redirect_uri: "https://agent-bestiary.world/auth/callback".to_string(),
+        };
+
+        let url = build_github_auth_url(&config, "test-state");
+
+        assert!(url.contains("github.com/login/oauth/authorize"));
+        assert!(url.contains("client_id=test-github-client"));
+        assert!(url.contains("state=test-state"));
     }
 }

@@ -62,6 +62,9 @@ http-body-util = "0.1"
 # ADM Memory
 agent-bestiary-memory = { path = "agent-bestiary/memory" }
 
+# Auth
+fermi-auth = { path = "fermi-auth" }
+
 # For migration scripts
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid"] }
 anyhow = "1.0"

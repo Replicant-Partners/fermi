@@ -335,6 +335,42 @@
         border-color: var(--yellow);
         color: var(--yellow);
       }
+
+      /* Auth UI */
+      .auth-area {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .auth-btn {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        padding: 4px 12px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        color: var(--fg3);
+        transition: all 0.2s ease;
+        text-decoration: none;
+      }
+      .auth-btn:hover {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .auth-user {
+        font-size: 0.85rem;
+        color: var(--fg2);
+      }
+      .auth-logout {
+        background: transparent;
+        border: none;
+        color: var(--fg3);
+        cursor: pointer;
+        font-size: 0.8rem;
+        padding: 2px 6px;
+      }
+      .auth-logout:hover {
+        color: var(--red);
+      }
     </style>
     <script src="https://d3js.org/d3.v7.min.js"></script>
   </head>
@@ -346,13 +382,16 @@
           <span>Back to Specimen</span>
         </a>
         <div class="page-title">Knowledge Graph</div>
-        <button
-          id="theme-toggle"
-          class="theme-toggle-btn"
-          title="Toggle Theme (Ctrl+T)"
-        >
-          OP-1
-        </button>
+        <div style="display: flex; align-items: center; gap: 8px">
+          <div id="user-area" class="auth-area"></div>
+          <button
+            id="theme-toggle"
+            class="theme-toggle-btn"
+            title="Toggle Theme (Ctrl+T)"
+          >
+            OP-1
+          </button>
+        </div>
       </div>
 
       <div class="agent-info" id="agent-info">
@@ -640,6 +679,31 @@
           document.getElementById("theme-toggle").click();
         }
       });
+    </script>
+    <script>
+      (async function () {
+        const area = document.getElementById("user-area");
+        try {
+          const res = await fetch("/api/auth/me");
+          if (res.ok) {
+            const user = await res.json();
+            const name = user.display_name || user.email || "User";
+            area.innerHTML =
+              '<span class="auth-user">' +
+              name +
+              "</span>" +
+              "<button class=\"auth-logout\" onclick=\"fetch('/auth/logout',{method:'POST'}).then(()=>location.reload())\">sign out</button>";
+          } else {
+            area.innerHTML =
+              '<a href="/auth/google" class="auth-btn">Google</a>' +
+              '<a href="/auth/github" class="auth-btn">GitHub</a>';
+          }
+        } catch (e) {
+          area.innerHTML =
+            '<a href="/auth/google" class="auth-btn">Google</a>' +
+            '<a href="/auth/github" class="auth-btn">GitHub</a>';
+        }
+      })();
     </script>
   </body>
 </html>

@@ -4,16 +4,15 @@ use uuid::Uuid;
 /// User identity across the system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    pub user_id: String, // Zitadel uses custom string IDs, not UUIDs
+    pub user_id: String,
     pub email: String,
     pub display_name: Option<String>,
     pub role: UserRole,
-    pub org_id: Option<String>, // Zitadel organization ID for multi-tenancy
-    pub auth_provider: AuthProvider, // How user signed in
-    pub github_username: Option<String>, // For GitHub users
-    pub google_id: Option<String>, // For Google users
-    pub ethereum_address: Option<String>, // For Web3 wallet users (checksummed)
-    pub ens_name: Option<String>, // ENS domain if resolved
+    pub auth_provider: AuthProvider,
+    pub github_username: Option<String>,
+    pub google_id: Option<String>,
+    pub ethereum_address: Option<String>,
+    pub ens_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,7 +21,7 @@ pub enum AuthProvider {
     Email,
     GitHub,
     Google,
-    Ethereum, // Web3 wallet (SIWE)
+    Ethereum,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,12 +46,12 @@ impl UserRole {
 #[derive(Debug, Clone)]
 pub struct ApiKey {
     pub key_id: Uuid,
-    pub user_id: String, // Links back to User
+    pub user_id: String,
     pub name: String,
     pub scopes: Vec<String>,
 }
 
-/// Authentication principal - either a user or an API key
+/// Authentication principal — either a user session or an API key
 #[derive(Debug, Clone)]
 pub enum AuthPrincipal {
     User(User),
