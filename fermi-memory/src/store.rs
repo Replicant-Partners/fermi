@@ -1,5 +1,5 @@
 use crate::error::{MemoryError, Result};
-use crate::types::{Episode, SemanticRule, Entity, Relationship, Fact};
+use crate::types::{Entity, Episode, Fact, Relationship, SemanticRule};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use uuid::Uuid;
 
@@ -71,7 +71,7 @@ impl MemoryStore {
         let rec = sqlx::query!(
             r#"
             SELECT
-                episode_id, agent_id, timestamp_ref, timestamp_created,
+                episode_id, agent_id, user_id, timestamp_ref, timestamp_created,
                 query, context, execution_status, error_details,
                 execution_time_ms, tokens_used, cost_usd,
                 consolidated, consolidation_job_id, cluster_id, created_at
@@ -87,6 +87,7 @@ impl MemoryStore {
         Ok(Episode {
             episode_id: Some(rec.episode_id),
             agent_id: rec.agent_id,
+            user_id: rec.user_id.unwrap_or_default(),
             timestamp_ref: rec.timestamp_ref,
             timestamp_created: Some(rec.timestamp_created),
             query: rec.query,
@@ -117,7 +118,7 @@ impl MemoryStore {
         let records = sqlx::query!(
             r#"
             SELECT
-                episode_id, agent_id, timestamp_ref, timestamp_created,
+                episode_id, agent_id, user_id, timestamp_ref, timestamp_created,
                 query, context, execution_status, error_details,
                 execution_time_ms, tokens_used, cost_usd,
                 consolidated, consolidation_job_id, cluster_id, created_at
@@ -137,6 +138,7 @@ impl MemoryStore {
             .map(|rec| Episode {
                 episode_id: Some(rec.episode_id),
                 agent_id: rec.agent_id,
+                user_id: rec.user_id.unwrap_or_default(),
                 timestamp_ref: rec.timestamp_ref,
                 timestamp_created: Some(rec.timestamp_created),
                 query: rec.query,
@@ -226,7 +228,7 @@ impl MemoryStore {
         let rec = sqlx::query!(
             r#"
             SELECT
-                rule_id, agent_id, rule_content, rule_description,
+                rule_id, agent_id, user_id, rule_content, rule_description,
                 confidence_score, verification_status, verification_method,
                 verification_details, source_episode_cluster, episode_count,
                 created_at, last_validated_at, application_count,
@@ -244,6 +246,7 @@ impl MemoryStore {
         Ok(SemanticRule {
             rule_id: Some(rec.rule_id),
             agent_id: rec.agent_id,
+            user_id: rec.user_id.unwrap_or_default(),
             rule_content: rec.rule_content,
             rule_description: rec.rule_description,
             confidence_score: rec.confidence_score,
@@ -272,7 +275,7 @@ impl MemoryStore {
         let records = sqlx::query!(
             r#"
             SELECT
-                rule_id, agent_id, rule_content, rule_description,
+                rule_id, agent_id, user_id, rule_content, rule_description,
                 confidence_score, verification_status, verification_method,
                 verification_details, source_episode_cluster, episode_count,
                 created_at, last_validated_at, application_count,
@@ -292,6 +295,7 @@ impl MemoryStore {
             .map(|rec| SemanticRule {
                 rule_id: Some(rec.rule_id),
                 agent_id: rec.agent_id,
+                user_id: rec.user_id.unwrap_or_default(),
                 rule_content: rec.rule_content,
                 rule_description: rec.rule_description,
                 confidence_score: rec.confidence_score,

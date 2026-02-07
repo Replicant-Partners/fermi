@@ -28,6 +28,7 @@ impl std::fmt::Display for ExecutionStatus {
 pub struct Episode {
     pub episode_id: Option<Uuid>,
     pub agent_id: Uuid,
+    pub user_id: String, // Owner (for multi-tenant isolation)
 
     // Temporal tracking
     pub timestamp_ref: DateTime<Utc>,
@@ -55,6 +56,7 @@ pub struct Episode {
 impl Episode {
     pub fn new(
         agent_id: Uuid,
+        user_id: String,
         query: String,
         context: serde_json::Value,
         execution_status: ExecutionStatus,
@@ -62,6 +64,7 @@ impl Episode {
         Self {
             episode_id: None,
             agent_id,
+            user_id,
             timestamp_ref: Utc::now(),
             timestamp_created: None,
             query,
@@ -104,6 +107,7 @@ impl std::fmt::Display for VerificationStatus {
 pub struct SemanticRule {
     pub rule_id: Option<Uuid>,
     pub agent_id: Uuid,
+    pub user_id: String, // Owner (for multi-tenant isolation)
 
     // Rule content
     pub rule_content: String,
@@ -135,6 +139,7 @@ pub struct SemanticRule {
 impl SemanticRule {
     pub fn new(
         agent_id: Uuid,
+        user_id: String,
         rule_content: String,
         confidence_score: f32,
         source_episodes: Vec<Uuid>,
@@ -142,6 +147,7 @@ impl SemanticRule {
         Self {
             rule_id: None,
             agent_id,
+            user_id,
             rule_content,
             rule_description: None,
             confidence_score,
