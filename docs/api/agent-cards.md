@@ -626,8 +626,10 @@ cost_per_1k_tokens = 0.015
 template_file = "prompts/research_analyst.txt"
 
 [knowledge]
-embeddings_model = "text-embedding-3-large"
-dimensions = 3072
+# Embedding provider: anthropic, openai, mistral, qwen
+embeddings_provider = "anthropic"
+embeddings_model = "voyage-2"
+dimensions = 1024
 
 [a2a]
 can_share_with = ["market_researcher", "competitive_intel"]
@@ -640,6 +642,165 @@ connectors = ["bloomberg", "pitchbook", "cbinsights"]
 supported = ["daily", "weekly", "monthly", "on-demand"]
 default_schedule = "weekly"
 ```
+
+---
+
+## Embedding Configuration
+
+### Overview
+
+Fermi ADM supports multiple embedding providers, allowing you to choose the best model for your agent's needs. When designing an agent, you can specify both the embedding provider and model in the agent configuration.
+
+### Supported Providers
+
+#### 1. Anthropic (Default) - Voyage AI
+
+```toml
+[knowledge]
+embeddings_provider = "anthropic"
+embeddings_model = "voyage-2"
+dimensions = 1024
+```
+
+**Models:**
+- `voyage-2` - General purpose, 1024 dimensions (default)
+- `voyage-large-2` - Higher quality, 1536 dimensions
+- `voyage-code-2` - Optimized for code, 1536 dimensions
+
+**Advantages:**
+- Optimized for retrieval tasks
+- Strong performance on domain-specific content
+- Integrated with Anthropic ecosystem
+
+**API Key:** `ANTHROPIC_API_KEY`
+
+#### 2. OpenAI
+
+```toml
+[knowledge]
+embeddings_provider = "openai"
+embeddings_model = "text-embedding-3-large"
+dimensions = 1024
+```
+
+**Models:**
+- `text-embedding-3-small` - Cost-effective, 1536 dimensions
+- `text-embedding-3-large` - High quality, 3072 dimensions (configurable)
+- `text-embedding-ada-002` - Legacy model, 1536 dimensions
+
+**Advantages:**
+- Widely tested and documented
+- Flexible dimensionality
+- Strong general-purpose performance
+
+**API Key:** `OPENAI_API_KEY`
+
+#### 3. Mistral
+
+```toml
+[knowledge]
+embeddings_provider = "mistral"
+embeddings_model = "mistral-embed"
+dimensions = 1024
+```
+
+**Models:**
+- `mistral-embed` - General purpose, 1024 dimensions
+
+**Advantages:**
+- European data residency options
+- Open model architecture
+- Competitive pricing
+
+**API Key:** `MISTRAL_API_KEY`
+
+#### 4. Qwen (Alibaba Cloud)
+
+```toml
+[knowledge]
+embeddings_provider = "qwen"
+embeddings_model = "text-embedding-v3"
+dimensions = 1024
+```
+
+**Models:**
+- `text-embedding-v3` - Latest generation, 1024 dimensions
+- `text-embedding-v2` - Previous generation, 1536 dimensions
+
+**Advantages:**
+- Strong multilingual support (especially Chinese)
+- Regional deployment options
+- Cost-effective for Asian markets
+
+**API Key:** `QWEN_API_KEY` (Alibaba Cloud DashScope)
+
+### Choosing an Embedding Provider
+
+**Consider these factors:**
+
+1. **Language Support**
+   - Anthropic/OpenAI: Best for English
+   - Qwen: Best for Chinese and multilingual
+
+2. **Domain Specificity**
+   - Voyage-code-2: Code and technical content
+   - Voyage-2/text-embedding-3: General purpose
+   - Consider fine-tuning for specialized domains
+
+3. **Cost vs Performance**
+   - Mistral: Cost-effective
+   - OpenAI 3-small: Budget option
+   - OpenAI 3-large/Voyage-large-2: Premium quality
+
+4. **Data Residency**
+   - Mistral: European options
+   - Qwen: Asian deployment
+   - Anthropic/OpenAI: US-based
+
+5. **Dimensionality**
+   - 1024d: Faster, lower storage, good for most use cases
+   - 1536-3072d: Higher quality, more storage/compute
+
+### Usage in fermi-consolidate
+
+When running the consolidation worker, specify your embedding provider:
+
+```bash
+# Default: Anthropic Voyage
+fermi-consolidate --database-url $DATABASE_URL \
+  --anthropic-api-key $ANTHROPIC_API_KEY
+
+# OpenAI
+fermi-consolidate --database-url $DATABASE_URL \
+  --embedding-provider openai \
+  --openai-api-key $OPENAI_API_KEY \
+  --anthropic-api-key $ANTHROPIC_API_KEY  # Still needed for LLM
+
+# Mistral (Bring Your Own)
+fermi-consolidate --database-url $DATABASE_URL \
+  --embedding-provider mistral \
+  --mistral-api-key $MISTRAL_API_KEY \
+  --anthropic-api-key $ANTHROPIC_API_KEY
+
+# Custom model/dimensions
+fermi-consolidate --database-url $DATABASE_URL \
+  --embedding-provider openai \
+  --embedding-model text-embedding-3-small \
+  --embedding-dimensions 1536 \
+  --openai-api-key $OPENAI_API_KEY \
+  --anthropic-api-key $ANTHROPIC_API_KEY
+```
+
+### Migration Considerations
+
+**Important:** Embedding vectors are not interchangeable between models. If you change embedding providers for an agent:
+
+1. **Vector Dimensions Must Match**: Ensure your new model uses the same dimensions, or update the database schema
+2. **Re-embed Existing Content**: All episodes and semantic memory must be re-embedded with the new model
+3. **Similarity Scores Will Change**: Different models will produce different similarity scores for the same content
+4. **Backward Compatibility**: Consider maintaining both embeddings during migration
+
+**Best Practice:** Choose your embedding provider when creating an agent and stick with it. Changing providers requires significant migration work.
 
 ---
 

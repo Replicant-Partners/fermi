@@ -106,7 +106,71 @@ Use this checklist to plan your Fermi agent before implementation. Answer each q
 
 ---
 
-## ✅ Step 5: Ontology Design
+## ✅ Step 5: Embedding Configuration
+
+### How will your agent store and retrieve knowledge?
+
+Fermi ADM uses embeddings to store episodic and semantic memory. You can choose the embedding provider that best fits your agent's needs.
+
+- [ ] **Embedding provider:**
+  - [ ] **Anthropic (Default)** - Voyage AI embeddings, optimized for retrieval
+  - [ ] **OpenAI** - Widely tested, flexible dimensionality
+  - [ ] **Mistral** - European data residency, open architecture
+  - [ ] **Qwen** - Strong multilingual support, cost-effective
+
+- [ ] **Model selection:**
+  - [ ] Using default model for provider
+  - [ ] Custom model: _________________________________________
+
+- [ ] **Embedding dimensions:**
+  - [ ] 1024 (default, good balance of speed/quality)
+  - [ ] 1536 (higher quality)
+  - [ ] 3072 (maximum quality, OpenAI only)
+
+- [ ] **Language considerations:**
+  - [ ] English-only → Anthropic or OpenAI recommended
+  - [ ] Multilingual → Consider Qwen
+  - [ ] Chinese content → Qwen strongly recommended
+  - [ ] Code-heavy → Consider Voyage-code-2 (Anthropic)
+
+- [ ] **Cost considerations:**
+  - [ ] Budget-friendly → Mistral or OpenAI text-embedding-3-small
+  - [ ] Quality-focused → Anthropic voyage-large-2 or OpenAI text-embedding-3-large
+  - [ ] Balanced → Anthropic voyage-2 (default)
+
+- [ ] **Data residency requirements:**
+  - [ ] No specific requirements → Any provider
+  - [ ] European data residency → Mistral
+  - [ ] Asian deployment → Qwen
+  - [ ] US-based → Anthropic or OpenAI
+
+### Configuration Example
+
+```toml
+[knowledge]
+# Choose your embedding provider
+embeddings_provider = "anthropic"  # or "openai", "mistral", "qwen"
+embeddings_model = "voyage-2"      # provider-specific model
+dimensions = 1024                  # must match model's output
+
+# Provider-specific examples:
+# Anthropic: voyage-2, voyage-large-2, voyage-code-2
+# OpenAI: text-embedding-3-small, text-embedding-3-large
+# Mistral: mistral-embed
+# Qwen: text-embedding-v3, text-embedding-v2
+```
+
+### Important Notes
+
+⚠️ **Migration Warning:** Once you choose an embedding provider for your agent, changing it later requires re-embedding all existing memories. Choose carefully at design time.
+
+✅ **Best Practice:** Use the default (Anthropic voyage-2) unless you have specific requirements for language support, data residency, or cost optimization.
+
+📚 **For detailed provider comparison:** See [Agent Cards - Embedding Configuration](../../docs/api/agent-cards.md#embedding-configuration)
+
+---
+
+## ✅ Step 6: Ontology Design
 
 ### What will your agent learn?
 
@@ -134,7 +198,7 @@ Use this checklist to plan your Fermi agent before implementation. Answer each q
 
 ---
 
-## ✅ Step 6: Error Handling
+## ✅ Step 7: Error Handling
 
 ### What could go wrong?
 
@@ -152,7 +216,7 @@ Use this checklist to plan your Fermi agent before implementation. Answer each q
 
 ---
 
-## ✅ Step 7: Verification & Quality
+## ✅ Step 8: Verification & Quality
 
 ### How will you verify your agent works?
 
@@ -179,7 +243,7 @@ Use this checklist to plan your Fermi agent before implementation. Answer each q
 
 ---
 
-## ✅ Step 8: Deployment Planning
+## ✅ Step 9: Deployment Planning
 
 ### How will your agent run?
 
@@ -203,7 +267,7 @@ Use this checklist to plan your Fermi agent before implementation. Answer each q
 
 ---
 
-## ✅ Step 9: Documentation
+## ✅ Step 10: Documentation
 
 ### Have you documented your agent?
 
@@ -220,7 +284,7 @@ Use this checklist to plan your Fermi agent before implementation. Answer each q
 
 ---
 
-## ✅ Step 10: Ready to Build
+## ✅ Step 11: Ready to Build
 
 ### Final checks before implementation:
 

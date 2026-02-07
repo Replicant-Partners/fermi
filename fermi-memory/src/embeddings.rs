@@ -177,6 +177,194 @@ impl EmbeddingGenerator for OpenAIEmbeddings {
     }
 }
 
+/// Mistral embedding generator
+pub struct MistralEmbeddings {
+    api_key: String,
+    model: String,
+    dimension: usize,
+    client: reqwest::Client,
+}
+
+impl MistralEmbeddings {
+    pub fn new(api_key: String) -> Self {
+        Self {
+            api_key,
+            model: "mistral-embed".to_string(),
+            dimension: 1024,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    pub fn with_model(mut self, model: String, dimension: usize) -> Self {
+        self.model = model;
+        self.dimension = dimension;
+        self
+    }
+}
+
+#[derive(Serialize)]
+struct MistralEmbeddingRequest {
+    input: Vec<String>,
+    model: String,
+}
+
+#[derive(Deserialize)]
+struct MistralEmbeddingResponse {
+    data: Vec<MistralEmbeddingData>,
+}
+
+#[derive(Deserialize)]
+struct MistralEmbeddingData {
+    embedding: Vec<f32>,
+}
+
+#[async_trait::async_trait]
+impl EmbeddingGenerator for MistralEmbeddings {
+    async fn generate(&self, text: &str) -> Result<Vec<f32>> {
+        let embeddings = self.generate_batch(&[text.to_string()]).await?;
+        Ok(embeddings.into_iter().next().unwrap())
+    }
+
+    async fn generate_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let request = MistralEmbeddingRequest {
+            input: texts.to_vec(),
+            model: self.model.clone(),
+        };
+
+        let response = self
+            .client
+            .post("https://api.mistral.ai/v1/embeddings")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| MemoryError::InvalidData(format!("API request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(MemoryError::InvalidData(format!(
+                "API error {}: {}",
+                status, body
+            )));
+        }
+
+        let data: MistralEmbeddingResponse = response
+            .json()
+            .await
+            .map_err(|e| MemoryError::InvalidData(format!("Failed to parse response: {}", e)))?;
+
+        Ok(data.data.into_iter().map(|d| d.embedding).collect())
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+}
+
+/// Qwen embedding generator
+pub struct QwenEmbeddings {
+    api_key: String,
+    model: String,
+    dimension: usize,
+    client: reqwest::Client,
+}
+
+impl QwenEmbeddings {
+    pub fn new(api_key: String) -> Self {
+        Self {
+            api_key,
+            model: "text-embedding-v3".to_string(),
+            dimension: 1024,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    pub fn with_model(mut self, model: String, dimension: usize) -> Self {
+        self.model = model;
+        self.dimension = dimension;
+        self
+    }
+}
+
+#[derive(Serialize)]
+struct QwenEmbeddingRequest {
+    input: QwenInput,
+    model: String,
+}
+
+#[derive(Serialize)]
+struct QwenInput {
+    texts: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct QwenEmbeddingResponse {
+    output: QwenOutput,
+}
+
+#[derive(Deserialize)]
+struct QwenOutput {
+    embeddings: Vec<QwenEmbeddingData>,
+}
+
+#[derive(Deserialize)]
+struct QwenEmbeddingData {
+    embedding: Vec<f32>,
+}
+
+#[async_trait::async_trait]
+impl EmbeddingGenerator for QwenEmbeddings {
+    async fn generate(&self, text: &str) -> Result<Vec<f32>> {
+        let embeddings = self.generate_batch(&[text.to_string()]).await?;
+        Ok(embeddings.into_iter().next().unwrap())
+    }
+
+    async fn generate_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let request = QwenEmbeddingRequest {
+            input: QwenInput {
+                texts: texts.to_vec(),
+            },
+            model: self.model.clone(),
+        };
+
+        let response = self
+            .client
+            .post("https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| MemoryError::InvalidData(format!("API request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(MemoryError::InvalidData(format!(
+                "API error {}: {}",
+                status, body
+            )));
+        }
+
+        let data: QwenEmbeddingResponse = response
+            .json()
+            .await
+            .map_err(|e| MemoryError::InvalidData(format!("Failed to parse response: {}", e)))?;
+
+        Ok(data
+            .output
+            .embeddings
+            .into_iter()
+            .map(|d| d.embedding)
+            .collect())
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+}
+
 /// Mock embedding generator for testing
 pub struct MockEmbeddings {
     dimension: usize,

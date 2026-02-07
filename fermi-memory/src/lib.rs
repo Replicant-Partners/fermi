@@ -21,7 +21,10 @@ pub mod types;
 
 pub use clustering::{DBSCANClustering, EpisodeCluster};
 pub use consolidation::{ConsolidationResult, ConsolidationWorker};
-pub use embeddings::{AnthropicEmbeddings, EmbeddingGenerator, MockEmbeddings, OpenAIEmbeddings};
+pub use embeddings::{
+    AnthropicEmbeddings, EmbeddingGenerator, MistralEmbeddings, MockEmbeddings, OpenAIEmbeddings,
+    QwenEmbeddings,
+};
 pub use error::{MemoryError, Result};
 pub use llm::{
     generate_structured, AnthropicProvider, GenerationConfig, GenerationResponse, LLMProvider,

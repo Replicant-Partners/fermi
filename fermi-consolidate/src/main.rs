@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
 use fermi_memory::{
-    AnthropicProvider, ConsolidationLock, ConsolidationWorker, MemoryStore, OpenAIEmbeddings,
+    AnthropicEmbeddings, AnthropicProvider, ConsolidationLock, ConsolidationWorker,
+    EmbeddingGenerator, MemoryStore, MistralEmbeddings, OpenAIEmbeddings, QwenEmbeddings,
 };
-use fermi_ontology::{GitConfig, GitManager, MermaidConfig, MermaidGenerator, SnapshotManager};
+use fermi_ontology::{GitConfig, GitManager, MermaidGenerator, SnapshotManager};
 use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -19,13 +20,33 @@ struct Args {
     #[arg(long, env)]
     database_url: String,
 
-    /// OpenAI API key for embeddings
-    #[arg(long, env)]
-    openai_api_key: String,
+    /// Embedding provider: anthropic, openai, mistral, qwen
+    #[arg(long, env, default_value = "anthropic")]
+    embedding_provider: String,
 
-    /// Anthropic API key for LLM
+    /// Anthropic API key (for Voyage embeddings or LLM)
     #[arg(long, env)]
-    anthropic_api_key: String,
+    anthropic_api_key: Option<String>,
+
+    /// OpenAI API key (for OpenAI embeddings)
+    #[arg(long, env)]
+    openai_api_key: Option<String>,
+
+    /// Mistral API key (for Mistral embeddings)
+    #[arg(long, env)]
+    mistral_api_key: Option<String>,
+
+    /// Qwen API key (for Qwen embeddings)
+    #[arg(long, env)]
+    qwen_api_key: Option<String>,
+
+    /// Embedding model (provider-specific)
+    #[arg(long, env)]
+    embedding_model: Option<String>,
+
+    /// Embedding dimensions
+    #[arg(long, env, default_value = "1024")]
+    embedding_dimensions: usize,
 
     /// Git repository path for ontologies
     #[arg(long, default_value = "./ontologies")]
@@ -69,16 +90,88 @@ async fn main() -> Result<()> {
     let store = Arc::new(MemoryStore::new(&args.database_url).await?);
     info!("Connected to database");
 
-    // Initialize embedding generator
-    let embedder = Arc::new(
-        OpenAIEmbeddings::new(args.openai_api_key.clone())
-            .with_model("text-embedding-3-small".to_string(), 1536),
-    );
+    // Initialize embedding generator based on provider
+    let embedder: Arc<dyn EmbeddingGenerator> = match args.embedding_provider.as_str() {
+        "anthropic" => {
+            let api_key = args.anthropic_api_key.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("ANTHROPIC_API_KEY required for anthropic provider")
+            })?;
+            let model = args
+                .embedding_model
+                .unwrap_or_else(|| "voyage-2".to_string());
+            info!(
+                "Using Anthropic embeddings: model={}, dims={}",
+                model, args.embedding_dimensions
+            );
+            Arc::new(
+                AnthropicEmbeddings::new(api_key.clone())
+                    .with_model(model, args.embedding_dimensions),
+            )
+        }
+        "openai" => {
+            let api_key = args
+                .openai_api_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("OPENAI_API_KEY required for openai provider"))?;
+            let model = args
+                .embedding_model
+                .unwrap_or_else(|| "text-embedding-3-large".to_string());
+            info!(
+                "Using OpenAI embeddings: model={}, dims={}",
+                model, args.embedding_dimensions
+            );
+            Arc::new(
+                OpenAIEmbeddings::new(api_key.clone()).with_model(model, args.embedding_dimensions),
+            )
+        }
+        "mistral" => {
+            let api_key = args
+                .mistral_api_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("MISTRAL_API_KEY required for mistral provider"))?;
+            let model = args
+                .embedding_model
+                .unwrap_or_else(|| "mistral-embed".to_string());
+            info!(
+                "Using Mistral embeddings: model={}, dims={}",
+                model, args.embedding_dimensions
+            );
+            Arc::new(
+                MistralEmbeddings::new(api_key.clone())
+                    .with_model(model, args.embedding_dimensions),
+            )
+        }
+        "qwen" => {
+            let api_key = args
+                .qwen_api_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("QWEN_API_KEY required for qwen provider"))?;
+            let model = args
+                .embedding_model
+                .unwrap_or_else(|| "text-embedding-v3".to_string());
+            info!(
+                "Using Qwen embeddings: model={}, dims={}",
+                model, args.embedding_dimensions
+            );
+            Arc::new(
+                QwenEmbeddings::new(api_key.clone()).with_model(model, args.embedding_dimensions),
+            )
+        }
+        _ => {
+            bail!(
+                "Unknown embedding provider: {}. Supported: anthropic, openai, mistral, qwen",
+                args.embedding_provider
+            );
+        }
+    };
     info!("Initialized embedding generator");
 
-    // Initialize LLM provider
+    // Initialize LLM provider (requires Anthropic API key)
+    let anthropic_key = args
+        .anthropic_api_key
+        .ok_or_else(|| anyhow::anyhow!("ANTHROPIC_API_KEY required for LLM provider"))?;
     let llm = Arc::new(AnthropicProvider::new(
-        args.anthropic_api_key.clone(),
+        anthropic_key,
         "claude-sonnet-4-5".to_string(),
         None,
     )?);
