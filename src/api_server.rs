@@ -56,10 +56,10 @@ async fn health() -> Json<Value> {
 }
 
 async fn list_agents(State(state): State<AppState>) -> Json<Value> {
-    // Query agents from database
+    // Query agents from database - using SELECT * to get all columns
     let result = sqlx::query(
         r#"
-        SELECT agent_id, name, created_at, updated_at
+        SELECT *
         FROM agents
         ORDER BY created_at DESC
         LIMIT 100
@@ -73,12 +73,24 @@ async fn list_agents(State(state): State<AppState>) -> Json<Value> {
             let agents: Vec<Value> = rows
                 .iter()
                 .map(|row| {
-                    json!({
-                        "agent_id": row.try_get::<String, _>("agent_id").unwrap_or_default(),
-                        "name": row.try_get::<String, _>("name").unwrap_or_default(),
-                        "created_at": row.try_get::<chrono::NaiveDateTime, _>("created_at").ok(),
-                        "updated_at": row.try_get::<chrono::NaiveDateTime, _>("updated_at").ok()
-                    })
+                    // Get column names and values dynamically
+                    let mut agent = serde_json::Map::new();
+
+                    // Try common column names
+                    if let Ok(val) = row.try_get::<String, _>("agent_id") {
+                        agent.insert("agent_id".to_string(), json!(val));
+                    }
+                    if let Ok(val) = row.try_get::<String, _>("agent_name") {
+                        agent.insert("agent_name".to_string(), json!(val));
+                    }
+                    if let Ok(val) = row.try_get::<chrono::NaiveDateTime, _>("created_at") {
+                        agent.insert("created_at".to_string(), json!(val));
+                    }
+                    if let Ok(val) = row.try_get::<chrono::NaiveDateTime, _>("updated_at") {
+                        agent.insert("updated_at".to_string(), json!(val));
+                    }
+
+                    json!(agent)
                 })
                 .collect();
 
