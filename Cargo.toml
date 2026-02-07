@@ -54,8 +54,7 @@ rand_distr = "0.4"
 # For regex in examples
 regex = "1.10"
 
-# Vercel runtime (for serverless functions)
-vercel_runtime = "2"
+# For async runtime
 tokio = { version = "1", features = ["full"] }
 http = "1"
 http-body-util = "0.1"
@@ -90,15 +89,6 @@ path = "src/bin/agent-web-ui.rs"
 [[bin]]
 name = "migrate-embedding-dimensions"
 path = "scripts/migrate_embedding_dimensions.rs"
-
-# Vercel API functions
-[[bin]]
-name = "health"
-path = "api/health.rs"
-
-[[bin]]
-name = "execute"
-path = "api/execute.rs"
 
 [lib]
 name = "fermi"
