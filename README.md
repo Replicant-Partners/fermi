@@ -1,61 +1,218 @@
-# Fermi: Probabilistic Forecasting with Active Dreaming Memory
+# Fermi: Agent Bestiary & FPL Engine
 
-A domain-specific language for probabilistic forecasting with Monte Carlo simulation, agent-based research, and biologically-inspired memory consolidation.
+A two-service system for managing AI forecasting agents with a beautiful web interface and probabilistic forecasting language.
 
-## Project Status: v0.5.0
+## Project Status: v0.6.0
 
+**Agent Bestiary (Web):** ✅ Live at [agent-bestiary.world](https://agent-bestiary-production.up.railway.app)  
+**MCP Server (Zed):** ✅ Complete  
 **Core FPL Engine:** ✅ Complete  
-**Active Dreaming Memory:** 🚧 Phase 1 In Progress  
-**Agent Bestiary:** ✅ MCP Integration Complete  
-**Zed IDE Integration:** ✅ Complete  
-**Backend API:** 🚧 In Progress
+**Active Dreaming Memory:** 🚧 Phase 1 In Progress
 
 ---
 
-## What's New: Active Dreaming Memory (ADM)
+## 🦁 Agent Bestiary
 
-Fermi now features a biologically-inspired memory system where agents:
-- 🧠 **Learn from experience** - Episodes consolidated into semantic rules
-- 🌙 **Sleep-phase consolidation** - Daily processing of accumulated experiences
-- 🔗 **Knowledge graphs** - Mermaid ER diagrams of agent worldviews
-- 🔍 **Vector search** - pgvector-powered similarity matching
-- ⏱️ **Bi-temporal tracking** - Full history of what agents knew when
-- 🔐 **Race-safe consolidation** - Distributed locking prevents conflicts
+A beautiful, modern web interface for cataloguing and managing AI forecasting agents.
 
-**Status:** Phase 0 complete, Phase 1 in progress  
-**Documentation:** See [README_ADM.md](README_ADM.md) and [docs/ARCHITECTURE_ADM.md](docs/ARCHITECTURE_ADM.md)
+**Live Site:** https://agent-bestiary-production.up.railway.app
+
+### Features
+
+- **Beautiful UI** - Gruvbox Dark theme with sleek, modern design
+- **Agent Catalogue** - Browse all documented specimens
+- **Detailed Views** - Complete agent information including:
+  - Performance statistics (executions, accuracy, confidence)
+  - Configuration (model, executor, temperature)
+  - Knowledge graphs (ontology stats with visualization link)
+  - Economic ledger (wallet, costs, budget)
+  - MCP tools integration
+  - Credentials registry
+- **Avatar Generation** - Hasui Kawase-style portraits via Gemini AI
+- **Avatar Caching** - Generated once, cached forever
+- **Responsive Design** - Works on all screen sizes
+
+### Tech Stack
+
+- **Backend:** Rust + Axum
+- **Database:** PostgreSQL (Neon)
+- **AI:** Gemini 2.5 Flash Image for avatars
+- **Deployment:** Railway
+- **Templates:** Pure HTML/CSS/JS (no framework bloat)
 
 ---
 
-## Features
+## 🔌 MCP Server (Zed Integration)
 
-### FPL Language
+Model Context Protocol server for accessing agents directly from Zed editor.
+
+### Available Tools
+
+- `list_agents` - List all forecasting agents
+- `get_agent` - Get detailed agent information
+- `execute_agent` - Run research queries
+- `save_agent` - Save stats and commit to git
+
+### Setup
+
+1. Build the MCP server:
+```bash
+cargo build --bin agent-mcp-server
+```
+
+2. Add to `~/.config/zed/settings.json`:
+```json
+{
+  "context_servers": {
+    "fermi-agent-bestiary": {
+      "command": "/home/your-username/fermi/target/debug/agent-mcp-server",
+      "args": [],
+      "env": {
+        "ANTHROPIC_API_KEY": "your_key_here",
+        "AGENTS_DIR": "/home/your-username/fermi/agents/curated"
+      }
+    }
+  }
+}
+```
+
+3. Use in Zed:
+```
+"List available agents"
+"Execute market_research with query: What's the AI chip market outlook?"
+```
+
+---
+
+## 📊 FPL Language (Forecasting Programming Language)
+
+Domain-specific language for probabilistic forecasting with Monte Carlo simulation.
+
+### Features
+
 - **Probabilistic Distributions:** Triangular, Normal, Lognormal, Uniform, Beta
 - **Monte Carlo Simulation:** 10K-10M iterations
 - **Expression Evaluation:** Full arithmetic, functions, conditionals
 - **Type System:** Static type checking with semantic analysis
 - **CLI:** Interactive 4-stage execution flow
 
-### Agent Bestiary
-- **Multi-agent research** coordination
-- **MCP Integration** - Available in Zed via Model Context Protocol
-- **LLM Executors** - Claude-powered research agents
-- **Active Dreaming Memory** - Episodic → Semantic consolidation
-- **Current Agents:** market_research, sentiment_analyzer
+### Example
 
-### Memory System (NEW)
+```fpl
+forecast "AMD Q4 2024 Revenue" {
+    # Define probabilistic drivers
+    driver gpu_market triangular(20000, 32000, 50000)
+    driver market_share normal(0.15, 0.05)
+    driver avg_price triangular(800, 1200, 2000)
+    
+    # Agent-assisted research
+    agent market_research {
+        type: "research"
+        query: "AMD datacenter GPU market share trends"
+        executor: "llm"
+        driver_refs: ["market_share"]
+    }
+    
+    # Final estimate
+    estimate gpu_market * market_share * avg_price
+}
+```
+
+### Run FPL
+
+```bash
+cargo build --release
+cargo run --release examples/amd_forecast.fpl
+```
+
+---
+
+## 🧠 Active Dreaming Memory (ADM)
+
+Biologically-inspired memory system for agents (in progress).
+
+### Features
+
 - **Episodic Memory** - Raw agent execution traces
 - **Semantic Memory** - Verified, consolidated rules
 - **Knowledge Graphs** - Entities, facts, relationships
 - **Ontology Snapshots** - Version-controlled worldviews (Mermaid ER)
-- **Vector Search** - Similarity-based retrieval
-- **PostgreSQL + pgvector** - Production-ready storage
+- **Vector Search** - pgvector-powered similarity matching
+- **Bi-temporal Tracking** - Full history of what agents knew when
+- **Race-safe Consolidation** - Distributed locking prevents conflicts
+
+**Status:** Phase 0 complete, Phase 1 in progress  
+**Documentation:** See [README_ADM.md](README_ADM.md) and [docs/ARCHITECTURE_ADM.md](docs/ARCHITECTURE_ADM.md)
 
 ---
 
-## Quick Start
+## 🏗️ Architecture
 
-### Run FPL Forecasts
+### Two-Service System
+
+```
+┌─────────────────────────────────────────────────┐
+│                                                 │
+│  1. Agent Bestiary Web Service (Railway)       │
+│     - Web UI for browsing agents                │
+│     - REST API endpoints                        │
+│     - Avatar generation & caching               │
+│     - PostgreSQL database                       │
+│     → https://agent-bestiary.world              │
+│                                                 │
+└─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│                                                 │
+│  2. MCP Server (Local/Zed)                      │
+│     - Model Context Protocol server             │
+│     - Direct access from Zed editor             │
+│     - Loads agents from filesystem              │
+│     - Execute research queries                  │
+│     → Runs locally via Zed                      │
+│                                                 │
+└─────────────────────────────────────────────────┘
+```
+
+### Project Structure
+
+```
+fermi/
+├── src/
+│   ├── lib.rs                  # FPL core library
+│   ├── main.rs                 # FPL CLI
+│   ├── api_server.rs           # Web service (Railway)
+│   └── bin/
+│       ├── agent-mcp-server.rs # MCP server (Zed)
+│       └── agent-web-ui.rs     # Alternative web UI
+├── templates/
+│   ├── index.html              # Agent catalogue
+│   └── agent_detail.html       # Agent detail view
+├── agents/curated/
+│   ├── market_research/
+│   │   └── agent_card.json
+│   └── sentiment_analyzer/
+│       └── agent_card.json
+├── avatars_cache/              # Cached avatar images
+├── agent-bestiary/
+│   ├── memory/                 # ADM memory system
+│   ├── ontology/               # Knowledge graphs
+│   └── consolidate/            # Memory consolidation
+├── scripts/
+│   └── update_namecom_dns.sh   # DNS helper
+├── Dockerfile                  # Railway deployment
+└── docs/
+    ├── SESSION_NOTES.md        # Latest session notes
+    ├── ARCHITECTURE_ADM.md     # Memory system design
+    └── ROADMAP_ADM_*.md        # Implementation roadmap
+```
+
+---
+
+## 🚀 Quick Start
+
+### 1. Run FPL Forecasts (Local)
+
 ```bash
 # Build the project
 cargo build --release
@@ -67,263 +224,89 @@ cargo run --release examples/amd_forecast.fpl
 cargo test
 ```
 
-### Use Agents in Zed
-```
-# In Zed assistant:
-"List available agents"
-"Execute market_research with query: What's the AI chip market outlook?"
-"Show me the sentiment_analyzer agent"
-```
+### 2. Use Agent Bestiary (Web)
 
-### Test ADM Memory System
+Visit: **https://agent-bestiary-production.up.railway.app**
+
+Or run locally:
 ```bash
-# Run memory system tests
-cargo test --package fermi-memory
+# Set environment variables
+export DATABASE_URL="your_postgresql_url"
+export GEMINI_API_KEY="your_gemini_key"
 
-# Check database
-export DATABASE_URL="postgresql://..."
-psql $DATABASE_URL -c "\dt"
+# Run the server
+cargo run --bin api-server
+
+# Visit http://localhost:3000
 ```
 
----
+### 3. Use MCP Server in Zed
 
-## Architecture
-
-### Core Components
-
-**FPL Engine** (Complete)
-- Lexer → Parser → AST → Semantic Analyzer → Executor
-- Monte Carlo simulation with 10K-10M iterations
-- Distribution modeling and expression evaluation
-
-**Agent Bestiary** (Active Development)
-- Multi-agent research coordination
-- LLM-powered executors (Claude Haiku/Sonnet)
-- MCP server for Zed integration
-- Active Dreaming Memory consolidation
-
-**Memory System** (Phase 1)
-```
-┌──────────────────────────────────────┐
-│   Active Dreaming Memory (ADM)      │
-├──────────────────────────────────────┤
-│                                      │
-│  Wake:   Agent executes              │
-│          ↓                           │
-│          Episodes (PostgreSQL)       │
-│                                      │
-│  Sleep:  Consolidation (daily)       │
-│          ↓                           │
-│          Rules + Knowledge Graph     │
-│                                      │
-│  Query:  Vector + Graph + Text       │
-│          ↓                           │
-│          Relevant context retrieved  │
-│                                      │
-└──────────────────────────────────────┘
-```
-
-**Backend API** (Vercel)
-- Serverless Rust functions
-- Health checks and execution endpoints
-- Agent coordination (planned)
+1. Build: `cargo build --bin agent-mcp-server`
+2. Configure Zed (see MCP Server section above)
+3. Use in Zed assistant: "List available agents"
 
 ---
 
-## Project Structure
+## 🎨 Agent Bestiary Design
 
-```
-fermi/
-├── src/                      # FPL core (lexer, parser, executor)
-├── fermi-memory/            # ADM memory system (NEW)
-├── fermi-lsp/               # Language Server Protocol
-├── extensions/fermi/        # Zed IDE extension
-├── agents/curated/          # Agent definitions
-├── api/                     # Vercel serverless functions
-├── docs/                    # Documentation
-│   ├── ARCHITECTURE_ADM.md  # Memory system design
-│   ├── ROADMAP_ADM_IMPLEMENTATION.md
-│   └── MEMORY_SCHEMA.sql
-├── README_ADM.md            # ADM quick reference
-└── examples/                # FPL examples
-```
+### Color Palette (Gruvbox Dark)
+- Background: `#1d2021` → `#282828` → `#3c3836`
+- Text: `#ebdbb2` (primary), `#d5c4a1` (secondary)
+- Accent: `#fabd2f` (yellow)
+- Success: `#b8bb26` (green)
+- Error: `#fb4934` (red)
+
+### Design Principles
+- **Left-justified** - Modern, efficient layout
+- **Compressed** - Tight spacing, more content visible
+- **Sleek borders** - Subtle 1px borders, no heavy shadows
+- **Grid-based** - Responsive, efficient use of space
+- **Typography** - Inter, SF fonts for clean readability
 
 ---
 
-## Technology Stack
+## 🗂️ Current Agents
 
-**Core:**
-- **Language:** Rust 2021
-- **Editor:** Zed IDE
-- **MCP:** Model Context Protocol integration
+### market_research
+- **Type:** research
+- **Model:** Claude 3 Haiku
+- **Description:** Researches market trends, competitive dynamics, and market sizing for forecasts
+- **Tags:** market, research, competitive-analysis
+- **Stats:** 2 executions, $0.0004 cost
 
-**Memory System:**
-- **Database:** PostgreSQL (Neon via Vercel)
-- **Vector Search:** pgvector extension
-- **Embeddings:** Anthropic/OpenAI (configurable)
-- **Ontology Format:** Mermaid ER diagrams
-- **Version Control:** Git-based evolution tracking
-
-**Backend:**
-- **Platform:** Vercel serverless
-- **Runtime:** Rust + vercel_runtime
-- **API:** REST (GraphQL planned)
+### sentiment_analyzer
+- **Type:** sentiment
+- **Model:** Claude 3 Haiku
+- **Description:** Analyzes sentiment from social media, news, and forums to gauge market perception
+- **Tags:** sentiment, social-media, public-opinion
+- **Stats:** 1 execution, $0.0001 cost
 
 ---
 
-## Documentation
-
-### Getting Started
-- [Quick Start Guide](docs/QUICK_START.md) - ADM setup
-- [README_ADM.md](README_ADM.md) - Memory system overview
-- [Project Rules](docs/PROJECT_RULES.md) - Development workflow
-
-### Architecture
-- [ADM Architecture](docs/ARCHITECTURE_ADM.md) - Complete design
-- [ADM Roadmap](docs/ROADMAP_ADM_IMPLEMENTATION.md) - 8-week plan
-- [Database Schema](docs/MEMORY_SCHEMA.sql) - PostgreSQL tables
-- [Module Architecture](docs/roadmap/MODULE_ARCHITECTURE.md) - System design
-
-### Implementation Guides
-- [Lexer](LEXER_README.md) - Tokenization
-- [Parser](PARSER_README.md) - AST construction
-- [Semantic Analyzer](SEMANTIC_ANALYZER_README.md) - Type checking
-- [Executor](EXECUTOR_README.md) - Monte Carlo simulation
-- [Agent Bestiary Design](docs/AGENT_BESTIARY_DESIGN.md) - Agent system
-
----
-
-## Example: FPL with Agent Research
-
-```fpl
-forecast "AMD Q4 2024 Revenue" {
-    # Define probabilistic drivers
-    driver gpu_market triangular(20000, 32000, 50000)
-    driver market_share normal(0.15, 0.05)
-    driver avg_price triangular(800, 1200, 2000)
-    
-    # Agent-assisted research (MCP integration)
-    agent market_research {
-        type: "research"
-        query: "AMD datacenter GPU market share trends"
-        executor: "llm"
-        schedule: every 1 week
-        driver_refs: ["market_share"]
-    }
-    
-    # Final estimate
-    estimate gpu_market * market_share * avg_price
-}
-```
-
----
-
-## Active Dreaming Memory (ADM)
-
-### What It Does
-
-Agents build **personal knowledge graphs** through experience:
-
-1. **Wake Phase** - Agent executes, writes episodes to PostgreSQL
-2. **Sleep Phase** - Daily consolidation (2am by default)
-   - Cluster similar failures (DBSCAN)
-   - Extract semantic rules (LLM verification)
-   - Build knowledge graph (entities + facts)
-   - Generate Mermaid ER diagrams
-   - Commit to git with detailed messages
-3. **Retrieval** - Multi-modal search (vector + text + graph)
-
-### Example Ontology
-
-```mermaid
-erDiagram
-    COMPANY ||--o{ PRODUCT : produces
-    COMPANY }o--|| MARKET : competes_in
-    PRODUCT }o--o{ TECHNOLOGY : uses
-    
-    COMPANY {
-        string name
-        string ticker
-        timestamp t_valid
-    }
-```
-
-### Current Status
-
-**Phase 0:** ✅ Complete (Database + fermi-memory crate)  
-**Phase 1:** 🚧 In Progress (Vector search + clustering)  
-**Phase 2-8:** 📋 Planned (See [ADM Roadmap](docs/ROADMAP_ADM_IMPLEMENTATION.md))
-
----
-
-## Roadmap
-
-### ADM Implementation (8 Weeks)
-- **Week 1:** Vector search + clustering (Phase 1) 🚧
-- **Week 2:** Episodic memory operations (Phase 2)
-- **Week 3:** Semantic memory + knowledge graph (Phase 3)
-- **Week 4:** Mermaid generation + git integration (Phase 4)
-- **Week 5:** Consolidation worker (Phase 5)
-- **Week 6:** LLM verification (Phase 6)
-- **Week 7:** Agent migration (Phase 7)
-- **Week 8:** Vercel deployment (Phase 8)
-
-### Future Phases
-- **Phase 9+:** AKP (Agent Knowledge Protocol) - Inter-agent learning
-- **Tournaments:** Forecasting competitions
-- **Visualization:** Tufte-style charts
-- **Collaboration:** Real-time multi-user forecasting
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ROADMAP_ADM_IMPLEMENTATION.md](docs/ROADMAP_ADM_IMPLEMENTATION.md)
-
----
-
-## Environment Setup
+## 🔧 Development
 
 ### Prerequisites
 - Rust 2021+ (`rustc --version`)
-- PostgreSQL client (`psql --version`)
+- PostgreSQL client (for database features)
 - Zed IDE (optional, for MCP integration)
 
-### Configuration
+### Environment Setup
 
 1. Copy `.env.example` to `.env`
-2. Add your credentials:
+2. Add credentials:
 ```bash
 DATABASE_URL=postgresql://...
 ANTHROPIC_API_KEY=sk-ant-...
-REPO_PATH=/path/to/fermi
+GEMINI_API_KEY=AIza...
 ```
 
-3. Initialize database:
+3. Build:
 ```bash
-psql $DATABASE_URL < docs/MEMORY_SCHEMA.sql
+cargo build --workspace
 ```
 
-4. Test:
-```bash
-cargo test --package fermi-memory
-```
-
----
-
-## Contributing
-
-See [docs/PROJECT_RULES.md](docs/PROJECT_RULES.md) for:
-- Git workflow and commit conventions
-- ADR (Architecture Decision Record) process
-- Documentation standards
-- Testing requirements
-
-### Current Focus Areas
-- ✅ ADM Phase 1 implementation
-- 🔜 Vector embeddings generation
-- 🔜 DBSCAN clustering
-- 🔜 Distributed locking
-
----
-
-## Testing
+### Testing
 
 ```bash
 # Run all tests
@@ -333,41 +316,164 @@ cargo test --workspace
 cargo test --package fermi
 
 # Test memory system
-cargo test --package fermi-memory
+cargo test --package agent-bestiary-memory
 
 # Test specific module
 cargo test semantic_analysis
 ```
 
-**Status:** 61 tests passing ✅
+---
+
+## 🚢 Deployment
+
+### Railway (Web Service)
+
+The web service deploys automatically from the `main` branch:
+
+```bash
+# Deploy manually
+railway up --detach
+
+# Check logs
+railway logs --tail 50
+
+# Check status
+railway status
+```
+
+**Configuration:**
+- `Dockerfile` - Multi-stage Rust build
+- Copies: src, templates, agents, creates avatars_cache
+- Environment variables set in Railway dashboard
+
+### MCP Server (Local)
+
+Runs locally on your machine via Zed:
+```bash
+cargo build --bin agent-mcp-server
+# Configure in ~/.config/zed/settings.json
+```
 
 ---
 
-## Performance
+## 📚 API Documentation
 
-- **Monte Carlo:** 1M iterations in ~50ms
-- **Episode Storage:** <10ms per episode
-- **Vector Search:** <100ms for 10K episodes
-- **Consolidation:** ~5 minutes for 1000 episodes
+### REST API Endpoints
+
+**Base URL:** `https://agent-bestiary-production.up.railway.app`
+
+#### `GET /api/health`
+Health check endpoint.
+
+```json
+{
+  "status": "ok",
+  "service": "Agent Bestiary",
+  "description": "A naturalist's catalogue of dreaming agents",
+  "version": "1.0.0"
+}
+```
+
+#### `GET /api/agents`
+List all agents.
+
+```json
+{
+  "agents": [...],
+  "total": 2
+}
+```
+
+#### `GET /api/agents/:id/avatar`
+Get agent avatar (cached).
+
+```json
+{
+  "agent_id": "market_research",
+  "image": {
+    "mime_type": "image/png",
+    "data": "base64_encoded_image_data"
+  }
+}
+```
+
+#### `GET /agent/:id`
+View agent detail page (HTML).
 
 ---
 
-## License
+## 🎯 Roadmap
+
+### Short Term
+- [ ] Add more curated agents
+- [ ] Implement ontology graph visualization
+- [ ] Add agent wallet management UI
+- [ ] Create agent creation/editing interface
+
+### Medium Term
+- [ ] Agent execution dashboard
+- [ ] Real-time performance monitoring
+- [ ] Agent tournament system
+- [ ] Search and filtering in catalogue
+
+### Long Term
+- [ ] Inter-agent knowledge sharing (AKP protocol)
+- [ ] Multi-agent collaboration workflows
+- [ ] Agent marketplace
+- [ ] Advanced analytics and forecasting
+
+See [docs/ROADMAP_ADM_IMPLEMENTATION.md](docs/ROADMAP_ADM_IMPLEMENTATION.md) for memory system roadmap.
+
+---
+
+## 📖 Documentation
+
+### Getting Started
+- [Session Notes](docs/SESSION_NOTES.md) - Latest development session
+- [ADM Overview](README_ADM.md) - Memory system quick reference
+- [Architecture](docs/ARCHITECTURE_ADM.md) - Complete system design
+
+### Development
+- [Lexer](LEXER_README.md) - FPL tokenization
+- [Parser](PARSER_README.md) - AST construction
+- [Semantic Analyzer](SEMANTIC_ANALYZER_README.md) - Type checking
+- [Executor](EXECUTOR_README.md) - Monte Carlo simulation
+
+### Deployment
+- [DNS Setup](scripts/update_namecom_dns.sh) - name.com DNS helper
+- [Railway Config](Dockerfile) - Docker deployment configuration
+
+---
+
+## 🤝 Contributing
+
+See [docs/PROJECT_RULES.md](docs/PROJECT_RULES.md) for:
+- Git workflow and commit conventions
+- ADR (Architecture Decision Record) process
+- Documentation standards
+- Testing requirements
+
+---
+
+## 🔗 Links
+
+- **Live Site:** https://agent-bestiary-production.up.railway.app
+- **Custom Domain:** https://agent-bestiary.world
+- **GitHub:** https://github.com/Replicant-Partners/fermi
+- **Railway:** agent-bestiary (production environment)
+- **Issues:** https://github.com/Replicant-Partners/fermi/issues
+
+---
+
+## 📄 License
 
 [License TBD]
 
 ---
 
-## Links
-
-- **Repository:** https://github.com/Replicant-Partners/fermi
-- **Documentation:** [docs/](docs/)
-- **ADM Documentation:** [README_ADM.md](README_ADM.md)
-- **Issues:** https://github.com/Replicant-Partners/fermi/issues
-
----
-
 **Built by Replicant Partners**  
+**Version:** 0.6.0  
 **Status:** Active Development  
-**Version:** 0.5.0  
-**Latest:** Active Dreaming Memory Phase 1 🧠
+**Latest:** Sleek modern Agent Bestiary with MCP integration 🦁✨
+
+*Make your agents dreams come true.*
