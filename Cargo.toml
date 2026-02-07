@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    ".",
+    ".", "fermi-consolidate",
     "fermi-memory", "fermi-ontology",
 ]
 resolver = "2"
