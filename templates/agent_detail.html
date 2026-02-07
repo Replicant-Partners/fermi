@@ -501,11 +501,11 @@
                 <div class="section-title">Economic Ledger</div>
                 <div class="field-grid">
                   ${
-                    wallet?.address
+                    wallet?.public_address
                       ? `
                   <div class="field-item" style="grid-column: span 2;">
-                    <div class="field-label">Wallet Address</div>
-                    <div class="field-value" style="font-family: 'SF Mono', monospace; font-size: 0.85em;">${wallet.address}</div>
+                    <div class="field-label">Public Crypto Wallet</div>
+                    <div class="field-value" style="font-family: 'SF Mono', monospace; font-size: 0.85em;">${wallet.public_address}</div>
                   </div>
                   `
                       : ""
@@ -530,9 +530,24 @@
                   `
                       : ""
                   }
-                  <div class="field-item">
-                    <div class="field-label">Total Cost</div>
-                    <div class="field-value">$${cost.toFixed(6)}</div>
+                </div>
+                <div class="field-label" style="margin-top: 20px; margin-bottom: 12px;">Cost Statistics</div>
+                <div class="stats-grid">
+                  <div class="stat-card">
+                    <div class="stat-value">$${cost.toFixed(6)}</div>
+                    <div class="stat-label">Total Cost</div>
+                  </div>
+                  <div class="stat-card">
+                    <div class="stat-value">$${totalExec > 0 ? (cost / totalExec).toFixed(6) : "0.00"}</div>
+                    <div class="stat-label">Per Execution</div>
+                  </div>
+                  <div class="stat-card">
+                    <div class="stat-value">$${agent.usage?.last_30_days?.cost_usd?.toFixed(6) || "0.00"}</div>
+                    <div class="stat-label">Last 30 Days</div>
+                  </div>
+                  <div class="stat-card">
+                    <div class="stat-value">${agent.usage?.total_tokens_used || 0}</div>
+                    <div class="stat-label">Total Tokens</div>
                   </div>
                 </div>
               </div>

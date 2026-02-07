@@ -3,9 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agent Bestiary - Make your agents dreams come true</title>
+    <title>Agent Bestiary</title>
     <style>
-      /* Gruvbox Dark Theme Colors */
       :root {
         --bg0-hard: #1d2021;
         --bg0: #282828;
@@ -16,13 +15,10 @@
         --fg1: #ebdbb2;
         --fg2: #d5c4a1;
         --fg3: #bdae93;
-        --red: #fb4934;
-        --green: #b8bb26;
         --yellow: #fabd2f;
-        --blue: #83a598;
-        --purple: #d3869b;
+        --green: #b8bb26;
+        --red: #fb4934;
         --aqua: #8ec07c;
-        --orange: #fe8019;
         --gray: #928374;
       }
 
@@ -33,68 +29,94 @@
       }
 
       body {
-        font-family:
-          -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
         background: var(--bg0-hard);
         color: var(--fg1);
         min-height: 100vh;
-        padding: 20px;
-        line-height: 1.5;
+        padding: 0;
+        line-height: 1.4;
       }
 
-      .container {
-        max-width: 1400px;
-        margin: 0 auto;
-      }
-
+      /* Architectural Header - Lacaton & Vassal Style */
       header {
-        margin-bottom: 40px;
+        border-bottom: 1px solid var(--bg3);
+        padding: 20px 30px;
+        background: var(--bg0);
+      }
+
+      .header-grid {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 40px;
+        align-items: baseline;
+      }
+
+      .header-left {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
       }
 
       h1 {
-        font-size: 2em;
-        font-weight: 600;
+        font-size: 1.4em;
+        font-weight: 400;
         color: var(--fg0);
-        margin-bottom: 8px;
-        letter-spacing: -0.02em;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
       }
 
       .subtitle {
+        color: var(--gray);
+        font-size: 0.85em;
+        font-weight: 400;
+        letter-spacing: 0.02em;
+      }
+
+      .header-right {
+        display: flex;
+        gap: 30px;
+        font-size: 0.85em;
         color: var(--fg3);
-        font-size: 0.95em;
+        align-items: baseline;
       }
 
-      .stats {
-        background: var(--bg1);
-        padding: 20px 24px;
-        border-radius: 6px;
-        margin-bottom: 32px;
-        border: 1px solid var(--bg2);
-        display: inline-block;
+      .header-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        text-align: right;
       }
 
-      .stat-value {
-        font-size: 2.5em;
-        font-weight: 600;
+      .stat-value-header {
+        font-size: 1.8em;
         color: var(--yellow);
+        font-weight: 300;
         line-height: 1;
       }
 
-      .stat-label {
-        color: var(--fg3);
-        margin-top: 6px;
+      .stat-label-header {
         text-transform: uppercase;
         font-size: 0.75em;
-        letter-spacing: 0.5px;
-        font-weight: 500;
+        letter-spacing: 0.08em;
+        color: var(--gray);
+      }
+
+      /* Container */
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 30px;
       }
 
       .section-title {
-        font-size: 1.1em;
-        font-weight: 600;
-        color: var(--fg0);
+        font-size: 0.85em;
+        font-weight: 400;
+        color: var(--fg2);
         margin-bottom: 20px;
-        letter-spacing: -0.01em;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--bg2);
+        padding-bottom: 8px;
       }
 
       .specimens-grid {
@@ -109,14 +131,12 @@
         padding: 0;
         transition: all 0.2s ease;
         cursor: pointer;
-        border-radius: 6px;
         overflow: hidden;
       }
 
       .specimen-card:hover {
         border-color: var(--yellow);
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        transform: translateY(-1px);
       }
 
       .specimen-header {
@@ -130,7 +150,6 @@
       .specimen-avatar {
         width: 64px;
         height: 64px;
-        border-radius: 6px;
         background: var(--bg2);
         display: flex;
         align-items: center;
@@ -168,10 +187,10 @@
 
       .specimen-name {
         font-size: 1.1em;
-        font-weight: 600;
+        font-weight: 400;
         color: var(--fg0);
         text-transform: capitalize;
-        letter-spacing: -0.01em;
+        letter-spacing: 0.01em;
       }
 
       .specimen-body {
@@ -201,7 +220,10 @@
 
       .meta-label {
         color: var(--gray);
-        font-weight: 500;
+        font-weight: 400;
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       .meta-value {
@@ -211,13 +233,13 @@
       .badge {
         display: inline-block;
         padding: 3px 8px;
-        background: var(--bg3);
+        background: transparent;
         color: var(--yellow);
-        border-radius: 3px;
+        border: 1px solid var(--yellow);
         font-size: 0.75em;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
-        font-weight: 600;
+        letter-spacing: 0.08em;
+        font-weight: 400;
       }
 
       .loading {
@@ -232,23 +254,27 @@
         border: 1px solid var(--red);
         color: var(--red);
         padding: 20px;
-        border-radius: 6px;
         text-align: center;
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>Agent Bestiary</h1>
-        <div class="subtitle">Make your agents dreams come true</div>
-      </header>
-
-      <div class="stats">
-        <div class="stat-value" id="total-agents">—</div>
-        <div class="stat-label">Documented Specimens</div>
+    <header>
+      <div class="header-grid">
+        <div class="header-left">
+          <h1>Agent Bestiary</h1>
+          <div class="subtitle">make your agents dreams come true</div>
+        </div>
+        <div class="header-right">
+          <div class="header-stat">
+            <div class="stat-value-header" id="total-agents">—</div>
+            <div class="stat-label-header">Specimens</div>
+          </div>
+        </div>
       </div>
+    </header>
 
+    <div class="container">
       <h2 class="section-title">Catalogue</h2>
 
       <div class="specimens-grid" id="specimens-grid">
@@ -315,7 +341,7 @@
                 <div class="specimen-description">${description}</div>
                 <div class="specimen-meta">
                   <div class="meta-item">
-                    <span class="meta-label">First Observed</span>
+                    <span class="meta-label">First Obs.</span>
                     <span class="meta-value">${created || "—"}</span>
                   </div>
                   <div class="meta-item">

@@ -29,21 +29,22 @@
       "cost_usd": 0.0
     }
   },
-  "wallet": null,
+  "wallet": {
+    "public_address": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
+    "balance": 87.25,
+    "currency": "USD",
+    "budget": 500.0
+  },
   "ontology_stats": {
-    "entities": 0,
-    "relationships": 0,
-    "last_updated": "2026-02-05T00:00:00Z",
-    "evolution_commits": 0
+    "entities": 10,
+    "relationships": 10,
+    "last_updated": "2026-02-07T00:00:00Z",
+    "evolution_commits": 5
   },
   "metadata": {
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Analyzes sentiment from social media, news, and forums to gauge market perception and public opinion",
-    "tags": [
-      "sentiment",
-      "social-media",
-      "public-opinion"
-    ]
+    "tags": ["sentiment", "social-media", "public-opinion"]
   }
 }

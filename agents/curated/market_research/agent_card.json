@@ -29,21 +29,22 @@
       "cost_usd": 0.0
     }
   },
-  "wallet": null,
+  "wallet": {
+    "public_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7",
+    "balance": 150.5,
+    "currency": "USD",
+    "budget": 1000.0
+  },
   "ontology_stats": {
-    "entities": 0,
-    "relationships": 0,
-    "last_updated": "2026-02-05T00:00:00Z",
-    "evolution_commits": 0
+    "entities": 8,
+    "relationships": 8,
+    "last_updated": "2026-02-07T00:00:00Z",
+    "evolution_commits": 3
   },
   "metadata": {
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Researches market trends, competitive dynamics, and market sizing for forecasts",
-    "tags": [
-      "market",
-      "research",
-      "competitive-analysis"
-    ]
+    "tags": ["market", "research", "competitive-analysis"]
   }
 }

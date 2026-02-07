@@ -1,0 +1,198 @@
+{
+  "ontology_id": "sentiment_analyzer_ontology",
+  "agent_id": "sentiment_analyzer",
+  "version": "1.0.0",
+  "created": "2026-02-07T00:00:00Z",
+  "last_updated": "2026-02-07T00:00:00Z",
+  "evolution_commits": 5,
+  "entities": [
+    {
+      "id": "sentiment",
+      "type": "attribute",
+      "name": "Sentiment",
+      "properties": {
+        "definition": "Emotional tone or attitude expressed in text",
+        "scale": ["very_negative", "negative", "neutral", "positive", "very_positive"]
+      }
+    },
+    {
+      "id": "emotion",
+      "type": "attribute",
+      "name": "Emotion",
+      "properties": {
+        "definition": "Specific affective state detected in content",
+        "categories": ["joy", "anger", "fear", "sadness", "surprise", "disgust", "trust", "anticipation"]
+      }
+    },
+    {
+      "id": "opinion_holder",
+      "type": "actor",
+      "name": "Opinion Holder",
+      "properties": {
+        "definition": "Entity expressing a sentiment or opinion",
+        "attributes": ["credibility", "influence", "bias"]
+      }
+    },
+    {
+      "id": "opinion_target",
+      "type": "concept",
+      "name": "Opinion Target",
+      "properties": {
+        "definition": "Subject or entity being evaluated",
+        "types": ["product", "person", "organization", "event", "topic"]
+      }
+    },
+    {
+      "id": "aspect",
+      "type": "concept",
+      "name": "Aspect",
+      "properties": {
+        "definition": "Specific feature or dimension of opinion target",
+        "granularity": "fine-grained"
+      }
+    },
+    {
+      "id": "intensity",
+      "type": "attribute",
+      "name": "Intensity",
+      "properties": {
+        "definition": "Strength or magnitude of expressed sentiment",
+        "scale": [0.0, 1.0]
+      }
+    },
+    {
+      "id": "context",
+      "type": "frame",
+      "name": "Context",
+      "properties": {
+        "definition": "Situational factors affecting sentiment interpretation",
+        "components": ["temporal", "cultural", "domain", "social"]
+      }
+    },
+    {
+      "id": "sentiment_shift",
+      "type": "pattern",
+      "name": "Sentiment Shift",
+      "properties": {
+        "definition": "Change in sentiment over time or across text",
+        "indicators": ["transition_markers", "contrastive_language"]
+      }
+    },
+    {
+      "id": "subjectivity",
+      "type": "attribute",
+      "name": "Subjectivity",
+      "properties": {
+        "definition": "Degree of personal opinion vs objective fact",
+        "scale": ["objective", "mixed", "subjective"]
+      }
+    },
+    {
+      "id": "sarcasm",
+      "type": "modifier",
+      "name": "Sarcasm",
+      "properties": {
+        "definition": "Ironic expression reversing apparent sentiment",
+        "detection": "complex"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "from": "opinion_holder",
+      "to": "sentiment",
+      "type": "expresses",
+      "properties": {
+        "description": "Holders express sentiments",
+        "mechanism": "language"
+      }
+    },
+    {
+      "from": "sentiment",
+      "to": "opinion_target",
+      "type": "about",
+      "properties": {
+        "description": "Sentiments are directed toward targets",
+        "specificity": "variable"
+      }
+    },
+    {
+      "from": "opinion_target",
+      "to": "aspect",
+      "type": "has",
+      "properties": {
+        "description": "Targets comprise multiple aspects",
+        "cardinality": "many"
+      }
+    },
+    {
+      "from": "sentiment",
+      "to": "aspect",
+      "type": "evaluates",
+      "properties": {
+        "description": "Sentiments assess specific aspects",
+        "granularity": "fine"
+      }
+    },
+    {
+      "from": "sentiment",
+      "to": "intensity",
+      "type": "has_intensity",
+      "properties": {
+        "description": "Sentiments vary in strength",
+        "measurable": true
+      }
+    },
+    {
+      "from": "sentiment",
+      "to": "emotion",
+      "type": "manifests_as",
+      "properties": {
+        "description": "Sentiments are expressed through emotions",
+        "mapping": "complex"
+      }
+    },
+    {
+      "from": "context",
+      "to": "sentiment",
+      "type": "influences",
+      "properties": {
+        "description": "Context shapes sentiment interpretation",
+        "impact": "significant"
+      }
+    },
+    {
+      "from": "sarcasm",
+      "to": "sentiment",
+      "type": "inverts",
+      "properties": {
+        "description": "Sarcasm reverses surface sentiment",
+        "challenge": "detection"
+      }
+    },
+    {
+      "from": "sentiment",
+      "to": "subjectivity",
+      "type": "has_degree",
+      "properties": {
+        "description": "Sentiments have subjectivity levels",
+        "correlation": "positive"
+      }
+    },
+    {
+      "from": "sentiment_shift",
+      "to": "sentiment",
+      "type": "transitions",
+      "properties": {
+        "description": "Shifts connect sentiment changes",
+        "temporal": true
+      }
+    }
+  ],
+  "metadata": {
+    "domain": "sentiment_analysis",
+    "purpose": "Structuring emotional and opinion analysis",
+    "coverage": "comprehensive",
+    "maturity": "mature"
+  }
+}

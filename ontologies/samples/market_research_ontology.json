@@ -1,0 +1,162 @@
+{
+  "ontology_id": "market_research_ontology",
+  "agent_id": "market_research",
+  "version": "1.0.0",
+  "created": "2026-02-07T00:00:00Z",
+  "last_updated": "2026-02-07T00:00:00Z",
+  "evolution_commits": 3,
+  "entities": [
+    {
+      "id": "market_segment",
+      "type": "concept",
+      "name": "Market Segment",
+      "properties": {
+        "definition": "A distinct group of customers with similar needs and characteristics",
+        "attributes": ["size", "growth_rate", "demographics", "psychographics"]
+      }
+    },
+    {
+      "id": "competitor",
+      "type": "actor",
+      "name": "Competitor",
+      "properties": {
+        "definition": "Organizations competing for the same market",
+        "attributes": ["market_share", "strengths", "weaknesses", "strategy"]
+      }
+    },
+    {
+      "id": "market_trend",
+      "type": "pattern",
+      "name": "Market Trend",
+      "properties": {
+        "definition": "Observable patterns in market behavior over time",
+        "attributes": ["direction", "velocity", "duration", "impact"]
+      }
+    },
+    {
+      "id": "customer_need",
+      "type": "concept",
+      "name": "Customer Need",
+      "properties": {
+        "definition": "Unmet or underserved requirements in the market",
+        "attributes": ["urgency", "willingness_to_pay", "frequency"]
+      }
+    },
+    {
+      "id": "pricing_model",
+      "type": "concept",
+      "name": "Pricing Model",
+      "properties": {
+        "definition": "Structure for how value is monetized",
+        "attributes": ["type", "elasticity", "positioning"]
+      }
+    },
+    {
+      "id": "distribution_channel",
+      "type": "mechanism",
+      "name": "Distribution Channel",
+      "properties": {
+        "definition": "Pathway to deliver products/services to customers",
+        "attributes": ["reach", "cost", "control", "efficiency"]
+      }
+    },
+    {
+      "id": "market_entry_barrier",
+      "type": "constraint",
+      "name": "Market Entry Barrier",
+      "properties": {
+        "definition": "Obstacles preventing new competitors from entering",
+        "attributes": ["type", "height", "sustainability"]
+      }
+    },
+    {
+      "id": "value_proposition",
+      "type": "concept",
+      "name": "Value Proposition",
+      "properties": {
+        "definition": "Benefits offered to customers relative to alternatives",
+        "attributes": ["differentiation", "relevance", "clarity"]
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "from": "competitor",
+      "to": "market_segment",
+      "type": "targets",
+      "properties": {
+        "description": "Competitors focus on specific market segments",
+        "strength": "varies"
+      }
+    },
+    {
+      "from": "market_segment",
+      "to": "customer_need",
+      "type": "has",
+      "properties": {
+        "description": "Segments contain customers with specific needs",
+        "cardinality": "many"
+      }
+    },
+    {
+      "from": "market_trend",
+      "to": "market_segment",
+      "type": "affects",
+      "properties": {
+        "description": "Trends influence segment dynamics",
+        "impact": "variable"
+      }
+    },
+    {
+      "from": "value_proposition",
+      "to": "customer_need",
+      "type": "addresses",
+      "properties": {
+        "description": "Value propositions solve customer needs",
+        "effectiveness": "measurable"
+      }
+    },
+    {
+      "from": "pricing_model",
+      "to": "value_proposition",
+      "type": "monetizes",
+      "properties": {
+        "description": "Pricing captures value from proposition",
+        "alignment": "critical"
+      }
+    },
+    {
+      "from": "distribution_channel",
+      "to": "market_segment",
+      "type": "reaches",
+      "properties": {
+        "description": "Channels deliver to segments",
+        "coverage": "variable"
+      }
+    },
+    {
+      "from": "market_entry_barrier",
+      "to": "market_segment",
+      "type": "protects",
+      "properties": {
+        "description": "Barriers limit competition in segments",
+        "durability": "varies"
+      }
+    },
+    {
+      "from": "competitor",
+      "to": "value_proposition",
+      "type": "offers",
+      "properties": {
+        "description": "Competitors present value propositions",
+        "differentiation": "required"
+      }
+    }
+  ],
+  "metadata": {
+    "domain": "market_research",
+    "purpose": "Structuring market analysis and competitive intelligence",
+    "coverage": "comprehensive",
+    "maturity": "evolving"
+  }
+}
