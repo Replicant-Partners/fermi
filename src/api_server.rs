@@ -1,8 +1,7 @@
 use axum::{extract::State, routing::get, Json, Router};
 use serde_json::{json, Value};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 #[derive(Clone)]
 struct AppState {
@@ -55,7 +54,7 @@ async fn health() -> Json<Value> {
 
 async fn list_agents(State(state): State<AppState>) -> Json<Value> {
     // Query agents from database
-    let result = sqlx::query!(
+    let result = sqlx::query(
         r#"
         SELECT id, name, created_at, updated_at
         FROM agents
@@ -72,10 +71,10 @@ async fn list_agents(State(state): State<AppState>) -> Json<Value> {
                 .iter()
                 .map(|row| {
                     json!({
-                        "id": row.id,
-                        "name": row.name,
-                        "created_at": row.created_at,
-                        "updated_at": row.updated_at
+                        "id": row.try_get::<String, _>("id").unwrap_or_default(),
+                        "name": row.try_get::<String, _>("name").unwrap_or_default(),
+                        "created_at": row.try_get::<chrono::NaiveDateTime, _>("created_at").ok(),
+                        "updated_at": row.try_get::<chrono::NaiveDateTime, _>("updated_at").ok()
                     })
                 })
                 .collect();
