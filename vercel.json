@@ -1,1 +1,28 @@
-{}
+{
+  "functions": {
+    "api/**/*.rs": {
+      "runtime": "vercel-rust@4.0.0"
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/health",
+      "dest": "/api/health.rs"
+    },
+    {
+      "src": "/api/agents",
+      "dest": "/api/agents.rs"
+    },
+    {
+      "src": "/api/agents/([^/]+)",
+      "dest": "/api/agents/[agent_id].rs"
+    },
+    {
+      "src": "/api/agents/([^/]+)/ontology",
+      "dest": "/api/agents/[agent_id]/ontology.rs"
+    }
+  ],
+  "env": {
+    "DATABASE_URL": "@database_url"
+  }
+}

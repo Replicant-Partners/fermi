@@ -15,6 +15,7 @@ description = "Forecasting Programming Language (FPL) - Agent Fermi's Broca Brai
 [dependencies]
 # For date/time handling
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # For better error messages
 colored = "2.0"

@@ -1,5 +1,5 @@
-use serde_json::{Value, json};
-use vercel_runtime::{Error, Request, run, service_fn};
+use serde_json::{json, Value};
+use vercel_runtime::{run, service_fn, Error, Request};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -10,7 +10,9 @@ async fn main() -> Result<(), Error> {
 async fn handler(_req: Request) -> Result<Value, Error> {
     Ok(json!({
         "status": "ok",
-        "service": "fermi-backend",
-        "version": "0.4.0"
+        "service": "agent-bestiary",
+        "description": "Active Dreaming Memory backend for AI agents",
+        "version": "1.0.0",
+        "api_version": "v1"
     }))
 }
