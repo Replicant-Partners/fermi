@@ -1,0 +1,2 @@
+# This file tells sqlx to skip compile-time database checks
+# We'll enable offline mode in Cargo.toml
