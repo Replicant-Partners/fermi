@@ -86,8 +86,8 @@ async fn main() {
 
     println!("Connected to database successfully");
 
-    let gemini_api_key = std::env::var("GEMINI_API_KEY")
-        .unwrap_or_else(|_| "AIzaSyDgzwrmWLFjPqqrOipsV5ge_2Ad4Ns7iXw".to_string());
+    let gemini_api_key =
+        std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY environment variable must be set");
 
     let state = AppState { db, gemini_api_key };
 
