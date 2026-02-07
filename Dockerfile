@@ -1,0 +1,38 @@
+# Build stage
+FROM rust:1.85 as builder
+
+WORKDIR /app
+
+# Copy manifests
+COPY Cargo.toml Cargo.lock ./
+COPY rust-toolchain.toml ./
+
+# Copy source code
+COPY src ./src
+COPY agent-bestiary ./agent-bestiary
+
+# Build the api-server binary
+RUN cargo build --release --bin api-server
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the binary from builder
+COPY --from=builder /app/target/release/api-server /app/api-server
+
+# Set the PORT environment variable (Railway will override this)
+ENV PORT=3000
+
+# Expose the port
+EXPOSE 3000
+
+# Run the binary
+CMD ["/app/api-server"]
