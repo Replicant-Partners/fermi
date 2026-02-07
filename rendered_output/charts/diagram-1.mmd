@@ -20,59 +20,77 @@
       'fontSize': '14px'
     }
   }
-}%%flowchart TD
-    subgraph "Complete FPL Validation Pipeline"
-        A[Forecasting Question] --> B[FPL Coding Assistant]
-        
-        B --> C{Has Template?}
-        C -->|No| D[Generate Fermi Decomposition]
-        C -->|Yes| E[Load Forecast Template]
-        
-        D --> F[Interactive Driver Editor]
-        E --> F
-        
-        F --> G[Real-time Syntax Check]
-        G -.->|Invalid| B
-        
-        G --> H[Submit to FPL Parser]
-        H --> I{Syntactically<br/>Valid?}
-        I -->|No| J[Syntax Errors]
-        J --> B
-        
-        I -->|Yes| K[Type Compiler]
-        K --> L{Types<br/>Valid?}
-        L -->|No| M[Type Errors]
-        M --> B
-        
-        L -->|Yes| N[Compiled Forecast Model]
-        
-        B --> O[Coherence Router Config]
-        O -.->|Validator mapping| P[Validator Orchestrator]
-        
-        N --> P
-        
-        P --> Q[Validation Agent Pool]
-        Q --> R[Decomposition Agent]
-        Q --> S[Distribution Agent]
-        Q --> T[Agent Config Agent]
-        Q --> U[Model Consistency Agent]
-        
-        R --> V[Aggregate Results]
-        S --> V
-        T --> V
-        U --> V
-        
-        V --> W{Coherent<br/>Forecast?}
-        W -->|No| X[Coherence Report]
-        X --> B
-        
-        W -->|Yes| Y[Validated Forecast]
-        Y --> Z[Fermi Engine]
-        Z --> AA[Monte Carlo Simulation]
-        Z --> AB[Research Agent Orchestration]
+}%%graph TB
+    subgraph "DNS Layer"
+        DNS1[agent-bestiary.world<br/>CNAME → Railway]
+        DNS2[fermi.systems<br/>CNAME → Railway]
+        DNS3[*.fermi.systems<br/>Wildcard SSL]
     end
+
+    subgraph "CDN Layer"
+        SSL[SSL/TLS<br/>Let's Encrypt<br/>Auto-renewal]
+    end
+
+    subgraph "Railway Platform"
+        LB[Load Balancer<br/>HTTPS Only]
+        
+        subgraph "Service 1"
+            Bestiary1[Agent Bestiary<br/>Instance 1]
+            Bestiary2[Agent Bestiary<br/>Instance 2]
+        end
+        
+        subgraph "Service 2"
+            Fermi1[Fermi Service<br/>Instance 1]
+            Fermi2[Fermi Service<br/>Instance 2]
+        end
+    end
+
+    subgraph "Database Layer"
+        Neon[(Neon PostgreSQL<br/>Serverless<br/>Auto-scaling)]
+        NeonReplica[(Read Replica<br/>Query Optimization)]
+    end
+
+    subgraph "Storage Layer"
+        AvatarCache[Avatar Cache<br/>Railway Volumes]
+        GitRepo[Git Repository<br/>GitHub<br/>Ontology History]
+    end
+
+    subgraph "External Services"
+        Supabase[Supabase Auth<br/>User Management]
+        Gemini[Gemini API<br/>Avatar Generation]
+        Monitoring[Monitoring<br/>Sentry/DataDog]
+    end
+
+    DNS1 --> SSL
+    DNS2 --> SSL
+    DNS3 --> SSL
     
-    style B fill:#ffd700
-    style O fill:#ffd700
-    style Y fill:#e1ffe1
-    style Z fill:#90ee90
+    SSL --> LB
+    
+    LB --> Bestiary1
+    LB --> Bestiary2
+    LB --> Fermi1
+    LB --> Fermi2
+    
+    Bestiary1 --> Neon
+    Bestiary2 --> Neon
+    Fermi1 --> Neon
+    Fermi2 --> Neon
+    
+    Bestiary1 --> NeonReplica
+    Bestiary2 --> NeonReplica
+    
+    Bestiary1 --> AvatarCache
+    Bestiary1 --> GitRepo
+    Bestiary1 --> Supabase
+    Bestiary1 --> Gemini
+    
+    Fermi1 --> GitRepo
+    Fermi1 --> Supabase
+    
+    Bestiary1 --> Monitoring
+    Fermi1 --> Monitoring
+
+    style SSL fill:#4caf50,stroke:#2e7d32,stroke-width:3px
+    style Supabase fill:#4caf50,stroke:#2e7d32,stroke-width:3px
+    style Neon fill:#2196f3,stroke:#1565c0,stroke-width:2px

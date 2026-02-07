@@ -1,6 +1,0 @@
-# Ignore local environment overrides
-.env.local
-docker-compose.override.yml
-
-# Ignore volumes
-data/

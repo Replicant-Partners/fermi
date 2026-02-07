@@ -1,0 +1,81 @@
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#5CCFE6',
+      'primaryTextColor': '#CBCCC6',
+      'primaryBorderColor': '#5C6773',
+      'lineColor': '#FFCC66',
+      'secondaryColor': '#BAE67E',
+      'tertiaryColor': '#FFAE57',
+      'background': '#1F2430',
+      'mainBkg': '#1F2430',
+      'secondBkg': '#1F2430',
+      'tertiaryBkg': '#1F2430',
+      'textColor': '#CBCCC6',
+      'border1': '#5C6773',
+      'border2': '#5C6773',
+      'arrowheadColor': '#FFCC66',
+      'fontFamily': 'ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      'fontSize': '14px'
+    }
+  }
+}%%graph TB
+    subgraph "User Layer"
+        User[👤 User]
+        Browser[🌐 Browser]
+        Zed[📝 Zed Editor]
+    end
+
+    subgraph "Frontend Layer"
+        UI[Agent Bestiary UI<br/>HTML/CSS/JS<br/>Gruvbox Dark Theme]
+    end
+
+    subgraph "API Layer"
+        API[Agent Bestiary API<br/>Axum REST API<br/>Port 8080]
+        MCP[MCP Server<br/>Zed Integration<br/>Local Binary]
+    end
+
+    subgraph "Business Logic Layer"
+        FPL[FPL Engine<br/>Monte Carlo<br/>v0.4.0 Complete]
+        Memory[Fermi Memory ADM<br/>900+ lines<br/>Not Integrated ⚠️]
+    end
+
+    subgraph "Data Layer"
+        DB[(Neon PostgreSQL<br/>12 tables<br/>ADM Schema)]
+        Cache[Avatar Cache<br/>Filesystem<br/>JSON Files]
+        Git[Git Repository<br/>Ontology History<br/>Not Connected ⚠️]
+    end
+
+    subgraph "External Services"
+        Gemini[Gemini API<br/>Avatar Generation<br/>Cached]
+        Railway[Railway Deployment<br/>agent-bestiary-production]
+    end
+
+    User --> Browser
+    User --> Zed
+    Browser --> UI
+    UI --> API
+    Zed --> MCP
+    
+    API --> DB
+    API --> Cache
+    API --> Gemini
+    
+    MCP --> DB
+    MCP -.-> Memory
+    
+    Memory -.-> DB
+    Memory -.-> Git
+    
+    FPL -.-> Memory
+    
+    API --> Railway
+    Railway --> DB
+
+    style Memory fill:#ffeb3b,stroke:#f57c00,stroke-width:3px
+    style Git fill:#ffeb3b,stroke:#f57c00,stroke-width:3px
+    style FPL fill:#ffeb3b,stroke:#f57c00,stroke-width:3px
+
+    classDef notConnected stroke-dasharray: 5 5
+    class Memory,Git,FPL notConnected

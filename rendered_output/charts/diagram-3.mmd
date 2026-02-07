@@ -20,32 +20,44 @@
       'fontSize': '14px'
     }
   }
-}%%flowchart LR
-    subgraph "FPL Assistant Dual Competencies"
-        A[FPL Coding Assistant]
-        
-        A --> B[Competency 1:<br/>FPL Expert]
-        A --> C[Competency 2:<br/>Validator Orchestrator]
-        
-        B --> D[Decomposition Syntax]
-        B --> E[Driver Templates]
-        B --> F[Agent Configuration]
-        
-        C --> G[Coherence Validation]
-        C --> H[Validation Routing]
-        C --> I[Engine Configuration]
+}%%sequenceDiagram
+    participant User
+    participant UI as Agent Bestiary UI
+    participant API as Bestiary API
+    participant Agent as Agent Executor
+    participant ADM as Fermi Memory
+    participant DB as PostgreSQL
+    participant Git as Git Repository
+
+    User->>UI: Click "Execute Agent"
+    UI->>API: POST /api/agents/:id/execute
+    
+    rect rgb(200, 220, 255)
+        Note over API,Agent: Agent Execution Phase (Wake)
+        API->>Agent: Execute with query
+        Agent->>Agent: Research & analyze
+        Agent->>API: Return results
     end
     
-    subgraph "Applied To"
-        D --> J[FPL Forecast Authoring]
-        E --> J
-        F --> J
-        
-        G --> K[Decomposition Validation]
-        H --> K
-        I --> K
+    rect rgb(255, 220, 200)
+        Note over API,ADM: Memory Storage Phase
+        API->>ADM: Store episode
+        ADM->>DB: INSERT INTO episodes
+        DB-->>ADM: Episode ID
+        ADM-->>API: Episode stored
     end
     
-    style A fill:#ffd700
-    style B fill:#a8d5ff
-    style C fill:#d5a8ff
+    API->>UI: Execution complete
+    UI->>User: Show results
+    
+    rect rgb(220, 255, 220)
+        Note over ADM,Git: Consolidation Phase (Sleep)
+        ADM->>DB: Get unconsolidated episodes
+        ADM->>ADM: Cluster similar episodes
+        ADM->>ADM: Extract semantic rules
+        ADM->>DB: Store semantic rules
+        ADM->>ADM: Update knowledge graph
+        ADM->>Git: Commit ontology (Mermaid ER)
+        Git-->>ADM: Commit SHA
+        ADM->>DB: Update agent with commit SHA
+    end

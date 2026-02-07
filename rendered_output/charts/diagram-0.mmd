@@ -20,43 +20,28 @@
       'fontSize': '14px'
     }
   }
-}%%graph TB
-    subgraph "Validator Orchestration for Fermi Decomposition"
-        A[FPL Coding Assistant] --> B{Analyze Forecast<br/>Structure}
-        
-        B --> C[Identify Forecast Elements]
-        
-        C --> D[Element 1:<br/>Question Definition]
-        C --> E[Element 2:<br/>Driver Decomposition]
-        C --> F[Element 3:<br/>Agent Configurations]
-        C --> G[Element 4:<br/>Model Equation]
-        C --> H[Element 5:<br/>Simulation Parameters]
-        
-        D --> I[Map to:<br/>Question Validator]
-        E --> J[Map to:<br/>Decomposition Validator]
-        F --> K[Map to:<br/>Agent Config Validator]
-        G --> L[Map to:<br/>Model Validator]
-        H --> M[Map to:<br/>Simulation Validator]
-        
-        I --> N[Service Registry]
-        J --> N
-        K --> N
-        L --> N
-        M --> N
-        
-        N --> O[Execution Plan]
-        O --> P[Sequential: Structure First]
-        O --> Q[Parallel: Driver Checks]
-        O --> R[Final: Model Consistency]
-        
-        P --> S[Results Aggregation]
-        Q --> S
-        R --> S
-        
-        S --> T[Fermi Engine Config]
-    end
+}%%gantt
+    title Fermi + Agent Bestiary Roadmap to MVP
+    dateFormat  YYYY-MM-DD
+    section Phase 0: Critical Infrastructure
+    Authentication & SSL           :crit, p0w1, 2026-02-08, 7d
+    Agent Identity & Security      :crit, p0w2, after p0w1, 7d
     
-    style A fill:#ffd700
-    style N fill:#e1e1ff
-    style S fill:#e1ffe1
-    style T fill:#90ee90
+    section Phase 1: Agent Bestiary MVP
+    Memory Integration             :p1w3, after p0w2, 7d
+    Agent Execution                :p1w4, after p1w3, 7d
+    
+    section Phase 2: Fermi Service MVP
+    FPL LSP & Zed Extension        :p2w56, after p1w4, 14d
+    Agent Integration              :p2w7, after p2w56, 7d
+    
+    section Phase 3: AKP Foundation
+    Socialization Rules            :p3w8, after p2w7, 7d
+    Agent Immune System            :p3w9, after p3w8, 7d
+    Knowledge Sharing              :p3w10, after p3w9, 7d
+    
+    section Milestones
+    Auth Complete                  :milestone, m1, after p0w2, 0d
+    Bestiary MVP                   :milestone, m2, after p1w4, 0d
+    Fermi MVP                      :milestone, m3, after p2w7, 0d
+    AKP MVP                        :milestone, m4, after p3w10, 0d
