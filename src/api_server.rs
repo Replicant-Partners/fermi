@@ -14,6 +14,9 @@ async fn main() {
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set");
 
+    println!("Connecting to database...");
+    println!("Database URL: {}", database_url.chars().take(30).collect::<String>() + "...");
+
     // Create database connection pool
     let db = PgPoolOptions::new()
         .max_connections(5)
@@ -21,7 +24,7 @@ async fn main() {
         .await
         .expect("Failed to connect to database");
 
-    println!("Connected to database");
+    println!("Connected to database successfully");
 
     let state = AppState { db };
 
