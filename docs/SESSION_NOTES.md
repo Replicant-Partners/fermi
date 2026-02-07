@@ -12,6 +12,10 @@
 5. ✅ Added avatar caching
 6. ✅ Created modern, compressed UI
 7. ✅ Added all missing fields to detail view
+8. ✅ Polished design with architectural header (Lacaton & Vassal inspired)
+9. ✅ Added cost statistics to economic ledger
+10. ✅ Added public crypto wallet field
+11. ✅ Seeded sample ontologies in database
 
 ---
 
@@ -169,7 +173,7 @@ fermi/
 - "Specimens" terminology
 - Sepia-filtered avatars
 
-### Phase 3: Modern & Sleek (Current)
+### Phase 3: Modern & Sleek
 - Gruvbox Dark maintained
 - Sans-serif fonts (Inter, SF)
 - **Left-justified layout**
@@ -178,6 +182,15 @@ fermi/
 - Grid-based efficiency
 - Smaller typography
 - More content visible
+
+### Phase 4: Architectural Polish (Current)
+- **Lacaton & Vassal inspired header** - minimalist, utilitarian, generous whitespace
+- Uppercase typography with letter-spacing
+- Grid-based header layout (title left, stats right)
+- Border-bottom separator instead of heavy styling
+- **Cost statistics breakdown** - total, per execution, last 30 days, tokens
+- **Public crypto wallet field** - dedicated field separate from general wallet
+- **Sample ontologies seeded** - market_research (8 entities, 8 relationships), sentiment_analyzer (10 entities, 10 relationships)
 
 ---
 
@@ -320,6 +333,9 @@ export NAMECOM_API_TOKEN="your_token"
 - Description: "Researches market trends, competitive dynamics, and market sizing"
 - Tags: market, research, competitive-analysis
 - Usage: 2 executions, $0.0004
+- Wallet: 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7 ($150.50 balance, $1000 budget)
+- Ontology: 8 entities, 8 relationships, 3 evolution commits
+- Concepts: Market Segment, Competitor, Market Trend, Customer Need, Pricing Model, Distribution Channel, Market Entry Barrier, Value Proposition
 
 ### 2. **sentiment_analyzer**
 - Type: sentiment
@@ -327,13 +343,16 @@ export NAMECOM_API_TOKEN="your_token"
 - Description: "Analyzes sentiment from social media, news, and forums"
 - Tags: sentiment, social-media, public-opinion
 - Usage: 1 execution, $0.0001
+- Wallet: 0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063 ($87.25 balance, $500 budget)
+- Ontology: 10 entities, 10 relationships, 5 evolution commits
+- Concepts: Sentiment, Emotion, Opinion Holder, Opinion Target, Aspect, Intensity, Context, Sentiment Shift, Subjectivity, Sarcasm
 
 ---
 
 ## 🚀 Next Steps / Future Enhancements
 
 ### Short Term
-- [ ] Verify custom domain `agent-bestiary.world` DNS propagation
+- [x] Verify custom domain `agent-bestiary.world` DNS propagation (DNS configured, SSL provisioning)
 - [ ] Add more curated agents to the bestiary
 - [ ] Test MCP server integration in Zed
 - [ ] Create agent execution workflows
@@ -415,12 +434,17 @@ export NAMECOM_API_TOKEN="your_token"
 - ✅ Clear API naming maintained
 - ✅ DNS helper script created
 - ✅ Sleek, compressed, left-justified UI
+- ✅ Architectural header polish (Lacaton & Vassal inspired)
+- ✅ Cost statistics breakdown in economic ledger
+- ✅ Public crypto wallet field added
+- ✅ Sample ontologies seeded (market_research, sentiment_analyzer)
 - ✅ Successfully deployed to Railway
 
 **Deployment:** Live and operational 🎉  
-**Theme:** Modern, sleek, Gruvbox Dark ✨  
+**Theme:** Architectural, minimalist, Gruvbox Dark ✨  
 **Performance:** Avatar caching, fast loading 🚀  
-**Documentation:** Complete session notes 📝
+**Documentation:** Complete session notes 📝  
+**DNS Status:** Configured and resolving, SSL provisioning in progress ⏳
 
 ---
 
