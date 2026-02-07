@@ -26,7 +26,5 @@
       "dest": "/agent-bestiary/api/execute.rs"
     }
   ],
-  "env": {
-    "DATABASE_URL": "@database_url"
-  }
+  "env": {}
 }
