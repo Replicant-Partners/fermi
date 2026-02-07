@@ -8,5 +8,6 @@ ENV ZITADEL_TLS_ENABLED=false
 # Expose port
 EXPOSE 8080
 
-# Default command (can be overridden)
-CMD ["start-from-init", "--masterkey", "MasterkeyNeedsToHave32Characters", "--tlsMode", "external"]
+# Use 'start' since initialization already completed (events exist in DB)
+# If starting fresh, use 'start-from-init' instead
+CMD ["start", "--masterkey", "MasterkeyNeedsToHave32Characters", "--tlsMode", "external"]
