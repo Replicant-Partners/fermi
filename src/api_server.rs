@@ -93,8 +93,12 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index))
-        .route("/agent/:agent_id", get(agent_detail))
+        .route("/specimen/:agent_id", get(agent_detail))
         .route("/api/health", get(health))
+        .route("/api/specimens", get(list_agents))
+        .route("/api/specimens/:agent_id/portrait", get(generate_avatar))
+        // Legacy routes for backwards compatibility
+        .route("/agent/:agent_id", get(agent_detail))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:agent_id/avatar", get(generate_avatar))
         .with_state(state);
@@ -149,8 +153,8 @@ async fn agent_detail() -> Html<String> {
 async fn health() -> Json<Value> {
     Json(json!({
         "status": "ok",
-        "service": "agent-bestiary",
-        "description": "Active Dreaming Memory backend for AI agents",
+        "service": "Agent Bestiary",
+        "description": "A naturalist's catalogue of dreaming agents",
         "version": "1.0.0",
         "api_version": "v1"
     }))
