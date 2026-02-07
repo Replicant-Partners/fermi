@@ -7,6 +7,6 @@ startCommand = ""
 # Temporarily disable healthcheck to allow full initialization
 # healthcheckPath = "/debug/healthz"
 # healthcheckTimeout = 300
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 10
-# Trigger redeploy - database cleaned
+restartPolicyType = "NEVER"
+# Don't auto-restart - let initialization complete or fail cleanly
+# After successful deployment, change back to ON_FAILURE
