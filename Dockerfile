@@ -10,6 +10,8 @@ COPY rust-toolchain.toml ./
 # Copy source code
 COPY src ./src
 COPY agent-bestiary ./agent-bestiary
+COPY fermi-memory ./fermi-memory
+COPY fermi-auth ./fermi-auth
 
 # Downgrade incompatible dependencies for Rust 1.85
 RUN cargo update time --precise 0.3.36 && \
