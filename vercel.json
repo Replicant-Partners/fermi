@@ -1,7 +1,35 @@
 {
-  "functions": {
-    "api/**/*.rs": {
-      "runtime": "vercel-rust@4.0.0"
+  "version": 2,
+  "builds": [
+    {
+      "src": "src/api_server.rs",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "public"
+      }
     }
+  ],
+  "routes": [
+    {
+      "src": "/static/(.*)",
+      "dest": "/static/$1"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/"
+    }
+  ],
+  "env": {
+    "DATABASE_URL": "@database_url",
+    "ANTHROPIC_API_KEY": "@anthropic_api_key",
+    "GEMINI_API_KEY": "@gemini_api_key",
+    "ZITADEL_ISSUER": "@zitadel_issuer",
+    "ZITADEL_CLIENT_ID": "@zitadel_client_id",
+    "ZITADEL_CLIENT_SECRET": "@zitadel_client_secret",
+    "ZITADEL_REDIRECT_URI": "@zitadel_redirect_uri"
   }
 }
