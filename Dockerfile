@@ -16,7 +16,8 @@ RUN cargo update time --precise 0.3.36 && \
     cargo update home --precise 0.5.9
 
 # Build the api-server binary
-RUN cargo build --release --bin api-server
+RUN cargo build --release --bin api-server && \
+    ls -la /app/target/release/ | grep api-server
 
 # Runtime stage
 FROM debian:bookworm-slim
