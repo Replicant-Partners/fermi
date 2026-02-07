@@ -1,218 +1,85 @@
-# Fermi Documentation
+# Documentation
 
-Welcome to the Fermi project documentation! This directory contains all technical documentation, guides, and architecture information for the Fermi probabilistic forecasting platform.
+This repository contains two products:
 
----
+## 🧠 [Agent Bestiary](agent-bestiary/) - Universal Memory Backend for AI Agents
 
-## 📚 Documentation Structure
+Active Dreaming Memory backend that consolidates episodic experiences into semantic knowledge. Works with any agent framework (LangChain, AutoGPT, CrewAI, custom).
 
-### 🚀 [Guides](guides/) - Getting Started & User Documentation
-Start here if you're new to Fermi or want to learn how to use specific features.
+**Start here if you want to**:
+- Add memory to your AI agents
+- Integrate with LangChain/AutoGPT/CrewAI
+- Build GDPR-compliant agent systems
+- Use Agent Bestiary as a service
 
-- **[Getting Started](guides/GETTING_STARTED.md)** - First steps with Fermi
-- **[Quickstart](guides/quickstart.md)** - Fast introduction
-- **[FPL Reference](guides/fpl-reference.md)** - Complete FPL language reference
-- **[Forecasting Guide](guides/forecasting-guide.md)** - How to run forecasts
-- **[ADM Guide](guides/adm-guide.md)** - Active Dreaming Memory system
-- **[MCP Guide](guides/mcp-guide.md)** - Model Context Protocol integration
-- **[Zed Integration](guides/zed-integration.md)** - Using Fermi with Zed IDE
-- **[Deployment Guide](guides/deployment-guide.md)** - Deployment instructions
+**Key docs**:
+- [Features](agent-bestiary/FEATURES.md)
+- [Quick Start](agent-bestiary/QUICK_START.md)
+- [API Reference](agent-bestiary/API.md)
+- [Architecture](agent-bestiary/ARCHITECTURE.md)
 
-### 🏗️ [Architecture](architecture/) - System Design & Technical Architecture
-Deep dive into how Fermi is built and why design decisions were made.
+## 🎯 [Fermi](fermi/) - Probabilistic Forecasting Agents
 
-- **[System Overview](architecture/overview.md)** - High-level architecture
-- **[Domain Model](architecture/domain-model.md)** - Core concepts and types
-- **[FPL Grammar](architecture/fpl-grammar.md)** - Language grammar specification
-- **[Codebase Structure](architecture/codebase-structure.md)** - Code organization
-- **[Whitepaper](architecture/whitepaper.md)** - Agent-assisted architecture paper
-- **[ADM Architecture](ARCHITECTURE_ADM.md)** - Active Dreaming Memory design
-- **[Database Schema](MEMORY_SCHEMA.sql)** - Complete PostgreSQL schema
+AI agents that make probabilistic forecasts using the Fermi Programming Language (FPL). Built on top of Agent Bestiary for memory and learning.
 
-### 🔌 [API](api/) - API Documentation
-Documentation for REST APIs, MCP server, LSP server, and agent interfaces.
+**Start here if you want to**:
+- Build forecasting agents
+- Use FPL (Fermi Programming Language)
+- Deploy Fermi forecasting systems
+- Contribute to Fermi development
 
-- **[Execute Command](api/execute-command.md)** - Command execution API
-- **[Agent Cards](api/agent-cards.md)** - Agent definition format
-- **[MCP Server](MCP_SETUP.md)** - Model Context Protocol server
+**Key docs**:
+- [Quick Start](fermi/QUICK_START.md)
+- [User Guides](fermi/guides/)
+- [Architecture](fermi/architecture/)
+- [Roadmap](fermi/ROADMAP.md)
 
-### 💻 [Development](development/) - Developer Guides
-Information for contributors and developers working on Fermi.
+## 📚 [Shared Concepts](shared/)
 
-- **[Lexer Implementation](development/lexer-implementation.md)** - Lexer internals
-- **[Parser Implementation](development/parser-implementation.md)** - Parser design
-- **[Executor Implementation](development/executor-implementation.md)** - Execution engine
-- **[Semantic Analyzer](development/semantic-analyzer.md)** - Type checking
-- **[LSP Features](development/lsp-features.md)** - Language server features
+Documentation relevant to both products:
+- [Active Dreaming Memory (ADM) Architecture](shared/ARCHITECTURE_ADM.md)
+- [Model Context Protocol (MCP) Setup](shared/MCP_SETUP.md)
+- [Vercel Domain Setup](shared/VERCEL_DOMAIN_SETUP.md)
 
-### 📋 [Decisions](decisions/) - Architecture Decision Records
-ADRs documenting important technical decisions and their rationale.
+## Quick Navigation
 
-- [000 - ADR Template](decisions/000_TEMPLATE.md)
-- [001 - Architecture Option C](decisions/001_architecture_option_c.md)
-- [002 - Rust Backend Rebuild](decisions/002_rust_backend_rebuild.md)
-- [003 - Hybrid Fermi Coaching](decisions/003_hybrid_fermi_coaching.md)
-- [More ADRs...](decisions/)
+| I want to... | Go to... |
+|--------------|----------|
+| Add memory to my agents | [Agent Bestiary Quick Start](agent-bestiary/QUICK_START.md) |
+| Integrate with LangChain | [Agent Bestiary Integrations](agent-bestiary/INTEGRATIONS.md) |
+| Understand GDPR compliance | [Agent Bestiary GDPR Guide](agent-bestiary/GDPR.md) |
+| Build forecasting agents | [Fermi Quick Start](fermi/QUICK_START.md) |
+| Learn FPL | [FPL Reference](fermi/guides/fpl-reference.md) |
+| Deploy to production | [Fermi Deployment](fermi/guides/deployment-guide.md) |
+| Understand ADM concepts | [ADM Architecture](shared/ARCHITECTURE_ADM.md) |
 
-### 📊 [Reports](reports/) - Status Reports & Audits
-Current project status, audits, and comprehensive analyses.
+## Relationship Between Products
 
-- **[State of the Project](reports/STATE_OF_THE_PROJECT_2026_02_06.md)** - Complete project status
-- **[System Audit](COMPREHENSIVE_SYSTEM_AUDIT_2026_02_06.md)** - Full system audit
-- **[Code Review](CODE_REVIEW_2026_02_06.md)** - Code quality analysis
-- **[Session Notes](SESSION_NOTES_2026_02_06.md)** - Development session context
-- **[Phase 0 Complete](SESSION_COMPLETE_ADM_PHASE_0.md)** - ADM Phase 0 summary
-- **[Phase 1 Complete](SESSION_COMPLETE_ADM_PHASE_1.md)** - ADM Phase 1 summary
-- **[Phase 2 Complete](SESSION_COMPLETE_ADM_PHASE_2.md)** - ADM Phase 2 summary
-- **[Phase 3 Complete](SESSION_COMPLETE_ADM_PHASE_3.md)** - ADM Phase 3 summary
-- **[Phase 4 Complete](SESSION_COMPLETE_ADM_PHASE_4.md)** - ADM Phase 4 summary
-- **[Phases 2-4 Summary](SESSION_SUMMARY_ADM_PHASES_2_3_4.md)** - Combined summary
+```
+┌─────────────────────────────────────────────┐
+│          Fermi Forecasting Agents           │
+│  (Probabilistic forecasting with FPL)       │
+└─────────────────┬───────────────────────────┘
+                  │ uses
+                  ↓
+┌─────────────────────────────────────────────┐
+│           Agent Bestiary                    │
+│  (Universal memory backend for any agent)   │
+└─────────────────────────────────────────────┘
+```
 
-### 📅 [Roadmap](roadmap/) - Planning & Future Work
-Development roadmap and feature planning.
+**Fermi** is a specific application built on **Agent Bestiary**. You can use Agent Bestiary without Fermi for any type of AI agent.
 
-- **[ADM Roadmap](ROADMAP_ADM_IMPLEMENTATION.md)** - Active Dreaming Memory roadmap
-- **[Project Roadmap](ROADMAP.md)** - Overall project roadmap
-- **[Module Architecture](roadmap/MODULE_ARCHITECTURE.md)** - Module planning
+## Website & Domains
 
-### 📝 [Sessions](sessions/) - Development Session Logs
-Detailed logs of development sessions for historical reference.
+- **Agent Bestiary**: https://agent-bestiary.world
+- **Fermi**: https://fermi.systems
 
-- [Session 2026-02-04](sessions/SESSION_2026-02-04.md)
-- [Session 2026-02-05](sessions/SESSION_2026-02-05.md)
-- [More sessions...](sessions/)
+## Contributing
 
-### 📦 [Archive](archive/) - Historical Documentation
-Older documentation for completed features and historical context.
+- Agent Bestiary contributions: See [Agent Bestiary docs](agent-bestiary/)
+- Fermi contributions: See [Fermi development guide](fermi/development/)
 
-- Completed feature summaries
-- Migration logs
-- Deprecated documentation
+## License
 
----
-
-## 🔍 Quick Navigation
-
-### By Role
-
-**👤 New User?**
-1. Start with [Getting Started](guides/GETTING_STARTED.md)
-2. Read [Quickstart](guides/quickstart.md)
-3. Try the [Forecasting Guide](guides/forecasting-guide.md)
-
-**🔧 Developer?**
-1. Review [System Overview](architecture/overview.md)
-2. Check [Codebase Structure](architecture/codebase-structure.md)
-3. Read relevant [Development Guides](development/)
-
-**🏢 Decision Maker?**
-1. Read [State of the Project](reports/STATE_OF_THE_PROJECT_2026_02_06.md)
-2. Review [System Audit](COMPREHENSIVE_SYSTEM_AUDIT_2026_02_06.md)
-3. Check [ADM Architecture](ARCHITECTURE_ADM.md)
-
-**🤖 AI/Agent Developer?**
-1. Start with [ADM Guide](guides/adm-guide.md)
-2. Review [ADM Architecture](ARCHITECTURE_ADM.md)
-3. Check [Agent Cards](api/agent-cards.md)
-
-### By Topic
-
-**📊 Forecasting:**
-- [FPL Reference](guides/fpl-reference.md)
-- [Forecasting Guide](guides/forecasting-guide.md)
-- [FPL Grammar](architecture/fpl-grammar.md)
-
-**🧠 Memory System:**
-- [ADM Guide](guides/adm-guide.md)
-- [ADM Architecture](ARCHITECTURE_ADM.md)
-- [Database Schema](MEMORY_SCHEMA.sql)
-- [Phase Completion Docs](reports/)
-
-**🤖 Agents:**
-- [Agent Cards](api/agent-cards.md)
-- [ADM Guide](guides/adm-guide.md)
-- [Agent Bestiary Design](AGENT_BESTIARY_DESIGN.md)
-
-**🔌 Integration:**
-- [MCP Guide](guides/mcp-guide.md)
-- [Zed Integration](guides/zed-integration.md)
-- [LSP Features](development/lsp-features.md)
-
----
-
-## 📖 Key Documents
-
-### Essential Reading
-1. **[README.md](../README.md)** - Main project README
-2. **[State of the Project](reports/STATE_OF_THE_PROJECT_2026_02_06.md)** - Current status
-3. **[STATUS.md](../STATUS.md)** - Quick status overview
-4. **[System Audit](COMPREHENSIVE_SYSTEM_AUDIT_2026_02_06.md)** - Complete audit
-
-### Architecture
-- [System Overview](architecture/overview.md)
-- [ADM Architecture](ARCHITECTURE_ADM.md)
-- [Database Schema](MEMORY_SCHEMA.sql)
-
-### Implementation
-- [ADM Phases 0-4](reports/) - Complete implementation journey
-- [Code Review](CODE_REVIEW_2026_02_06.md)
-- [Session Notes](SESSION_NOTES_2026_02_06.md)
-
----
-
-## 🎯 Current Focus
-
-**Active Development**: Phase 5 - LLM Integration  
-**Completed**: Phases 0-4 of Active Dreaming Memory  
-**Next Up**: Ontology Snapshots (Phase 6)
-
-See [Roadmap](roadmap/ROADMAP_ADM_IMPLEMENTATION.md) for details.
-
----
-
-## 📊 Documentation Stats
-
-- **Total Docs**: 108+ files
-- **Guides**: 8 user-facing docs
-- **Architecture**: 7 design docs
-- **API Docs**: 3 specifications
-- **Development**: 5 implementation guides
-- **ADRs**: 11 decision records
-- **Session Logs**: 19 detailed logs
-- **Reports**: 8 status/audit reports
-- **Archived**: 30+ historical docs
-
----
-
-## 🤝 Contributing to Documentation
-
-Found an issue or want to improve the docs?
-
-1. Check [Contributing Guide](development/contributing.md) (if exists)
-2. Follow the documentation structure above
-3. Keep docs concise and actionable
-4. Add links for cross-references
-5. Update this index when adding new docs
-
----
-
-## 📞 Getting Help
-
-- **Issues**: Check existing documentation first
-- **Questions**: Review [Quick Start](QUICK_START.md)
-- **Bugs**: See project issue tracker
-- **Ideas**: Create an ADR in [decisions/](decisions/)
-
----
-
-## 📜 License
-
-See [LICENSE](../LICENSE) file in project root (if exists).
-
----
-
-**Last Updated**: 2026-02-06  
-**Documentation Version**: 1.0  
-**Project Version**: 0.5.0
-
-*This documentation is maintained alongside the Fermi project. For the latest updates, see the project repository.*
+[Your license here]
