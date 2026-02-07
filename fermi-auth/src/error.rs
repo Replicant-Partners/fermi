@@ -32,14 +32,26 @@ pub enum AuthError {
     #[error("Invalid Ethereum address")]
     InvalidAddress,
 
+    #[error("Invalid Ethereum address format")]
+    InvalidEthereumAddress,
+
+    #[error("Invalid domain")]
+    InvalidDomain,
+
     #[error("Invalid SIWE message format")]
     InvalidMessage,
 
     #[error("Domain mismatch")]
     DomainMismatch,
 
+    #[error("Nonce not found")]
+    NonceNotFound,
+
     #[error("Nonce already used (replay attack?)")]
     NonceAlreadyUsed,
+
+    #[error("Nonce expired")]
+    NonceExpired,
 
     #[error("Message expired")]
     MessageExpired,
@@ -65,9 +77,13 @@ impl IntoResponse for AuthError {
                 "Database error occurred".to_string(),
             ),
             AuthError::InvalidAddress => (StatusCode::BAD_REQUEST, self.to_string()),
+            AuthError::InvalidEthereumAddress => (StatusCode::BAD_REQUEST, self.to_string()),
+            AuthError::InvalidDomain => (StatusCode::BAD_REQUEST, self.to_string()),
             AuthError::InvalidMessage => (StatusCode::BAD_REQUEST, self.to_string()),
             AuthError::DomainMismatch => (StatusCode::FORBIDDEN, self.to_string()),
+            AuthError::NonceNotFound => (StatusCode::BAD_REQUEST, self.to_string()),
             AuthError::NonceAlreadyUsed => (StatusCode::FORBIDDEN, self.to_string()),
+            AuthError::NonceExpired => (StatusCode::UNAUTHORIZED, self.to_string()),
             AuthError::MessageExpired => (StatusCode::UNAUTHORIZED, self.to_string()),
             AuthError::VerificationFailed => (StatusCode::UNAUTHORIZED, self.to_string()),
             AuthError::OAuthError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),

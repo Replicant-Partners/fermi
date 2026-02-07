@@ -3,7 +3,7 @@ use axum::{
     extract::{FromRequestParts, Request},
     http::{header, request::Parts, StatusCode},
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
 };
 
 use crate::{error::AuthError, jwt::validate_jwt, types::AuthPrincipal};
