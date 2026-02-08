@@ -1046,6 +1046,33 @@ impl MemoryStore {
 
         Ok(communities)
     }
+
+    /// Stores a new community
+    pub async fn store_community(&self, community: Community) -> Result<()> {
+        let embedding_vec = community
+            .embedding
+            .as_ref()
+            .map(|e| pgvector::Vector::from(e.clone()));
+
+        sqlx::query(
+            "INSERT INTO communities
+             (community_id, agent_id, community_name, summary,
+              member_entity_ids, member_count, embedding, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(community.community_id)
+        .bind(community.agent_id)
+        .bind(&community.community_name)
+        .bind(&community.summary)
+        .bind(&community.member_entity_ids)
+        .bind(community.member_count)
+        .bind(embedding_vec)
+        .bind(community.created_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

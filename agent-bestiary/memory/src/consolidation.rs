@@ -458,6 +458,9 @@ mod tests {
             current_ontology_commit: None,
             current_ontology_snapshot_id: None,
             last_consolidated_at: None,
+            dreaming_budget_credits: 0,
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

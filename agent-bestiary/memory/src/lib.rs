@@ -16,6 +16,7 @@ pub mod embeddings;
 pub mod error;
 pub mod llm;
 pub mod locking;
+pub mod seed;
 pub mod store;
 pub mod types;
 
@@ -32,5 +33,6 @@ pub use llm::{
     OpenRouterProvider, ProviderType, QwenProvider, TokenUsage,
 };
 pub use locking::{ConsolidationLock, LockInfo};
+pub use seed::SeedData;
 pub use store::MemoryStore;
 pub use types::*;
