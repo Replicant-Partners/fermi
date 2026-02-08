@@ -19,6 +19,8 @@ pub struct AgentCard {
     pub wallet: Option<AgentWallet>,
     pub ontology_stats: OntologyStats,
     pub metadata: AgentMetadata,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 /// Agent tier (curated vs community)
@@ -155,6 +157,7 @@ impl AgentCard {
                 description: "Agent description".to_string(),
                 tags: vec![],
             },
+            system_prompt: None,
         }
     }
 

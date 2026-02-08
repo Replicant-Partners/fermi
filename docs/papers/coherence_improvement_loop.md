@@ -2,7 +2,7 @@
 
 **Draft — February 2026**
 
-**Authors**: Replicant Partners
+**Authors**: Ivan Labra - axelotl partners
 
 ---
 
@@ -64,15 +64,15 @@ $$C = \langle U, E, R^+, R^-, A, \sigma, \tau \rangle$$
 
 extending Thagard's original formulation with a temporal dimension $\tau$.
 
-| Symbol | Definition |
-|--------|-----------|
-| $U$ | Set of utterance-propositions, each attributed to a participant $p \in P$ and classified as Claim, Evidence, Explanation, Analogy, or Question |
-| $E \subseteq U$ | Evidence subset — utterances with intrinsic acceptability |
-| $R^+$ | Coherence relations: explanation links, acknowledgments, analogical mappings, constructive elaboration |
-| $R^-$ | Incoherence relations: contradictions, unresolved competition, non-sequiturs |
-| $A : U \rightarrow [-1, 1]$ | Activation function settled via ECHO |
-| $\sigma : \{P_1, \ldots, P_7\} \rightarrow [0, 1]$ | Principle-level scoring |
-| $\tau : U \rightarrow \mathbb{R}$ | Temporal ordering of utterances |
+| Symbol                                             | Definition                                                                                                                                     |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| $U$                                                | Set of utterance-propositions, each attributed to a participant $p \in P$ and classified as Claim, Evidence, Explanation, Analogy, or Question |
+| $E \subseteq U$                                    | Evidence subset — utterances with intrinsic acceptability                                                                                      |
+| $R^+$                                              | Coherence relations: explanation links, acknowledgments, analogical mappings, constructive elaboration                                         |
+| $R^-$                                              | Incoherence relations: contradictions, unresolved competition, non-sequiturs                                                                   |
+| $A : U \rightarrow [-1, 1]$                        | Activation function settled via ECHO                                                                                                           |
+| $\sigma : \{P_1, \ldots, P_7\} \rightarrow [0, 1]$ | Principle-level scoring                                                                                                                        |
+| $\tau : U \rightarrow \mathbb{R}$                  | Temporal ordering of utterances                                                                                                                |
 
 ### 3.2 Participant Attribution
 
@@ -176,12 +176,12 @@ This is analogous to the preference for "team fit" in organizational hiring, whi
 
 We propose a taxonomy of incoherence:
 
-| Type | Formal Signature | Epistemic Value |
-|------|-----------------|-----------------|
-| **Destructive** | Low $\sigma(P_2)$, low $\sigma(P_7)$: poor explanation, low acceptability. Utterances don't engage with each other. | Negative — reduces group performance |
-| **Productive-Competitive** | Low $\sigma(P_6)$, moderate $\sigma(P_2)$: competing explanations that both engage with evidence. | Positive — forces evidence evaluation |
-| **Productive-Analogical** | Low $\sigma(P_3)$ with high $\sigma(P_2)$: reasoning from different frameworks but engaging with shared data. | Positive — reveals hidden assumptions |
-| **Productive-Contradictory** | Low $\sigma(P_5)$ with high $\sigma(P_4)$: direct contradiction grounded in evidence. | Positive — sharpens hypothesis space |
+| Type                         | Formal Signature                                                                                                    | Epistemic Value                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| **Destructive**              | Low $\sigma(P_2)$, low $\sigma(P_7)$: poor explanation, low acceptability. Utterances don't engage with each other. | Negative — reduces group performance  |
+| **Productive-Competitive**   | Low $\sigma(P_6)$, moderate $\sigma(P_2)$: competing explanations that both engage with evidence.                   | Positive — forces evidence evaluation |
+| **Productive-Analogical**    | Low $\sigma(P_3)$ with high $\sigma(P_2)$: reasoning from different frameworks but engaging with shared data.       | Positive — reveals hidden assumptions |
+| **Productive-Contradictory** | Low $\sigma(P_5)$ with high $\sigma(P_4)$: direct contradiction grounded in evidence.                               | Positive — sharpens hypothesis space  |
 
 The key insight: **productive incoherence is characterized by high engagement with evidence (P4) despite low scores on other principles.** Destructive incoherence shows low evidence engagement alongside low coherence.
 
@@ -192,6 +192,7 @@ We propose that for a given task type $t$, there exists an optimal coherence ran
 $$Q(t) = f(\Gamma, \sigma, \text{diversity}(P), \text{evidence\_engagement})$$
 
 where:
+
 - $\Gamma$ is global coherence
 - $\sigma$ is the vector of principle scores
 - $\text{diversity}(P)$ measures the diversity of participant perspectives
@@ -222,11 +223,11 @@ Human-agent collaboration introduces asymmetric coherence dynamics. Humans bring
 
 ### 6.3 Protocol Integration Points
 
-| Protocol | Coherence Evaluator Role |
-|----------|-------------------------|
+| Protocol                     | Coherence Evaluator Role                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
 | MCP (Model Context Protocol) | Available as a tool that other agents invoke: `evaluate_coherence(conversation_id)` |
-| A2A (Agent-to-Agent) | Participates as a peer agent with evaluation capabilities |
-| REST API | Provides programmatic access for dashboards and monitoring |
+| A2A (Agent-to-Agent)         | Participates as a peer agent with evaluation capabilities                           |
+| REST API                     | Provides programmatic access for dashboards and monitoring                          |
 
 ---
 
@@ -281,11 +282,13 @@ Our optimal tension model draws on organizational theory's concept of "task conf
 ## 9. Limitations and Future Work
 
 **Limitations**:
+
 - The heuristic classification of utterances into TEC categories (Claim, Evidence, Explanation, Analogy, Question) is imprecise; LLM-based classification may improve accuracy but introduces its own biases
 - The optimal tension model's parameters ($\Gamma^*_{\min}$, $\Gamma^*_{\max}$) must be learned empirically and may not generalize across domains
 - Human participants' contributions are harder to model formally; pragmatic and social dimensions of communication are not captured by TEC
 
 **Future directions**:
+
 - Integration of emotional coherence (Thagard, 2006) to model affective dimensions of collaboration
 - Extension to asynchronous collaboration (e.g., document co-authoring, code review) where temporal dynamics differ from real-time conversation
 - Multi-evaluator architectures where specialized evaluators (coherence, bias detection, factual accuracy) provide complementary feedback

@@ -183,6 +183,12 @@ pub struct Agent {
     pub mcp_servers: Option<serde_json::Value>, // Array of MCP server configs
     pub description: Option<String>,
     pub author: String,
+    pub system_prompt: Option<String>,
+    #[serde(default = "default_visibility")]
+    pub visibility: String,
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub current_ontology_commit: Option<String>,
     pub current_ontology_snapshot_id: Option<Uuid>,
     pub last_consolidated_at: Option<DateTime<Utc>>,
@@ -200,6 +206,26 @@ pub struct Agent {
     #[serde(default)]
     pub dreaming_credits_used: i32,
     pub dreaming_budget_reset_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub education_budget_credits: i32,
+    #[serde(default)]
+    pub education_credits_used: i32,
+}
+
+fn default_visibility() -> String {
+    "public".to_string()
+}
+
+/// Partial update for agents (all fields optional)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentUpdate {
+    pub description: Option<String>,
+    pub system_prompt: Option<String>,
+    pub visibility: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub model: Option<String>,
+    pub temperature: Option<f64>,
+    pub education_budget_credits: Option<i32>,
 }
 
 /// Community (clustered group of entities)

@@ -1,10 +1,22 @@
 use crate::{
-    Agent, Community, ConsolidationJob, Entity, Episode, Fact, MemoryError, Result, SemanticRule,
-    VerificationStatus,
+    Agent, AgentUpdate, Community, ConsolidationJob, Entity, Episode, Fact, MemoryError, Result,
+    SemanticRule, VerificationStatus,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
 use uuid::Uuid;
+
+/// Common SELECT columns for agent queries
+const AGENT_COLUMNS: &str = r#"
+    agent_id, agent_name, agent_type, version, tier,
+    executor_type, model, temperature, mcp_servers, description, author,
+    system_prompt, visibility, user_id, tags,
+    current_ontology_commit, current_ontology_snapshot_id,
+    last_consolidated_at, total_executions, successful_executions,
+    failed_executions, total_cost_usd, avg_execution_time_ms,
+    dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at,
+    education_budget_credits, education_credits_used
+"#;
 
 pub struct MemoryStore {
     pool: PgPool,
@@ -148,16 +160,18 @@ impl MemoryStore {
         Ok(episodes)
     }
 
-    /// Create or update an agent
+    /// Create or update an agent (used for seeding curated agents)
     pub async fn upsert_agent(&self, agent: Agent) -> Result<Uuid> {
         let row = sqlx::query(
             r#"
             INSERT INTO agents (
                 agent_id, agent_name, agent_type, version, tier,
                 executor_type, model, temperature, mcp_servers, description, author,
-                dreaming_budget_credits, dreaming_credits_used
+                system_prompt, visibility, user_id, tags,
+                dreaming_budget_credits, dreaming_credits_used,
+                education_budget_credits, education_credits_used
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -167,7 +181,8 @@ impl MemoryStore {
                 model = EXCLUDED.model,
                 temperature = EXCLUDED.temperature,
                 mcp_servers = EXCLUDED.mcp_servers,
-                description = EXCLUDED.description
+                description = EXCLUDED.description,
+                system_prompt = EXCLUDED.system_prompt
             RETURNING agent_id
             "#,
         )
@@ -182,33 +197,27 @@ impl MemoryStore {
         .bind(&agent.mcp_servers)
         .bind(&agent.description)
         .bind(&agent.author)
+        .bind(&agent.system_prompt)
+        .bind(&agent.visibility)
+        .bind(&agent.owner_id)
+        .bind(&agent.tags)
         .bind(agent.dreaming_budget_credits)
         .bind(agent.dreaming_credits_used)
+        .bind(agent.education_budget_credits)
+        .bind(agent.education_credits_used)
         .fetch_one(&self.pool)
         .await?;
 
         Ok(row.try_get("agent_id")?)
     }
 
-    /// Get agent by name
     /// Get agent by ID
     pub async fn get_agent(&self, agent_id: Uuid) -> Result<Option<Agent>> {
-        let row = sqlx::query(
-            r#"
-            SELECT
-                agent_id, agent_name, agent_type, version, tier,
-                executor_type, model, temperature, mcp_servers, description, author,
-                current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at, total_executions, successful_executions,
-                failed_executions, total_cost_usd, avg_execution_time_ms,
-                dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at
-            FROM agents
-            WHERE agent_id = $1
-            "#,
-        )
-        .bind(agent_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let query = format!("SELECT {} FROM agents WHERE agent_id = $1", AGENT_COLUMNS);
+        let row = sqlx::query(&query)
+            .bind(agent_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         match row {
             Some(row) => Ok(Some(Self::row_to_agent(&row)?)),
@@ -218,44 +227,20 @@ impl MemoryStore {
 
     /// Get agent by name
     pub async fn get_agent_by_name(&self, agent_name: &str) -> Result<Agent> {
-        let row = sqlx::query(
-            r#"
-            SELECT
-                agent_id, agent_name, agent_type, version, tier,
-                executor_type, model, temperature, mcp_servers, description, author,
-                current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at, total_executions, successful_executions,
-                failed_executions, total_cost_usd, avg_execution_time_ms,
-                dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at
-            FROM agents
-            WHERE agent_name = $1
-            "#,
-        )
-        .bind(agent_name)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or_else(|| MemoryError::NotFound(format!("Agent {} not found", agent_name)))?;
+        let query = format!("SELECT {} FROM agents WHERE agent_name = $1", AGENT_COLUMNS);
+        let row = sqlx::query(&query)
+            .bind(agent_name)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| MemoryError::NotFound(format!("Agent {} not found", agent_name)))?;
 
         Self::row_to_agent(&row)
     }
 
     /// List all agents
     pub async fn list_agents(&self) -> Result<Vec<Agent>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-                agent_id, agent_name, agent_type, version, tier,
-                executor_type, model, temperature, mcp_servers, description, author,
-                current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at, total_executions, successful_executions,
-                failed_executions, total_cost_usd, avg_execution_time_ms,
-                dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at
-            FROM agents
-            ORDER BY agent_name
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let query = format!("SELECT {} FROM agents ORDER BY agent_name", AGENT_COLUMNS);
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
 
         let mut agents = Vec::new();
         for row in rows {
@@ -263,6 +248,185 @@ impl MemoryStore {
         }
 
         Ok(agents)
+    }
+
+    /// List public agents (for anonymous catalogue)
+    pub async fn list_public_agents(&self) -> Result<Vec<Agent>> {
+        let query = format!(
+            "SELECT {} FROM agents WHERE visibility = 'public' ORDER BY agent_name",
+            AGENT_COLUMNS
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+
+        let mut agents = Vec::new();
+        for row in rows {
+            agents.push(Self::row_to_agent(&row)?);
+        }
+
+        Ok(agents)
+    }
+
+    /// List agents owned by a specific user
+    pub async fn list_agents_for_owner(&self, owner_id: &str) -> Result<Vec<Agent>> {
+        let query = format!(
+            "SELECT {} FROM agents WHERE user_id = $1 ORDER BY agent_name",
+            AGENT_COLUMNS
+        );
+        let rows = sqlx::query(&query)
+            .bind(owner_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut agents = Vec::new();
+        for row in rows {
+            agents.push(Self::row_to_agent(&row)?);
+        }
+
+        Ok(agents)
+    }
+
+    /// Create a new agent (INSERT only, no upsert)
+    pub async fn create_agent(&self, agent: &Agent) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO agents (
+                agent_id, agent_name, agent_type, version, tier,
+                executor_type, model, temperature, mcp_servers, description, author,
+                system_prompt, visibility, user_id, tags,
+                dreaming_budget_credits, education_budget_credits
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            RETURNING agent_id
+            "#,
+        )
+        .bind(agent.agent_id)
+        .bind(&agent.agent_name)
+        .bind(&agent.agent_type)
+        .bind(&agent.version)
+        .bind(&agent.tier)
+        .bind(&agent.executor_type)
+        .bind(&agent.model)
+        .bind(agent.temperature)
+        .bind(&agent.mcp_servers)
+        .bind(&agent.description)
+        .bind(&agent.author)
+        .bind(&agent.system_prompt)
+        .bind(&agent.visibility)
+        .bind(&agent.owner_id)
+        .bind(&agent.tags)
+        .bind(agent.dreaming_budget_credits)
+        .bind(agent.education_budget_credits)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.try_get("agent_id")?)
+    }
+
+    /// Update an agent with partial fields (owner-only operation)
+    pub async fn update_agent(&self, agent_id: Uuid, updates: &AgentUpdate) -> Result<()> {
+        let mut set_clauses = Vec::new();
+        let mut param_idx = 2u32; // $1 is agent_id
+
+        // Build dynamic SET clause
+        if updates.description.is_some() {
+            set_clauses.push(format!("description = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.system_prompt.is_some() {
+            set_clauses.push(format!("system_prompt = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.visibility.is_some() {
+            set_clauses.push(format!("visibility = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.tags.is_some() {
+            set_clauses.push(format!("tags = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.model.is_some() {
+            set_clauses.push(format!("model = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.temperature.is_some() {
+            set_clauses.push(format!("temperature = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.education_budget_credits.is_some() {
+            set_clauses.push(format!("education_budget_credits = ${}", param_idx));
+            // param_idx += 1; // last one
+        }
+
+        if set_clauses.is_empty() {
+            return Ok(()); // nothing to update
+        }
+
+        let sql = format!(
+            "UPDATE agents SET {} WHERE agent_id = $1",
+            set_clauses.join(", ")
+        );
+        let mut query = sqlx::query(&sql).bind(agent_id);
+
+        // Bind in same order as set_clauses
+        if let Some(ref v) = updates.description {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.system_prompt {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.visibility {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.tags {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.model {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.temperature {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.education_budget_credits {
+            query = query.bind(v);
+        }
+
+        query.execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Delete an agent and cascade (episodes, rules, entities, facts, communities)
+    pub async fn delete_agent(&self, agent_id: Uuid) -> Result<()> {
+        // Delete in dependency order
+        sqlx::query("DELETE FROM facts WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM communities WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM entities WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM semantic_rules WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM consolidation_jobs WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM episodes WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM agents WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
     }
 
     /// Map a database row to an Agent struct
@@ -279,6 +443,14 @@ impl MemoryStore {
             mcp_servers: row.try_get("mcp_servers")?,
             description: row.try_get("description")?,
             author: row.try_get("author")?,
+            system_prompt: row.try_get("system_prompt")?,
+            visibility: row
+                .try_get::<Option<String>, _>("visibility")?
+                .unwrap_or_else(|| "public".to_string()),
+            owner_id: row.try_get("user_id")?,
+            tags: row
+                .try_get::<Option<Vec<String>>, _>("tags")?
+                .unwrap_or_default(),
             current_ontology_commit: row.try_get("current_ontology_commit")?,
             current_ontology_snapshot_id: row.try_get("current_ontology_snapshot_id")?,
             last_consolidated_at: row.try_get("last_consolidated_at")?,
@@ -290,6 +462,8 @@ impl MemoryStore {
             dreaming_budget_credits: row.try_get("dreaming_budget_credits")?,
             dreaming_credits_used: row.try_get("dreaming_credits_used")?,
             dreaming_budget_reset_at: row.try_get("dreaming_budget_reset_at")?,
+            education_budget_credits: row.try_get("education_budget_credits").unwrap_or(0),
+            education_credits_used: row.try_get("education_credits_used").unwrap_or(0),
         })
     }
 
@@ -1133,6 +1307,12 @@ mod tests {
             dreaming_budget_credits: 0,
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
+            system_prompt: None,
+            visibility: "public".to_string(),
+            owner_id: None,
+            tags: vec![],
+            education_budget_credits: 0,
+            education_credits_used: 0,
         };
 
         let agent_id = store.upsert_agent(agent).await.unwrap();
@@ -1187,6 +1367,12 @@ mod tests {
             dreaming_budget_credits: 0,
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
+            system_prompt: None,
+            visibility: "public".to_string(),
+            owner_id: None,
+            tags: vec![],
+            education_budget_credits: 0,
+            education_credits_used: 0,
         };
 
         let agent_id = store.upsert_agent(agent).await.unwrap();
@@ -1262,6 +1448,12 @@ mod tests {
             dreaming_budget_credits: 0,
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
+            system_prompt: None,
+            visibility: "public".to_string(),
+            owner_id: None,
+            tags: vec![],
+            education_budget_credits: 0,
+            education_credits_used: 0,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1340,6 +1532,12 @@ mod tests {
             dreaming_budget_credits: 0,
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
+            system_prompt: None,
+            visibility: "public".to_string(),
+            owner_id: None,
+            tags: vec![],
+            education_budget_credits: 0,
+            education_credits_used: 0,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1416,6 +1614,12 @@ mod tests {
             dreaming_budget_credits: 0,
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
+            system_prompt: None,
+            visibility: "public".to_string(),
+            owner_id: None,
+            tags: vec![],
+            education_budget_credits: 0,
+            education_credits_used: 0,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1502,6 +1706,12 @@ mod tests {
             dreaming_budget_credits: 0,
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
+            system_prompt: None,
+            visibility: "public".to_string(),
+            owner_id: None,
+            tags: vec![],
+            education_budget_credits: 0,
+            education_credits_used: 0,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

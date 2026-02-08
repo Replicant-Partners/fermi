@@ -466,6 +466,12 @@ mod tests {
             dreaming_budget_credits: 0,
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
+            system_prompt: None,
+            visibility: "public".to_string(),
+            owner_id: None,
+            tags: vec![],
+            education_budget_credits: 0,
+            education_credits_used: 0,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

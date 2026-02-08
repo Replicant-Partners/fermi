@@ -61,6 +61,12 @@ pub enum AuthError {
 
     #[error("OAuth error: {0}")]
     OAuthError(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 impl IntoResponse for AuthError {
@@ -87,6 +93,8 @@ impl IntoResponse for AuthError {
             AuthError::MessageExpired => (StatusCode::UNAUTHORIZED, self.to_string()),
             AuthError::VerificationFailed => (StatusCode::UNAUTHORIZED, self.to_string()),
             AuthError::OAuthError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            AuthError::InvalidInput(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            AuthError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
 
         let body = Json(json!({

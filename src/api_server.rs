@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::{header, StatusCode},
     middleware,
     response::{Html, IntoResponse, Redirect, Response},
@@ -15,9 +15,11 @@ use fermi::agent_backend::{
 use fermi::ast;
 use fermi_auth::{
     api_keys, auth_middleware, build_github_auth_url, build_google_auth_url, create_session_token,
-    generate_state, github_exchange_code, github_fetch_user_info, google_exchange_code,
-    google_fetch_user_info, sync_user, teams, AuthPrincipal, AuthState, MemberType, OAuthConfig,
-    ObjectType, Permission, ShareType, TeamRole,
+    credit_charge, credit_get_balance, credit_get_transactions, credit_grant, generate_state,
+    get_or_create_wallet, github_exchange_code, github_fetch_user_info, google_exchange_code,
+    google_fetch_user_info, optional_auth_middleware, sync_user, teams, AuthPrincipal, AuthState,
+    CreditTransaction, MemberType, OAuthConfig, ObjectType, Permission, ShareType, TeamRole,
+    Wallet,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -27,8 +29,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use agent_bestiary_memory::{
-    Agent, AnthropicEmbeddings, ConsolidationLock, ConsolidationWorker, EmbeddingGenerator,
-    Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
+    Agent, AgentUpdate, AnthropicEmbeddings, ConsolidationLock, ConsolidationWorker,
+    EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
 };
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMethod};
 
@@ -284,11 +286,19 @@ async fn main() {
             "/api/agents/:agent_id/projections/temporal",
             get(get_temporal_projections),
         )
+        // Page routes (serve HTML templates)
+        .route("/dashboard", get(dashboard_view))
+        .route("/agents/new", get(agent_create_view))
+        .route("/workspace/:workspace_id", get(workspace_view))
         // Auth flow routes
         .route("/auth/google", get(auth_google))
         .route("/auth/github", get(auth_github))
         .route("/auth/callback", get(auth_callback))
-        .route("/auth/logout", post(auth_logout));
+        .route("/auth/logout", post(auth_logout))
+        .layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            optional_auth_middleware,
+        ));
 
     // Protected routes (require auth)
     let protected_routes = Router::new()
@@ -311,6 +321,11 @@ async fn main() {
             "/api/teams/:team_id/members/:member_id",
             put(update_member_role_handler),
         )
+        // Agent CRUD
+        .route("/api/agents", post(create_agent_handler))
+        .route("/api/agents/mine", get(list_my_agents_handler))
+        .route("/api/agents/:agent_id", put(update_agent_handler))
+        .route("/api/agents/:agent_id", delete(delete_agent_handler))
         // Agent execution
         .route("/api/agents/:agent_id/execute", post(execute_agent_handler))
         // Dreaming budget
@@ -327,6 +342,24 @@ async fn main() {
             "/api/agents/:agent_id/consolidate",
             post(consolidate_agent_handler),
         )
+        // Workspace routes
+        .route("/api/workspaces", get(list_workspaces_handler))
+        .route("/api/workspaces/:workspace_id", get(get_workspace_handler))
+        .route(
+            "/api/workspaces/:workspace_id/agents",
+            get(list_workspace_agents_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/agents",
+            post(create_workspace_agent_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/budget",
+            put(fund_workspace_handler),
+        )
+        // Wallet / credits
+        .route("/api/wallet", get(get_wallet_handler))
+        .route("/api/wallet/transactions", get(get_transactions_handler))
         // Sharing routes
         .route("/api/shares", post(share_object_handler))
         .route("/api/shares/:share_id", delete(revoke_share_handler))
@@ -466,12 +499,30 @@ async fn debug_startup(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
-async fn list_agents(State(state): State<AppState>) -> Json<Value> {
-    // Primary: database (filter out test agents)
+async fn list_agents(
+    State(state): State<AppState>,
+    caller: Option<Extension<AuthPrincipal>>,
+) -> Json<Value> {
+    let caller_id = caller.map(|Extension(p)| p.user_id());
+
+    // Primary: database (filter out test agents + apply visibility)
     if let Ok(db_agents) = state.memory_store.list_agents().await {
         let real_agents: Vec<_> = db_agents
             .into_iter()
             .filter(|a| !a.agent_name.starts_with("test_agent_"))
+            .filter(|a| {
+                // Public agents visible to everyone
+                if a.visibility == "public" {
+                    return true;
+                }
+                // Private/shared agents only visible to owner
+                if let Some(ref uid) = caller_id {
+                    if a.owner_id.as_deref() == Some(uid.as_str()) {
+                        return true;
+                    }
+                }
+                false
+            })
             .collect();
         if !real_agents.is_empty() {
             let agents: Vec<Value> = real_agents
@@ -479,7 +530,7 @@ async fn list_agents(State(state): State<AppState>) -> Json<Value> {
                 .map(|a| {
                     // Merge filesystem card data if available
                     let card = state.registry.get(&a.agent_name).ok();
-                    let card_json = card.as_ref().and_then(|c| {
+                    let card_json = card.as_ref().and_then(|_c| {
                         let path = format!("agents/curated/{}/agent_card.json", a.agent_name);
                         std::fs::read_to_string(&path).ok()
                             .and_then(|s| serde_json::from_str::<Value>(&s).ok())
@@ -793,6 +844,39 @@ async fn projector_view() -> Html<String> {
     Html(html)
 }
 
+async fn dashboard_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/dashboard.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/dashboard.html: {}", e);
+            format!("<h1>Dashboard</h1><p>Error loading template: {}</p>", e)
+        }
+    };
+    Html(html)
+}
+
+async fn agent_create_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/agent_create.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/agent_create.html: {}", e);
+            format!("<h1>Create Agent</h1><p>Error loading template: {}</p>", e)
+        }
+    };
+    Html(html)
+}
+
+async fn workspace_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/workspace.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/workspace.html: {}", e);
+            format!("<h1>Workspace</h1><p>Error loading template: {}</p>", e)
+        }
+    };
+    Html(html)
+}
+
 #[derive(Debug, Deserialize)]
 struct ProjectionParams {
     method: Option<String>,
@@ -975,6 +1059,14 @@ async fn auth_callback(
 
     // Sync user to database
     let user = sync_user(&state.db, &user_info).await.map_err(map_err)?;
+
+    // Ensure wallet exists; grant onboarding credits if new
+    if let Ok(wallet) = get_or_create_wallet(&state.db, "user", &user.user_id).await {
+        if wallet.total_deposited == 0 && wallet.balance == 0 {
+            let _ =
+                credit_grant(&state.db, wallet.wallet_id, 100, "Welcome onboarding grant").await;
+        }
+    }
 
     // Create session JWT
     let token = create_session_token(&user, &state.jwt_secret).map_err(map_err)?;
@@ -1382,6 +1474,12 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             dreaming_budget_credits: 10, // default budget
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
+            system_prompt: None,
+            visibility: "public".to_string(),
+            owner_id: None,
+            tags: card.metadata.tags.clone(),
+            education_budget_credits: 0,
+            education_credits_used: 0,
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -1406,6 +1504,576 @@ async fn resolve_agent(state: &AppState, agent_id: &str) -> Result<Agent, (Statu
         })
 }
 
+// ─── Agent CRUD handlers ───────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CreateAgentRequest {
+    agent_name: String,
+    #[serde(default = "default_agent_type")]
+    agent_type: String,
+    description: Option<String>,
+    system_prompt: Option<String>,
+    #[serde(default = "default_model")]
+    model: String,
+    #[serde(default = "default_temperature")]
+    temperature: f64,
+    #[serde(default = "default_executor")]
+    executor_type: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default = "default_visibility")]
+    visibility: String,
+    #[serde(default)]
+    education_budget_credits: i32,
+}
+
+fn default_agent_type() -> String {
+    "research".to_string()
+}
+fn default_model() -> String {
+    "claude-3-haiku-20240307".to_string()
+}
+fn default_temperature() -> f64 {
+    0.3
+}
+fn default_executor() -> String {
+    "llm".to_string()
+}
+fn default_visibility() -> String {
+    "private".to_string()
+}
+
+async fn create_agent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<CreateAgentRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let agent = Agent {
+        agent_id: uuid::Uuid::new_v4(),
+        agent_name: req.agent_name.clone(),
+        agent_type: req.agent_type,
+        version: "1.0.0".to_string(),
+        tier: "community".to_string(),
+        executor_type: req.executor_type,
+        model: req.model,
+        temperature: req.temperature,
+        mcp_servers: None,
+        description: req.description,
+        author: user_id.clone(),
+        system_prompt: req.system_prompt,
+        visibility: req.visibility,
+        owner_id: Some(user_id.clone()),
+        tags: req.tags,
+        current_ontology_commit: None,
+        current_ontology_snapshot_id: None,
+        last_consolidated_at: None,
+        total_executions: 0,
+        successful_executions: 0,
+        failed_executions: 0,
+        total_cost_usd: None,
+        avg_execution_time_ms: 0,
+        dreaming_budget_credits: 5,
+        dreaming_credits_used: 0,
+        dreaming_budget_reset_at: None,
+        education_budget_credits: req.education_budget_credits,
+        education_credits_used: 0,
+    };
+
+    // If education budget requested, debit from user's wallet
+    if req.education_budget_credits > 0 {
+        let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Wallet error: {}", e),
+                )
+            })?;
+        credit_charge(
+            &state.db,
+            wallet.wallet_id,
+            req.education_budget_credits,
+            "education_alloc",
+            &format!("Education budget for agent {}", req.agent_name),
+            None,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Insufficient credits: {}", e),
+            )
+        })?;
+    }
+
+    let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Failed to create agent: {}", e),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "agent_name": req.agent_name,
+        "message": "Agent created successfully"
+    })))
+}
+
+async fn list_my_agents_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let agents = state
+        .memory_store
+        .list_agents_for_owner(&user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to list agents: {}", e),
+            )
+        })?;
+
+    let agent_list: Vec<Value> = agents
+        .iter()
+        .map(|a| {
+            json!({
+                "agent_id": a.agent_id,
+                "agent_name": a.agent_name,
+                "agent_type": a.agent_type,
+                "description": a.description,
+                "visibility": a.visibility,
+                "tags": a.tags,
+                "total_executions": a.total_executions,
+                "education_budget_credits": a.education_budget_credits,
+                "education_credits_used": a.education_credits_used,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "agents": agent_list })))
+}
+
+async fn update_agent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+    Json(updates): Json<AgentUpdate>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    // Owner check
+    if db_agent.owner_id.as_deref() != Some(&principal.user_id()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Not the owner of this agent".to_string(),
+        ));
+    }
+
+    state
+        .memory_store
+        .update_agent(db_agent.agent_id, &updates)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to update agent: {}", e),
+            )
+        })?;
+
+    Ok(Json(json!({ "message": "Agent updated successfully" })))
+}
+
+async fn delete_agent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    // Owner check
+    if db_agent.owner_id.as_deref() != Some(&principal.user_id()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Not the owner of this agent".to_string(),
+        ));
+    }
+
+    state
+        .memory_store
+        .delete_agent(db_agent.agent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to delete agent: {}", e),
+            )
+        })?;
+
+    Ok(Json(json!({ "message": "Agent deleted successfully" })))
+}
+
+// ─── Wallet / Credits handlers ─────────────────────────────────────
+
+async fn get_wallet_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+
+    Ok(Json(json!({
+        "wallet_id": wallet.wallet_id,
+        "balance": wallet.balance,
+        "total_deposited": wallet.total_deposited,
+        "total_spent": wallet.total_spent,
+        "created_at": wallet.created_at,
+    })))
+}
+
+#[derive(Deserialize)]
+struct TransactionsQuery {
+    #[serde(default = "default_tx_limit")]
+    limit: i64,
+}
+
+fn default_tx_limit() -> i64 {
+    50
+}
+
+async fn get_transactions_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(params): Query<TransactionsQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+
+    let txs = credit_get_transactions(&state.db, wallet.wallet_id, params.limit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Transaction query error: {}", e),
+            )
+        })?;
+
+    let tx_list: Vec<Value> = txs
+        .iter()
+        .map(|t| {
+            json!({
+                "tx_id": t.tx_id,
+                "amount": t.amount,
+                "balance_after": t.balance_after,
+                "tx_type": t.tx_type,
+                "description": t.description,
+                "related_id": t.related_id,
+                "created_at": t.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "wallet_id": wallet.wallet_id,
+        "balance": wallet.balance,
+        "transactions": tx_list,
+    })))
+}
+
+// ─── Workspace handlers ────────────────────────────────────────────
+
+async fn list_workspaces_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let user_teams = teams::get_user_teams(&state.db, &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Enrich with budget info from DB
+    let mut workspaces = Vec::new();
+    for team in &user_teams {
+        let budget_row =
+            sqlx::query("SELECT workspace_budget, workspace_spent FROM teams WHERE id = $1")
+                .bind(team.id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        let (budget, spent) = match budget_row {
+            Some(row) => (
+                row.try_get::<i32, _>("workspace_budget").unwrap_or(0),
+                row.try_get::<i32, _>("workspace_spent").unwrap_or(0),
+            ),
+            None => (0, 0),
+        };
+
+        workspaces.push(json!({
+            "id": team.id,
+            "name": team.name,
+            "slug": team.slug,
+            "description": team.description,
+            "workspace_budget": budget,
+            "workspace_spent": spent,
+            "workspace_remaining": budget - spent,
+        }));
+    }
+
+    Ok(Json(json!({ "workspaces": workspaces })))
+}
+
+async fn get_workspace_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let team = teams::get_team(&state.db, ws_uuid)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+
+    // Get budget
+    let budget_row =
+        sqlx::query("SELECT workspace_budget, workspace_spent FROM teams WHERE id = $1")
+            .bind(ws_uuid)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let (budget, spent) = match budget_row {
+        Some(row) => (
+            row.try_get::<i32, _>("workspace_budget").unwrap_or(0),
+            row.try_get::<i32, _>("workspace_spent").unwrap_or(0),
+        ),
+        None => (0, 0),
+    };
+
+    // Get workspace agents
+    let ws_id_str = ws_uuid.to_string();
+    let agents = state
+        .memory_store
+        .list_agents_for_owner(&ws_id_str)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let agent_list: Vec<Value> = agents
+        .iter()
+        .map(|a| {
+            json!({
+                "agent_id": a.agent_id,
+                "agent_name": a.agent_name,
+                "description": a.description,
+                "total_executions": a.total_executions,
+            })
+        })
+        .collect();
+
+    // Get members
+    let members = teams::get_team_members(&state.db, ws_uuid)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "id": team.id,
+        "name": team.name,
+        "slug": team.slug,
+        "description": team.description,
+        "workspace_budget": budget,
+        "workspace_spent": spent,
+        "workspace_remaining": budget - spent,
+        "agents": agent_list,
+        "members": members.iter().map(|m| json!({
+            "member_id": m.member_id,
+            "role": format!("{:?}", m.role),
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+async fn list_workspace_agents_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let agents = state
+        .memory_store
+        .list_agents_for_owner(&workspace_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let agent_list: Vec<Value> = agents
+        .iter()
+        .map(|a| {
+            json!({
+                "agent_id": a.agent_id,
+                "agent_name": a.agent_name,
+                "agent_type": a.agent_type,
+                "description": a.description,
+                "total_executions": a.total_executions,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "agents": agent_list })))
+}
+
+async fn create_workspace_agent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<CreateAgentRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Verify the user is a member of this workspace
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let _role = teams::get_member_role(&state.db, ws_uuid, &principal.user_id())
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::FORBIDDEN,
+                "Not a member of this workspace".to_string(),
+            )
+        })?;
+
+    // Create agent owned by workspace
+    let agent = Agent {
+        agent_id: uuid::Uuid::new_v4(),
+        agent_name: req.agent_name.clone(),
+        agent_type: req.agent_type,
+        version: "1.0.0".to_string(),
+        tier: "community".to_string(),
+        executor_type: req.executor_type,
+        model: req.model,
+        temperature: req.temperature,
+        mcp_servers: None,
+        description: req.description,
+        author: principal.user_id(),
+        system_prompt: req.system_prompt,
+        visibility: "shared".to_string(), // workspace agents are shared by default
+        owner_id: Some(workspace_id),
+        tags: req.tags,
+        current_ontology_commit: None,
+        current_ontology_snapshot_id: None,
+        last_consolidated_at: None,
+        total_executions: 0,
+        successful_executions: 0,
+        failed_executions: 0,
+        total_cost_usd: None,
+        avg_execution_time_ms: 0,
+        dreaming_budget_credits: 5,
+        dreaming_credits_used: 0,
+        dreaming_budget_reset_at: None,
+        education_budget_credits: req.education_budget_credits,
+        education_credits_used: 0,
+    };
+
+    let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Failed to create agent: {}", e),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "agent_name": req.agent_name,
+        "workspace_id": ws_uuid,
+        "message": "Workspace agent created successfully"
+    })))
+}
+
+#[derive(Deserialize)]
+struct FundWorkspaceRequest {
+    amount: i32,
+}
+
+async fn fund_workspace_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<FundWorkspaceRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    if req.amount <= 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Amount must be positive".to_string(),
+        ));
+    }
+
+    // Verify owner
+    let team = teams::get_team(&state.db, ws_uuid)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+
+    if team.owner_id != principal.user_id() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only workspace owner can fund it".to_string(),
+        ));
+    }
+
+    // Charge user's wallet
+    let user_wallet = get_or_create_wallet(&state.db, "user", &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    credit_charge(
+        &state.db,
+        user_wallet.wallet_id,
+        req.amount,
+        "transfer_out",
+        &format!("Fund workspace {}", team.name),
+        Some(&workspace_id),
+    )
+    .await
+    .map_err(|e| (StatusCode::PAYMENT_REQUIRED, e.to_string()))?;
+
+    // Credit workspace budget
+    sqlx::query("UPDATE teams SET workspace_budget = workspace_budget + $1 WHERE id = $2")
+        .bind(req.amount)
+        .bind(ws_uuid)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "message": "Workspace funded successfully",
+        "amount": req.amount,
+        "workspace_id": ws_uuid,
+    })))
+}
+
 // ─── Agent execution ───────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -1415,10 +2083,28 @@ struct ExecuteRequest {
 
 async fn execute_agent_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
     Path(agent_id): Path<String>,
     Json(body): Json<ExecuteRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    let caller_id = principal.user_id();
+
+    // 0. Check caller has credits
+    let wallet = get_or_create_wallet(&state.db, "user", &caller_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+    if wallet.balance <= 0 {
+        return Err((
+            StatusCode::PAYMENT_REQUIRED,
+            "Insufficient credits".to_string(),
+        ));
+    }
+
     // 1. Resolve agent in both registry and database
     let db_agent = resolve_agent(&state, &agent_id).await?;
 
@@ -1488,7 +2174,43 @@ async fn execute_agent_handler(
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         })?;
 
-    // 6. Return result
+    // 6. Charge credits: execution fee (1 credit per 1000 tokens, min 1) + 10% gas fee
+    let tokens = output.tokens_used.unwrap_or(0) as i32;
+    let execution_fee = std::cmp::max(1, tokens / 1000);
+    let gas_fee = std::cmp::max(1, execution_fee / 10);
+
+    // Charge execution fee
+    let ep_id_str = episode_id.to_string();
+    if let Err(e) = credit_charge(
+        &state.db,
+        wallet.wallet_id,
+        execution_fee,
+        "execution_fee",
+        &format!("Execute {} ({}tk)", agent_id, tokens),
+        Some(ep_id_str.as_str()),
+    )
+    .await
+    {
+        eprintln!("Warning: failed to charge execution fee: {}", e);
+    }
+
+    // Charge gas fee
+    if let Err(e) = credit_charge(
+        &state.db,
+        wallet.wallet_id,
+        gas_fee,
+        "gas_fee",
+        &format!("Gas fee for {}", agent_id),
+        Some(ep_id_str.as_str()),
+    )
+    .await
+    {
+        eprintln!("Warning: failed to charge gas fee: {}", e);
+    }
+
+    let total_charged = execution_fee + gas_fee;
+
+    // 7. Return result
     Ok(Json(json!({
         "agent_id": agent_id,
         "episode_id": episode_id,
@@ -1496,6 +2218,7 @@ async fn execute_agent_handler(
         "confidence": output.confidence,
         "execution_time_ms": output.execution_time_ms,
         "tokens_used": output.tokens_used,
+        "credits_charged": total_charged,
         "evidence": output.evidence.iter().map(|e| json!({
             "id": e.id,
             "source": e.source,

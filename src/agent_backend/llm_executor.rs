@@ -35,11 +35,18 @@ impl LLMExecutor {
         Ok(Self::new(api_key))
     }
 
-    /// Build structured prompt for forecasting context
+    /// Build the system prompt — use agent card's custom prompt if available
+    fn build_system_prompt(&self, context: &ExecutionContext) -> String {
+        if let Some(ref custom) = context.agent_card.system_prompt {
+            return custom.clone();
+        }
+        // Default forecasting system prompt
+        "You are a forecasting research agent helping to generate evidence for probabilistic forecasts.".to_string()
+    }
+
+    /// Build the user message for the query
     fn build_prompt(&self, agent: &AgentStmt, context: &ExecutionContext) -> String {
         let mut prompt = String::new();
-
-        prompt.push_str("You are a forecasting research agent helping to generate evidence for probabilistic forecasts.\n\n");
 
         prompt.push_str(&format!(
             "AGENT TYPE: {}\n",
@@ -117,17 +124,19 @@ impl AgentExecutor for LLMExecutor {
     ) -> Result<AgentOutput, ExecutionError> {
         let start = Instant::now();
 
-        // Build prompt
-        let prompt = self.build_prompt(agent, context);
+        // Build prompts
+        let system_prompt = self.build_system_prompt(context);
+        let user_prompt = self.build_prompt(agent, context);
 
         // Prepare Claude API request
         let request = ClaudeRequest {
             model: context.agent_card.capabilities.model.clone(),
             max_tokens: 2048,
             temperature: context.agent_card.capabilities.temperature,
+            system: Some(system_prompt),
             messages: vec![Message {
                 role: "user".to_string(),
-                content: prompt,
+                content: user_prompt,
             }],
         };
 
@@ -197,6 +206,8 @@ struct ClaudeRequest {
     model: String,
     max_tokens: u32,
     temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
     messages: Vec<Message>,
 }
 

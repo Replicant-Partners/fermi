@@ -635,9 +635,21 @@
                   ${agent.metadata?.author ? `<span class="badge">${agent.metadata.author}</span>` : ""}
                 </div>
               </div>
-              <button class="hire-button" onclick="alert('Agent hiring coming soon! This will allow you to add this agent to your workspace.')">
-                Hire Agent
+              <button class="hire-button" id="execute-btn" onclick="toggleExecutePanel()">
+                Execute Agent
               </button>
+            </div>
+
+            <!-- Inline Execute Panel (hidden by default) -->
+            <div id="execute-panel" style="display:none;background:var(--bg1);border:1px solid var(--bg3);padding:16px;margin-bottom:16px">
+              <div style="font-size:0.85rem;color:var(--yellow);margin-bottom:8px">Execute Agent</div>
+              <input type="text" id="exec-query" placeholder="Enter your query..."
+                style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg0);padding:8px 12px;font-family:inherit;margin-bottom:8px" />
+              <button onclick="executeAgent()"
+                style="background:transparent;border:1px solid var(--yellow);color:var(--yellow);padding:6px 16px;cursor:pointer;font-family:inherit">
+                Run
+              </button>
+              <div id="exec-result" style="margin-top:12px;font-size:0.85rem;color:var(--fg2);white-space:pre-wrap"></div>
             </div>
 
             <div class="cognition-panel">
@@ -1320,6 +1332,42 @@
             '<a href="/auth/github" class="auth-btn">GitHub</a>';
         }
       })();
+    </script>
+    <script>
+      function toggleExecutePanel() {
+        const panel = document.getElementById("execute-panel");
+        panel.style.display = panel.style.display === "none" ? "block" : "none";
+        if (panel.style.display === "block")
+          document.getElementById("exec-query").focus();
+      }
+      async function executeAgent() {
+        const query = document.getElementById("exec-query").value.trim();
+        if (!query) return;
+        const resultEl = document.getElementById("exec-result");
+        resultEl.textContent = "Executing...";
+        const agentId = window.location.pathname
+          .split("/")
+          .filter(Boolean)
+          .pop();
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/execute`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ query }),
+            },
+          );
+          if (res.ok) {
+            const data = await res.json();
+            resultEl.textContent = JSON.stringify(data, null, 2);
+          } else {
+            resultEl.textContent = "Error: " + (await res.text());
+          }
+        } catch (e) {
+          resultEl.textContent = "Network error: " + e.message;
+        }
+      }
     </script>
   </body>
 </html>

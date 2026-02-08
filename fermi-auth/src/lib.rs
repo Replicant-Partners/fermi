@@ -1,4 +1,5 @@
 pub mod api_keys;
+pub mod credits;
 pub mod error;
 pub mod jwt;
 pub mod middleware;
@@ -31,3 +32,9 @@ pub use types::{
     ShareType, Team, TeamMember, TeamRole, User, UserRole, Visibility,
 };
 pub use visibility::{can_access, can_access_anonymous, can_edit, can_view, AccessLevel};
+
+pub use credits::{
+    charge as credit_charge, deposit as credit_deposit, get_balance as credit_get_balance,
+    get_or_create_wallet, get_transactions as credit_get_transactions, grant as credit_grant,
+    CreditTransaction, Wallet,
+};

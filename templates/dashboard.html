@@ -1,205 +1,427 @@
-{% extends "base.html" %} {% block title %}Dashboard - Fermi Agent Bestiary{%
-endblock %} {% block content %}
-<h1 style="font-size: 2rem; color: var(--accent); margin-bottom: 2rem">
-  Performance Dashboard
-</h1>
-
-<!-- Overall Stats -->
-<div class="card mb-3">
-  <div class="card-header">
-    <h2 class="card-title">System Overview</h2>
-  </div>
-
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-label">Total Agents</div>
-      <div class="stat-value">{{ total_agents }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Total Executions</div>
-      <div class="stat-value">{{ total_executions }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Total Tokens</div>
-      <div class="stat-value">{{ total_tokens }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Total Cost</div>
-      <div class="stat-value">${{ total_cost }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Avg Success Rate</div>
-      <div class="stat-value">
-        {{ avg_success_rate * 100.0 }}<span class="stat-unit">%</span>
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard - Agent Bestiary</title>
+    <style>
+      :root {
+        --bg0-hard: #1d2021;
+        --bg0: #282828;
+        --bg1: #3c3836;
+        --bg2: #504945;
+        --bg3: #665c54;
+        --fg0: #fbf1c7;
+        --fg1: #ebdbb2;
+        --fg2: #d5c4a1;
+        --fg3: #bdae93;
+        --yellow: #fabd2f;
+        --green: #b8bb26;
+        --red: #fb4934;
+        --aqua: #8ec07c;
+        --gray: #928374;
+      }
+      .theme-op1 {
+        --bg0-hard: #f5f5f0;
+        --bg0: #ffffff;
+        --bg1: #f0f0eb;
+        --bg2: #e0e0db;
+        --bg3: #c8c8c3;
+        --fg0: #1a1a1a;
+        --fg1: #2d2d2d;
+        --fg2: #4a4a4a;
+        --fg3: #6b6b6b;
+        --yellow: #ff6b00;
+        --green: #00c853;
+        --red: #ff1744;
+        --aqua: #00b8d4;
+        --gray: #9e9e9e;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--bg0-hard);
+        color: var(--fg1);
+        font-family: "Berkeley Mono", "JetBrains Mono", monospace;
+        line-height: 1.6;
+      }
+      header {
+        background: var(--bg0);
+        border-bottom: 1px solid var(--bg2);
+        padding: 16px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      header h1 {
+        font-size: 1.2rem;
+        color: var(--fg0);
+      }
+      header a {
+        color: var(--fg3);
+        text-decoration: none;
+        font-size: 0.85rem;
+        margin-left: 16px;
+      }
+      header a:hover {
+        color: var(--yellow);
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        margin-bottom: 24px;
+      }
+      @media (max-width: 768px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .section {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 20px;
+      }
+      .section-title {
+        font-size: 0.9rem;
+        color: var(--yellow);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .btn {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        padding: 4px 12px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        color: var(--fg3);
+        font-family: inherit;
+        text-decoration: none;
+      }
+      .btn:hover {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .btn-primary {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .btn-primary:hover {
+        background: var(--yellow);
+        color: var(--bg0-hard);
+      }
+      .wallet-balance {
+        font-size: 2rem;
+        color: var(--green);
+        font-weight: bold;
+      }
+      .wallet-label {
+        font-size: 0.8rem;
+        color: var(--fg3);
+      }
+      .agent-row,
+      .workspace-row,
+      .tx-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--bg1);
+      }
+      .agent-row:last-child,
+      .workspace-row:last-child,
+      .tx-row:last-child {
+        border-bottom: none;
+      }
+      .agent-name {
+        color: var(--fg0);
+        font-size: 0.9rem;
+      }
+      .agent-meta {
+        color: var(--fg3);
+        font-size: 0.75rem;
+      }
+      .badge {
+        font-size: 0.7rem;
+        padding: 2px 6px;
+        border: 1px solid var(--bg3);
+        color: var(--fg3);
+      }
+      .badge-public {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .badge-private {
+        border-color: var(--gray);
+        color: var(--gray);
+      }
+      .badge-shared {
+        border-color: var(--aqua);
+        color: var(--aqua);
+      }
+      .tx-amount-positive {
+        color: var(--green);
+      }
+      .tx-amount-negative {
+        color: var(--red);
+      }
+      .tx-type {
+        color: var(--fg3);
+        font-size: 0.75rem;
+      }
+      .empty-state {
+        color: var(--fg3);
+        font-size: 0.85rem;
+        font-style: italic;
+        padding: 12px 0;
+      }
+      .budget-bar {
+        height: 6px;
+        background: var(--bg2);
+        margin-top: 4px;
+      }
+      .budget-fill {
+        height: 100%;
+        background: var(--aqua);
+      }
+      .theme-toggle-btn {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        padding: 4px 10px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        color: var(--fg3);
+        font-family: inherit;
+      }
+      .theme-toggle-btn:hover {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Dashboard</h1>
       </div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Avg Confidence</div>
-      <div class="stat-value">{{ avg_confidence }}</div>
-    </div>
-  </div>
-</div>
-
-<!-- Agent Performance Table -->
-<div class="card mb-3">
-  <div class="card-header">
-    <h2 class="card-title">Agent Performance</h2>
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Agent</th>
-        <th>Tier</th>
-        <th>Executions</th>
-        <th>Success Rate</th>
-        <th>Avg Confidence</th>
-        <th>Total Tokens</th>
-        <th>Total Cost</th>
-        <th>Avg Time (ms)</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for agent in agents %}
-      <tr
-        onclick="window.location='/agents/{{ agent.agent_id }}'"
-        style="cursor: pointer"
-      >
-        <td>
-          <a
-            href="/agents/{{ agent.agent_id }}"
-            style="
-              color: var(--primary);
-              text-decoration: none;
-              font-weight: 500;
-            "
-          >
-            {{ agent.agent_id }}
-          </a>
-        </td>
-        <td>
-          <span class="badge badge-{{ agent.tier|lower }}"
-            >{{ agent.tier }}</span
-          >
-        </td>
-        <td style="color: var(--fg-primary); font-weight: 500">
-          {{ agent.usage.total_executions }}
-        </td>
-        <td style="color: var(--secondary); font-weight: 500">
-          {{ agent.performance.accuracy_rate * 100.0 }}%
-        </td>
-        <td style="color: var(--accent); font-weight: 500">
-          {{ agent.performance.avg_confidence }}
-        </td>
-        <td style="color: var(--fg-primary)">
-          {{ agent.usage.total_tokens_used }}
-        </td>
-        <td style="color: var(--accent)">${{ agent.usage.total_cost_usd }}</td>
-        <td style="color: var(--primary)">
-          {{ agent.usage.avg_execution_time_ms }}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-
-<!-- Cost Breakdown -->
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem">
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title">Cost by Agent</h2>
-    </div>
-
-    {% for agent in agents %}
-    <div style="margin-bottom: 1rem">
-      <div class="flex-between mb-1">
-        <span style="color: var(--fg-primary)">{{ agent.agent_id }}</span>
-        <span style="color: var(--accent); font-weight: bold"
-          >${{ agent.usage.total_cost_usd }}</span
+      <div>
+        <a href="/">Catalogue</a>
+        <a href="/agents/new" style="color: var(--yellow)">+ Create Agent</a>
+        <a href="#" id="user-name"></a>
+        <button
+          id="theme-toggle"
+          class="theme-toggle-btn"
+          title="Toggle Theme (Ctrl+T)"
         >
+          OP-1
+        </button>
       </div>
-      <div
-        style="
-          background-color: var(--bg-tertiary);
-          height: 8px;
-          border-radius: 4px;
-          overflow: hidden;
-        "
-      >
-        <div
-          style="
-            background: linear-gradient(90deg, var(--accent), var(--tertiary));
-            height: 100%;
-            width: 50%;
-          "
-        ></div>
+    </header>
+
+    <div class="container">
+      <!-- Wallet -->
+      <div class="section" style="margin-bottom: 24px">
+        <div class="section-title">Wallet</div>
+        <div style="display: flex; gap: 48px; align-items: center">
+          <div>
+            <div class="wallet-balance" id="wallet-balance">--</div>
+            <div class="wallet-label">credits available</div>
+          </div>
+          <div>
+            <div style="color: var(--fg2)" id="wallet-deposited">--</div>
+            <div class="wallet-label">total deposited</div>
+          </div>
+          <div>
+            <div style="color: var(--fg2)" id="wallet-spent">--</div>
+            <div class="wallet-label">total spent</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid">
+        <!-- My Agents -->
+        <div class="section">
+          <div class="section-title">
+            My Agents
+            <a href="/agents/new" class="btn btn-primary">+ New</a>
+          </div>
+          <div id="agents-list">
+            <div class="empty-state">Loading...</div>
+          </div>
+        </div>
+
+        <!-- My Workspaces -->
+        <div class="section">
+          <div class="section-title">Workspaces</div>
+          <div id="workspaces-list">
+            <div class="empty-state">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Transactions -->
+      <div class="section">
+        <div class="section-title">Recent Transactions</div>
+        <div id="transactions-list">
+          <div class="empty-state">Loading...</div>
+        </div>
       </div>
     </div>
-    {% endfor %}
-  </div>
 
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title">Executions by Agent</h2>
-    </div>
+    <script>
+      // Auth check — redirect to home if not logged in
+      (async () => {
+        try {
+          const res = await fetch("/api/auth/me");
+          if (!res.ok) {
+            window.location.href = "/";
+            return;
+          }
+          const user = await res.json();
+          document.getElementById("user-name").textContent =
+            user.display_name || user.email || "User";
+        } catch {
+          window.location.href = "/";
+          return;
+        }
 
-    {% for agent in agents %}
-    <div style="margin-bottom: 1rem">
-      <div class="flex-between mb-1">
-        <span style="color: var(--fg-primary)">{{ agent.agent_id }}</span>
-        <span style="color: var(--primary); font-weight: bold"
-          >{{ agent.usage.total_executions }}</span
-        >
-      </div>
-      <div
-        style="
-          background-color: var(--bg-tertiary);
-          height: 8px;
-          border-radius: 4px;
-          overflow: hidden;
-        "
-      >
-        <div
-          style="
-            background: linear-gradient(
-              90deg,
-              var(--primary),
-              var(--secondary)
-            );
-            height: 100%;
-            width: 75%;
-          "
-        ></div>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-</div>
+        // Load wallet
+        try {
+          const res = await fetch("/api/wallet");
+          if (res.ok) {
+            const w = await res.json();
+            document.getElementById("wallet-balance").textContent = w.balance;
+            document.getElementById("wallet-deposited").textContent =
+              w.total_deposited;
+            document.getElementById("wallet-spent").textContent = w.total_spent;
+          }
+        } catch {}
 
-<!-- Ontology Stats -->
-<div class="card mt-3">
-  <div class="card-header">
-    <h2 class="card-title">Ontology Statistics</h2>
-  </div>
+        // Load agents
+        try {
+          const res = await fetch("/api/agents/mine");
+          if (res.ok) {
+            const data = await res.json();
+            const el = document.getElementById("agents-list");
+            if (!data.agents || data.agents.length === 0) {
+              el.innerHTML =
+                '<div class="empty-state">No agents yet. <a href="/agents/new" style="color:var(--yellow)">Create one</a></div>';
+            } else {
+              el.innerHTML = data.agents
+                .map(
+                  (a) => `
+                <div class="agent-row">
+                  <div>
+                    <div class="agent-name">${a.agent_name}</div>
+                    <div class="agent-meta">${a.agent_type} | ${a.total_executions} executions</div>
+                  </div>
+                  <div>
+                    <span class="badge badge-${a.visibility}">${a.visibility}</span>
+                  </div>
+                </div>
+              `,
+                )
+                .join("");
+            }
+          }
+        } catch {}
 
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-label">Total Entities</div>
-      <div class="stat-value">{{ total_entities }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Total Relationships</div>
-      <div class="stat-value">{{ total_relationships }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Evolution Commits</div>
-      <div class="stat-value">{{ evolution_commits }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Total Forecasts</div>
-      <div class="stat-value">{{ total_forecasts }}</div>
-    </div>
-  </div>
-</div>
-{% endblock %}
+        // Load workspaces
+        try {
+          const res = await fetch("/api/workspaces");
+          if (res.ok) {
+            const data = await res.json();
+            const el = document.getElementById("workspaces-list");
+            if (!data.workspaces || data.workspaces.length === 0) {
+              el.innerHTML =
+                '<div class="empty-state">No workspaces yet.</div>';
+            } else {
+              el.innerHTML = data.workspaces
+                .map((w) => {
+                  const pct =
+                    w.workspace_budget > 0
+                      ? Math.min(
+                          100,
+                          (w.workspace_spent / w.workspace_budget) * 100,
+                        )
+                      : 0;
+                  return `
+                  <div class="workspace-row">
+                    <div>
+                      <div class="agent-name">${w.name}</div>
+                      <div class="agent-meta">${w.workspace_remaining} / ${w.workspace_budget} credits remaining</div>
+                      <div class="budget-bar"><div class="budget-fill" style="width:${pct}%"></div></div>
+                    </div>
+                  </div>
+                `;
+                })
+                .join("");
+            }
+          }
+        } catch {}
+
+        // Load transactions
+        try {
+          const res = await fetch("/api/wallet/transactions?limit=10");
+          if (res.ok) {
+            const data = await res.json();
+            const el = document.getElementById("transactions-list");
+            if (!data.transactions || data.transactions.length === 0) {
+              el.innerHTML =
+                '<div class="empty-state">No transactions yet.</div>';
+            } else {
+              el.innerHTML = data.transactions
+                .map(
+                  (t) => `
+                <div class="tx-row">
+                  <div>
+                    <span class="tx-type">${t.tx_type}</span>
+                    ${t.description ? `<span style="color:var(--fg2);font-size:0.8rem;margin-left:8px">${t.description}</span>` : ""}
+                  </div>
+                  <div class="${t.amount >= 0 ? "tx-amount-positive" : "tx-amount-negative"}">
+                    ${t.amount >= 0 ? "+" : ""}${t.amount}
+                  </div>
+                </div>
+              `,
+                )
+                .join("");
+            }
+          }
+        } catch {}
+      })();
+
+      // Theme toggle
+      const themes = ["hasui", "op1"];
+      const labels = { hasui: "OP-1", op1: "Hasui" };
+      function setTheme(t) {
+        document.documentElement.className = "theme-" + t;
+        localStorage.setItem("fermi-theme", t);
+        document.getElementById("theme-toggle").textContent = labels[t];
+      }
+      const saved = localStorage.getItem("fermi-theme");
+      if (saved && themes.includes(saved)) setTheme(saved);
+      document.getElementById("theme-toggle").addEventListener("click", () => {
+        const current = localStorage.getItem("fermi-theme") || "hasui";
+        setTheme(current === "hasui" ? "op1" : "hasui");
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.ctrlKey && e.key === "t") {
+          e.preventDefault();
+          document.getElementById("theme-toggle").click();
+        }
+      });
+    </script>
+  </body>
+</html>
