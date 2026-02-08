@@ -26,7 +26,10 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use agent_bestiary_memory::{Agent, Episode, ExecutionStatus, MemoryStore};
+use agent_bestiary_memory::{
+    Agent, AnthropicEmbeddings, ConsolidationLock, ConsolidationWorker, EmbeddingGenerator,
+    Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
+};
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMethod};
 
 #[derive(Clone)]
@@ -36,6 +39,7 @@ struct AppState {
     registry: Arc<AgentRegistry>,
     projection_engine: Arc<ProjectionEngine>,
     projection_cache: Arc<ProjectionCache>,
+    embedder: Arc<dyn EmbeddingGenerator>,
     gemini_api_key: String,
     jwt_secret: String,
     oauth: OAuthConfig,
@@ -171,6 +175,16 @@ async fn main() {
         Arc::new(AgentRegistry::new())
     };
 
+    // Initialize embedding generator
+    let embedder: Arc<dyn EmbeddingGenerator> =
+        if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+            println!("Using Anthropic embeddings (voyage-2)");
+            Arc::new(AnthropicEmbeddings::new(api_key))
+        } else {
+            println!("No ANTHROPIC_API_KEY, using mock embeddings");
+            Arc::new(MockEmbeddings::new(1024))
+        };
+
     // Load agents from filesystem into registry
     let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents/curated".to_string());
     println!("Loading agents from directory: {}", agents_dir);
@@ -227,6 +241,7 @@ async fn main() {
         registry,
         projection_engine,
         projection_cache,
+        embedder,
         gemini_api_key,
         jwt_secret: jwt_secret.clone(),
         oauth,
@@ -306,6 +321,11 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/dreaming/budget",
             put(set_dreaming_budget),
+        )
+        // Consolidation trigger
+        .route(
+            "/api/agents/:agent_id/consolidate",
+            post(consolidate_agent_handler),
         )
         // Sharing routes
         .route("/api/shares", post(share_object_handler))
@@ -1445,8 +1465,20 @@ async fn execute_agent_handler(
     // 4. Record stats in registry
     let _ = state.registry.record_execution(&agent_id, &output);
 
-    // 5. Store as ADM episode
-    let episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
+    // 5. Store as ADM episode (with embedding)
+    let mut episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
+
+    // Generate embedding from query + output summary
+    let embed_text = format!(
+        "{} {}",
+        body.query,
+        output.metadata.reasoning.as_deref().unwrap_or("")
+    );
+    match state.embedder.generate(&embed_text).await {
+        Ok(embedding) => episode.embedding = Some(embedding),
+        Err(e) => eprintln!("Warning: embedding generation failed: {}", e),
+    }
+
     let episode_id = state
         .memory_store
         .store_episode(episode)
@@ -1722,5 +1754,100 @@ async fn set_dreaming_budget(
         "status": "updated",
         "agent_id": agent_id,
         "budget_credits": body.budget_credits,
+    })))
+}
+
+// ─── Consolidation trigger ─────────────────────────────────────────
+
+async fn consolidate_agent_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    // Check dreaming budget
+    let remaining = db_agent.dreaming_budget_credits - db_agent.dreaming_credits_used;
+    if remaining <= 0 {
+        return Err((
+            StatusCode::PAYMENT_REQUIRED,
+            format!(
+                "No dreaming credits remaining (used {}/{})",
+                db_agent.dreaming_credits_used, db_agent.dreaming_budget_credits
+            ),
+        ));
+    }
+
+    // Check for unconsolidated episodes first (avoids spending a credit on empty runs)
+    let episodes = state
+        .memory_store
+        .get_unconsolidated_episodes(db_agent.agent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch episodes: {}", e),
+            )
+        })?;
+
+    if episodes.is_empty() {
+        return Ok(Json(json!({
+            "status": "completed",
+            "agent_id": agent_id,
+            "result": {
+                "episodes_processed": 0,
+                "clusters_identified": 0,
+                "rules_extracted": 0,
+                "message": "No unconsolidated episodes found"
+            },
+            "dreaming_credits_remaining": remaining,
+        })));
+    }
+
+    // Create consolidation worker and run
+    let pool = Arc::new(state.db.clone());
+    let lock = Arc::new(ConsolidationLock::new(
+        pool,
+        format!("api-{}", uuid::Uuid::new_v4()),
+    ));
+    let worker = ConsolidationWorker::new(
+        state.memory_store.clone(),
+        lock,
+        state.embedder.clone(),
+        "api-trigger".to_string(),
+    );
+
+    let result = worker
+        .consolidate_agent(db_agent.agent_id, 0.5, 2)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Consolidation failed: {}", e),
+            )
+        })?;
+
+    // Debit dreaming credit
+    sqlx::query(
+        "UPDATE agents SET dreaming_credits_used = dreaming_credits_used + 1, last_consolidated_at = NOW() WHERE agent_id = $1",
+    )
+    .bind(db_agent.agent_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "status": "completed",
+        "agent_id": agent_id,
+        "result": {
+            "episodes_processed": result.episodes_processed,
+            "clusters_identified": result.clusters_identified,
+            "rules_extracted": result.rules_extracted,
+            "rules_verified": result.rules_verified,
+            "rules_rejected": result.rules_rejected,
+            "entities_created": result.entities_created,
+            "facts_created": result.facts_created,
+        },
+        "dreaming_credits_remaining": remaining - 1,
     })))
 }

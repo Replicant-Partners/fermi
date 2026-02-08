@@ -18,9 +18,10 @@ CREATE TABLE IF NOT EXISTS public.teams (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_teams_owner ON public.teams(owner_id);
-CREATE INDEX idx_teams_slug  ON public.teams(slug);
+CREATE INDEX IF NOT EXISTS idx_teams_owner ON public.teams(owner_id);
+CREATE INDEX IF NOT EXISTS idx_teams_slug  ON public.teams(slug);
 
+DROP TRIGGER IF EXISTS update_teams_updated_at ON public.teams;
 CREATE TRIGGER update_teams_updated_at BEFORE UPDATE ON public.teams
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -44,9 +45,9 @@ CREATE TABLE IF NOT EXISTS public.team_members (
     PRIMARY KEY (team_id, member_id)
 );
 
-CREATE INDEX idx_team_members_member ON public.team_members(member_id);
-CREATE INDEX idx_team_members_team   ON public.team_members(team_id);
-CREATE INDEX idx_team_members_type   ON public.team_members(member_type);
+CREATE INDEX IF NOT EXISTS idx_team_members_member ON public.team_members(member_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_team   ON public.team_members(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_type   ON public.team_members(member_type);
 
 COMMENT ON TABLE public.team_members IS 'Team membership - users and agents can both be members';
 COMMENT ON COLUMN public.team_members.member_type IS 'user or agent';
@@ -75,8 +76,8 @@ CREATE TABLE IF NOT EXISTS public.object_shares (
     UNIQUE (object_type, object_id, share_type, share_target)
 );
 
-CREATE INDEX idx_object_shares_object ON public.object_shares(object_type, object_id);
-CREATE INDEX idx_object_shares_target ON public.object_shares(share_type, share_target);
+CREATE INDEX IF NOT EXISTS idx_object_shares_object ON public.object_shares(object_type, object_id);
+CREATE INDEX IF NOT EXISTS idx_object_shares_target ON public.object_shares(share_type, share_target);
 
 COMMENT ON TABLE public.object_shares IS 'Polymorphic sharing: any object to any team or user';
 COMMENT ON COLUMN public.object_shares.object_id IS 'ID of the shared object (UUID as text or string ID)';
@@ -95,6 +96,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_auto_add_team_owner ON public.teams;
 CREATE TRIGGER trg_auto_add_team_owner
     AFTER INSERT ON public.teams
     FOR EACH ROW EXECUTE FUNCTION auto_add_team_owner();
