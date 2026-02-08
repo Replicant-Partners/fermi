@@ -1,0 +1,65 @@
+{
+  "agent_id": "coherence_evaluator",
+  "agent_type": "coherence",
+  "version": "0.1.0",
+  "tier": "curated",
+  "capabilities": {
+    "executor": "mcp",
+    "mcp_tools": [
+      {
+        "name": "evaluate_coherence",
+        "description": "Evaluate explanatory coherence of a multi-party conversation using Thagard TEC model"
+      },
+      {
+        "name": "get_coherence_snapshot",
+        "description": "Get current coherence evaluation state for a conversation"
+      }
+    ],
+    "skills": [
+      "discourse-analysis",
+      "coherence-scoring",
+      "collaboration-assessment",
+      "principle-evaluation"
+    ],
+    "model": "deterministic",
+    "temperature": 0.0
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-08T00:00:00Z",
+    "evolution_commits": 0
+  },
+  "metadata": {
+    "created": "2026-02-08",
+    "author": "Replicant Partners",
+    "description": "Observes multi-party conversations and evaluates collaborative discourse coherence using Thagard's Theory of Explanatory Coherence (TEC). Computes global coherence score, per-principle diagnostics, and actionable feedback via connectionist constraint-satisfaction (ECHO).",
+    "tags": [
+      "coherence",
+      "discourse-analysis",
+      "collaboration",
+      "thagard",
+      "tec",
+      "constraint-satisfaction"
+    ]
+  }
+}
