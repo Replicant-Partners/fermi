@@ -4,11 +4,9 @@
 --              communities, ontology_snapshots, consolidation_jobs, verification_tests,
 --              consolidation_locks) if not exists, then add dreaming budget columns.
 
-BEGIN;
-
--- Enable required extensions
+-- Enable required extensions (vector may already be enabled on Neon)
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "vector";
+DO $$ BEGIN CREATE EXTENSION IF NOT EXISTS "vector"; EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'pgvector extension not available, skipping'; END $$;
 
 -- ============================================================================
 -- AGENT REGISTRY
@@ -248,4 +246,4 @@ ALTER TABLE public.consolidation_jobs ADD COLUMN IF NOT EXISTS dream_synopsis TE
 ALTER TABLE public.ontology_snapshots ADD COLUMN IF NOT EXISTS dream_synopsis TEXT;
 ALTER TABLE public.ontology_snapshots ADD COLUMN IF NOT EXISTS consolidation_stats JSONB;
 
-COMMIT;
+-- End of migration 010
