@@ -44,6 +44,9 @@ COPY agents /app/agents
 # Copy ontologies directory
 COPY ontologies /app/ontologies
 
+# Copy migrations directory (for startup migration runner)
+COPY migrations /app/migrations
+
 # Create avatars cache directory
 RUN mkdir -p /app/avatars_cache
 
