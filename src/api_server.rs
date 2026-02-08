@@ -558,6 +558,22 @@ async fn generate_avatar(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // PAUSED: Avatar generation disabled to avoid Gemini API costs during development.
+    // Remove this block to re-enable.
+    if true {
+        // Still serve from cache if available
+        let cache_path = format!("avatars_cache/{}.json", agent_id);
+        if let Ok(cached) = std::fs::read_to_string(&cache_path) {
+            if let Ok(cached_data) = serde_json::from_str::<Value>(&cached) {
+                return Ok(Json(cached_data));
+            }
+        }
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Avatar generation paused (cost saving)".to_string(),
+        ));
+    }
+
     if state.gemini_api_key.is_empty() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
