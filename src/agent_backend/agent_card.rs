@@ -38,11 +38,21 @@ impl std::fmt::Display for AgentTier {
     }
 }
 
+/// MCP tool descriptor
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpTool {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
 /// Agent capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentCapabilities {
     pub executor: ExecutorType,
-    pub mcp_tools: Vec<String>,
+    #[serde(default)]
+    pub mcp_tools: Vec<McpTool>,
+    #[serde(default)]
     pub skills: Vec<String>,
     pub model: String,
     pub temperature: f64,
@@ -77,30 +87,8 @@ pub struct UsageWindow {
     pub cost_usd: f64,
 }
 
-/// Agent wallet for future revenue model
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentWallet {
-    pub primary: WalletAddress,
-    pub secondary: Option<WalletAddress>,
-    pub payment_model: PaymentModel,
-}
-
-/// Blockchain wallet address
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalletAddress {
-    pub chain: String,
-    pub address: String,
-    pub purpose: String,
-}
-
-/// Payment model configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PaymentModel {
-    pub model_type: String,
-    pub rate_per_1k_tokens: f64,
-    pub revenue_share_pct: f64,
-    pub payment_threshold_usd: f64,
-}
+/// Agent wallet — flexible structure for future revenue model
+pub type AgentWallet = serde_json::Value;
 
 /// Ontology statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
