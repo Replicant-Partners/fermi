@@ -1,0 +1,87 @@
+{
+  "agent_id": "coherence_evaluator",
+  "agent_type": "coherence",
+  "version": "0.1.0",
+  "tier": "curated",
+  "capabilities": {
+    "executor": "rust",
+    "mcp_tools": [
+      {
+        "name": "evaluate_coherence",
+        "description": "Evaluate explanatory coherence of a multi-party conversation using Thagard TEC model"
+      },
+      {
+        "name": "get_coherence_snapshot",
+        "description": "Get current coherence evaluation state for a conversation"
+      }
+    ],
+    "skills": [
+      "discourse-analysis",
+      "coherence-scoring",
+      "collaboration-assessment",
+      "principle-evaluation"
+    ],
+    "model": "deterministic",
+    "temperature": 0.0
+  },
+  "theory": {
+    "foundation": "Thagard (1989) Theory of Explanatory Coherence",
+    "formal_model": "C = (U, E, R+, R-, A, sigma)",
+    "principles": [
+      "P1: Symmetry",
+      "P2: Explanation",
+      "P3: Analogy",
+      "P4: Data Priority",
+      "P5: Contradiction",
+      "P6: Competition",
+      "P7: Acceptability"
+    ],
+    "settling_algorithm": "Connectionist constraint-satisfaction (ECHO)",
+    "references": [
+      "Thagard, P. (1989). Explanatory Coherence. Behavioral and Brain Sciences, 12(3), 435-467.",
+      "Thagard, P. & Verbeurgt, K. (1998). Coherence as constraint satisfaction. Cognitive Science, 22(1), 1-24."
+    ]
+  },
+  "architecture": {
+    "crates": {
+      "coherence-core": "Domain model, types, relations, principles (~3300 LOC)",
+      "coherence-engine": "Connectionist settling algorithm and principle scorer",
+      "coherence-observer": "Heuristic utterance classifier and relation detector",
+      "coherence-api": "Axum REST server (6 endpoints)",
+      "coherence-protocols": "MCP/A2A/AKP integration protocol traits"
+    },
+    "test_count": 89
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "metadata": {
+    "created": "2026-02-08",
+    "author": "Replicant Partners",
+    "description": "Observes multi-party conversations and evaluates collaborative discourse coherence using Thagard's Theory of Explanatory Coherence (TEC). Computes global coherence score, per-principle diagnostics, and actionable feedback.",
+    "tags": [
+      "coherence",
+      "discourse-analysis",
+      "collaboration",
+      "thagard",
+      "tec",
+      "constraint-satisfaction"
+    ]
+  }
+}

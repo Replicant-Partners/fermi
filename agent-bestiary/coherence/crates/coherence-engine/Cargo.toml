@@ -1,0 +1,19 @@
+[package]
+name = "coherence-engine"
+version = "0.1.0"
+edition = "2021"
+authors = ["Replicant Partners"]
+description = "Connectionist settling engine for Thagard TEC coherence evaluation"
+
+[dependencies]
+coherence-core = { path = "../coherence-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+thiserror = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio = { version = "1", features = ["test-util", "macros"] }

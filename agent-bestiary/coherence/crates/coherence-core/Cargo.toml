@@ -1,0 +1,16 @@
+[package]
+name = "coherence-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Replicant Partners"]
+description = "Core types and formal model for Thagard TEC-based coherence evaluation"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "1"
+
+[dev-dependencies]
+pretty_assertions = "1"

@@ -1,0 +1,22 @@
+[package]
+name = "coherence-observer"
+version = "0.1.0"
+edition = "2021"
+authors = ["Replicant Partners"]
+description = "Conversation observation and utterance extraction for the Coherence Evaluator Agent"
+
+[dependencies]
+coherence-core = { path = "../coherence-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "1"
+unicode-segmentation = "1"
+regex = "1"
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio = { version = "1", features = ["test-util", "macros"] }
