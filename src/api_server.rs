@@ -449,7 +449,15 @@ async fn list_agents(State(state): State<AppState>) -> Json<Value> {
             let agents: Vec<Value> = real_agents
                 .iter()
                 .map(|a| {
-                    json!({
+                    // Merge filesystem card data if available
+                    let card = state.registry.get(&a.agent_name).ok();
+                    let card_json = card.as_ref().and_then(|c| {
+                        let path = format!("agents/curated/{}/agent_card.json", a.agent_name);
+                        std::fs::read_to_string(&path).ok()
+                            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                    });
+
+                    let mut agent_val = json!({
                         "agent_id": a.agent_name,
                         "agent_type": a.agent_type,
                         "version": a.version,
@@ -461,6 +469,8 @@ async fn list_agents(State(state): State<AppState>) -> Json<Value> {
                             "executor": a.executor_type,
                             "model": a.model,
                             "temperature": a.temperature,
+                            "mcp_tools": card.as_ref().map(|c| c.capabilities.mcp_tools.iter().map(|t| json!({"name": t.name, "description": t.description})).collect::<Vec<_>>()).unwrap_or_default(),
+                            "skills": card.as_ref().map(|c| c.capabilities.skills.clone()).unwrap_or_default(),
                         },
                         "ontology_stats": {
                             "last_updated": a.last_consolidated_at,
@@ -472,7 +482,43 @@ async fn list_agents(State(state): State<AppState>) -> Json<Value> {
                             "credits_remaining": a.dreaming_budget_credits - a.dreaming_credits_used,
                         },
                         "source": "database",
-                    })
+                    });
+
+                    // Overlay rich fields from filesystem card
+                    if let Some(cj) = &card_json {
+                        if let Some(obj) = agent_val.as_object_mut() {
+                            // Metadata (tags, created date)
+                            if let Some(meta) = cj.get("metadata") {
+                                obj.insert("metadata".to_string(), meta.clone());
+                            }
+                            // Performance stats
+                            if let Some(perf) = cj.get("performance") {
+                                obj.insert("performance".to_string(), perf.clone());
+                            }
+                            // Usage stats
+                            if let Some(usage) = cj.get("usage") {
+                                obj.insert("usage".to_string(), usage.clone());
+                            }
+                            // Wallet
+                            if let Some(wallet) = cj.get("wallet") {
+                                obj.insert("wallet".to_string(), wallet.clone());
+                            }
+                            // Ontology stats from card (entities/relationships counts)
+                            if let Some(onto) = cj.get("ontology_stats") {
+                                let mut merged = obj.get("ontology_stats").cloned().unwrap_or(json!({}));
+                                if let (Some(m), Some(o)) = (merged.as_object_mut(), onto.as_object()) {
+                                    for (k, v) in o {
+                                        if m.get(k).map(|existing| existing.is_null()).unwrap_or(true) {
+                                            m.insert(k.clone(), v.clone());
+                                        }
+                                    }
+                                }
+                                obj.insert("ontology_stats".to_string(), merged);
+                            }
+                        }
+                    }
+
+                    agent_val
                 })
                 .collect();
             return Json(json!({ "agents": agents, "total": agents.len() }));

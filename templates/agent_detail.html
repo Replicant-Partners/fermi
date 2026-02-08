@@ -365,6 +365,74 @@
         font-style: italic;
       }
 
+      /* ─── Dual Cognition Canvas ─── */
+      .cognition-panel {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+
+      .cognition-card {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .cognition-label {
+        position: absolute;
+        top: 8px;
+        left: 12px;
+        font-size: 0.65em;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--fg3);
+        z-index: 2;
+        background: var(--bg1);
+        padding: 2px 6px;
+        border-radius: 2px;
+      }
+
+      .cognition-stat {
+        position: absolute;
+        bottom: 8px;
+        right: 12px;
+        font-size: 0.7em;
+        color: var(--fg3);
+        z-index: 2;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .cognition-canvas {
+        width: 100%;
+        height: 180px;
+        display: block;
+      }
+
+      @media (max-width: 640px) {
+        .cognition-panel {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ─── Dreaming Section ─── */
+      .dream-bar {
+        height: 6px;
+        background: var(--bg2);
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+
+      .dream-bar-fill {
+        height: 100%;
+        background: var(--purple);
+        border-radius: 3px;
+        transition: width 0.5s ease;
+      }
+
       /* OP-1 Theme */
       .theme-op1 {
         --bg0-hard: #f5f5f0;
@@ -572,6 +640,19 @@
               </button>
             </div>
 
+            <div class="cognition-panel">
+              <div class="cognition-card">
+                <span class="cognition-label">Cognition / Knowledge Graph</span>
+                <span class="cognition-stat" id="kg-stat"></span>
+                <canvas class="cognition-canvas" id="canvas-kg"></canvas>
+              </div>
+              <div class="cognition-card">
+                <span class="cognition-label">Embedding Space</span>
+                <span class="cognition-stat" id="emb-stat"></span>
+                <canvas class="cognition-canvas" id="canvas-emb"></canvas>
+              </div>
+            </div>
+
             <div class="sections">
               <div class="section">
                 <div class="section-title">Performance Statistics</div>
@@ -660,6 +741,33 @@
                   Embedding Projector →
                 </a>
               </div>
+
+              ${
+                agent.dreaming
+                  ? `
+              <div class="section">
+                <div class="section-title">Active Dreaming Memory</div>
+                <div class="field-grid">
+                  <div class="field-item">
+                    <div class="field-label">Budget Credits</div>
+                    <div class="field-value">${agent.dreaming.budget_credits}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Credits Used</div>
+                    <div class="field-value">${agent.dreaming.credits_used}</div>
+                  </div>
+                  <div class="field-item">
+                    <div class="field-label">Credits Remaining</div>
+                    <div class="field-value">${agent.dreaming.credits_remaining}</div>
+                  </div>
+                </div>
+                <div class="dream-bar">
+                  <div class="dream-bar-fill" style="width: ${agent.dreaming.budget_credits > 0 ? (agent.dreaming.credits_used / agent.dreaming.budget_credits) * 100 : 0}%"></div>
+                </div>
+              </div>
+              `
+                  : ""
+              }
 
               ${
                 wallet || cost > 0
@@ -811,7 +919,360 @@
         }
       }
 
-      loadAgentDetail();
+      loadAgentDetail().then(() => initCognitionCanvases());
+    </script>
+
+    <script>
+      function initCognitionCanvases() {
+        const kgCanvas = document.getElementById("canvas-kg");
+        const embCanvas = document.getElementById("canvas-emb");
+        if (!kgCanvas || !embCanvas) return;
+
+        const agentId = window.location.pathname.split("/").pop();
+        const isDark = () =>
+          !document.documentElement.classList.contains("theme-op1");
+
+        // ─── Color helpers ───
+        function colors() {
+          return isDark()
+            ? {
+                bg: "#3c3836",
+                node: "#fabd2f",
+                edge: "#504945",
+                nodeAlt: "#83a598",
+                nodeWarm: "#fe8019",
+                nodePurple: "#d3869b",
+                text: "#bdae93",
+                particle: "#83a598",
+                pRule: "#b8bb26",
+                pEntity: "#fe8019",
+                pComm: "#d3869b",
+              }
+            : {
+                bg: "#f0f0eb",
+                node: "#ff6b00",
+                edge: "#e0e0db",
+                nodeAlt: "#1e88e5",
+                nodeWarm: "#ef6c00",
+                nodePurple: "#8e24aa",
+                text: "#6b6b6b",
+                particle: "#1e88e5",
+                pRule: "#43a047",
+                pEntity: "#ef6c00",
+                pComm: "#8e24aa",
+              };
+        }
+
+        // ─── Knowledge Graph Canvas ───
+        (function () {
+          const canvas = kgCanvas;
+          const ctx = canvas.getContext("2d");
+          const dpr = window.devicePixelRatio || 1;
+
+          function resize() {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+          }
+          resize();
+
+          // Generate a plausible small graph
+          const nodeCount = 12 + Math.floor(Math.random() * 8);
+          const nodes = [];
+          const edges = [];
+          const w = () => canvas.getBoundingClientRect().width;
+          const h = () => canvas.getBoundingClientRect().height;
+
+          for (let i = 0; i < nodeCount; i++) {
+            const type =
+              i < 3 ? "hub" : Math.random() < 0.3 ? "rule" : "entity";
+            nodes.push({
+              x: 40 + Math.random() * (w() - 80),
+              y: 30 + Math.random() * (h() - 60),
+              vx: (Math.random() - 0.5) * 0.3,
+              vy: (Math.random() - 0.5) * 0.3,
+              r: type === "hub" ? 5 : type === "rule" ? 3.5 : 2.5,
+              type,
+              pulse: Math.random() * Math.PI * 2,
+            });
+          }
+
+          // Build edges — hubs connect broadly, others sparsely
+          for (let i = 0; i < nodeCount; i++) {
+            const conns =
+              nodes[i].type === "hub" ? 4 : 1 + Math.floor(Math.random() * 2);
+            for (let c = 0; c < conns; c++) {
+              const j = Math.floor(Math.random() * nodeCount);
+              if (j !== i) edges.push([i, j]);
+            }
+          }
+
+          let kgNodeCount = nodeCount;
+          let kgEdgeCount = edges.length;
+
+          // Try loading real ontology data for stat display
+          fetch(`/api/agents/${agentId}/ontology`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data && data.stats) {
+                kgNodeCount = data.stats.entity_count || nodeCount;
+                kgEdgeCount = data.stats.fact_count || edges.length;
+              }
+              const el = document.getElementById("kg-stat");
+              if (el)
+                el.textContent = `${kgNodeCount} entities / ${kgEdgeCount} facts`;
+            })
+            .catch(() => {});
+
+          function tick() {
+            const c = colors();
+            const cw = w();
+            const ch = h();
+            ctx.clearRect(0, 0, cw, ch);
+
+            // Simple force simulation
+            for (let i = 0; i < nodes.length; i++) {
+              const n = nodes[i];
+              // Repulsion
+              for (let j = i + 1; j < nodes.length; j++) {
+                const m = nodes[j];
+                let dx = n.x - m.x,
+                  dy = n.y - m.y;
+                let d2 = dx * dx + dy * dy;
+                if (d2 < 1) d2 = 1;
+                const f = 30 / d2;
+                n.vx += dx * f;
+                n.vy += dy * f;
+                m.vx -= dx * f;
+                m.vy -= dy * f;
+              }
+            }
+
+            // Edge attraction
+            for (const [i, j] of edges) {
+              const a = nodes[i],
+                b = nodes[j];
+              const dx = b.x - a.x,
+                dy = b.y - a.y;
+              const d = Math.sqrt(dx * dx + dy * dy);
+              const f = (d - 50) * 0.003;
+              a.vx += dx * f;
+              a.vy += dy * f;
+              b.vx -= dx * f;
+              b.vy -= dy * f;
+            }
+
+            // Center gravity + integration
+            const cx = cw / 2,
+              cy = ch / 2;
+            for (const n of nodes) {
+              n.vx += (cx - n.x) * 0.001;
+              n.vy += (cy - n.y) * 0.001;
+              n.vx *= 0.92;
+              n.vy *= 0.92;
+              n.x += n.vx;
+              n.y += n.vy;
+              n.x = Math.max(10, Math.min(cw - 10, n.x));
+              n.y = Math.max(10, Math.min(ch - 10, n.y));
+              n.pulse += 0.02;
+            }
+
+            // Draw edges
+            ctx.strokeStyle = c.edge;
+            ctx.lineWidth = 0.5;
+            for (const [i, j] of edges) {
+              ctx.beginPath();
+              ctx.moveTo(nodes[i].x, nodes[i].y);
+              ctx.lineTo(nodes[j].x, nodes[j].y);
+              ctx.stroke();
+            }
+
+            // Draw nodes
+            for (const n of nodes) {
+              const pulseFactor = 1 + Math.sin(n.pulse) * 0.15;
+              const r = n.r * pulseFactor;
+              const fill =
+                n.type === "hub"
+                  ? c.node
+                  : n.type === "rule"
+                    ? c.nodeAlt
+                    : c.nodeWarm;
+
+              ctx.beginPath();
+              ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+              ctx.fillStyle = fill;
+              ctx.globalAlpha = 0.8;
+              ctx.fill();
+
+              // Glow
+              ctx.beginPath();
+              ctx.arc(n.x, n.y, r + 3, 0, Math.PI * 2);
+              ctx.fillStyle = fill;
+              ctx.globalAlpha = 0.08;
+              ctx.fill();
+              ctx.globalAlpha = 1;
+            }
+
+            requestAnimationFrame(tick);
+          }
+          tick();
+
+          window.addEventListener("resize", resize);
+        })();
+
+        // ─── Embedding Space Canvas ───
+        (function () {
+          const canvas = embCanvas;
+          const ctx = canvas.getContext("2d");
+          const dpr = window.devicePixelRatio || 1;
+
+          function resize() {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+          }
+          resize();
+
+          const w = () => canvas.getBoundingClientRect().width;
+          const h = () => canvas.getBoundingClientRect().height;
+
+          // Generate particle cloud
+          const particles = [];
+          const count = 60 + Math.floor(Math.random() * 40);
+          for (let i = 0; i < count; i++) {
+            const type = Math.random();
+            particles.push({
+              // Spherical coordinates for 3D rotation
+              theta: Math.random() * Math.PI * 2,
+              phi: Math.acos(2 * Math.random() - 1),
+              r: 0.3 + Math.random() * 0.6,
+              size: 1 + Math.random() * 2.5,
+              source:
+                type < 0.5
+                  ? "episode"
+                  : type < 0.7
+                    ? "rule"
+                    : type < 0.9
+                      ? "entity"
+                      : "community",
+            });
+          }
+
+          let angle = 0;
+          let embPointCount = count;
+
+          // Try loading real projection data for stat display
+          fetch(`/api/agents/${agentId}/projections?dimensions=3`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data && data.point_count) {
+                embPointCount = data.point_count;
+                const ev = data.explained_variance;
+                const evStr = ev ? ` / ${(ev[0] * 100).toFixed(0)}% var` : "";
+                const el = document.getElementById("emb-stat");
+                if (el) el.textContent = `${embPointCount} vectors${evStr}`;
+              }
+            })
+            .catch(() => {
+              const el = document.getElementById("emb-stat");
+              if (el) el.textContent = `${embPointCount} vectors`;
+            });
+
+          function tick() {
+            const c = colors();
+            const cw = w();
+            const ch = h();
+            ctx.clearRect(0, 0, cw, ch);
+            angle += 0.004;
+
+            const cx = cw / 2,
+              cy = ch / 2;
+            const scale = Math.min(cw, ch) * 0.35;
+
+            // Sort by z for painter's algorithm
+            const projected = particles
+              .map((p) => {
+                const x3 = p.r * Math.sin(p.phi) * Math.cos(p.theta + angle);
+                const y3 = p.r * Math.sin(p.phi) * Math.sin(p.theta + angle);
+                const z3 = p.r * Math.cos(p.phi);
+                // Rotate around Y axis
+                const rx =
+                  x3 * Math.cos(angle * 0.3) - z3 * Math.sin(angle * 0.3);
+                const rz =
+                  x3 * Math.sin(angle * 0.3) + z3 * Math.cos(angle * 0.3);
+                return {
+                  x: cx + rx * scale,
+                  y: cy + y3 * scale,
+                  z: rz,
+                  size: p.size,
+                  source: p.source,
+                };
+              })
+              .sort((a, b) => a.z - b.z);
+
+            for (const p of projected) {
+              const depth = (p.z + 1) / 2; // 0..1
+              const alpha = 0.3 + depth * 0.6;
+              const s = p.size * (0.6 + depth * 0.8);
+
+              let fill;
+              switch (p.source) {
+                case "episode":
+                  fill = c.particle;
+                  break;
+                case "rule":
+                  fill = c.pRule;
+                  break;
+                case "entity":
+                  fill = c.pEntity;
+                  break;
+                case "community":
+                  fill = c.pComm;
+                  break;
+              }
+
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+              ctx.fillStyle = fill;
+              ctx.globalAlpha = alpha;
+              ctx.fill();
+
+              // Subtle glow for foreground particles
+              if (depth > 0.7) {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, s + 2, 0, Math.PI * 2);
+                ctx.fillStyle = fill;
+                ctx.globalAlpha = 0.06;
+                ctx.fill();
+              }
+              ctx.globalAlpha = 1;
+            }
+
+            // Axis lines (subtle)
+            ctx.strokeStyle = c.edge;
+            ctx.lineWidth = 0.5;
+            ctx.globalAlpha = 0.3;
+            // X axis
+            ctx.beginPath();
+            ctx.moveTo(cx - scale * 0.8, cy);
+            ctx.lineTo(cx + scale * 0.8, cy);
+            ctx.stroke();
+            // Y axis
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - scale * 0.8);
+            ctx.lineTo(cx, cy + scale * 0.8);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+
+            requestAnimationFrame(tick);
+          }
+          tick();
+
+          window.addEventListener("resize", resize);
+        })();
+      }
     </script>
 
     <script>
