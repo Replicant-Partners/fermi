@@ -415,10 +415,14 @@ async fn debug_startup(State(state): State<AppState>) -> Json<Value> {
 }
 
 async fn list_agents(State(state): State<AppState>) -> Json<Value> {
-    // Primary: database
+    // Primary: database (filter out test agents)
     if let Ok(db_agents) = state.memory_store.list_agents().await {
-        if !db_agents.is_empty() {
-            let agents: Vec<Value> = db_agents
+        let real_agents: Vec<_> = db_agents
+            .into_iter()
+            .filter(|a| !a.agent_name.starts_with("test_agent_"))
+            .collect();
+        if !real_agents.is_empty() {
+            let agents: Vec<Value> = real_agents
                 .iter()
                 .map(|a| {
                     json!({

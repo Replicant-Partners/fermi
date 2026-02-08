@@ -148,9 +148,10 @@ impl MemoryStore {
             r#"
             INSERT INTO agents (
                 agent_id, agent_name, agent_type, version, tier,
-                executor_type, model, temperature, mcp_servers, description, author
+                executor_type, model, temperature, mcp_servers, description, author,
+                dreaming_budget_credits, dreaming_credits_used
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -175,6 +176,8 @@ impl MemoryStore {
         .bind(&agent.mcp_servers)
         .bind(&agent.description)
         .bind(&agent.author)
+        .bind(agent.dreaming_budget_credits)
+        .bind(agent.dreaming_credits_used)
         .fetch_one(&self.pool)
         .await?;
 
