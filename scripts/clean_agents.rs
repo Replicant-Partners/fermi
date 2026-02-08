@@ -1,13 +1,15 @@
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL")?;
 
     println!("Connecting to database...");
+    let connect_options = PgConnectOptions::from_str(&database_url)?.statement_cache_capacity(0);
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect(&database_url)
+        .connect_with(connect_options)
         .await?;
 
     // Count before

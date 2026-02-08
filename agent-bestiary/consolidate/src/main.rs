@@ -228,8 +228,13 @@ async fn main() -> Result<()> {
     let lock = Arc::new(ConsolidationLock::new(pool, args.worker_id.clone()));
 
     // Initialize consolidation worker
-    let worker =
-        ConsolidationWorker::with_llm(store.clone(), lock, embedder, llm, args.worker_id.clone());
+    let worker = ConsolidationWorker::with_llm(
+        store.clone(),
+        lock,
+        embedder,
+        llm.clone(),
+        args.worker_id.clone(),
+    );
     info!("Initialized consolidation worker");
 
     // Initialize ontology components

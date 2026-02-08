@@ -193,7 +193,15 @@ mod tests {
         dotenvy::dotenv().ok();
         let database_url =
             std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
-        PgPool::connect(&database_url).await.unwrap()
+        let connect_options = database_url
+            .parse::<sqlx::postgres::PgConnectOptions>()
+            .expect("Invalid DATABASE_URL")
+            .statement_cache_capacity(0);
+        sqlx::pool::PoolOptions::new()
+            .max_connections(5)
+            .connect_with(connect_options)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]

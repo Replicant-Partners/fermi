@@ -2,7 +2,8 @@ use crate::{
     Agent, Community, ConsolidationJob, Entity, Episode, Fact, MemoryError, Result, SemanticRule,
     VerificationStatus,
 };
-use sqlx::{postgres::PgPoolOptions, PgPool, Row};
+use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
+use std::str::FromStr;
 use uuid::Uuid;
 
 pub struct MemoryStore {
@@ -12,9 +13,14 @@ pub struct MemoryStore {
 impl MemoryStore {
     /// Create a new MemoryStore with database connection
     pub async fn new(database_url: &str) -> Result<Self> {
+        // Neon uses PgBouncer in transaction mode — disable prepared statement
+        // cache to avoid "prepared statement does not exist" errors
+        let connect_options = PgConnectOptions::from_str(database_url)?.statement_cache_capacity(0);
+
         let pool = PgPoolOptions::new()
             .max_connections(20)
-            .connect(database_url)
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .connect_with(connect_options)
             .await?;
 
         Ok(Self { pool })

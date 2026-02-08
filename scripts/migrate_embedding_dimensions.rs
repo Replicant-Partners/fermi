@@ -12,7 +12,9 @@
 
 use anyhow::{bail, Result};
 use clap::Parser;
+use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
+use std::str::FromStr;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -71,7 +73,9 @@ async fn main() -> Result<()> {
 
     // Connect to database
     println!("📡 Connecting to database...");
-    let pool = PgPool::connect(&args.database_url).await?;
+    let connect_options =
+        PgConnectOptions::from_str(&args.database_url)?.statement_cache_capacity(0);
+    let pool = PgPool::connect_with(connect_options).await?;
     println!("✅ Connected!");
     println!();
 

@@ -21,8 +21,9 @@ use fermi_auth::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{postgres::PgPoolOptions, PgPool, Row};
+use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use agent_bestiary_memory::{Agent, Episode, ExecutionStatus, MemoryStore};
@@ -135,9 +136,16 @@ async fn main() {
         database_url.chars().take(30).collect::<String>() + "..."
     );
 
+    // Neon uses PgBouncer in transaction mode — disable prepared statement
+    // cache to avoid "prepared statement does not exist" errors
+    let connect_options = PgConnectOptions::from_str(&database_url)
+        .expect("Invalid DATABASE_URL")
+        .statement_cache_capacity(0);
+
     let db = PgPoolOptions::new()
         .max_connections(5)
-        .connect(&database_url)
+        .acquire_timeout(std::time::Duration::from_secs(30))
+        .connect_with(connect_options)
         .await
         .expect("Failed to connect to database");
 

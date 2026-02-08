@@ -7,6 +7,7 @@ members = [
     "agent-bestiary/projector",
     "fermi-memory",
     "fermi-auth",
+    "fermi-lsp",
 ]
 resolver = "2"
 
