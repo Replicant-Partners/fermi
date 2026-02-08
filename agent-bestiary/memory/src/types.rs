@@ -185,6 +185,9 @@ pub struct Agent {
     pub current_ontology_commit: Option<String>,
     pub current_ontology_snapshot_id: Option<Uuid>,
     pub last_consolidated_at: Option<DateTime<Utc>>,
+    pub dreaming_budget_credits: i32,
+    pub dreaming_credits_used: i32,
+    pub dreaming_budget_reset_at: Option<DateTime<Utc>>,
 }
 
 /// Consolidation job record

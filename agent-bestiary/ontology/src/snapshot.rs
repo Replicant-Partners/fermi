@@ -2,8 +2,8 @@ use crate::error::{OntologyError, Result};
 use crate::git::GitManager;
 use crate::mermaid::MermaidGenerator;
 use crate::types::OntologyStats;
-use chrono::Utc;
 use agent_bestiary_memory::MemoryStore;
+use chrono::Utc;
 use sqlx::Row;
 use uuid::Uuid;
 
@@ -87,6 +87,29 @@ impl SnapshotManager {
             .await?;
 
         Ok(snapshot_id)
+    }
+
+    /// Update dream synopsis and consolidation stats on an existing snapshot
+    pub async fn update_snapshot_synopsis(
+        &self,
+        snapshot_id: Uuid,
+        dream_synopsis: &str,
+        consolidation_stats: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE ontology_snapshots
+            SET dream_synopsis = $1, consolidation_stats = $2
+            WHERE snapshot_id = $3
+            "#,
+        )
+        .bind(dream_synopsis)
+        .bind(consolidation_stats)
+        .bind(snapshot_id)
+        .execute(self.store.pool())
+        .await?;
+
+        Ok(())
     }
 
     /// Store snapshot metadata in database
@@ -189,7 +212,7 @@ impl SnapshotManager {
         let row = sqlx::query(
             r#"
             SELECT snapshot_id, agent_id, git_commit_sha, mermaid_content,
-                   consolidation_job_id, created_at
+                   consolidation_job_id, dream_synopsis, consolidation_stats, created_at
             FROM ontology_snapshots
             WHERE agent_id = $1
             ORDER BY created_at DESC
@@ -201,14 +224,7 @@ impl SnapshotManager {
         .await?;
 
         match row {
-            Some(row) => Ok(Some(OntologySnapshot {
-                snapshot_id: row.try_get("snapshot_id")?,
-                agent_id: row.try_get("agent_id")?,
-                git_commit_sha: row.try_get("git_commit_sha")?,
-                mermaid_content: row.try_get("mermaid_content")?,
-                consolidation_job_id: row.try_get("consolidation_job_id")?,
-                created_at: row.try_get("created_at")?,
-            })),
+            Some(row) => Ok(Some(row_to_snapshot(&row)?)),
             None => Ok(None),
         }
     }
@@ -218,7 +234,7 @@ impl SnapshotManager {
         let row = sqlx::query(
             r#"
             SELECT snapshot_id, agent_id, git_commit_sha, mermaid_content,
-                   consolidation_job_id, created_at
+                   consolidation_job_id, dream_synopsis, consolidation_stats, created_at
             FROM ontology_snapshots
             WHERE snapshot_id = $1
             "#,
@@ -228,14 +244,7 @@ impl SnapshotManager {
         .await?;
 
         match row {
-            Some(row) => Ok(Some(OntologySnapshot {
-                snapshot_id: row.try_get("snapshot_id")?,
-                agent_id: row.try_get("agent_id")?,
-                git_commit_sha: row.try_get("git_commit_sha")?,
-                mermaid_content: row.try_get("mermaid_content")?,
-                consolidation_job_id: row.try_get("consolidation_job_id")?,
-                created_at: row.try_get("created_at")?,
-            })),
+            Some(row) => Ok(Some(row_to_snapshot(&row)?)),
             None => Ok(None),
         }
     }
@@ -245,7 +254,7 @@ impl SnapshotManager {
         let rows = sqlx::query(
             r#"
             SELECT snapshot_id, agent_id, git_commit_sha, mermaid_content,
-                   consolidation_job_id, created_at
+                   consolidation_job_id, dream_synopsis, consolidation_stats, created_at
             FROM ontology_snapshots
             WHERE agent_id = $1
             ORDER BY created_at DESC
@@ -257,14 +266,7 @@ impl SnapshotManager {
 
         let mut snapshots = Vec::new();
         for row in rows {
-            snapshots.push(OntologySnapshot {
-                snapshot_id: row.try_get("snapshot_id")?,
-                agent_id: row.try_get("agent_id")?,
-                git_commit_sha: row.try_get("git_commit_sha")?,
-                mermaid_content: row.try_get("mermaid_content")?,
-                consolidation_job_id: row.try_get("consolidation_job_id")?,
-                created_at: row.try_get("created_at")?,
-            });
+            snapshots.push(row_to_snapshot(&row)?);
         }
 
         Ok(snapshots)
@@ -281,6 +283,20 @@ impl SnapshotManager {
     }
 }
 
+/// Helper to construct OntologySnapshot from a database row
+fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<OntologySnapshot> {
+    Ok(OntologySnapshot {
+        snapshot_id: row.try_get("snapshot_id")?,
+        agent_id: row.try_get("agent_id")?,
+        git_commit_sha: row.try_get("git_commit_sha")?,
+        mermaid_content: row.try_get("mermaid_content")?,
+        consolidation_job_id: row.try_get("consolidation_job_id")?,
+        dream_synopsis: row.try_get("dream_synopsis")?,
+        consolidation_stats: row.try_get("consolidation_stats")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
 /// Represents an ontology snapshot stored in the database
 #[derive(Debug, Clone)]
 pub struct OntologySnapshot {
@@ -289,6 +305,8 @@ pub struct OntologySnapshot {
     pub git_commit_sha: String,
     pub mermaid_content: String,
     pub consolidation_job_id: Option<Uuid>,
+    pub dream_synopsis: Option<String>,
+    pub consolidation_stats: Option<serde_json::Value>,
     pub created_at: chrono::DateTime<Utc>,
 }
 
@@ -309,6 +327,8 @@ mod tests {
             git_commit_sha: "abc123".to_string(),
             mermaid_content: "erDiagram\n".to_string(),
             consolidation_job_id: None,
+            dream_synopsis: None,
+            consolidation_stats: None,
             created_at: Utc::now(),
         };
 

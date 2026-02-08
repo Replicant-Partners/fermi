@@ -190,7 +190,8 @@ impl MemoryStore {
                 agent_id, agent_name, agent_type, version, tier,
                 executor_type, model, temperature, mcp_servers, description, author,
                 current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at
+                last_consolidated_at, dreaming_budget_credits,
+                dreaming_credits_used, dreaming_budget_reset_at
             FROM agents
             WHERE agent_id = $1
             "#,
@@ -200,22 +201,7 @@ impl MemoryStore {
         .await?;
 
         match row {
-            Some(row) => Ok(Some(Agent {
-                agent_id: row.try_get("agent_id")?,
-                agent_name: row.try_get("agent_name")?,
-                agent_type: row.try_get("agent_type")?,
-                version: row.try_get("version")?,
-                tier: row.try_get("tier")?,
-                executor_type: row.try_get("executor_type")?,
-                model: row.try_get("model")?,
-                temperature: row.try_get("temperature")?,
-                mcp_servers: row.try_get("mcp_servers")?,
-                description: row.try_get("description")?,
-                author: row.try_get("author")?,
-                current_ontology_commit: row.try_get("current_ontology_commit")?,
-                current_ontology_snapshot_id: row.try_get("current_ontology_snapshot_id")?,
-                last_consolidated_at: row.try_get("last_consolidated_at")?,
-            })),
+            Some(row) => Ok(Some(Self::row_to_agent(&row)?)),
             None => Ok(None),
         }
     }
@@ -228,7 +214,8 @@ impl MemoryStore {
                 agent_id, agent_name, agent_type, version, tier,
                 executor_type, model, temperature, mcp_servers, description, author,
                 current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at
+                last_consolidated_at, dreaming_budget_credits,
+                dreaming_credits_used, dreaming_budget_reset_at
             FROM agents
             WHERE agent_name = $1
             "#,
@@ -238,6 +225,36 @@ impl MemoryStore {
         .await?
         .ok_or_else(|| MemoryError::NotFound(format!("Agent {} not found", agent_name)))?;
 
+        Self::row_to_agent(&row)
+    }
+
+    /// List all agents
+    pub async fn list_agents(&self) -> Result<Vec<Agent>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                agent_id, agent_name, agent_type, version, tier,
+                executor_type, model, temperature, mcp_servers, description, author,
+                current_ontology_commit, current_ontology_snapshot_id,
+                last_consolidated_at, dreaming_budget_credits,
+                dreaming_credits_used, dreaming_budget_reset_at
+            FROM agents
+            ORDER BY agent_name
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut agents = Vec::new();
+        for row in rows {
+            agents.push(Self::row_to_agent(&row)?);
+        }
+
+        Ok(agents)
+    }
+
+    /// Map a database row to an Agent struct
+    fn row_to_agent(row: &sqlx::postgres::PgRow) -> Result<Agent> {
         Ok(Agent {
             agent_id: row.try_get("agent_id")?,
             agent_name: row.try_get("agent_name")?,
@@ -253,46 +270,10 @@ impl MemoryStore {
             current_ontology_commit: row.try_get("current_ontology_commit")?,
             current_ontology_snapshot_id: row.try_get("current_ontology_snapshot_id")?,
             last_consolidated_at: row.try_get("last_consolidated_at")?,
+            dreaming_budget_credits: row.try_get("dreaming_budget_credits")?,
+            dreaming_credits_used: row.try_get("dreaming_credits_used")?,
+            dreaming_budget_reset_at: row.try_get("dreaming_budget_reset_at")?,
         })
-    }
-
-    /// List all agents
-    pub async fn list_agents(&self) -> Result<Vec<Agent>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-                agent_id, agent_name, agent_type, version, tier,
-                executor_type, model, temperature, mcp_servers, description, author,
-                current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at
-            FROM agents
-            ORDER BY agent_name
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut agents = Vec::new();
-        for row in rows {
-            agents.push(Agent {
-                agent_id: row.try_get("agent_id")?,
-                agent_name: row.try_get("agent_name")?,
-                agent_type: row.try_get("agent_type")?,
-                version: row.try_get("version")?,
-                tier: row.try_get("tier")?,
-                executor_type: row.try_get("executor_type")?,
-                model: row.try_get("model")?,
-                temperature: row.try_get("temperature")?,
-                mcp_servers: row.try_get("mcp_servers")?,
-                description: row.try_get("description")?,
-                author: row.try_get("author")?,
-                current_ontology_commit: row.try_get("current_ontology_commit")?,
-                current_ontology_snapshot_id: row.try_get("current_ontology_snapshot_id")?,
-                last_consolidated_at: row.try_get("last_consolidated_at")?,
-            });
-        }
-
-        Ok(agents)
     }
 
     /// Search for similar episodes using vector similarity

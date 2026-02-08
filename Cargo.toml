@@ -59,8 +59,10 @@ tokio = { version = "1", features = ["full"] }
 http = "1"
 http-body-util = "0.1"
 
-# ADM Memory
+# ADM Memory + Ontology
 agent-bestiary-memory = { path = "agent-bestiary/memory" }
+agent-bestiary-ontology = { path = "agent-bestiary/ontology" }
+rust_decimal = { version = "1", features = ["serde-float"] }
 
 # Auth
 fermi-auth = { path = "fermi-auth" }

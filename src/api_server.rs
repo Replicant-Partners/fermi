@@ -6,6 +6,13 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use fermi::agent_backend::{
+    agent_card::AgentCard,
+    executor::{AgentOutput, AgentStatus, ExecutionContext},
+    llm_executor::LLMExecutor,
+    registry::AgentRegistry,
+};
+use fermi::ast;
 use fermi_auth::{
     api_keys, auth_middleware, build_github_auth_url, build_google_auth_url, create_session_token,
     generate_state, github_exchange_code, github_fetch_user_info, google_exchange_code,
@@ -14,12 +21,17 @@ use fermi_auth::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
+use std::sync::Arc;
+
+use agent_bestiary_memory::{Agent, Episode, ExecutionStatus, MemoryStore};
 
 #[derive(Clone)]
 struct AppState {
     db: PgPool,
+    memory_store: Arc<MemoryStore>,
+    registry: Arc<AgentRegistry>,
     gemini_api_key: String,
     jwt_secret: String,
     oauth: OAuthConfig,
@@ -88,7 +100,10 @@ struct GeminiInlineData {
 
 /// Run SQL migration files on startup (idempotent — uses IF NOT EXISTS).
 async fn run_migrations(db: &PgPool) {
-    let migration_files = ["migrations/009_add_teams_and_sharing.sql"];
+    let migration_files = [
+        "migrations/009_add_teams_and_sharing.sql",
+        "migrations/010_add_adm_tables_and_dreaming.sql",
+    ];
 
     for file in &migration_files {
         match std::fs::read_to_string(file) {
@@ -128,6 +143,33 @@ async fn main() {
     // Run pending migrations on startup
     run_migrations(&db).await;
 
+    // Initialize ADM memory store
+    let memory_store = Arc::new(
+        MemoryStore::new(&database_url)
+            .await
+            .expect("Failed to initialize MemoryStore"),
+    );
+    println!("ADM MemoryStore initialized");
+
+    // Initialize agent registry with LLM executor
+    let registry = if let Ok(llm_executor) = LLMExecutor::from_env() {
+        println!("Using LLM Executor (Claude API)");
+        Arc::new(AgentRegistry::with_executor(Arc::new(llm_executor)))
+    } else {
+        println!("No ANTHROPIC_API_KEY found, using Mock Executor");
+        Arc::new(AgentRegistry::new())
+    };
+
+    // Load agents from filesystem into registry
+    let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents/curated".to_string());
+    match registry.load_from_directory(&agents_dir) {
+        Ok(count) => println!("Loaded {} agent(s) from {}", count, agents_dir),
+        Err(e) => eprintln!("Warning: failed to load agents: {}", e),
+    }
+
+    // Seed filesystem agents into database (idempotent)
+    seed_agents_to_database(&memory_store, &registry).await;
+
     let gemini_api_key =
         std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY environment variable must be set");
 
@@ -148,6 +190,8 @@ async fn main() {
 
     let state = AppState {
         db: db.clone(),
+        memory_store,
+        registry,
         gemini_api_key,
         jwt_secret: jwt_secret.clone(),
         oauth,
@@ -164,6 +208,19 @@ async fn main() {
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:agent_id/avatar", get(generate_avatar))
         .route("/api/agents/:agent_id/ontology", get(get_ontology))
+        // Ontology evolution (public, read-only)
+        .route(
+            "/api/agents/:agent_id/ontology/history",
+            get(get_ontology_history),
+        )
+        .route(
+            "/api/agents/:agent_id/ontology/snapshots/:snapshot_id",
+            get(get_ontology_snapshot),
+        )
+        .route(
+            "/api/agents/:agent_id/ontology/diff",
+            get(get_ontology_diff),
+        )
         // Auth flow routes
         .route("/auth/google", get(auth_google))
         .route("/auth/github", get(auth_github))
@@ -190,6 +247,17 @@ async fn main() {
         .route(
             "/api/teams/:team_id/members/:member_id",
             put(update_member_role_handler),
+        )
+        // Agent execution
+        .route("/api/agents/:agent_id/execute", post(execute_agent_handler))
+        // Dreaming budget
+        .route(
+            "/api/agents/:agent_id/dreaming/budget",
+            get(get_dreaming_budget),
+        )
+        .route(
+            "/api/agents/:agent_id/dreaming/budget",
+            put(set_dreaming_budget),
         )
         // Sharing routes
         .route("/api/shares", post(share_object_handler))
@@ -279,11 +347,46 @@ async fn health() -> Json<Value> {
     }))
 }
 
-async fn list_agents(State(_state): State<AppState>) -> Json<Value> {
+async fn list_agents(State(state): State<AppState>) -> Json<Value> {
+    // Primary: database
+    if let Ok(db_agents) = state.memory_store.list_agents().await {
+        if !db_agents.is_empty() {
+            let agents: Vec<Value> = db_agents
+                .iter()
+                .map(|a| {
+                    json!({
+                        "agent_id": a.agent_name,
+                        "agent_type": a.agent_type,
+                        "version": a.version,
+                        "tier": a.tier,
+                        "description": a.description,
+                        "author": a.author,
+                        "model": a.model,
+                        "capabilities": {
+                            "executor": a.executor_type,
+                            "model": a.model,
+                            "temperature": a.temperature,
+                        },
+                        "ontology_stats": {
+                            "last_updated": a.last_consolidated_at,
+                            "current_commit": a.current_ontology_commit,
+                        },
+                        "dreaming": {
+                            "budget_credits": a.dreaming_budget_credits,
+                            "credits_used": a.dreaming_credits_used,
+                            "credits_remaining": a.dreaming_budget_credits - a.dreaming_credits_used,
+                        },
+                        "source": "database",
+                    })
+                })
+                .collect();
+            return Json(json!({ "agents": agents, "total": agents.len() }));
+        }
+    }
+
+    // Fallback: filesystem
     let agents_dir = "agents/curated";
-
     let mut agents = Vec::new();
-
     if let Ok(entries) = std::fs::read_dir(agents_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -299,11 +402,7 @@ async fn list_agents(State(_state): State<AppState>) -> Json<Value> {
             }
         }
     }
-
-    Json(json!({
-        "agents": agents,
-        "total": agents.len()
-    }))
+    Json(json!({ "agents": agents, "total": agents.len() }))
 }
 
 async fn generate_avatar(
@@ -412,9 +511,53 @@ async fn generate_avatar(
     ))
 }
 
-async fn get_ontology(Path(agent_id): Path<String>) -> Result<Json<Value>, (StatusCode, String)> {
-    let sample_path = format!("ontologies/samples/{}_ontology.json", agent_id);
+async fn get_ontology(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Primary: latest database snapshot
+    if let Ok(db_agent) = resolve_agent(&state, &agent_id).await {
+        let row = sqlx::query(
+            r#"
+            SELECT snapshot_id, version, git_commit_sha, github_url,
+                   entity_count, fact_count, community_count, rule_count,
+                   mermaid_content, dream_synopsis, created_at
+            FROM ontology_snapshots
+            WHERE agent_id = $1
+            ORDER BY version DESC LIMIT 1
+            "#,
+        )
+        .bind(db_agent.agent_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
 
+        if let Some(row) = row {
+            return Ok(Json(json!({
+                "ontology_id": format!("{}_ontology", agent_id),
+                "agent_id": agent_id,
+                "version": row.get::<i32, _>("version"),
+                "mermaid_content": row.get::<String, _>("mermaid_content"),
+                "git_commit_sha": row.get::<String, _>("git_commit_sha"),
+                "github_url": row.get::<Option<String>, _>("github_url"),
+                "dream_synopsis": row.get::<Option<String>, _>("dream_synopsis"),
+                "entities": [],
+                "relationships": [],
+                "evolution_commits": row.get::<i32, _>("version"),
+                "stats": {
+                    "entity_count": row.get::<i32, _>("entity_count"),
+                    "fact_count": row.get::<i32, _>("fact_count"),
+                    "community_count": row.get::<i32, _>("community_count"),
+                    "rule_count": row.get::<i32, _>("rule_count"),
+                },
+                "source": "database",
+            })));
+        }
+    }
+
+    // Fallback: sample files
+    let sample_path = format!("ontologies/samples/{}_ontology.json", agent_id);
     if let Ok(content) = std::fs::read_to_string(&sample_path) {
         if let Ok(ontology) = serde_json::from_str::<Value>(&content) {
             return Ok(Json(ontology));
@@ -888,4 +1031,394 @@ async fn revoke_share_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({ "status": "revoked" })))
+}
+
+// ─── Agent seeding (filesystem → database) ─────────────────────────
+
+async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentRegistry) {
+    let cards = match registry.list_cards() {
+        Ok(cards) => cards,
+        Err(_) => return,
+    };
+
+    for card in &cards {
+        let agent = Agent {
+            agent_id: uuid::Uuid::new_v4(),
+            agent_name: card.agent_id.clone(),
+            agent_type: card.agent_type.clone(),
+            version: card.version.clone(),
+            tier: format!("{:?}", card.tier).to_lowercase(),
+            executor_type: format!("{:?}", card.capabilities.executor).to_lowercase(),
+            model: card.capabilities.model.clone(),
+            temperature: card.capabilities.temperature,
+            mcp_servers: None,
+            description: Some(card.metadata.description.clone()),
+            author: card.metadata.author.clone(),
+            current_ontology_commit: None,
+            current_ontology_snapshot_id: None,
+            last_consolidated_at: None,
+            dreaming_budget_credits: 10, // default budget
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
+        };
+
+        match memory_store.upsert_agent(agent).await {
+            Ok(id) => println!("Seeded agent {} → {}", card.agent_id, id),
+            Err(e) => eprintln!("Warning: failed to seed {}: {}", card.agent_id, e),
+        }
+    }
+}
+
+// ─── Agent resolution helper ───────────────────────────────────────
+
+async fn resolve_agent(state: &AppState, agent_id: &str) -> Result<Agent, (StatusCode, String)> {
+    state
+        .memory_store
+        .get_agent_by_name(agent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Agent '{}' not found: {}", agent_id, e),
+            )
+        })
+}
+
+// ─── Agent execution ───────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ExecuteRequest {
+    query: String,
+}
+
+async fn execute_agent_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+    Json(body): Json<ExecuteRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // 1. Resolve agent in both registry and database
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    let card = state.registry.get(&agent_id).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Agent not in registry: {}", e),
+        )
+    })?;
+
+    // 2. Build execution context
+    let agent_stmt = ast::AgentStmt {
+        name: agent_id.clone(),
+        agent_type: Some(card.agent_type.clone()),
+        query: body.query.clone(),
+        executor: Some(ast::ExecutorType::LLM),
+        schedule: None,
+        driver_refs: vec![],
+        depends_on: vec![],
+        confidence_threshold: None,
+    };
+
+    let program = ast::Program {
+        statements: vec![ast::Statement::Agent(agent_stmt.clone())],
+    };
+
+    let context = ExecutionContext {
+        program,
+        agent_card: card.clone(),
+    };
+
+    // 3. Execute
+    let output = state
+        .registry
+        .execute_agent(&agent_stmt, &context)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Execution failed: {}", e),
+            )
+        })?;
+
+    // 4. Record stats in registry
+    let _ = state.registry.record_execution(&agent_id, &output);
+
+    // 5. Store as ADM episode
+    let episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
+    let episode_id = state
+        .memory_store
+        .store_episode(episode)
+        .await
+        .map_err(|e| {
+            eprintln!("Warning: failed to store episode: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
+
+    // 6. Return result
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "episode_id": episode_id,
+        "status": format!("{:?}", output.status),
+        "confidence": output.confidence,
+        "execution_time_ms": output.execution_time_ms,
+        "tokens_used": output.tokens_used,
+        "evidence": output.evidence.iter().map(|e| json!({
+            "id": e.id,
+            "source": e.source,
+            "summary": e.summary,
+            "key_findings": e.key_findings,
+            "relevance": e.relevance,
+        })).collect::<Vec<_>>(),
+        "metadata": {
+            "model_used": output.metadata.model_used,
+            "reasoning": output.metadata.reasoning,
+        }
+    })))
+}
+
+fn agent_output_to_episode(agent_db_id: uuid::Uuid, query: &str, output: &AgentOutput) -> Episode {
+    Episode {
+        episode_id: uuid::Uuid::new_v4(),
+        agent_id: agent_db_id,
+        timestamp_ref: output.timestamp,
+        query: query.to_string(),
+        context: json!({
+            "evidence": output.evidence.iter().map(|e| json!({
+                "id": e.id,
+                "source": e.source,
+                "summary": e.summary,
+                "key_findings": e.key_findings,
+                "relevance": e.relevance,
+            })).collect::<Vec<_>>(),
+            "sources_consulted": output.sources_consulted,
+            "model_used": output.metadata.model_used,
+            "reasoning": output.metadata.reasoning,
+        }),
+        execution_status: match output.status {
+            AgentStatus::Success => ExecutionStatus::Success,
+            AgentStatus::Failed | AgentStatus::Timeout => ExecutionStatus::Failure,
+            AgentStatus::BelowConfidenceThreshold => ExecutionStatus::Partial,
+        },
+        error_details: match output.status {
+            AgentStatus::Failed => Some("Execution failed".to_string()),
+            AgentStatus::Timeout => Some("Execution timed out".to_string()),
+            _ => None,
+        },
+        execution_time_ms: output.execution_time_ms as i64,
+        tokens_used: output.tokens_used.map(|t| t as i32),
+        cost_usd: output.tokens_used.map(|t| {
+            rust_decimal::Decimal::from_f64_retain((t as f64 / 1_000_000.0) * 3.0)
+                .unwrap_or_default()
+        }),
+        embedding: None,
+        consolidated: false,
+    }
+}
+
+// ─── Ontology API (database-backed) ────────────────────────────────
+
+async fn get_ontology_history(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT snapshot_id, version, git_commit_sha, entity_count, fact_count,
+               community_count, rule_count, dream_synopsis, created_at
+        FROM ontology_snapshots
+        WHERE agent_id = $1
+        ORDER BY version DESC
+        "#,
+    )
+    .bind(db_agent.agent_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let snapshots: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "snapshot_id": r.get::<uuid::Uuid, _>("snapshot_id"),
+                "version": r.get::<i32, _>("version"),
+                "git_commit_sha": r.get::<String, _>("git_commit_sha"),
+                "entity_count": r.get::<i32, _>("entity_count"),
+                "fact_count": r.get::<i32, _>("fact_count"),
+                "community_count": r.get::<i32, _>("community_count"),
+                "rule_count": r.get::<i32, _>("rule_count"),
+                "dream_synopsis": r.get::<Option<String>, _>("dream_synopsis"),
+                "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "agent_uuid": db_agent.agent_id,
+        "snapshots": snapshots,
+        "total": snapshots.len(),
+    })))
+}
+
+async fn get_ontology_snapshot(
+    State(state): State<AppState>,
+    Path((agent_id, snapshot_id)): Path<(String, uuid::Uuid)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let _db_agent = resolve_agent(&state, &agent_id).await?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT snapshot_id, version, git_commit_sha, github_url,
+               entity_count, fact_count, community_count, rule_count,
+               mermaid_content, dream_synopsis, consolidation_stats, created_at
+        FROM ontology_snapshots
+        WHERE snapshot_id = $1
+        "#,
+    )
+    .bind(snapshot_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Snapshot not found".to_string()))?;
+
+    Ok(Json(json!({
+        "snapshot_id": row.get::<uuid::Uuid, _>("snapshot_id"),
+        "agent_id": agent_id,
+        "version": row.get::<i32, _>("version"),
+        "git_commit_sha": row.get::<String, _>("git_commit_sha"),
+        "github_url": row.get::<Option<String>, _>("github_url"),
+        "mermaid_content": row.get::<String, _>("mermaid_content"),
+        "dream_synopsis": row.get::<Option<String>, _>("dream_synopsis"),
+        "consolidation_stats": row.get::<Option<Value>, _>("consolidation_stats"),
+        "stats": {
+            "entity_count": row.get::<i32, _>("entity_count"),
+            "fact_count": row.get::<i32, _>("fact_count"),
+            "community_count": row.get::<i32, _>("community_count"),
+            "rule_count": row.get::<i32, _>("rule_count"),
+        },
+        "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct DiffParams {
+    from: uuid::Uuid,
+    to: uuid::Uuid,
+}
+
+async fn get_ontology_diff(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(params): Query<DiffParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let _db_agent = resolve_agent(&state, &agent_id).await?;
+
+    // Fetch both snapshots
+    let from_row = sqlx::query(
+        "SELECT version, mermaid_content, entity_count, fact_count, rule_count, created_at FROM ontology_snapshots WHERE snapshot_id = $1",
+    )
+    .bind(params.from)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Source snapshot not found".to_string()))?;
+
+    let to_row = sqlx::query(
+        "SELECT version, mermaid_content, entity_count, fact_count, rule_count, created_at FROM ontology_snapshots WHERE snapshot_id = $1",
+    )
+    .bind(params.to)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Target snapshot not found".to_string()))?;
+
+    let from_content: String = from_row.get("mermaid_content");
+    let to_content: String = to_row.get("mermaid_content");
+
+    // Line-based diff
+    let from_lines: std::collections::HashSet<&str> = from_content.lines().collect();
+    let to_lines: std::collections::HashSet<&str> = to_content.lines().collect();
+
+    let added: Vec<&str> = to_lines.difference(&from_lines).copied().collect();
+    let removed: Vec<&str> = from_lines.difference(&to_lines).copied().collect();
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "from": {
+            "snapshot_id": params.from,
+            "version": from_row.get::<i32, _>("version"),
+            "entity_count": from_row.get::<i32, _>("entity_count"),
+            "fact_count": from_row.get::<i32, _>("fact_count"),
+            "rule_count": from_row.get::<i32, _>("rule_count"),
+        },
+        "to": {
+            "snapshot_id": params.to,
+            "version": to_row.get::<i32, _>("version"),
+            "entity_count": to_row.get::<i32, _>("entity_count"),
+            "fact_count": to_row.get::<i32, _>("fact_count"),
+            "rule_count": to_row.get::<i32, _>("rule_count"),
+        },
+        "diff": {
+            "lines_added": added.len(),
+            "lines_removed": removed.len(),
+            "added": added,
+            "removed": removed,
+        },
+        "deltas": {
+            "entity_count": to_row.get::<i32, _>("entity_count") - from_row.get::<i32, _>("entity_count"),
+            "fact_count": to_row.get::<i32, _>("fact_count") - from_row.get::<i32, _>("fact_count"),
+            "rule_count": to_row.get::<i32, _>("rule_count") - from_row.get::<i32, _>("rule_count"),
+        }
+    })))
+}
+
+// ─── Dreaming budget ───────────────────────────────────────────────
+
+async fn get_dreaming_budget(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "agent_uuid": db_agent.agent_id,
+        "budget_credits": db_agent.dreaming_budget_credits,
+        "credits_used": db_agent.dreaming_credits_used,
+        "credits_remaining": db_agent.dreaming_budget_credits - db_agent.dreaming_credits_used,
+        "budget_reset_at": db_agent.dreaming_budget_reset_at,
+        "last_consolidated_at": db_agent.last_consolidated_at,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct SetBudgetRequest {
+    budget_credits: i32,
+}
+
+async fn set_dreaming_budget(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+    Json(body): Json<SetBudgetRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    sqlx::query(
+        "UPDATE agents SET dreaming_budget_credits = $1, dreaming_credits_used = 0, dreaming_budget_reset_at = NOW() WHERE agent_id = $2",
+    )
+    .bind(body.budget_credits)
+    .bind(db_agent.agent_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "status": "updated",
+        "agent_id": agent_id,
+        "budget_credits": body.budget_credits,
+    })))
 }
