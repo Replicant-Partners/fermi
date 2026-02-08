@@ -12,6 +12,7 @@ COPY src ./src
 COPY agent-bestiary ./agent-bestiary
 COPY fermi-memory ./fermi-memory
 COPY fermi-auth ./fermi-auth
+COPY fermi-lsp ./fermi-lsp
 
 # Downgrade incompatible dependencies for Rust 1.85
 RUN cargo update time --precise 0.3.36 && \
