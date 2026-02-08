@@ -1,5 +1,5 @@
 use crate::{
-    Agent, ConsolidationJob, Entity, Episode, Fact, MemoryError, Result, SemanticRule,
+    Agent, Community, ConsolidationJob, Entity, Episode, Fact, MemoryError, Result, SemanticRule,
     VerificationStatus,
 };
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
@@ -629,7 +629,7 @@ impl MemoryStore {
         let row = sqlx::query(
             "SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
                     verification_status, verification_method, source_episode_cluster,
-                    episode_count, embedding, is_active
+                    episode_count, embedding, is_active, created_at
              FROM semantic_rules
              WHERE rule_id = $1",
         )
@@ -638,8 +638,34 @@ impl MemoryStore {
         .await?
         .ok_or_else(|| MemoryError::NotFound(format!("Semantic rule {} not found", rule_id)))?;
 
-        let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
+        Self::row_to_semantic_rule(&row)
+    }
 
+    /// Gets all active semantic rules for an agent
+    pub async fn get_agent_semantic_rules(&self, agent_id: Uuid) -> Result<Vec<SemanticRule>> {
+        let rows = sqlx::query(
+            "SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
+                    verification_status, verification_method, source_episode_cluster,
+                    episode_count, embedding, is_active, created_at
+             FROM semantic_rules
+             WHERE agent_id = $1 AND is_active = true
+             ORDER BY confidence_score DESC",
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut rules = Vec::new();
+        for row in rows {
+            rules.push(Self::row_to_semantic_rule(&row)?);
+        }
+
+        Ok(rules)
+    }
+
+    /// Map a database row to a SemanticRule struct
+    fn row_to_semantic_rule(row: &sqlx::postgres::PgRow) -> Result<SemanticRule> {
+        let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
         Ok(SemanticRule {
             rule_id: row.try_get("rule_id")?,
             agent_id: row.try_get("agent_id")?,
@@ -655,45 +681,8 @@ impl MemoryStore {
             episode_count: row.try_get("episode_count")?,
             embedding: embedding.map(|v| v.to_vec()),
             is_active: row.try_get("is_active")?,
+            created_at: row.try_get("created_at")?,
         })
-    }
-
-    /// Gets all active semantic rules for an agent
-    pub async fn get_agent_semantic_rules(&self, agent_id: Uuid) -> Result<Vec<SemanticRule>> {
-        let rows = sqlx::query(
-            "SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
-                    verification_status, verification_method, source_episode_cluster,
-                    episode_count, embedding, is_active
-             FROM semantic_rules
-             WHERE agent_id = $1 AND is_active = true
-             ORDER BY confidence_score DESC",
-        )
-        .bind(agent_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut rules = Vec::new();
-        for row in rows {
-            let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
-            rules.push(SemanticRule {
-                rule_id: row.try_get("rule_id")?,
-                agent_id: row.try_get("agent_id")?,
-                rule_content: row.try_get("rule_content")?,
-                rule_description: row.try_get("rule_description")?,
-                confidence_score: row.try_get("confidence_score")?,
-                verification_status: row
-                    .try_get::<String, _>("verification_status")?
-                    .parse()
-                    .unwrap(),
-                verification_method: row.try_get("verification_method")?,
-                source_episode_cluster: row.try_get("source_episode_cluster")?,
-                episode_count: row.try_get("episode_count")?,
-                embedding: embedding.map(|v| v.to_vec()),
-                is_active: row.try_get("is_active")?,
-            });
-        }
-
-        Ok(rules)
     }
 
     /// Updates verification status of a semantic rule
@@ -982,6 +971,81 @@ impl MemoryStore {
 
         Ok(())
     }
+
+    // ========== Projector Query Methods ==========
+
+    /// Get all episodes with non-null embeddings for an agent
+    pub async fn get_all_episodes_with_embeddings(&self, agent_id: Uuid) -> Result<Vec<Episode>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                episode_id, agent_id, timestamp_ref, query, context,
+                execution_status, error_details, execution_time_ms,
+                tokens_used, cost_usd, embedding, consolidated
+            FROM episodes
+            WHERE agent_id = $1 AND embedding IS NOT NULL
+            ORDER BY timestamp_ref ASC
+            "#,
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut episodes = Vec::new();
+        for row in rows {
+            let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
+            episodes.push(Episode {
+                episode_id: row.try_get("episode_id")?,
+                agent_id: row.try_get("agent_id")?,
+                timestamp_ref: row.try_get("timestamp_ref")?,
+                query: row.try_get("query")?,
+                context: row.try_get("context")?,
+                execution_status: row
+                    .try_get::<String, _>("execution_status")?
+                    .parse()
+                    .unwrap(),
+                error_details: row.try_get("error_details")?,
+                execution_time_ms: row.try_get("execution_time_ms")?,
+                tokens_used: row.try_get("tokens_used")?,
+                cost_usd: row.try_get("cost_usd")?,
+                embedding: embedding.map(|v| v.to_vec()),
+                consolidated: row.try_get("consolidated")?,
+            });
+        }
+
+        Ok(episodes)
+    }
+
+    /// Get all communities for an agent
+    pub async fn get_agent_communities(&self, agent_id: Uuid) -> Result<Vec<Community>> {
+        let rows = sqlx::query(
+            "SELECT community_id, agent_id, community_name, summary,
+                    member_entity_ids, member_count, embedding, created_at
+             FROM communities
+             WHERE agent_id = $1
+             ORDER BY created_at ASC",
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut communities = Vec::new();
+        for row in rows {
+            let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
+            communities.push(Community {
+                community_id: row.try_get("community_id")?,
+                agent_id: row.try_get("agent_id")?,
+                community_name: row.try_get("community_name")?,
+                summary: row.try_get("summary")?,
+                member_entity_ids: row.try_get("member_entity_ids")?,
+                member_count: row.try_get("member_count")?,
+                embedding: embedding.map(|v| v.to_vec()),
+                created_at: row.try_get("created_at")?,
+            });
+        }
+
+        Ok(communities)
+    }
 }
 
 #[cfg(test)]
@@ -1025,6 +1089,9 @@ mod tests {
             current_ontology_commit: None,
             current_ontology_snapshot_id: None,
             last_consolidated_at: None,
+            dreaming_budget_credits: 0,
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
         };
 
         let agent_id = store.upsert_agent(agent).await.unwrap();
@@ -1076,6 +1143,9 @@ mod tests {
             current_ontology_commit: None,
             current_ontology_snapshot_id: None,
             last_consolidated_at: None,
+            dreaming_budget_credits: 0,
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
         };
 
         let agent_id = store.upsert_agent(agent).await.unwrap();
@@ -1148,6 +1218,9 @@ mod tests {
             current_ontology_commit: None,
             current_ontology_snapshot_id: None,
             last_consolidated_at: None,
+            dreaming_budget_credits: 0,
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1223,6 +1296,9 @@ mod tests {
             current_ontology_commit: None,
             current_ontology_snapshot_id: None,
             last_consolidated_at: None,
+            dreaming_budget_credits: 0,
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1296,6 +1372,9 @@ mod tests {
             current_ontology_commit: None,
             current_ontology_snapshot_id: None,
             last_consolidated_at: None,
+            dreaming_budget_credits: 0,
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1313,6 +1392,7 @@ mod tests {
             episode_count: 3,
             embedding: None,
             is_active: true,
+            created_at: Utc::now(),
         };
 
         // Store rule
@@ -1378,6 +1458,9 @@ mod tests {
             current_ontology_commit: None,
             current_ontology_snapshot_id: None,
             last_consolidated_at: None,
+            dreaming_budget_credits: 0,
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

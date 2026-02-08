@@ -3,7 +3,10 @@ members = [
     ".",
     "agent-bestiary/memory",
     "agent-bestiary/ontology",
-    "agent-bestiary/consolidate", "fermi-memory", "fermi-auth",
+    "agent-bestiary/consolidate",
+    "agent-bestiary/projector",
+    "fermi-memory",
+    "fermi-auth",
 ]
 resolver = "2"
 
@@ -59,9 +62,10 @@ tokio = { version = "1", features = ["full"] }
 http = "1"
 http-body-util = "0.1"
 
-# ADM Memory + Ontology
+# ADM Memory + Ontology + Projector
 agent-bestiary-memory = { path = "agent-bestiary/memory" }
 agent-bestiary-ontology = { path = "agent-bestiary/ontology" }
+agent-bestiary-projector = { path = "agent-bestiary/projector" }
 rust_decimal = { version = "1", features = ["serde-float"] }
 
 # Auth

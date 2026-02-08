@@ -26,12 +26,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use agent_bestiary_memory::{Agent, Episode, ExecutionStatus, MemoryStore};
+use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMethod};
 
 #[derive(Clone)]
 struct AppState {
     db: PgPool,
     memory_store: Arc<MemoryStore>,
     registry: Arc<AgentRegistry>,
+    projection_engine: Arc<ProjectionEngine>,
+    projection_cache: Arc<ProjectionCache>,
     gemini_api_key: String,
     jwt_secret: String,
     oauth: OAuthConfig,
@@ -185,8 +188,15 @@ async fn main() {
     seed_agents_to_database(&memory_store, &registry).await;
     println!("Agent seeding complete");
 
-    let gemini_api_key =
-        std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY environment variable must be set");
+    // Initialize projection engine + cache
+    let projection_engine = Arc::new(ProjectionEngine::new(memory_store.clone()));
+    let projection_cache = Arc::new(ProjectionCache::new(300)); // 5 min TTL
+    println!("Projection engine initialized");
+
+    let gemini_api_key = std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| {
+        eprintln!("Note: GEMINI_API_KEY not set. Avatar generation will be disabled.");
+        String::new()
+    });
 
     let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
         eprintln!(
@@ -207,6 +217,8 @@ async fn main() {
         db: db.clone(),
         memory_store,
         registry,
+        projection_engine,
+        projection_cache,
         gemini_api_key,
         jwt_secret: jwt_secret.clone(),
         oauth,
@@ -236,6 +248,17 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/ontology/diff",
             get(get_ontology_diff),
+        )
+        // Projector
+        .route("/agent/:agent_id/projector", get(projector_view))
+        .route(
+            "/api/agents/:agent_id/projections",
+            get(get_agent_projections),
+        )
+        .route("/api/projections/bestiary", get(get_bestiary_projections))
+        .route(
+            "/api/agents/:agent_id/projections/temporal",
+            get(get_temporal_projections),
         )
         // Auth flow routes
         .route("/auth/google", get(auth_google))
@@ -480,6 +503,13 @@ async fn generate_avatar(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    if state.gemini_api_key.is_empty() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Avatar generation disabled (GEMINI_API_KEY not set)".to_string(),
+        ));
+    }
+
     let cache_dir = "avatars_cache";
     std::fs::create_dir_all(cache_dir).ok();
     let cache_path = format!("{}/{}.json", cache_dir, agent_id);
@@ -647,6 +677,124 @@ async fn get_ontology(
             "message": "No ontology data available for this agent"
         }
     })))
+}
+
+// ─── Projector routes ──────────────────────────────────────────────
+
+async fn projector_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/projector.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/projector.html: {}", e);
+            format!(
+                "<h1>Embedding Projector</h1><p>Error loading template: {}</p>",
+                e
+            )
+        }
+    };
+    Html(html)
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectionParams {
+    method: Option<String>,
+    dimensions: Option<u8>,
+}
+
+async fn get_agent_projections(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(params): Query<ProjectionParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let dims = params.dimensions.unwrap_or(3);
+    let method = parse_projection_method(params.method.as_deref());
+
+    // Check cache
+    let cache_key = agent_bestiary_projector::CacheKey {
+        agent_id: Some(db_agent.agent_id),
+        method: method.name().to_string(),
+        dimensions: dims,
+    };
+    if let Some(cached) = state.projection_cache.get(&cache_key) {
+        return Ok(Json(serde_json::to_value(cached).unwrap()));
+    }
+
+    let result = state
+        .projection_engine
+        .project_agent(db_agent.agent_id, &agent_id, &method, dims)
+        .await
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
+
+    state.projection_cache.insert(cache_key, result.clone());
+    Ok(Json(serde_json::to_value(result).unwrap()))
+}
+
+#[derive(Debug, Deserialize)]
+struct BestiaryProjectionParams {
+    method: Option<String>,
+    dimensions: Option<u8>,
+    limit: Option<usize>,
+}
+
+async fn get_bestiary_projections(
+    State(state): State<AppState>,
+    Query(params): Query<BestiaryProjectionParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let dims = params.dimensions.unwrap_or(3);
+    let limit = params.limit.unwrap_or(5000);
+    let method = parse_projection_method(params.method.as_deref());
+
+    let cache_key = agent_bestiary_projector::CacheKey {
+        agent_id: None,
+        method: method.name().to_string(),
+        dimensions: dims,
+    };
+    if let Some(cached) = state.projection_cache.get(&cache_key) {
+        return Ok(Json(serde_json::to_value(cached).unwrap()));
+    }
+
+    let result = state
+        .projection_engine
+        .project_bestiary(&method, dims, limit)
+        .await
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
+
+    state.projection_cache.insert(cache_key, result.clone());
+    Ok(Json(serde_json::to_value(result).unwrap()))
+}
+
+#[derive(Debug, Deserialize)]
+struct TemporalProjectionParams {
+    method: Option<String>,
+    dimensions: Option<u8>,
+    keyframes: Option<usize>,
+}
+
+async fn get_temporal_projections(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(params): Query<TemporalProjectionParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let dims = params.dimensions.unwrap_or(3);
+    let keyframes = params.keyframes.unwrap_or(10);
+    let method = parse_projection_method(params.method.as_deref());
+
+    let result = state
+        .projection_engine
+        .project_agent_temporal(db_agent.agent_id, &agent_id, &method, dims, keyframes)
+        .await
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
+
+    Ok(Json(serde_json::to_value(result).unwrap()))
+}
+
+fn parse_projection_method(method: Option<&str>) -> ProjectionMethod {
+    match method {
+        Some("tsne") => ProjectionMethod::Tsne { perplexity: 30.0 },
+        _ => ProjectionMethod::Pca,
+    }
 }
 
 // ─── Auth routes ───────────────────────────────────────────────────

@@ -65,6 +65,7 @@ pub struct SemanticRule {
     pub episode_count: i32,
     pub embedding: Option<Vec<f32>>,
     pub is_active: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,9 +186,24 @@ pub struct Agent {
     pub current_ontology_commit: Option<String>,
     pub current_ontology_snapshot_id: Option<Uuid>,
     pub last_consolidated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub dreaming_budget_credits: i32,
+    #[serde(default)]
     pub dreaming_credits_used: i32,
     pub dreaming_budget_reset_at: Option<DateTime<Utc>>,
+}
+
+/// Community (clustered group of entities)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Community {
+    pub community_id: Uuid,
+    pub agent_id: Uuid,
+    pub community_name: Option<String>,
+    pub summary: Option<String>,
+    pub member_entity_ids: Vec<Uuid>,
+    pub member_count: i32,
+    pub embedding: Option<Vec<f32>>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Consolidation job record

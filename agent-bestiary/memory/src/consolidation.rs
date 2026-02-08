@@ -295,6 +295,7 @@ impl ConsolidationWorker {
                 episode_count: cluster.episodes.len() as i32,
                 embedding,
                 is_active: true,
+                created_at: chrono::Utc::now(),
             };
 
             rules.push(rule);
@@ -346,6 +347,7 @@ impl ConsolidationWorker {
                 episode_count: cluster.episodes.len() as i32,
                 embedding,
                 is_active: true,
+                created_at: chrono::Utc::now(),
             };
 
             rules.push(rule);

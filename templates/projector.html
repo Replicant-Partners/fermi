@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Embedding Projector - Agent Bestiary</title>
+    <style>
+      :root {
+        --bg0-hard: #1d2021;
+        --bg0: #282828;
+        --bg1: #3c3836;
+        --bg2: #504945;
+        --bg3: #665c54;
+        --fg0: #fbf1c7;
+        --fg1: #ebdbb2;
+        --fg2: #d5c4a1;
+        --fg3: #bdae93;
+        --red: #fb4934;
+        --green: #b8bb26;
+        --yellow: #fabd2f;
+        --blue: #83a598;
+        --purple: #d3869b;
+        --aqua: #8ec07c;
+        --orange: #fe8019;
+        --gray: #928374;
+        --episode-color: #83a598;
+        --rule-color: #b8bb26;
+        --entity-color: #fe8019;
+        --community-color: #d3869b;
+      }
+
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+        background: var(--bg0-hard);
+        color: var(--fg1);
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        grid-template-rows: 48px 1fr 60px;
+        height: 100vh;
+      }
+
+      /* ─── Header ─── */
+      .header {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        background: var(--bg0);
+        border-bottom: 1px solid var(--bg2);
+      }
+
+      .header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .back-button {
+        color: var(--fg3);
+        text-decoration: none;
+        font-size: 0.8em;
+        padding: 4px 10px;
+        border: 1px solid var(--bg2);
+        border-radius: 4px;
+        transition: all 0.2s;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .back-button:hover {
+        background: var(--bg1);
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+
+      .header-title {
+        font-size: 0.95em;
+        font-weight: 600;
+        color: var(--fg0);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .agent-badge {
+        font-size: 0.75em;
+        padding: 3px 8px;
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        border-radius: 3px;
+        color: var(--yellow);
+      }
+
+      /* ─── Sidebar ─── */
+      .sidebar {
+        background: var(--bg0);
+        border-right: 1px solid var(--bg2);
+        padding: 12px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .sidebar-section {
+        border-bottom: 1px solid var(--bg1);
+        padding-bottom: 12px;
+      }
+      .sidebar-section:last-child { border-bottom: none; }
+
+      .sidebar-label {
+        font-size: 0.7em;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--fg3);
+        margin-bottom: 8px;
+      }
+
+      .control-row {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+
+      .btn {
+        font-size: 0.75em;
+        padding: 5px 10px;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 3px;
+        color: var(--fg2);
+        cursor: pointer;
+        transition: all 0.15s;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .btn:hover { background: var(--bg2); color: var(--fg0); }
+      .btn.active {
+        background: var(--bg2);
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+
+      .btn-compute {
+        width: 100%;
+        background: var(--bg2);
+        border-color: var(--aqua);
+        color: var(--aqua);
+        font-weight: 600;
+      }
+      .btn-compute:hover { background: var(--bg3); }
+
+      /* ─── Filter checkboxes ─── */
+      .filter-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+        font-size: 0.8em;
+      }
+
+      .filter-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .filter-item input[type="checkbox"] {
+        accent-color: var(--yellow);
+      }
+
+      .filter-count {
+        margin-left: auto;
+        color: var(--fg3);
+        font-size: 0.85em;
+      }
+
+      /* ─── Selected point info ─── */
+      .point-info {
+        font-size: 0.8em;
+      }
+
+      .point-info-label {
+        color: var(--fg3);
+        font-size: 0.75em;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+      }
+
+      .point-info-value {
+        color: var(--fg0);
+        margin-bottom: 8px;
+        word-break: break-word;
+      }
+
+      /* ─── Stats ─── */
+      .stat-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.8em;
+        margin-bottom: 4px;
+      }
+      .stat-row .label { color: var(--fg3); }
+      .stat-row .value { color: var(--fg0); font-variant-numeric: tabular-nums; }
+
+      /* ─── Canvas ─── */
+      .canvas-container {
+        position: relative;
+        overflow: hidden;
+        background: var(--bg0-hard);
+      }
+
+      #three-canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .loading-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(29, 32, 33, 0.9);
+        z-index: 10;
+      }
+
+      .loading-spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--bg3);
+        border-top-color: var(--yellow);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 12px;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      .loading-text {
+        font-size: 0.85em;
+        color: var(--fg3);
+      }
+
+      .empty-state {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--fg3);
+      }
+      .empty-state h2 { font-size: 1.1em; margin-bottom: 8px; color: var(--fg2); }
+      .empty-state p { font-size: 0.85em; max-width: 400px; text-align: center; }
+
+      /* ─── Tooltip ─── */
+      .tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: var(--bg0);
+        border: 1px solid var(--bg3);
+        border-radius: 4px;
+        padding: 8px 12px;
+        font-size: 0.78em;
+        z-index: 20;
+        max-width: 300px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        display: none;
+      }
+      .tooltip .tt-label { color: var(--fg0); font-weight: 600; margin-bottom: 3px; }
+      .tooltip .tt-source { color: var(--fg3); font-size: 0.9em; }
+
+      /* ─── Timeline ─── */
+      .timeline {
+        grid-column: 1 / -1;
+        background: var(--bg0);
+        border-top: 1px solid var(--bg2);
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        gap: 12px;
+      }
+
+      .timeline-label {
+        font-size: 0.7em;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--fg3);
+        white-space: nowrap;
+      }
+
+      .timeline-controls {
+        display: flex;
+        gap: 4px;
+      }
+
+      .timeline-btn {
+        width: 28px;
+        height: 28px;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 3px;
+        color: var(--fg2);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9em;
+        transition: all 0.15s;
+      }
+      .timeline-btn:hover { background: var(--bg2); color: var(--fg0); }
+      .timeline-btn.active { border-color: var(--aqua); color: var(--aqua); }
+
+      .timeline-slider {
+        flex: 1;
+        -webkit-appearance: none;
+        height: 4px;
+        background: var(--bg2);
+        border-radius: 2px;
+        outline: none;
+      }
+      .timeline-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--yellow);
+        cursor: pointer;
+        border: 2px solid var(--bg0);
+      }
+
+      .timeline-info {
+        font-size: 0.75em;
+        color: var(--fg3);
+        white-space: nowrap;
+        min-width: 140px;
+        text-align: right;
+      }
+
+      /* ─── Variance bar ─── */
+      .variance-bar {
+        height: 4px;
+        background: var(--bg2);
+        border-radius: 2px;
+        margin-top: 6px;
+        overflow: hidden;
+        display: flex;
+      }
+      .variance-segment {
+        height: 100%;
+        transition: width 0.3s ease;
+      }
+
+      /* ─── OP-1 Theme ─── */
+      .theme-op1 {
+        --bg0-hard: #f5f5f0;
+        --bg0: #ffffff;
+        --bg1: #f0f0ea;
+        --bg2: #e0e0d8;
+        --bg3: #c0c0b8;
+        --fg0: #1a1a18;
+        --fg1: #333330;
+        --fg2: #555550;
+        --fg3: #888880;
+        --red: #e53935;
+        --green: #43a047;
+        --yellow: #f9a825;
+        --blue: #1e88e5;
+        --purple: #8e24aa;
+        --aqua: #00897b;
+        --orange: #ef6c00;
+        --gray: #9e9e9e;
+        --episode-color: #1e88e5;
+        --rule-color: #43a047;
+        --entity-color: #ef6c00;
+        --community-color: #8e24aa;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <!-- Header -->
+      <div class="header">
+        <div class="header-left">
+          <a class="back-button" id="back-link" href="/">Back</a>
+          <span class="header-title">Embedding Projector</span>
+        </div>
+        <div class="header-right">
+          <span class="agent-badge" id="agent-badge"></span>
+          <button class="btn" id="theme-toggle" title="Toggle theme (Ctrl+T)">Theme</button>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-section">
+          <div class="sidebar-label">Method</div>
+          <div class="control-row">
+            <button class="btn active" data-method="pca" id="btn-pca">PCA</button>
+            <button class="btn" data-method="tsne" id="btn-tsne">t-SNE</button>
+          </div>
+          <div class="sidebar-label" style="margin-top: 8px;">Dimensions</div>
+          <div class="control-row">
+            <button class="btn active" data-dims="3" id="btn-3d">3D</button>
+            <button class="btn" data-dims="2" id="btn-2d">2D</button>
+          </div>
+          <button class="btn btn-compute" id="btn-recompute" style="margin-top: 8px;">Recompute</button>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-label">Filter by Source</div>
+          <label class="filter-item">
+            <input type="checkbox" checked data-source="episode" />
+            <span class="filter-dot" style="background: var(--episode-color)"></span>
+            Episodes
+            <span class="filter-count" id="count-episodes">0</span>
+          </label>
+          <label class="filter-item">
+            <input type="checkbox" checked data-source="semantic_rule" />
+            <span class="filter-dot" style="background: var(--rule-color)"></span>
+            Rules
+            <span class="filter-count" id="count-rules">0</span>
+          </label>
+          <label class="filter-item">
+            <input type="checkbox" checked data-source="entity" />
+            <span class="filter-dot" style="background: var(--entity-color)"></span>
+            Entities
+            <span class="filter-count" id="count-entities">0</span>
+          </label>
+          <label class="filter-item">
+            <input type="checkbox" checked data-source="community" />
+            <span class="filter-dot" style="background: var(--community-color)"></span>
+            Communities
+            <span class="filter-count" id="count-communities">0</span>
+          </label>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-label">Stats</div>
+          <div class="stat-row"><span class="label">Points</span><span class="value" id="stat-points">-</span></div>
+          <div class="stat-row"><span class="label">Method</span><span class="value" id="stat-method">-</span></div>
+          <div class="stat-row"><span class="label">Dims</span><span class="value" id="stat-dims">-</span></div>
+          <div class="sidebar-label" style="margin-top: 6px;">Explained Variance</div>
+          <div class="stat-row"><span class="label">PC1</span><span class="value" id="var-pc1">-</span></div>
+          <div class="stat-row"><span class="label">PC2</span><span class="value" id="var-pc2">-</span></div>
+          <div class="stat-row"><span class="label">PC3</span><span class="value" id="var-pc3">-</span></div>
+          <div class="variance-bar" id="variance-bar"></div>
+        </div>
+
+        <div class="sidebar-section" id="point-detail" style="display:none;">
+          <div class="sidebar-label">Selected Point</div>
+          <div class="point-info">
+            <div class="point-info-label">Label</div>
+            <div class="point-info-value" id="sel-label">-</div>
+            <div class="point-info-label">Source</div>
+            <div class="point-info-value" id="sel-source">-</div>
+            <div class="point-info-label">Status</div>
+            <div class="point-info-value" id="sel-status">-</div>
+            <div class="point-info-label">Timestamp</div>
+            <div class="point-info-value" id="sel-timestamp">-</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Canvas -->
+      <div class="canvas-container" id="canvas-container">
+        <canvas id="three-canvas"></canvas>
+        <div class="loading-overlay" id="loading">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">Computing projections...</div>
+        </div>
+        <div class="empty-state" id="empty-state" style="display:none;">
+          <h2>No Embeddings Yet</h2>
+          <p>Execute some queries against this agent to generate embeddings, then return here to explore the embedding space.</p>
+        </div>
+        <div class="tooltip" id="tooltip">
+          <div class="tt-label" id="tt-label"></div>
+          <div class="tt-source" id="tt-source"></div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="timeline">
+        <span class="timeline-label">Timeline</span>
+        <div class="timeline-controls">
+          <button class="timeline-btn" id="btn-play" title="Play">&#9654;</button>
+          <button class="timeline-btn" id="btn-pause" title="Pause">&#9646;&#9646;</button>
+        </div>
+        <input type="range" class="timeline-slider" id="timeline-slider" min="0" max="100" value="100" />
+        <span class="timeline-info" id="timeline-info">All points</span>
+      </div>
+    </div>
+
+    <!-- Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+    (function() {
+      'use strict';
+
+      // ─── State ───
+      const agentId = window.location.pathname.split('/')[2];
+      let currentMethod = 'pca';
+      let currentDims = 3;
+      let projectionData = null;
+      let temporalData = null;
+      let pointsData = [];  // filtered points currently shown
+      let allPoints = [];   // all points from API
+      let isPlaying = false;
+      let playInterval = null;
+
+      // Source visibility
+      const sourceVisible = {
+        episode: true,
+        semantic_rule: true,
+        entity: true,
+        community: true
+      };
+
+      // ─── Three.js setup ───
+      const container = document.getElementById('canvas-container');
+      const canvas = document.getElementById('three-canvas');
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue('--bg0-hard').trim() || '#1d2021');
+
+      const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
+      camera.position.set(5, 5, 5);
+
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setPixelRatio(window.devicePixelRatio);
+
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 0.5;
+
+      // Raycaster for interaction
+      const raycaster = new THREE.Raycaster();
+      raycaster.params.Points.threshold = 0.15;
+      const mouse = new THREE.Vector2();
+
+      // Point cloud objects
+      let pointCloud = null;
+      let highlightPoint = null;
+
+      // ─── Source color map ───
+      const sourceColors = {
+        episode:       new THREE.Color(0x83a598),
+        semantic_rule: new THREE.Color(0xb8bb26),
+        entity:        new THREE.Color(0xfe8019),
+        community:     new THREE.Color(0xd3869b),
+      };
+
+      const sourceColorsOP1 = {
+        episode:       new THREE.Color(0x1e88e5),
+        semantic_rule: new THREE.Color(0x43a047),
+        entity:        new THREE.Color(0xef6c00),
+        community:     new THREE.Color(0x8e24aa),
+      };
+
+      function getSourceColor(source) {
+        const isOP1 = document.documentElement.classList.contains('theme-op1');
+        const colors = isOP1 ? sourceColorsOP1 : sourceColors;
+        return colors[source] || new THREE.Color(0x928374);
+      }
+
+      // ─── URL setup ───
+      if (agentId) {
+        document.getElementById('back-link').href = '/agent/' + agentId;
+        document.getElementById('back-link').textContent = 'Back to Specimen';
+        document.getElementById('agent-badge').textContent = agentId;
+      } else {
+        document.getElementById('agent-badge').textContent = 'Bestiary-wide';
+      }
+
+      // ─── Data loading ───
+      async function loadProjection() {
+        showLoading(true);
+        hideEmpty();
+
+        try {
+          const url = agentId
+            ? `/api/agents/${agentId}/projections?method=${currentMethod}&dimensions=${currentDims}`
+            : `/api/projections/bestiary?method=${currentMethod}&dimensions=${currentDims}`;
+
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            const err = await resp.text();
+            if (resp.status === 422 && err.includes('No embeddings')) {
+              showEmpty();
+              showLoading(false);
+              return;
+            }
+            throw new Error(err);
+          }
+
+          projectionData = await resp.json();
+          allPoints = projectionData.points;
+          updateFilters();
+          renderPoints();
+          updateStats();
+
+          // Also load temporal data
+          if (agentId) loadTemporal();
+
+        } catch (e) {
+          console.error('Projection error:', e);
+          showEmpty();
+        }
+
+        showLoading(false);
+      }
+
+      async function loadTemporal() {
+        try {
+          const resp = await fetch(`/api/agents/${agentId}/projections/temporal?method=${currentMethod}&dimensions=${currentDims}&keyframes=10`);
+          if (!resp.ok) return;
+          temporalData = await resp.json();
+          const slider = document.getElementById('timeline-slider');
+          slider.max = temporalData.keyframes.length - 1;
+          slider.value = slider.max;
+          document.getElementById('timeline-info').textContent =
+            `${temporalData.keyframes.length} keyframes | ${temporalData.total_points} total`;
+        } catch (e) {
+          console.warn('Temporal data not available:', e);
+        }
+      }
+
+      // ─── Rendering ───
+      function renderPoints() {
+        // Clear existing
+        if (pointCloud) {
+          scene.remove(pointCloud);
+          pointCloud.geometry.dispose();
+          pointCloud.material.dispose();
+          pointCloud = null;
+        }
+        if (highlightPoint) {
+          scene.remove(highlightPoint);
+          highlightPoint.geometry.dispose();
+          highlightPoint.material.dispose();
+          highlightPoint = null;
+        }
+
+        if (pointsData.length === 0) return;
+
+        const positions = new Float32Array(pointsData.length * 3);
+        const colors = new Float32Array(pointsData.length * 3);
+        const sizes = new Float32Array(pointsData.length);
+
+        for (let i = 0; i < pointsData.length; i++) {
+          const p = pointsData[i];
+          positions[i * 3]     = p.x;
+          positions[i * 3 + 1] = p.y;
+          positions[i * 3 + 2] = currentDims === 3 ? (p.z || 0) : 0;
+
+          const color = getSourceColor(p.source);
+          colors[i * 3]     = color.r;
+          colors[i * 3 + 1] = color.g;
+          colors[i * 3 + 2] = color.b;
+
+          sizes[i] = p.source === 'community' ? 8 : p.source === 'semantic_rule' ? 6 : 4;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+        const material = new THREE.PointsMaterial({
+          size: 0.12,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.85,
+          sizeAttenuation: true,
+        });
+
+        pointCloud = new THREE.Points(geometry, material);
+        scene.add(pointCloud);
+
+        // Center camera on point cloud
+        const bbox = new THREE.Box3().setFromBufferAttribute(geometry.getAttribute('position'));
+        const center = new THREE.Vector3();
+        bbox.getCenter(center);
+        controls.target.copy(center);
+
+        const size = new THREE.Vector3();
+        bbox.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        camera.position.copy(center);
+        camera.position.x += maxDim * 1.5;
+        camera.position.y += maxDim * 1.0;
+        camera.position.z += maxDim * 1.5;
+      }
+
+      // ─── Filtering ───
+      function updateFilters() {
+        const counts = { episode: 0, semantic_rule: 0, entity: 0, community: 0 };
+        allPoints.forEach(p => { if (counts[p.source] !== undefined) counts[p.source]++; });
+
+        document.getElementById('count-episodes').textContent = counts.episode;
+        document.getElementById('count-rules').textContent = counts.semantic_rule;
+        document.getElementById('count-entities').textContent = counts.entity;
+        document.getElementById('count-communities').textContent = counts.community;
+
+        pointsData = allPoints.filter(p => sourceVisible[p.source]);
+      }
+
+      // ─── Stats ───
+      function updateStats() {
+        if (!projectionData) return;
+        document.getElementById('stat-points').textContent = projectionData.point_count;
+        document.getElementById('stat-method').textContent = projectionData.method.toUpperCase();
+        document.getElementById('stat-dims').textContent = projectionData.dimensions + 'D';
+
+        const ev = projectionData.explained_variance || [];
+        document.getElementById('var-pc1').textContent = ev[0] ? (ev[0] * 100).toFixed(1) + '%' : '-';
+        document.getElementById('var-pc2').textContent = ev[1] ? (ev[1] * 100).toFixed(1) + '%' : '-';
+        document.getElementById('var-pc3').textContent = ev[2] ? (ev[2] * 100).toFixed(1) + '%' : '-';
+
+        // Variance bar
+        const bar = document.getElementById('variance-bar');
+        bar.innerHTML = '';
+        const barColors = ['var(--blue)', 'var(--green)', 'var(--orange)'];
+        ev.forEach((v, i) => {
+          if (i > 2) return;
+          const seg = document.createElement('div');
+          seg.className = 'variance-segment';
+          seg.style.width = (v * 100) + '%';
+          seg.style.background = barColors[i];
+          bar.appendChild(seg);
+        });
+      }
+
+      // ─── UI helpers ───
+      function showLoading(show) {
+        document.getElementById('loading').style.display = show ? 'flex' : 'none';
+      }
+      function showEmpty() {
+        document.getElementById('empty-state').style.display = 'flex';
+      }
+      function hideEmpty() {
+        document.getElementById('empty-state').style.display = 'none';
+      }
+
+      // ─── Interaction ───
+      let hoveredIndex = -1;
+
+      function onMouseMove(event) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+
+        if (!pointCloud) return;
+        const intersects = raycaster.intersectObject(pointCloud);
+
+        const tooltip = document.getElementById('tooltip');
+
+        if (intersects.length > 0) {
+          const idx = intersects[0].index;
+          if (idx !== hoveredIndex) {
+            hoveredIndex = idx;
+            const p = pointsData[idx];
+            if (p) {
+              document.getElementById('tt-label').textContent = p.label;
+              document.getElementById('tt-source').textContent = p.source.replace('_', ' ');
+              tooltip.style.display = 'block';
+            }
+          }
+          tooltip.style.left = (event.clientX - container.getBoundingClientRect().left + 12) + 'px';
+          tooltip.style.top = (event.clientY - container.getBoundingClientRect().top - 10) + 'px';
+          renderer.domElement.style.cursor = 'pointer';
+        } else {
+          hoveredIndex = -1;
+          tooltip.style.display = 'none';
+          renderer.domElement.style.cursor = 'grab';
+        }
+      }
+
+      function onClick(event) {
+        if (hoveredIndex < 0 || hoveredIndex >= pointsData.length) return;
+        const p = pointsData[hoveredIndex];
+        if (!p) return;
+
+        const detail = document.getElementById('point-detail');
+        detail.style.display = 'block';
+        document.getElementById('sel-label').textContent = p.label;
+        document.getElementById('sel-source').textContent = p.source.replace('_', ' ');
+        document.getElementById('sel-status').textContent =
+          p.metadata?.execution_status || p.metadata?.verification_status || '-';
+        document.getElementById('sel-timestamp').textContent =
+          p.timestamp ? new Date(p.timestamp).toLocaleString() : '-';
+
+        // Highlight selected point
+        if (highlightPoint) {
+          scene.remove(highlightPoint);
+          highlightPoint.geometry.dispose();
+          highlightPoint.material.dispose();
+        }
+        const geo = new THREE.SphereGeometry(0.15, 16, 16);
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0xfabd2f,
+          transparent: true,
+          opacity: 0.6,
+          wireframe: true,
+        });
+        highlightPoint = new THREE.Mesh(geo, mat);
+        highlightPoint.position.set(p.x, p.y, currentDims === 3 ? (p.z || 0) : 0);
+        scene.add(highlightPoint);
+
+        controls.autoRotate = false;
+      }
+
+      renderer.domElement.addEventListener('mousemove', onMouseMove);
+      renderer.domElement.addEventListener('click', onClick);
+
+      // ─── Control buttons ───
+      document.querySelectorAll('[data-method]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          currentMethod = btn.dataset.method;
+          document.querySelectorAll('[data-method]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+
+      document.querySelectorAll('[data-dims]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          currentDims = parseInt(btn.dataset.dims);
+          document.querySelectorAll('[data-dims]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+
+      document.getElementById('btn-recompute').addEventListener('click', loadProjection);
+
+      // Source filters
+      document.querySelectorAll('[data-source]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          sourceVisible[cb.dataset.source] = cb.checked;
+          updateFilters();
+          renderPoints();
+        });
+      });
+
+      // ─── Timeline ───
+      document.getElementById('timeline-slider').addEventListener('input', function() {
+        if (!temporalData || !temporalData.keyframes.length) return;
+        const idx = parseInt(this.value);
+        const kf = temporalData.keyframes[idx];
+        if (!kf) return;
+
+        document.getElementById('timeline-info').textContent =
+          `${kf.label} | ${kf.point_count} points`;
+
+        // Replace point data with keyframe points
+        allPoints = kf.points.map(tp => ({
+          ...tp,
+          metadata: {},
+          timestamp: kf.timestamp,
+        }));
+        updateFilters();
+        renderPoints();
+      });
+
+      document.getElementById('btn-play').addEventListener('click', () => {
+        if (!temporalData || isPlaying) return;
+        isPlaying = true;
+        const slider = document.getElementById('timeline-slider');
+        slider.value = 0;
+        slider.dispatchEvent(new Event('input'));
+
+        playInterval = setInterval(() => {
+          let val = parseInt(slider.value) + 1;
+          if (val > parseInt(slider.max)) {
+            clearInterval(playInterval);
+            isPlaying = false;
+            return;
+          }
+          slider.value = val;
+          slider.dispatchEvent(new Event('input'));
+        }, 1500);
+      });
+
+      document.getElementById('btn-pause').addEventListener('click', () => {
+        if (playInterval) clearInterval(playInterval);
+        isPlaying = false;
+      });
+
+      // ─── Theme toggle ───
+      const themeBtn = document.getElementById('theme-toggle');
+      function toggleTheme() {
+        const html = document.documentElement;
+        const isOP1 = html.classList.contains('theme-op1');
+        html.classList.toggle('theme-op1', !isOP1);
+        html.classList.toggle('theme-hasui', isOP1);
+        localStorage.setItem('abw-theme', isOP1 ? 'hasui' : 'op1');
+
+        // Update scene background
+        const bgColor = getComputedStyle(html).getPropertyValue('--bg0-hard').trim();
+        scene.background = new THREE.Color(bgColor);
+
+        // Re-render with new colors
+        if (pointsData.length > 0) renderPoints();
+      }
+      themeBtn.addEventListener('click', toggleTheme);
+      document.addEventListener('keydown', e => {
+        if (e.ctrlKey && e.key === 't') { e.preventDefault(); toggleTheme(); }
+      });
+
+      // Restore saved theme
+      const saved = localStorage.getItem('abw-theme');
+      if (saved === 'op1') {
+        document.documentElement.classList.remove('theme-hasui');
+        document.documentElement.classList.add('theme-op1');
+        scene.background = new THREE.Color('#f5f5f0');
+      }
+
+      // ─── Resize ───
+      window.addEventListener('resize', () => {
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      });
+
+      // ─── Animate ───
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      // ─── Initial load ───
+      loadProjection();
+
+    })();
+    </script>
+  </body>
+</html>
