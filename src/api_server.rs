@@ -250,6 +250,7 @@ async fn main() {
             get(get_ontology_diff),
         )
         // Projector
+        .route("/projector", get(projector_view))
         .route("/agent/:agent_id/projector", get(projector_view))
         .route(
             "/api/agents/:agent_id/projections",
