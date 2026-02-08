@@ -187,6 +187,15 @@ pub struct Agent {
     pub current_ontology_snapshot_id: Option<Uuid>,
     pub last_consolidated_at: Option<DateTime<Utc>>,
     #[serde(default)]
+    pub total_executions: i32,
+    #[serde(default)]
+    pub successful_executions: i32,
+    #[serde(default)]
+    pub failed_executions: i32,
+    pub total_cost_usd: Option<rust_decimal::Decimal>,
+    #[serde(default)]
+    pub avg_execution_time_ms: i64,
+    #[serde(default)]
     pub dreaming_budget_credits: i32,
     #[serde(default)]
     pub dreaming_credits_used: i32,

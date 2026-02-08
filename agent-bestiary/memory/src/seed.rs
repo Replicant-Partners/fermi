@@ -23,9 +23,7 @@ use uuid::Uuid;
 /// Deterministic UUID from (agent_index, table_code, item_index).
 /// Table codes: Agent=0, Episode=1, Rule=2, Entity=3, Fact=4, Community=5, Job=6
 fn make_uuid(agent_idx: u8, table_code: u8, item_idx: u8) -> Uuid {
-    Uuid::from_u128(
-        (agent_idx as u128) << 96 | (table_code as u128) << 64 | (item_idx as u128),
-    )
+    Uuid::from_u128((agent_idx as u128) << 96 | (table_code as u128) << 64 | (item_idx as u128))
 }
 
 /// Deterministic 1024-dim embedding from a seed value.
@@ -90,8 +88,13 @@ impl SeedData {
             let agent_rules = Self::build_rules(ai, agent.agent_id, &agent_episodes, base_time);
             let agent_entities =
                 Self::build_entities(ai, agent.agent_id, &agent_episodes, base_time);
-            let agent_facts =
-                Self::build_facts(ai, agent.agent_id, &agent_entities, &agent_episodes, base_time);
+            let agent_facts = Self::build_facts(
+                ai,
+                agent.agent_id,
+                &agent_entities,
+                &agent_episodes,
+                base_time,
+            );
             let agent_communities =
                 Self::build_communities(ai, agent.agent_id, &agent_entities, base_time);
             let agent_jobs = Self::build_consolidation_jobs(ai, agent.agent_id, &agent_episodes);
@@ -139,12 +142,19 @@ impl SeedData {
                 executor_type: "llm".to_string(),
                 model: "claude-sonnet-4-5-20250929".to_string(),
                 temperature: 0.3,
-                mcp_servers: Some(json!([{"name": "market-data", "url": "https://api.marketdata.example"}])),
+                mcp_servers: Some(
+                    json!([{"name": "market-data", "url": "https://api.marketdata.example"}]),
+                ),
                 description: Some("Semiconductor market analysis and forecasting".to_string()),
                 author: "fermi-lab".to_string(),
                 current_ontology_commit: None,
                 current_ontology_snapshot_id: None,
                 last_consolidated_at: None,
+                total_executions: 0,
+                successful_executions: 0,
+                failed_executions: 0,
+                total_cost_usd: None,
+                avg_execution_time_ms: 0,
                 dreaming_budget_credits: 10,
                 dreaming_credits_used: 3,
                 dreaming_budget_reset_at: None,
@@ -162,11 +172,18 @@ impl SeedData {
                     {"name": "news-feed", "url": "https://news.example"},
                     {"name": "sanctions-db", "url": "https://sanctions.example"}
                 ])),
-                description: Some("Geopolitical conflict and sanctions risk assessment".to_string()),
+                description: Some(
+                    "Geopolitical conflict and sanctions risk assessment".to_string(),
+                ),
                 author: "fermi-lab".to_string(),
                 current_ontology_commit: None,
                 current_ontology_snapshot_id: None,
                 last_consolidated_at: None,
+                total_executions: 0,
+                successful_executions: 0,
+                failed_executions: 0,
+                total_cost_usd: None,
+                avg_execution_time_ms: 0,
                 dreaming_budget_credits: 5,
                 dreaming_credits_used: 5,
                 dreaming_budget_reset_at: None,
@@ -186,6 +203,11 @@ impl SeedData {
                 current_ontology_commit: None,
                 current_ontology_snapshot_id: None,
                 last_consolidated_at: None,
+                total_executions: 0,
+                successful_executions: 0,
+                failed_executions: 0,
+                total_cost_usd: None,
+                avg_execution_time_ms: 0,
                 dreaming_budget_credits: 0,
                 dreaming_credits_used: 0,
                 dreaming_budget_reset_at: None,
@@ -320,9 +342,7 @@ impl SeedData {
             // Embeddings: all success + failures have embeddings, partials: only first one
             let has_embedding = i < 22 || i == 22;
             let embedding = if has_embedding {
-                Some(make_embedding(
-                    ai as u64 * 1000 + i as u64,
-                ))
+                Some(make_embedding(ai as u64 * 1000 + i as u64))
             } else {
                 None
             };
@@ -449,42 +469,138 @@ impl SeedData {
         let entity_templates: &[&[(&str, &str, Option<&str>)]] = &[
             // Agent 0: market_research (name, type, summary)
             &[
-                ("AMD", "Company", Some("Advanced Micro Devices — datacenter GPU and CPU manufacturer")),
-                ("NVIDIA", "Company", Some("GPU market leader, dominant in AI training accelerators")),
-                ("TSMC", "Company", Some("Taiwan Semiconductor Manufacturing Company, leading-edge foundry")),
-                ("HBM3E", "Technology", Some("High Bandwidth Memory 3E, next-gen memory for AI chips")),
-                ("Datacenter GPU Market", "Market", Some("$80B+ TAM for AI/ML accelerator hardware")),
+                (
+                    "AMD",
+                    "Company",
+                    Some("Advanced Micro Devices — datacenter GPU and CPU manufacturer"),
+                ),
+                (
+                    "NVIDIA",
+                    "Company",
+                    Some("GPU market leader, dominant in AI training accelerators"),
+                ),
+                (
+                    "TSMC",
+                    "Company",
+                    Some("Taiwan Semiconductor Manufacturing Company, leading-edge foundry"),
+                ),
+                (
+                    "HBM3E",
+                    "Technology",
+                    Some("High Bandwidth Memory 3E, next-gen memory for AI chips"),
+                ),
+                (
+                    "Datacenter GPU Market",
+                    "Market",
+                    Some("$80B+ TAM for AI/ML accelerator hardware"),
+                ),
                 ("Lisa Su", "Person", Some("CEO of AMD")),
                 ("MI300X Launch", "Event", None), // no summary edge case
-                ("Intel", "Company", Some("x86 processor and foundry company")),
-                ("CoWoS Packaging", "Technology", Some("Chip-on-Wafer-on-Substrate advanced packaging by TSMC")),
-                ("MI350 Architecture", "Technology", Some("Next-gen AMD Instinct GPU architecture")),
+                (
+                    "Intel",
+                    "Company",
+                    Some("x86 processor and foundry company"),
+                ),
+                (
+                    "CoWoS Packaging",
+                    "Technology",
+                    Some("Chip-on-Wafer-on-Substrate advanced packaging by TSMC"),
+                ),
+                (
+                    "MI350 Architecture",
+                    "Technology",
+                    Some("Next-gen AMD Instinct GPU architecture"),
+                ),
             ],
             // Agent 1: geopolitical_risk
             &[
-                ("Russian Federation", "Country", Some("Subject of extensive Western sanctions regime")),
-                ("Taiwan", "Territory", Some("Self-governing island, semiconductor manufacturing hub")),
-                ("Houthi Movement", "Organization", Some("Yemen-based militia disrupting Red Sea shipping")),
-                ("OPEC+", "Organization", Some("Oil production cartel including Russia")),
-                ("Wagner Group", "Organization", Some("Russian private military company active in Africa")),
-                ("Sahel Region", "Region", Some("Sub-Saharan belt experiencing military coup cascade")),
-                ("Nord Stream Pipeline", "Infrastructure", Some("Sabotaged Russia-EU gas pipeline")),
+                (
+                    "Russian Federation",
+                    "Country",
+                    Some("Subject of extensive Western sanctions regime"),
+                ),
+                (
+                    "Taiwan",
+                    "Territory",
+                    Some("Self-governing island, semiconductor manufacturing hub"),
+                ),
+                (
+                    "Houthi Movement",
+                    "Organization",
+                    Some("Yemen-based militia disrupting Red Sea shipping"),
+                ),
+                (
+                    "OPEC+",
+                    "Organization",
+                    Some("Oil production cartel including Russia"),
+                ),
+                (
+                    "Wagner Group",
+                    "Organization",
+                    Some("Russian private military company active in Africa"),
+                ),
+                (
+                    "Sahel Region",
+                    "Region",
+                    Some("Sub-Saharan belt experiencing military coup cascade"),
+                ),
+                (
+                    "Nord Stream Pipeline",
+                    "Infrastructure",
+                    Some("Sabotaged Russia-EU gas pipeline"),
+                ),
                 ("LAC Border", "Region", None), // no summary
-                ("Suez Canal", "Infrastructure", Some("Critical shipping chokepoint affected by Houthi attacks")),
-                ("SWIFT System", "Technology", Some("Global financial messaging network used for sanctions")),
+                (
+                    "Suez Canal",
+                    "Infrastructure",
+                    Some("Critical shipping chokepoint affected by Houthi attacks"),
+                ),
+                (
+                    "SWIFT System",
+                    "Technology",
+                    Some("Global financial messaging network used for sanctions"),
+                ),
             ],
             // Agent 2: crypto_sentiment
             &[
-                ("Bitcoin", "Protocol", Some("Largest cryptocurrency by market cap")),
-                ("Ethereum", "Protocol", Some("Smart contract platform, transitioning to L2-centric roadmap")),
+                (
+                    "Bitcoin",
+                    "Protocol",
+                    Some("Largest cryptocurrency by market cap"),
+                ),
+                (
+                    "Ethereum",
+                    "Protocol",
+                    Some("Smart contract platform, transitioning to L2-centric roadmap"),
+                ),
                 ("Solana", "Protocol", Some("High-throughput L1 blockchain")),
-                ("Arbitrum", "Protocol", Some("Ethereum L2 optimistic rollup")),
-                ("EigenLayer", "Protocol", Some("Restaking protocol on Ethereum")),
-                ("Coinbase", "Company", Some("Largest US crypto exchange, Base L2 operator")),
+                (
+                    "Arbitrum",
+                    "Protocol",
+                    Some("Ethereum L2 optimistic rollup"),
+                ),
+                (
+                    "EigenLayer",
+                    "Protocol",
+                    Some("Restaking protocol on Ethereum"),
+                ),
+                (
+                    "Coinbase",
+                    "Company",
+                    Some("Largest US crypto exchange, Base L2 operator"),
+                ),
                 ("Tether", "Company", Some("USDT stablecoin issuer")),
                 ("BlackRock", "Company", None), // no summary
-                ("DeFi Lending", "Market", Some("Decentralized lending protocols: Aave, Compound, MakerDAO")),
-                ("MEV Extraction", "Technology", Some("Maximal extractable value in transaction ordering")),
+                (
+                    "DeFi Lending",
+                    "Market",
+                    Some("Decentralized lending protocols: Aave, Compound, MakerDAO"),
+                ),
+                (
+                    "MEV Extraction",
+                    "Technology",
+                    Some("Maximal extractable value in transaction ordering"),
+                ),
             ],
         ];
 
@@ -740,11 +856,7 @@ impl SeedData {
                     .await?;
             } else {
                 store
-                    .complete_consolidation_job(
-                        job_id,
-                        "failed",
-                        job.error_message.clone(),
-                    )
+                    .complete_consolidation_job(job_id, "failed", job.error_message.clone())
                     .await?;
             }
         }

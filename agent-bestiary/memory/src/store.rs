@@ -199,8 +199,9 @@ impl MemoryStore {
                 agent_id, agent_name, agent_type, version, tier,
                 executor_type, model, temperature, mcp_servers, description, author,
                 current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at, dreaming_budget_credits,
-                dreaming_credits_used, dreaming_budget_reset_at
+                last_consolidated_at, total_executions, successful_executions,
+                failed_executions, total_cost_usd, avg_execution_time_ms,
+                dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at
             FROM agents
             WHERE agent_id = $1
             "#,
@@ -223,8 +224,9 @@ impl MemoryStore {
                 agent_id, agent_name, agent_type, version, tier,
                 executor_type, model, temperature, mcp_servers, description, author,
                 current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at, dreaming_budget_credits,
-                dreaming_credits_used, dreaming_budget_reset_at
+                last_consolidated_at, total_executions, successful_executions,
+                failed_executions, total_cost_usd, avg_execution_time_ms,
+                dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at
             FROM agents
             WHERE agent_name = $1
             "#,
@@ -245,8 +247,9 @@ impl MemoryStore {
                 agent_id, agent_name, agent_type, version, tier,
                 executor_type, model, temperature, mcp_servers, description, author,
                 current_ontology_commit, current_ontology_snapshot_id,
-                last_consolidated_at, dreaming_budget_credits,
-                dreaming_credits_used, dreaming_budget_reset_at
+                last_consolidated_at, total_executions, successful_executions,
+                failed_executions, total_cost_usd, avg_execution_time_ms,
+                dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at
             FROM agents
             ORDER BY agent_name
             "#,
@@ -279,6 +282,11 @@ impl MemoryStore {
             current_ontology_commit: row.try_get("current_ontology_commit")?,
             current_ontology_snapshot_id: row.try_get("current_ontology_snapshot_id")?,
             last_consolidated_at: row.try_get("last_consolidated_at")?,
+            total_executions: row.try_get("total_executions").unwrap_or(0),
+            successful_executions: row.try_get("successful_executions").unwrap_or(0),
+            failed_executions: row.try_get("failed_executions").unwrap_or(0),
+            total_cost_usd: row.try_get("total_cost_usd").ok(),
+            avg_execution_time_ms: row.try_get("avg_execution_time_ms").unwrap_or(0),
             dreaming_budget_credits: row.try_get("dreaming_budget_credits")?,
             dreaming_credits_used: row.try_get("dreaming_credits_used")?,
             dreaming_budget_reset_at: row.try_get("dreaming_budget_reset_at")?,

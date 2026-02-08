@@ -484,6 +484,13 @@ async fn list_agents(State(state): State<AppState>) -> Json<Value> {
                             "last_updated": a.last_consolidated_at,
                             "current_commit": a.current_ontology_commit,
                         },
+                        "execution_stats": {
+                            "total_executions": a.total_executions,
+                            "successful_executions": a.successful_executions,
+                            "failed_executions": a.failed_executions,
+                            "total_cost_usd": a.total_cost_usd,
+                            "avg_execution_time_ms": a.avg_execution_time_ms,
+                        },
                         "dreaming": {
                             "budget_credits": a.dreaming_budget_credits,
                             "credits_used": a.dreaming_credits_used,
@@ -1347,6 +1354,11 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             current_ontology_commit: None,
             current_ontology_snapshot_id: None,
             last_consolidated_at: None,
+            total_executions: 0,
+            successful_executions: 0,
+            failed_executions: 0,
+            total_cost_usd: None,
+            avg_execution_time_ms: 0,
             dreaming_budget_credits: 10, // default budget
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
