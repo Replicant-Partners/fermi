@@ -162,13 +162,28 @@ async fn main() {
 
     // Load agents from filesystem into registry
     let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents/curated".to_string());
+    println!("Loading agents from directory: {}", agents_dir);
+    println!(
+        "Directory exists: {}, is_dir: {}",
+        std::path::Path::new(&agents_dir).exists(),
+        std::path::Path::new(&agents_dir).is_dir()
+    );
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries {
+            if let Ok(e) = entry {
+                println!("  Found entry: {:?}", e.path());
+            }
+        }
+    }
     match registry.load_from_directory(&agents_dir) {
         Ok(count) => println!("Loaded {} agent(s) from {}", count, agents_dir),
-        Err(e) => eprintln!("Warning: failed to load agents: {}", e),
+        Err(e) => eprintln!("ERROR: failed to load agents from {}: {}", agents_dir, e),
     }
 
     // Seed filesystem agents into database (idempotent)
+    println!("Seeding agents to database...");
     seed_agents_to_database(&memory_store, &registry).await;
+    println!("Agent seeding complete");
 
     let gemini_api_key =
         std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY environment variable must be set");
