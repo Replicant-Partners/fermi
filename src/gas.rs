@@ -82,6 +82,9 @@ fn env_or(key: &str, default: i32) -> i32 {
         .unwrap_or(default)
 }
 
+/// Low balance threshold (credits)
+pub const LOW_BALANCE_THRESHOLD: i32 = 10;
+
 /// Charge a flat gas fee. Returns amount charged.
 pub async fn charge_gas(
     pool: &PgPool,
@@ -100,4 +103,17 @@ pub async fn charge_gas(
                 format!("Gas fee failed: {}", e),
             )
         })
+}
+
+/// Check wallet balance and return true if low
+pub async fn check_low_balance(pool: &PgPool, wallet_id: Uuid) -> bool {
+    sqlx::query("SELECT balance FROM wallets WHERE wallet_id = $1")
+        .bind(wallet_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|row| sqlx::Row::try_get::<i32, _>(&row, "balance").ok())
+        .map(|b| b < LOW_BALANCE_THRESHOLD)
+        .unwrap_or(false)
 }

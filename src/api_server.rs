@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 #[path = "gas.rs"]
 mod gas;
-use gas::{charge_gas, GasFees};
+use gas::{charge_gas, check_low_balance, GasFees};
 
 use agent_bestiary_memory::{
     Agent, AgentUpdate, AnthropicEmbeddings, CoherenceEvaluation, ConsolidationLock,
@@ -43,6 +43,162 @@ use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMeth
 use coherence_core::types::{ConversationId, Message as CoherenceMessage, ParticipantId};
 use coherence_engine::SettlingEngine;
 use coherence_observer::ConversationObserver;
+
+// ─── Rate Limiter ──────────────────────────────────────────────────
+
+use dashmap::DashMap;
+use std::time::Instant;
+
+#[derive(Clone)]
+struct RateLimiter {
+    /// Map of key -> list of request timestamps (sliding window)
+    windows: Arc<DashMap<String, Vec<Instant>>>,
+    max_requests: u32,
+    window_secs: u64,
+}
+
+impl RateLimiter {
+    fn new(max_requests: u32, window_secs: u64) -> Self {
+        Self {
+            windows: Arc::new(DashMap::new()),
+            max_requests,
+            window_secs,
+        }
+    }
+
+    /// Returns Ok(remaining) or Err(retry_after_secs)
+    fn check(&self, key: &str) -> Result<u32, u64> {
+        let now = Instant::now();
+        let cutoff = now - std::time::Duration::from_secs(self.window_secs);
+
+        let mut entry = self.windows.entry(key.to_string()).or_default();
+        // Prune old entries
+        entry.retain(|t| *t > cutoff);
+
+        if entry.len() >= self.max_requests as usize {
+            // Find earliest entry to compute retry-after
+            let earliest = entry.iter().min().copied().unwrap_or(now);
+            let retry_after = self
+                .window_secs
+                .saturating_sub(now.duration_since(earliest).as_secs());
+            Err(retry_after.max(1))
+        } else {
+            entry.push(now);
+            let remaining = self.max_requests - entry.len() as u32;
+            Ok(remaining)
+        }
+    }
+
+    /// Periodically clean up old entries (call from a background task)
+    fn cleanup(&self) {
+        let now = Instant::now();
+        let cutoff = now - std::time::Duration::from_secs(self.window_secs * 2);
+        self.windows.retain(|_, v| {
+            v.retain(|t| *t > cutoff);
+            !v.is_empty()
+        });
+    }
+}
+
+#[derive(Clone)]
+struct RateLimitConfig {
+    public: RateLimiter, // 100 req/min per IP
+    authed: RateLimiter, // 300 req/min per user
+    llm: RateLimiter,    // 10 req/min per user (execute, generate)
+}
+
+impl RateLimitConfig {
+    fn from_env() -> Self {
+        let public_rpm: u32 = std::env::var("RATE_LIMIT_PUBLIC")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+        let auth_rpm: u32 = std::env::var("RATE_LIMIT_AUTH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(300);
+        let llm_rpm: u32 = std::env::var("RATE_LIMIT_LLM")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
+
+        Self {
+            public: RateLimiter::new(public_rpm, 60),
+            authed: RateLimiter::new(auth_rpm, 60),
+            llm: RateLimiter::new(llm_rpm, 60),
+        }
+    }
+}
+
+/// Rate limit middleware — checks public rate limit by remote IP
+async fn rate_limit_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<Response, (StatusCode, String)> {
+    // Extract IP from request (peer addr or X-Forwarded-For)
+    let ip = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    match state.rate_limits.public.check(&ip) {
+        Ok(remaining) => {
+            let mut response = next.run(req).await;
+            response.headers_mut().insert(
+                "x-ratelimit-remaining",
+                remaining.to_string().parse().unwrap(),
+            );
+            Ok(response)
+        }
+        Err(retry_after) => Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("Rate limit exceeded. Retry after {} seconds.", retry_after),
+        )),
+    }
+}
+
+/// Rate limit middleware for LLM endpoints (stricter, per-user)
+async fn llm_rate_limit_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<Response, (StatusCode, String)> {
+    // Try to extract user_id from auth principal (Extension)
+    let key = req
+        .extensions()
+        .get::<AuthPrincipal>()
+        .map(|p| format!("user:{}", p.user_id()))
+        .unwrap_or_else(|| {
+            req.headers()
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(|s| format!("ip:{}", s.trim()))
+                .unwrap_or_else(|| "unknown".to_string())
+        });
+
+    match state.rate_limits.llm.check(&key) {
+        Ok(remaining) => {
+            let mut response = next.run(req).await;
+            response.headers_mut().insert(
+                "x-ratelimit-remaining",
+                remaining.to_string().parse().unwrap(),
+            );
+            Ok(response)
+        }
+        Err(retry_after) => Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "LLM rate limit exceeded ({}/min). Retry after {} seconds.",
+                state.rate_limits.llm.max_requests, retry_after
+            ),
+        )),
+    }
+}
 
 /// Stripe configuration — pricing tiers for credit purchases.
 #[derive(Clone, Default)]
@@ -113,6 +269,7 @@ struct AppState {
     oauth: OAuthConfig,
     gas_fees: GasFees,
     stripe: StripeConfig,
+    rate_limits: RateLimitConfig,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -342,7 +499,19 @@ async fn main() {
         oauth,
         gas_fees: GasFees::from_env(),
         stripe: stripe_config,
+        rate_limits: RateLimitConfig::from_env(),
     };
+
+    // Spawn rate limiter cleanup task (every 5 min)
+    let rl_clone = state.rate_limits.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            rl_clone.public.cleanup();
+            rl_clone.authed.cleanup();
+            rl_clone.llm.cleanup();
+        }
+    });
 
     let auth_state = AuthState { jwt_secret, db };
 
@@ -403,6 +572,10 @@ async fn main() {
         // Profile + Settings pages
         .route("/profile", get(profile_view))
         .route("/settings", get(settings_view))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             optional_auth_middleware,
@@ -524,6 +697,16 @@ async fn main() {
         // Profile
         .route("/api/profile", get(get_profile_handler))
         .route("/api/profile", put(update_profile_handler))
+        // Notifications
+        .route("/api/notifications", get(list_notifications_handler))
+        .route(
+            "/api/notifications/:id/read",
+            put(mark_notification_read_handler),
+        )
+        .route(
+            "/api/notifications/read-all",
+            put(mark_all_notifications_read_handler),
+        )
         // Coherence evaluation
         .route(
             "/api/workspaces/:workspace_id/coherence/evaluate",
@@ -3664,6 +3847,14 @@ async fn execute_agent_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let caller_id = principal.user_id();
 
+    // Rate limit LLM calls
+    if let Err(retry) = state.rate_limits.llm.check(&format!("user:{}", caller_id)) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("LLM rate limit exceeded. Retry after {} seconds.", retry),
+        ));
+    }
+
     // 0. Check caller has credits
     let wallet = get_or_create_wallet(&state.db, "user", &caller_id)
         .await
@@ -3785,7 +3976,39 @@ async fn execute_agent_handler(
 
     let total_charged = execution_fee + gas_fee;
 
-    // 7. Return result
+    // 7. Fire notifications (execution failure, low balance)
+    if matches!(output.status, AgentStatus::Failed | AgentStatus::Timeout) {
+        let db = state.db.clone();
+        let uid = caller_id.clone();
+        let aid = agent_id.clone();
+        tokio::spawn(async move {
+            create_notification(
+                &db,
+                &uid,
+                "execution_failure",
+                &format!("Execution failed: {}", aid),
+                Some("Check the agent's execution history for details."),
+            )
+            .await;
+        });
+    }
+    // Low balance notification
+    if check_low_balance(&state.db, wallet.wallet_id).await {
+        let db = state.db.clone();
+        let uid = caller_id.clone();
+        tokio::spawn(async move {
+            create_notification(
+                &db,
+                &uid,
+                "low_balance",
+                "Low credit balance",
+                Some("Your balance is below 10 credits. Buy more to keep your agents running."),
+            )
+            .await;
+        });
+    }
+
+    // 8. Return result
     Ok(Json(json!({
         "agent_id": agent_id,
         "episode_id": episode_id,
@@ -4840,6 +5063,17 @@ async fn generate_ontology_handler(
     principal: AuthPrincipal,
     Json(req): Json<GenerateOntologyRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // Rate limit LLM calls
+    if let Err(retry) = state
+        .rate_limits
+        .llm
+        .check(&format!("user:{}", principal.user_id()))
+    {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("LLM rate limit exceeded. Retry after {} seconds.", retry),
+        ));
+    }
     // Charge 2 credits
     let wallet = get_or_create_wallet(&state.db, "user", &principal.user_id())
         .await
@@ -4915,6 +5149,17 @@ async fn generate_prompt_handler(
     principal: AuthPrincipal,
     Json(req): Json<GeneratePromptRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // Rate limit LLM calls
+    if let Err(retry) = state
+        .rate_limits
+        .llm
+        .check(&format!("user:{}", principal.user_id()))
+    {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("LLM rate limit exceeded. Retry after {} seconds.", retry),
+        ));
+    }
     // Charge 1 credit
     let wallet = get_or_create_wallet(&state.db, "user", &principal.user_id())
         .await
@@ -5191,6 +5436,124 @@ async fn update_profile_handler(
     }
 
     Ok(Json(json!({ "message": "Profile updated" })))
+}
+
+// ─── Notifications ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct NotificationsParams {
+    unread: Option<bool>,
+    limit: Option<i64>,
+}
+
+async fn list_notifications_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(params): Query<NotificationsParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let limit = params.limit.unwrap_or(20).min(100);
+
+    let rows = if params.unread.unwrap_or(false) {
+        sqlx::query(
+            "SELECT id, type, title, message, read, created_at FROM notifications
+             WHERE user_id = $1 AND read = FALSE ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(&user_id)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await
+    } else {
+        sqlx::query(
+            "SELECT id, type, title, message, read, created_at FROM notifications
+             WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(&user_id)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let unread_count: i64 = sqlx::query(
+        "SELECT COUNT(*) as cnt FROM notifications WHERE user_id = $1 AND read = FALSE",
+    )
+    .bind(&user_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .try_get("cnt")
+    .unwrap_or(0);
+
+    let notifications: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.try_get::<uuid::Uuid, _>("id").unwrap_or_default(),
+                "type": r.try_get::<String, _>("type").unwrap_or_default(),
+                "title": r.try_get::<String, _>("title").unwrap_or_default(),
+                "message": r.try_get::<Option<String>, _>("message").unwrap_or(None),
+                "read": r.try_get::<bool, _>("read").unwrap_or(false),
+                "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "notifications": notifications,
+        "unread_count": unread_count,
+    })))
+}
+
+async fn mark_notification_read_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    sqlx::query("UPDATE notifications SET read = TRUE WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(&principal.user_id())
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "status": "read" })))
+}
+
+async fn mark_all_notifications_read_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let result =
+        sqlx::query("UPDATE notifications SET read = TRUE WHERE user_id = $1 AND read = FALSE")
+            .bind(&principal.user_id())
+            .execute(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "status": "all_read",
+        "count": result.rows_affected(),
+    })))
+}
+
+/// Helper: create a notification for a user
+async fn create_notification(
+    pool: &PgPool,
+    user_id: &str,
+    notif_type: &str,
+    title: &str,
+    message: Option<&str>,
+) {
+    let _ = sqlx::query(
+        "INSERT INTO notifications (user_id, type, title, message) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(user_id)
+    .bind(notif_type)
+    .bind(title)
+    .bind(message)
+    .execute(pool)
+    .await;
 }
 
 // ─── Billing / Stripe ──────────────────────────────────────────────
