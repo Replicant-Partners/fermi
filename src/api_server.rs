@@ -354,6 +354,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/020_stripe_and_profile.sql",
         "migrations/021_notifications.sql",
         "migrations/022_sample_queries.sql",
+        "migrations/023_waitlist.sql",
     ];
 
     for file in &migration_files {
@@ -540,6 +541,7 @@ async fn main() {
         .route("/api/health", get(health))
         .route("/api/debug/startup", get(debug_startup))
         .route("/api/agents", get(list_agents))
+        .route("/api/waitlist", post(waitlist_handler))
         .route("/api/models/catalogue", get(model_catalogue_handler))
         .route("/api/agents/:agent_id/avatar", get(get_cached_avatar))
         .route(
@@ -877,6 +879,42 @@ async fn ontology_view() -> Html<String> {
 }
 
 // ─── API routes ────────────────────────────────────────────────────
+
+// ─── Waitlist ───────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct WaitlistRequest {
+    email: String,
+    #[serde(default = "default_waitlist_source")]
+    source: String,
+}
+
+fn default_waitlist_source() -> String {
+    "landing".to_string()
+}
+
+async fn waitlist_handler(
+    State(state): State<AppState>,
+    Json(req): Json<WaitlistRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let email = req.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() < 5 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid email".to_string()));
+    }
+
+    sqlx::query(
+        "INSERT INTO waitlist (email, source) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING",
+    )
+    .bind(&email)
+    .bind(&req.source)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", e)))?;
+
+    Ok(Json(
+        json!({ "status": "ok", "message": "You're on the list!" }),
+    ))
+}
 
 async fn health() -> Json<Value> {
     Json(json!({

@@ -503,6 +503,58 @@
         <a href="/catalogue" class="cta-primary">Explore Catalogue</a>
         <a href="/agents/new" class="cta-secondary">Create an Agent</a>
       </div>
+      <div
+        id="waitlist-form"
+        style="
+          margin-top: 28px;
+          display: flex;
+          gap: 8px;
+          justify-content: center;
+          align-items: center;
+          flex-wrap: wrap;
+        "
+      >
+        <input
+          type="email"
+          id="waitlist-email"
+          placeholder="your@email.com"
+          style="
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--bg3);
+            color: var(--fg1);
+            padding: 10px 16px;
+            font-family: inherit;
+            font-size: 0.9rem;
+            width: 260px;
+          "
+          onkeydown="if (event.key === 'Enter') submitWaitlist();"
+        />
+        <button
+          onclick="submitWaitlist()"
+          style="
+            background: transparent;
+            border: 1px solid var(--yellow);
+            color: var(--yellow);
+            padding: 10px 20px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.9rem;
+            transition: opacity 0.15s;
+          "
+          id="waitlist-btn"
+        >
+          Notify Me
+        </button>
+      </div>
+      <div
+        id="waitlist-msg"
+        style="
+          margin-top: 8px;
+          font-size: 0.82rem;
+          color: var(--green);
+          text-align: center;
+        "
+      ></div>
     </section>
 
     <!-- What is Agent Bestiary? -->
@@ -774,6 +826,45 @@
       // Load saved theme
       const saved = localStorage.getItem("fermi-theme");
       if (saved) setTheme(saved);
+
+      // Waitlist
+      async function submitWaitlist() {
+        const input = document.getElementById("waitlist-email");
+        const msg = document.getElementById("waitlist-msg");
+        const btn = document.getElementById("waitlist-btn");
+        const email = input.value.trim();
+        if (!email || !email.includes("@")) {
+          msg.style.color = "var(--red)";
+          msg.textContent = "Please enter a valid email";
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = "Sending...";
+        try {
+          const res = await fetch("/api/waitlist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+          if (res.ok) {
+            msg.style.color = "var(--green)";
+            msg.textContent = "You're on the list!";
+            input.style.display = "none";
+            btn.style.display = "none";
+          } else {
+            const text = await res.text();
+            msg.style.color = "var(--red)";
+            msg.textContent = text || "Something went wrong";
+            btn.disabled = false;
+            btn.textContent = "Notify Me";
+          }
+        } catch (e) {
+          msg.style.color = "var(--red)";
+          msg.textContent = "Network error";
+          btn.disabled = false;
+          btn.textContent = "Notify Me";
+        }
+      }
     </script>
   </body>
 </html>
