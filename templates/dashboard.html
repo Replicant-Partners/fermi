@@ -341,51 +341,15 @@
   <body>
     <header>
       <div>
-        <h1>Dashboard</h1>
+        <a href="/" style="color: var(--fg1); text-decoration: none"
+          ><h1>Agent Bestiary</h1></a
+        >
       </div>
       <div>
         <a href="/catalogue">Catalogue</a>
-        <a href="/agents/new" style="color: var(--yellow)">+ Create Agent</a>
+        <a href="/dashboard" style="color: var(--yellow)">Dashboard</a>
         <a href="/profile">Profile</a>
-        <a href="/settings">Settings</a>
-        <span
-          id="notif-bell"
-          style="position: relative; cursor: pointer; font-size: 1.1em"
-          onclick="toggleNotifDropdown()"
-        >
-          &#128276;<span
-            id="notif-badge"
-            style="
-              display: none;
-              position: absolute;
-              top: -6px;
-              right: -8px;
-              background: var(--red);
-              color: #fff;
-              font-size: 0.6em;
-              padding: 1px 5px;
-              border-radius: 50%;
-              font-weight: 600;
-            "
-          ></span>
-        </span>
-        <div
-          id="notif-dropdown"
-          style="
-            display: none;
-            position: absolute;
-            right: 20px;
-            top: 50px;
-            width: 340px;
-            max-height: 400px;
-            overflow-y: auto;
-            background: var(--bg1);
-            border: 1px solid var(--bg3);
-            z-index: 100;
-            padding: 8px 0;
-          "
-        ></div>
-        <a href="#" id="user-name"></a>
+        <div id="user-area" class="auth-area" style="display: inline"></div>
         <button
           id="theme-toggle"
           class="theme-toggle-btn"
@@ -494,8 +458,9 @@
             return;
           }
           const user = await res.json();
-          document.getElementById("user-name").textContent =
-            user.display_name || user.email || "User";
+          const ua = document.getElementById("user-area");
+          if (ua)
+            ua.innerHTML = `<span style="color:var(--fg2);font-size:0.85em">${user.display_name || user.email || "User"}</span>`;
         } catch {
           window.location.href = "/";
           return;
@@ -787,104 +752,6 @@
           document.getElementById("theme-toggle").click();
         }
       });
-    </script>
-
-    <!-- Notification system -->
-    <script>
-      let notifOpen = false;
-
-      async function loadNotifications() {
-        try {
-          const res = await fetch("/api/notifications?unread=true");
-          if (!res.ok) return;
-          const data = await res.json();
-          const badge = document.getElementById("notif-badge");
-          if (data.unread_count > 0) {
-            badge.style.display = "inline";
-            badge.textContent =
-              data.unread_count > 9 ? "9+" : data.unread_count;
-          } else {
-            badge.style.display = "none";
-          }
-        } catch (e) {}
-      }
-
-      async function toggleNotifDropdown() {
-        const dd = document.getElementById("notif-dropdown");
-        notifOpen = !notifOpen;
-        dd.style.display = notifOpen ? "block" : "none";
-        if (!notifOpen) return;
-
-        dd.innerHTML =
-          '<div style="padding:8px 16px;color:var(--gray);font-size:0.85em">Loading...</div>';
-        try {
-          const res = await fetch("/api/notifications?limit=10");
-          if (!res.ok) {
-            dd.innerHTML =
-              '<div style="padding:8px 16px;color:var(--red)">Failed to load</div>';
-            return;
-          }
-          const data = await res.json();
-
-          if (data.notifications.length === 0) {
-            dd.innerHTML =
-              '<div style="padding:12px 16px;color:var(--gray);font-size:0.85em;text-align:center">No notifications</div>';
-            return;
-          }
-
-          let html =
-            '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 16px 8px;border-bottom:1px solid var(--bg2)">' +
-            '<span style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em">Notifications</span>' +
-            '<button onclick="markAllRead()" style="background:none;border:none;color:var(--aqua);font-size:0.75em;cursor:pointer">Mark all read</button></div>';
-
-          data.notifications.forEach((n) => {
-            const time = n.created_at
-              ? new Date(n.created_at).toLocaleDateString()
-              : "";
-            const unreadDot = n.read
-              ? ""
-              : '<span style="color:var(--yellow);margin-right:6px">&#9679;</span>';
-            html += `<div style="padding:8px 16px;border-bottom:1px solid var(--bg2);font-size:0.85em;cursor:pointer" onclick="markRead('${n.id}', this)">
-              ${unreadDot}<strong style="color:var(--fg1)">${n.title}</strong>
-              ${n.message ? `<div style="color:var(--fg3);font-size:0.9em;margin-top:2px">${n.message}</div>` : ""}
-              <div style="color:var(--gray);font-size:0.8em;margin-top:2px">${time}</div>
-            </div>`;
-          });
-
-          dd.innerHTML = html;
-        } catch (e) {
-          dd.innerHTML =
-            '<div style="padding:8px 16px;color:var(--red)">Error loading notifications</div>';
-        }
-      }
-
-      async function markRead(id, el) {
-        await fetch(`/api/notifications/${id}/read`, { method: "PUT" });
-        if (el) el.querySelector("span")?.remove();
-        loadNotifications();
-      }
-
-      async function markAllRead() {
-        await fetch("/api/notifications/read-all", { method: "PUT" });
-        document.getElementById("notif-badge").style.display = "none";
-        toggleNotifDropdown();
-      }
-
-      // Close dropdown on outside click
-      document.addEventListener("click", (e) => {
-        if (
-          notifOpen &&
-          !e.target.closest("#notif-bell") &&
-          !e.target.closest("#notif-dropdown")
-        ) {
-          notifOpen = false;
-          document.getElementById("notif-dropdown").style.display = "none";
-        }
-      });
-
-      // Load on page load + poll every 60s
-      loadNotifications();
-      setInterval(loadNotifications, 60000);
     </script>
   </body>
 </html>

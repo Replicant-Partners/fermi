@@ -739,12 +739,28 @@
   </head>
   <body>
     <div class="container">
-      <div class="detail-header-bar">
-        <a href="/catalogue" class="back-button">
-          <span>←</span>
-          <span>Back to Catalogue</span>
-        </a>
-        <div style="display: flex; align-items: center; gap: 8px">
+      <header
+        style="
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px 20px;
+          border-bottom: 1px solid var(--bg2);
+        "
+      >
+        <a
+          href="/"
+          style="
+            color: var(--fg1);
+            text-decoration: none;
+            font-size: 1.1em;
+            font-weight: 600;
+          "
+          >Agent Bestiary</a
+        >
+        <div style="display: flex; align-items: center; gap: 16px">
+          <a href="/catalogue">Catalogue</a>
+          <a href="/dashboard">Dashboard</a>
           <div id="user-area" class="auth-area"></div>
           <button
             id="theme-toggle"
@@ -754,7 +770,7 @@
             OP-1
           </button>
         </div>
-      </div>
+      </header>
 
       <div id="owner-panel-slot"></div>
       <div id="agent-content">

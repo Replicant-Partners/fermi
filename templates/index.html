@@ -600,21 +600,14 @@
     <header>
       <div class="header-grid">
         <div class="header-left">
-          <h1>Agent Bestiary</h1>
+          <a href="/" style="color: var(--fg1); text-decoration: none"
+            ><h1>Agent Bestiary</h1></a
+          >
           <div class="subtitle">make your agents dreams come true</div>
         </div>
         <div class="header-right">
-          <div class="header-stat">
-            <div class="stat-value-header" id="total-agents">—</div>
-            <div class="stat-label-header">Specimens</div>
-          </div>
-          <a
-            href="/projector"
-            class="theme-toggle-btn"
-            style="text-decoration: none; margin-right: 4px"
-            title="Bestiary-wide Embedding Projector"
-            >Projector</a
-          >
+          <a href="/catalogue" style="color: var(--yellow)">Catalogue</a>
+          <a href="/dashboard">Dashboard</a>
           <div id="user-area" class="auth-area"></div>
           <button
             id="theme-toggle"
@@ -1003,9 +996,6 @@
             const user = await res.json();
             const name = user.display_name || user.email || "User";
             area.innerHTML =
-              '<a href="/dashboard" class="auth-btn" style="border-color:var(--aqua);color:var(--aqua)">Dashboard</a>' +
-              '<a href="/profile" class="auth-btn">Profile</a>' +
-              '<a href="/agents/new" class="auth-btn" style="border-color:var(--yellow);color:var(--yellow)">+ Create</a>' +
               '<span class="auth-user">' +
               name +
               "</span>" +
