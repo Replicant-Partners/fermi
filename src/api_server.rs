@@ -443,6 +443,11 @@ async fn main() {
             "/api/workspaces/:workspace_id/coherence/history",
             get(get_coherence_history_handler),
         )
+        // Workspace ontology (merged)
+        .route(
+            "/api/workspaces/:workspace_id/ontology",
+            get(get_workspace_ontology_handler),
+        )
         // Workspace git / files
         .route(
             "/api/workspaces/:workspace_id/files",
@@ -2536,6 +2541,35 @@ async fn post_workspace_message_handler(
                         )
                         .await;
 
+                        // Auto-commit ontology snapshot to workspace repo
+                        if !slug.is_empty() {
+                            if let Ok(snapshot) = sqlx::query(
+                                "SELECT version, mermaid_content, dream_synopsis FROM ontology_snapshots
+                                 WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 1"
+                            )
+                            .bind(db_agent.agent_id)
+                            .fetch_optional(&state2.db)
+                            .await
+                            {
+                                if let Some(snap) = snapshot {
+                                    let version: i32 = snap.get("version");
+                                    let mermaid: Option<String> = snap.get("mermaid_content");
+                                    let synopsis: Option<String> = snap.get("dream_synopsis");
+                                    let content = format!(
+                                        "# Ontology Snapshot v{}\n\n{}\n\n{}",
+                                        version,
+                                        synopsis.as_deref().unwrap_or(""),
+                                        mermaid.as_deref().unwrap_or("(no diagram)")
+                                    );
+                                    let path = format!("ontology/{}/snapshot_v{}.md", agent_name2, version);
+                                    let _ = state2.workspace_git.commit_file(
+                                        &slug, &path, &content,
+                                        &format!("Ontology snapshot v{} for {}", version, agent_name2),
+                                    );
+                                }
+                            }
+                        }
+
                         Ok::<_, (StatusCode, String)>(output)
                     }
                     .await;
@@ -3845,6 +3879,99 @@ async fn get_coherence_history_handler(
 #[derive(Debug, Deserialize)]
 struct HistoryQuery {
     limit: Option<i64>,
+}
+
+/// Merge ontology snapshots from all agents in a workspace into a combined view
+async fn get_workspace_ontology_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    // Get all agents in workspace with their latest ontology snapshots
+    let rows = sqlx::query(
+        "SELECT a.agent_name, a.display_alias, os.version, os.mermaid_content, os.dream_synopsis, os.entity_count, os.fact_count, os.created_at
+         FROM workspace_agents wa
+         JOIN agents a ON a.agent_id = wa.agent_id
+         LEFT JOIN LATERAL (
+            SELECT * FROM ontology_snapshots
+            WHERE agent_id = a.agent_id
+            ORDER BY created_at DESC LIMIT 1
+         ) os ON true
+         WHERE wa.workspace_id = $1"
+    )
+    .bind(ws_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut agent_ontologies = Vec::new();
+    let mut merged_mermaid_parts = Vec::new();
+    let mut total_entities = 0i32;
+    let mut total_facts = 0i32;
+
+    for row in &rows {
+        let agent_name: String = row.get("agent_name");
+        let display_alias: Option<String> = row.get("display_alias");
+        let version: Option<i32> = row.get("version");
+        let mermaid: Option<String> = row.get("mermaid_content");
+        let synopsis: Option<String> = row.get("dream_synopsis");
+        let entities: Option<i32> = row.get("entity_count");
+        let facts: Option<i32> = row.get("fact_count");
+
+        total_entities += entities.unwrap_or(0);
+        total_facts += facts.unwrap_or(0);
+
+        if let Some(ref m) = mermaid {
+            // Extract relationship lines from mermaid (skip the erDiagram header)
+            let lines: Vec<&str> = m
+                .lines()
+                .filter(|l| {
+                    !l.trim().is_empty()
+                        && !l.trim().starts_with("erDiagram")
+                        && !l.trim().starts_with("%%")
+                })
+                .collect();
+            if !lines.is_empty() {
+                merged_mermaid_parts.push(format!("    %% {} %%", agent_name));
+                merged_mermaid_parts.extend(lines.iter().map(|l| l.to_string()));
+            }
+        }
+
+        agent_ontologies.push(json!({
+            "agent_name": agent_name,
+            "display_alias": display_alias,
+            "version": version,
+            "entity_count": entities,
+            "fact_count": facts,
+            "dream_synopsis": synopsis,
+            "has_ontology": mermaid.is_some(),
+        }));
+    }
+
+    let merged_mermaid = if merged_mermaid_parts.is_empty() {
+        None
+    } else {
+        Some(format!("erDiagram\n{}", merged_mermaid_parts.join("\n")))
+    };
+
+    Ok(Json(json!({
+        "workspace_id": workspace_id,
+        "agent_count": rows.len(),
+        "total_entities": total_entities,
+        "total_facts": total_facts,
+        "merged_mermaid": merged_mermaid,
+        "agent_ontologies": agent_ontologies,
+    })))
 }
 
 // ---------------------------------------------------------------------------

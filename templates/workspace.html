@@ -2050,7 +2050,7 @@
           }
 
           el.innerHTML = commits
-            .map((c) => {
+            .map((c, i) => {
               const time =
                 new Date(c.timestamp).toLocaleDateString([], {
                   month: "short",
@@ -2061,7 +2061,8 @@
                   hour: "2-digit",
                   minute: "2-digit",
                 });
-              return `<div class="git-commit-entry">
+              const prevSha = i + 1 < commits.length ? commits[i + 1].sha : "";
+              return `<div class="git-commit-entry" style="cursor:pointer" onclick="viewDiff('${c.sha}','${prevSha}')">
               <div class="git-commit-sha">${escHtml(c.sha.substring(0, 8))}</div>
               <div class="git-commit-msg">${escHtml(c.message.split("\n")[0])}</div>
               <div class="git-commit-time">${time}</div>
@@ -2071,6 +2072,50 @@
         } catch {
           document.getElementById("git-log-entries").innerHTML =
             '<div style="color:var(--fg3);font-size:0.75rem;padding:8px 12px">No commits</div>';
+        }
+      }
+
+      async function viewDiff(sha, prevSha) {
+        const viewer = document.getElementById("files-viewer-content");
+        const header = document.getElementById("files-current-path");
+        header.textContent = `Commit ${sha.substring(0, 8)}`;
+        viewer.innerHTML =
+          '<div style="color:var(--fg3);text-align:center;padding:20px">Loading diff...</div>';
+
+        if (!prevSha) {
+          viewer.innerHTML =
+            '<div style="color:var(--fg3);text-align:center;padding:20px">Initial commit (no diff available)</div>';
+          return;
+        }
+
+        try {
+          const res = await fetch(
+            `/api/workspaces/${wsId}/git/diff?from=${prevSha}&to=${sha}`,
+          );
+          if (!res.ok) {
+            viewer.innerHTML =
+              '<div style="color:var(--fg3);text-align:center;padding:20px">Could not load diff</div>';
+            return;
+          }
+          const data = await res.json();
+          const diff = data.diff || "(empty diff)";
+          // Render diff with basic syntax coloring
+          const lines = escHtml(diff)
+            .split("\n")
+            .map((line) => {
+              if (line.startsWith("+"))
+                return `<span style="color:var(--green)">${line}</span>`;
+              if (line.startsWith("-"))
+                return `<span style="color:var(--red)">${line}</span>`;
+              if (line.startsWith("@@"))
+                return `<span style="color:var(--aqua)">${line}</span>`;
+              return line;
+            })
+            .join("\n");
+          viewer.innerHTML = `<pre style="font-size:0.78rem;white-space:pre-wrap;word-break:break-all;margin:0;padding:8px;color:var(--fg2);line-height:1.5">${lines}</pre>`;
+        } catch {
+          viewer.innerHTML =
+            '<div style="color:var(--fg3);text-align:center;padding:20px">Error loading diff</div>';
         }
       }
 
