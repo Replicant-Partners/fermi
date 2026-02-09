@@ -4,42 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Embedding Projector - Agent Bestiary</title>
+    <link rel="stylesheet" href="/static/css/variables.css" />
+    <link rel="stylesheet" href="/static/css/common.css" />
     <style>
+      /* Page-specific colour aliases (base Gruvbox vars come from variables.css) */
       :root {
-        --bg0-hard: #1d2021;
-        --bg0: #282828;
-        --bg1: #3c3836;
-        --bg2: #504945;
-        --bg3: #665c54;
-        --fg0: #fbf1c7;
-        --fg1: #ebdbb2;
-        --fg2: #d5c4a1;
-        --fg3: #bdae93;
-        --red: #fb4934;
-        --green: #b8bb26;
-        --yellow: #fabd2f;
-        --blue: #83a598;
-        --purple: #d3869b;
-        --aqua: #8ec07c;
-        --orange: #fe8019;
-        --gray: #928374;
         --episode-color: #83a598;
         --rule-color: #b8bb26;
         --entity-color: #fe8019;
         --community-color: #d3869b;
       }
 
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
-
+      /* Page-specific body overrides (reset + base font from common.css) */
       body {
-        font-family:
-          -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
-        background: var(--bg0-hard);
-        color: var(--fg1);
         height: 100vh;
         overflow: hidden;
       }
@@ -408,25 +385,8 @@
         transition: width 0.3s ease;
       }
 
-      /* ─── OP-1 Theme ─── */
+      /* OP-1 overrides for page-specific colour aliases (base OP-1 vars from variables.css) */
       .theme-op1 {
-        --bg0-hard: #f5f5f0;
-        --bg0: #ffffff;
-        --bg1: #f0f0ea;
-        --bg2: #e0e0d8;
-        --bg3: #c0c0b8;
-        --fg0: #1a1a18;
-        --fg1: #333330;
-        --fg2: #555550;
-        --fg3: #888880;
-        --red: #e53935;
-        --green: #43a047;
-        --yellow: #f9a825;
-        --blue: #1e88e5;
-        --purple: #8e24aa;
-        --aqua: #00897b;
-        --orange: #ef6c00;
-        --gray: #9e9e9e;
         --episode-color: #1e88e5;
         --rule-color: #43a047;
         --entity-color: #ef6c00;
@@ -722,6 +682,9 @@
     <!-- Three.js from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <!-- Shared theme toggle (migrates abw-theme → fermi-theme, wires #theme-toggle) -->
+    <script src="/static/js/theme.js"></script>
 
     <script>
       (function () {
@@ -1185,39 +1148,21 @@
           isPlaying = false;
         });
 
-        // ─── Theme toggle ───
-        const themeBtn = document.getElementById("theme-toggle");
-        function toggleTheme() {
-          const html = document.documentElement;
-          const isOP1 = html.classList.contains("theme-op1");
-          html.classList.toggle("theme-op1", !isOP1);
-          html.classList.toggle("theme-hasui", isOP1);
-          localStorage.setItem("abw-theme", isOP1 ? "hasui" : "op1");
-
-          // Update scene background
-          const bgColor = getComputedStyle(html)
+        // ─── Theme reactivity (toggle handled by /static/js/theme.js) ───
+        // Sync Three.js scene background whenever the shared theme script changes the class
+        function syncSceneBg() {
+          const bgColor = getComputedStyle(document.documentElement)
             .getPropertyValue("--bg0-hard")
             .trim();
           scene.background = new THREE.Color(bgColor);
-
-          // Re-render with new colors
           if (pointsData.length > 0) renderPoints();
         }
-        themeBtn.addEventListener("click", toggleTheme);
-        document.addEventListener("keydown", (e) => {
-          if (e.ctrlKey && e.key === "t") {
-            e.preventDefault();
-            toggleTheme();
-          }
+        new MutationObserver(syncSceneBg).observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["class"],
         });
-
-        // Restore saved theme
-        const saved = localStorage.getItem("abw-theme");
-        if (saved === "op1") {
-          document.documentElement.classList.remove("theme-hasui");
-          document.documentElement.classList.add("theme-op1");
-          scene.background = new THREE.Color("#f5f5f0");
-        }
+        // Set initial scene background from (possibly restored) theme
+        syncSceneBg();
 
         // ─── Resize ───
         window.addEventListener("resize", () => {

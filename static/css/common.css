@@ -1,0 +1,112 @@
+/* Base reset & shared component styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background: var(--bg0-hard);
+  color: var(--fg1);
+  min-height: 100vh;
+  padding: 0;
+  line-height: 1.4;
+}
+
+a { color: var(--fg3); text-decoration: none; }
+a:hover { color: var(--yellow); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg0); }
+::-webkit-scrollbar-thumb { background: var(--bg2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bg3); }
+
+/* Theme Toggle Button */
+.theme-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--bg3);
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--fg3);
+  transition: all 0.2s ease;
+  letter-spacing: 0.05em;
+}
+.theme-toggle-btn:hover {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+
+/* Auth UI */
+.auth-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.auth-btn {
+  background: transparent;
+  border: 1px solid var(--bg3);
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--fg3);
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+.auth-btn:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+.auth-user {
+  font-size: 0.85rem;
+  color: var(--fg2);
+}
+.auth-logout {
+  background: transparent;
+  border: none;
+  color: var(--fg3);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 2px 6px;
+}
+.auth-logout:hover {
+  color: var(--red);
+}
+
+/* Badge */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--bg3);
+  font-size: 0.7em;
+  color: var(--fg3);
+  letter-spacing: 0.04em;
+}
+.theme-op1 .badge {
+  border-radius: 20px;
+  border-color: var(--yellow);
+}
+
+/* Toast notifications */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 12px 20px;
+  border-radius: 4px;
+  color: var(--fg0);
+  font-size: 0.85rem;
+  z-index: 9999;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.3s ease;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast-success { background: var(--green); color: #1d2021; }
+.toast-error { background: var(--red); color: #1d2021; }
+.toast-info { background: var(--blue); color: #1d2021; }

@@ -28,6 +28,7 @@ use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
+use tower_http::services::ServeDir;
 
 #[path = "gas.rs"]
 mod gas;
@@ -793,6 +794,7 @@ async fn main() {
     let app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .nest_service("/static", ServeDir::new("static"))
         .fallback(fallback_404)
         .with_state(state);
 

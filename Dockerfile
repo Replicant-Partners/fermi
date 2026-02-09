@@ -36,8 +36,9 @@ RUN apt-get update && apt-get install -y \
 # Copy the binary from builder
 COPY --from=builder /app/target/release/api-server /app/api-server
 
-# Copy templates directory (updated 2026-02-07 with theme toggle)
+# Copy templates and static assets
 COPY templates /app/templates
+COPY static /app/static
 
 # Copy agents directory
 COPY agents /app/agents
