@@ -18,30 +18,6 @@
         margin: 0 auto;
       }
 
-      .back-button {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        color: var(--fg3);
-        text-decoration: none;
-        font-size: 0.85em;
-        margin-bottom: 20px;
-        padding: 6px 12px;
-        background: transparent;
-        border: 1px solid var(--bg2);
-        border-radius: 4px;
-        transition: all 0.2s ease;
-        font-weight: 400;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-      }
-
-      .back-button:hover {
-        background: var(--bg1);
-        border-color: var(--yellow);
-        color: var(--yellow);
-      }
-
       .specimen-header {
         display: flex;
         gap: 24px;
@@ -440,20 +416,7 @@
         margin-bottom: 20px;
       }
 
-      /* Owner Actions Panel */
-      .owner-panel {
-        background: var(--bg1);
-        border: 1px solid var(--yellow);
-        padding: 16px 20px;
-        margin-bottom: 16px;
-      }
-      .owner-panel-title {
-        font-size: 0.75em;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--yellow);
-        margin-bottom: 12px;
-      }
+      /* Owner Actions */
       .owner-actions {
         display: flex;
         gap: 8px;
@@ -480,46 +443,6 @@
       .owner-btn.danger:hover {
         background: var(--red);
         color: var(--bg0);
-      }
-
-      /* Inline Edit */
-      .edit-field {
-        display: none;
-        margin-top: 12px;
-        padding-top: 12px;
-        border-top: 1px solid var(--bg3);
-      }
-      .edit-field.visible {
-        display: block;
-      }
-      .edit-field label {
-        display: block;
-        font-size: 0.75em;
-        color: var(--gray);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-bottom: 4px;
-        margin-top: 10px;
-      }
-      .edit-field input,
-      .edit-field textarea,
-      .edit-field select {
-        width: 100%;
-        background: var(--bg0);
-        border: 1px solid var(--bg3);
-        color: var(--fg1);
-        padding: 8px 10px;
-        font-family: inherit;
-        font-size: 0.9em;
-      }
-      .edit-field textarea {
-        min-height: 80px;
-        resize: vertical;
-      }
-      .edit-field .edit-save-row {
-        display: flex;
-        gap: 8px;
-        margin-top: 12px;
       }
 
       /* Execution History */
@@ -773,6 +696,38 @@
         padding: 6px 8px;
         font-family: inherit;
       }
+
+      /* Tab navigation */
+      .agent-tabs {
+        display: flex;
+        gap: 0;
+        border-bottom: 1px solid var(--bg2);
+        margin-bottom: 20px;
+        margin-top: 16px;
+      }
+      .agent-tabs [data-tab] {
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--fg3);
+        padding: 10px 18px;
+        font-size: 0.82em;
+        font-family: inherit;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        transition: all 0.2s;
+      }
+      .agent-tabs [data-tab]:hover {
+        color: var(--fg1);
+      }
+      .agent-tabs [data-tab].active {
+        color: var(--yellow);
+        border-bottom-color: var(--yellow);
+      }
+      .theme-op1 .agent-tabs [data-tab].active {
+        border-bottom-color: var(--yellow);
+      }
     </style>
   </head>
   <body>
@@ -782,7 +737,6 @@
         Nav.init({ back: { label: "\u2190 Catalogue", href: "/catalogue" } });
       </script>
 
-      <div id="owner-panel-slot"></div>
       <div id="agent-content">
         <div class="loading-spinner">Loading specimen details...</div>
       </div>
@@ -814,14 +768,20 @@
       </div>
     </div>
 
+    <script src="/static/js/widgets/tabs.js"></script>
     <script src="/static/js/widgets/toast.js"></script>
     <script src="/static/js/widgets/modal.js"></script>
     <script src="/static/js/widgets/fork-modal.js"></script>
     <script src="/static/js/api.js"></script>
     <script>
+      // Store agent data globally for tab lazy-loading
+      let _agentData = null;
+      let _agentId = null;
+
       async function loadAgentDetail() {
         const pathParts = window.location.pathname.split("/");
         const agentId = pathParts[pathParts.length - 1];
+        _agentId = agentId;
 
         try {
           const response = await fetch("/api/agents");
@@ -837,6 +797,7 @@
             `;
             return;
           }
+          _agentData = agent;
 
           // Load cached avatar
           const avatarResponse = await fetch(`/api/agents/${agentId}/avatar`);
@@ -971,299 +932,210 @@
                 style="background:none;border:1px solid var(--bg3);color:var(--fg3);padding:3px 10px;cursor:pointer;font-size:0.78rem;font-family:inherit;white-space:nowrap">Copy</button>
             </div>
 
-            <div class="cognition-panel">
-              <div class="cognition-card">
-                <span class="cognition-label">Cognition / Knowledge Graph</span>
-                <span class="cognition-stat" id="kg-stat"></span>
-                <canvas class="cognition-canvas" id="canvas-kg"></canvas>
-              </div>
-              <div class="cognition-card">
-                <span class="cognition-label">Embedding Space</span>
-                <span class="cognition-stat" id="emb-stat"></span>
-                <canvas class="cognition-canvas" id="canvas-emb"></canvas>
-              </div>
-            </div>
-
-            <div class="sections">
-              <div class="section">
-                <div class="section-title">Performance Statistics</div>
-                <div class="stats-grid">
-                  <div class="stat-card">
-                    <div class="stat-value">${totalExec}</div>
-                    <div class="stat-label">Total</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-value">${successExec}</div>
-                    <div class="stat-label">Success</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-value">${failedExec}</div>
-                    <div class="stat-label">Failed</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-value">${(accuracy * 100).toFixed(1)}%</div>
-                    <div class="stat-label">Accuracy</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-value">${confidence.toFixed(2)}</div>
-                    <div class="stat-label">Confidence</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-value">${avgTime}</div>
-                    <div class="stat-label">Avg Time (ms)</div>
-                  </div>
-                </div>
-                <div style="margin-top:12px;display:flex;align-items:center;gap:12px">
-                  <button class="owner-btn" onclick="askPerformanceCoach('${agentId}')" id="coach-btn" style="border-color:var(--aqua);color:var(--aqua)">Ask Performance Coach</button>
-                  <span id="coach-status" style="color:var(--gray);font-size:0.8em"></span>
-                </div>
-                <div id="coach-response" style="display:none;margin-top:12px;padding:16px;background:var(--bg0);border:1px solid var(--bg2);border-radius:6px;font-size:0.85em;line-height:1.6;white-space:pre-wrap;max-height:400px;overflow-y:auto"></div>
+            <!-- Tab navigation -->
+            <div id="agent-tabs">
+              <div class="agent-tabs">
+                <button data-tab="overview" class="active">Overview</button>
+                <button data-tab="activity">Activity</button>
+                <button data-tab="knowledge">Knowledge</button>
+                <button data-tab="economics">Economics</button>
               </div>
 
-              <div class="section" id="execution-activity-section" style="display:none">
-                <div class="section-title">Execution Activity</div>
-                <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
-                  <div style="flex:1;min-width:200px">
-                    <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">30-Day Activity</div>
-                    <div id="activity-sparkline" style="display:flex;align-items:flex-end;gap:2px;height:48px"></div>
+              <!-- Overview Tab -->
+              <div data-tab-panel="overview">
+                <div class="cognition-panel">
+                  <div class="cognition-card">
+                    <span class="cognition-label">Cognition / Knowledge Graph</span>
+                    <span class="cognition-stat" id="kg-stat"></span>
+                    <canvas class="cognition-canvas" id="canvas-kg"></canvas>
                   </div>
-                  <div style="min-width:120px;text-align:center">
-                    <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Avg Iterations</div>
-                    <div id="avg-iterations-badge" style="font-size:1.8em;color:var(--aqua);font-weight:700">—</div>
-                    <div style="color:var(--gray);font-size:0.75em">per execution</div>
+                  <div class="cognition-card">
+                    <span class="cognition-label">Embedding Space</span>
+                    <span class="cognition-stat" id="emb-stat"></span>
+                    <canvas class="cognition-canvas" id="canvas-emb"></canvas>
                   </div>
                 </div>
-                <div style="margin-top:16px">
-                  <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Tool Usage</div>
-                  <div id="tool-usage-bars"></div>
-                </div>
-              </div>
 
-              <div class="section">
-                <div class="section-title">Configuration</div>
-                <div class="field-grid">
-                  <div class="field-item">
-                    <div class="field-label">Executor</div>
-                    <div class="field-value">${executor}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Model</div>
-                    <div class="field-value">${model}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Temperature</div>
-                    <div class="field-value">${temperature}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Type</div>
-                    <div class="field-value">${agent.agent_type || "N/A"}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">First Observed</div>
-                    <div class="field-value">${agent.metadata?.created || "N/A"}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Researcher</div>
-                    <div class="field-value">${agent.metadata?.author || "N/A"}</div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="section">
-                <div class="section-title">Knowledge Graph (Ontology)</div>
-                <div class="field-grid">
-                  <div class="field-item">
-                    <div class="field-label">Entities</div>
-                    <div class="field-value">${ontology.entities || 0}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Relationships</div>
-                    <div class="field-value">${ontology.relationships || 0}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Evolution Commits</div>
-                    <div class="field-value">${ontology.evolution_commits || 0}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Last Updated</div>
-                    <div class="field-value">${ontology.last_updated ? new Date(ontology.last_updated).toLocaleDateString() : "N/A"}</div>
-                  </div>
-                </div>
-                <a href="/agent/${agentId}/ontology" class="view-link">
-                  View Knowledge Graph →
-                </a>
-                <a href="/agent/${agentId}/projector" class="view-link" style="margin-top: 6px;">
-                  Embedding Projector →
-                </a>
-              </div>
-
-              ${
-                agent.dreaming
-                  ? `
-              <div class="section">
-                <div class="section-title">Active Dreaming Memory</div>
-                <div class="field-grid">
-                  <div class="field-item">
-                    <div class="field-label">Budget Credits</div>
-                    <div class="field-value">${agent.dreaming.budget_credits}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Credits Used</div>
-                    <div class="field-value">${agent.dreaming.credits_used}</div>
-                  </div>
-                  <div class="field-item">
-                    <div class="field-label">Credits Remaining</div>
-                    <div class="field-value">${agent.dreaming.credits_remaining}</div>
-                  </div>
-                </div>
-                <div class="dream-bar">
-                  <div class="dream-bar-fill" style="width: ${agent.dreaming.budget_credits > 0 ? (agent.dreaming.credits_used / agent.dreaming.budget_credits) * 100 : 0}%"></div>
-                </div>
-              </div>
-              `
-                  : ""
-              }
-
-              ${
-                wallet || cost > 0
-                  ? `
-              <div class="section">
-                <div class="section-title">Economic Ledger</div>
-                <div class="field-grid">
-                  ${
-                    wallet?.public_address
-                      ? `
-                  <div class="field-item" style="grid-column: span 2;">
-                    <div class="field-label">Public Crypto Wallet</div>
-                    <div class="field-value" style="font-family: 'SF Mono', monospace; font-size: 0.85em;">${wallet.public_address}</div>
-                  </div>
-                  `
-                      : ""
-                  }
-                  ${
-                    wallet?.balance !== undefined
-                      ? `
-                  <div class="field-item">
-                    <div class="field-label">Balance</div>
-                    <div class="field-value">${wallet.balance} ${wallet.currency || "USD"}</div>
-                  </div>
-                  `
-                      : ""
-                  }
-                  ${
-                    wallet?.budget
-                      ? `
-                  <div class="field-item">
-                    <div class="field-label">Budget</div>
-                    <div class="field-value">${wallet.budget} ${wallet.currency || "USD"}</div>
-                  </div>
-                  `
-                      : ""
-                  }
-                </div>
-                <div class="field-label" style="margin-top: 20px; margin-bottom: 12px;">Cost Statistics</div>
-                <div class="stats-grid">
-                  <div class="stat-card">
-                    <div class="stat-value">$${cost.toFixed(6)}</div>
-                    <div class="stat-label">Total Cost</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-value">$${totalExec > 0 ? (cost / totalExec).toFixed(6) : "0.00"}</div>
-                    <div class="stat-label">Per Execution</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-value">$${agent.usage?.last_30_days?.cost_usd?.toFixed(6) || "0.00"}</div>
-                    <div class="stat-label">Last 30 Days</div>
-                  </div>
-                  <div class="stat-card">
-                    <div class="stat-value">${agent.usage?.total_tokens_used || 0}</div>
-                    <div class="stat-label">Total Tokens</div>
-                  </div>
-                </div>
-              </div>
-              `
-                  : ""
-              }
-
-              ${
-                mcpTools.length > 0
-                  ? `
-              <div class="section">
-                <div class="section-title">MCP Tools</div>
-                <div class="field-grid">
-                  ${mcpTools
-                    .map(
-                      (tool) => `
-                    <div class="field-item">
-                      <div class="field-label">${tool.name || tool}</div>
-                      <div class="field-value">${tool.description || "MCP Tool"}</div>
+                <div class="sections">
+                  <div class="section">
+                    <div class="section-title">Performance Statistics</div>
+                    <div class="stats-grid">
+                      <div class="stat-card"><div class="stat-value">${totalExec}</div><div class="stat-label">Total</div></div>
+                      <div class="stat-card"><div class="stat-value">${successExec}</div><div class="stat-label">Success</div></div>
+                      <div class="stat-card"><div class="stat-value">${failedExec}</div><div class="stat-label">Failed</div></div>
+                      <div class="stat-card"><div class="stat-value">${(accuracy * 100).toFixed(1)}%</div><div class="stat-label">Accuracy</div></div>
+                      <div class="stat-card"><div class="stat-value">${confidence.toFixed(2)}</div><div class="stat-label">Confidence</div></div>
+                      <div class="stat-card"><div class="stat-value">${avgTime}</div><div class="stat-label">Avg Time (ms)</div></div>
                     </div>
-                  `,
-                    )
-                    .join("")}
-                </div>
-              </div>
-              `
-                  : ""
-              }
-
-              ${
-                secrets
-                  ? `
-              <div class="section">
-                <div class="section-title">Credentials Registry</div>
-                <div class="notice-box">
-                  <strong>Security Notice</strong>
-                  This specimen requires ${Object.keys(secrets).length} credential(s) to operate.
-                </div>
-                ${Object.keys(secrets)
-                  .map(
-                    (key) => `
-                  <div class="credential-item">
-                    <span class="credential-key">${key}</span>
-                    <span class="${secrets[key] ? "status-ok" : "status-missing"}">
-                      ${secrets[key] ? "✓ Configured" : "✗ Missing"}
-                    </span>
                   </div>
-                `,
-                  )
-                  .join("")}
-              </div>
-              `
-                  : ""
-              }
 
-              ${
-                skills.length > 0 || agent.metadata?.tags
-                  ? `
-              <div class="section">
-                <div class="section-title">Taxonomic Classifications</div>
-                ${
-                  skills.length > 0
-                    ? `
-                <div class="field-label" style="margin-bottom: 8px;">Skills</div>
-                <div class="tags">
-                  ${skills.map((skill) => `<span class="tag">${skill}</span>`).join("")}
+                  <div class="section">
+                    <div class="section-title">Configuration</div>
+                    <div class="field-grid">
+                      <div class="field-item"><div class="field-label">Executor</div><div class="field-value">${executor}</div></div>
+                      <div class="field-item"><div class="field-label">Model</div><div class="field-value">${model}</div></div>
+                      <div class="field-item"><div class="field-label">Temperature</div><div class="field-value">${temperature}</div></div>
+                      <div class="field-item"><div class="field-label">Type</div><div class="field-value">${agent.agent_type || "N/A"}</div></div>
+                      <div class="field-item"><div class="field-label">First Observed</div><div class="field-value">${agent.metadata?.created || "N/A"}</div></div>
+                      <div class="field-item"><div class="field-label">Researcher</div><div class="field-value">${agent.metadata?.author || "N/A"}</div></div>
+                    </div>
+                  </div>
+
+                  ${
+                    mcpTools.length > 0
+                      ? `
+                  <div class="section">
+                    <div class="section-title">MCP Tools</div>
+                    <div class="field-grid">
+                      ${mcpTools.map((tool) => `<div class="field-item"><div class="field-label">${tool.name || tool}</div><div class="field-value">${tool.description || "MCP Tool"}</div></div>`).join("")}
+                    </div>
+                  </div>`
+                      : ""
+                  }
+
+                  ${
+                    skills.length > 0 || tags.length > 0
+                      ? `
+                  <div class="section">
+                    <div class="section-title">Taxonomic Classifications</div>
+                    ${skills.length > 0 ? `<div class="field-label" style="margin-bottom:8px">Skills</div><div class="tags">${skills.map((s) => `<span class="tag">${s}</span>`).join("")}</div>` : ""}
+                    ${tags.length > 0 ? `<div class="field-label" style="margin-top:16px;margin-bottom:8px">Tags</div><div class="tags">${tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>` : ""}
+                  </div>`
+                      : ""
+                  }
                 </div>
-                `
-                    : ""
-                }
-                ${
-                  tags.length > 0
-                    ? `
-                <div class="field-label" style="margin-top: 16px; margin-bottom: 8px;">Tags</div>
-                <div class="tags">
-                  ${tags.map((tag) => `<span class="tag">${tag}</span>`).join("")}
-                </div>
-                `
-                    : ""
-                }
               </div>
-              `
-                  : ""
-              }
+
+              <!-- Activity Tab -->
+              <div data-tab-panel="activity" style="display:none">
+                <div class="sections">
+                  <div class="section" id="execution-activity-section">
+                    <div class="section-title">Execution Activity</div>
+                    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+                      <div style="flex:1;min-width:200px">
+                        <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">30-Day Activity</div>
+                        <div id="activity-sparkline" style="display:flex;align-items:flex-end;gap:2px;height:48px"></div>
+                      </div>
+                      <div style="min-width:120px;text-align:center">
+                        <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Avg Iterations</div>
+                        <div id="avg-iterations-badge" style="font-size:1.8em;color:var(--aqua);font-weight:700">—</div>
+                        <div style="color:var(--gray);font-size:0.75em">per execution</div>
+                      </div>
+                    </div>
+                    <div style="margin-top:16px">
+                      <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Tool Usage</div>
+                      <div id="tool-usage-bars"></div>
+                    </div>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">Performance Coach</div>
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <button class="owner-btn" onclick="askPerformanceCoach('${agentId}')" id="coach-btn" style="border-color:var(--aqua);color:var(--aqua)">Ask Performance Coach</button>
+                      <span id="coach-status" style="color:var(--gray);font-size:0.8em"></span>
+                    </div>
+                    <div id="coach-response" style="display:none;margin-top:12px;padding:16px;background:var(--bg0);border:1px solid var(--bg2);border-radius:6px;font-size:0.85em;line-height:1.6;white-space:pre-wrap;max-height:400px;overflow-y:auto"></div>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">Execution History</div>
+                    <div id="episodes-container"><div style="color:var(--fg3);font-size:0.85em">Loading episodes...</div></div>
+                    <div id="episodes-pagination" style="margin-top:12px;display:flex;gap:8px;justify-content:center"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Knowledge Tab -->
+              <div data-tab-panel="knowledge" style="display:none">
+                <div class="sections">
+                  <div class="section">
+                    <div class="section-title">Knowledge Graph (Ontology)</div>
+                    <div class="field-grid">
+                      <div class="field-item"><div class="field-label">Entities</div><div class="field-value">${ontology.entities || 0}</div></div>
+                      <div class="field-item"><div class="field-label">Relationships</div><div class="field-value">${ontology.relationships || 0}</div></div>
+                      <div class="field-item"><div class="field-label">Evolution Commits</div><div class="field-value">${ontology.evolution_commits || 0}</div></div>
+                      <div class="field-item"><div class="field-label">Last Updated</div><div class="field-value">${ontology.last_updated ? new Date(ontology.last_updated).toLocaleDateString() : "N/A"}</div></div>
+                    </div>
+                    <a href="/agent/${agentId}/ontology" class="view-link">View Knowledge Graph →</a>
+                    <a href="/agent/${agentId}/projector" class="view-link" style="margin-top:6px">Embedding Projector →</a>
+                  </div>
+
+                  ${
+                    agent.dreaming
+                      ? `
+                  <div class="section">
+                    <div class="section-title">Active Dreaming Memory</div>
+                    <div class="field-grid">
+                      <div class="field-item"><div class="field-label">Budget Credits</div><div class="field-value">${agent.dreaming.budget_credits}</div></div>
+                      <div class="field-item"><div class="field-label">Credits Used</div><div class="field-value">${agent.dreaming.credits_used}</div></div>
+                      <div class="field-item"><div class="field-label">Credits Remaining</div><div class="field-value">${agent.dreaming.credits_remaining}</div></div>
+                    </div>
+                    <div class="dream-bar">
+                      <div class="dream-bar-fill" style="width:${agent.dreaming.budget_credits > 0 ? (agent.dreaming.credits_used / agent.dreaming.budget_credits) * 100 : 0}%"></div>
+                    </div>
+                  </div>`
+                      : ""
+                  }
+                </div>
+              </div>
+
+              <!-- Economics Tab -->
+              <div data-tab-panel="economics" style="display:none">
+                <div class="sections">
+                  ${
+                    wallet || cost > 0
+                      ? `
+                  <div class="section">
+                    <div class="section-title">Economic Ledger</div>
+                    <div class="field-grid">
+                      ${wallet?.public_address ? `<div class="field-item" style="grid-column:span 2"><div class="field-label">Public Crypto Wallet</div><div class="field-value" style="font-family:'SF Mono',monospace;font-size:0.85em">${wallet.public_address}</div></div>` : ""}
+                      ${wallet?.balance !== undefined ? `<div class="field-item"><div class="field-label">Balance</div><div class="field-value">${wallet.balance} ${wallet.currency || "USD"}</div></div>` : ""}
+                      ${wallet?.budget ? `<div class="field-item"><div class="field-label">Budget</div><div class="field-value">${wallet.budget} ${wallet.currency || "USD"}</div></div>` : ""}
+                    </div>
+                    <div class="field-label" style="margin-top:20px;margin-bottom:12px">Cost Statistics</div>
+                    <div class="stats-grid">
+                      <div class="stat-card"><div class="stat-value">$${cost.toFixed(6)}</div><div class="stat-label">Total Cost</div></div>
+                      <div class="stat-card"><div class="stat-value">$${totalExec > 0 ? (cost / totalExec).toFixed(6) : "0.00"}</div><div class="stat-label">Per Execution</div></div>
+                      <div class="stat-card"><div class="stat-value">$${agent.usage?.last_30_days?.cost_usd?.toFixed(6) || "0.00"}</div><div class="stat-label">Last 30 Days</div></div>
+                      <div class="stat-card"><div class="stat-value">${agent.usage?.total_tokens_used || 0}</div><div class="stat-label">Total Tokens</div></div>
+                    </div>
+                  </div>`
+                      : `<div class="section"><div class="section-title">Economic Ledger</div><div style="color:var(--fg3);font-size:0.85em">No economic data yet. Execute the agent to generate cost statistics.</div></div>`
+                  }
+
+                  ${
+                    secrets
+                      ? `
+                  <div class="section">
+                    <div class="section-title">Credentials Registry</div>
+                    <div class="notice-box"><strong>Security Notice</strong> This specimen requires ${Object.keys(secrets).length} credential(s) to operate.</div>
+                    ${Object.keys(secrets)
+                      .map(
+                        (key) =>
+                          `<div class="credential-item"><span class="credential-key">${key}</span><span class="${secrets[key] ? "status-ok" : "status-missing"}">${secrets[key] ? "✓ Configured" : "✗ Missing"}</span></div>`,
+                      )
+                      .join("")}
+                  </div>`
+                      : ""
+                  }
+                </div>
+              </div>
+
+              <!-- Eval Tab (owner only, injected by renderOwnerTabs) -->
+              <div data-tab-panel="eval" id="eval-tab-panel" style="display:none"></div>
+
+              <!-- Manage Tab (owner only, injected by renderOwnerTabs) -->
+              <div data-tab-panel="manage" id="manage-tab-panel" style="display:none"></div>
             </div>
           `;
+
+          // Initialize tabs with lazy-load callback
+          Tabs.init("agent-tabs", 0, function (tabName, idx) {
+            if (tabName === "activity") {
+              loadExecutionActivity();
+              loadEpisodes(0);
+            }
+          });
         } catch (error) {
           console.error("Error loading agent:", error);
           document.getElementById("agent-content").innerHTML = `
@@ -1276,7 +1148,6 @@
 
       loadAgentDetail().then(() => {
         initCognitionCanvases();
-        loadExecutionActivity();
       });
 
       async function loadExecutionActivity() {
@@ -1919,13 +1790,16 @@
       })();
 
       function renderForkButton(agentId) {
-        const slot = document.getElementById("owner-panel-slot");
-        slot.innerHTML = `
-          <div class="owner-panel" style="border-color:var(--blue)">
-            <div class="owner-actions">
-              <button class="owner-btn" style="border-color:var(--blue);color:var(--blue)" onclick="ForkModal.open('${agentId}')">Fork This Agent</button>
-            </div>
-          </div>`;
+        // Add a fork button below the tab bar for non-owners
+        const tabBar = document.querySelector(".agent-tabs");
+        if (!tabBar) return;
+        const forkDiv = document.createElement("div");
+        forkDiv.style.cssText = "margin-bottom:16px;display:flex;gap:8px";
+        forkDiv.innerHTML = `<button class="owner-btn" style="border-color:var(--blue);color:var(--blue)" onclick="ForkModal.open('${agentId}')">Fork This Agent</button>`;
+        tabBar.parentNode.insertBefore(
+          forkDiv,
+          tabBar.nextSibling?.nextSibling,
+        );
       }
 
       function renderOwnerPanel(agentId, agent) {
@@ -1937,6 +1811,64 @@
         };
         const statusColor = statusColors[status] || "var(--fg)";
 
+        // --- Add Eval + Manage tab buttons to the tab bar ---
+        const tabBar = document.querySelector(".agent-tabs");
+        if (!tabBar) return;
+
+        const evalBtn = document.createElement("button");
+        evalBtn.setAttribute("data-tab", "eval");
+        evalBtn.textContent = "Eval";
+        tabBar.appendChild(evalBtn);
+
+        const manageBtn = document.createElement("button");
+        manageBtn.setAttribute("data-tab", "manage");
+        manageBtn.textContent = "Manage";
+        tabBar.appendChild(manageBtn);
+
+        // --- Populate Eval tab ---
+        const evalPanel = document.getElementById("eval-tab-panel");
+        if (evalPanel) {
+          evalPanel.innerHTML = `
+            <div class="sections">
+              <div class="section">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                  <div class="section-title" style="margin-bottom:0">Eval Suite</div>
+                  <div style="display:flex;gap:6px">
+                    <button class="owner-btn" style="border-color:var(--green);color:var(--green)"
+                            onclick="runEval('${agentId}', false)">Run Eval</button>
+                    <button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua)"
+                            onclick="runEval('${agentId}', true)">Run + Judge</button>
+                    <button class="owner-btn" onclick="toggleAddTestCase()">+ Test Case</button>
+                  </div>
+                </div>
+                <div style="font-size:0.85em;color:var(--fg3);margin-bottom:12px">
+                  Test Cases: <strong id="eval-case-count">0</strong>
+                </div>
+                <div id="add-tc-form" style="display:none;margin-bottom:12px;padding:12px;background:var(--bg0);border:1px solid var(--bg2)">
+                  <input type="text" id="tc-query" placeholder="Test query..."
+                    style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
+                  <input type="text" id="tc-expected" placeholder="Expected output (optional)"
+                    style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
+                  <input type="text" id="tc-rubric" placeholder="Scoring rubric (optional)"
+                    style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
+                  <input type="text" id="tc-tags" placeholder="Tags (comma-separated)"
+                    style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
+                  <div style="display:flex;gap:6px">
+                    <button class="owner-btn" style="border-color:var(--green);color:var(--green)"
+                            onclick="saveTestCase('${agentId}')">Save</button>
+                    <button class="owner-btn" onclick="toggleAddTestCase()">Cancel</button>
+                  </div>
+                </div>
+                <div id="eval-cases-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
+              </div>
+              <div class="section">
+                <div class="section-title">Run History</div>
+                <div id="eval-runs-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
+              </div>
+            </div>`;
+        }
+
+        // --- Populate Manage tab ---
         // Build lifecycle buttons based on current status
         let lifecycleBtns = "";
         if (status === "draft") {
@@ -1945,199 +1877,131 @@
             <button class="owner-btn" style="border-color:var(--gray);color:var(--gray)" onclick="archiveAgent('${agentId}')">Archive</button>`;
         } else if (status === "published") {
           lifecycleBtns = `
-            <button class="owner-btn" style="border-color:var(--orange);color:var(--orange)" onclick="archiveAgent('${agentId}')">Archive</button>
-            <button class="owner-btn" style="border-color:var(--blue);color:var(--blue)" onclick="toggleForkPricingPanel()">Fork Pricing</button>`;
+            <button class="owner-btn" style="border-color:var(--orange);color:var(--orange)" onclick="archiveAgent('${agentId}')">Archive</button>`;
         } else if (status === "archived") {
           lifecycleBtns = `
             <button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua)" onclick="restoreAgent('${agentId}')">Restore to Draft</button>`;
         }
 
-        const slot = document.getElementById("owner-panel-slot");
-        slot.innerHTML = `
-          <div class="owner-panel">
-            <div class="owner-panel-title">
-              Owner Actions
-              <span style="float:right;font-size:0.75rem;color:${statusColor};border:1px solid ${statusColor};padding:2px 8px;border-radius:4px">${status.toUpperCase()}</span>
-            </div>
-            <div class="owner-actions">
-              ${lifecycleBtns}
-              <button class="owner-btn" onclick="toggleEditPanel()">Edit</button>
-              <button class="owner-btn" onclick="toggleHistoryPanel()">Execution History</button>
-              <button class="owner-btn" onclick="toggleTopupPanel()">Top Up Dreams</button>
-              <button class="owner-btn" onclick="toggleConsolidatePanel()">Run Consolidation</button>
-              <button class="owner-btn" onclick="toggleVersionsPanel('${agentId}')">Version History</button>
-              <button class="owner-btn" onclick="toggleEvalPanel('${agentId}')" style="border-color:var(--purple);color:var(--purple)">Eval Suite</button>
-              <button class="owner-btn danger" onclick="document.getElementById('delete-modal').classList.add('visible')">Delete</button>
-            </div>
-
-            <!-- Fork Pricing (published agents only) -->
-            <div class="edit-field" id="fork-pricing-panel" style="display:none">
-              <label>Base Fork Price (credits)</label>
-              <input type="number" id="fork-price-base" value="${(agent.fork_pricing || {}).base_price || 0}" min="0" />
-              <label>Ontology Price (credits, leave empty to disable)</label>
-              <input type="number" id="fork-price-ontology" value="${(agent.fork_pricing || {}).ontology_price ?? ""}" min="0" placeholder="Disabled" />
-              <label>Embeddings Price (credits, leave empty to disable)</label>
-              <input type="number" id="fork-price-embeddings" value="${(agent.fork_pricing || {}).embedding_price ?? ""}" min="0" placeholder="Disabled" />
-              <div class="edit-save-row">
-                <button class="owner-btn" onclick="saveForkPricing('${agentId}')" style="border-color:var(--blue);color:var(--blue)">Save Pricing</button>
-                <button class="owner-btn" onclick="toggleForkPricingPanel()">Cancel</button>
-              </div>
-            </div>
-
-            <!-- Inline Edit -->
-            <div class="edit-field" id="edit-panel">
-              <label>Description</label>
-              <textarea id="edit-description">${agent.description || ""}</textarea>
-              <label>System Prompt</label>
-              <textarea id="edit-system-prompt" style="min-height:120px">${agent.system_prompt || ""}</textarea>
-              <label>Tags (comma-separated)</label>
-              <input type="text" id="edit-tags" value="${(agent.tags || []).join(", ")}" />
-              <label>Visibility</label>
-              <select id="edit-visibility">
-                <option value="public" ${agent.visibility === "public" ? "selected" : ""}>Public</option>
-                <option value="private" ${agent.visibility === "private" ? "selected" : ""}>Private</option>
-                <option value="shared" ${agent.visibility === "shared" ? "selected" : ""}>Shared</option>
-              </select>
-              <div class="edit-save-row">
-                <button class="owner-btn" onclick="saveAgentEdits('${agentId}')" style="border-color:var(--green);color:var(--green)">Save Changes</button>
-                <button class="owner-btn" onclick="toggleEditPanel()">Cancel</button>
-              </div>
-            </div>
-
-            <!-- Execution History -->
-            <div class="edit-field" id="history-panel">
-              <div id="episodes-container">
-                <div style="color:var(--gray);font-size:0.85em">Loading...</div>
-              </div>
-            </div>
-
-            <!-- Dream Budget Top-up -->
-            <div class="edit-field" id="topup-panel">
-              <div style="font-size:0.85em;color:var(--fg2);margin-bottom:8px">
-                Current budget: <strong>${agent.dreaming?.budget_credits || 0}</strong> |
-                Used: <strong>${agent.dreaming?.credits_used || 0}</strong> |
-                Remaining: <strong>${agent.dreaming?.credits_remaining || 0}</strong>
-              </div>
-              <div class="topup-row">
-                <input type="number" id="topup-amount" min="1" max="1000" value="10" />
-                <button class="owner-btn" onclick="topupDreamBudget('${agentId}')" style="border-color:var(--green);color:var(--green)">Top Up (charges credits)</button>
-              </div>
-              <div id="topup-result" style="margin-top:8px;font-size:0.85em;color:var(--fg3)"></div>
-            </div>
-
-            <!-- Consolidation (Dreaming) -->
-            <div class="edit-field" id="consolidate-panel">
-              <div style="font-size:0.85em;color:var(--fg2);margin-bottom:8px">
-                Run a consolidation cycle to extract rules from unconsolidated episodes.
-                Costs <strong>${agent.dreaming?.credits_remaining || 0}</strong> dream credit(s) remaining + 3 gas credits from your wallet.
-              </div>
-              <button class="owner-btn" id="consolidate-btn" onclick="runConsolidation('${agentId}')" style="border-color:var(--aqua);color:var(--aqua)">Consolidate Now</button>
-              <div id="consolidate-result" style="margin-top:8px;font-size:0.85em;color:var(--fg3)"></div>
-            </div>
-
-            <!-- Version History -->
-            <div class="edit-field" id="versions-panel">
-              <div id="versions-list" style="font-size:0.85em;color:var(--fg3)">Loading versions...</div>
-            </div>
-
-            <!-- Eval Suite -->
-            <div class="edit-field" id="eval-panel">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-                <span style="font-size:0.85em;color:var(--fg2)">
-                  Test Cases: <strong id="eval-case-count">0</strong>
-                </span>
-                <div style="display:flex;gap:6px">
-                  <button class="owner-btn" style="border-color:var(--green);color:var(--green)"
-                          onclick="runEval('${agentId}', false)">Run Eval</button>
-                  <button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua)"
-                          onclick="runEval('${agentId}', true)">Run + Judge</button>
-                  <button class="owner-btn" onclick="toggleAddTestCase()">+ Test Case</button>
+        const managePanel = document.getElementById("manage-tab-panel");
+        if (managePanel) {
+          managePanel.innerHTML = `
+            <div class="sections">
+              <!-- Status + Lifecycle -->
+              <div class="section">
+                <div class="section-title">
+                  Lifecycle
+                  <span style="float:right;font-size:0.75rem;color:${statusColor};border:1px solid ${statusColor};padding:2px 8px;border-radius:4px">${status.toUpperCase()}</span>
+                </div>
+                <div class="owner-actions">
+                  ${lifecycleBtns}
+                  <button class="owner-btn danger" onclick="document.getElementById('delete-modal').classList.add('visible')">Delete</button>
                 </div>
               </div>
-              <div id="add-tc-form" style="display:none;margin-bottom:12px;padding:12px;background:var(--bg0);border:1px solid var(--bg2)">
-                <input type="text" id="tc-query" placeholder="Test query..."
-                  style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
-                <input type="text" id="tc-expected" placeholder="Expected output (optional)"
-                  style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
-                <input type="text" id="tc-rubric" placeholder="Scoring rubric (optional)"
-                  style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
-                <input type="text" id="tc-tags" placeholder="Tags (comma-separated)"
-                  style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
-                <div style="display:flex;gap:6px">
-                  <button class="owner-btn" style="border-color:var(--green);color:var(--green)"
-                          onclick="saveTestCase('${agentId}')">Save</button>
-                  <button class="owner-btn" onclick="toggleAddTestCase()">Cancel</button>
-                </div>
-              </div>
-              <div id="eval-cases-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
-              <div style="margin-top:16px;border-top:1px solid var(--bg3);padding-top:12px">
-                <div style="font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;color:var(--fg4);margin-bottom:8px">
-                  Run History
-                </div>
-                <div id="eval-runs-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
-              </div>
-            </div>
-          </div>
-        `;
-      }
 
-      const ownerPanelIds = [
-        "edit-panel",
-        "history-panel",
-        "topup-panel",
-        "consolidate-panel",
-        "versions-panel",
-        "eval-panel",
-      ];
-      function hideAllOwnerPanels(except) {
-        ownerPanelIds.forEach((id) => {
-          if (id !== except)
-            document.getElementById(id)?.classList.remove("visible");
+              <!-- Edit Description / Prompt -->
+              <div class="section">
+                <div class="section-title">Edit Agent</div>
+                <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Description</label>
+                <textarea id="edit-description" style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:8px 10px;font-family:inherit;font-size:0.9em;min-height:80px;resize:vertical">${agent.description || ""}</textarea>
+                <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;margin-top:10px">System Prompt</label>
+                <textarea id="edit-system-prompt" style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:8px 10px;font-family:inherit;font-size:0.9em;min-height:120px;resize:vertical">${agent.system_prompt || ""}</textarea>
+                <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;margin-top:10px">Tags (comma-separated)</label>
+                <input type="text" id="edit-tags" value="${(agent.tags || []).join(", ")}" style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:8px 10px;font-family:inherit;font-size:0.9em" />
+                <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;margin-top:10px">Visibility</label>
+                <select id="edit-visibility" style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:8px 10px;font-family:inherit;font-size:0.9em">
+                  <option value="public" ${agent.visibility === "public" ? "selected" : ""}>Public</option>
+                  <option value="private" ${agent.visibility === "private" ? "selected" : ""}>Private</option>
+                  <option value="shared" ${agent.visibility === "shared" ? "selected" : ""}>Shared</option>
+                </select>
+                <div style="display:flex;gap:8px;margin-top:12px">
+                  <button class="owner-btn" onclick="saveAgentEdits('${agentId}')" style="border-color:var(--green);color:var(--green)">Save Changes</button>
+                </div>
+              </div>
+
+              ${
+                status === "published"
+                  ? `
+              <!-- Fork Pricing -->
+              <div class="section">
+                <div class="section-title">Fork Pricing</div>
+                <div class="field-grid">
+                  <div class="field-item">
+                    <label style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em">Base Price (credits)</label>
+                    <input type="number" id="fork-price-base" value="${(agent.fork_pricing || {}).base_price || 0}" min="0"
+                      style="background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:6px 8px;font-family:inherit;width:100%" />
+                  </div>
+                  <div class="field-item">
+                    <label style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em">Ontology Price</label>
+                    <input type="number" id="fork-price-ontology" value="${(agent.fork_pricing || {}).ontology_price ?? ""}" min="0" placeholder="Disabled"
+                      style="background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:6px 8px;font-family:inherit;width:100%" />
+                  </div>
+                  <div class="field-item">
+                    <label style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em">Embeddings Price</label>
+                    <input type="number" id="fork-price-embeddings" value="${(agent.fork_pricing || {}).embedding_price ?? ""}" min="0" placeholder="Disabled"
+                      style="background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:6px 8px;font-family:inherit;width:100%" />
+                  </div>
+                </div>
+                <div style="margin-top:12px">
+                  <button class="owner-btn" onclick="saveForkPricing('${agentId}')" style="border-color:var(--blue);color:var(--blue)">Save Pricing</button>
+                </div>
+              </div>`
+                  : ""
+              }
+
+              <!-- Version History -->
+              <div class="section">
+                <div class="section-title">Version History</div>
+                <div id="versions-list" style="font-size:0.85em;color:var(--fg3)">Loading versions...</div>
+              </div>
+
+              <!-- Dream Budget -->
+              <div class="section">
+                <div class="section-title">Dreaming Budget</div>
+                <div style="font-size:0.85em;color:var(--fg2);margin-bottom:8px">
+                  Budget: <strong>${agent.dreaming?.budget_credits || 0}</strong> |
+                  Used: <strong>${agent.dreaming?.credits_used || 0}</strong> |
+                  Remaining: <strong>${agent.dreaming?.credits_remaining || 0}</strong>
+                </div>
+                <div class="topup-row">
+                  <input type="number" id="topup-amount" min="1" max="1000" value="10" />
+                  <button class="owner-btn" onclick="topupDreamBudget('${agentId}')" style="border-color:var(--green);color:var(--green)">Top Up (charges credits)</button>
+                </div>
+                <div id="topup-result" style="margin-top:8px;font-size:0.85em;color:var(--fg3)"></div>
+              </div>
+
+              <!-- Consolidation -->
+              <div class="section">
+                <div class="section-title">Consolidation</div>
+                <div style="font-size:0.85em;color:var(--fg2);margin-bottom:8px">
+                  Run a consolidation cycle to extract rules from unconsolidated episodes.
+                  Costs 1 dream credit + 3 gas credits from your wallet.
+                </div>
+                <button class="owner-btn" id="consolidate-btn" onclick="runConsolidation('${agentId}')" style="border-color:var(--aqua);color:var(--aqua)">Consolidate Now</button>
+                <div id="consolidate-result" style="margin-top:8px;font-size:0.85em;color:var(--fg3)"></div>
+              </div>
+
+              <!-- Fork / Duplicate -->
+              <div class="section">
+                <div class="section-title">Fork / Duplicate</div>
+                <div class="owner-actions">
+                  <button class="owner-btn" style="border-color:var(--blue);color:var(--blue)" onclick="ForkModal.open('${agentId}')">Fork This Agent</button>
+                </div>
+              </div>
+            </div>`;
+        }
+
+        // --- Re-initialize Tabs to pick up new buttons + panels ---
+        Tabs.init("agent-tabs", 0, function (tabName, idx) {
+          if (tabName === "activity") {
+            loadExecutionActivity();
+            loadEpisodes(0);
+          } else if (tabName === "eval") {
+            loadEvalData(agentId);
+          } else if (tabName === "manage") {
+            loadVersions(agentId);
+          }
         });
-      }
-
-      function toggleEditPanel() {
-        hideAllOwnerPanels("edit-panel");
-        document.getElementById("edit-panel")?.classList.toggle("visible");
-      }
-
-      function toggleHistoryPanel() {
-        const panel = document.getElementById("history-panel");
-        if (!panel) return;
-        const wasVisible = panel.classList.contains("visible");
-        hideAllOwnerPanels("history-panel");
-        panel.classList.toggle("visible");
-        if (!wasVisible) loadEpisodes(0);
-      }
-
-      function toggleTopupPanel() {
-        hideAllOwnerPanels("topup-panel");
-        document.getElementById("topup-panel")?.classList.toggle("visible");
-      }
-
-      function toggleConsolidatePanel() {
-        hideAllOwnerPanels("consolidate-panel");
-        document
-          .getElementById("consolidate-panel")
-          ?.classList.toggle("visible");
-      }
-
-      function toggleVersionsPanel(agentId) {
-        const panel = document.getElementById("versions-panel");
-        if (!panel) return;
-        const wasVisible = panel.classList.contains("visible");
-        hideAllOwnerPanels("versions-panel");
-        panel.classList.toggle("visible");
-        if (!wasVisible) loadVersions(agentId);
-      }
-
-      function toggleEvalPanel(agentId) {
-        const panel = document.getElementById("eval-panel");
-        if (!panel) return;
-        const wasVisible = panel.classList.contains("visible");
-        hideAllOwnerPanels("eval-panel");
-        panel.classList.toggle("visible");
-        if (!wasVisible) loadEvalData(agentId);
       }
 
       async function loadEvalData(agentId) {
@@ -2551,11 +2415,6 @@
         }
       }
 
-      function toggleForkPricingPanel() {
-        const p = document.getElementById("fork-pricing-panel");
-        if (p) p.style.display = p.style.display === "none" ? "block" : "none";
-      }
-
       async function saveForkPricing(agentId) {
         const base =
           parseInt(document.getElementById("fork-price-base").value) || 0;
@@ -2569,7 +2428,6 @@
         try {
           await API.put(`/api/agents/${agentId}/fork-pricing`, body);
           Toast.show("Fork pricing updated", "success");
-          toggleForkPricingPanel();
         } catch (e) {
           Toast.show(e.message || "Failed to save pricing", "error");
         }
