@@ -828,6 +828,9 @@
                 </button>
               </div>
               <div id="exec-result" style="margin-top:12px"></div>
+              <div id="execute-hint" style="display:none;margin-top:8px;font-size:0.78rem;color:var(--fg3)">
+                Direct execution costs credits per query. <a href="#" id="hire-link" style="color:var(--aqua)">Hire to a workspace</a> for team access.
+              </div>
             </div>
 
             <!-- MCP Endpoint -->
@@ -1664,9 +1667,17 @@
               // Check if we need owner_id — it comes from the API
               const userId = currentUser.user_id;
               const isOwner = agent.owner_id === userId;
-              if (!isOwner) return;
-
-              renderOwnerPanel(agentId, agent);
+              if (isOwner) {
+                renderOwnerPanel(agentId, agent);
+              } else {
+                // Show hire hint for non-owners
+                const hint = document.getElementById("execute-hint");
+                if (hint) {
+                  hint.style.display = "block";
+                  const link = document.getElementById("hire-link");
+                  if (link) link.href = "/dashboard";
+                }
+              }
             });
         }, 200);
       })();

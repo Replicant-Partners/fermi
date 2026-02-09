@@ -4288,12 +4288,11 @@ async fn execute_agent_handler(
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         })?;
 
-    // 6. Charge credits: execution fee (1 credit per 1000 tokens, min 1) + 10% gas fee
+    // 6. Charge credits via GasFees struct
     let tokens = output.tokens_used.unwrap_or(0) as i32;
-    let execution_fee = std::cmp::max(1, tokens / 1000);
-    let gas_fee = std::cmp::max(1, execution_fee / 10);
+    let (execution_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
 
-    // Charge execution fee
+    // Charge execution fee (warning on failure — work is already done)
     let ep_id_str = episode_id.to_string();
     if let Err(e) = credit_charge(
         &state.db,
@@ -4308,8 +4307,8 @@ async fn execute_agent_handler(
         eprintln!("Warning: failed to charge execution fee: {}", e);
     }
 
-    // Charge gas fee
-    if let Err(e) = credit_charge(
+    // Charge gas fee (hard error)
+    charge_gas(
         &state.db,
         wallet.wallet_id,
         gas_fee,
@@ -4317,10 +4316,7 @@ async fn execute_agent_handler(
         &format!("Gas fee for {}", agent_id),
         Some(ep_id_str.as_str()),
     )
-    .await
-    {
-        eprintln!("Warning: failed to charge gas fee: {}", e);
-    }
+    .await?;
 
     let total_charged = execution_fee + gas_fee;
 
