@@ -1680,6 +1680,7 @@
               <button class="owner-btn" onclick="toggleEditPanel()">Edit</button>
               <button class="owner-btn" onclick="toggleHistoryPanel()">Execution History</button>
               <button class="owner-btn" onclick="toggleTopupPanel()">Top Up Dreams</button>
+              <button class="owner-btn" onclick="toggleConsolidatePanel()">Run Consolidation</button>
               <button class="owner-btn danger" onclick="document.getElementById('delete-modal').classList.add('visible')">Delete</button>
             </div>
 
@@ -1723,6 +1724,16 @@
               </div>
               <div id="topup-result" style="margin-top:8px;font-size:0.85em;color:var(--fg3)"></div>
             </div>
+
+            <!-- Consolidation (Dreaming) -->
+            <div class="edit-field" id="consolidate-panel">
+              <div style="font-size:0.85em;color:var(--fg2);margin-bottom:8px">
+                Run a consolidation cycle to extract rules from unconsolidated episodes.
+                Costs <strong>${agent.dreaming?.credits_remaining || 0}</strong> dream credit(s) remaining + 3 gas credits from your wallet.
+              </div>
+              <button class="owner-btn" id="consolidate-btn" onclick="runConsolidation('${agentId}')" style="border-color:var(--aqua);color:var(--aqua)">Consolidate Now</button>
+              <div id="consolidate-result" style="margin-top:8px;font-size:0.85em;color:var(--fg3)"></div>
+            </div>
           </div>
         `;
       }
@@ -1731,6 +1742,9 @@
         document.getElementById("edit-panel")?.classList.toggle("visible");
         document.getElementById("history-panel")?.classList.remove("visible");
         document.getElementById("topup-panel")?.classList.remove("visible");
+        document
+          .getElementById("consolidate-panel")
+          ?.classList.remove("visible");
       }
 
       function toggleHistoryPanel() {
@@ -1739,6 +1753,9 @@
         const wasVisible = panel.classList.contains("visible");
         document.getElementById("edit-panel")?.classList.remove("visible");
         document.getElementById("topup-panel")?.classList.remove("visible");
+        document
+          .getElementById("consolidate-panel")
+          ?.classList.remove("visible");
         panel.classList.toggle("visible");
         if (!wasVisible) loadEpisodes(0);
       }
@@ -1746,7 +1763,53 @@
       function toggleTopupPanel() {
         document.getElementById("edit-panel")?.classList.remove("visible");
         document.getElementById("history-panel")?.classList.remove("visible");
+        document
+          .getElementById("consolidate-panel")
+          ?.classList.remove("visible");
         document.getElementById("topup-panel")?.classList.toggle("visible");
+      }
+
+      function toggleConsolidatePanel() {
+        document.getElementById("edit-panel")?.classList.remove("visible");
+        document.getElementById("history-panel")?.classList.remove("visible");
+        document.getElementById("topup-panel")?.classList.remove("visible");
+        document
+          .getElementById("consolidate-panel")
+          ?.classList.toggle("visible");
+      }
+
+      async function runConsolidation(agentId) {
+        const btn = document.getElementById("consolidate-btn");
+        const resultEl = document.getElementById("consolidate-result");
+        btn.disabled = true;
+        btn.textContent = "Consolidating...";
+        resultEl.innerHTML =
+          '<span style="color:var(--gray)">Running consolidation cycle...</span>';
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/consolidate`,
+            {
+              method: "POST",
+            },
+          );
+          const data = await res.json();
+          if (!res.ok) {
+            resultEl.innerHTML = `<span style="color:var(--red)">${data.message || res.statusText || "Failed"}</span>`;
+            return;
+          }
+          const r = data.result;
+          resultEl.innerHTML = `<span style="color:var(--green)">
+            ${r.episodes_processed} episodes processed, ${r.clusters_identified} clusters,
+            ${r.rules_extracted} rules extracted, ${r.entities_created || 0} entities,
+            ${r.facts_created || 0} facts.
+            Dream credits remaining: ${data.dreaming_credits_remaining}
+          </span>`;
+        } catch (e) {
+          resultEl.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Consolidate Now";
+        }
       }
 
       async function saveAgentEdits(agentId) {

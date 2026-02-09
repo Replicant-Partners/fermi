@@ -4749,10 +4749,30 @@ async fn topup_dreaming_budget_handler(
 
 async fn consolidate_agent_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    // Charge gas fee from caller's wallet
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        state.gas_fees.consolidation_cycle,
+        "gas_fee",
+        &format!("Consolidation gas for agent {}", agent_id),
+        Some(&agent_id),
+    )
+    .await?;
 
     // Check dreaming budget
     let remaining = db_agent.dreaming_budget_credits - db_agent.dreaming_credits_used;
