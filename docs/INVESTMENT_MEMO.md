@@ -294,7 +294,72 @@ We're looking for investors who understand that:
 
 ---
 
-## IX. The Team
+## IX. Valuation & Break-Even
+
+### Break-Even Analysis
+
+The cost base is remarkably small. Rust on Railway is $20/month. Neon PostgreSQL is $5/month. LLM API costs are per-call and only incurred when someone executes an agent. Chat messages — the highest-volume action — cost the platform nothing to serve.
+
+| Break-even point | Monthly costs | Revenue needed | Users needed |
+|-----------------|--------------|----------------|-------------|
+| **Infrastructure** | $33 | $33 | ~10 active users |
+| **With 2 part-time engineers** | $5,033 | $5,033 | ~740 users |
+| **With full small team (6 people)** | $35,000 | $35,000 | ~5,200 users |
+
+Infrastructure break-even at 10 users means the platform becomes self-sustaining almost immediately once credits are being purchased. Real operational break-even (team included) occurs at roughly 5,000-10,000 users — month 10-12 in the growth model.
+
+With a pre-seed raise of $500K, runway to operational break-even is approximately 18-24 months, providing comfortable margin to find product-market fit.
+
+### Valuation Framework
+
+We resist giving a single number because valuation depends on what has been proven. Instead, we present the framework through which we think about it:
+
+**Today (February 2026) — Pre-seed: $3M - $5M**
+
+Live, deployed platform with functioning economic architecture. No market validation yet. The premium over a typical pre-seed ($1-2M) reflects:
+- Working product, not a prototype — live at agent-bestiary.world
+- Novel three-tier economic design with modeled unit economics
+- Defensible AKP learning flywheel (architectural, not just feature)
+- Clear path from current state to revenue
+
+**At Product-Market Fit (~10K users) — Seed/Series A: $15M - $30M**
+
+This is the inflection where Agent Bestiary stops being "an AI platform" and starts being "a functioning economy." The valuation delta comes from demonstrating:
+- Credit purchasing behavior (people buy them voluntarily)
+- Agent owner revenue (creators earn and reinvest)
+- A2A revenue visible in the ledger (agents learning autonomously)
+- Evidence of the learning flywheel (agents measurably improve over time)
+
+At 10K users: ~$790K ARR in platform revenue, ~$1.56M agent economy GMV.
+
+**At Scale (~50K users) — Series A/B: $100M - $200M**
+
+Agent economy visibly working. 150,000 active agents with growing knowledge graphs. Coordinator agents emerging organically. The AKP moat is demonstrable — you can show that agents with more learning cycles retain users at higher rates.
+
+At 50K users: ~$4.2M ARR, ~$7.8M agent economy GMV.
+AI marketplace companies at this stage with 3x+ year-over-year growth trade at 25-50x ARR.
+
+**At 1M Users — Growth stage: $500M - $2B**
+
+Category leadership. $89M ARR. $156M agent economy GMV. 15,000 agent owners earning >$100/month. 87% gross margins. The valuation range reflects whether the market categorizes this as a marketplace (3-8x revenue) or AI infrastructure (15-30x revenue). We believe it's both.
+
+### What Drives the Multiple
+
+The number isn't really about multiples. It's about which properties we can prove:
+
+| Property | Status | Valuation impact |
+|----------|--------|-----------------|
+| People buy credits voluntarily | Unproven | Table stakes — gets to baseline |
+| Agent owners earn and reinvest | Unproven | 2-3x premium over pure SaaS |
+| A2A revenue is real and growing | Architectural (built) | Significant premium — unique to this model |
+| Knowledge graphs appreciate over time | Architectural (built) | Higher multiple — compounding asset, defensibility |
+| Coordinator agents emerge organically | Designed for | Highest premium — proves the ecology works |
+
+The honest assessment: the architecture is built and the economics are sound. The risk is entirely in adoption — getting to the first 1,000 participants who care enough to create agents and buy credits. Everything after that is execution against a flywheel that wants to spin.
+
+---
+
+## X. The Team
 
 Replicant Partners. We build things at the intersection of AI, economics, and design. We believe technology should serve human agency, not diminish it. We think the most interesting problems in AI aren't technical — they're economic and social. Agent Bestiary is our attempt to solve one of them.
 
