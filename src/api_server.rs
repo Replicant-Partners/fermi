@@ -361,7 +361,7 @@ async fn main() {
         )
         .route(
             "/api/workspaces/:workspace_id/budget",
-            put(fund_workspace_handler),
+            post(fund_workspace_handler),
         )
         // Workspace chat
         .route(
@@ -2088,10 +2088,21 @@ async fn fund_workspace_handler(
     .await
     .map_err(|e| (StatusCode::PAYMENT_REQUIRED, e.to_string()))?;
 
-    // Credit workspace budget
+    // Credit workspace budget in teams table (display)
     sqlx::query("UPDATE teams SET workspace_budget = workspace_budget + $1 WHERE id = $2")
         .bind(req.amount)
         .bind(ws_uuid)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Also credit the workspace wallet (used for gas charges)
+    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    sqlx::query("UPDATE wallets SET balance = balance + $1, total_deposited = total_deposited + $1 WHERE wallet_id = $2")
+        .bind(req.amount)
+        .bind(ws_wallet.wallet_id)
         .execute(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -2101,6 +2112,39 @@ async fn fund_workspace_handler(
         "amount": req.amount,
         "workspace_id": ws_uuid,
     })))
+}
+
+// ─── Workspace Gas Helper ──────────────────────────────────────────
+
+/// Charge gas from workspace wallet and sync workspace_spent on teams table.
+async fn charge_workspace_gas(
+    pool: &PgPool,
+    ws_uuid: uuid::Uuid,
+    workspace_id: &str,
+    amount: i32,
+    tx_type: &str,
+    description: &str,
+    related_id: Option<&str>,
+) -> Result<i32, (StatusCode, String)> {
+    let ws_wallet = get_or_create_wallet(pool, "workspace", workspace_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let charged = charge_gas(
+        pool,
+        ws_wallet.wallet_id,
+        amount,
+        tx_type,
+        description,
+        related_id,
+    )
+    .await?;
+    // Keep teams.workspace_spent in sync for display
+    let _ = sqlx::query("UPDATE teams SET workspace_spent = workspace_spent + $1 WHERE id = $2")
+        .bind(charged)
+        .bind(ws_uuid)
+        .execute(pool)
+        .await;
+    Ok(charged)
 }
 
 // ─── Workspace Chat ────────────────────────────────────────────────
@@ -2128,12 +2172,10 @@ async fn post_workspace_message_handler(
         .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
 
     // Charge message gas
-    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    charge_gas(
+    charge_workspace_gas(
         &state.db,
-        ws_wallet.wallet_id,
+        ws_uuid,
+        &workspace_id,
         state.gas_fees.message_send,
         "gas_fee",
         "Chat message",
@@ -2346,16 +2388,15 @@ async fn hire_agent_handler(
     }
 
     // Charge hire gas from workspace wallet
-    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    charge_gas(
+    let agent_id_str = req.agent_id.to_string();
+    charge_workspace_gas(
         &state.db,
-        ws_wallet.wallet_id,
+        ws_uuid,
+        &workspace_id,
         state.gas_fees.agent_hire,
         "gas_fee",
         &format!("Hire agent {}", agent.agent_name),
-        Some(&req.agent_id.to_string()),
+        Some(&agent_id_str),
     )
     .await?;
 
@@ -2418,16 +2459,15 @@ async fn add_agent_handler(
     }
 
     // Charge add gas from workspace wallet
-    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    charge_gas(
+    let agent_id_str = req.agent_id.to_string();
+    charge_workspace_gas(
         &state.db,
-        ws_wallet.wallet_id,
+        ws_uuid,
+        &workspace_id,
         state.gas_fees.agent_add,
         "gas_fee",
         &format!("Add agent {}", agent.agent_name),
-        Some(&req.agent_id.to_string()),
+        Some(&agent_id_str),
     )
     .await?;
 
