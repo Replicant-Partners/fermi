@@ -10,9 +10,13 @@ pub mod executor;
 pub mod llm_executor;
 pub mod multi_model_executor;
 pub mod registry;
+pub mod tool_executor;
+pub mod tools;
 
 pub use agent_card::*;
 pub use executor::*;
 pub use llm_executor::*;
 pub use multi_model_executor::*;
 pub use registry::*;
+pub use tool_executor::ToolAwareExecutor;
+pub use tools::{ToolContext, ToolRegistry};

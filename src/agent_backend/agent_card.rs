@@ -46,6 +46,8 @@ pub struct McpTool {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub input_schema: Option<serde_json::Value>,
 }
 
 /// Agent capabilities

@@ -8,15 +8,51 @@
     "mcp_tools": [
       {
         "name": "projection_api",
-        "description": "Query the embedding projector API for PCA/t-SNE projections of agent knowledge"
+        "description": "Query the embedding projector API for PCA/t-SNE projections of agent knowledge",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "temporal_analysis",
-        "description": "Analyze temporal keyframes showing how embedding spaces evolve through consolidation cycles"
+        "description": "Analyze temporal keyframes showing how embedding spaces evolve through consolidation cycles",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "cluster_interpreter",
-        "description": "Identify and explain semantic clusters in projected embedding spaces"
+        "description": "Identify and explain semantic clusters in projected embedding spaces",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

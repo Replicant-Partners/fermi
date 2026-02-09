@@ -8,15 +8,51 @@
     "mcp_tools": [
       {
         "name": "simulation_engine",
-        "description": "Run Monte Carlo simulations with configurable parameters and distributions"
+        "description": "Run Monte Carlo simulations with configurable parameters and distributions",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "distribution_fitter",
-        "description": "Fit probability distributions to historical data or expert estimates"
+        "description": "Fit probability distributions to historical data or expert estimates",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "sensitivity_analyzer",
-        "description": "Identify which input variables have the greatest impact on outcomes"
+        "description": "Identify which input variables have the greatest impact on outcomes",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

@@ -89,13 +89,13 @@ impl LLMExecutor {
         response: &ClaudeResponse,
         agent_name: &str,
     ) -> Result<EvidenceStmt, ExecutionError> {
-        // Extract text from response
-        let text = response
-            .content
-            .first()
-            .ok_or_else(|| ExecutionError::ExecutionFailed("Empty response".to_string()))?
-            .text
-            .clone();
+        // Extract text from response content blocks
+        let text = extract_text_from_content(&response.content);
+        if text.is_empty() {
+            return Err(ExecutionError::ExecutionFailed(
+                "Empty response".to_string(),
+            ));
+        }
 
         // Try to parse as JSON
         let evidence_data: EvidenceData = serde_json::from_str(&text).map_err(|e| {
@@ -111,6 +111,38 @@ impl LLMExecutor {
             date: Some(Utc::now().format("%Y-%m-%d").to_string()),
             strength: Some(evidence_data.confidence),
             key_findings: evidence_data.key_findings,
+        })
+    }
+
+    /// Send a raw ClaudeRequest and return the parsed response
+    pub(crate) async fn send_request(
+        &self,
+        request: &ClaudeRequest,
+    ) -> Result<ClaudeResponse, ExecutionError> {
+        let response = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| ExecutionError::ExecutionFailed(format!("API request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(ExecutionError::ExecutionFailed(format!(
+                "API error: {}",
+                error_text
+            )));
+        }
+
+        response.json().await.map_err(|e| {
+            ExecutionError::ExecutionFailed(format!("Failed to parse response: {}", e))
         })
     }
 }
@@ -136,38 +168,14 @@ impl AgentExecutor for LLMExecutor {
             system: Some(system_prompt),
             messages: vec![Message {
                 role: "user".to_string(),
-                content: user_prompt,
+                content: MessageContent::Text(user_prompt),
             }],
+            tools: None,
+            tool_choice: None,
         };
 
         // Call Claude API
-        let response = self
-            .client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| ExecutionError::ExecutionFailed(format!("API request failed: {}", e)))?;
-
-        // Check for errors
-        if !response.status().is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(ExecutionError::ExecutionFailed(format!(
-                "API error: {}",
-                error_text
-            )));
-        }
-
-        // Parse response
-        let claude_response: ClaudeResponse = response.json().await.map_err(|e| {
-            ExecutionError::ExecutionFailed(format!("Failed to parse response: {}", e))
-        })?;
+        let claude_response = self.send_request(&request).await?;
 
         // Extract evidence
         let evidence = self.parse_response(&claude_response, &agent.name)?;
@@ -192,6 +200,8 @@ impl AgentExecutor for LLMExecutor {
                 temperature: Some(request.temperature),
                 reasoning: None,
             },
+            tool_invocations: vec![],
+            loop_iterations: 1,
         })
     }
 
@@ -200,41 +210,106 @@ impl AgentExecutor for LLMExecutor {
     }
 }
 
+// ─── Claude API types (tool-aware) ─────────────────────────────────
+
 /// Claude API request structure
-#[derive(Debug, Serialize)]
-struct ClaudeRequest {
-    model: String,
-    max_tokens: u32,
-    temperature: f64,
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ClaudeRequest {
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
-    messages: Vec<Message>,
+    pub system: Option<String>,
+    pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ClaudeTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize)]
-struct Message {
-    role: String,
-    content: String,
+/// A tool definition for the Anthropic API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ClaudeTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// Message in the conversation
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Message {
+    pub role: String,
+    pub content: MessageContent,
+}
+
+/// Message content — either a plain text string or an array of content blocks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum MessageContent {
+    Text(String),
+    Blocks(Vec<MessageBlock>),
+}
+
+/// A content block within a message (for multi-block messages)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub(crate) enum MessageBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
 }
 
 /// Claude API response structure
-#[derive(Debug, Deserialize)]
-struct ClaudeResponse {
-    id: String,
-    model: String,
-    content: Vec<Content>,
-    usage: Usage,
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ClaudeResponse {
+    pub id: String,
+    pub model: String,
+    pub content: Vec<ContentBlock>,
+    pub usage: Usage,
+    #[serde(default)]
+    pub stop_reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct Content {
-    text: String,
+/// A content block in the response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub(crate) enum ContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
 }
 
-#[derive(Debug, Deserialize)]
-struct Usage {
-    input_tokens: u32,
-    output_tokens: u32,
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct Usage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+/// Extract all text from content blocks
+pub(crate) fn extract_text_from_content(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Parsed evidence data from LLM response

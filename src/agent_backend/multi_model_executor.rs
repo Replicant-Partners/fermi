@@ -112,46 +112,21 @@ impl MultiModelExecutor {
         let request = OpenAIRequest {
             model: context.agent_card.capabilities.model.clone(),
             messages: vec![
-                OpenAIMessage {
-                    role: "system".to_string(),
-                    content: system_prompt,
-                },
-                OpenAIMessage {
-                    role: "user".to_string(),
-                    content: user_prompt,
-                },
+                OpenAIMessage::chat("system", &system_prompt),
+                OpenAIMessage::chat("user", &user_prompt),
             ],
             temperature: Some(context.agent_card.capabilities.temperature),
             max_tokens: Some(2048),
+            tools: None,
+            tool_choice: None,
         };
 
-        let url = format!("{}/chat/completions", config.base_url);
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| ExecutionError::ExecutionFailed(format!("API request failed: {}", e)))?;
-
-        if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(ExecutionError::ExecutionFailed(format!(
-                "API error: {}",
-                error_text
-            )));
-        }
-
-        let oai_response: OpenAIResponse = response.json().await.map_err(|e| {
-            ExecutionError::ExecutionFailed(format!("Failed to parse response: {}", e))
-        })?;
+        let oai_response = self.send_openai_request(&request, config).await?;
 
         let text = oai_response
             .choices
             .first()
-            .map(|c| c.message.content.clone())
+            .map(|c| c.message.content.clone().unwrap_or_default())
             .unwrap_or_default();
 
         let tokens_used = oai_response.usage.as_ref().map(|u| u.total_tokens);
@@ -178,6 +153,38 @@ impl MultiModelExecutor {
                 temperature: Some(context.agent_card.capabilities.temperature),
                 reasoning,
             },
+            tool_invocations: vec![],
+            loop_iterations: 1,
+        })
+    }
+
+    /// Send a request to an OpenAI-compatible endpoint
+    pub(crate) async fn send_openai_request(
+        &self,
+        request: &OpenAIRequest,
+        config: &ProviderConfig,
+    ) -> Result<OpenAIResponse, ExecutionError> {
+        let url = format!("{}/chat/completions", config.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", config.api_key))
+            .header("Content-Type", "application/json")
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| ExecutionError::ExecutionFailed(format!("API request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(ExecutionError::ExecutionFailed(format!(
+                "API error: {}",
+                error_text
+            )));
+        }
+
+        response.json().await.map_err(|e| {
+            ExecutionError::ExecutionFailed(format!("Failed to parse response: {}", e))
         })
     }
 }
@@ -212,43 +219,109 @@ impl AgentExecutor for MultiModelExecutor {
     }
 }
 
-// ─── OpenAI-compatible types ───────────────────────────────────────
+// ─── OpenAI-compatible types (tool-aware) ──────────────────────────
 
-#[derive(Serialize)]
-struct OpenAIRequest {
-    model: String,
-    messages: Vec<OpenAIMessage>,
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct OpenAIRequest {
+    pub model: String,
+    pub messages: Vec<OpenAIMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
+    pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OpenAITool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<String>,
 }
 
-#[derive(Serialize)]
-struct OpenAIMessage {
-    role: String,
-    content: String,
+/// OpenAI tool definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OpenAITool {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub function: OpenAIFunction,
 }
 
-#[derive(Deserialize)]
-struct OpenAIResponse {
-    choices: Vec<OpenAIChoice>,
-    usage: Option<OpenAIUsage>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OpenAIFunction {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
 }
 
-#[derive(Deserialize)]
-struct OpenAIChoice {
-    message: OpenAIChoiceMessage,
+/// OpenAI message — supports text, assistant with tool_calls, and tool results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OpenAIMessage {
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OpenAIToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct OpenAIChoiceMessage {
-    content: String,
+impl OpenAIMessage {
+    /// Create a simple text message (system, user, or assistant)
+    pub fn chat(role: &str, content: &str) -> Self {
+        Self {
+            role: role.to_string(),
+            content: Some(content.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    /// Create a tool result message
+    pub fn tool_result(tool_call_id: &str, content: &str) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: Some(content.to_string()),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.to_string()),
+        }
+    }
 }
 
-#[derive(Deserialize)]
-struct OpenAIUsage {
-    total_tokens: u32,
+/// Tool call in an assistant message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OpenAIToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String,
+    pub function: OpenAIFunctionCall,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OpenAIFunctionCall {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct OpenAIResponse {
+    pub choices: Vec<OpenAIChoice>,
+    pub usage: Option<OpenAIUsage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct OpenAIChoice {
+    pub message: OpenAIChoiceMessage,
+    #[serde(default)]
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct OpenAIChoiceMessage {
+    pub content: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<Vec<OpenAIToolCall>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct OpenAIUsage {
+    pub total_tokens: u32,
 }
 
 // ─── Evidence parsing ──────────────────────────────────────────────

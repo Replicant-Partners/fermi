@@ -8,15 +8,51 @@
     "mcp_tools": [
       {
         "name": "indicator_analyzer",
-        "description": "Analyze macroeconomic indicators and their historical patterns"
+        "description": "Analyze macroeconomic indicators and their historical patterns",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "policy_tracker",
-        "description": "Track central bank and fiscal policy signals"
+        "description": "Track central bank and fiscal policy signals",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "cross_country_comparator",
-        "description": "Compare economic conditions across countries and regions"
+        "description": "Compare economic conditions across countries and regions",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

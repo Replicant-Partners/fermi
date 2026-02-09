@@ -8,11 +8,35 @@
     "mcp_tools": [
       {
         "name": "agent_template_loader",
-        "description": "Load and explain the agent_card.json template structure"
+        "description": "Load and explain the agent_card.json template structure",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "design_checklist",
-        "description": "Walk through the agent design checklist step by step"
+        "description": "Walk through the agent design checklist step by step",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

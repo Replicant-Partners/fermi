@@ -8,11 +8,35 @@
     "mcp_tools": [
       {
         "name": "consolidation_reader",
-        "description": "Read consolidation synopsis data (rules extracted, entities created, clusters found)"
+        "description": "Read consolidation synopsis data (rules extracted, entities created, clusters found)",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "agent_profile_loader",
-        "description": "Load the dreaming agent's profile, personality, and domain context"
+        "description": "Load the dreaming agent's profile, personality, and domain context",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

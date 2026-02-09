@@ -5,12 +5,23 @@
 use crate::agent_backend::agent_card::AgentCard;
 use crate::ast::{AgentStmt, EvidenceStmt, Program};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Execution context passed to executors
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
     pub program: Program,
     pub agent_card: AgentCard,
+}
+
+/// A record of a single tool invocation during agentic execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolInvocation {
+    pub tool_name: String,
+    pub input: serde_json::Value,
+    pub output: String,
+    pub duration_ms: u64,
+    pub iteration: u32,
 }
 
 /// Agent execution output
@@ -26,6 +37,10 @@ pub struct AgentOutput {
     pub execution_time_ms: u64,
     pub tokens_used: Option<u32>,
     pub metadata: AgentMetadata,
+    /// Tool invocations performed during agentic loop (empty for single-turn)
+    pub tool_invocations: Vec<ToolInvocation>,
+    /// Number of LLM round-trips (1 for single-turn, >1 for tool-using agents)
+    pub loop_iterations: u32,
 }
 
 /// Agent execution status
@@ -133,6 +148,8 @@ impl AgentExecutor for MockExecutor {
                 temperature: Some(0.0),
                 reasoning: Some("Mock execution for testing".to_string()),
             },
+            tool_invocations: vec![],
+            loop_iterations: 1,
         })
     }
 

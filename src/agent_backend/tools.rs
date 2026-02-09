@@ -1,0 +1,497 @@
+/// Built-in tool registry for agent tool-use
+///
+/// Provides 6 platform tools that agents can invoke via the LLM tool-calling protocol:
+///   - search_knowledge: similarity search over agent's episodic memory
+///   - query_ontology: get rules/entities/facts from knowledge graph
+///   - execute_agent: invoke another agent (single-turn, no recursion)
+///   - list_agents: discover available agents
+///   - read_workspace_file: read a file from workspace git repo (workspace-only)
+///   - list_workspace_agents: list agents in current workspace (workspace-only)
+use crate::agent_backend::agent_card::AgentCard;
+use crate::agent_backend::llm_executor::{ClaudeTool, ContentBlock};
+use crate::agent_backend::multi_model_executor::{OpenAIFunction, OpenAITool};
+use crate::agent_backend::registry::AgentRegistry;
+use agent_bestiary_memory::embeddings::EmbeddingGenerator;
+use agent_bestiary_memory::store::MemoryStore;
+use agent_bestiary_ontology::WorkspaceGitManager;
+use serde_json::json;
+use std::sync::Arc;
+use std::time::Instant;
+use uuid::Uuid;
+
+/// Context available to tools during execution
+pub struct ToolContext {
+    pub memory_store: Arc<MemoryStore>,
+    pub embedder: Arc<dyn EmbeddingGenerator>,
+    pub registry: Arc<AgentRegistry>,
+    pub current_agent_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
+    pub workspace_slug: Option<String>,
+    pub workspace_git: Option<Arc<WorkspaceGitManager>>,
+}
+
+/// A built-in tool definition
+struct BuiltinToolDef {
+    name: &'static str,
+    description: &'static str,
+    input_schema: serde_json::Value,
+    requires_workspace: bool,
+}
+
+/// All 6 built-in tools
+fn builtin_tools() -> Vec<BuiltinToolDef> {
+    vec![
+        BuiltinToolDef {
+            name: "search_knowledge",
+            description: "Search the agent's episodic memory for relevant past experiences using semantic similarity. Returns the most relevant episodes.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query to find relevant knowledge"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 5)",
+                        "default": 5
+                    }
+                },
+                "required": ["query"]
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "query_ontology",
+            description: "Query the agent's knowledge graph to retrieve semantic rules, entities, and facts. Specify which types to include.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "include_rules": {
+                        "type": "boolean",
+                        "description": "Include semantic rules (default: true)",
+                        "default": true
+                    },
+                    "include_entities": {
+                        "type": "boolean",
+                        "description": "Include entities (default: true)",
+                        "default": true
+                    },
+                    "include_facts": {
+                        "type": "boolean",
+                        "description": "Include facts/relationships (default: true)",
+                        "default": true
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "execute_agent",
+            description: "Invoke another agent with a query and get its response. The sub-agent runs a single turn without tools to prevent recursion.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_name": {
+                        "type": "string",
+                        "description": "The name/ID of the agent to invoke"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "The query to send to the agent"
+                    }
+                },
+                "required": ["agent_name", "query"]
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "list_agents",
+            description: "List all available agents in the registry with their names, types, and descriptions.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "read_workspace_file",
+            description: "Read a file from the current workspace's git repository.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "The file path relative to workspace root"
+                    }
+                },
+                "required": ["path"]
+            }),
+            requires_workspace: true,
+        },
+        BuiltinToolDef {
+            name: "list_workspace_agents",
+            description: "List all agents that are members of the current workspace.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+            requires_workspace: true,
+        },
+    ]
+}
+
+/// Tool registry — collects available tools and dispatches execution
+pub struct ToolRegistry {
+    include_workspace: bool,
+}
+
+impl ToolRegistry {
+    /// Standard registry (4 tools, no workspace tools)
+    pub fn standard() -> Self {
+        Self {
+            include_workspace: false,
+        }
+    }
+
+    /// Registry with workspace tools (6 tools)
+    pub fn with_workspace() -> Self {
+        Self {
+            include_workspace: true,
+        }
+    }
+
+    /// Get available tools as Claude API format
+    pub(crate) fn to_claude_tools(&self) -> Vec<ClaudeTool> {
+        builtin_tools()
+            .into_iter()
+            .filter(|t| !t.requires_workspace || self.include_workspace)
+            .map(|t| ClaudeTool {
+                name: t.name.to_string(),
+                description: t.description.to_string(),
+                input_schema: t.input_schema,
+            })
+            .collect()
+    }
+
+    /// Get available tools as OpenAI API format
+    pub(crate) fn to_openai_tools(&self) -> Vec<OpenAITool> {
+        builtin_tools()
+            .into_iter()
+            .filter(|t| !t.requires_workspace || self.include_workspace)
+            .map(|t| OpenAITool {
+                tool_type: "function".to_string(),
+                function: OpenAIFunction {
+                    name: t.name.to_string(),
+                    description: t.description.to_string(),
+                    parameters: t.input_schema,
+                },
+            })
+            .collect()
+    }
+
+    /// Also include any MCP tools declared on the agent card
+    pub(crate) fn to_claude_tools_with_card(&self, card: &AgentCard) -> Vec<ClaudeTool> {
+        let mut tools = self.to_claude_tools();
+        for mcp in &card.capabilities.mcp_tools {
+            // Only include MCP tools that have schemas (otherwise the LLM can't call them)
+            if let Some(ref schema) = mcp.input_schema {
+                tools.push(ClaudeTool {
+                    name: mcp.name.clone(),
+                    description: mcp.description.clone(),
+                    input_schema: schema.clone(),
+                });
+            }
+        }
+        tools
+    }
+
+    /// Execute a tool by name
+    pub async fn execute(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        match tool_name {
+            "search_knowledge" => execute_search_knowledge(input, ctx).await,
+            "query_ontology" => execute_query_ontology(input, ctx).await,
+            "execute_agent" => execute_execute_agent(input, ctx).await,
+            "list_agents" => execute_list_agents(ctx).await,
+            "read_workspace_file" => execute_read_workspace_file(input, ctx).await,
+            "list_workspace_agents" => execute_list_workspace_agents(ctx).await,
+            _ => Err(format!("Unknown tool: {}", tool_name)),
+        }
+    }
+}
+
+// ─── Tool implementations ──────────────────────────────────────────
+
+async fn execute_search_knowledge(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let query = input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: query")?;
+    let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+
+    let agent_id = ctx
+        .current_agent_id
+        .ok_or("No agent context for search_knowledge")?;
+
+    // Generate embedding for the query
+    let embedding = ctx
+        .embedder
+        .generate(query)
+        .await
+        .map_err(|e| format!("Embedding generation failed: {}", e))?;
+
+    // Search similar episodes
+    let results = ctx
+        .memory_store
+        .search_similar_episodes(agent_id, &embedding, limit)
+        .await
+        .map_err(|e| format!("Search failed: {}", e))?;
+
+    // Format results
+    let formatted: Vec<serde_json::Value> = results
+        .iter()
+        .map(|(episode, distance)| {
+            json!({
+                "query": episode.query,
+                "context": episode.context,
+                "timestamp": episode.timestamp_ref.to_rfc3339(),
+                "similarity": 1.0 - distance,
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&formatted).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_query_ontology(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let include_rules = input
+        .get("include_rules")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let include_entities = input
+        .get("include_entities")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let include_facts = input
+        .get("include_facts")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let agent_id = ctx
+        .current_agent_id
+        .ok_or("No agent context for query_ontology")?;
+
+    let mut result = json!({});
+
+    if include_rules {
+        let rules = ctx
+            .memory_store
+            .get_agent_semantic_rules(agent_id)
+            .await
+            .map_err(|e| format!("Failed to get rules: {}", e))?;
+        let rules_json: Vec<serde_json::Value> = rules
+            .iter()
+            .map(|r| {
+                json!({
+                    "content": r.rule_content,
+                    "description": r.rule_description,
+                    "confidence": r.confidence_score,
+                    "status": r.verification_status,
+                })
+            })
+            .collect();
+        result["rules"] = json!(rules_json);
+    }
+
+    if include_entities {
+        let entities = ctx
+            .memory_store
+            .get_agent_entities(agent_id)
+            .await
+            .map_err(|e| format!("Failed to get entities: {}", e))?;
+        let entities_json: Vec<serde_json::Value> = entities
+            .iter()
+            .map(|e| {
+                json!({
+                    "name": e.entity_name,
+                    "type": e.entity_type,
+                    "summary": e.summary,
+                })
+            })
+            .collect();
+        result["entities"] = json!(entities_json);
+    }
+
+    if include_facts {
+        let facts = ctx
+            .memory_store
+            .get_agent_facts(agent_id)
+            .await
+            .map_err(|e| format!("Failed to get facts: {}", e))?;
+        let facts_json: Vec<serde_json::Value> = facts
+            .iter()
+            .map(|f| {
+                json!({
+                    "relation_type": f.relation_type,
+                    "confidence": f.confidence,
+                    "reasoning": f.reasoning,
+                })
+            })
+            .collect();
+        result["facts"] = json!(facts_json);
+    }
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_execute_agent(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_name = input
+        .get("agent_name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: agent_name")?;
+    let query = input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: query")?;
+
+    // Get the target agent card
+    let card = ctx
+        .registry
+        .get(agent_name)
+        .map_err(|e| format!("Agent not found: {}", e))?;
+
+    // Build a minimal AgentStmt for execution
+    let stmt = crate::ast::AgentStmt {
+        name: agent_name.to_string(),
+        agent_type: Some(card.agent_type.clone()),
+        query: query.to_string(),
+        executor: None,
+        schedule: None,
+        driver_refs: vec![],
+        depends_on: vec![],
+        confidence_threshold: None,
+    };
+
+    let context = crate::agent_backend::executor::ExecutionContext {
+        program: crate::ast::Program { statements: vec![] },
+        agent_card: card,
+    };
+
+    // Execute via the base executor (no tools — prevents recursion)
+    let output = ctx
+        .registry
+        .execute_agent(&stmt, &context)
+        .await
+        .map_err(|e| format!("Agent execution failed: {}", e))?;
+
+    // Format the output
+    let result = json!({
+        "agent": output.agent_name,
+        "confidence": output.confidence,
+        "evidence": output.evidence.iter().map(|e| {
+            json!({
+                "summary": e.summary,
+                "key_findings": e.key_findings,
+                "strength": e.strength,
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_list_agents(ctx: &ToolContext) -> Result<String, String> {
+    let cards = ctx
+        .registry
+        .list_cards()
+        .map_err(|e| format!("Failed to list agents: {}", e))?;
+
+    let agents: Vec<serde_json::Value> = cards
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c.agent_id,
+                "type": c.agent_type,
+                "description": c.metadata.description,
+                "skills": c.capabilities.skills,
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&agents).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_read_workspace_file(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let path = input
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: path")?;
+
+    let slug = ctx
+        .workspace_slug
+        .as_deref()
+        .ok_or("Not in a workspace context")?;
+    let git = ctx
+        .workspace_git
+        .as_ref()
+        .ok_or("Workspace git not available")?;
+
+    // read_file is sync (git2), so run on blocking thread
+    let git = Arc::clone(git);
+    let slug = slug.to_string();
+    let path = path.to_string();
+    tokio::task::spawn_blocking(move || git.read_file(&slug, &path))
+        .await
+        .map_err(|e| format!("Join error: {}", e))?
+        .map_err(|e| format!("Failed to read file: {}", e))
+}
+
+async fn execute_list_workspace_agents(ctx: &ToolContext) -> Result<String, String> {
+    let workspace_id = ctx.workspace_id.ok_or("Not in a workspace context")?;
+
+    let pool = ctx.memory_store.pool();
+    let rows = sqlx::query(
+        "SELECT a.agent_name, a.agent_type, a.description
+         FROM workspace_agents wa
+         JOIN agents a ON wa.agent_id = a.id
+         WHERE wa.workspace_id = $1",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Query failed: {}", e))?;
+
+    use sqlx::Row;
+    let agents: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "name": row.get::<String, _>("agent_name"),
+                "type": row.get::<String, _>("agent_type"),
+                "description": row.get::<Option<String>, _>("description"),
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&agents).map_err(|e| format!("Serialization error: {}", e))
+}

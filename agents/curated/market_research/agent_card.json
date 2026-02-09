@@ -8,15 +8,51 @@
     "mcp_tools": [
       {
         "name": "web_search",
-        "description": "Search the web for market trends and competitive intelligence"
+        "description": "Search the web for market trends and competitive intelligence",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "data_analysis",
-        "description": "Analyze market data and generate insights"
+        "description": "Analyze market data and generate insights",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "report_generator",
-        "description": "Generate comprehensive market research reports"
+        "description": "Generate comprehensive market research reports",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [
@@ -62,7 +98,11 @@
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Researches market trends, competitive dynamics, and market sizing for forecasts",
-    "tags": ["market", "research", "competitive-analysis"],
+    "tags": [
+      "market",
+      "research",
+      "competitive-analysis"
+    ],
     "sample_queries": [
       "What are the key growth drivers for the electric vehicle market in 2026?",
       "Analyze the competitive landscape of cloud computing providers",

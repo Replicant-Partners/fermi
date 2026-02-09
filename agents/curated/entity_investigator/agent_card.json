@@ -8,15 +8,51 @@
     "mcp_tools": [
       {
         "name": "entity_resolver",
-        "description": "Resolve entity identities across data sources and disambiguate"
+        "description": "Resolve entity identities across data sources and disambiguate",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "relationship_mapper",
-        "description": "Map relationships between entities (ownership, board seats, partnerships)"
+        "description": "Map relationships between entities (ownership, board seats, partnerships)",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "risk_scorer",
-        "description": "Score entities on risk indicators (sanctions, PEP, adverse media)"
+        "description": "Score entities on risk indicators (sanctions, PEP, adverse media)",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

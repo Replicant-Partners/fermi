@@ -8,15 +8,51 @@
     "mcp_tools": [
       {
         "name": "coherence_snapshot",
-        "description": "Get the current TEC coherence evaluation for a workspace"
+        "description": "Get the current TEC coherence evaluation for a workspace",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "workspace_messages",
-        "description": "Read recent workspace conversation messages for analysis"
+        "description": "Read recent workspace conversation messages for analysis",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "ontology_reader",
-        "description": "Read workspace ontology for knowledge synthesis"
+        "description": "Read workspace ontology for knowledge synthesis",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

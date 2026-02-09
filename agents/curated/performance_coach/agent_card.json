@@ -8,15 +8,51 @@
     "mcp_tools": [
       {
         "name": "agent_stats_api",
-        "description": "Query agent execution statistics, success rates, and cost metrics"
+        "description": "Query agent execution statistics, success rates, and cost metrics",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "ontology_analyzer",
-        "description": "Analyze agent knowledge graph density and coverage"
+        "description": "Analyze agent knowledge graph density and coverage",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "benchmark_comparator",
-        "description": "Compare agent performance against category benchmarks"
+        "description": "Compare agent performance against category benchmarks",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

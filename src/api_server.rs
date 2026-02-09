@@ -12,10 +12,12 @@ use fermi::agent_backend::{
         AgentCapabilities, AgentCard, AgentMetadata as CardMetadata, AgentPerformance, AgentTier,
         AgentUsage, OntologyStats, UsageWindow,
     },
-    executor::{AgentOutput, AgentStatus, ExecutionContext},
+    executor::{AgentExecutor, AgentOutput, AgentStatus, ExecutionContext},
     llm_executor::LLMExecutor,
     multi_model_executor::MultiModelExecutor,
     registry::AgentRegistry,
+    tool_executor::ToolAwareExecutor,
+    tools::{ToolContext, ToolRegistry},
 };
 use fermi::ast;
 use fermi_auth::{
@@ -3792,9 +3794,24 @@ async fn post_workspace_message_handler(
                             program,
                             agent_card: card.clone(),
                         };
-                        let output = state2
-                            .registry
-                            .execute_agent(&agent_stmt, &context)
+
+                        // Use ToolAwareExecutor with workspace tools
+                        let tool_context = Arc::new(ToolContext {
+                            memory_store: state2.memory_store.clone(),
+                            embedder: state2.embedder.clone(),
+                            registry: state2.registry.clone(),
+                            current_agent_id: Some(db_agent.agent_id),
+                            workspace_id: Some(ws_uuid2),
+                            workspace_slug: Some(slug.clone()),
+                            workspace_git: Some(state2.workspace_git.clone()),
+                        });
+                        let tool_executor = ToolAwareExecutor::new(
+                            state2.registry.executor_arc(),
+                            ToolRegistry::with_workspace(),
+                            tool_context,
+                        );
+                        let output = tool_executor
+                            .execute(&agent_stmt, &context)
                             .await
                             .map_err(|e| {
                                 (
@@ -4503,10 +4520,23 @@ async fn execute_agent_handler(
         agent_card: card.clone(),
     };
 
-    // 3. Execute
-    let output = state
-        .registry
-        .execute_agent(&agent_stmt, &context)
+    // 3. Execute via ToolAwareExecutor
+    let tool_context = Arc::new(ToolContext {
+        memory_store: state.memory_store.clone(),
+        embedder: state.embedder.clone(),
+        registry: state.registry.clone(),
+        current_agent_id: Some(db_agent.agent_id),
+        workspace_id: None,
+        workspace_slug: None,
+        workspace_git: None,
+    });
+    let tool_executor = ToolAwareExecutor::new(
+        state.registry.executor_arc(),
+        ToolRegistry::standard(),
+        tool_context,
+    );
+    let output = tool_executor
+        .execute(&agent_stmt, &context)
         .await
         .map_err(|e| {
             (
@@ -4614,6 +4644,12 @@ async fn execute_agent_handler(
         "execution_time_ms": output.execution_time_ms,
         "tokens_used": output.tokens_used,
         "credits_charged": total_charged,
+        "loop_iterations": output.loop_iterations,
+        "tool_invocations": output.tool_invocations.iter().map(|t| json!({
+            "tool_name": t.tool_name,
+            "duration_ms": t.duration_ms,
+            "iteration": t.iteration,
+        })).collect::<Vec<_>>(),
         "evidence": output.evidence.iter().map(|e| json!({
             "id": e.id,
             "source": e.source,
@@ -4645,6 +4681,14 @@ fn agent_output_to_episode(agent_db_id: uuid::Uuid, query: &str, output: &AgentO
             "sources_consulted": output.sources_consulted,
             "model_used": output.metadata.model_used,
             "reasoning": output.metadata.reasoning,
+            "loop_iterations": output.loop_iterations,
+            "tool_invocations": output.tool_invocations.iter().map(|t| json!({
+                "tool_name": t.tool_name,
+                "input": t.input,
+                "output": t.output,
+                "duration_ms": t.duration_ms,
+                "iteration": t.iteration,
+            })).collect::<Vec<_>>(),
         }),
         execution_status: match output.status {
             AgentStatus::Success => ExecutionStatus::Success,

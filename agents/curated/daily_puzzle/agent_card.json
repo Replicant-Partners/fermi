@@ -8,11 +8,35 @@
     "mcp_tools": [
       {
         "name": "puzzle_generator",
-        "description": "Generate deterministic daily puzzles seeded by date"
+        "description": "Generate deterministic daily puzzles seeded by date",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "streak_tracker",
-        "description": "Track user solve streaks and statistics"
+        "description": "Track user solve streaks and statistics",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

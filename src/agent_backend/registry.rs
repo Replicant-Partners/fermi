@@ -233,6 +233,11 @@ impl AgentRegistry {
         Ok(agents.values().cloned().collect())
     }
 
+    /// Get a reference to the inner executor
+    pub fn executor_arc(&self) -> Arc<dyn AgentExecutor> {
+        Arc::clone(&self.executor)
+    }
+
     /// Execute an agent
     pub async fn execute_agent(
         &self,

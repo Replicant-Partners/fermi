@@ -8,15 +8,51 @@
     "mcp_tools": [
       {
         "name": "scene_planner",
-        "description": "Generate 3D scene placement instructions for avatar rendering"
+        "description": "Generate 3D scene placement instructions for avatar rendering",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "interaction_designer",
-        "description": "Design avatar interaction scripts and ambient behaviors"
+        "description": "Design avatar interaction scripts and ambient behaviors",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "avatar_profile_loader",
-        "description": "Load agent avatar, personality, and taxonomy data"
+        "description": "Load agent avatar, personality, and taxonomy data",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

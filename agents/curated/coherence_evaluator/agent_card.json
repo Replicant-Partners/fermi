@@ -8,11 +8,35 @@
     "mcp_tools": [
       {
         "name": "evaluate_coherence",
-        "description": "Evaluate explanatory coherence of a multi-party conversation using Thagard TEC model"
+        "description": "Evaluate explanatory coherence of a multi-party conversation using Thagard TEC model",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "get_coherence_snapshot",
-        "description": "Get current coherence evaluation state for a conversation"
+        "description": "Get current coherence evaluation state for a conversation",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

@@ -8,11 +8,35 @@
     "mcp_tools": [
       {
         "name": "pricing_calculator",
-        "description": "Calculate optimal pricing tiers based on creator type and audience"
+        "description": "Calculate optimal pricing tiers based on creator type and audience",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "agent_card_generator",
-        "description": "Generate a complete agent_card.json for a creator's earning agent"
+        "description": "Generate a complete agent_card.json for a creator's earning agent",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
     "skills": [

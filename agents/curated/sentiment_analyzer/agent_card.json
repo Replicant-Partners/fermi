@@ -8,18 +8,58 @@
     "mcp_tools": [
       {
         "name": "social_media_scraper",
-        "description": "Collect sentiment data from social media platforms"
+        "description": "Collect sentiment data from social media platforms",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "nlp_analyzer",
-        "description": "Natural language processing for sentiment extraction"
+        "description": "Natural language processing for sentiment extraction",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       },
       {
         "name": "emotion_classifier",
-        "description": "Classify emotions and intensity from text"
+        "description": "Classify emotions and intensity from text",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The input query or parameters"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ],
-    "skills": ["sentiment-analysis", "emotion-detection", "social-listening"],
+    "skills": [
+      "sentiment-analysis",
+      "emotion-detection",
+      "social-listening"
+    ],
     "model": "claude-3-haiku-20240307",
     "temperature": 0.5
   },
@@ -58,7 +98,11 @@
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Analyzes sentiment from social media, news, and forums to gauge market perception and public opinion",
-    "tags": ["sentiment", "social-media", "public-opinion"],
+    "tags": [
+      "sentiment",
+      "social-media",
+      "public-opinion"
+    ],
     "sample_queries": [
       "What is the current market sentiment around semiconductor stocks?",
       "Analyze public opinion trends on remote work policies",
