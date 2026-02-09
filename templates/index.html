@@ -488,6 +488,42 @@
       .sort-select:focus {
         border-color: var(--yellow);
       }
+      .category-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .category-badge {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 8px 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-size: 0.8em;
+      }
+      .category-badge:hover {
+        border-color: var(--yellow);
+      }
+      .category-badge.active {
+        border-color: var(--yellow);
+        background: var(--bg2);
+      }
+      .category-badge .cat-icon {
+        font-size: 1.2em;
+      }
+      .category-badge .cat-count {
+        background: var(--bg3);
+        color: var(--fg3);
+        padding: 1px 6px;
+        font-size: 0.85em;
+        border-radius: 8px;
+        min-width: 18px;
+        text-align: center;
+      }
       .tag-filters {
         display: flex;
         flex-wrap: wrap;
@@ -594,6 +630,8 @@
     <div class="container">
       <h2 class="section-title">Catalogue</h2>
 
+      <div class="category-badges" id="category-badges"></div>
+
       <div class="catalogue-controls">
         <input
           type="text"
@@ -631,12 +669,82 @@
         }
       }
 
+      // Category definitions
+      const CATEGORIES = [
+        {
+          id: "research",
+          label: "Research & Analysis",
+          tags: [
+            "forecasting",
+            "economics",
+            "macro",
+            "monte-carlo",
+            "simulation",
+            "probability",
+            "quantitative",
+            "risk",
+          ],
+        },
+        {
+          id: "creative",
+          label: "Creative & Art",
+          tags: [
+            "creative",
+            "art",
+            "patron",
+            "monetization",
+            "artist",
+            "ar",
+            "augmented-reality",
+            "avatar",
+          ],
+        },
+        {
+          id: "games",
+          label: "Games & Engagement",
+          tags: ["puzzle", "daily", "engagement", "demo", "wordle"],
+        },
+        {
+          id: "meta",
+          label: "Meta & Platform",
+          tags: [
+            "meta",
+            "performance",
+            "coaching",
+            "agent-improvement",
+            "dreams",
+            "consolidation",
+            "tutorial",
+            "companion",
+            "getting-started",
+          ],
+        },
+        {
+          id: "osint",
+          label: "OSINT & Investigation",
+          tags: [
+            "osint",
+            "investigation",
+            "entity-resolution",
+            "knowledge-graph",
+            "due-diligence",
+          ],
+        },
+        {
+          id: "coherence",
+          label: "Coherence",
+          tags: ["coherence", "thagard", "discourse-analysis"],
+        },
+      ];
+
       // State
       let currentPage = 1;
       let currentSearch = "";
       let currentTag = "";
+      let currentCategory = "";
       let currentSort = "newest";
       let allTags = new Set();
+      let categoryCounts = {};
 
       async function loadAgents(page = 1) {
         currentPage = page;
@@ -645,6 +753,10 @@
         params.set("limit", "20");
         if (currentSearch) params.set("search", currentSearch);
         if (currentTag) params.set("tag", currentTag);
+        if (currentCategory && !currentTag) {
+          const cat = CATEGORIES.find((c) => c.id === currentCategory);
+          if (cat) params.set("tags", cat.tags.join(","));
+        }
         if (currentSort) params.set("sort", currentSort);
 
         try {
@@ -663,10 +775,18 @@
             return;
           }
 
-          // Collect all tags for the filter pills
+          // Collect all tags for the filter pills + count categories
+          categoryCounts = {};
           data.agents.forEach((agent) => {
-            (agent.tags || []).forEach((t) => allTags.add(t));
+            const tags = agent.tags || [];
+            tags.forEach((t) => allTags.add(t));
+            CATEGORIES.forEach((cat) => {
+              if (tags.some((t) => cat.tags.includes(t))) {
+                categoryCounts[cat.id] = (categoryCounts[cat.id] || 0) + 1;
+              }
+            });
           });
+          renderCategoryBadges();
           renderTagPills();
 
           data.agents.forEach((agent) => {
@@ -777,6 +897,29 @@
         html += `<button class="page-btn" onclick="loadAgents(${page + 1})" ${page >= pages ? "disabled" : ""}>Next &raquo;</button>`;
         html += `<span class="page-info">${total} total</span>`;
         el.innerHTML = html;
+      }
+
+      function renderCategoryBadges() {
+        const el = document.getElementById("category-badges");
+        el.innerHTML = CATEGORIES.map((cat) => {
+          const count = categoryCounts[cat.id] || 0;
+          const active = currentCategory === cat.id ? "active" : "";
+          return `<div class="category-badge ${active}" onclick="toggleCategory('${cat.id}')">
+            <span>${cat.label}</span>
+            <span class="cat-count">${count}</span>
+          </div>`;
+        }).join("");
+      }
+
+      function toggleCategory(catId) {
+        if (currentCategory === catId) {
+          currentCategory = "";
+        } else {
+          currentCategory = catId;
+        }
+        currentTag = "";
+        currentPage = 1;
+        loadAgents(1);
       }
 
       function renderTagPills() {

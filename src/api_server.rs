@@ -909,6 +909,7 @@ async fn debug_startup(State(state): State<AppState>) -> Json<Value> {
 struct ListAgentsParams {
     search: Option<String>,
     tag: Option<String>,
+    tags: Option<String>, // comma-separated, OR semantics
     sort: Option<String>, // "newest", "executions", "name"
     page: Option<usize>,
     limit: Option<usize>,
@@ -963,10 +964,25 @@ async fn list_agents(
             real_agents
         };
 
-        // Apply tag filter
+        // Apply tag filter (single tag)
         if let Some(ref tag) = params.tag {
             let t = tag.to_lowercase();
             filtered.retain(|a| a.tags.iter().any(|at| at.to_lowercase() == t));
+        }
+
+        // Apply multi-tag filter (comma-separated, OR semantics)
+        if let Some(ref tags_str) = params.tags {
+            let tag_list: Vec<String> = tags_str
+                .split(',')
+                .map(|t| t.trim().to_lowercase())
+                .collect();
+            if !tag_list.is_empty() {
+                filtered.retain(|a| {
+                    a.tags
+                        .iter()
+                        .any(|at| tag_list.contains(&at.to_lowercase()))
+                });
+            }
         }
 
         // Sort
