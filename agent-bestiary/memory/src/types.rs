@@ -262,6 +262,20 @@ pub struct ConsolidationJob {
     pub facts_created: i32,
 }
 
+/// Coherence evaluation result for a workspace conversation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoherenceEvaluation {
+    pub eval_id: Uuid,
+    pub workspace_id: Uuid,
+    pub global_score: f64,
+    pub quality_label: String,
+    pub principle_scores: serde_json::Value,
+    pub health_indicators: serde_json::Value,
+    pub utterance_count: i32,
+    pub message_window: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Workspace chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceMessage {

@@ -74,6 +74,11 @@ agent-bestiary-ontology = { path = "agent-bestiary/ontology" }
 agent-bestiary-projector = { path = "agent-bestiary/projector" }
 rust_decimal = { version = "1", features = ["serde-float"] }
 
+# Coherence evaluator
+coherence-core = { path = "agent-bestiary/coherence/crates/coherence-core" }
+coherence-engine = { path = "agent-bestiary/coherence/crates/coherence-engine" }
+coherence-observer = { path = "agent-bestiary/coherence/crates/coherence-observer" }
+
 # Auth
 fermi-auth = { path = "fermi-auth" }
 

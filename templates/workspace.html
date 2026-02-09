@@ -516,6 +516,11 @@
       <div class="ws-header-left">
         <button class="btn members-toggle" id="members-toggle">Members</button>
         <h1 id="ws-name">Workspace</h1>
+        <span
+          id="header-coherence"
+          style="font-size: 0.75rem; color: var(--fg3); cursor: default"
+          title="Coherence score"
+        ></span>
         <div class="budget-inline">
           <div class="budget-bar">
             <div class="budget-fill" id="budget-bar-fill"></div>
@@ -590,6 +595,48 @@
 
       <!-- Right: Shelf -->
       <div class="panel-shelf">
+        <!-- Coherence -->
+        <div class="shelf-section">
+          <div class="shelf-label">Coherence</div>
+          <div id="coherence-display">
+            <div
+              class="shelf-value"
+              style="color: var(--fg3)"
+              id="coherence-score"
+            >
+              --
+            </div>
+            <div class="shelf-sub" id="coherence-label">not evaluated</div>
+            <div style="margin-top: 6px">
+              <div
+                class="budget-bar"
+                style="width: 100%; height: 8px; background: var(--bg2)"
+              >
+                <div
+                  id="coherence-bar"
+                  style="height: 100%; width: 0%; transition: width 0.4s"
+                ></div>
+              </div>
+            </div>
+            <div id="coherence-principles" style="margin-top: 8px"></div>
+            <div
+              id="coherence-health"
+              style="margin-top: 6px; font-size: 0.75rem; color: var(--fg3)"
+            ></div>
+            <div style="margin-top: 6px">
+              <button
+                class="btn"
+                id="eval-btn"
+                style="font-size: 0.7rem"
+                title="Run coherence evaluation (2 cr)"
+              >
+                Evaluate (2 cr)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Budget -->
         <div class="shelf-section">
           <div class="shelf-label">Budget</div>
           <div
@@ -605,6 +652,7 @@
           </div>
         </div>
 
+        <!-- Activity -->
         <div class="shelf-section">
           <div class="shelf-label">Activity</div>
           <div class="stat-row-small">
@@ -640,6 +688,10 @@
           </div>
           <div class="stat-row-small">
             <span class="stat-key">Add agent</span
+            ><span class="stat-val">2 cr</span>
+          </div>
+          <div class="stat-row-small">
+            <span class="stat-key">Evaluate</span
             ><span class="stat-val">2 cr</span>
           </div>
           <div class="stat-row-small">
@@ -696,6 +748,7 @@
 
         await loadWorkspace();
         await loadMessages();
+        await loadCoherence();
         startPolling();
       })();
 
@@ -809,6 +862,26 @@
         });
         const name = m.sender_name || m.sender_id;
 
+        if (m.message_type === "coherence_update") {
+          const meta = typeof m.metadata === "object" ? m.metadata : {};
+          const score =
+            meta.global_score != null
+              ? (meta.global_score * 100).toFixed(0)
+              : "?";
+          const label = meta.quality_label || "";
+          return `
+            <div class="chat-msg">
+              <div class="chat-avatar" style="background:var(--purple);color:var(--bg0-hard)">C</div>
+              <div class="chat-body">
+                <div class="chat-meta-row">
+                  <span class="chat-sender" style="color:var(--purple)">Coherence Evaluator</span>
+                  <span class="chat-time">${time}</span>
+                </div>
+                <div style="font-size:0.82rem;color:var(--purple)">${escHtml(m.content)}</div>
+              </div>
+            </div>`;
+        }
+
         if (m.sender_type === "system" || m.message_type === "system_event") {
           return `
             <div class="chat-msg">
@@ -877,15 +950,21 @@
               const wasAtBottom =
                 el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
 
+              let hasCoherenceUpdate = false;
               data.messages.forEach((m) => {
                 el.insertAdjacentHTML("beforeend", renderMessage(m));
                 messageCount++;
+                if (m.message_type === "coherence_update")
+                  hasCoherenceUpdate = true;
               });
 
               document.getElementById("stat-messages").textContent =
                 messageCount;
               const last = data.messages[data.messages.length - 1];
               lastMessageTime = last.created_at;
+
+              // Refresh coherence shelf if we got a coherence update
+              if (hasCoherenceUpdate) loadCoherence();
 
               if (wasAtBottom) el.scrollTop = el.scrollHeight;
             }
@@ -1173,6 +1252,112 @@
           if (e.target === overlay) overlay.classList.remove("active");
         });
       });
+
+      // ─── Coherence ───
+      async function loadCoherence() {
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/coherence`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!data.eval_id) return; // no evaluations yet
+
+          updateCoherenceDisplay(data);
+        } catch {}
+      }
+
+      function updateCoherenceDisplay(data) {
+        const pct = (data.global_score * 100).toFixed(0);
+        const scoreEl = document.getElementById("coherence-score");
+        scoreEl.textContent = pct + "%";
+
+        // Color based on quality
+        const colors = {
+          excellent: "var(--green)",
+          good: "var(--aqua)",
+          moderate: "var(--yellow)",
+          weak: "var(--orange)",
+          critical: "var(--red)",
+        };
+        scoreEl.style.color = colors[data.quality_label] || "var(--fg3)";
+
+        document.getElementById("coherence-label").textContent =
+          data.quality_label;
+
+        // Header indicator (visible when shelf is hidden on mobile)
+        const headerEl = document.getElementById("header-coherence");
+        headerEl.textContent = "C:" + pct + "%";
+        headerEl.style.color = colors[data.quality_label] || "var(--fg3)";
+
+        const bar = document.getElementById("coherence-bar");
+        bar.style.width = pct + "%";
+        bar.style.background = colors[data.quality_label] || "var(--fg3)";
+
+        // Principle scores
+        const principlesEl = document.getElementById("coherence-principles");
+        if (data.principle_scores && data.principle_scores.scores) {
+          const shortLabels = {
+            symmetry: "Sym",
+            explanation: "Expl",
+            analogy: "Anlg",
+            data_priority: "Data",
+            contradiction: "Contr",
+            competition: "Comp",
+            acceptability: "Acpt",
+          };
+          principlesEl.innerHTML = data.principle_scores.scores
+            .map((p) => {
+              const w = (p.score * 100).toFixed(0);
+              const label = shortLabels[p.principle] || p.principle;
+              return `<div class="stat-row-small"><span class="stat-key">${label}</span><span class="stat-val">${w}%</span></div>`;
+            })
+            .join("");
+        }
+
+        // Health indicators
+        const healthEl = document.getElementById("coherence-health");
+        if (data.health_indicators) {
+          const hi = data.health_indicators;
+          const items = [];
+          if (hi.converged) items.push("Converged");
+          if (hi.evidence_density > 0.2) items.push("Evidence-grounded");
+          if (hi.explanation_density > 0.2) items.push("Well-explained");
+          if (hi.accepted_count != null)
+            items.push(
+              `${hi.accepted_count} accepted / ${hi.rejected_count} rejected`,
+            );
+          healthEl.textContent = items.join(" | ") || "";
+        }
+      }
+
+      // Evaluate button
+      document
+        .getElementById("eval-btn")
+        .addEventListener("click", async () => {
+          const btn = document.getElementById("eval-btn");
+          btn.disabled = true;
+          btn.textContent = "Evaluating...";
+          try {
+            const res = await fetch(
+              `/api/workspaces/${wsId}/coherence/evaluate`,
+              {
+                method: "POST",
+              },
+            );
+            if (!res.ok) {
+              const err = await res.text();
+              alert("Evaluation failed: " + err);
+              return;
+            }
+            const data = await res.json();
+            updateCoherenceDisplay(data);
+            refreshBudget();
+          } catch (e) {
+            alert("Evaluation failed");
+          } finally {
+            btn.disabled = false;
+            btn.textContent = "Evaluate (2 cr)";
+          }
+        });
 
       // ─── Helpers ───
       function escHtml(str) {

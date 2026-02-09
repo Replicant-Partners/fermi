@@ -33,10 +33,14 @@ mod gas;
 use gas::{charge_gas, GasFees};
 
 use agent_bestiary_memory::{
-    Agent, AgentUpdate, AnthropicEmbeddings, ConsolidationLock, ConsolidationWorker,
-    EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings, WorkspaceMessage,
+    Agent, AgentUpdate, AnthropicEmbeddings, CoherenceEvaluation, ConsolidationLock,
+    ConsolidationWorker, EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
+    WorkspaceMessage,
 };
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMethod};
+use coherence_core::types::{ConversationId, Message as CoherenceMessage, ParticipantId};
+use coherence_engine::SettlingEngine;
+use coherence_observer::ConversationObserver;
 
 #[derive(Clone)]
 struct AppState {
@@ -389,6 +393,19 @@ async fn main() {
         // Wallet / credits
         .route("/api/wallet", get(get_wallet_handler))
         .route("/api/wallet/transactions", get(get_transactions_handler))
+        // Coherence evaluation
+        .route(
+            "/api/workspaces/:workspace_id/coherence/evaluate",
+            post(evaluate_coherence_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/coherence",
+            get(get_coherence_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/coherence/history",
+            get(get_coherence_history_handler),
+        )
         // Sharing routes
         .route("/api/shares", post(share_object_handler))
         .route("/api/shares/:share_id", delete(revoke_share_handler))
@@ -1949,21 +1966,36 @@ async fn list_workspace_agents_handler(
     _principal: AuthPrincipal,
     Path(workspace_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let agents = state
-        .memory_store
-        .list_agents_for_owner(&workspace_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
 
-    let agent_list: Vec<Value> = agents
+    // Query workspace_agents junction table joined with agents
+    let rows = sqlx::query(
+        "SELECT a.agent_id, a.agent_name, a.agent_type, a.description, a.total_executions,
+                wa.relationship, wa.added_by, wa.added_at
+         FROM workspace_agents wa
+         JOIN agents a ON a.agent_id = wa.agent_id
+         WHERE wa.workspace_id = $1
+         ORDER BY wa.added_at DESC",
+    )
+    .bind(ws_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let agent_list: Vec<Value> = rows
         .iter()
-        .map(|a| {
+        .map(|r| {
             json!({
-                "agent_id": a.agent_id,
-                "agent_name": a.agent_name,
-                "agent_type": a.agent_type,
-                "description": a.description,
-                "total_executions": a.total_executions,
+                "agent_id": r.get::<uuid::Uuid, _>("agent_id"),
+                "agent_name": r.get::<String, _>("agent_name"),
+                "agent_type": r.get::<String, _>("agent_type"),
+                "description": r.get::<Option<String>, _>("description"),
+                "total_executions": r.get::<i32, _>("total_executions"),
+                "relationship": r.get::<String, _>("relationship"),
+                "added_by": r.get::<String, _>("added_by"),
+                "added_at": r.get::<chrono::DateTime<chrono::Utc>, _>("added_at"),
             })
         })
         .collect();
@@ -2200,6 +2232,101 @@ async fn post_workspace_message_handler(
         .store_workspace_message(&msg)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Auto-evaluate coherence every N messages (background, best-effort)
+    let auto_eval_interval: i64 = std::env::var("COHERENCE_AUTO_EVAL_INTERVAL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let store = state.memory_store.clone();
+    tokio::spawn(async move {
+        // Check last eval time
+        let since = match store.get_latest_coherence(ws_uuid).await {
+            Ok(Some(e)) => e.created_at,
+            _ => chrono::DateTime::<chrono::Utc>::MIN_UTC,
+        };
+        let count = store
+            .count_workspace_messages_since(ws_uuid, since)
+            .await
+            .unwrap_or(0);
+        if count >= auto_eval_interval {
+            // Run coherence evaluation (no gas charge for auto-eval)
+            let messages = match store.get_workspace_messages(ws_uuid, 50, None).await {
+                Ok(m) => m,
+                Err(_) => return,
+            };
+            if messages.is_empty() {
+                return;
+            }
+            let conv_id = ConversationId(ws_uuid);
+            let coherence_msgs: Vec<CoherenceMessage> = messages
+                .iter()
+                .rev()
+                .map(|m| {
+                    let pid = ParticipantId(
+                        uuid::Uuid::parse_str(&m.sender_id)
+                            .unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                    );
+                    CoherenceMessage::new(pid, &m.content)
+                })
+                .collect();
+
+            let observer = ConversationObserver::new(conv_id);
+            let mut system = observer.observe(&coherence_msgs);
+            let engine = SettlingEngine::with_defaults();
+            engine.settle(&mut system);
+            let snapshot = system.snapshot();
+
+            let principle_scores =
+                serde_json::to_value(&snapshot.principle_scores).unwrap_or(json!({}));
+            let health_indicators = json!({
+                "feedback_action": serde_json::to_value(&snapshot.feedback_action).unwrap_or(json!("unknown")),
+                "converged": snapshot.global_coherence.converged,
+                "accepted_count": snapshot.global_coherence.accepted_count,
+                "rejected_count": snapshot.global_coherence.rejected_count,
+            });
+
+            let eval = CoherenceEvaluation {
+                eval_id: uuid::Uuid::new_v4(),
+                workspace_id: ws_uuid,
+                global_score: snapshot.global_coherence.score,
+                quality_label: snapshot.global_coherence.quality_label().to_string(),
+                principle_scores: principle_scores.clone(),
+                health_indicators: health_indicators.clone(),
+                utterance_count: snapshot.utterance_stats.total as i32,
+                message_window: Some(json!({
+                    "message_count": messages.len(),
+                    "auto": true,
+                })),
+                created_at: chrono::Utc::now(),
+            };
+
+            if let Ok(eval_id) = store.store_coherence_evaluation(&eval).await {
+                let update_msg = WorkspaceMessage {
+                    message_id: uuid::Uuid::new_v4(),
+                    workspace_id: ws_uuid,
+                    sender_type: "system".to_string(),
+                    sender_id: "coherence_evaluator".to_string(),
+                    sender_name: Some("Coherence Evaluator".to_string()),
+                    content: format!(
+                        "Coherence: {:.0}% ({}) | {} utterances",
+                        eval.global_score * 100.0,
+                        eval.quality_label,
+                        eval.utterance_count,
+                    ),
+                    message_type: "coherence_update".to_string(),
+                    metadata: json!({
+                        "eval_id": eval_id,
+                        "global_score": eval.global_score,
+                        "quality_label": eval.quality_label,
+                        "auto": true,
+                    }),
+                    created_at: chrono::Utc::now(),
+                };
+                let _ = store.store_workspace_message(&update_msg).await;
+            }
+        }
+    });
 
     Ok(Json(json!({
         "message_id": msg_id,
@@ -3051,4 +3178,238 @@ async fn consolidate_agent_handler(
         },
         "dreaming_credits_remaining": remaining - 1,
     })))
+}
+
+// ─── Coherence Evaluation ────────────────────────────────────────────
+
+/// Run TEC coherence evaluation on recent workspace messages.
+async fn evaluate_coherence_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    // Verify membership
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    // Charge coherence evaluation gas (2 credits)
+    charge_workspace_gas(
+        &state.db,
+        ws_uuid,
+        &workspace_id,
+        2, // coherence evaluation cost
+        "gas_fee",
+        "Coherence evaluation",
+        None,
+    )
+    .await?;
+
+    // Fetch recent messages (last 50)
+    let messages = state
+        .memory_store
+        .get_workspace_messages(ws_uuid, 50, None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if messages.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No messages in workspace to evaluate".to_string(),
+        ));
+    }
+
+    // Convert workspace messages to coherence-core Messages
+    let conv_id = ConversationId(ws_uuid);
+    let coherence_messages: Vec<CoherenceMessage> = messages
+        .iter()
+        .rev() // messages come DESC, observer expects chronological
+        .map(|m| {
+            let pid = ParticipantId(
+                uuid::Uuid::parse_str(&m.sender_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+            );
+            CoherenceMessage::new(pid, &m.content)
+        })
+        .collect();
+
+    // Run observation pipeline: classify utterances + detect relations
+    let observer = ConversationObserver::new(conv_id);
+    let mut system = observer.observe(&coherence_messages);
+
+    // Run settling engine
+    let engine = SettlingEngine::with_defaults();
+    let _result = engine.settle(&mut system);
+
+    // Extract snapshot
+    let snapshot = system.snapshot();
+
+    // Build principle scores JSON
+    let principle_scores: serde_json::Value =
+        serde_json::to_value(&snapshot.principle_scores).unwrap_or(json!({}));
+
+    // Build health indicators
+    let health_indicators = json!({
+        "feedback_action": serde_json::to_value(&snapshot.feedback_action).unwrap_or(json!("unknown")),
+        "converged": snapshot.global_coherence.converged,
+        "accepted_count": snapshot.global_coherence.accepted_count,
+        "rejected_count": snapshot.global_coherence.rejected_count,
+        "evidence_density": snapshot.utterance_stats.evidence_density(),
+        "explanation_density": snapshot.utterance_stats.explanation_density(),
+    });
+
+    // Store evaluation
+    let eval = CoherenceEvaluation {
+        eval_id: uuid::Uuid::new_v4(),
+        workspace_id: ws_uuid,
+        global_score: snapshot.global_coherence.score,
+        quality_label: snapshot.global_coherence.quality_label().to_string(),
+        principle_scores: principle_scores.clone(),
+        health_indicators: health_indicators.clone(),
+        utterance_count: snapshot.utterance_stats.total as i32,
+        message_window: Some(json!({
+            "message_count": messages.len(),
+            "from": messages.last().map(|m| m.created_at),
+            "to": messages.first().map(|m| m.created_at),
+        })),
+        created_at: chrono::Utc::now(),
+    };
+
+    let eval_id = state
+        .memory_store
+        .store_coherence_evaluation(&eval)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Post coherence update to workspace chat
+    let update_msg = WorkspaceMessage {
+        message_id: uuid::Uuid::new_v4(),
+        workspace_id: ws_uuid,
+        sender_type: "system".to_string(),
+        sender_id: "coherence_evaluator".to_string(),
+        sender_name: Some("Coherence Evaluator".to_string()),
+        content: format!(
+            "Coherence: {:.0}% ({}) | {} utterances | {}",
+            eval.global_score * 100.0,
+            eval.quality_label,
+            eval.utterance_count,
+            snapshot.feedback_action,
+        ),
+        message_type: "coherence_update".to_string(),
+        metadata: json!({
+            "eval_id": eval_id,
+            "global_score": eval.global_score,
+            "quality_label": eval.quality_label,
+            "principle_scores": principle_scores,
+            "health_indicators": health_indicators,
+        }),
+        created_at: chrono::Utc::now(),
+    };
+
+    let _ = state
+        .memory_store
+        .store_workspace_message(&update_msg)
+        .await;
+
+    Ok(Json(json!({
+        "eval_id": eval_id,
+        "global_score": eval.global_score,
+        "quality_label": eval.quality_label,
+        "principle_scores": principle_scores,
+        "health_indicators": health_indicators,
+        "utterance_count": eval.utterance_count,
+        "message_window": eval.message_window,
+    })))
+}
+
+/// Get latest coherence evaluation for a workspace.
+async fn get_coherence_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    let eval = state
+        .memory_store
+        .get_latest_coherence(ws_uuid)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match eval {
+        Some(e) => Ok(Json(json!({
+            "eval_id": e.eval_id,
+            "global_score": e.global_score,
+            "quality_label": e.quality_label,
+            "principle_scores": e.principle_scores,
+            "health_indicators": e.health_indicators,
+            "utterance_count": e.utterance_count,
+            "message_window": e.message_window,
+            "created_at": e.created_at,
+        }))),
+        None => Ok(Json(
+            json!({ "eval_id": null, "message": "No evaluations yet" }),
+        )),
+    }
+}
+
+/// Get coherence evaluation history for a workspace.
+async fn get_coherence_history_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Query(params): Query<HistoryQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    let limit = params.limit.unwrap_or(20).min(100);
+
+    let evals = state
+        .memory_store
+        .get_coherence_history(ws_uuid, limit)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let items: Vec<Value> = evals
+        .iter()
+        .map(|e| {
+            json!({
+                "eval_id": e.eval_id,
+                "global_score": e.global_score,
+                "quality_label": e.quality_label,
+                "principle_scores": e.principle_scores,
+                "health_indicators": e.health_indicators,
+                "utterance_count": e.utterance_count,
+                "created_at": e.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "evaluations": items })))
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryQuery {
+    limit: Option<i64>,
 }

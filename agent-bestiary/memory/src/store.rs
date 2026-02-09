@@ -1,6 +1,6 @@
 use crate::{
-    Agent, AgentUpdate, Community, ConsolidationJob, Entity, Episode, Fact, MemoryError, Result,
-    SemanticRule, VerificationStatus, WorkspaceMessage,
+    Agent, AgentUpdate, CoherenceEvaluation, Community, ConsolidationJob, Entity, Episode, Fact,
+    MemoryError, Result, SemanticRule, VerificationStatus, WorkspaceMessage,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
@@ -1350,6 +1350,112 @@ impl MemoryStore {
         .await?;
 
         Ok(rows.iter().map(row_to_workspace_message).collect())
+    }
+
+    // ─── Coherence evaluations ────────────────────────────────────────
+
+    pub async fn store_coherence_evaluation(&self, eval: &CoherenceEvaluation) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO coherence_evaluations
+                (eval_id, workspace_id, global_score, quality_label,
+                 principle_scores, health_indicators, utterance_count, message_window)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING eval_id
+            "#,
+        )
+        .bind(eval.eval_id)
+        .bind(eval.workspace_id)
+        .bind(eval.global_score)
+        .bind(&eval.quality_label)
+        .bind(&eval.principle_scores)
+        .bind(&eval.health_indicators)
+        .bind(eval.utterance_count)
+        .bind(&eval.message_window)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.try_get("eval_id")?)
+    }
+
+    pub async fn get_latest_coherence(
+        &self,
+        workspace_id: Uuid,
+    ) -> Result<Option<CoherenceEvaluation>> {
+        let row = sqlx::query(
+            r#"
+            SELECT eval_id, workspace_id, global_score, quality_label,
+                   principle_scores, health_indicators, utterance_count,
+                   message_window, created_at
+            FROM coherence_evaluations
+            WHERE workspace_id = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(workspace_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.as_ref().map(row_to_coherence_evaluation))
+    }
+
+    pub async fn get_coherence_history(
+        &self,
+        workspace_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<CoherenceEvaluation>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT eval_id, workspace_id, global_score, quality_label,
+                   principle_scores, health_indicators, utterance_count,
+                   message_window, created_at
+            FROM coherence_evaluations
+            WHERE workspace_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.iter().map(row_to_coherence_evaluation).collect())
+    }
+
+    pub async fn count_workspace_messages_since(
+        &self,
+        workspace_id: Uuid,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as cnt FROM workspace_messages WHERE workspace_id = $1 AND created_at > $2",
+        )
+        .bind(workspace_id)
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.try_get::<i64, _>("cnt").unwrap_or(0))
+    }
+}
+
+fn row_to_coherence_evaluation(row: &sqlx::postgres::PgRow) -> CoherenceEvaluation {
+    CoherenceEvaluation {
+        eval_id: row.try_get("eval_id").unwrap(),
+        workspace_id: row.try_get("workspace_id").unwrap(),
+        global_score: row.try_get("global_score").unwrap(),
+        quality_label: row.try_get("quality_label").unwrap(),
+        principle_scores: row
+            .try_get::<serde_json::Value, _>("principle_scores")
+            .unwrap_or(serde_json::json!({})),
+        health_indicators: row
+            .try_get::<serde_json::Value, _>("health_indicators")
+            .unwrap_or(serde_json::json!({})),
+        utterance_count: row.try_get("utterance_count").unwrap_or(0),
+        message_window: row.try_get("message_window").unwrap_or(None),
+        created_at: row.try_get("created_at").unwrap(),
     }
 }
 
