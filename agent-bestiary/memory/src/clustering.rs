@@ -216,6 +216,7 @@ mod tests {
                 cost_usd: Some(Decimal::new(1, 3)),
                 embedding: Some(embedding),
                 consolidated: false,
+                tags: vec![],
             });
         }
 
@@ -241,6 +242,7 @@ mod tests {
                 cost_usd: Some(Decimal::new(1, 3)),
                 embedding: Some(embedding),
                 consolidated: false,
+                tags: vec![],
             });
         }
 

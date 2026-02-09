@@ -383,3 +383,22 @@ a:hover {
   background: var(--bg1);
   color: var(--fg1);
 }
+
+/* ── Tag Pills ── */
+.tag-pills {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.tag-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 0.72em;
+  border: 1px solid var(--bg3);
+  border-radius: 3px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.theme-op1 .tag-pill {
+  border-radius: 0;
+}

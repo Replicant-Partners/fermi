@@ -418,6 +418,29 @@ impl SeedData {
                 cost_usd: Some(Decimal::new(1 + i as i64, 3)),
                 embedding,
                 consolidated,
+                tags: vec![
+                    format!(
+                        "status:{}",
+                        if i < 18 {
+                            "success"
+                        } else if i < 22 {
+                            "error"
+                        } else {
+                            "partial"
+                        }
+                    ),
+                    format!(
+                        "cost:{}",
+                        if i < 5 {
+                            "low"
+                        } else if i < 15 {
+                            "medium"
+                        } else {
+                            "high"
+                        }
+                    ),
+                    "iterations:1".to_string(),
+                ],
             });
         }
 

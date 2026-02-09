@@ -59,9 +59,9 @@ impl MemoryStore {
             INSERT INTO episodes (
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, embedding, consolidated
+                tokens_used, cost_usd, embedding, consolidated, tags
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING episode_id
             "#,
         )
@@ -77,6 +77,7 @@ impl MemoryStore {
         .bind(episode.cost_usd)
         .bind(embedding_vec)
         .bind(episode.consolidated)
+        .bind(&episode.tags)
         .fetch_one(&self.pool)
         .await?;
 
@@ -118,6 +119,7 @@ impl MemoryStore {
             cost_usd: row.try_get("cost_usd")?,
             embedding: embedding.map(|v| v.to_vec()),
             consolidated: row.try_get("consolidated")?,
+            tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
         })
     }
 
@@ -158,6 +160,7 @@ impl MemoryStore {
                 cost_usd: row.try_get("cost_usd")?,
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
+                tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
             });
         }
 
@@ -685,6 +688,7 @@ impl MemoryStore {
                 cost_usd: row.try_get("cost_usd")?,
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
+                tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
             };
 
             results.push((episode, distance));
@@ -748,6 +752,7 @@ impl MemoryStore {
                 cost_usd: row.try_get("cost_usd")?,
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
+                tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
             };
 
             results.push((episode, distance));
@@ -799,6 +804,7 @@ impl MemoryStore {
                 cost_usd: row.try_get("cost_usd")?,
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
+                tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
             });
         }
 
@@ -1379,6 +1385,7 @@ impl MemoryStore {
                 cost_usd: row.try_get("cost_usd")?,
                 embedding: None, // omit for performance
                 consolidated: row.try_get("consolidated")?,
+                tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
             });
         }
 
@@ -1423,6 +1430,7 @@ impl MemoryStore {
                 cost_usd: row.try_get("cost_usd")?,
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
+                tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
             });
         }
 
@@ -1975,6 +1983,7 @@ mod tests {
             cost_usd: Some(Decimal::new(1, 3)), // 0.001
             embedding: None,
             consolidated: false,
+            tags: vec![],
         };
 
         let episode_id = store.store_episode(episode.clone()).await.unwrap();
@@ -2050,6 +2059,7 @@ mod tests {
                 cost_usd: Some(Decimal::new(1, 3)),
                 embedding: Some(embedding),
                 consolidated: false,
+                tags: vec![],
             };
 
             store.store_episode(episode).await.unwrap();
@@ -2129,6 +2139,7 @@ mod tests {
                 cost_usd: Some(Decimal::new(1, 3)),
                 embedding: None,
                 consolidated: false,
+                tags: vec![],
             };
             episode_ids.push(episode.episode_id);
             store.store_episode(episode).await.unwrap();

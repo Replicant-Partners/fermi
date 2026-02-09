@@ -451,7 +451,7 @@
       }
       .episode-row {
         display: grid;
-        grid-template-columns: 1fr auto auto auto;
+        grid-template-columns: 1fr auto minmax(0, 200px) auto auto;
         gap: 12px;
         padding: 10px 0;
         border-bottom: 1px solid var(--bg2);
@@ -769,6 +769,7 @@
     </div>
 
     <script src="/static/js/widgets/tabs.js"></script>
+    <script src="/static/js/widgets/tag-renderer.js"></script>
     <script src="/static/js/widgets/toast.js"></script>
     <script src="/static/js/widgets/modal.js"></script>
     <script src="/static/js/widgets/fork-modal.js"></script>
@@ -2471,6 +2472,7 @@
               <div class="episode-row clickable" onclick="toggleEpisodeDetail('${safeId}', this)" id="ep-row-${safeId}">
                 <div class="episode-query" title="${ep.query.replace(/"/g, "&quot;")}">${ep.query}</div>
                 <span class="episode-status ${ep.status}">${ep.status}</span>
+                <span class="episode-tags">${TagRenderer.render(ep.tags || [], { max: 3 })}</span>
                 <span class="episode-cost">${costStr}</span>
                 <span class="episode-time">${date}</span>
               </div>
@@ -2550,10 +2552,11 @@
           // Model + iterations summary
           const iters = ep.loop_iterations || 0;
           const model = ep.model_used || "—";
-          html += `<div style="display:flex;gap:16px;margin-bottom:12px;font-size:0.85em;color:var(--fg3)">
+          html += `<div style="display:flex;gap:16px;margin-bottom:12px;font-size:0.85em;color:var(--fg3);flex-wrap:wrap;align-items:center">
             <span>Model: <strong style="color:var(--fg1)">${model}</strong></span>
             <span>Iterations: <strong style="color:var(--fg1)">${iters}</strong></span>
             <span>Tokens: <strong style="color:var(--fg1)">${(ep.tokens_used || 0).toLocaleString()}</strong></span>
+            ${ep.tags && ep.tags.length ? TagRenderer.render(ep.tags) : ""}
           </div>`;
 
           // Iteration timeline with tool calls

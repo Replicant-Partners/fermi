@@ -503,6 +503,7 @@ mod tests {
                 cost_usd: Some(rust_decimal::Decimal::new(1, 3)),
                 embedding: Some(vec![0.1; 1024]),
                 consolidated: false,
+                tags: vec![],
             };
             store.store_episode(episode).await.unwrap();
         }

@@ -18,6 +18,8 @@ pub struct Episode {
     pub cost_usd: Option<Decimal>,
     pub embedding: Option<Vec<f32>>,
     pub consolidated: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

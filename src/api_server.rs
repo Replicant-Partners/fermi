@@ -173,6 +173,7 @@ async fn get_episode_detail_handler(
         "evidence": evidence,
         "reasoning": reasoning,
         "model_used": model_used,
+        "tags": episode.tags,
         "timing": {
             "total_ms": total_ms,
             "tool_ms": tool_ms,
@@ -1257,6 +1258,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/025_agent_lifecycle.sql",
         "migrations/026_fork_royalty_tx_type.sql",
         "migrations/027_eval_framework.sql",
+        "migrations/028_episode_tags.sql",
     ];
 
     for file in &migration_files {
@@ -3809,6 +3811,7 @@ async fn import_embeddings_handler(
             cost_usd: None,
             embedding: Some(ep.embedding.clone()),
             consolidated: false,
+            tags: vec![],
         };
 
         state
@@ -5600,6 +5603,72 @@ async fn execute_agent_handler(
 }
 
 fn agent_output_to_episode(agent_db_id: uuid::Uuid, query: &str, output: &AgentOutput) -> Episode {
+    // Generate tags from execution metadata
+    let mut tags = Vec::new();
+
+    // Status tag
+    match output.status {
+        AgentStatus::Success => tags.push("status:success".to_string()),
+        AgentStatus::Failed => tags.push("status:error".to_string()),
+        AgentStatus::Timeout => tags.push("status:timeout".to_string()),
+        AgentStatus::BelowConfidenceThreshold => tags.push("status:low-confidence".to_string()),
+    }
+
+    // Tool usage tags
+    let mut tool_names: Vec<String> = output
+        .tool_invocations
+        .iter()
+        .map(|t| t.tool_name.clone())
+        .collect();
+    tool_names.sort();
+    tool_names.dedup();
+    for name in &tool_names {
+        tags.push(format!("tool:{}", name));
+    }
+
+    // Iteration count tag
+    match output.loop_iterations {
+        0 | 1 => tags.push("iterations:1".to_string()),
+        2..=4 => tags.push("iterations:2+".to_string()),
+        _ => tags.push("iterations:5+".to_string()),
+    }
+
+    // Cost tier tag (based on token count)
+    match output.tokens_used {
+        None | Some(0) => tags.push("cost:free".to_string()),
+        Some(t) if t < 500 => tags.push("cost:low".to_string()),
+        Some(t) if t < 5000 => tags.push("cost:medium".to_string()),
+        _ => tags.push("cost:high".to_string()),
+    }
+
+    // Model tag
+    if let Some(ref model) = output.metadata.model_used {
+        let short = if model.contains("sonnet") {
+            "claude-sonnet"
+        } else if model.contains("haiku") {
+            "claude-haiku"
+        } else if model.contains("opus") {
+            "claude-opus"
+        } else if model.contains("mistral") {
+            "mistral"
+        } else if model.contains("qwen") {
+            "qwen"
+        } else {
+            model.as_str()
+        };
+        tags.push(format!("model:{}", short));
+    }
+
+    // Confidence tag
+    let conf = output.confidence;
+    if conf >= 0.7 {
+        tags.push("confidence:high".to_string());
+    } else if conf >= 0.4 {
+        tags.push("confidence:medium".to_string());
+    } else if conf > 0.0 {
+        tags.push("confidence:low".to_string());
+    }
+
     Episode {
         episode_id: uuid::Uuid::new_v4(),
         agent_id: agent_db_id,
@@ -5643,6 +5712,7 @@ fn agent_output_to_episode(agent_db_id: uuid::Uuid, query: &str, output: &AgentO
         }),
         embedding: None,
         consolidated: false,
+        tags,
     }
 }
 
@@ -5890,6 +5960,7 @@ async fn get_agent_episodes_handler(
                 "tokens_used": ep.tokens_used,
                 "cost_usd": ep.cost_usd,
                 "consolidated": ep.consolidated,
+                "tags": ep.tags,
             })
         })
         .collect();
