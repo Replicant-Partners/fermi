@@ -696,6 +696,7 @@
 
     <script src="/static/js/widgets/toast.js"></script>
     <script src="/static/js/widgets/modal.js"></script>
+    <script src="/static/js/widgets/fork-modal.js"></script>
     <script src="/static/js/api.js"></script>
     <script>
       async function loadAgentDetail() {
@@ -1674,7 +1675,10 @@
               if (isOwner) {
                 renderOwnerPanel(agentId, agent);
               } else {
-                // Show hire hint for non-owners
+                // Show fork button for non-owners on published agents
+                if (agent.status === "published") {
+                  renderForkButton(agentId);
+                }
                 const hint = document.getElementById("execute-hint");
                 if (hint) {
                   hint.style.display = "block";
@@ -1686,18 +1690,69 @@
         }, 200);
       })();
 
+      function renderForkButton(agentId) {
+        const slot = document.getElementById("owner-panel-slot");
+        slot.innerHTML = `
+          <div class="owner-panel" style="border-color:var(--blue)">
+            <div class="owner-actions">
+              <button class="owner-btn" style="border-color:var(--blue);color:var(--blue)" onclick="ForkModal.open('${agentId}')">Fork This Agent</button>
+            </div>
+          </div>`;
+      }
+
       function renderOwnerPanel(agentId, agent) {
+        const status = agent.status || "draft";
+        const statusColors = {
+          draft: "var(--yellow)",
+          published: "var(--green)",
+          archived: "var(--gray)",
+        };
+        const statusColor = statusColors[status] || "var(--fg)";
+
+        // Build lifecycle buttons based on current status
+        let lifecycleBtns = "";
+        if (status === "draft") {
+          lifecycleBtns = `
+            <button class="owner-btn" style="border-color:var(--green);color:var(--green)" onclick="publishAgent('${agentId}')">Publish</button>
+            <button class="owner-btn" style="border-color:var(--gray);color:var(--gray)" onclick="archiveAgent('${agentId}')">Archive</button>`;
+        } else if (status === "published") {
+          lifecycleBtns = `
+            <button class="owner-btn" style="border-color:var(--orange);color:var(--orange)" onclick="archiveAgent('${agentId}')">Archive</button>
+            <button class="owner-btn" style="border-color:var(--blue);color:var(--blue)" onclick="toggleForkPricingPanel()">Fork Pricing</button>`;
+        } else if (status === "archived") {
+          lifecycleBtns = `
+            <button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua)" onclick="restoreAgent('${agentId}')">Restore to Draft</button>`;
+        }
+
         const slot = document.getElementById("owner-panel-slot");
         slot.innerHTML = `
           <div class="owner-panel">
-            <div class="owner-panel-title">Owner Actions</div>
+            <div class="owner-panel-title">
+              Owner Actions
+              <span style="float:right;font-size:0.75rem;color:${statusColor};border:1px solid ${statusColor};padding:2px 8px;border-radius:4px">${status.toUpperCase()}</span>
+            </div>
             <div class="owner-actions">
+              ${lifecycleBtns}
               <button class="owner-btn" onclick="toggleEditPanel()">Edit</button>
               <button class="owner-btn" onclick="toggleHistoryPanel()">Execution History</button>
               <button class="owner-btn" onclick="toggleTopupPanel()">Top Up Dreams</button>
               <button class="owner-btn" onclick="toggleConsolidatePanel()">Run Consolidation</button>
               <button class="owner-btn" onclick="toggleVersionsPanel('${agentId}')">Version History</button>
               <button class="owner-btn danger" onclick="document.getElementById('delete-modal').classList.add('visible')">Delete</button>
+            </div>
+
+            <!-- Fork Pricing (published agents only) -->
+            <div class="edit-field" id="fork-pricing-panel" style="display:none">
+              <label>Base Fork Price (credits)</label>
+              <input type="number" id="fork-price-base" value="${(agent.fork_pricing || {}).base_price || 0}" min="0" />
+              <label>Ontology Price (credits, leave empty to disable)</label>
+              <input type="number" id="fork-price-ontology" value="${(agent.fork_pricing || {}).ontology_price ?? ""}" min="0" placeholder="Disabled" />
+              <label>Embeddings Price (credits, leave empty to disable)</label>
+              <input type="number" id="fork-price-embeddings" value="${(agent.fork_pricing || {}).embedding_price ?? ""}" min="0" placeholder="Disabled" />
+              <div class="edit-save-row">
+                <button class="owner-btn" onclick="saveForkPricing('${agentId}')" style="border-color:var(--blue);color:var(--blue)">Save Pricing</button>
+                <button class="owner-btn" onclick="toggleForkPricingPanel()">Cancel</button>
+              </div>
             </div>
 
             <!-- Inline Edit -->
@@ -1953,6 +2008,77 @@
           }
         } catch (e) {
           alert("Network error: " + e.message);
+        }
+      }
+
+      // ─── Lifecycle actions ─────────────────────────────────────
+
+      async function publishAgent(agentId) {
+        try {
+          const checks = await API.get(`/api/agents/${agentId}/publish-checks`);
+          if (!checks.can_publish) {
+            const failing = checks.checks.filter(
+              (c) => !c.passed && c.severity === "Error",
+            );
+            Toast.show(
+              "Cannot publish: " + failing.map((c) => c.message).join("; "),
+              "error",
+            );
+            return;
+          }
+          const result = await API.post(`/api/agents/${agentId}/publish`);
+          Toast.show("Agent published! (1 cr)", "success");
+          setTimeout(() => location.reload(), 1200);
+        } catch (e) {
+          Toast.show(e.message || "Publish failed", "error");
+        }
+      }
+
+      async function archiveAgent(agentId) {
+        if (
+          !confirm("Archive this agent? It will be hidden from the catalogue.")
+        )
+          return;
+        try {
+          await API.post(`/api/agents/${agentId}/archive`);
+          Toast.show("Agent archived", "success");
+          setTimeout(() => location.reload(), 1200);
+        } catch (e) {
+          Toast.show(e.message || "Archive failed", "error");
+        }
+      }
+
+      async function restoreAgent(agentId) {
+        try {
+          await API.post(`/api/agents/${agentId}/restore`);
+          Toast.show("Agent restored to draft", "success");
+          setTimeout(() => location.reload(), 1200);
+        } catch (e) {
+          Toast.show(e.message || "Restore failed", "error");
+        }
+      }
+
+      function toggleForkPricingPanel() {
+        const p = document.getElementById("fork-pricing-panel");
+        if (p) p.style.display = p.style.display === "none" ? "block" : "none";
+      }
+
+      async function saveForkPricing(agentId) {
+        const base =
+          parseInt(document.getElementById("fork-price-base").value) || 0;
+        const ontoVal = document.getElementById("fork-price-ontology").value;
+        const embVal = document.getElementById("fork-price-embeddings").value;
+        const body = {
+          base_price: base,
+          ontology_price: ontoVal !== "" ? parseInt(ontoVal) : null,
+          embedding_price: embVal !== "" ? parseInt(embVal) : null,
+        };
+        try {
+          await API.put(`/api/agents/${agentId}/fork-pricing`, body);
+          Toast.show("Fork pricing updated", "success");
+          toggleForkPricingPanel();
+        } catch (e) {
+          Toast.show(e.message || "Failed to save pricing", "error");
         }
       }
 

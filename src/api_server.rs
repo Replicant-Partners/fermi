@@ -662,6 +662,31 @@ async fn main() {
         .route("/api/agents/mine", get(list_my_agents_handler))
         .route("/api/agents/:agent_id", put(update_agent_handler))
         .route("/api/agents/:agent_id", delete(delete_agent_handler))
+        // Agent lifecycle (fork, publish, archive, restore)
+        .route(
+            "/api/agents/:agent_id/fork",
+            post(handlers::lifecycle::fork_agent_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/fork-pricing",
+            put(handlers::lifecycle::update_fork_pricing_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/publish-checks",
+            get(handlers::lifecycle::publish_checks_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/publish",
+            post(handlers::lifecycle::publish_agent_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/archive",
+            post(handlers::lifecycle::archive_agent_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/restore",
+            post(handlers::lifecycle::restore_agent_handler),
+        )
         .route(
             "/api/agents/:agent_id/versions/:version_num/restore",
             post(restore_agent_version_handler),
@@ -1213,17 +1238,14 @@ async fn list_agents(
             .into_iter()
             .filter(|a| !a.agent_name.starts_with("test_agent_"))
             .filter(|a| {
-                // Public agents visible to everyone
-                if a.visibility == "public" {
-                    return true;
-                }
-                // Private/shared agents only visible to owner
+                // Owner always sees their own agents (any status)
                 if let Some(ref uid) = caller_id {
                     if a.owner_id.as_deref() == Some(uid.as_str()) {
                         return true;
                     }
                 }
-                false
+                // Everyone else: only published + public
+                a.status == "published" && a.visibility == "public"
             })
             .collect();
 
@@ -1317,6 +1339,10 @@ async fn list_agents(
                         "visibility": a.visibility,
                         "owner_id": a.owner_id.as_deref().unwrap_or(""),
                         "system_prompt": a.system_prompt.as_deref().unwrap_or(""),
+                        "status": a.status,
+                        "fork_pricing": a.fork_pricing,
+                        "forked_from": a.forked_from,
+                        "fork_count": a.fork_count,
                         "capabilities": {
                             "executor": a.executor_type,
                             "model": a.model,
