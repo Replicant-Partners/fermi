@@ -211,6 +211,27 @@ pub struct Agent {
     #[serde(default)]
     pub education_credits_used: i32,
     pub display_alias: Option<String>,
+    #[serde(default = "default_llm_provider")]
+    pub llm_provider: String,
+    #[serde(default = "default_embedding_provider")]
+    pub embedding_provider: String,
+    #[serde(default = "default_embedding_model")]
+    pub embedding_model: String,
+    #[serde(default = "default_embedding_dimension")]
+    pub embedding_dimension: i32,
+}
+
+fn default_llm_provider() -> String {
+    "anthropic".to_string()
+}
+fn default_embedding_provider() -> String {
+    "anthropic".to_string()
+}
+fn default_embedding_model() -> String {
+    "voyage-2".to_string()
+}
+fn default_embedding_dimension() -> i32 {
+    1024
 }
 
 fn default_visibility() -> String {

@@ -76,11 +76,45 @@
       header a:hover {
         color: var(--yellow);
       }
-
       .wizard-container {
         max-width: 780px;
         margin: 0 auto;
         padding: 20px 24px 60px;
+      }
+
+      /* ─── Mode toggle ─── */
+      .mode-toggle {
+        display: flex;
+        margin-bottom: 16px;
+        border: 1px solid var(--bg2);
+      }
+      .mode-btn {
+        flex: 1;
+        padding: 10px;
+        text-align: center;
+        font-size: 0.82rem;
+        cursor: pointer;
+        background: var(--bg0);
+        color: var(--fg3);
+        border: none;
+        font-family: inherit;
+        transition: all 0.2s;
+      }
+      .mode-btn.active {
+        background: var(--bg1);
+        color: var(--yellow);
+        font-weight: bold;
+      }
+      .mode-btn:first-child {
+        border-right: 1px solid var(--bg2);
+      }
+
+      /* ─── Import panel ─── */
+      .import-panel {
+        display: none;
+      }
+      .import-panel.active {
+        display: block;
       }
 
       /* ─── Step indicator ─── */
@@ -114,7 +148,6 @@
         color: var(--green);
       }
 
-      /* ─── Step panels ─── */
       .step-panel {
         display: none;
       }
@@ -178,7 +211,6 @@
         flex: 1;
       }
 
-      /* ─── Buttons ─── */
       .btn {
         background: transparent;
         border: 1px solid var(--bg3);
@@ -218,14 +250,12 @@
         opacity: 0.4;
         cursor: not-allowed;
       }
-
       .step-nav {
         display: flex;
         justify-content: space-between;
         margin-top: 16px;
       }
 
-      /* ─── Tips ─── */
       .tip-box {
         background: var(--bg1);
         border-left: 3px solid var(--aqua);
@@ -243,7 +273,6 @@
         margin-bottom: 2px;
       }
 
-      /* ─── Ontology template cards ─── */
       .template-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -280,7 +309,6 @@
         margin-top: 6px;
       }
 
-      /* ─── Mermaid preview ─── */
       .mermaid-preview {
         background: var(--bg1);
         border: 1px solid var(--bg2);
@@ -293,14 +321,64 @@
         overflow-y: auto;
       }
 
+      /* ─── Provider tabs ─── */
+      .provider-tabs {
+        display: flex;
+        gap: 0;
+        border: 1px solid var(--bg2);
+        margin-bottom: 12px;
+      }
+      .provider-tab {
+        flex: 1;
+        padding: 8px 10px;
+        text-align: center;
+        font-size: 0.78rem;
+        cursor: pointer;
+        background: var(--bg0);
+        color: var(--fg3);
+        border-right: 1px solid var(--bg2);
+        font-family: inherit;
+        border-top: none;
+        border-bottom: none;
+        border-left: none;
+        transition: all 0.2s;
+      }
+      .provider-tab:last-child {
+        border-right: none;
+      }
+      .provider-tab.active {
+        background: var(--bg1);
+        color: var(--yellow);
+        font-weight: bold;
+      }
+      .provider-tab.unavailable {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .provider-tab .avail-dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        margin-left: 4px;
+      }
+      .provider-tab .avail-dot.on {
+        background: var(--green);
+      }
+      .provider-tab .avail-dot.off {
+        background: var(--red);
+      }
+
       /* ─── Model cards ─── */
       .model-cards {
         display: flex;
         gap: 10px;
         margin-bottom: 12px;
+        flex-wrap: wrap;
       }
       .model-card {
         flex: 1;
+        min-width: 140px;
         background: var(--bg1);
         border: 1px solid var(--bg2);
         padding: 10px;
@@ -343,7 +421,43 @@
         min-width: 30px;
       }
 
-      /* ─── Review card ─── */
+      /* ─── Collapsible ─── */
+      .collapsible-header {
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.78rem;
+        color: var(--fg3);
+        margin: 12px 0 6px;
+      }
+      .collapsible-header:hover {
+        color: var(--yellow);
+      }
+      .collapsible-header .arrow {
+        transition: transform 0.2s;
+      }
+      .collapsible-header.open .arrow {
+        transform: rotate(90deg);
+      }
+      .collapsible-body {
+        display: none;
+      }
+      .collapsible-body.open {
+        display: block;
+      }
+
+      /* ─── Info box ─── */
+      .info-box {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 10px 14px;
+        font-size: 0.75rem;
+        color: var(--fg2);
+        line-height: 1.5;
+        margin: 8px 0;
+      }
+
       .review-card {
         background: var(--bg1);
         border: 1px solid var(--bg2);
@@ -362,7 +476,6 @@
         color: var(--fg0);
       }
 
-      /* ─── Checklist ─── */
       .checklist {
         margin-top: 12px;
       }
@@ -404,7 +517,6 @@
         color: var(--yellow);
       }
 
-      /* ─── ADM explainer ─── */
       .adm-flow {
         display: flex;
         align-items: center;
@@ -422,6 +534,27 @@
         color: var(--yellow);
         font-size: 0.8rem;
       }
+
+      /* ─── Roadmap section ─── */
+      .roadmap-section {
+        opacity: 0.5;
+        border: 1px dashed var(--bg3);
+        padding: 14px;
+        margin-top: 14px;
+      }
+      .roadmap-section:hover {
+        opacity: 0.7;
+      }
+      .roadmap-badge {
+        display: inline-block;
+        font-size: 0.65rem;
+        background: var(--bg3);
+        color: var(--fg2);
+        padding: 2px 8px;
+        margin-left: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
     </style>
   </head>
   <body>
@@ -437,345 +570,451 @@
     </header>
 
     <div class="wizard-container">
-      <!-- Step indicator -->
-      <div class="step-indicator">
-        <div class="step-dot active" data-step="0">1. Identity</div>
-        <div class="step-dot" data-step="1">2. Ontology</div>
-        <div class="step-dot" data-step="2">3. Capabilities</div>
-        <div class="step-dot" data-step="3">4. Economics</div>
-        <div class="step-dot" data-step="4">5. Review</div>
+      <!-- Mode toggle: Create vs Import -->
+      <div class="mode-toggle">
+        <button class="mode-btn active" onclick="setMode('create')">
+          Create from Scratch
+        </button>
+        <button class="mode-btn" onclick="setMode('import')">
+          Import Agent Spec
+        </button>
       </div>
 
-      <!-- ─── Step 1: Identity ─── -->
-      <div class="step-panel active" id="step-0">
+      <!-- ─── Import panel ─── -->
+      <div class="import-panel" id="import-panel">
         <div class="form-section">
-          <div class="form-title">Identity</div>
-          <div id="tips-identity"></div>
-          <div class="form-group">
-            <label for="agent-name">Agent Name *</label>
-            <input
-              type="text"
-              id="agent-name"
-              placeholder="my_research_agent"
-              pattern="[a-z0-9_-]+"
-            />
-            <div class="hint">
-              Lowercase letters, numbers, underscores, hyphens. This is the
-              system identifier.
-            </div>
-          </div>
-          <div class="form-group">
-            <label for="display-alias">Display Alias</label>
-            <input
-              type="text"
-              id="display-alias"
-              placeholder="Market Research Pro"
-            />
-            <div class="hint">
-              Human-friendly name shown in the catalogue and workspace
-            </div>
-          </div>
-          <div class="form-group">
-            <label for="description">Description *</label>
-            <input
-              type="text"
-              id="description"
-              placeholder="What does this agent do?"
-            />
-          </div>
-          <div class="row">
-            <div class="form-group">
-              <label for="agent-type">Type</label>
-              <select id="agent-type">
-                <option value="research">Research</option>
-                <option value="risk">Risk</option>
-                <option value="sentiment">Sentiment</option>
-                <option value="analysis">Analysis</option>
-                <option value="forecasting">Forecasting</option>
-                <option value="creative">Creative</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="visibility">Visibility</label>
-              <select id="visibility">
-                <option value="private">Private</option>
-                <option value="shared">Shared</option>
-                <option value="public">Public</option>
-              </select>
-            </div>
-          </div>
-          <div class="form-group">
-            <label for="tags">Tags</label>
-            <input type="text" id="tags" placeholder="comma, separated, tags" />
-            <div class="hint" id="popular-tags-hint"></div>
-          </div>
-        </div>
-        <div class="step-nav">
-          <div></div>
-          <button class="btn btn-primary" onclick="goStep(1)">
-            Next: Ontology &rarr;
-          </button>
-        </div>
-      </div>
-
-      <!-- ─── Step 2: Domain & Ontology ─── -->
-      <div class="step-panel" id="step-1">
-        <div class="form-section">
-          <div class="form-title">Domain & Ontology Seed</div>
-          <div id="tips-ontology"></div>
+          <div class="form-title">Import Agent Card</div>
           <div class="hint" style="margin-bottom: 12px">
-            Pick a template or describe your domain to generate a seed ontology.
-            This is optional but helps your agent learn faster.
+            Paste an <code>agent_card.json</code> spec to import an existing
+            agent definition.
           </div>
+          <div class="form-group">
+            <label for="import-json">Agent Card JSON</label>
+            <textarea
+              id="import-json"
+              rows="12"
+              placeholder='{"agent_id": "my_agent", "agent_type": "research", "capabilities": {"model": "claude-sonnet-4-5-20250929", ...}, "metadata": {"description": "...", "tags": [...]}}'
+            ></textarea>
+          </div>
+          <div style="display: flex; gap: 8px">
+            <button class="btn btn-primary" onclick="parseImport()">
+              Parse & Review
+            </button>
+            <label
+              class="btn"
+              style="display: inline-flex; align-items: center; cursor: pointer"
+            >
+              Upload File
+              <input
+                type="file"
+                accept=".json"
+                style="display: none"
+                onchange="uploadImportFile(event)"
+              />
+            </label>
+          </div>
+          <div class="error-msg" id="import-error"></div>
+          <div class="success-msg" id="import-success"></div>
+        </div>
+      </div>
 
-          <div class="template-grid" id="template-grid">
-            <div style="color: var(--fg3); font-size: 0.78rem">
-              Loading templates...
+      <!-- ─── Wizard (create mode) ─── -->
+      <div id="wizard-panel">
+        <!-- Step indicator -->
+        <div class="step-indicator">
+          <div class="step-dot active" data-step="0">1. Identity</div>
+          <div class="step-dot" data-step="1">2. Ontology</div>
+          <div class="step-dot" data-step="2">3. Capabilities</div>
+          <div class="step-dot" data-step="3">4. Economics</div>
+          <div class="step-dot" data-step="4">5. Review</div>
+        </div>
+
+        <!-- ─── Step 1: Identity ─── -->
+        <div class="step-panel active" id="step-0">
+          <div class="form-section">
+            <div class="form-title">Identity</div>
+            <div id="tips-identity"></div>
+            <div class="form-group">
+              <label for="agent-name">Agent Name *</label>
+              <input
+                type="text"
+                id="agent-name"
+                placeholder="my_research_agent"
+                pattern="[a-z0-9_-]+"
+              />
+              <div class="hint">
+                Lowercase letters, numbers, underscores, hyphens. This is the
+                system identifier.
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="display-alias">Display Alias</label>
+              <input
+                type="text"
+                id="display-alias"
+                placeholder="Market Research Pro"
+              />
+              <div class="hint">
+                Human-friendly name shown in the catalogue and workspace
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="description">Description *</label>
+              <input
+                type="text"
+                id="description"
+                placeholder="What does this agent do?"
+              />
+            </div>
+            <div class="row">
+              <div class="form-group">
+                <label for="agent-type">Type</label>
+                <select id="agent-type">
+                  <option value="research">Research</option>
+                  <option value="risk">Risk</option>
+                  <option value="sentiment">Sentiment</option>
+                  <option value="analysis">Analysis</option>
+                  <option value="forecasting">Forecasting</option>
+                  <option value="creative">Creative</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="visibility">Visibility</label>
+                <select id="visibility">
+                  <option value="private">Private</option>
+                  <option value="shared">Shared</option>
+                  <option value="public">Public</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="tags">Tags</label>
+              <input
+                type="text"
+                id="tags"
+                placeholder="comma, separated, tags"
+              />
+              <div class="hint" id="popular-tags-hint"></div>
             </div>
           </div>
-
-          <div class="form-group">
-            <label for="domain-desc">Or describe your domain</label>
-            <textarea
-              id="domain-desc"
-              rows="3"
-              placeholder="e.g., We track supply chain disruptions across semiconductor manufacturers in East Asia, monitoring factory output, shipping delays, and raw material availability..."
-            ></textarea>
-            <button
-              class="btn"
-              id="generate-ontology-btn"
-              style="margin-top: 6px"
-              onclick="generateOntology()"
-            >
-              Generate Ontology (2 cr)
+          <div class="step-nav">
+            <div></div>
+            <button class="btn btn-primary" onclick="goStep(1)">
+              Next: Ontology &rarr;
             </button>
           </div>
-
-          <div id="ontology-preview-wrap" style="display: none">
-            <label>Ontology Preview</label>
-            <div class="mermaid-preview" id="ontology-preview"></div>
-            <div style="margin-top: 6px">
-              <button
-                class="btn"
-                style="font-size: 0.72rem"
-                onclick="toggleEditOntology()"
-              >
-                Edit Source
-              </button>
-            </div>
-            <textarea
-              id="ontology-edit"
-              style="
-                display: none;
-                margin-top: 6px;
-                min-height: 120px;
-                font-size: 0.78rem;
-              "
-            ></textarea>
-          </div>
         </div>
-        <div class="step-nav">
-          <button class="btn" onclick="goStep(0)">&larr; Back</button>
-          <button class="btn btn-primary" onclick="goStep(2)">
-            Next: Capabilities &rarr;
-          </button>
-        </div>
-      </div>
 
-      <!-- ─── Step 3: Capabilities ─── -->
-      <div class="step-panel" id="step-2">
-        <div class="form-section">
-          <div class="form-title">Capabilities & Model</div>
-          <div id="tips-capabilities"></div>
-
-          <div class="form-group">
-            <label>Model</label>
-            <div class="model-cards">
-              <div
-                class="model-card selected"
-                data-model="claude-3-haiku-20240307"
-                onclick="selectModel(this)"
-              >
-                <div class="mc-name">Haiku</div>
-                <div class="mc-desc">Fast, efficient</div>
-                <div class="mc-cost">~0.5 cr/query</div>
-              </div>
-              <div
-                class="model-card"
-                data-model="claude-sonnet-4-5-20250929"
-                onclick="selectModel(this)"
-              >
-                <div class="mc-name">Sonnet 4.5</div>
-                <div class="mc-desc">Balanced</div>
-                <div class="mc-cost">~2 cr/query</div>
-              </div>
-              <div
-                class="model-card"
-                data-model="claude-opus-4-6"
-                onclick="selectModel(this)"
-              >
-                <div class="mc-name">Opus 4.6</div>
-                <div class="mc-desc">Most capable</div>
-                <div class="mc-cost">~8 cr/query</div>
-              </div>
+        <!-- ─── Step 2: Domain & Ontology ─── -->
+        <div class="step-panel" id="step-1">
+          <div class="form-section">
+            <div class="form-title">Domain & Ontology Seed</div>
+            <div id="tips-ontology"></div>
+            <div class="hint" style="margin-bottom: 12px">
+              Pick a template or describe your domain to generate a seed
+              ontology. This is optional but helps your agent learn faster.
             </div>
-          </div>
-
-          <div class="row">
-            <div class="form-group">
-              <label for="executor">Executor</label>
-              <select id="executor">
-                <option value="llm">LLM</option>
-                <option value="mcp">MCP</option>
-                <option value="skill">Skill</option>
-              </select>
+            <div class="template-grid" id="template-grid">
+              <div style="color: var(--fg3); font-size: 0.78rem">
+                Loading templates...
+              </div>
             </div>
             <div class="form-group">
-              <label>Temperature</label>
-              <div class="slider-row">
-                <input
-                  type="range"
-                  id="temperature"
-                  min="0"
-                  max="100"
-                  value="30"
-                />
-                <span class="slider-value" id="temp-display">0.30</span>
+              <label for="domain-desc">Or describe your domain</label>
+              <textarea
+                id="domain-desc"
+                rows="3"
+                placeholder="e.g., We track supply chain disruptions across semiconductor manufacturers in East Asia..."
+              ></textarea>
+              <button
+                class="btn"
+                id="generate-ontology-btn"
+                style="margin-top: 6px"
+                onclick="generateOntology()"
+              >
+                Generate Ontology (2 cr)
+              </button>
+            </div>
+            <div id="ontology-preview-wrap" style="display: none">
+              <label>Ontology Preview</label>
+              <div class="mermaid-preview" id="ontology-preview"></div>
+              <div style="margin-top: 6px">
+                <button
+                  class="btn"
+                  style="font-size: 0.72rem"
+                  onclick="toggleEditOntology()"
+                >
+                  Edit Source
+                </button>
+              </div>
+              <textarea
+                id="ontology-edit"
+                style="
+                  display: none;
+                  margin-top: 6px;
+                  min-height: 120px;
+                  font-size: 0.78rem;
+                "
+              ></textarea>
+            </div>
+          </div>
+          <div class="step-nav">
+            <button class="btn" onclick="goStep(0)">&larr; Back</button>
+            <button class="btn btn-primary" onclick="goStep(2)">
+              Next: Capabilities &rarr;
+            </button>
+          </div>
+        </div>
+
+        <!-- ─── Step 3: Capabilities & Model (MULTI-PROVIDER) ─── -->
+        <div class="step-panel" id="step-2">
+          <div class="form-section">
+            <div class="form-title">Capabilities & Model</div>
+            <div id="tips-capabilities"></div>
+
+            <div class="form-group">
+              <label>LLM Provider</label>
+              <div class="provider-tabs" id="provider-tabs">
+                <div
+                  style="color: var(--fg3); font-size: 0.78rem; padding: 8px"
+                >
+                  Loading providers...
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Model</label>
+              <div class="model-cards" id="model-cards">
+                <div style="color: var(--fg3); font-size: 0.78rem">
+                  Select a provider first
+                </div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="form-group">
+                <label for="executor">Executor</label>
+                <select id="executor">
+                  <option value="llm">LLM</option>
+                  <option value="mcp">MCP</option>
+                  <option value="skill">Skill</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Temperature</label>
+                <div class="slider-row">
+                  <input
+                    type="range"
+                    id="temperature"
+                    min="0"
+                    max="100"
+                    value="30"
+                  />
+                  <span class="slider-value" id="temp-display">0.30</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="system-prompt">System Prompt</label>
+              <textarea
+                id="system-prompt"
+                rows="6"
+                placeholder="You are a specialist in..."
+              ></textarea>
+              <div style="display: flex; gap: 8px; margin-top: 6px">
+                <button
+                  class="btn"
+                  id="suggest-prompt-btn"
+                  onclick="suggestPrompt()"
+                >
+                  Suggest Prompt (1 cr)
+                </button>
+              </div>
+              <div class="hint">
+                The core instruction defining this agent's behavior and
+                expertise
+              </div>
+            </div>
+
+            <!-- Embedding config (collapsible advanced) -->
+            <div class="collapsible-header" onclick="toggleCollapsible(this)">
+              <span class="arrow">&#9654;</span> Advanced: Embedding
+              Configuration
+            </div>
+            <div class="collapsible-body" id="embedding-config">
+              <div class="info-box">
+                Embeddings are generated automatically when your agent executes
+                queries. They encode the semantic meaning of each episode into a
+                vector, enabling similarity search, clustering, and the
+                Embedding Projector visualization. Embeddings are stored in the
+                ADM database alongside episodes, rules, and entities.
+              </div>
+              <div class="row">
+                <div class="form-group">
+                  <label for="embedding-provider">Embedding Provider</label>
+                  <select
+                    id="embedding-provider"
+                    onchange="onEmbeddingProviderChange()"
+                  >
+                    <option value="anthropic">Voyage-2 (Anthropic)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Model / Dimension</label>
+                  <input
+                    type="text"
+                    id="embedding-model-display"
+                    readonly
+                    style="opacity: 0.7"
+                    value="voyage-2 / 1024d"
+                  />
+                </div>
+              </div>
+              <div class="hint">
+                Custom embeddings can be imported after agent creation via the
+                agent detail page. Imported embeddings must match this model's
+                dimensions.
               </div>
             </div>
           </div>
-
-          <div class="form-group">
-            <label for="system-prompt">System Prompt</label>
-            <textarea
-              id="system-prompt"
-              rows="6"
-              placeholder="You are a specialist in..."
-            ></textarea>
-            <div style="display: flex; gap: 8px; margin-top: 6px">
-              <button
-                class="btn"
-                id="suggest-prompt-btn"
-                onclick="suggestPrompt()"
-              >
-                Suggest Prompt (1 cr)
-              </button>
-            </div>
-            <div class="hint">
-              The core instruction defining this agent's behavior and expertise
-            </div>
+          <div class="step-nav">
+            <button class="btn" onclick="goStep(1)">&larr; Back</button>
+            <button class="btn btn-primary" onclick="goStep(3)">
+              Next: Economics &rarr;
+            </button>
           </div>
         </div>
-        <div class="step-nav">
-          <button class="btn" onclick="goStep(1)">&larr; Back</button>
-          <button class="btn btn-primary" onclick="goStep(3)">
-            Next: Economics &rarr;
-          </button>
-        </div>
-      </div>
 
-      <!-- ─── Step 4: Economics ─── -->
-      <div class="step-panel" id="step-3">
-        <div class="form-section">
-          <div class="form-title">Economics (AKP)</div>
-          <div id="tips-economics"></div>
+        <!-- ─── Step 4: Economics ─── -->
+        <div class="step-panel" id="step-3">
+          <div class="form-section">
+            <div class="form-title">Economics</div>
+            <div id="tips-economics"></div>
 
-          <div class="form-group">
-            <label>Education Budget</label>
-            <div class="slider-row">
-              <input
-                type="range"
-                id="education-budget"
-                min="0"
-                max="50"
-                value="0"
-              />
-              <span class="slider-value" id="edu-display">0 cr</span>
-            </div>
-            <div class="hint">
-              Credits for A2A learning cycles. Deducted from your wallet on
-              creation.
-            </div>
-          </div>
-
-          <div
-            class="form-section"
-            style="
-              margin-top: 14px;
-              border: none;
-              padding: 14px;
-              background: var(--bg1);
-            "
-          >
+            <!-- Section A: Dream Budget (current, working) -->
             <div
               style="
-                font-size: 0.78rem;
+                font-size: 0.82rem;
                 color: var(--aqua);
                 font-weight: bold;
-                margin-bottom: 8px;
+                margin-bottom: 6px;
               "
             >
-              How the system optimizes your agent
+              Dream Budget &mdash; ADM Consolidation
             </div>
-            <div class="adm-flow">
-              <span class="adm-step">Execute queries</span>
-              <span class="adm-arrow">&rarr;</span>
-              <span class="adm-step">Episodic memory</span>
-              <span class="adm-arrow">&rarr;</span>
-              <span class="adm-step">Consolidation</span>
-              <span class="adm-arrow">&rarr;</span>
-              <span class="adm-step">Semantic rules</span>
-              <span class="adm-arrow">&rarr;</span>
-              <span class="adm-step">Ontology evolves</span>
+            <div class="info-box">
+              <div style="margin-bottom: 8px">
+                Your agent includes
+                <strong>5 free consolidation cycles</strong>. Each cycle (3
+                credits) extracts patterns from execution history, forms
+                semantic rules, and evolves the knowledge graph.
+              </div>
+              <div class="adm-flow">
+                <span class="adm-step">Execute queries</span>
+                <span class="adm-arrow">&rarr;</span>
+                <span class="adm-step">Episodic memory</span>
+                <span class="adm-arrow">&rarr;</span>
+                <span class="adm-step">Consolidation</span>
+                <span class="adm-arrow">&rarr;</span>
+                <span class="adm-step">Semantic rules</span>
+                <span class="adm-arrow">&rarr;</span>
+                <span class="adm-step">Ontology evolves</span>
+              </div>
+              <div
+                style="font-size: 0.72rem; color: var(--fg3); margin-top: 6px"
+              >
+                Additional cycles can be purchased from the agent detail page.
+                More cycles = deeper expertise.
+              </div>
             </div>
-            <div style="font-size: 0.72rem; color: var(--fg3); margin-top: 6px">
-              Each consolidation cycle costs 3 credits. The agent extracts
-              patterns from its execution history, forms semantic rules, and
-              evolves its knowledge graph. More cycles = deeper expertise.
+
+            <!-- Section B: Agent Knowledge Protocol (future, roadmap) -->
+            <div class="roadmap-section">
+              <div
+                style="font-size: 0.78rem; color: var(--fg3); font-weight: bold"
+              >
+                Agent Knowledge Protocol (Agent-OM)
+                <span class="roadmap-badge">Coming Soon</span>
+              </div>
+              <div
+                class="collapsible-header"
+                onclick="toggleCollapsible(this)"
+                style="margin-top: 6px"
+              >
+                <span class="arrow">&#9654;</span> Learn more about AKP
+              </div>
+              <div class="collapsible-body">
+                <div
+                  style="
+                    font-size: 0.72rem;
+                    color: var(--fg3);
+                    line-height: 1.5;
+                    padding: 8px 0;
+                  "
+                >
+                  The future Agent Knowledge Protocol enables
+                  <strong
+                    >opt-in agent-to-agent learning and knowledge
+                    sharing</strong
+                  >
+                  based on Agent-OM. Agents will be able to subscribe to
+                  knowledge streams from other agents, share semantic rules, and
+                  collaboratively evolve ontologies. Education budget will fund
+                  these A2A learning cycles. <br /><br />
+                  This is distinct from the Dream Budget (which funds internal
+                  consolidation). AKP enables inter-agent knowledge transfer
+                  &mdash; learning from the collective experience of the
+                  bestiary.
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="step-nav">
-          <button class="btn" onclick="goStep(2)">&larr; Back</button>
-          <button class="btn btn-primary" onclick="goStep(4)">
-            Next: Review &rarr;
-          </button>
-        </div>
-      </div>
-
-      <!-- ─── Step 5: Review & Create ─── -->
-      <div class="step-panel" id="step-4">
-        <div class="form-section">
-          <div class="form-title">Review & Create</div>
-
-          <div class="review-card" id="review-card"></div>
-
-          <div class="checklist" id="checklist"></div>
+          <div class="step-nav">
+            <button class="btn" onclick="goStep(2)">&larr; Back</button>
+            <button class="btn btn-primary" onclick="goStep(4)">
+              Next: Review &rarr;
+            </button>
+          </div>
         </div>
 
-        <div class="step-nav">
-          <button class="btn" onclick="goStep(3)">&larr; Back</button>
-          <button
-            class="btn btn-create"
-            id="create-btn"
-            onclick="createAgent()"
-          >
-            Create Agent
-          </button>
+        <!-- ─── Step 5: Review & Create ─── -->
+        <div class="step-panel" id="step-4">
+          <div class="form-section">
+            <div class="form-title">Review & Create</div>
+            <div class="review-card" id="review-card"></div>
+            <div class="checklist" id="checklist"></div>
+          </div>
+          <div class="step-nav">
+            <button class="btn" onclick="goStep(3)">&larr; Back</button>
+            <button
+              class="btn btn-create"
+              id="create-btn"
+              onclick="createAgent()"
+            >
+              Create Agent
+            </button>
+          </div>
+          <div class="error-msg" id="error-msg"></div>
+          <div class="success-msg" id="success-msg"></div>
         </div>
-        <div class="error-msg" id="error-msg"></div>
-        <div class="success-msg" id="success-msg"></div>
       </div>
     </div>
 
     <script>
       let currentStep = 0;
+      let selectedProvider = "anthropic";
       let selectedModel = "claude-3-haiku-20240307";
-      let selectedOntology = null; // mermaid string or null
+      let selectedEmbeddingProvider = "anthropic";
+      let selectedEmbeddingModel = "voyage-2";
+      let selectedEmbeddingDimension = 1024;
+      let selectedOntology = null;
       let guideTips = [];
+      let catalogueData = null;
 
-      // ─── Auth check ───
+      // ─── Auth check + init ───
       (async () => {
         const res = await fetch("/api/auth/me");
         if (!res.ok) {
@@ -785,37 +1024,232 @@
         loadTemplates();
         loadGuide();
         loadPopularTags();
+        loadCatalogue();
       })();
+
+      // ─── Mode toggle ───
+      function setMode(mode) {
+        document
+          .querySelectorAll(".mode-btn")
+          .forEach((b) => b.classList.remove("active"));
+        event.target.classList.add("active");
+        document
+          .getElementById("import-panel")
+          .classList.toggle("active", mode === "import");
+        document.getElementById("wizard-panel").style.display =
+          mode === "create" ? "block" : "none";
+      }
+
+      // ─── Import functions ───
+      function uploadImportFile(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          document.getElementById("import-json").value = reader.result;
+        };
+        reader.readAsText(file);
+      }
+
+      async function parseImport() {
+        const errEl = document.getElementById("import-error");
+        const sucEl = document.getElementById("import-success");
+        errEl.style.display = "none";
+        sucEl.style.display = "none";
+
+        const raw = document.getElementById("import-json").value.trim();
+        if (!raw) {
+          errEl.textContent = "Paste JSON first";
+          errEl.style.display = "block";
+          return;
+        }
+
+        let card;
+        try {
+          card = JSON.parse(raw);
+        } catch (e) {
+          errEl.textContent = "Invalid JSON: " + e.message;
+          errEl.style.display = "block";
+          return;
+        }
+
+        try {
+          const res = await fetch("/api/agents/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent_card_json: card }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            sucEl.textContent = "Imported: " + data.agent_name;
+            sucEl.style.display = "block";
+            setTimeout(() => {
+              window.location.href = "/dashboard";
+            }, 1500);
+          } else {
+            const err = await res.text();
+            errEl.textContent = err;
+            errEl.style.display = "block";
+          }
+        } catch (e) {
+          errEl.textContent = "Network error: " + e.message;
+          errEl.style.display = "block";
+        }
+      }
+
+      // ─── Catalogue loading ───
+      async function loadCatalogue() {
+        try {
+          const res = await fetch("/api/models/catalogue");
+          if (!res.ok) return;
+          catalogueData = await res.json();
+          renderProviderTabs();
+          renderEmbeddingProviders();
+          selectProviderTab("anthropic");
+        } catch {}
+      }
+
+      function renderProviderTabs() {
+        const tabs = document.getElementById("provider-tabs");
+        if (!catalogueData) return;
+        tabs.innerHTML = catalogueData.providers
+          .map(
+            (p) => `
+        <button class="provider-tab ${p.id === selectedProvider ? "active" : ""} ${!p.available ? "unavailable" : ""}"
+                onclick="selectProviderTab('${p.id}')" ${!p.available ? 'title="API key not configured"' : ""}>
+          ${esc(p.name)}
+          <span class="avail-dot ${p.available ? "on" : "off"}"></span>
+        </button>
+      `,
+          )
+          .join("");
+      }
+
+      function selectProviderTab(providerId) {
+        if (!catalogueData) return;
+        const provider = catalogueData.providers.find(
+          (p) => p.id === providerId,
+        );
+        if (!provider) return;
+        selectedProvider = providerId;
+
+        document
+          .querySelectorAll(".provider-tab")
+          .forEach((t) => t.classList.remove("active"));
+        const tab = [...document.querySelectorAll(".provider-tab")].find((t) =>
+          t.textContent.trim().startsWith(provider.name),
+        );
+        if (tab) tab.classList.add("active");
+
+        renderModelCards(provider);
+      }
+
+      function renderModelCards(provider) {
+        const container = document.getElementById("model-cards");
+        if (!provider.available) {
+          container.innerHTML =
+            `<div class="info-box" style="width:100%">
+          <strong>${esc(provider.name)}</strong> is not configured on this instance.
+          Set <code>${provider.env_var}</code> to enable. Models shown for reference only.
+        </div>` +
+            provider.models
+              .map(
+                (m) => `
+          <div class="model-card" style="opacity:0.4" data-model="${m.id}" data-provider="${provider.id}">
+            <div class="mc-name">${esc(m.name)}</div>
+            <div class="mc-desc">${esc(m.description)}</div>
+            <div class="mc-cost">${m.speed} / ${m.cost_tier}</div>
+          </div>
+        `,
+              )
+              .join("");
+          return;
+        }
+
+        container.innerHTML = provider.models
+          .map(
+            (m, i) => `
+        <div class="model-card ${i === 0 && provider.id === "anthropic" ? "selected" : ""}"
+             data-model="${m.id}" data-provider="${provider.id}"
+             onclick="selectModelCard(this)">
+          <div class="mc-name">${esc(m.name)}</div>
+          <div class="mc-desc">${esc(m.description)}</div>
+          <div class="mc-cost">${m.speed} / ${m.cost_tier}</div>
+        </div>
+      `,
+          )
+          .join("");
+
+        // Auto-select first model of this provider
+        if (provider.available && provider.models.length > 0) {
+          selectedModel = provider.models[0].id;
+          const first = container.querySelector(".model-card");
+          if (first) first.classList.add("selected");
+        }
+      }
+
+      function selectModelCard(el) {
+        document
+          .querySelectorAll(".model-card")
+          .forEach((c) => c.classList.remove("selected"));
+        el.classList.add("selected");
+        selectedModel = el.dataset.model;
+        selectedProvider = el.dataset.provider;
+      }
+
+      function renderEmbeddingProviders() {
+        if (!catalogueData || !catalogueData.embedding_providers) return;
+        const sel = document.getElementById("embedding-provider");
+        sel.innerHTML = catalogueData.embedding_providers
+          .map(
+            (ep) =>
+              `<option value="${ep.id}" ${!ep.available ? "disabled" : ""}>${esc(ep.name)}${!ep.available ? " (not configured)" : ""}</option>`,
+          )
+          .join("");
+      }
+
+      function onEmbeddingProviderChange() {
+        if (!catalogueData) return;
+        const id = document.getElementById("embedding-provider").value;
+        const ep = catalogueData.embedding_providers.find((p) => p.id === id);
+        if (ep) {
+          selectedEmbeddingProvider = ep.id;
+          selectedEmbeddingModel = ep.model;
+          selectedEmbeddingDimension = ep.dimension;
+          document.getElementById("embedding-model-display").value =
+            ep.model + " / " + ep.dimension + "d";
+        }
+      }
+
+      // ─── Collapsible sections ───
+      function toggleCollapsible(header) {
+        header.classList.toggle("open");
+        const body = header.nextElementSibling;
+        body.classList.toggle("open");
+      }
 
       // ─── Step navigation ───
       function goStep(n) {
-        // Validate current step before advancing
         if (n > currentStep && !validateStep(currentStep)) return;
-
         document
           .querySelectorAll(".step-panel")
           .forEach((p) => p.classList.remove("active"));
         document
           .querySelectorAll(".step-dot")
           .forEach((d) => d.classList.remove("active"));
-
-        // Mark completed steps
         for (let i = 0; i < n; i++) {
           document
             .querySelector(`.step-dot[data-step="${i}"]`)
             .classList.add("done");
         }
-
         document.getElementById("step-" + n).classList.add("active");
         document
           .querySelector(`.step-dot[data-step="${n}"]`)
           .classList.add("active");
         currentStep = n;
-
         if (n === 4) buildReview();
       }
 
-      // Click on step dots
       document.querySelectorAll(".step-dot").forEach((d) => {
         d.addEventListener("click", () => {
           const target = parseInt(d.dataset.step);
@@ -847,22 +1281,20 @@
           if (!res.ok) return;
           const data = await res.json();
           const grid = document.getElementById("template-grid");
-
           if (!data.templates || data.templates.length === 0) {
             grid.innerHTML =
               '<div style="color:var(--fg3);font-size:0.78rem">No templates available</div>';
             return;
           }
-
           grid.innerHTML = data.templates
             .map(
               (t) => `
-            <div class="template-card" onclick="selectTemplate(this, ${esc(JSON.stringify(t.mermaid))})" data-id="${t.template_id}">
-              <div class="tc-name">${esc(t.name)}</div>
-              <div class="tc-desc">${esc(t.description)}</div>
-              <div class="tc-meta">${t.entity_count} entities &middot; ${esc(t.suggested_type)}</div>
-            </div>
-          `,
+          <div class="template-card" onclick="selectTemplate(this, ${esc(JSON.stringify(t.mermaid))})" data-id="${t.template_id}">
+            <div class="tc-name">${esc(t.name)}</div>
+            <div class="tc-desc">${esc(t.description)}</div>
+            <div class="tc-meta">${t.entity_count} entities &middot; ${esc(t.suggested_type)}</div>
+          </div>
+        `,
             )
             .join("");
         } catch {}
@@ -902,11 +1334,9 @@
           alert("Describe your domain first");
           return;
         }
-
         const btn = document.getElementById("generate-ontology-btn");
         btn.disabled = true;
         btn.textContent = "Generating...";
-
         try {
           const res = await fetch("/api/agents/generate-ontology", {
             method: "POST",
@@ -914,8 +1344,7 @@
             body: JSON.stringify({ domain_description: desc }),
           });
           if (!res.ok) {
-            const err = await res.text();
-            alert("Generation failed: " + err);
+            alert("Generation failed: " + (await res.text()));
             return;
           }
           const data = await res.json();
@@ -932,29 +1361,12 @@
         }
       }
 
-      // ─── Model selection ───
-      function selectModel(el) {
-        document
-          .querySelectorAll(".model-card")
-          .forEach((c) => c.classList.remove("selected"));
-        el.classList.add("selected");
-        selectedModel = el.dataset.model;
-      }
-
       // ─── Temperature slider ───
       document.getElementById("temperature").addEventListener("input", (e) => {
         document.getElementById("temp-display").textContent = (
           e.target.value / 100
         ).toFixed(2);
       });
-
-      // ─── Education budget slider ───
-      document
-        .getElementById("education-budget")
-        .addEventListener("input", (e) => {
-          document.getElementById("edu-display").textContent =
-            e.target.value + " cr";
-        });
 
       // ─── Suggest prompt ───
       async function suggestPrompt() {
@@ -964,11 +1376,9 @@
           alert("Add a description first (Step 1)");
           return;
         }
-
         const btn = document.getElementById("suggest-prompt-btn");
         btn.disabled = true;
         btn.textContent = "Generating...";
-
         try {
           const res = await fetch("/api/agents/generate-prompt", {
             method: "POST",
@@ -980,8 +1390,7 @@
             }),
           });
           if (!res.ok) {
-            const err = await res.text();
-            alert("Generation failed: " + err);
+            alert("Generation failed: " + (await res.text()));
             return;
           }
           const data = await res.json();
@@ -1015,7 +1424,6 @@
         guideTips.forEach((t) => {
           if (groups[t.step]) groups[t.step].push(t);
         });
-
         Object.keys(groups).forEach((key) => {
           const el = document.getElementById("tips-" + key);
           if (!el) return;
@@ -1035,12 +1443,12 @@
           if (!res.ok) return;
           const data = await res.json();
           if (data.tags && data.tags.length > 0) {
-            const tagStr = data.tags
-              .slice(0, 8)
-              .map((t) => t.tag)
-              .join(", ");
             document.getElementById("popular-tags-hint").textContent =
-              "Popular: " + tagStr;
+              "Popular: " +
+              data.tags
+                .slice(0, 8)
+                .map((t) => t.tag)
+                .join(", ");
           }
         } catch {}
       }
@@ -1057,27 +1465,36 @@
           parseInt(document.getElementById("temperature").value) / 100
         ).toFixed(2);
         const prompt = document.getElementById("system-prompt").value.trim();
-        const edu = document.getElementById("education-budget").value;
         const modelName =
           document.querySelector(".model-card.selected .mc-name")
             ?.textContent || selectedModel;
 
+        // Find provider name
+        const providerName =
+          catalogueData?.providers.find((p) => p.id === selectedProvider)
+            ?.name || selectedProvider;
+        const embProviderName =
+          catalogueData?.embedding_providers.find(
+            (p) => p.id === selectedEmbeddingProvider,
+          )?.name || selectedEmbeddingProvider;
+
         const card = document.getElementById("review-card");
         card.innerHTML = `
-          <div class="review-row"><span class="rk">Name</span><span class="rv">${esc(name)}</span></div>
-          ${alias ? `<div class="review-row"><span class="rk">Alias</span><span class="rv">${esc(alias)}</span></div>` : ""}
-          <div class="review-row"><span class="rk">Description</span><span class="rv">${esc(desc || "(none)")}</span></div>
-          <div class="review-row"><span class="rk">Type</span><span class="rv">${type}</span></div>
-          <div class="review-row"><span class="rk">Visibility</span><span class="rv">${vis}</span></div>
-          <div class="review-row"><span class="rk">Tags</span><span class="rv">${esc(tags || "(none)")}</span></div>
-          <div class="review-row"><span class="rk">Model</span><span class="rv">${esc(modelName)}</span></div>
-          <div class="review-row"><span class="rk">Temperature</span><span class="rv">${temp}</span></div>
-          <div class="review-row"><span class="rk">System Prompt</span><span class="rv">${prompt ? prompt.substring(0, 80) + "..." : "(none)"}</span></div>
-          <div class="review-row"><span class="rk">Ontology</span><span class="rv">${selectedOntology ? "Seed ontology set" : "None (will learn from scratch)"}</span></div>
-          <div class="review-row"><span class="rk">Education Budget</span><span class="rv">${edu} credits</span></div>
-        `;
+        <div class="review-row"><span class="rk">Name</span><span class="rv">${esc(name)}</span></div>
+        ${alias ? `<div class="review-row"><span class="rk">Alias</span><span class="rv">${esc(alias)}</span></div>` : ""}
+        <div class="review-row"><span class="rk">Description</span><span class="rv">${esc(desc || "(none)")}</span></div>
+        <div class="review-row"><span class="rk">Type</span><span class="rv">${type}</span></div>
+        <div class="review-row"><span class="rk">Visibility</span><span class="rv">${vis}</span></div>
+        <div class="review-row"><span class="rk">Tags</span><span class="rv">${esc(tags || "(none)")}</span></div>
+        <div class="review-row"><span class="rk">LLM Provider</span><span class="rv">${esc(providerName)}</span></div>
+        <div class="review-row"><span class="rk">Model</span><span class="rv">${esc(modelName)}</span></div>
+        <div class="review-row"><span class="rk">Temperature</span><span class="rv">${temp}</span></div>
+        <div class="review-row"><span class="rk">System Prompt</span><span class="rv">${prompt ? prompt.substring(0, 80) + "..." : "(none)"}</span></div>
+        <div class="review-row"><span class="rk">Ontology</span><span class="rv">${selectedOntology ? "Seed ontology set" : "None (will learn from scratch)"}</span></div>
+        <div class="review-row"><span class="rk">Embedding</span><span class="rv">${esc(embProviderName)} (${selectedEmbeddingModel} / ${selectedEmbeddingDimension}d)</span></div>
+        <div class="review-row"><span class="rk">Dream Budget</span><span class="rv">5 cycles (included)</span></div>
+      `;
 
-        // Checklist
         const checks = [
           { label: "Agent name is set", pass: !!name },
           { label: "Description provided", pass: !!desc },
@@ -1131,10 +1548,12 @@
           executor_type: document.getElementById("executor").value,
           tags: tags,
           visibility: document.getElementById("visibility").value,
-          education_budget_credits: parseInt(
-            document.getElementById("education-budget").value,
-          ),
+          education_budget_credits: 0,
           display_alias: alias,
+          llm_provider: selectedProvider,
+          embedding_provider: selectedEmbeddingProvider,
+          embedding_model: selectedEmbeddingModel,
+          embedding_dimension: selectedEmbeddingDimension,
         };
 
         btn.disabled = true;
@@ -1146,7 +1565,6 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           });
-
           if (res.ok) {
             const data = await res.json();
             sucEl.textContent = "Agent created: " + data.agent_name;
@@ -1163,7 +1581,6 @@
           errEl.textContent = "Network error: " + e.message;
           errEl.style.display = "block";
         }
-
         btn.disabled = false;
         btn.textContent = "Create Agent";
       }

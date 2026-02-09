@@ -289,6 +289,7 @@ async fn main() {
         .route("/api/health", get(health))
         .route("/api/debug/startup", get(debug_startup))
         .route("/api/agents", get(list_agents))
+        .route("/api/models/catalogue", get(model_catalogue_handler))
         .route("/api/agents/:agent_id/avatar", get(get_cached_avatar))
         .route("/api/agents/:agent_id/ontology", get(get_ontology))
         // Ontology evolution (public, read-only)
@@ -365,6 +366,7 @@ async fn main() {
         .route("/api/tags/popular", get(popular_tags_handler))
         // Agent CRUD
         .route("/api/agents", post(create_agent_handler))
+        .route("/api/agents/import", post(import_agent_handler))
         .route("/api/agents/mine", get(list_my_agents_handler))
         .route("/api/agents/:agent_id", put(update_agent_handler))
         .route("/api/agents/:agent_id", delete(delete_agent_handler))
@@ -372,6 +374,11 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/avatar/generate",
             post(generate_avatar),
+        )
+        // Custom embeddings import
+        .route(
+            "/api/agents/:agent_id/embeddings/import",
+            post(import_embeddings_handler),
         )
         // Agent execution
         .route("/api/agents/:agent_id/execute", post(execute_agent_handler))
@@ -1614,6 +1621,10 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             education_budget_credits: 0,
             education_credits_used: 0,
             display_alias: None,
+            llm_provider: "anthropic".to_string(),
+            embedding_provider: "anthropic".to_string(),
+            embedding_model: "voyage-2".to_string(),
+            embedding_dimension: 1024,
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -1660,6 +1671,14 @@ struct CreateAgentRequest {
     #[serde(default)]
     education_budget_credits: i32,
     display_alias: Option<String>,
+    #[serde(default = "default_llm_provider")]
+    llm_provider: String,
+    #[serde(default = "default_embedding_provider")]
+    embedding_provider: String,
+    #[serde(default = "default_embedding_model")]
+    embedding_model: String,
+    #[serde(default = "default_embedding_dimension")]
+    embedding_dimension: i32,
 }
 
 fn default_agent_type() -> String {
@@ -1676,6 +1695,18 @@ fn default_executor() -> String {
 }
 fn default_visibility() -> String {
     "private".to_string()
+}
+fn default_llm_provider() -> String {
+    "anthropic".to_string()
+}
+fn default_embedding_provider() -> String {
+    "anthropic".to_string()
+}
+fn default_embedding_model() -> String {
+    "voyage-2".to_string()
+}
+fn default_embedding_dimension() -> i32 {
+    1024
 }
 
 async fn create_agent_handler(
@@ -1715,6 +1746,10 @@ async fn create_agent_handler(
         education_budget_credits: req.education_budget_credits,
         education_credits_used: 0,
         display_alias: req.display_alias,
+        llm_provider: req.llm_provider,
+        embedding_provider: req.embedding_provider,
+        embedding_model: req.embedding_model,
+        embedding_dimension: req.embedding_dimension,
     };
 
     // If education budget requested, debit from user's wallet
@@ -1755,6 +1790,314 @@ async fn create_agent_handler(
         "agent_id": agent_id,
         "agent_name": req.agent_name,
         "message": "Agent created successfully"
+    })))
+}
+
+// ─── Model catalogue endpoint ──────────────────────────────────────
+
+async fn model_catalogue_handler(State(_state): State<AppState>) -> Json<Value> {
+    let check_env = |key: &str| -> bool { std::env::var(key).is_ok() };
+
+    Json(json!({
+        "providers": [
+            {
+                "id": "anthropic",
+                "name": "Anthropic",
+                "models": [
+                    {"id": "claude-3-haiku-20240307", "name": "Haiku", "speed": "fast", "cost_tier": "low", "description": "Fast, efficient"},
+                    {"id": "claude-sonnet-4-5-20250929", "name": "Sonnet 4.5", "speed": "balanced", "cost_tier": "medium", "description": "Balanced"},
+                    {"id": "claude-opus-4-6", "name": "Opus 4.6", "speed": "slow", "cost_tier": "high", "description": "Most capable"}
+                ],
+                "env_var": "ANTHROPIC_API_KEY",
+                "available": check_env("ANTHROPIC_API_KEY")
+            },
+            {
+                "id": "mistral",
+                "name": "Mistral",
+                "models": [
+                    {"id": "mistral-large-latest", "name": "Mistral Large", "speed": "balanced", "cost_tier": "medium", "description": "Most capable Mistral model"},
+                    {"id": "mistral-medium-latest", "name": "Mistral Medium", "speed": "fast", "cost_tier": "low", "description": "Balanced Mistral model"},
+                    {"id": "open-mistral-nemo", "name": "Mistral Nemo", "speed": "fast", "cost_tier": "low", "description": "Lightweight open model"}
+                ],
+                "env_var": "MISTRAL_API_KEY",
+                "available": check_env("MISTRAL_API_KEY")
+            },
+            {
+                "id": "openrouter",
+                "name": "OpenRouter",
+                "models": [
+                    {"id": "anthropic/claude-3-opus", "name": "Claude 3 Opus (via OR)", "speed": "slow", "cost_tier": "high", "description": "Anthropic via OpenRouter"},
+                    {"id": "meta-llama/llama-3.1-70b-instruct", "name": "Llama 3.1 70B", "speed": "fast", "cost_tier": "low", "description": "Meta open model"},
+                    {"id": "google/gemini-pro-1.5", "name": "Gemini Pro 1.5", "speed": "balanced", "cost_tier": "medium", "description": "Google via OpenRouter"},
+                    {"id": "mistralai/mixtral-8x22b-instruct", "name": "Mixtral 8x22B", "speed": "fast", "cost_tier": "low", "description": "Mistral MoE via OpenRouter"}
+                ],
+                "env_var": "OPENROUTER_API_KEY",
+                "available": check_env("OPENROUTER_API_KEY")
+            },
+            {
+                "id": "qwen",
+                "name": "Qwen",
+                "models": [
+                    {"id": "qwen-max", "name": "Qwen Max", "speed": "slow", "cost_tier": "medium", "description": "Most capable Qwen model"},
+                    {"id": "qwen-plus", "name": "Qwen Plus", "speed": "balanced", "cost_tier": "low", "description": "Balanced Qwen model"},
+                    {"id": "qwen-turbo", "name": "Qwen Turbo", "speed": "fast", "cost_tier": "low", "description": "Fast Qwen model"}
+                ],
+                "env_var": "QWEN_API_KEY",
+                "available": check_env("QWEN_API_KEY")
+            }
+        ],
+        "embedding_providers": [
+            {"id": "anthropic", "name": "Voyage-2 (Anthropic)", "model": "voyage-2", "dimension": 1024, "env_var": "ANTHROPIC_API_KEY", "available": check_env("ANTHROPIC_API_KEY")},
+            {"id": "openai", "name": "text-embedding-3-large (OpenAI)", "model": "text-embedding-3-large", "dimension": 1024, "env_var": "OPENAI_API_KEY", "available": check_env("OPENAI_API_KEY")},
+            {"id": "mistral", "name": "mistral-embed (Mistral)", "model": "mistral-embed", "dimension": 1024, "env_var": "MISTRAL_API_KEY", "available": check_env("MISTRAL_API_KEY")},
+            {"id": "qwen", "name": "text-embedding-v3 (Qwen)", "model": "text-embedding-v3", "dimension": 1024, "env_var": "QWEN_API_KEY", "available": check_env("QWEN_API_KEY")}
+        ]
+    }))
+}
+
+// ─── Import agent endpoint ─────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ImportAgentRequest {
+    agent_card_json: Value,
+}
+
+async fn import_agent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<ImportAgentRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let card = &req.agent_card_json;
+
+    // Extract fields from agent_card.json format
+    let agent_name = card
+        .get("agent_id")
+        .or_else(|| card.get("agent_name"))
+        .and_then(|v| v.as_str())
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "Missing agent_id or agent_name in card".to_string(),
+        ))?
+        .to_string();
+
+    let agent_type = card
+        .get("agent_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("research")
+        .to_string();
+
+    let caps = card.get("capabilities");
+    let model = caps
+        .and_then(|c| c.get("model"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("claude-3-haiku-20240307")
+        .to_string();
+
+    let temperature = caps
+        .and_then(|c| c.get("temperature"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.3);
+
+    let executor_type = caps
+        .and_then(|c| c.get("executor"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("llm")
+        .to_string();
+
+    let meta = card.get("metadata");
+    let description = meta
+        .and_then(|m| m.get("description"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let tags: Vec<String> = meta
+        .and_then(|m| m.get("tags"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let system_prompt = card
+        .get("system_prompt")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let agent = Agent {
+        agent_id: uuid::Uuid::new_v4(),
+        agent_name: agent_name.clone(),
+        agent_type,
+        version: card
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("1.0.0")
+            .to_string(),
+        tier: "community".to_string(),
+        executor_type,
+        model,
+        temperature,
+        mcp_servers: caps.and_then(|c| c.get("mcp_tools")).cloned(),
+        description,
+        author: user_id.clone(),
+        system_prompt,
+        visibility: "private".to_string(),
+        owner_id: Some(user_id),
+        tags,
+        current_ontology_commit: None,
+        current_ontology_snapshot_id: None,
+        last_consolidated_at: None,
+        total_executions: 0,
+        successful_executions: 0,
+        failed_executions: 0,
+        total_cost_usd: None,
+        avg_execution_time_ms: 0,
+        dreaming_budget_credits: 5,
+        dreaming_credits_used: 0,
+        dreaming_budget_reset_at: None,
+        education_budget_credits: 0,
+        education_credits_used: 0,
+        display_alias: None,
+        llm_provider: "anthropic".to_string(),
+        embedding_provider: "anthropic".to_string(),
+        embedding_model: "voyage-2".to_string(),
+        embedding_dimension: 1024,
+    };
+
+    let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Failed to import agent: {}", e),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "message": "Agent imported successfully"
+    })))
+}
+
+// ─── Custom embeddings import endpoint ─────────────────────────────
+
+#[derive(Deserialize)]
+struct ImportEmbeddingsRequest {
+    episodes: Vec<ImportedEpisode>,
+}
+
+#[derive(Deserialize)]
+struct ImportedEpisode {
+    query: String,
+    summary: Option<String>,
+    embedding: Vec<f32>,
+}
+
+async fn import_embeddings_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<uuid::Uuid>,
+    Json(req): Json<ImportEmbeddingsRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    // Load agent to verify ownership and get embedding dimension
+    let agent = state
+        .memory_store
+        .get_agent(agent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("DB error: {}", e),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+
+    if agent.owner_id.as_deref() != Some(&user_id) {
+        return Err((StatusCode::FORBIDDEN, "Not the agent owner".to_string()));
+    }
+
+    if req.episodes.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "No episodes provided".to_string()));
+    }
+
+    // Validate embedding dimensions
+    for (i, ep) in req.episodes.iter().enumerate() {
+        if ep.embedding.len() as i32 != agent.embedding_dimension {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Episode {}: expected {} dimensions, got {}. Embeddings must match agent's embedding model ({}).",
+                    i, agent.embedding_dimension, ep.embedding.len(), agent.embedding_model
+                ),
+            ));
+        }
+    }
+
+    // Charge gas
+    let wallet = fermi_auth::get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        state.gas_fees.embedding_import,
+        "embedding_import",
+        &format!(
+            "Import {} episodes with embeddings for agent {}",
+            req.episodes.len(),
+            agent.agent_name
+        ),
+        Some(&agent_id.to_string()),
+    )
+    .await?;
+
+    // Create episodes with provided embeddings
+    let mut imported = 0;
+    for ep in &req.episodes {
+        let episode = Episode {
+            episode_id: uuid::Uuid::new_v4(),
+            agent_id,
+            timestamp_ref: chrono::Utc::now(),
+            query: ep.query.clone(),
+            context: serde_json::json!({
+                "source": "import",
+                "summary": ep.summary
+            }),
+            execution_status: agent_bestiary_memory::ExecutionStatus::Success,
+            error_details: None,
+            execution_time_ms: 0,
+            tokens_used: None,
+            cost_usd: None,
+            embedding: Some(ep.embedding.clone()),
+            consolidated: false,
+        };
+
+        state
+            .memory_store
+            .store_episode(episode)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to store episode: {}", e),
+                )
+            })?;
+        imported += 1;
+    }
+
+    Ok(Json(json!({
+        "imported": imported,
+        "agent_id": agent_id,
+        "message": format!("Imported {} episodes with embeddings", imported)
     })))
 }
 
@@ -2149,6 +2492,10 @@ async fn create_workspace_agent_handler(
         education_budget_credits: req.education_budget_credits,
         education_credits_used: 0,
         display_alias: None,
+        llm_provider: "anthropic".to_string(),
+        embedding_provider: "anthropic".to_string(),
+        embedding_model: "voyage-2".to_string(),
+        embedding_dimension: 1024,
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {

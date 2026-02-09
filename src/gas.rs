@@ -21,6 +21,7 @@ pub struct GasFees {
     pub consolidation_cycle: i32,
     pub file_write: i32,
     pub avatar_generate: i32,
+    pub embedding_import: i32,
     /// Layer 2: Platform transaction fee on crypto token transfers (agent→owner royalties).
     /// Expressed as a fraction (e.g. 0.025 = 2.5%). Applied to every token payout.
     /// Not yet wired — requires SIWE wallet connection + settlement layer.
@@ -41,6 +42,7 @@ impl GasFees {
             consolidation_cycle: env_or("GAS_CONSOLIDATION", 3),
             file_write: env_or("GAS_FILE_WRITE", 1),
             avatar_generate: env_or("GAS_AVATAR_GENERATE", 3),
+            embedding_import: env_or("GAS_EMBEDDING_IMPORT", 5),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -67,6 +69,7 @@ impl Default for GasFees {
             consolidation_cycle: 3,
             file_write: 1,
             avatar_generate: 3,
+            embedding_import: 5,
             crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
     }

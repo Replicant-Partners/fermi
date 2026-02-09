@@ -15,7 +15,8 @@ const AGENT_COLUMNS: &str = r#"
     last_consolidated_at, total_executions, successful_executions,
     failed_executions, total_cost_usd, avg_execution_time_ms,
     dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at,
-    education_budget_credits, education_credits_used, display_alias
+    education_budget_credits, education_credits_used, display_alias,
+    llm_provider, embedding_provider, embedding_model, embedding_dimension
 "#;
 
 pub struct MemoryStore {
@@ -169,9 +170,10 @@ impl MemoryStore {
                 executor_type, model, temperature, mcp_servers, description, author,
                 system_prompt, visibility, user_id, tags,
                 dreaming_budget_credits, dreaming_credits_used,
-                education_budget_credits, education_credits_used, display_alias
+                education_budget_credits, education_credits_used, display_alias,
+                llm_provider, embedding_provider, embedding_model, embedding_dimension
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -206,6 +208,10 @@ impl MemoryStore {
         .bind(agent.education_budget_credits)
         .bind(agent.education_credits_used)
         .bind(&agent.display_alias)
+        .bind(&agent.llm_provider)
+        .bind(&agent.embedding_provider)
+        .bind(&agent.embedding_model)
+        .bind(agent.embedding_dimension)
         .fetch_one(&self.pool)
         .await?;
 
@@ -294,9 +300,10 @@ impl MemoryStore {
                 agent_id, agent_name, agent_type, version, tier,
                 executor_type, model, temperature, mcp_servers, description, author,
                 system_prompt, visibility, user_id, tags,
-                dreaming_budget_credits, education_budget_credits, display_alias
+                dreaming_budget_credits, education_budget_credits, display_alias,
+                llm_provider, embedding_provider, embedding_model, embedding_dimension
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             RETURNING agent_id
             "#,
         )
@@ -318,6 +325,10 @@ impl MemoryStore {
         .bind(agent.dreaming_budget_credits)
         .bind(agent.education_budget_credits)
         .bind(&agent.display_alias)
+        .bind(&agent.llm_provider)
+        .bind(&agent.embedding_provider)
+        .bind(&agent.embedding_model)
+        .bind(agent.embedding_dimension)
         .fetch_one(&self.pool)
         .await?;
 
@@ -474,6 +485,16 @@ impl MemoryStore {
             education_budget_credits: row.try_get("education_budget_credits").unwrap_or(0),
             education_credits_used: row.try_get("education_credits_used").unwrap_or(0),
             display_alias: row.try_get("display_alias").unwrap_or(None),
+            llm_provider: row
+                .try_get("llm_provider")
+                .unwrap_or_else(|_| "anthropic".to_string()),
+            embedding_provider: row
+                .try_get("embedding_provider")
+                .unwrap_or_else(|_| "anthropic".to_string()),
+            embedding_model: row
+                .try_get("embedding_model")
+                .unwrap_or_else(|_| "voyage-2".to_string()),
+            embedding_dimension: row.try_get("embedding_dimension").unwrap_or(1024),
         })
     }
 
@@ -1536,6 +1557,10 @@ mod tests {
             education_budget_credits: 0,
             education_credits_used: 0,
             display_alias: None,
+            llm_provider: "anthropic".to_string(),
+            embedding_provider: "anthropic".to_string(),
+            embedding_model: "voyage-2".to_string(),
+            embedding_dimension: 1024,
         };
 
         let agent_id = store.upsert_agent(agent).await.unwrap();
@@ -1597,6 +1622,10 @@ mod tests {
             education_budget_credits: 0,
             education_credits_used: 0,
             display_alias: None,
+            llm_provider: "anthropic".to_string(),
+            embedding_provider: "anthropic".to_string(),
+            embedding_model: "voyage-2".to_string(),
+            embedding_dimension: 1024,
         };
 
         let agent_id = store.upsert_agent(agent).await.unwrap();
@@ -1679,6 +1708,10 @@ mod tests {
             education_budget_credits: 0,
             education_credits_used: 0,
             display_alias: None,
+            llm_provider: "anthropic".to_string(),
+            embedding_provider: "anthropic".to_string(),
+            embedding_model: "voyage-2".to_string(),
+            embedding_dimension: 1024,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1764,6 +1797,10 @@ mod tests {
             education_budget_credits: 0,
             education_credits_used: 0,
             display_alias: None,
+            llm_provider: "anthropic".to_string(),
+            embedding_provider: "anthropic".to_string(),
+            embedding_model: "voyage-2".to_string(),
+            embedding_dimension: 1024,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1847,6 +1884,10 @@ mod tests {
             education_budget_credits: 0,
             education_credits_used: 0,
             display_alias: None,
+            llm_provider: "anthropic".to_string(),
+            embedding_provider: "anthropic".to_string(),
+            embedding_model: "voyage-2".to_string(),
+            embedding_dimension: 1024,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1940,6 +1981,10 @@ mod tests {
             education_budget_credits: 0,
             education_credits_used: 0,
             display_alias: None,
+            llm_provider: "anthropic".to_string(),
+            embedding_provider: "anthropic".to_string(),
+            embedding_model: "voyage-2".to_string(),
+            embedding_dimension: 1024,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

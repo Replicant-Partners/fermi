@@ -473,6 +473,10 @@ mod tests {
             education_budget_credits: 0,
             education_credits_used: 0,
             display_alias: None,
+            llm_provider: "anthropic".to_string(),
+            embedding_provider: "anthropic".to_string(),
+            embedding_model: "voyage-2".to_string(),
+            embedding_dimension: 1024,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
