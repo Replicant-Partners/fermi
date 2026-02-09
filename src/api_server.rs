@@ -1,7 +1,7 @@
 use axum::body::Bytes;
 use axum::{
     extract::{Extension, Path, Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     middleware,
     response::{Html, IntoResponse, Redirect, Response},
     routing::{delete, get, post, put},
@@ -148,10 +148,9 @@ async fn rate_limit_middleware(
     match state.rate_limits.public.check(&ip) {
         Ok(remaining) => {
             let mut response = next.run(req).await;
-            response.headers_mut().insert(
-                "x-ratelimit-remaining",
-                remaining.to_string().parse().unwrap(),
-            );
+            response
+                .headers_mut()
+                .insert("x-ratelimit-remaining", HeaderValue::from(remaining));
             Ok(response)
         }
         Err(retry_after) => Err((
@@ -184,10 +183,9 @@ async fn llm_rate_limit_middleware(
     match state.rate_limits.llm.check(&key) {
         Ok(remaining) => {
             let mut response = next.run(req).await;
-            response.headers_mut().insert(
-                "x-ratelimit-remaining",
-                remaining.to_string().parse().unwrap(),
-            );
+            response
+                .headers_mut()
+                .insert("x-ratelimit-remaining", HeaderValue::from(remaining));
             Ok(response)
         }
         Err(retry_after) => Err((
@@ -1400,7 +1398,9 @@ async fn get_agent_projections(
         dimensions: dims,
     };
     if let Some(cached) = state.projection_cache.get(&cache_key) {
-        return Ok(Json(serde_json::to_value(cached).unwrap()));
+        return Ok(Json(serde_json::to_value(cached).map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?));
     }
 
     let result = state
@@ -1410,7 +1410,9 @@ async fn get_agent_projections(
         .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
 
     state.projection_cache.insert(cache_key, result.clone());
-    Ok(Json(serde_json::to_value(result).unwrap()))
+    Ok(Json(serde_json::to_value(result).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1434,7 +1436,9 @@ async fn get_bestiary_projections(
         dimensions: dims,
     };
     if let Some(cached) = state.projection_cache.get(&cache_key) {
-        return Ok(Json(serde_json::to_value(cached).unwrap()));
+        return Ok(Json(serde_json::to_value(cached).map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?));
     }
 
     let result = state
@@ -1444,7 +1448,9 @@ async fn get_bestiary_projections(
         .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
 
     state.projection_cache.insert(cache_key, result.clone());
-    Ok(Json(serde_json::to_value(result).unwrap()))
+    Ok(Json(serde_json::to_value(result).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1470,7 +1476,9 @@ async fn get_temporal_projections(
         .await
         .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
 
-    Ok(Json(serde_json::to_value(result).unwrap()))
+    Ok(Json(serde_json::to_value(result).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?))
 }
 
 fn parse_projection_method(method: Option<&str>) -> ProjectionMethod {
@@ -1578,16 +1586,16 @@ async fn auth_callback(
         token
     );
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::SEE_OTHER)
         .header(header::LOCATION, "/")
         .header(header::SET_COOKIE, cookie)
         .body(axum::body::Body::empty())
-        .unwrap())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 /// Logout — clear session cookie
-async fn auth_logout() -> Response {
+async fn auth_logout() -> Result<Response, (StatusCode, String)> {
     Response::builder()
         .status(StatusCode::SEE_OTHER)
         .header(header::LOCATION, "/")
@@ -1596,7 +1604,7 @@ async fn auth_logout() -> Response {
             "abw_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
         )
         .body(axum::body::Body::empty())
-        .unwrap()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 /// Get current authenticated user
@@ -6154,19 +6162,19 @@ async fn siwe_verify_handler(
         token
     );
 
-    Ok(Response::builder()
+    let body = serde_json::to_string(&json!({
+        "user_id": user.user_id,
+        "display_name": user.display_name,
+        "ethereum_address": eth_address,
+    }))
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::SET_COOKIE, cookie)
         .header(header::CONTENT_TYPE, "application/json")
-        .body(axum::body::Body::from(
-            serde_json::to_string(&json!({
-                "user_id": user.user_id,
-                "display_name": user.display_name,
-                "ethereum_address": eth_address,
-            }))
-            .unwrap(),
-        ))
-        .unwrap())
+        .body(axum::body::Body::from(body))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 /// Process a completed Stripe checkout — credit the user's wallet.
