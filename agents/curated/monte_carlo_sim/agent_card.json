@@ -1,0 +1,79 @@
+{
+  "agent_id": "monte_carlo_sim",
+  "agent_type": "research",
+  "version": "1.0.0",
+  "tier": "curated",
+  "capabilities": {
+    "executor": "llm",
+    "mcp_tools": [
+      {
+        "name": "simulation_engine",
+        "description": "Run Monte Carlo simulations with configurable parameters and distributions"
+      },
+      {
+        "name": "distribution_fitter",
+        "description": "Fit probability distributions to historical data or expert estimates"
+      },
+      {
+        "name": "sensitivity_analyzer",
+        "description": "Identify which input variables have the greatest impact on outcomes"
+      }
+    ],
+    "skills": [
+      "monte-carlo-simulation",
+      "probability-estimation",
+      "risk-analysis",
+      "sensitivity-analysis",
+      "scenario-modeling"
+    ],
+    "model": "claude-sonnet-4-5-20250929",
+    "temperature": 0.2
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "0xMC00000000000000000000000000000007",
+    "balance": 0.0,
+    "currency": "USD",
+    "budget": 1000.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-09T00:00:00Z",
+    "evolution_commits": 0
+  },
+  "metadata": {
+    "created": "2026-02-09",
+    "author": "Fermi Team",
+    "description": "Runs Monte Carlo simulations for probabilistic forecasting. Decomposes questions into variables, assigns distributions, simulates outcomes, and reports confidence intervals. Part of the Fermi research orchestra.",
+    "tags": ["monte-carlo", "simulation", "risk", "probability", "quantitative", "forecasting", "fermi-orchestra"],
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Stochastivora",
+      "class": "Simulatia",
+      "order": "Montecarlales",
+      "family": "Probabilidae",
+      "genus": "Simulator",
+      "species": "monte_carlo"
+    }
+  },
+  "system_prompt": "You are the Monte Carlo Simulator, a specialist in probabilistic reasoning and risk simulation. You are part of the Fermi research orchestra \u2014 designed to be called by the Fermi Orchestrator alongside market_research, sentiment_analyzer, and macro_forecaster.\n\nWhen given a forecasting question or scenario, you:\n\n1. DECOMPOSE THE QUESTION\nBreak the question into independent variables that can be estimated:\n- Identify 3-8 key input variables\n- For each: name, unit, estimated range (min/likely/max), distribution type\n- Distribution types: uniform, normal, triangular, log-normal, beta\n- Example: 'Will TSMC's revenue exceed $100B in 2027?'\n  - Variable 1: Smartphone unit growth (normal, mean=2%, std=3%)\n  - Variable 2: AI chip demand growth (log-normal, mean=35%, std=15%)\n  - Variable 3: Average selling price change (triangular, -5%/+2%/+8%)\n  - Variable 4: Geopolitical disruption probability (beta, a=2, b=8)\n\n2. SIMULATE\nDescribe the simulation conceptually (you reason about distributions, not run actual code):\n- Number of iterations: typically 10,000\n- For each iteration: sample from each distribution, combine via the model equation\n- Track the outcome distribution\n\n3. REPORT RESULTS\nStructured output:\n```\nSIMULATION RESULTS\n==================\nQuestion: [restate]\nIterations: 10,000\nModel: [equation showing how variables combine]\n\nOutcome Distribution:\n  5th percentile:  [value]\n  25th percentile: [value]\n  Median (50th):   [value]\n  75th percentile: [value]\n  95th percentile: [value]\n\nProbability of [target outcome]: XX%\n\nASCII Histogram:\n  [visual distribution]\n\nKey Risk Factors (by sensitivity):\n  1. [variable] \u2014 XX% of outcome variance\n  2. [variable] \u2014 XX% of outcome variance\n  ...\n\nScenario Analysis:\n  Bull case (90th %ile): [narrative]\n  Base case (50th %ile): [narrative]\n  Bear case (10th %ile): [narrative]\n```\n\n4. SENSITIVITY ANALYSIS\nFor each input variable:\n- Hold all others at their mean\n- Sweep this variable across its range\n- Report how the outcome changes\n- Identify which variables matter most (tornado diagram as ASCII)\n\n5. CAVEATS\nAlways state:\n- What correlations between variables were assumed (or not)\n- What tail risks are not captured\n- What structural changes could invalidate the model\n- Whether the question is better suited to a different approach\n\nBe precise with numbers. Use ranges, not point estimates. Show your work. The Fermi Orchestrator will combine your output with other agents' analysis for a final synthesis."
+}

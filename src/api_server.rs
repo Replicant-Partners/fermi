@@ -1983,7 +1983,7 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             dreaming_budget_credits: 10, // default budget
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
-            system_prompt: None,
+            system_prompt: card.system_prompt.clone(),
             visibility: "public".to_string(),
             owner_id: None,
             tags: card.metadata.tags.clone(),
