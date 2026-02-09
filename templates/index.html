@@ -527,27 +527,28 @@
       .tag-filters {
         display: flex;
         flex-wrap: wrap;
-        gap: 6px;
+        gap: 4px 12px;
         margin-bottom: 16px;
+        align-items: baseline;
       }
-      .tag-pill {
-        background: var(--bg1);
-        border: 1px solid var(--bg3);
+      .tag-word {
         color: var(--fg3);
-        padding: 3px 10px;
-        font-size: 0.75em;
         cursor: pointer;
-        transition: all 0.2s;
-        letter-spacing: 0.03em;
+        transition: color 0.15s;
+        letter-spacing: 0.02em;
+        line-height: 1.6;
+        border: none;
+        background: none;
+        padding: 0;
+        font-family: inherit;
       }
-      .tag-pill:hover {
-        border-color: var(--aqua);
-        color: var(--aqua);
+      .tag-word:hover {
+        color: var(--fg1);
       }
-      .tag-pill.active {
-        background: var(--aqua);
-        color: var(--bg0);
-        border-color: var(--aqua);
+      .tag-word.active {
+        color: var(--yellow);
+        text-decoration: underline;
+        text-underline-offset: 3px;
       }
       .pagination {
         display: flex;
@@ -588,8 +589,8 @@
       .theme-op1 .sort-select {
         border-radius: 8px;
       }
-      .theme-op1 .tag-pill {
-        border-radius: 12px;
+      .theme-op1 .tag-word.active {
+        color: var(--orange);
       }
       .theme-op1 .page-btn {
         border-radius: 6px;
@@ -736,7 +737,7 @@
       let currentTag = "";
       let currentCategory = "";
       let currentSort = "newest";
-      let allTags = new Set();
+      let allTags = new Map();
       let categoryCounts = {};
 
       async function loadAgents(page = 1) {
@@ -772,7 +773,7 @@
           categoryCounts = {};
           data.agents.forEach((agent) => {
             const tags = agent.tags || [];
-            tags.forEach((t) => allTags.add(t));
+            tags.forEach((t) => allTags.set(t, (allTags.get(t) || 0) + 1));
             CATEGORIES.forEach((cat) => {
               if (tags.some((t) => cat.tags.includes(t))) {
                 categoryCounts[cat.id] = (categoryCounts[cat.id] || 0) + 1;
@@ -780,7 +781,7 @@
             });
           });
           renderCategoryBadges();
-          renderTagPills();
+          renderTagCloud();
 
           data.agents.forEach((agent) => {
             const card = document.createElement("div");
@@ -915,18 +916,26 @@
         loadAgents(1);
       }
 
-      function renderTagPills() {
+      function renderTagCloud() {
         const el = document.getElementById("tag-filters");
         if (allTags.size === 0) {
           el.innerHTML = "";
           return;
         }
-        const sorted = [...allTags].sort();
+        const counts = [...allTags.entries()];
+        const maxCount = Math.max(...counts.map(([, c]) => c));
+        const minCount = Math.min(...counts.map(([, c]) => c));
+        const range = maxCount - minCount || 1;
+        const sorted = counts.sort((a, b) => a[0].localeCompare(b[0]));
         el.innerHTML = sorted
-          .map(
-            (t) =>
-              `<span class="tag-pill ${currentTag === t ? "active" : ""}" onclick="toggleTag('${t.replace(/'/g, "\\'")}')">${t}</span>`,
-          )
+          .map(([t, count]) => {
+            const weight = (count - minCount) / range;
+            const size = (0.72 + weight * 0.56).toFixed(2);
+            const opacity = (0.55 + weight * 0.45).toFixed(2);
+            return `<span class="tag-word ${currentTag === t ? "active" : ""}"
+              style="font-size:${size}em;opacity:${opacity}"
+              onclick="toggleTag('${t.replace(/'/g, "\\'")}')">${t}</span>`;
+          })
           .join("");
       }
 
