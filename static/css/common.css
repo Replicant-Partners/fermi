@@ -402,3 +402,77 @@ a:hover {
 .theme-op1 .tag-pill {
   border-radius: 0;
 }
+
+/* ── Xaman Ek: Context + Execute + Help ── */
+.xaman-context-label {
+  padding: 6px 16px;
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg3);
+}
+.xaman-context-item {
+  display: block;
+  padding: 6px 16px;
+  font-size: 0.84em;
+  color: var(--aqua);
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.xaman-context-item:hover {
+  background: var(--bg1);
+}
+.xaman-exec-result {
+  padding: 12px 16px;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.xaman-exec-agent {
+  color: var(--yellow);
+  font-size: 0.78em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.xaman-exec-answer {
+  color: var(--fg1);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.xaman-exec-link {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--aqua);
+  font-size: 0.8em;
+  text-decoration: none;
+}
+.xaman-exec-link:hover {
+  text-decoration: underline;
+}
+.xaman-help {
+  padding: 12px 16px;
+}
+.xaman-help-title {
+  color: var(--yellow);
+  font-size: 0.9em;
+  margin-bottom: 8px;
+}
+.xaman-help-steps {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--fg2);
+  font-size: 0.84em;
+  line-height: 1.6;
+}
+.xaman-help-link {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--aqua);
+  font-size: 0.8em;
+  text-decoration: none;
+}
+.xaman-help-link:hover {
+  text-decoration: underline;
+}
