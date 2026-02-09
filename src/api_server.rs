@@ -393,8 +393,12 @@ async fn main() {
         .route("/auth/logout", post(auth_logout))
         // Stripe webhook (no auth — Stripe calls this directly)
         .route("/webhooks/stripe", post(stripe_webhook_handler))
-        // Profile page
+        // SIWE wallet auth
+        .route("/auth/siwe/challenge", post(siwe_challenge_handler))
+        .route("/auth/siwe/verify", post(siwe_verify_handler))
+        // Profile + Settings pages
         .route("/profile", get(profile_view))
+        .route("/settings", get(settings_view))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             optional_auth_middleware,
@@ -5166,6 +5170,158 @@ async fn stripe_webhook_handler(
     }
 
     Ok(StatusCode::OK)
+}
+
+// ─── Settings page ─────────────────────────────────────────────────
+
+async fn settings_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/settings.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/settings.html: {}", e);
+            format!("<h1>Settings</h1><p>Error loading template: {}</p>", e)
+        }
+    };
+    Html(html)
+}
+
+// ─── SIWE (Sign In With Ethereum) ──────────────────────────────────
+
+async fn siwe_challenge_handler(
+    State(state): State<AppState>,
+    Json(body): Json<fermi_auth::SiweChallenge>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let domain = std::env::var("SIWE_DOMAIN")
+        .or_else(|_| {
+            std::env::var("OAUTH_REDIRECT_URI").map(|u| {
+                // Extract host from URL like https://agent-bestiary.world/auth/callback
+                u.replace("https://", "")
+                    .replace("http://", "")
+                    .split('/')
+                    .next()
+                    .unwrap_or("agent-bestiary.world")
+                    .to_string()
+            })
+        })
+        .unwrap_or_else(|_| "agent-bestiary.world".to_string());
+
+    let challenge = fermi_auth::create_challenge(body.address.clone(), domain, &state.db)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    Ok(Json(json!({
+        "message": challenge.message,
+        "nonce": challenge.nonce,
+    })))
+}
+
+async fn siwe_verify_handler(
+    State(state): State<AppState>,
+    Json(body): Json<fermi_auth::SiweVerify>,
+) -> Result<Response, (StatusCode, String)> {
+    let result = fermi_auth::verify_signature(body.message, body.signature, &state.db)
+        .await
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
+
+    let eth_address = result.ethereum_address.clone();
+
+    // Find or create user by ethereum address
+    let user_row = sqlx::query(
+        "SELECT user_id, email, display_name, avatar_url, role FROM users WHERE ethereum_address = $1",
+    )
+    .bind(&eth_address)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let is_new;
+    let user = if let Some(row) = user_row {
+        is_new = false;
+        fermi_auth::User {
+            user_id: row.get("user_id"),
+            email: row.get::<Option<String>, _>("email").unwrap_or_default(),
+            display_name: row.get("display_name"),
+            role: fermi_auth::UserRole::Developer,
+            auth_provider: fermi_auth::AuthProvider::Ethereum,
+            github_username: None,
+            google_id: None,
+            ethereum_address: Some(eth_address.clone()),
+            ens_name: result.ens_name.clone(),
+        }
+    } else {
+        is_new = true;
+        let user_id = format!("eth_{}", &eth_address[2..10].to_lowercase());
+        let display_name = result.ens_name.clone().unwrap_or_else(|| {
+            format!(
+                "{}...{}",
+                &eth_address[..6],
+                &eth_address[eth_address.len() - 4..]
+            )
+        });
+
+        sqlx::query(
+            "INSERT INTO users (user_id, display_name, role, auth_provider, ethereum_address, ens_name)
+             VALUES ($1, $2, 'user', 'ethereum', $3, $4)
+             ON CONFLICT (user_id) DO NOTHING",
+        )
+        .bind(&user_id)
+        .bind(&display_name)
+        .bind(&eth_address)
+        .bind(&result.ens_name)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        fermi_auth::User {
+            user_id,
+            email: String::new(),
+            display_name: Some(display_name),
+            role: fermi_auth::UserRole::Developer,
+            auth_provider: fermi_auth::AuthProvider::Ethereum,
+            github_username: None,
+            google_id: None,
+            ethereum_address: Some(eth_address.clone()),
+            ens_name: result.ens_name.clone(),
+        }
+    };
+
+    // Grant onboarding credits to new users
+    if is_new {
+        if let Ok(wallet) = get_or_create_wallet(&state.db, "user", &user.user_id).await {
+            if wallet.total_deposited == 0 && wallet.balance == 0 {
+                let _ = credit_grant(
+                    &state.db,
+                    wallet.wallet_id,
+                    100,
+                    "Welcome onboarding grant (SIWE)",
+                )
+                .await;
+            }
+        }
+    }
+
+    // Issue JWT and set cookie
+    let token = create_session_token(&user, &state.jwt_secret)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let cookie = format!(
+        "abw_session={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800",
+        token
+    );
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::SET_COOKIE, cookie)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_string(&json!({
+                "user_id": user.user_id,
+                "display_name": user.display_name,
+                "ethereum_address": eth_address,
+            }))
+            .unwrap(),
+        ))
+        .unwrap())
 }
 
 /// Process a completed Stripe checkout — credit the user's wallet.

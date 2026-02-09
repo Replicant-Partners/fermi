@@ -664,14 +664,57 @@
           } else {
             area.innerHTML =
               '<a href="/auth/google" class="auth-btn">Google</a>' +
-              '<a href="/auth/github" class="auth-btn">GitHub</a>';
+              '<a href="/auth/github" class="auth-btn">GitHub</a>' +
+              (window.ethereum
+                ? '<button class="auth-btn" onclick="connectWallet()" style="cursor:pointer">Wallet</button>'
+                : "");
           }
         } catch (e) {
           area.innerHTML =
             '<a href="/auth/google" class="auth-btn">Google</a>' +
-            '<a href="/auth/github" class="auth-btn">GitHub</a>';
+            '<a href="/auth/github" class="auth-btn">GitHub</a>' +
+            (window.ethereum
+              ? '<button class="auth-btn" onclick="connectWallet()" style="cursor:pointer">Wallet</button>'
+              : "");
         }
       })();
+
+      // SIWE wallet connect
+      async function connectWallet() {
+        if (!window.ethereum) return;
+        try {
+          const accounts = await window.ethereum.request({
+            method: "eth_requestAccounts",
+          });
+          const address = accounts[0];
+          const challengeRes = await fetch("/auth/siwe/challenge", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ address }),
+          });
+          if (!challengeRes.ok) {
+            alert("Failed to get challenge");
+            return;
+          }
+          const { message } = await challengeRes.json();
+          const signature = await window.ethereum.request({
+            method: "personal_sign",
+            params: [message, address],
+          });
+          const verifyRes = await fetch("/auth/siwe/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message, signature }),
+          });
+          if (verifyRes.ok) {
+            window.location.href = "/dashboard";
+          } else {
+            alert("Wallet verification failed");
+          }
+        } catch (e) {
+          console.error("Wallet connect error:", e);
+        }
+      }
     </script>
   </body>
 </html>
