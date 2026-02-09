@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin - Agent Bestiary</title>
+    <style>
+      :root {
+        --bg0-hard: #1d2021;
+        --bg0: #282828;
+        --bg1: #3c3836;
+        --bg2: #504945;
+        --bg3: #665c54;
+        --fg0: #fbf1c7;
+        --fg1: #ebdbb2;
+        --fg2: #d5c4a1;
+        --fg3: #bdae93;
+        --yellow: #fabd2f;
+        --green: #b8bb26;
+        --red: #fb4934;
+        --aqua: #8ec07c;
+        --gray: #928374;
+        --blue: #83a598;
+        --purple: #d3869b;
+        --orange: #fe8019;
+      }
+      .theme-op1 {
+        --bg0-hard: #f5f5f0;
+        --bg0: #ffffff;
+        --bg1: #f0f0eb;
+        --bg2: #e0e0db;
+        --bg3: #c8c8c3;
+        --fg0: #1a1a1a;
+        --fg1: #2d2d2d;
+        --fg2: #4a4a4a;
+        --fg3: #6b6b6b;
+        --yellow: #ff6b00;
+        --green: #00c853;
+        --red: #ff1744;
+        --aqua: #00b8d4;
+        --gray: #9e9e9e;
+        --blue: #2979ff;
+        --purple: #ab47bc;
+        --orange: #ff9100;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        background: var(--bg0-hard);
+        color: var(--fg1);
+        font-family: "Berkeley Mono", "JetBrains Mono", monospace;
+        line-height: 1.6;
+      }
+      header {
+        background: var(--bg0);
+        border-bottom: 1px solid var(--bg2);
+        padding: 16px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      header h1 { font-size: 1.2rem; color: var(--fg0); }
+      header a {
+        color: var(--fg3);
+        text-decoration: none;
+        font-size: 0.85rem;
+        margin-left: 16px;
+      }
+      header a:hover { color: var(--yellow); }
+      .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+      /* Stats grid */
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 32px;
+      }
+      .stat-card {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+      }
+      .stat-card .value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: var(--yellow);
+      }
+      .stat-card .label {
+        font-size: 0.8rem;
+        color: var(--fg3);
+        margin-top: 4px;
+      }
+
+      /* Tabs */
+      .tabs {
+        display: flex;
+        gap: 0;
+        margin-bottom: 24px;
+        border-bottom: 1px solid var(--bg2);
+      }
+      .tab {
+        padding: 10px 20px;
+        cursor: pointer;
+        color: var(--fg3);
+        border-bottom: 2px solid transparent;
+        font-size: 0.9rem;
+        font-family: inherit;
+        background: none;
+        border-top: none;
+        border-left: none;
+        border-right: none;
+        transition: color 0.2s;
+      }
+      .tab:hover { color: var(--fg1); }
+      .tab.active {
+        color: var(--yellow);
+        border-bottom-color: var(--yellow);
+      }
+      .tab-content { display: none; }
+      .tab-content.active { display: block; }
+
+      /* Search */
+      .search-bar {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .search-bar input {
+        flex: 1;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        color: var(--fg1);
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-family: inherit;
+        font-size: 0.85rem;
+      }
+      .search-bar input:focus {
+        outline: none;
+        border-color: var(--yellow);
+      }
+
+      /* Table */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+      }
+      thead th {
+        text-align: left;
+        color: var(--fg3);
+        font-weight: normal;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--bg2);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      tbody tr {
+        border-bottom: 1px solid var(--bg1);
+        transition: background 0.15s;
+      }
+      tbody tr:hover { background: var(--bg1); }
+      td { padding: 10px 12px; }
+      td .user-id {
+        color: var(--fg3);
+        font-size: 0.75rem;
+      }
+
+      /* Buttons */
+      .btn {
+        display: inline-block;
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-family: inherit;
+        font-size: 0.8rem;
+        cursor: pointer;
+        border: 1px solid var(--bg2);
+        background: var(--bg1);
+        color: var(--fg1);
+        transition: all 0.15s;
+      }
+      .btn:hover { border-color: var(--yellow); color: var(--yellow); }
+      .btn-sm { padding: 4px 10px; font-size: 0.75rem; }
+      .btn-green { border-color: var(--green); color: var(--green); }
+      .btn-green:hover { background: var(--green); color: var(--bg0); }
+      .btn-red { border-color: var(--red); color: var(--red); }
+      .btn-red:hover { background: var(--red); color: var(--bg0); }
+
+      /* Grant modal */
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.6);
+        z-index: 100;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-overlay.active { display: flex; }
+      .modal {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        border-radius: 12px;
+        padding: 24px;
+        width: 400px;
+        max-width: 90vw;
+      }
+      .modal h3 {
+        color: var(--fg0);
+        margin-bottom: 16px;
+      }
+      .modal label {
+        display: block;
+        color: var(--fg3);
+        font-size: 0.8rem;
+        margin-bottom: 4px;
+        margin-top: 12px;
+      }
+      .modal input, .modal textarea {
+        width: 100%;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        color: var(--fg1);
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-family: inherit;
+        font-size: 0.85rem;
+      }
+      .modal textarea { resize: vertical; min-height: 60px; }
+      .modal-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 16px;
+      }
+
+      /* Pagination */
+      .pagination {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        margin-top: 16px;
+      }
+
+      /* Badge */
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: bold;
+      }
+      .badge-green { background: rgba(184,187,38,0.15); color: var(--green); }
+      .badge-red { background: rgba(251,73,52,0.15); color: var(--red); }
+      .badge-yellow { background: rgba(250,189,47,0.15); color: var(--yellow); }
+      .badge-gray { background: rgba(146,131,116,0.15); color: var(--gray); }
+
+      /* Ledger */
+      .ledger-filters {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+      }
+      .ledger-filters select {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        color: var(--fg1);
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-family: inherit;
+        font-size: 0.8rem;
+      }
+
+      /* Theme toggle */
+      .theme-toggle {
+        cursor: pointer;
+        background: none;
+        border: none;
+        color: var(--fg3);
+        font-size: 1rem;
+        padding: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Admin Panel</h1>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/">Catalogue</a>
+        <a href="/profile">Profile</a>
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">&#9681;</button>
+      </nav>
+    </header>
+
+    <div class="container">
+      <!-- Stats -->
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-card"><div class="value" id="stat-users">-</div><div class="label">Total Users</div></div>
+        <div class="stat-card"><div class="value" id="stat-agents">-</div><div class="label">Total Agents</div></div>
+        <div class="stat-card"><div class="value" id="stat-episodes">-</div><div class="label">Total Episodes</div></div>
+        <div class="stat-card"><div class="value" id="stat-credits">-</div><div class="label">Credits in Circulation</div></div>
+        <div class="stat-card"><div class="value" id="stat-spent">-</div><div class="label">Credits Spent</div></div>
+        <div class="stat-card"><div class="value" id="stat-txs24h">-</div><div class="label">Transactions (24h)</div></div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab active" data-tab="users">Users</button>
+        <button class="tab" data-tab="agents">Agents</button>
+        <button class="tab" data-tab="ledger">Credit Ledger</button>
+      </div>
+
+      <!-- Users Tab -->
+      <div class="tab-content active" id="tab-users">
+        <div class="search-bar">
+          <input type="text" id="user-search" placeholder="Search users by name or email..." />
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Provider</th>
+              <th>Balance</th>
+              <th>Agents</th>
+              <th>Joined</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+        <div class="pagination" id="users-pagination"></div>
+      </div>
+
+      <!-- Agents Tab -->
+      <div class="tab-content" id="tab-agents">
+        <div class="search-bar">
+          <input type="text" id="agent-search" placeholder="Search agents by name..." />
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Owner</th>
+              <th>Visibility</th>
+              <th>Executions</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="agents-tbody"></tbody>
+        </table>
+        <div class="pagination" id="agents-pagination"></div>
+      </div>
+
+      <!-- Ledger Tab -->
+      <div class="tab-content" id="tab-ledger">
+        <div class="ledger-filters">
+          <select id="ledger-type">
+            <option value="">All types</option>
+            <option value="deposit">Deposits</option>
+            <option value="charge">Charges</option>
+            <option value="grant">Grants</option>
+            <option value="gas">Gas fees</option>
+          </select>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>User</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody id="ledger-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Grant Credits Modal -->
+    <div class="modal-overlay" id="grant-modal">
+      <div class="modal">
+        <h3>Grant Credits</h3>
+        <p id="grant-target" style="color:var(--fg3);font-size:0.85rem;"></p>
+        <label>Credits</label>
+        <input type="number" id="grant-amount" value="100" min="1" max="10000" />
+        <label>Reason</label>
+        <textarea id="grant-reason" placeholder="e.g., Beta tester reward"></textarea>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeGrantModal()">Cancel</button>
+          <button class="btn btn-green" onclick="submitGrant()">Grant</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // --- Auth check ---
+      let currentUser = null;
+      async function checkAuth() {
+        try {
+          const res = await fetch('/api/auth/me');
+          if (!res.ok) { window.location.href = '/'; return; }
+          currentUser = await res.json();
+        } catch {
+          window.location.href = '/';
+        }
+      }
+
+      // --- Stats ---
+      async function loadStats() {
+        try {
+          const res = await fetch('/api/admin/stats');
+          if (res.status === 403) {
+            document.querySelector('.container').innerHTML =
+              '<div style="text-align:center;padding:80px 0;color:var(--red);">' +
+              '<h2>Access Denied</h2><p style="color:var(--fg3);margin-top:8px;">Admin role required.</p>' +
+              '<a href="/dashboard" style="color:var(--yellow);margin-top:16px;display:inline-block;">Back to Dashboard</a></div>';
+            return;
+          }
+          if (!res.ok) return;
+          const stats = await res.json();
+          document.getElementById('stat-users').textContent = stats.total_users || 0;
+          document.getElementById('stat-agents').textContent = stats.total_agents || 0;
+          document.getElementById('stat-episodes').textContent = stats.total_episodes || 0;
+          document.getElementById('stat-credits').textContent = stats.total_credits || 0;
+          document.getElementById('stat-spent').textContent = stats.total_spent || 0;
+          document.getElementById('stat-txs24h').textContent = stats.transactions_24h || 0;
+        } catch (e) {
+          console.error('Failed to load stats', e);
+        }
+      }
+
+      // --- Users ---
+      let usersPage = 1;
+      async function loadUsers(search = '', page = 1) {
+        usersPage = page;
+        try {
+          const params = new URLSearchParams({ page, limit: 20 });
+          if (search) params.set('search', search);
+          const res = await fetch('/api/admin/users?' + params);
+          if (!res.ok) return;
+          const data = await res.json();
+          const tbody = document.getElementById('users-tbody');
+          tbody.innerHTML = '';
+          (data.users || []).forEach(u => {
+            const joined = u.created_at ? new Date(u.created_at).toLocaleDateString() : '-';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>
+                <div>${escHtml(u.display_name || u.user_id || '-')}</div>
+                <div class="user-id">${escHtml(u.email || u.user_id || '')}</div>
+              </td>
+              <td>${escHtml(u.provider || '-')}</td>
+              <td style="color:var(--yellow);font-weight:bold;">${u.balance ?? '-'}</td>
+              <td>${u.agent_count ?? '-'}</td>
+              <td style="color:var(--fg3);">${joined}</td>
+              <td>
+                <button class="btn btn-sm btn-green" onclick="openGrantModal('${escAttr(u.user_id)}', '${escAttr(u.display_name || u.user_id)}')">Grant</button>
+              </td>`;
+            tbody.appendChild(tr);
+          });
+        } catch (e) {
+          console.error('Failed to load users', e);
+        }
+      }
+
+      // --- Agents ---
+      let agentsPage = 1;
+      async function loadAgents(search = '', page = 1) {
+        agentsPage = page;
+        try {
+          const params = new URLSearchParams({ page, limit: 20 });
+          if (search) params.set('search', search);
+          const res = await fetch('/api/admin/agents?' + params);
+          if (!res.ok) return;
+          const data = await res.json();
+          const tbody = document.getElementById('agents-tbody');
+          tbody.innerHTML = '';
+          (data.agents || []).forEach(a => {
+            const created = a.created_at ? new Date(a.created_at).toLocaleDateString() : '-';
+            const visBadge = a.visibility === 'public' ? 'badge-green' :
+                             a.visibility === 'private' ? 'badge-gray' : 'badge-yellow';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td><a href="/agents/${a.id}" style="color:var(--aqua);text-decoration:none;">${escHtml(a.display_alias || a.agent_name || '-')}</a></td>
+              <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(a.owner_id || '-')}</td>
+              <td><span class="badge ${visBadge}">${escHtml(a.visibility || 'public')}</span></td>
+              <td>${a.execution_count ?? 0}</td>
+              <td style="color:var(--fg3);">${created}</td>
+              <td>
+                ${a.visibility !== 'hidden'
+                  ? `<button class="btn btn-sm btn-red" onclick="flagAgent('${a.id}')">Hide</button>`
+                  : `<button class="btn btn-sm" onclick="unflagAgent('${a.id}')">Unhide</button>`}
+              </td>`;
+            tbody.appendChild(tr);
+          });
+        } catch (e) {
+          console.error('Failed to load agents', e);
+        }
+      }
+
+      // --- Ledger ---
+      async function loadLedger(typeFilter = '') {
+        try {
+          const params = new URLSearchParams({ limit: 50 });
+          if (typeFilter) params.set('type', typeFilter);
+          // Use the wallet transactions endpoint for now
+          const res = await fetch('/api/wallet/transactions?' + params);
+          if (!res.ok) return;
+          const data = await res.json();
+          const tbody = document.getElementById('ledger-tbody');
+          tbody.innerHTML = '';
+          (data.transactions || []).forEach(tx => {
+            const time = tx.created_at ? new Date(tx.created_at).toLocaleString() : '-';
+            const amountColor = tx.amount > 0 ? 'var(--green)' : 'var(--red)';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td style="color:var(--fg3);font-size:0.8rem;">${time}</td>
+              <td style="font-size:0.8rem;">${escHtml(tx.wallet_id || '-')}</td>
+              <td><span class="badge badge-yellow">${escHtml(tx.tx_type || '-')}</span></td>
+              <td style="color:${amountColor};font-weight:bold;">${tx.amount > 0 ? '+' : ''}${tx.amount}</td>
+              <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(tx.description || '-')}</td>`;
+            tbody.appendChild(tr);
+          });
+        } catch (e) {
+          console.error('Failed to load ledger', e);
+        }
+      }
+
+      // --- Grant modal ---
+      let grantTargetUserId = '';
+      function openGrantModal(userId, displayName) {
+        grantTargetUserId = userId;
+        document.getElementById('grant-target').textContent = 'Granting to: ' + displayName;
+        document.getElementById('grant-amount').value = 100;
+        document.getElementById('grant-reason').value = '';
+        document.getElementById('grant-modal').classList.add('active');
+      }
+      function closeGrantModal() {
+        document.getElementById('grant-modal').classList.remove('active');
+      }
+      async function submitGrant() {
+        const credits = parseInt(document.getElementById('grant-amount').value) || 100;
+        const reason = document.getElementById('grant-reason').value || 'Admin grant';
+        try {
+          const res = await fetch('/api/admin/users/' + encodeURIComponent(grantTargetUserId) + '/grant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credits, reason })
+          });
+          if (res.ok) {
+            closeGrantModal();
+            loadUsers(document.getElementById('user-search').value);
+            loadStats();
+          } else {
+            const err = await res.text();
+            alert('Grant failed: ' + err);
+          }
+        } catch (e) {
+          alert('Grant failed: ' + e.message);
+        }
+      }
+
+      // --- Flag/unflag agent ---
+      async function flagAgent(agentId) {
+        if (!confirm('Hide this agent from the catalogue?')) return;
+        await fetch('/api/admin/agents/' + agentId + '/flag', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visibility: 'hidden' })
+        });
+        loadAgents(document.getElementById('agent-search').value);
+      }
+      async function unflagAgent(agentId) {
+        await fetch('/api/admin/agents/' + agentId + '/flag', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visibility: 'public' })
+        });
+        loadAgents(document.getElementById('agent-search').value);
+      }
+
+      // --- Tabs ---
+      document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+          tab.classList.add('active');
+          document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        });
+      });
+
+      // --- Search ---
+      let userSearchTimeout, agentSearchTimeout;
+      document.getElementById('user-search').addEventListener('input', (e) => {
+        clearTimeout(userSearchTimeout);
+        userSearchTimeout = setTimeout(() => loadUsers(e.target.value), 300);
+      });
+      document.getElementById('agent-search').addEventListener('input', (e) => {
+        clearTimeout(agentSearchTimeout);
+        agentSearchTimeout = setTimeout(() => loadAgents(e.target.value), 300);
+      });
+      document.getElementById('ledger-type').addEventListener('change', (e) => {
+        loadLedger(e.target.value);
+      });
+
+      // --- Utils ---
+      function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+      function escAttr(s) { return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+      // --- Theme ---
+      function toggleTheme() {
+        const html = document.documentElement;
+        const isHasui = html.classList.contains('theme-hasui');
+        html.classList.toggle('theme-hasui', !isHasui);
+        html.classList.toggle('theme-op1', isHasui);
+        localStorage.setItem('theme', isHasui ? 'op1' : 'hasui');
+      }
+      (function() {
+        const saved = localStorage.getItem('theme');
+        if (saved === 'op1') {
+          document.documentElement.classList.remove('theme-hasui');
+          document.documentElement.classList.add('theme-op1');
+        }
+      })();
+
+      // --- Init ---
+      checkAuth().then(() => {
+        loadStats();
+        loadUsers();
+        loadAgents();
+        loadLedger();
+      });
+    </script>
+  </body>
+</html>
