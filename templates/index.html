@@ -498,6 +498,10 @@
           <div class="subtitle">make your agents dreams come true</div>
         </div>
         <div class="header-right">
+          <div class="header-stat">
+            <div class="stat-value-header" id="total-agents">--</div>
+            <div class="stat-label-header">Specimens</div>
+          </div>
           <a href="/catalogue" style="color: var(--yellow)">Catalogue</a>
           <a href="/dashboard">Dashboard</a>
           <div id="user-area" class="auth-area"></div>
@@ -648,7 +652,8 @@
           const response = await fetch(`/api/agents?${params}`);
           const data = await response.json();
 
-          document.getElementById("total-agents").textContent = data.total;
+          const totalEl = document.getElementById("total-agents");
+          if (totalEl) totalEl.textContent = data.total;
 
           const grid = document.getElementById("specimens-grid");
           grid.innerHTML = "";
