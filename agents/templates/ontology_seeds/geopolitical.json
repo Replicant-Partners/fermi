@@ -1,0 +1,9 @@
+{
+  "template_id": "geopolitical",
+  "name": "Geopolitical Risk & Analysis",
+  "description": "Countries, regions, alliances, conflicts, sanctions, and political events",
+  "mermaid": "erDiagram\n    COUNTRY }o--o{ ALLIANCE : member_of\n    COUNTRY ||--o{ POLITICAL_EVENT : experiences\n    CONFLICT }o--o{ COUNTRY : involves\n    SANCTION }o--|| COUNTRY : targets\n    SANCTION }o--|| COUNTRY : imposed_by\n    REGION ||--o{ COUNTRY : contains\n    POLITICAL_EVENT ||--o{ IMPACT : causes\n",
+  "tags": ["geopolitics", "risk", "international", "policy"],
+  "entity_count": 7,
+  "suggested_type": "risk"
+}

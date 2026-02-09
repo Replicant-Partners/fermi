@@ -210,6 +210,7 @@ pub struct Agent {
     pub education_budget_credits: i32,
     #[serde(default)]
     pub education_credits_used: i32,
+    pub display_alias: Option<String>,
 }
 
 fn default_visibility() -> String {
@@ -226,6 +227,7 @@ pub struct AgentUpdate {
     pub model: Option<String>,
     pub temperature: Option<f64>,
     pub education_budget_credits: Option<i32>,
+    pub display_alias: Option<String>,
 }
 
 /// Community (clustered group of entities)

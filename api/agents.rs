@@ -122,6 +122,7 @@ async fn create_agent(req: Request) -> Result<Response<Body>, Error> {
         dreaming_budget_reset_at: None,
         education_budget_credits: 0,
         education_credits_used: 0,
+        display_alias: None,
     };
 
     // Upsert agent

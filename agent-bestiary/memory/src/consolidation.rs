@@ -472,6 +472,7 @@ mod tests {
             tags: vec![],
             education_budget_credits: 0,
             education_credits_used: 0,
+            display_alias: None,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

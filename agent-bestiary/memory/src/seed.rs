@@ -164,6 +164,7 @@ impl SeedData {
                 tags: vec![],
                 education_budget_credits: 0,
                 education_credits_used: 0,
+                display_alias: None,
             },
             Agent {
                 agent_id: make_uuid(1, 0, 0),
@@ -199,6 +200,7 @@ impl SeedData {
                 tags: vec![],
                 education_budget_credits: 0,
                 education_credits_used: 0,
+                display_alias: None,
             },
             Agent {
                 agent_id: make_uuid(2, 0, 0),
@@ -229,6 +231,7 @@ impl SeedData {
                 tags: vec![],
                 education_budget_credits: 0,
                 education_credits_used: 0,
+                display_alias: None,
             },
         ]
     }
