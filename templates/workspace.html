@@ -726,7 +726,11 @@
     </style>
   </head>
   <body>
-    <!-- ─── Header ─── -->
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({ current: "dashboard" });
+    </script>
+    <!-- ─── Workspace Controls ─── -->
     <div class="ws-header">
       <div class="ws-header-left">
         <button class="btn members-toggle" id="members-toggle">Members</button>
@@ -746,16 +750,6 @@
       </div>
       <div class="ws-header-right">
         <button class="btn" id="fund-btn">Fund</button>
-        <a href="/dashboard">Dashboard</a>
-        <a href="/profile">Profile</a>
-        <a href="/catalogue">Catalogue</a>
-        <button
-          id="theme-toggle"
-          class="theme-toggle-btn"
-          title="Toggle Theme (Ctrl+T)"
-        >
-          OP-1
-        </button>
       </div>
     </div>
 
@@ -2121,6 +2115,7 @@
         return d.innerHTML;
       }
     </script>
+    <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
   </body>
 </html>

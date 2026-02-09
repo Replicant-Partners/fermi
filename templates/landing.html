@@ -413,20 +413,10 @@
   </head>
   <body>
     <!-- Header -->
-    <header class="site-header">
-      <a href="/" class="logo">Agent Bestiary</a>
-      <nav class="header-nav">
-        <a href="/catalogue">Catalogue</a>
-        <a href="/dashboard">Dashboard</a>
-        <button
-          class="theme-toggle-btn"
-          id="theme-toggle"
-          title="Toggle Theme (Ctrl+T)"
-        >
-          OP-1
-        </button>
-      </nav>
-    </header>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({});
+    </script>
 
     <!-- Hero -->
     <section class="hero">
@@ -741,6 +731,7 @@
       <p>Agent Bestiary &mdash; agent-bestiary.world</p>
     </footer>
 
+    <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
     <!-- Waitlist -->
     <script>

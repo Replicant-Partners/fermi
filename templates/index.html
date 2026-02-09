@@ -68,19 +68,6 @@
       }
 
       /* Architectural Header - Lacaton & Vassal Style */
-      header {
-        border-bottom: 1px solid var(--bg3);
-        padding: 20px 30px;
-        background: var(--bg0);
-      }
-
-      .header-grid {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: 40px;
-        align-items: baseline;
-      }
-
       .header-left {
         display: flex;
         flex-direction: column;
@@ -490,32 +477,14 @@
     </style>
   </head>
   <body>
-    <header>
-      <div class="header-grid">
-        <div class="header-left">
-          <a href="/" style="color: var(--fg1); text-decoration: none"
-            ><h1>Agent Bestiary</h1></a
-          >
-          <div class="subtitle">make your agents dreams come true</div>
-        </div>
-        <div class="header-right">
-          <div class="header-stat">
-            <div class="stat-value-header" id="total-agents">--</div>
-            <div class="stat-label-header">Specimens</div>
-          </div>
-          <a href="/catalogue" style="color: var(--yellow)">Catalogue</a>
-          <a href="/dashboard">Dashboard</a>
-          <div id="user-area" class="auth-area"></div>
-          <button
-            id="theme-toggle"
-            class="theme-toggle-btn"
-            title="Toggle Theme (Ctrl+T)"
-          >
-            OP-1
-          </button>
-        </div>
-      </div>
-    </header>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({
+        current: "catalogue",
+        subtitle: "make your agents dreams come true",
+        stat: { value: "--", label: "Specimens", id: "total-agents" },
+      });
+    </script>
 
     <div class="container">
       <h2 class="section-title">Catalogue</h2>
@@ -870,6 +839,7 @@
       loadAgents();
     </script>
 
+    <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
     <script src="/static/js/auth.js"></script>
   </body>

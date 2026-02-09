@@ -777,38 +777,10 @@
   </head>
   <body>
     <div class="container">
-      <header
-        style="
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px 20px;
-          border-bottom: 1px solid var(--bg2);
-        "
-      >
-        <a
-          href="/"
-          style="
-            color: var(--fg1);
-            text-decoration: none;
-            font-size: 1.1em;
-            font-weight: 600;
-          "
-          >Agent Bestiary</a
-        >
-        <div style="display: flex; align-items: center; gap: 16px">
-          <a href="/catalogue">Catalogue</a>
-          <a href="/dashboard">Dashboard</a>
-          <div id="user-area" class="auth-area"></div>
-          <button
-            id="theme-toggle"
-            class="theme-toggle-btn"
-            title="Toggle Theme (Ctrl+T)"
-          >
-            OP-1
-          </button>
-        </div>
-      </header>
+      <script src="/static/js/widgets/nav.js"></script>
+      <script>
+        Nav.init({ back: { label: "\u2190 Catalogue", href: "/catalogue" } });
+      </script>
 
       <div id="owner-panel-slot"></div>
       <div id="agent-content">
@@ -1743,6 +1715,7 @@
       }
     </script>
 
+    <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
     <script src="/static/js/auth.js"></script>
     <script>

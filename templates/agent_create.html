@@ -12,18 +12,6 @@
         font-family: "Berkeley Mono", "JetBrains Mono", monospace;
         line-height: 1.6;
       }
-      header {
-        background: var(--bg0);
-        border-bottom: 1px solid var(--bg2);
-        padding: 14px 24px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      header h1 {
-        font-size: 1.1rem;
-        color: var(--fg0);
-      }
       header a {
         color: var(--fg3);
         text-decoration: none;
@@ -501,17 +489,10 @@
     </style>
   </head>
   <body>
-    <header>
-      <div><h1>Create Agent</h1></div>
-      <div>
-        <a href="/dashboard">Dashboard</a>
-        <a href="/profile">Profile</a>
-        <a href="/catalogue">Catalogue</a>
-        <button id="theme-toggle" class="theme-toggle-btn" title="Ctrl+T">
-          OP-1
-        </button>
-      </div>
-    </header>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({ title: "Create Agent" });
+    </script>
 
     <div class="wizard-container">
       <!-- Mode toggle: Create vs Import -->
@@ -1537,6 +1518,7 @@
         return d.innerHTML;
       }
     </script>
+    <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
   </body>
 </html>

@@ -8,18 +8,6 @@
     <link rel="stylesheet" href="/static/css/common.css" />
     <link rel="stylesheet" href="/static/css/components.css" />
     <style>
-      header {
-        background: var(--bg0);
-        border-bottom: 1px solid var(--bg2);
-        padding: 16px 24px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      header h1 {
-        font-size: 1.2rem;
-        color: var(--fg0);
-      }
       header a {
         color: var(--fg3);
         text-decoration: none;
@@ -252,23 +240,10 @@
     </style>
   </head>
   <body>
-    <header>
-      <a href="/" style="color: var(--fg1); text-decoration: none"
-        ><h1>Agent Bestiary</h1></a
-      >
-      <div>
-        <a href="/catalogue">Catalogue</a>
-        <a href="/dashboard">Dashboard</a>
-        <a href="/profile" style="color: var(--yellow)">Profile</a>
-        <button
-          id="theme-toggle"
-          class="theme-toggle-btn"
-          title="Toggle Theme (Ctrl+T)"
-        >
-          OP-1
-        </button>
-      </div>
-    </header>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({ current: "profile" });
+    </script>
 
     <div class="container">
       <!-- Profile Header -->
@@ -644,6 +619,7 @@
         }
       }
     </script>
+    <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
   </body>
 </html>

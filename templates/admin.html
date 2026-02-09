@@ -12,18 +12,6 @@
         font-family: "Berkeley Mono", "JetBrains Mono", monospace;
         line-height: 1.6;
       }
-      header {
-        background: var(--bg0);
-        border-bottom: 1px solid var(--bg2);
-        padding: 16px 24px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      header h1 {
-        font-size: 1.2rem;
-        color: var(--fg0);
-      }
       header a {
         color: var(--fg3);
         text-decoration: none;
@@ -294,21 +282,10 @@
     </style>
   </head>
   <body>
-    <header>
-      <h1>Admin Panel</h1>
-      <nav>
-        <a href="/dashboard">Dashboard</a>
-        <a href="/catalogue">Catalogue</a>
-        <a href="/profile">Profile</a>
-        <button
-          id="theme-toggle"
-          class="theme-toggle-btn"
-          title="Toggle theme (Ctrl+T)"
-        >
-          OP-1
-        </button>
-      </nav>
-    </header>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({ title: "Admin Panel" });
+    </script>
 
     <div class="container">
       <!-- Stats -->
@@ -455,6 +432,7 @@
       </div>
     </div>
 
+    <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
     <script>
       // --- Auth check ---

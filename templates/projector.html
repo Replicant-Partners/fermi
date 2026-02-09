@@ -24,8 +24,8 @@
       .layout {
         display: grid;
         grid-template-columns: 280px 1fr;
-        grid-template-rows: 48px 1fr 60px;
-        height: 100vh;
+        grid-template-rows: 1fr 60px;
+        height: calc(100vh - 49px); /* subtract nav header height */
       }
 
       /* ─── Header ─── */
@@ -510,21 +510,14 @@
     </style>
   </head>
   <body>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({
+        title: "Embedding Projector",
+        back: { label: "\u2190 Back", href: "/catalogue" },
+      });
+    </script>
     <div class="layout">
-      <!-- Header -->
-      <div class="header">
-        <div class="header-left">
-          <a class="back-button" id="back-link" href="/catalogue">Back</a>
-          <span class="header-title">Embedding Projector</span>
-        </div>
-        <div class="header-right">
-          <span class="agent-badge" id="agent-badge"></span>
-          <button class="btn" id="theme-toggle" title="Toggle theme (Ctrl+T)">
-            Theme
-          </button>
-        </div>
-      </div>
-
       <!-- Sidebar -->
       <div class="sidebar">
         <div class="sidebar-section">
@@ -683,6 +676,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
+    <script src="/static/js/widgets/xaman-ek.js"></script>
     <!-- Shared theme toggle (migrates abw-theme → fermi-theme, wires #theme-toggle) -->
     <script src="/static/js/theme.js"></script>
 
@@ -770,11 +764,12 @@
 
         // ─── URL setup ───
         if (agentId) {
-          document.getElementById("back-link").href = "/agent/" + agentId;
-          document.getElementById("back-link").textContent = "Back to Specimen";
-          document.getElementById("agent-badge").textContent = agentId;
-        } else {
-          document.getElementById("agent-badge").textContent = "Bestiary-wide";
+          // Nav back link already points to /catalogue; update to agent-specific
+          const navBack = document.querySelector(".nav-back");
+          if (navBack) {
+            navBack.href = "/agent/" + agentId;
+            navBack.textContent = "\u2190 Specimen";
+          }
         }
 
         // ─── Data loading ───
