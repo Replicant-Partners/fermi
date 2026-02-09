@@ -153,6 +153,55 @@
         color: var(--fg3);
         font-size: 0.75rem;
       }
+      /* ─── Micro sparklines ─── */
+      .agent-row-detail {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--bg1);
+        gap: 12px;
+      }
+      .agent-row-detail:last-child {
+        border-bottom: none;
+      }
+      .agent-info {
+        flex: 1;
+        min-width: 0;
+      }
+      .agent-sparks {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        flex-shrink: 0;
+      }
+      .spark-group {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+      }
+      .spark-label {
+        font-size: 0.55rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .spark-total {
+        font-size: 0.65rem;
+        font-weight: bold;
+      }
+      .spark-bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 1px;
+        height: 20px;
+      }
+      .spark-bar {
+        width: 3px;
+        min-height: 1px;
+        border-radius: 1px 1px 0 0;
+      }
       .badge {
         font-size: 0.7rem;
         padding: 2px 6px;
@@ -323,19 +372,31 @@
                 '<div class="empty-state">No agents yet. <a href="/agents/new" style="color:var(--yellow)">Create one</a></div>';
             } else {
               el.innerHTML = data.agents
-                .map(
-                  (a) => `
-                <div class="agent-row">
-                  <div>
+                .map((a) => {
+                  const mock = mockAgentEconomics(
+                    a.agent_name,
+                    a.total_executions,
+                  );
+                  return `
+                <div class="agent-row-detail">
+                  <div class="agent-info">
                     <div class="agent-name">${a.agent_name}</div>
-                    <div class="agent-meta">${a.agent_type} | ${a.total_executions} executions</div>
+                    <div class="agent-meta">${a.agent_type} | ${a.total_executions} exec | <span class="badge badge-${a.visibility}">${a.visibility}</span></div>
                   </div>
-                  <div>
-                    <span class="badge badge-${a.visibility}">${a.visibility}</span>
+                  <div class="agent-sparks">
+                    <div class="spark-group">
+                      <div class="spark-label">earn</div>
+                      ${renderSparkBars(mock.earnings, "var(--green)")}
+                      <div class="spark-total" style="color:var(--green)">${mock.totalEarnings}</div>
+                    </div>
+                    <div class="spark-group">
+                      <div class="spark-label">cost</div>
+                      ${renderSparkBars(mock.costs, "var(--red)")}
+                      <div class="spark-total" style="color:var(--red)">${mock.totalCosts}</div>
+                    </div>
                   </div>
-                </div>
-              `,
-                )
+                </div>`;
+                })
                 .join("");
             }
           }
@@ -439,6 +500,58 @@
             alert("Failed to create workspace");
           }
         });
+
+      // ─── Sparkline rendering ───
+      function renderSparkBars(values, color) {
+        const max = Math.max(...values, 1);
+        const bars = values
+          .map((v) => {
+            const h = Math.max(1, Math.round((v / max) * 20));
+            const opacity = v === 0 ? 0.2 : 0.4 + (v / max) * 0.6;
+            return `<div class="spark-bar" style="height:${h}px;background:${color};opacity:${opacity.toFixed(2)}"></div>`;
+          })
+          .join("");
+        return `<div class="spark-bars">${bars}</div>`;
+      }
+
+      // Generate deterministic mock economics for 12 weeks (3 months)
+      // Seeded by agent name hash so each agent gets consistent data across refreshes
+      function mockAgentEconomics(name, executions) {
+        let seed = 0;
+        for (let i = 0; i < name.length; i++)
+          seed = ((seed << 5) - seed + name.charCodeAt(i)) | 0;
+        const rng = () => {
+          seed = (seed * 16807 + 0) % 2147483647;
+          return (seed & 0x7fffffff) / 2147483647;
+        };
+
+        // Base activity level from actual executions (or mock if 0)
+        const activity = Math.max(executions, Math.floor(rng() * 50) + 5);
+        const earningPower = rng() * 0.8 + 0.2; // 0.2-1.0 multiplier
+        const costBase = rng() * 0.3 + 0.1; // cost is 10-40% of earnings
+
+        const weeks = 12;
+        const earnings = [];
+        const costs = [];
+
+        for (let w = 0; w < weeks; w++) {
+          // Trend upward slightly over time
+          const trend = 1 + (w / weeks) * 0.5;
+          const noise = 0.5 + rng();
+          const weekExecs = Math.floor((activity / 4) * trend * noise);
+          const earn = Math.floor(weekExecs * earningPower * (1 + rng() * 0.3));
+          const cost = Math.floor(weekExecs * costBase * (0.8 + rng() * 0.4));
+          earnings.push(earn);
+          costs.push(cost);
+        }
+
+        return {
+          earnings,
+          costs,
+          totalEarnings: earnings.reduce((a, b) => a + b, 0),
+          totalCosts: costs.reduce((a, b) => a + b, 0),
+        };
+      }
 
       // Theme toggle
       const themes = ["hasui", "op1"];
