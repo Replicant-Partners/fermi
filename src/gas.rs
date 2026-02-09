@@ -1,12 +1,16 @@
 //! Gas fee module — every A2A transaction has a cost.
 //!
+//! Two-layer economic model:
+//!   Layer 1 (Credits): Platform gas — users buy credits, spend on actions. The product.
+//!   Layer 2 (Crypto):  Agent-to-owner royalties — % tx fee on token transfers. Future.
+//!
 //! Gas fees fund the platform. Configurable via env vars with sensible defaults.
 
 use fermi_auth::credit_charge;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// Gas fee schedule
+/// Layer 1: Credit gas fee schedule (the product)
 #[derive(Debug, Clone)]
 pub struct GasFees {
     pub message_send: i32,
@@ -15,6 +19,10 @@ pub struct GasFees {
     pub execution_min: i32,
     pub execution_gas_pct: f64,
     pub consolidation_cycle: i32,
+    /// Layer 2: Platform transaction fee on crypto token transfers (agent→owner royalties).
+    /// Expressed as a fraction (e.g. 0.025 = 2.5%). Applied to every token payout.
+    /// Not yet wired — requires SIWE wallet connection + settlement layer.
+    pub crypto_tx_fee_pct: f64,
 }
 
 impl GasFees {
@@ -29,6 +37,10 @@ impl GasFees {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.10),
             consolidation_cycle: env_or("GAS_CONSOLIDATION", 3),
+            crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.025),
         }
     }
 
@@ -49,6 +61,7 @@ impl Default for GasFees {
             execution_min: 1,
             execution_gas_pct: 0.10,
             consolidation_cycle: 3,
+            crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
     }
 }

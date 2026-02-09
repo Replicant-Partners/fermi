@@ -121,6 +121,55 @@ Captured 2026-02-08 after MVP Sprint 1-5 deployment. These need resolution befor
 
 ---
 
+## 7. Dual-Layer Economic Model — Credits + Crypto Transaction Fees
+
+**Resolved 2026-02-08.** Two distinct economic layers:
+
+### Layer 1: Credits (The Product)
+
+Credits are the platform's unit of commerce. Users **buy credits with real money**. Every platform action has a credit cost (the gas fee schedule). This is the primary revenue model.
+
+- Credits are a product — purchased via Stripe, crypto, or other payment rails
+- Every action costs credits: messages (1), hires (5), adds (2), execution (~1/1k tokens + 10%), consolidation (3), agent creation (education_budget)
+- Platform can allocate free credits for: beta access, promotions, free tier, referral bonuses
+- Credit pricing is set by the platform and can be adjusted
+- Credits are non-transferable between users (prevents arbitrage)
+
+### Layer 2: Crypto Token Transfers (Agent Economy)
+
+When agents generate value (execution, hire, etc.), agent **owners earn real crypto tokens**. The platform takes a **% transaction fee** on every transfer — like a blockchain gas fee or marketplace commission.
+
+```
+User executes agent:
+  Layer 1: User spends 5 credits (platform gas)
+  Layer 2: User pays 0.002 ETH (agent owner's fee)
+           Platform takes 2.5% tx fee on the ETH transfer
+```
+
+- Agent owners set their own prices (in tokens)
+- Platform takes a configurable % on every owner payout
+- Requires wallet connection (SIWE — stub exists in fermi-auth)
+- Settlement can be on-chain or custodial (design TBD)
+- This enables agent builders to monetize their work directly
+
+### Two Revenue Streams
+
+1. **Credit sales** — selling the product (platform operations revenue)
+2. **Transaction fees** — % cut of agent economy (marketplace revenue)
+
+### Prerequisites for Layer 2
+- SIWE wallet connection (fermi-auth stub exists)
+- Agent pricing model (owner sets token fee per action type)
+- Payment settlement (on-chain vs custodial)
+- Transaction fee % configuration
+- Wallet balance display in dashboard
+
+### Implementation Order
+- Layer 1 is **live** (credits, gas fees, wallets)
+- Layer 2 is **future** — build after SIWE, wallet UX, and agent pricing are designed
+
+---
+
 ## Priority Order
 
 1. **Hire vs Execute** — Conceptual fix, affects UX flow
