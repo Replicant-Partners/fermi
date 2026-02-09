@@ -17,7 +17,8 @@ const AGENT_COLUMNS: &str = r#"
     dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at,
     education_budget_credits, education_credits_used, display_alias,
     llm_provider, embedding_provider, embedding_model, embedding_dimension,
-    sample_queries
+    sample_queries,
+    status, fork_pricing, forked_from, fork_count
 "#;
 
 pub struct MemoryStore {
@@ -173,9 +174,9 @@ impl MemoryStore {
                 dreaming_budget_credits, dreaming_credits_used,
                 education_budget_credits, education_credits_used, display_alias,
                 llm_provider, embedding_provider, embedding_model, embedding_dimension,
-                sample_queries
+                sample_queries, status, fork_pricing, forked_from, fork_count
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -187,7 +188,8 @@ impl MemoryStore {
                 mcp_servers = EXCLUDED.mcp_servers,
                 description = EXCLUDED.description,
                 system_prompt = EXCLUDED.system_prompt,
-                sample_queries = EXCLUDED.sample_queries
+                sample_queries = EXCLUDED.sample_queries,
+                status = EXCLUDED.status
             RETURNING agent_id
             "#,
         )
@@ -216,6 +218,10 @@ impl MemoryStore {
         .bind(&agent.embedding_model)
         .bind(agent.embedding_dimension)
         .bind(&agent.sample_queries)
+        .bind(&agent.status)
+        .bind(&agent.fork_pricing)
+        .bind(agent.forked_from)
+        .bind(agent.fork_count)
         .fetch_one(&self.pool)
         .await?;
 
@@ -306,9 +312,9 @@ impl MemoryStore {
                 system_prompt, visibility, user_id, tags,
                 dreaming_budget_credits, education_budget_credits, display_alias,
                 llm_provider, embedding_provider, embedding_model, embedding_dimension,
-                sample_queries
+                sample_queries, status, fork_pricing, forked_from, fork_count
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
             RETURNING agent_id
             "#,
         )
@@ -335,6 +341,10 @@ impl MemoryStore {
         .bind(&agent.embedding_model)
         .bind(agent.embedding_dimension)
         .bind(&agent.sample_queries)
+        .bind(&agent.status)
+        .bind(&agent.fork_pricing)
+        .bind(agent.forked_from)
+        .bind(agent.fork_count)
         .fetch_one(&self.pool)
         .await?;
 
@@ -377,7 +387,15 @@ impl MemoryStore {
         }
         if updates.display_alias.is_some() {
             set_clauses.push(format!("display_alias = ${}", param_idx));
-            // param_idx += 1; // last one
+            param_idx += 1;
+        }
+        if updates.status.is_some() {
+            set_clauses.push(format!("status = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.fork_pricing.is_some() {
+            set_clauses.push(format!("fork_pricing = ${}", param_idx));
+            let _ = param_idx; // last one
         }
 
         if set_clauses.is_empty() {
@@ -413,6 +431,12 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.display_alias {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.status {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.fork_pricing {
             query = query.bind(v);
         }
 
@@ -601,6 +625,12 @@ impl MemoryStore {
             sample_queries: row
                 .try_get::<Option<Vec<String>>, _>("sample_queries")?
                 .unwrap_or_default(),
+            status: row
+                .try_get("status")
+                .unwrap_or_else(|_| "draft".to_string()),
+            fork_pricing: row.try_get("fork_pricing").unwrap_or(None),
+            forked_from: row.try_get("forked_from").unwrap_or(None),
+            fork_count: row.try_get("fork_count").unwrap_or(0),
         })
     }
 

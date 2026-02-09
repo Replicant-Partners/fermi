@@ -20,6 +20,10 @@ pub mod agent_backend;
 // REST API (Phase 2)
 pub mod api;
 
+// Gas fees and workflow engine
+pub mod gas;
+pub mod workflows;
+
 // Re-export main types
 pub use ast::*;
 pub use evaluator::{evaluate, EvalError, EvaluationContext};

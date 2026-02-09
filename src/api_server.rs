@@ -34,9 +34,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tower_http::services::ServeDir;
 
-#[path = "gas.rs"]
-mod gas;
-use gas::{charge_gas, check_low_balance, GasFees};
+use fermi::gas::{charge_gas, check_low_balance, GasFees};
 
 use agent_bestiary_memory::{
     Agent, AgentUpdate, AnthropicEmbeddings, CoherenceEvaluation, ConsolidationLock,
@@ -2299,6 +2297,10 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
             sample_queries: card.metadata.sample_queries.clone(),
+            status: "published".to_string(),
+            fork_pricing: None,
+            forked_from: None,
+            fork_count: 0,
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -2506,6 +2508,10 @@ async fn create_agent_handler(
         embedding_model: req.embedding_model,
         embedding_dimension: req.embedding_dimension,
         sample_queries: vec![],
+        status: "draft".to_string(),
+        fork_pricing: None,
+        forked_from: None,
+        fork_count: 0,
     };
 
     // If education budget requested, debit from user's wallet
@@ -2721,6 +2727,10 @@ async fn import_agent_handler(
         embedding_model: "voyage-2".to_string(),
         embedding_dimension: 1024,
         sample_queries: vec![],
+        status: "draft".to_string(),
+        fork_pricing: None,
+        forked_from: None,
+        fork_count: 0,
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -3403,6 +3413,10 @@ async fn create_workspace_agent_handler(
         embedding_model: "voyage-2".to_string(),
         embedding_dimension: 1024,
         sample_queries: vec![],
+        status: "draft".to_string(),
+        fork_pricing: None,
+        forked_from: None,
+        fork_count: 0,
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {

@@ -221,6 +221,16 @@ pub struct Agent {
     pub embedding_dimension: i32,
     #[serde(default)]
     pub sample_queries: Vec<String>,
+    #[serde(default = "default_status")]
+    pub status: String,
+    pub fork_pricing: Option<serde_json::Value>,
+    pub forked_from: Option<Uuid>,
+    #[serde(default)]
+    pub fork_count: i32,
+}
+
+fn default_status() -> String {
+    "draft".to_string()
 }
 
 fn default_llm_provider() -> String {
@@ -251,6 +261,8 @@ pub struct AgentUpdate {
     pub temperature: Option<f64>,
     pub education_budget_credits: Option<i32>,
     pub display_alias: Option<String>,
+    pub status: Option<String>,
+    pub fork_pricing: Option<serde_json::Value>,
 }
 
 /// Snapshot of mutable agent fields at a point in time

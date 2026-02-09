@@ -22,6 +22,8 @@ pub struct GasFees {
     pub file_write: i32,
     pub avatar_generate: i32,
     pub embedding_import: i32,
+    pub fork_base: i32,
+    pub publish_fee: i32,
     /// Layer 2: Platform transaction fee on crypto token transfers (agent→owner royalties).
     /// Expressed as a fraction (e.g. 0.025 = 2.5%). Applied to every token payout.
     /// Not yet wired — requires SIWE wallet connection + settlement layer.
@@ -43,6 +45,8 @@ impl GasFees {
             file_write: env_or("GAS_FILE_WRITE", 1),
             avatar_generate: env_or("GAS_AVATAR_GENERATE", 3),
             embedding_import: env_or("GAS_EMBEDDING_IMPORT", 5),
+            fork_base: env_or("GAS_FORK_BASE", 2),
+            publish_fee: env_or("GAS_PUBLISH_FEE", 1),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -70,6 +74,8 @@ impl Default for GasFees {
             file_write: 1,
             avatar_generate: 3,
             embedding_import: 5,
+            fork_base: 2,
+            publish_fee: 1,
             crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
     }
