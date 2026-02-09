@@ -37,6 +37,7 @@ use agent_bestiary_memory::{
     ConsolidationWorker, EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
     WorkspaceMessage,
 };
+use agent_bestiary_ontology::{GitConfig, WorkspaceGitManager};
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMethod};
 use coherence_core::types::{ConversationId, Message as CoherenceMessage, ParticipantId};
 use coherence_engine::SettlingEngine;
@@ -50,6 +51,7 @@ struct AppState {
     projection_engine: Arc<ProjectionEngine>,
     projection_cache: Arc<ProjectionCache>,
     embedder: Arc<dyn EmbeddingGenerator>,
+    workspace_git: Arc<WorkspaceGitManager>,
     gemini_api_key: String,
     jwt_secret: String,
     oauth: OAuthConfig,
@@ -246,6 +248,23 @@ async fn main() {
         eprintln!("Note: GitHub OAuth not configured (GITHUB_CLIENT_ID/SECRET missing)");
     }
 
+    // Workspace git manager — per-workspace repos for version control
+    let git_config = GitConfig {
+        base_path: std::env::var("GIT_REPOS_PATH").unwrap_or_else(|_| "./repos".to_string()),
+        author_name: "Fermi Workspace".to_string(),
+        author_email: "workspace@agent-bestiary.world".to_string(),
+        branch: "main".to_string(),
+        github_org: std::env::var("GITHUB_ORG").ok(),
+        github_token: std::env::var("GIT_GITHUB_TOKEN").ok(),
+        auto_push: std::env::var("GIT_AUTO_PUSH")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false),
+        remote_name: "origin".to_string(),
+    };
+    let workspace_git = Arc::new(
+        WorkspaceGitManager::new(git_config).expect("Failed to initialize WorkspaceGitManager"),
+    );
+
     let state = AppState {
         db: db.clone(),
         memory_store,
@@ -253,6 +272,7 @@ async fn main() {
         projection_engine,
         projection_cache,
         embedder,
+        workspace_git,
         gemini_api_key,
         jwt_secret: jwt_secret.clone(),
         oauth,
@@ -405,6 +425,27 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/coherence/history",
             get(get_coherence_history_handler),
+        )
+        // Workspace git / files
+        .route(
+            "/api/workspaces/:workspace_id/files",
+            get(list_workspace_files_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/files/*path",
+            get(read_workspace_file_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/files/*path",
+            put(write_workspace_file_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/git/log",
+            get(workspace_git_log_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/git/diff",
+            get(workspace_git_diff_handler),
         )
         // Sharing routes
         .route("/api/shares", post(share_object_handler))
@@ -2139,6 +2180,35 @@ async fn fund_workspace_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Auto-commit budget log to workspace git repo
+    let wg = state.workspace_git.clone();
+    let db_clone = state.db.clone();
+    let uid = principal.user_id();
+    let amt = req.amount;
+    let team_name = team.name.clone();
+    tokio::spawn(async move {
+        if let Ok(slug) = get_workspace_slug(&db_clone, ws_uuid).await {
+            let entry = format!(
+                "## {} — Funded {} credits\n\nBy: {}\nWorkspace: {}\n\n---\n",
+                chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
+                amt,
+                uid,
+                team_name,
+            );
+            // Append to budget_log or create it
+            let existing = wg
+                .read_file(&slug, "context/budget_log.md")
+                .unwrap_or_default();
+            let updated = format!("{}{}", existing, entry);
+            let _ = wg.commit_file(
+                &slug,
+                "context/budget_log.md",
+                &updated,
+                &format!("Fund workspace: +{} credits", amt),
+            );
+        }
+    });
+
     Ok(Json(json!({
         "message": "Workspace funded successfully",
         "amount": req.amount,
@@ -2545,6 +2615,31 @@ async fn hire_agent_handler(
     )
     .await;
 
+    // Auto-commit agent card to workspace git repo
+    let wg = state.workspace_git.clone();
+    let agent_name = agent.agent_name.clone();
+    let db_clone = state.db.clone();
+    tokio::spawn(async move {
+        if let Ok(slug) = get_workspace_slug(&db_clone, ws_uuid).await {
+            let card = serde_json::json!({
+                "agent_name": agent_name,
+                "relationship": "hired",
+            });
+            let _ = wg.commit_file(
+                &slug,
+                &format!("agents/{}.json", agent_name),
+                &serde_json::to_string_pretty(&card).unwrap_or_default(),
+                &format!("Hired agent: {}", agent_name),
+            );
+            let _ = sqlx::query(
+                "UPDATE teams SET git_latest_commit = COALESCE(git_latest_commit, ''), git_commit_count = git_commit_count + 1 WHERE id = $1",
+            )
+            .bind(ws_uuid)
+            .execute(&db_clone)
+            .await;
+        }
+    });
+
     Ok(Json(json!({
         "message": "Agent hired successfully",
         "agent_name": agent.agent_name,
@@ -2615,6 +2710,31 @@ async fn add_agent_handler(
         &format!("{} added {} to the workspace", user_id, agent.agent_name),
     )
     .await;
+
+    // Auto-commit agent card to workspace git repo
+    let wg = state.workspace_git.clone();
+    let agent_name = agent.agent_name.clone();
+    let db_clone = state.db.clone();
+    tokio::spawn(async move {
+        if let Ok(slug) = get_workspace_slug(&db_clone, ws_uuid).await {
+            let card = serde_json::json!({
+                "agent_name": agent_name,
+                "relationship": "owned",
+            });
+            let _ = wg.commit_file(
+                &slug,
+                &format!("agents/{}.json", agent_name),
+                &serde_json::to_string_pretty(&card).unwrap_or_default(),
+                &format!("Added agent: {}", agent_name),
+            );
+            let _ = sqlx::query(
+                "UPDATE teams SET git_latest_commit = COALESCE(git_latest_commit, ''), git_commit_count = git_commit_count + 1 WHERE id = $1",
+            )
+            .bind(ws_uuid)
+            .execute(&db_clone)
+            .await;
+        }
+    });
 
     Ok(Json(json!({
         "message": "Agent added successfully",
@@ -3412,4 +3532,207 @@ async fn get_coherence_history_handler(
 #[derive(Debug, Deserialize)]
 struct HistoryQuery {
     limit: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
+// Workspace Git / Files handlers
+// ---------------------------------------------------------------------------
+
+/// Helper: get workspace slug from UUID
+async fn get_workspace_slug(
+    pool: &PgPool,
+    ws_uuid: uuid::Uuid,
+) -> Result<String, (StatusCode, String)> {
+    let row = sqlx::query("SELECT slug FROM teams WHERE id = $1")
+        .bind(ws_uuid)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Workspace not found".to_string()))?;
+    Ok(row.get::<String, _>("slug"))
+}
+
+#[derive(Debug, Deserialize)]
+struct FilesQuery {
+    path: Option<String>,
+}
+
+async fn list_workspace_files_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Query(query): Query<FilesQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let slug = get_workspace_slug(&state.db, ws_uuid).await?;
+
+    let files = state
+        .workspace_git
+        .list_files(&slug, query.path.as_deref())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let items: Vec<Value> = files
+        .iter()
+        .map(|f| {
+            json!({
+                "path": f.path,
+                "name": f.name,
+                "is_dir": f.is_dir,
+                "size": f.size,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "files": items })))
+}
+
+async fn read_workspace_file_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path((workspace_id, file_path)): Path<(String, String)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let slug = get_workspace_slug(&state.db, ws_uuid).await?;
+
+    let content = state
+        .workspace_git
+        .read_file(&slug, &file_path)
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+
+    Ok(Json(json!({
+        "path": file_path,
+        "content": content,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct WriteFileBody {
+    content: String,
+    message: Option<String>,
+}
+
+async fn write_workspace_file_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path((workspace_id, file_path)): Path<(String, String)>,
+    Json(body): Json<WriteFileBody>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let slug = get_workspace_slug(&state.db, ws_uuid).await?;
+
+    // Charge gas for file write
+    charge_workspace_gas(
+        &state.db,
+        ws_uuid,
+        &workspace_id,
+        state.gas_fees.file_write,
+        "file_write",
+        &format!("Write file: {}", file_path),
+        None,
+    )
+    .await?;
+
+    let commit_msg = body
+        .message
+        .unwrap_or_else(|| format!("{} updated {}", principal.user_id(), file_path));
+
+    let commit = state
+        .workspace_git
+        .commit_file(&slug, &file_path, &body.content, &commit_msg)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Update git tracking columns
+    let _ = sqlx::query(
+        "UPDATE teams SET git_latest_commit = $1, git_commit_count = git_commit_count + 1 WHERE id = $2",
+    )
+    .bind(&commit.sha)
+    .bind(ws_uuid)
+    .execute(&state.db)
+    .await;
+
+    Ok(Json(json!({
+        "path": file_path,
+        "commit": {
+            "sha": commit.sha,
+            "message": commit.message,
+            "timestamp": commit.timestamp,
+        },
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct GitLogQuery {
+    limit: Option<usize>,
+}
+
+async fn workspace_git_log_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Query(query): Query<GitLogQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let slug = get_workspace_slug(&state.db, ws_uuid).await?;
+    let limit = query.limit.unwrap_or(20);
+
+    let log = state
+        .workspace_git
+        .get_log(&slug, limit)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let items: Vec<Value> = log
+        .iter()
+        .map(|c| {
+            json!({
+                "sha": c.sha,
+                "message": c.message,
+                "timestamp": c.timestamp,
+                "author": c.author,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "commits": items })))
+}
+
+#[derive(Debug, Deserialize)]
+struct GitDiffQuery {
+    from: String,
+    to: String,
+}
+
+async fn workspace_git_diff_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Query(query): Query<GitDiffQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let slug = get_workspace_slug(&state.db, ws_uuid).await?;
+
+    let diff = state
+        .workspace_git
+        .diff_commits(&slug, &query.from, &query.to)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "from": query.from,
+        "to": query.to,
+        "diff": diff,
+    })))
 }

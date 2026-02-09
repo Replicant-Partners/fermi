@@ -2,7 +2,7 @@
 
 ## An Investment Memo & White Paper
 
-*Replicant Partners — February 2026*
+Ivan Labra— February 2026*
 
 ---
 
@@ -35,6 +35,7 @@ Agent Bestiary is a massively multiplayer economic environment where participant
 A bestiary, in the medieval tradition, was a compendium of creatures — real and imagined — each with distinct characteristics, behaviors, and moral significance. Our bestiary is similar, except the creatures are AI agents, their characteristics are learned from real human expertise, and their moral significance is replaced by economic participation.
 
 Each agent in the bestiary is a unique specimen:
+
 - It has a **body of knowledge** (ontology) that it has learned from its creator and from its interactions
 - It has **skills** (executor capabilities) that define what it can do
 - It has a **lineage** (provenance) that traces its knowledge to its human origins
@@ -173,37 +174,37 @@ We present these projections not as promises but as illustrations of the economi
 
 ### Growth Trajectory
 
-| Phase | Timeline | Users | Monthly Revenue | Net Margin | Annual Profit Rate |
-|-------|----------|-------|----------------|------------|-------------------|
-| Beta | Month 1-3 | 200 | $0 (free credits) | - | - |
-| Seed | Month 4-6 | 1,000 | $5,100 | -16% | Pre-revenue |
-| Growth | Month 7-12 | 10,000 | $65,600 | 23% | $179K |
-| Scale | Month 13-18 | 50,000 | $347,900 | 32% | $1.33M |
-| Expansion | Month 19-24 | 200,000 | $1,487,800 | 50% | $8.9M |
-| Mass | Month 25-36 | 1,000,000 | $7,437,000 | 60% | $53.5M |
+| Phase     | Timeline    | Users     | Monthly Revenue   | Net Margin | Annual Profit Rate |
+| --------- | ----------- | --------- | ----------------- | ---------- | ------------------ |
+| Beta      | Month 1-3   | 200       | $0 (free credits) | -          | -                  |
+| Seed      | Month 4-6   | 1,000     | $5,100            | -16%       | Pre-revenue        |
+| Growth    | Month 7-12  | 10,000    | $65,600           | 23%        | $179K              |
+| Scale     | Month 13-18 | 50,000    | $347,900          | 32%        | $1.33M             |
+| Expansion | Month 19-24 | 200,000   | $1,487,800        | 50%        | $8.9M              |
+| Mass      | Month 25-36 | 1,000,000 | $7,437,000        | 60%        | $53.5M             |
 
 ### Revenue Composition at 1M Users
 
-| Stream | Monthly | Share |
-|--------|---------|-------|
-| Credits — user-driven actions | $5,440,000 | 73.1% |
-| Credits — A2A/AKP (autonomous learning) | $472,000 | 6.3% |
-| Agent marketplace transaction fees | $325,000 | 4.4% |
-| Enterprise contracts | $1,000,000 | 13.4% |
-| API licensing | $200,000 | 2.7% |
-| **Total** | **$7,437,000** | 100% |
+| Stream                                  | Monthly        | Share |
+| --------------------------------------- | -------------- | ----- |
+| Credits — user-driven actions           | $5,440,000     | 73.1% |
+| Credits — A2A/AKP (autonomous learning) | $472,000       | 6.3%  |
+| Agent marketplace transaction fees      | $325,000       | 4.4%  |
+| Enterprise contracts                    | $1,000,000     | 13.4% |
+| API licensing                           | $200,000       | 2.7%  |
+| **Total**                               | **$7,437,000** | 100%  |
 
 ### The Agent Economy at 1M Users
 
-| Metric | Value |
-|--------|-------|
-| Agents on the platform | 7,000,000 |
-| Active agents (>0 executions/month) | 3,500,000 |
-| Agents with owner-set pricing | 350,000 |
-| Agent economy GMV (monthly) | $13,000,000 |
-| Agent owners earning >$100/month | ~15,000 |
-| Agent owners earning >$1,000/month | ~2,000 |
-| Agent owners earning >$10,000/month | ~200 |
+| Metric                              | Value       |
+| ----------------------------------- | ----------- |
+| Agents on the platform              | 7,000,000   |
+| Active agents (>0 executions/month) | 3,500,000   |
+| Agents with owner-set pricing       | 350,000     |
+| Agent economy GMV (monthly)         | $13,000,000 |
+| Agent owners earning >$100/month    | ~15,000     |
+| Agent owners earning >$1,000/month  | ~2,000      |
+| Agent owners earning >$10,000/month | ~200        |
 
 ### What Participants Earn
 
@@ -212,6 +213,7 @@ This is the number that matters most to us. The platform exists to enable partic
 At 1M users, the agent economy distributes approximately **$13M per month to agent creators**. The platform takes $325K (2.5%) of that. The remaining $12.675M flows directly to the people who brought their expertise, their art, their methodology to the ecology.
 
 For comparison:
+
 - The iOS App Store takes 30% of developer revenue
 - Spotify pays artists ~$0.003-0.005 per stream
 - Stock photography platforms take 40-85% of photographer revenue
@@ -221,13 +223,13 @@ We take 2.5%. The rest is yours.
 
 ### Cost Structure
 
-| Phase | COGS | Gross Margin |
-|-------|------|-------------|
-| 1,000 users | $933/mo | 82% |
-| 10,000 users | $15,700/mo | 76% |
-| 50,000 users | $76,900/mo | 78% |
-| 200,000 users | $264,100/mo | 82% |
-| 1,000,000 users | $976,000/mo | 87% |
+| Phase           | COGS        | Gross Margin |
+| --------------- | ----------- | ------------ |
+| 1,000 users     | $933/mo     | 82%          |
+| 10,000 users    | $15,700/mo  | 76%          |
+| 50,000 users    | $76,900/mo  | 78%          |
+| 200,000 users   | $264,100/mo | 82%          |
+| 1,000,000 users | $976,000/mo | 87%          |
 
 Gross margin improves with scale because: (a) self-hosted models replace per-token API costs at high volume, (b) chat messages — the highest-volume action — have zero marginal cost, and (c) volume agreements with LLM providers reduce per-token rates.
 
@@ -244,6 +246,7 @@ A **factory** is fully controlled. It produces predictable outputs but no divers
 A **cultivated ecology** is designed but not controlled. The gardener creates conditions — soil quality, light, water, spacing — and then the garden grows. Some plants thrive in ways the gardener didn't anticipate. New relationships emerge between species. The garden produces more biodiversity and more abundance than either the wild or the factory, because it combines natural dynamics with intentional design.
 
 Our role is the gardener's role:
+
 - **Soil**: The infrastructure — compute, storage, knowledge pipeline, embedding generation
 - **Water**: The credit economy — a medium of exchange that flows toward value
 - **Light**: The marketplace — visibility, discovery, composability that lets agents find their audience
@@ -261,6 +264,7 @@ This is not a disruption narrative. It's a cultivation narrative. We're not tryi
 ### Current State (February 2026)
 
 Agent Bestiary is live at agent-bestiary.world. The core infrastructure is operational:
+
 - Agent creation, education, and execution pipeline
 - Agent Knowledge Pipeline (consolidation, entity extraction, ontology evolution)
 - Workspace system with chat, agent hiring, and credit-based gas fees
@@ -273,12 +277,12 @@ What exists is a functioning ecology with one inhabitant (us). It needs particip
 
 ### Funding Use
 
-| Allocation | Amount | Purpose |
-|------------|--------|---------|
-| Infrastructure scaling | 20% | Multi-region deployment, self-hosted model fleet |
-| Engineering | 40% | Multi-model support, SIWE wallet integration, agent creation coaching, mobile experience |
-| Community | 25% | Beta credit grants, creator onboarding, documentation, developer relations |
-| Operations | 15% | Legal (IP framework), compliance, business development |
+| Allocation             | Amount | Purpose                                                                                  |
+| ---------------------- | ------ | ---------------------------------------------------------------------------------------- |
+| Infrastructure scaling | 20%    | Multi-region deployment, self-hosted model fleet                                         |
+| Engineering            | 40%    | Multi-model support, SIWE wallet integration, agent creation coaching, mobile experience |
+| Community              | 25%    | Beta credit grants, creator onboarding, documentation, developer relations               |
+| Operations             | 15%    | Legal (IP framework), compliance, business development                                   |
 
 ### What We're Looking For
 
@@ -300,11 +304,11 @@ We're looking for investors who understand that:
 
 The cost base is remarkably small. Rust on Railway is $20/month. Neon PostgreSQL is $5/month. LLM API costs are per-call and only incurred when someone executes an agent. Chat messages — the highest-volume action — cost the platform nothing to serve.
 
-| Break-even point | Monthly costs | Revenue needed | Users needed |
-|-----------------|--------------|----------------|-------------|
-| **Infrastructure** | $33 | $33 | ~10 active users |
-| **With 2 part-time engineers** | $5,033 | $5,033 | ~740 users |
-| **With full small team (6 people)** | $35,000 | $35,000 | ~5,200 users |
+| Break-even point                    | Monthly costs | Revenue needed | Users needed     |
+| ----------------------------------- | ------------- | -------------- | ---------------- |
+| **Infrastructure**                  | $33           | $33            | ~10 active users |
+| **With 2 part-time engineers**      | $5,033        | $5,033         | ~740 users       |
+| **With full small team (6 people)** | $35,000       | $35,000        | ~5,200 users     |
 
 Infrastructure break-even at 10 users means the platform becomes self-sustaining almost immediately once credits are being purchased. Real operational break-even (team included) occurs at roughly 5,000-10,000 users — month 10-12 in the growth model.
 
@@ -317,6 +321,7 @@ We resist giving a single number because valuation depends on what has been prov
 **Today (February 2026) — Pre-seed: $3M - $5M**
 
 Live, deployed platform with functioning economic architecture. No market validation yet. The premium over a typical pre-seed ($1-2M) reflects:
+
 - Working product, not a prototype — live at agent-bestiary.world
 - Novel three-tier economic design with modeled unit economics
 - Defensible AKP learning flywheel (architectural, not just feature)
@@ -325,6 +330,7 @@ Live, deployed platform with functioning economic architecture. No market valida
 **At Product-Market Fit (~10K users) — Seed/Series A: $15M - $30M**
 
 This is the inflection where Agent Bestiary stops being "an AI platform" and starts being "a functioning economy." The valuation delta comes from demonstrating:
+
 - Credit purchasing behavior (people buy them voluntarily)
 - Agent owner revenue (creators earn and reinvest)
 - A2A revenue visible in the ledger (agents learning autonomously)
@@ -347,13 +353,13 @@ Category leadership. $89M ARR. $156M agent economy GMV. 15,000 agent owners earn
 
 The number isn't really about multiples. It's about which properties we can prove:
 
-| Property | Status | Valuation impact |
-|----------|--------|-----------------|
-| People buy credits voluntarily | Unproven | Table stakes — gets to baseline |
-| Agent owners earn and reinvest | Unproven | 2-3x premium over pure SaaS |
-| A2A revenue is real and growing | Architectural (built) | Significant premium — unique to this model |
+| Property                              | Status                | Valuation impact                                   |
+| ------------------------------------- | --------------------- | -------------------------------------------------- |
+| People buy credits voluntarily        | Unproven              | Table stakes — gets to baseline                    |
+| Agent owners earn and reinvest        | Unproven              | 2-3x premium over pure SaaS                        |
+| A2A revenue is real and growing       | Architectural (built) | Significant premium — unique to this model         |
 | Knowledge graphs appreciate over time | Architectural (built) | Higher multiple — compounding asset, defensibility |
-| Coordinator agents emerge organically | Designed for | Highest premium — proves the ecology works |
+| Coordinator agents emerge organically | Designed for          | Highest premium — proves the ecology works         |
 
 The honest assessment: the architecture is built and the economics are sound. The risk is entirely in adoption — getting to the first 1,000 participants who care enough to create agents and buy credits. Everything after that is execution against a flywheel that wants to spin.
 

@@ -189,12 +189,173 @@
         margin-top: auto;
       }
 
+      /* ─── Center panel tabs ─── */
+      .center-tabs {
+        display: flex;
+        gap: 0;
+        background: var(--bg0);
+        border-bottom: 1px solid var(--bg2);
+        flex-shrink: 0;
+      }
+      .center-tab {
+        padding: 6px 16px;
+        font-size: 0.78rem;
+        color: var(--fg3);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        background: none;
+        border-top: none;
+        border-left: none;
+        border-right: none;
+        font-family: inherit;
+      }
+      .center-tab:hover {
+        color: var(--fg1);
+      }
+      .center-tab.active {
+        color: var(--yellow);
+        border-bottom-color: var(--yellow);
+      }
+
       /* ─── Center: Chat ─── */
+      .panel-center {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
       .panel-chat {
         flex: 1;
         display: flex;
         flex-direction: column;
         min-width: 0;
+      }
+
+      /* ─── Center: Files ─── */
+      .panel-files {
+        flex: 1;
+        display: none;
+        flex-direction: column;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .panel-files.active {
+        display: flex;
+      }
+      .panel-chat.hidden {
+        display: none;
+      }
+
+      .files-layout {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+      .files-tree {
+        width: 240px;
+        min-width: 200px;
+        border-right: 1px solid var(--bg2);
+        overflow-y: auto;
+        padding: 8px 0;
+      }
+      .file-entry {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 12px;
+        font-size: 0.78rem;
+        cursor: pointer;
+        color: var(--fg2);
+      }
+      .file-entry:hover {
+        background: var(--bg1);
+        color: var(--fg0);
+      }
+      .file-entry.active {
+        background: var(--bg1);
+        color: var(--yellow);
+      }
+      .file-entry .file-icon {
+        flex-shrink: 0;
+        font-size: 0.7rem;
+      }
+      .file-entry .file-size {
+        margin-left: auto;
+        font-size: 0.65rem;
+        color: var(--fg3);
+      }
+      .file-dir-name {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 8px 12px 3px;
+      }
+
+      .files-viewer {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .files-viewer-header {
+        padding: 6px 12px;
+        font-size: 0.75rem;
+        color: var(--fg3);
+        border-bottom: 1px solid var(--bg1);
+        background: var(--bg0);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .files-viewer-content {
+        flex: 1;
+        overflow: auto;
+        padding: 12px 16px;
+        font-size: 0.82rem;
+        white-space: pre-wrap;
+        color: var(--fg1);
+        line-height: 1.5;
+      }
+
+      .git-log-panel {
+        width: 260px;
+        min-width: 200px;
+        border-left: 1px solid var(--bg2);
+        overflow-y: auto;
+        padding: 8px 0;
+      }
+      .git-log-title {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 4px 12px 8px;
+      }
+      .git-commit-entry {
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--bg1);
+        cursor: default;
+      }
+      .git-commit-entry:hover {
+        background: var(--bg1);
+      }
+      .git-commit-sha {
+        font-size: 0.7rem;
+        color: var(--yellow);
+        font-family: inherit;
+      }
+      .git-commit-msg {
+        font-size: 0.75rem;
+        color: var(--fg2);
+        margin-top: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .git-commit-time {
+        font-size: 0.65rem;
+        color: var(--fg3);
       }
       .chat-messages {
         flex: 1;
@@ -567,30 +728,87 @@
         </div>
       </div>
 
-      <!-- Center: Chat -->
-      <div class="panel-chat">
-        <div class="chat-messages" id="chat-messages">
-          <div
-            style="
-              color: var(--fg3);
-              font-size: 0.8rem;
-              padding: 40px 0;
-              text-align: center;
-            "
+      <!-- Center: Tabs + Chat/Files -->
+      <div class="panel-center">
+        <div class="center-tabs">
+          <button
+            class="center-tab active"
+            id="tab-chat"
+            onclick="switchTab('chat')"
           >
-            Loading messages...
+            Chat
+          </button>
+          <button
+            class="center-tab"
+            id="tab-files"
+            onclick="switchTab('files')"
+          >
+            Files
+          </button>
+        </div>
+
+        <!-- Chat panel -->
+        <div class="panel-chat" id="panel-chat">
+          <div class="chat-messages" id="chat-messages">
+            <div
+              style="
+                color: var(--fg3);
+                font-size: 0.8rem;
+                padding: 40px 0;
+                text-align: center;
+              "
+            >
+              Loading messages...
+            </div>
+          </div>
+          <div class="chat-input-area">
+            <textarea
+              class="chat-input"
+              id="chat-input"
+              placeholder="Type a message..."
+              rows="1"
+            ></textarea>
+            <button class="btn btn-send" id="send-btn">Send</button>
+          </div>
+          <div class="gas-hint">1 credit per message</div>
+        </div>
+
+        <!-- Files panel -->
+        <div class="panel-files" id="panel-files">
+          <div class="files-layout">
+            <div class="files-tree" id="files-tree">
+              <div style="color: var(--fg3); font-size: 0.75rem; padding: 12px">
+                Loading files...
+              </div>
+            </div>
+            <div class="files-viewer">
+              <div class="files-viewer-header">
+                <span id="files-current-path">Select a file</span>
+              </div>
+              <div class="files-viewer-content" id="files-viewer-content">
+                <div
+                  style="color: var(--fg3); text-align: center; padding: 40px 0"
+                >
+                  Click a file to view its contents
+                </div>
+              </div>
+            </div>
+            <div class="git-log-panel" id="git-log-panel">
+              <div class="git-log-title">Git Log</div>
+              <div id="git-log-entries">
+                <div
+                  style="
+                    color: var(--fg3);
+                    font-size: 0.75rem;
+                    padding: 8px 12px;
+                  "
+                >
+                  Loading...
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="chat-input-area">
-          <textarea
-            class="chat-input"
-            id="chat-input"
-            placeholder="Type a message..."
-            rows="1"
-          ></textarea>
-          <button class="btn btn-send" id="send-btn">Send</button>
-        </div>
-        <div class="gas-hint">1 credit per message</div>
       </div>
 
       <!-- Right: Shelf -->
@@ -697,6 +915,10 @@
           <div class="stat-row-small">
             <span class="stat-key">Execute</span
             ><span class="stat-val">~1cr/1k tok</span>
+          </div>
+          <div class="stat-row-small">
+            <span class="stat-key">File write</span
+            ><span class="stat-val">1 cr</span>
           </div>
         </div>
       </div>
@@ -1358,6 +1580,224 @@
             btn.textContent = "Evaluate (2 cr)";
           }
         });
+
+      // ─── Tab switching ───
+      function switchTab(tab) {
+        document
+          .getElementById("tab-chat")
+          .classList.toggle("active", tab === "chat");
+        document
+          .getElementById("tab-files")
+          .classList.toggle("active", tab === "files");
+        document
+          .getElementById("panel-chat")
+          .classList.toggle("hidden", tab !== "chat");
+        document
+          .getElementById("panel-files")
+          .classList.toggle("active", tab === "files");
+        if (tab === "files" && !filesLoaded) loadFiles();
+      }
+
+      // ─── Files panel ───
+      let filesLoaded = false;
+      let filesData = [];
+
+      async function loadFiles() {
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/files`);
+          if (!res.ok) {
+            document.getElementById("files-tree").innerHTML =
+              '<div style="color:var(--fg3);font-size:0.75rem;padding:12px">No files yet</div>';
+            filesLoaded = true;
+            loadGitLog();
+            return;
+          }
+          const data = await res.json();
+          filesData = data.files || [];
+          filesLoaded = true;
+          renderFileTree(filesData);
+          loadGitLog();
+        } catch {
+          document.getElementById("files-tree").innerHTML =
+            '<div style="color:var(--fg3);font-size:0.75rem;padding:12px">No files yet</div>';
+          filesLoaded = true;
+        }
+      }
+
+      function renderFileTree(files) {
+        const el = document.getElementById("files-tree");
+        if (!files || files.length === 0) {
+          el.innerHTML =
+            '<div style="color:var(--fg3);font-size:0.75rem;padding:12px">No files yet</div>';
+          return;
+        }
+
+        // Group files by directory
+        const dirs = {};
+        const rootFiles = [];
+        files.forEach((f) => {
+          if (f.is_dir) return;
+          const slash = f.path.indexOf("/");
+          if (slash > 0) {
+            const dir = f.path.substring(0, slash);
+            if (!dirs[dir]) dirs[dir] = [];
+            dirs[dir].push(f);
+          } else {
+            rootFiles.push(f);
+          }
+        });
+
+        let html = "";
+
+        // Root files first
+        rootFiles.forEach((f) => {
+          html += renderFileEntry(f);
+        });
+
+        // Directories
+        Object.keys(dirs)
+          .sort()
+          .forEach((dir) => {
+            html += `<div class="file-dir-name">${escHtml(dir)}/</div>`;
+            dirs[dir].forEach((f) => {
+              html += renderFileEntry(f);
+            });
+          });
+
+        el.innerHTML = html;
+      }
+
+      function renderFileEntry(f) {
+        const icon = f.path.endsWith(".md")
+          ? "M"
+          : f.path.endsWith(".json")
+            ? "J"
+            : f.path.endsWith(".mermaid")
+              ? "D"
+              : "F";
+        const size =
+          f.size > 1024 ? (f.size / 1024).toFixed(1) + "K" : f.size + "B";
+        return `<div class="file-entry" onclick="viewFile('${escHtml(f.path)}')" title="${escHtml(f.path)}">
+          <span class="file-icon">${icon}</span>
+          <span>${escHtml(f.name)}</span>
+          <span class="file-size">${size}</span>
+        </div>`;
+      }
+
+      async function viewFile(path) {
+        // Highlight active file
+        document
+          .querySelectorAll(".file-entry")
+          .forEach((el) => el.classList.remove("active"));
+        event.currentTarget && event.currentTarget.classList.add("active");
+
+        document.getElementById("files-current-path").textContent = path;
+        const viewer = document.getElementById("files-viewer-content");
+        viewer.innerHTML = '<div style="color:var(--fg3)">Loading...</div>';
+
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/files/${path}`);
+          if (!res.ok) {
+            viewer.innerHTML =
+              '<div style="color:var(--red)">Failed to load file</div>';
+            return;
+          }
+          const data = await res.json();
+          const content = data.content || "";
+
+          if (path.endsWith(".md")) {
+            // Simple markdown: headers, bold, code
+            let rendered = escHtml(content)
+              .replace(
+                /^### (.+)$/gm,
+                '<span style="color:var(--aqua);font-size:0.9rem">$1</span>',
+              )
+              .replace(
+                /^## (.+)$/gm,
+                '<span style="color:var(--yellow);font-size:1rem;font-weight:bold">$1</span>',
+              )
+              .replace(
+                /^# (.+)$/gm,
+                '<span style="color:var(--yellow);font-size:1.1rem;font-weight:bold">$1</span>',
+              )
+              .replace(
+                /\*\*(.+?)\*\*/g,
+                '<strong style="color:var(--fg0)">$1</strong>',
+              )
+              .replace(
+                /`(.+?)`/g,
+                '<code style="background:var(--bg2);padding:1px 4px">$1</code>',
+              )
+              .replace(
+                /^- (.+)$/gm,
+                '  <span style="color:var(--fg3)">-</span> $1',
+              )
+              .replace(
+                /^---$/gm,
+                '<hr style="border-color:var(--bg2);margin:8px 0">',
+              );
+            viewer.innerHTML = rendered;
+          } else if (path.endsWith(".json")) {
+            try {
+              const formatted = JSON.stringify(JSON.parse(content), null, 2);
+              viewer.innerHTML =
+                '<pre style="color:var(--aqua)">' +
+                escHtml(formatted) +
+                "</pre>";
+            } catch {
+              viewer.textContent = content;
+            }
+          } else {
+            viewer.textContent = content;
+          }
+        } catch {
+          viewer.innerHTML =
+            '<div style="color:var(--red)">Error loading file</div>';
+        }
+      }
+
+      async function loadGitLog() {
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/git/log?limit=15`);
+          if (!res.ok) {
+            document.getElementById("git-log-entries").innerHTML =
+              '<div style="color:var(--fg3);font-size:0.75rem;padding:8px 12px">No commits yet</div>';
+            return;
+          }
+          const data = await res.json();
+          const commits = data.commits || [];
+          const el = document.getElementById("git-log-entries");
+
+          if (commits.length === 0) {
+            el.innerHTML =
+              '<div style="color:var(--fg3);font-size:0.75rem;padding:8px 12px">No commits yet</div>';
+            return;
+          }
+
+          el.innerHTML = commits
+            .map((c) => {
+              const time =
+                new Date(c.timestamp).toLocaleDateString([], {
+                  month: "short",
+                  day: "numeric",
+                }) +
+                " " +
+                new Date(c.timestamp).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+              return `<div class="git-commit-entry">
+              <div class="git-commit-sha">${escHtml(c.sha.substring(0, 8))}</div>
+              <div class="git-commit-msg">${escHtml(c.message.split("\n")[0])}</div>
+              <div class="git-commit-time">${time}</div>
+            </div>`;
+            })
+            .join("");
+        } catch {
+          document.getElementById("git-log-entries").innerHTML =
+            '<div style="color:var(--fg3);font-size:0.75rem;padding:8px 12px">No commits</div>';
+        }
+      }
 
       // ─── Helpers ───
       function escHtml(str) {
