@@ -429,6 +429,15 @@
         <div id="agents-list"><div class="empty-state">Loading...</div></div>
       </div>
 
+      <!-- Fork Curated Agents -->
+      <div class="section">
+        <div class="section-title">Fork Curated Agents</div>
+        <div style="font-size: 0.8rem; color: var(--fg3); margin-bottom: 12px">
+          Claim a curated agent as your own. Creates a copy you can customize.
+        </div>
+        <div id="curated-list"><div class="empty-state">Loading...</div></div>
+      </div>
+
       <!-- Connected Accounts -->
       <div class="section">
         <div class="section-title">Connected Accounts</div>
@@ -646,6 +655,74 @@
           document.getElementById("theme-toggle").click();
         }
       });
+
+      // Load curated agents for forking
+      (async () => {
+        try {
+          const res = await fetch("/api/agents/curated");
+          if (!res.ok) return;
+          const data = await res.json();
+          const el = document.getElementById("curated-list");
+          if (!data.agents || data.agents.length === 0) {
+            el.innerHTML =
+              '<div class="empty-state">No curated agents available.</div>';
+            return;
+          }
+          el.innerHTML = data.agents
+            .map(
+              (a) => `
+            <div class="agent-row" style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <a href="/agent/${a.agent_id}" style="color:var(--yellow)">${a.agent_id.replace(/_/g, " ")}</a>
+                <div class="meta">${a.agent_type} | ${a.tags.slice(0, 3).join(", ")}</div>
+              </div>
+              <button class="btn" style="font-size:0.75rem;padding:4px 10px" onclick="forkAgent('${a.agent_id}', this)">Fork</button>
+            </div>
+          `,
+            )
+            .join("");
+        } catch {}
+      })();
+
+      async function forkAgent(agentId, btn) {
+        btn.disabled = true;
+        btn.textContent = "Forking...";
+        try {
+          // Get full agent card from registry
+          const cardRes = await fetch(`/api/agents/${agentId}`);
+          if (!cardRes.ok) {
+            btn.textContent = "Error";
+            return;
+          }
+          const card = await cardRes.json();
+          // Import as own agent with a forked name
+          const forkedCard = {
+            agent_id: agentId + "_fork",
+            agent_type: card.agent_type || "research",
+            capabilities: card.capabilities || {},
+            metadata: card.metadata || {},
+            system_prompt: card.system_prompt || null,
+          };
+          const importRes = await fetch("/api/agents/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent_card_json: forkedCard }),
+          });
+          if (importRes.ok) {
+            btn.textContent = "Forked!";
+            btn.style.color = "var(--green)";
+            btn.style.borderColor = "var(--green)";
+            showToast("Agent forked to your collection");
+          } else {
+            const err = await importRes.text();
+            btn.textContent = "Error";
+            console.error("Fork failed:", err);
+          }
+        } catch (e) {
+          btn.textContent = "Error";
+          console.error("Fork error:", e);
+        }
+      }
     </script>
   </body>
 </html>

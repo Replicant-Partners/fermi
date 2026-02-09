@@ -334,8 +334,25 @@ struct GeminiInlineData {
 /// Run SQL migration files on startup (idempotent — uses IF NOT EXISTS).
 async fn run_migrations(db: &PgPool) {
     let migration_files = [
+        "migrations/004_add_users_table.sql",
+        "migrations/004_migrate_users_for_auth.sql",
+        "migrations/005_add_api_keys.sql",
+        "migrations/006_add_user_id_to_agents.sql",
+        "migrations/007_add_user_id_to_memory.sql",
+        "migrations/008_add_siwe_nonces.sql",
         "migrations/009_add_teams_and_sharing.sql",
         "migrations/010_add_adm_tables_and_dreaming.sql",
+        "migrations/011_agent_crud_and_education.sql",
+        "migrations/012_credit_ledger.sql",
+        "migrations/013_workspace_fields.sql",
+        "migrations/014_workspace_messages.sql",
+        "migrations/015_workspace_agents.sql",
+        "migrations/016_coherence_evaluations.sql",
+        "migrations/017_workspace_git.sql",
+        "migrations/018_agent_aliases.sql",
+        "migrations/019_agent_provider_fields.sql",
+        "migrations/020_stripe_and_profile.sql",
+        "migrations/021_notifications.sql",
     ];
 
     for file in &migration_files {
@@ -618,6 +635,7 @@ async fn main() {
         .route("/api/agents", post(create_agent_handler))
         .route("/api/agents/import", post(import_agent_handler))
         .route("/api/agents/mine", get(list_my_agents_handler))
+        .route("/api/agents/curated", get(list_curated_agents_handler))
         .route("/api/agents/:agent_id", put(update_agent_handler))
         .route("/api/agents/:agent_id", delete(delete_agent_handler))
         // Agent avatar generation (credit-gated)
@@ -2499,6 +2517,31 @@ async fn import_embeddings_handler(
         "agent_id": agent_id,
         "message": format!("Imported {} episodes with embeddings", imported)
     })))
+}
+
+async fn list_curated_agents_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let agents = state
+        .registry
+        .list()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", e)))?;
+
+    let curated: Vec<Value> = agents
+        .iter()
+        .map(|card| {
+            json!({
+                "agent_id": card.agent_id,
+                "agent_type": card.agent_type,
+                "version": card.version,
+                "description": card.metadata.description,
+                "tags": card.metadata.tags,
+                "model": card.capabilities.model,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "agents": curated })))
 }
 
 async fn list_my_agents_handler(
