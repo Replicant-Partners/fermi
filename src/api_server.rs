@@ -4506,6 +4506,78 @@ async fn consolidate_agent_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Spawn dream narrator to turn consolidation results into a narrative
+    {
+        let narrator_state = state.clone();
+        let agent_name = agent_id.clone();
+        let agent_db_id = db_agent.agent_id;
+        let ep = result.episodes_processed;
+        let cl = result.clusters_identified;
+        let rx = result.rules_extracted;
+        let rv = result.rules_verified;
+        let ec = result.entities_created;
+        let fc = result.facts_created;
+        tokio::spawn(async move {
+            let narrator_id = "dream_narrator";
+            let card = match narrator_state.registry.get(narrator_id) {
+                Ok(c) => c,
+                Err(_) => return, // narrator not available
+            };
+            let synopsis_input = format!(
+                "Agent \"{}\" just completed a consolidation cycle (dreaming). \
+                 Results: {} episodes processed, {} clusters identified, {} rules extracted, \
+                 {} rules verified, {} entities created, {} facts created. \
+                 Write a brief, engaging narrative about what this agent dreamed.",
+                agent_name, ep, cl, rx, rv, ec, fc
+            );
+            let agent_stmt = ast::AgentStmt {
+                name: narrator_id.to_string(),
+                agent_type: Some(card.agent_type.clone()),
+                query: synopsis_input,
+                executor: Some(ast::ExecutorType::LLM),
+                schedule: None,
+                driver_refs: vec![],
+                depends_on: vec![],
+                confidence_threshold: None,
+            };
+            let program = ast::Program {
+                statements: vec![ast::Statement::Agent(agent_stmt.clone())],
+            };
+            let context = ExecutionContext {
+                program,
+                agent_card: card,
+            };
+            match narrator_state
+                .registry
+                .execute_agent(&agent_stmt, &context)
+                .await
+            {
+                Ok(output) => {
+                    let narrative = output.metadata.reasoning.unwrap_or_default();
+                    if narrative.is_empty() {
+                        return;
+                    }
+                    // Store on the latest ontology snapshot for this agent
+                    let _ = sqlx::query(
+                        "UPDATE ontology_snapshots SET dream_synopsis = $1 \
+                         WHERE agent_id = $2 AND snapshot_id = (\
+                           SELECT snapshot_id FROM ontology_snapshots \
+                           WHERE agent_id = $2 ORDER BY version DESC LIMIT 1\
+                         )",
+                    )
+                    .bind(&narrative)
+                    .bind(agent_db_id)
+                    .execute(&narrator_state.db)
+                    .await;
+                    eprintln!("Dream narrator: wrote synopsis for {}", agent_name);
+                }
+                Err(e) => {
+                    eprintln!("Dream narrator failed for {}: {:?}", agent_name, e);
+                }
+            }
+        });
+    }
+
     Ok(Json(json!({
         "status": "completed",
         "agent_id": agent_id,
@@ -4525,10 +4597,12 @@ async fn consolidate_agent_handler(
 // ─── Coherence Evaluation ────────────────────────────────────────────
 
 /// Run TEC coherence evaluation on recent workspace messages.
+/// Supports tiered depth: "index" (free), "recommendations" (2cr), "dream_notes" (5cr).
 async fn evaluate_coherence_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(workspace_id): Path<String>,
+    body: Option<Json<Value>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let ws_uuid: uuid::Uuid = workspace_id
@@ -4541,17 +4615,42 @@ async fn evaluate_coherence_handler(
         .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
         .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
 
-    // Charge coherence evaluation gas (2 credits)
-    charge_workspace_gas(
-        &state.db,
-        ws_uuid,
-        &workspace_id,
-        2, // coherence evaluation cost
-        "gas_fee",
-        "Coherence evaluation",
-        None,
-    )
-    .await?;
+    // Parse depth tier (default: "index" which is free)
+    let depth = body
+        .as_ref()
+        .and_then(|b| b.get("depth"))
+        .and_then(|d| d.as_str())
+        .unwrap_or("index")
+        .to_string();
+
+    let credit_cost = match depth.as_str() {
+        "index" => 0,
+        "recommendations" => 2,
+        "dream_notes" => 5,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid depth '{}'. Use: index, recommendations, dream_notes",
+                    depth
+                ),
+            ))
+        }
+    };
+
+    // Charge credits if tier requires it
+    if credit_cost > 0 {
+        charge_workspace_gas(
+            &state.db,
+            ws_uuid,
+            &workspace_id,
+            credit_cost,
+            "gas_fee",
+            &format!("Coherence evaluation ({})", depth),
+            None,
+        )
+        .await?;
+    }
 
     // Fetch recent messages (last 50)
     let messages = state
@@ -4628,23 +4727,106 @@ async fn evaluate_coherence_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // For premium tiers, run coherence_consultant agent
+    let consultant_output = if depth == "recommendations" || depth == "dream_notes" {
+        let consultant_id = "coherence_consultant";
+        match state.registry.get(consultant_id) {
+            Ok(card) => {
+                let msg_summary: String = messages
+                    .iter()
+                    .rev()
+                    .take(20)
+                    .map(|m| {
+                        format!(
+                            "[{}]: {}",
+                            m.sender_name.as_deref().unwrap_or("?"),
+                            m.content
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let query_text = if depth == "recommendations" {
+                    format!(
+                        "Coherence score: {:.0}% ({}). Principles: {:?}. Health: {:?}.\n\n\
+                         Recent messages:\n{}\n\n\
+                         Provide specific, actionable recommendations for improving workspace coherence.",
+                        eval.global_score * 100.0, eval.quality_label,
+                        principle_scores, health_indicators, msg_summary,
+                    )
+                } else {
+                    format!(
+                        "Coherence score: {:.0}% ({}). Principles: {:?}. Health: {:?}.\n\n\
+                         Full workspace conversation:\n{}\n\n\
+                         Write dream notes: a narrative synthesis of what this workspace has learned, \
+                         connections made, knowledge gaps identified, and emerging themes.",
+                        eval.global_score * 100.0, eval.quality_label,
+                        principle_scores, health_indicators, msg_summary,
+                    )
+                };
+
+                let agent_stmt = ast::AgentStmt {
+                    name: consultant_id.to_string(),
+                    agent_type: Some(card.agent_type.clone()),
+                    query: query_text,
+                    executor: Some(ast::ExecutorType::LLM),
+                    schedule: None,
+                    driver_refs: vec![],
+                    depends_on: vec![],
+                    confidence_threshold: None,
+                };
+                let program = ast::Program {
+                    statements: vec![ast::Statement::Agent(agent_stmt.clone())],
+                };
+                let context = ExecutionContext {
+                    program,
+                    agent_card: card,
+                };
+                match state.registry.execute_agent(&agent_stmt, &context).await {
+                    Ok(output) => output.metadata.reasoning,
+                    Err(e) => {
+                        eprintln!("Coherence consultant failed: {:?}", e);
+                        Some(format!("Consultant unavailable: {:?}", e))
+                    }
+                }
+            }
+            Err(_) => Some("Coherence consultant agent not available".to_string()),
+        }
+    } else {
+        None
+    };
+
     // Post coherence update to workspace chat
+    let chat_content = if let Some(ref consultant) = consultant_output {
+        format!(
+            "Coherence: {:.0}% ({}) | {} utterances | {}\n\n{}",
+            eval.global_score * 100.0,
+            eval.quality_label,
+            eval.utterance_count,
+            snapshot.feedback_action,
+            consultant,
+        )
+    } else {
+        format!(
+            "Coherence: {:.0}% ({}) | {} utterances | {}",
+            eval.global_score * 100.0,
+            eval.quality_label,
+            eval.utterance_count,
+            snapshot.feedback_action,
+        )
+    };
+
     let update_msg = WorkspaceMessage {
         message_id: uuid::Uuid::new_v4(),
         workspace_id: ws_uuid,
         sender_type: "system".to_string(),
         sender_id: "coherence_evaluator".to_string(),
         sender_name: Some("Coherence Evaluator".to_string()),
-        content: format!(
-            "Coherence: {:.0}% ({}) | {} utterances | {}",
-            eval.global_score * 100.0,
-            eval.quality_label,
-            eval.utterance_count,
-            snapshot.feedback_action,
-        ),
+        content: chat_content,
         message_type: "coherence_update".to_string(),
         metadata: json!({
             "eval_id": eval_id,
+            "depth": depth,
             "global_score": eval.global_score,
             "quality_label": eval.quality_label,
             "principle_scores": principle_scores,
@@ -4658,15 +4840,31 @@ async fn evaluate_coherence_handler(
         .store_workspace_message(&update_msg)
         .await;
 
-    Ok(Json(json!({
+    let mut response = json!({
         "eval_id": eval_id,
+        "depth": depth,
+        "credits_charged": credit_cost,
         "global_score": eval.global_score,
         "quality_label": eval.quality_label,
         "principle_scores": principle_scores,
         "health_indicators": health_indicators,
         "utterance_count": eval.utterance_count,
         "message_window": eval.message_window,
-    })))
+    });
+
+    if let Some(ref consultant) = consultant_output {
+        response.as_object_mut().unwrap().insert(
+            if depth == "recommendations" {
+                "recommendations"
+            } else {
+                "dream_notes"
+            }
+            .to_string(),
+            json!(consultant),
+        );
+    }
+
+    Ok(Json(response))
 }
 
 /// Get latest coherence evaluation for a workspace.

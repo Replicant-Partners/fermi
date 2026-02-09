@@ -955,16 +955,56 @@
               id="coherence-health"
               style="margin-top: 6px; font-size: 0.75rem; color: var(--fg3)"
             ></div>
-            <div style="margin-top: 6px">
+            <div
+              style="
+                margin-top: 6px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+              "
+            >
               <button
                 class="btn"
-                id="eval-btn"
+                onclick="evaluateCoherenceTier('index')"
                 style="font-size: 0.7rem"
-                title="Run coherence evaluation (2 cr)"
+                title="Free coherence index"
               >
-                Evaluate (2 cr)
+                Index (free)
+              </button>
+              <button
+                class="btn"
+                onclick="evaluateCoherenceTier('recommendations')"
+                style="font-size: 0.7rem"
+                title="Actionable recommendations (2 cr)"
+              >
+                Recommendations (2 cr)
+              </button>
+              <button
+                class="btn"
+                onclick="evaluateCoherenceTier('dream_notes')"
+                style="font-size: 0.7rem"
+                title="Dream notes synthesis (5 cr)"
+              >
+                Dream Notes (5 cr)
               </button>
             </div>
+            <div
+              id="consultant-output"
+              style="
+                display: none;
+                margin-top: 8px;
+                padding: 8px;
+                background: var(--bg0);
+                border: 1px solid var(--bg2);
+                border-radius: 4px;
+                font-size: 0.75rem;
+                line-height: 1.5;
+                white-space: pre-wrap;
+                max-height: 200px;
+                overflow-y: auto;
+                color: var(--fg2);
+              "
+            ></div>
           </div>
         </div>
 
@@ -1827,35 +1867,40 @@
         }
       }
 
-      // Evaluate button
-      document
-        .getElementById("eval-btn")
-        .addEventListener("click", async () => {
-          const btn = document.getElementById("eval-btn");
-          btn.disabled = true;
-          btn.textContent = "Evaluating...";
-          try {
-            const res = await fetch(
-              `/api/workspaces/${wsId}/coherence/evaluate`,
-              {
-                method: "POST",
-              },
-            );
-            if (!res.ok) {
-              const err = await res.text();
-              alert("Evaluation failed: " + err);
-              return;
-            }
-            const data = await res.json();
-            updateCoherenceDisplay(data);
-            refreshBudget();
-          } catch (e) {
-            alert("Evaluation failed");
-          } finally {
-            btn.disabled = false;
-            btn.textContent = "Evaluate (2 cr)";
+      // Tiered coherence evaluation
+      window.evaluateCoherenceTier = async function (depth) {
+        const btns = document.querySelectorAll(".panel-shelf .btn");
+        btns.forEach((b) => (b.disabled = true));
+        const consultantEl = document.getElementById("consultant-output");
+        consultantEl.style.display = "none";
+        try {
+          const res = await fetch(
+            `/api/workspaces/${wsId}/coherence/evaluate`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ depth }),
+            },
+          );
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Evaluation failed: " + err);
+            return;
           }
-        });
+          const data = await res.json();
+          updateCoherenceDisplay(data);
+          // Show consultant output if present
+          if (data.recommendations || data.dream_notes) {
+            consultantEl.textContent = data.recommendations || data.dream_notes;
+            consultantEl.style.display = "block";
+          }
+          refreshBudget();
+        } catch (e) {
+          alert("Evaluation failed");
+        } finally {
+          btns.forEach((b) => (b.disabled = false));
+        }
+      };
 
       // ─── Tab switching ───
       function switchTab(tab) {
