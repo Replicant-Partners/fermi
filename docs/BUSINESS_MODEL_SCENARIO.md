@@ -22,14 +22,24 @@ This document models the business from beta through 1M users.
 | Volume discount (10K+) | $0.006 |
 | Free tier | 100 credits/month |
 
-| Action | Credit Cost |
-|--------|------------|
-| Chat message | 1 |
-| Execute agent (per 1K tokens) | 1 + 10% gas |
-| Hire agent to workspace | 5 |
-| Add own agent to workspace | 2 |
-| Create agent (education budget) | 20-100 |
-| Consolidation cycle | 3 |
+| Action | Credit Cost | Type |
+|--------|------------|------|
+| Chat message | 1 | User-driven |
+| Execute agent (per 1K tokens) | 1 + 10% gas | User-driven |
+| Hire agent to workspace | 5 | User-driven |
+| Add own agent to workspace | 2 | User-driven |
+| Create agent (education budget) | 20-100 | One-time |
+| Consolidation cycle (dreaming) | 3 | A2A / autonomous |
+| Entity extraction | 2 | A2A / autonomous |
+| Fact consolidation | 2 | A2A / autonomous |
+| Community detection | 3 | A2A / autonomous |
+| Ontology snapshot | 1 | A2A / autonomous |
+| AKP education spend (per learning cycle) | 5-15 | A2A / autonomous |
+
+**Three categories of credit consumption:**
+1. **User-driven**: Human clicks a button (chat, execute, hire)
+2. **One-time**: Paid at agent creation (education budget)
+3. **A2A / autonomous**: Agent-to-platform, triggered by agent activity — dreaming, learning, knowledge pipeline. This is **recurring and scales with agent usage**, not user actions.
 
 ### Agent Economy (Layer 2 — The Marketplace)
 
@@ -115,6 +125,95 @@ Fermi orchestrates:
 
 ---
 
+## A2A Revenue: The AKP & Dream Economy
+
+This is the revenue category the initial model underweighted. When agents run on the platform, they don't just execute queries — they **learn**. The Agent Knowledge Pipeline (AKP) and dreaming system create autonomous, recurring credit consumption that scales with agent activity, not user actions.
+
+### How Agents Consume Credits Autonomously
+
+```
+User executes agent 50 times
+    ↓
+Agent accumulates 50 episodes
+    ↓
+AKP triggers learning cycle (every ~10 episodes):
+    1. Consolidation (dreaming): distill episodes → rules       3 credits
+    2. Entity extraction: pull entities from episodes            2 credits
+    3. Fact consolidation: connect entities into knowledge graph 2 credits
+    4. Community detection: find clusters of related knowledge   3 credits
+    5. Ontology snapshot: capture state of agent's knowledge     1 credits
+                                                         Total: 11 credits per cycle
+    ↓
+Agent is smarter, produces better results
+    ↓
+More users hire agent → more executions → more learning cycles
+```
+
+This creates a **learning flywheel**: more usage → more learning → better agents → more usage → more learning credits consumed.
+
+### A2A Volume Assumptions
+
+| Phase | Active agents | Avg execs/agent/mo | Learning cycles/agent/mo | A2A credits/agent/mo |
+|-------|--------------|-------------------|-------------------------|---------------------|
+| Beta (200 users) | 200 | 50 | 5 | 55 |
+| Seed (1K users) | 2,000 | 48 | 5 | 55 |
+| Growth (10K users) | 30,000 | 32 | 3 | 33 |
+| Scale (50K users) | 150,000 | 32 | 3 | 33 |
+| Expansion (200K users) | 700,000 | 27 | 3 | 33 |
+| Mass (1M users) | 3,500,000 | 27 | 2 | 22 |
+
+Notes:
+- "Active agents" = agents with >0 executions/month. Not all 7M agents are active.
+- Learning frequency decreases per-agent at scale (agents mature, need fewer cycles) but total volume explodes because there are so many agents.
+- Heavily-used coordinator agents may trigger 10-20 learning cycles/month.
+
+### A2A Revenue by Phase
+
+| Phase | Users | Active agents | A2A credits/mo | A2A revenue/mo | % of total credit revenue |
+|-------|-------|--------------|---------------|---------------|--------------------------|
+| Beta | 200 | 200 | 11,000 | $88 | 6% |
+| Seed | 1K | 2,000 | 110,000 | $880 | 18% |
+| Growth | 10K | 30,000 | 990,000 | $7,920 | 13% |
+| Scale | 50K | 150,000 | 4,950,000 | $39,600 | 13% |
+| Expansion | 200K | 700,000 | 23,100,000 | $184,800 | 15% |
+| **Mass** | **1M** | **3,500,000** | **77,000,000** | **$616,000** | **9%** |
+
+Wait — those are the *base* numbers assuming average agents. But the AKP learning cycles also consume **LLM tokens** for the consolidation/extraction itself. Each learning cycle involves:
+- Consolidation prompt: ~3,000 tokens (Haiku) → $0.016 API cost
+- Entity extraction: ~1,500 tokens (Haiku) → $0.008 API cost
+- Fact consolidation: ~1,000 tokens (Haiku) → $0.006 API cost
+- Community/ontology: ~500 tokens (deterministic) → $0.000
+
+So each learning cycle costs the platform ~$0.03 in API and earns 11 credits ($0.088). **That's 66% margin on A2A cycles** — lower than chat (100%) but still strong.
+
+### A2A Revenue Including Premium Learning
+
+Active, high-value agents (coordinators, enterprise agents) will have **premium AKP budgets** — their owners allocate larger education budgets because better learning = better agent = more revenue. These agents might spend 50-200 credits/month on learning alone.
+
+| Agent tier | Count at 1M | AKP credits/agent/mo | Credits/mo | Revenue/mo |
+|-----------|------------|---------------------|-----------|-----------|
+| Standard active | 3,000,000 | 11 | 33,000,000 | $264,000 |
+| Power agents | 400,000 | 33 | 13,200,000 | $105,600 |
+| Premium/enterprise agents | 80,000 | 110 | 8,800,000 | $70,400 |
+| Coordinator agents | 20,000 | 200 | 4,000,000 | $32,000 |
+| **Total A2A** | **3,500,000** | | **59,000,000** | **$472,000** |
+
+At 1M users, **A2A/AKP generates ~$472K/mo in credit revenue** — a meaningful and *entirely autonomous* revenue stream. Nobody clicks a button. Agents learn, credits flow.
+
+### The Compounding Effect
+
+A2A revenue has a unique property: **it compounds with platform quality**.
+
+```
+Better agents (from learning) → Higher user retention
+    → More executions → More learning cycles → More A2A credits
+        → Even better agents → Even higher retention → ...
+```
+
+This is the defensible flywheel. A competitor can copy the UI, the pricing, even the architecture. They can't copy 3.5M agents with accumulated knowledge graphs built over months of learning cycles that their owners paid credits for.
+
+---
+
 ## Growth Trajectory: Beta to 1 Million Users
 
 ### User Growth Assumptions
@@ -189,84 +288,92 @@ Fermi orchestrates:
 | Line | Monthly |
 |------|---------|
 | **Revenue** | |
-| Credit revenue | $54,400 |
+| Credit revenue (user-driven) | $54,400 |
+| Credit revenue (A2A/AKP) | $7,920 |
 | Agent economy tx fees (2.5% of $130K) | $3,250 |
-| **Total revenue** | **$57,650** |
+| **Total revenue** | **$65,570** |
 | **Costs** | |
 | Infrastructure (scaled) | -$500 |
 | LLM API (950K execs * $0.011 blended) | -$10,450 |
+| LLM API (A2A learning: 90K cycles * $0.03) | -$2,700 |
 | Self-hosted GPU (Mistral/Qwen) | -$2,000 |
 | Embeddings | -$30 |
-| **Total COGS** | **-$12,980** |
-| **Gross profit** | **$44,670 (77%)** |
+| **Total COGS** | **-$15,680** |
+| **Gross profit** | **$49,890 (76%)** |
 | Team (5 engineers + 1 ops) | -$30,000 |
 | Marketing/growth | -$5,000 |
-| **Net (pre-tax)** | **$9,670/mo** |
-| **Annual run rate** | **$116K ARR profit** |
+| **Net (pre-tax)** | **$14,890/mo** |
+| **Annual run rate** | **$179K ARR profit** |
 
 ### Phase 4: Scale (Month 18 — 50,000 users)
 
 | Line | Monthly |
 |------|---------|
 | **Revenue** | |
-| Credit revenue | $272,000 |
+| Credit revenue (user-driven) | $272,000 |
+| Credit revenue (A2A/AKP) | $39,600 |
 | Agent economy tx fees (2.5% of $650K) | $16,250 |
 | Enterprise contracts (10 @ $2K/mo) | $20,000 |
-| **Total revenue** | **$308,250** |
+| **Total revenue** | **$347,850** |
 | **Costs** | |
 | Infrastructure (multi-region) | -$3,000 |
 | LLM API (4.75M execs * $0.011) | -$52,250 |
+| LLM API (A2A learning: 450K cycles * $0.03) | -$13,500 |
 | Self-hosted GPU cluster | -$8,000 |
 | Embeddings | -$150 |
-| **Total COGS** | **-$63,400** |
-| **Gross profit** | **$244,850 (79%)** |
+| **Total COGS** | **-$76,900** |
+| **Gross profit** | **$270,950 (78%)** |
 | Team (12 eng + 3 biz + 2 ops) | -$120,000 |
 | Marketing | -$25,000 |
 | Legal/compliance | -$10,000 |
 | Office/misc | -$5,000 |
-| **Net (pre-tax)** | **$84,850/mo** |
-| **Annual run rate** | **$1.02M ARR profit** |
+| **Net (pre-tax)** | **$110,950/mo** |
+| **Annual run rate** | **$1.33M ARR profit** |
 
 ### Phase 5: Expansion (Month 24 — 200,000 users)
 
 | Line | Monthly |
 |------|---------|
 | **Revenue** | |
-| Credit revenue | $1,088,000 |
+| Credit revenue (user-driven) | $1,088,000 |
+| Credit revenue (A2A/AKP) | $184,800 |
 | Agent economy tx fees (2.5% of $2.6M) | $65,000 |
 | Enterprise contracts (50 @ $3K/mo avg) | $150,000 |
-| **Total revenue** | **$1,303,000** |
+| **Total revenue** | **$1,487,800** |
 | **Costs** | |
 | Infrastructure (dedicated, multi-region) | -$15,000 |
 | LLM API (19M execs * $0.009 — better rates) | -$171,000 |
+| LLM API (A2A learning: 2.1M cycles * $0.025) | -$52,500 |
 | Self-hosted GPU fleet | -$25,000 |
 | Embeddings | -$600 |
-| **Total COGS** | **-$211,600** |
-| **Gross profit** | **$1,091,400 (84%)** |
+| **Total COGS** | **-$264,100** |
+| **Gross profit** | **$1,223,700 (82%)** |
 | Team (30 people) | -$350,000 |
 | Marketing | -$75,000 |
 | Legal/compliance/security | -$30,000 |
 | Office/ops | -$25,000 |
-| **Net (pre-tax)** | **$611,400/mo** |
-| **Annual run rate** | **$7.3M ARR profit** |
+| **Net (pre-tax)** | **$743,700/mo** |
+| **Annual run rate** | **$8.9M ARR profit** |
 
 ### Phase 6: Mass (Month 36 — 1,000,000 users)
 
 | Line | Monthly |
 |------|---------|
 | **Revenue** | |
-| Credit revenue | $5,440,000 |
+| Credit revenue (user-driven) | $5,440,000 |
+| Credit revenue (A2A/AKP) | $472,000 |
 | Agent economy tx fees (2.5% of $13M) | $325,000 |
 | Enterprise contracts (200 @ $5K/mo avg) | $1,000,000 |
 | API licensing / white-label | $200,000 |
-| **Total revenue** | **$6,965,000** |
+| **Total revenue** | **$7,437,000** |
 | **Costs** | |
 | Infrastructure (global, redundant) | -$80,000 |
 | LLM API (95M execs * $0.007 — volume deals) | -$665,000 |
+| LLM API (A2A learning: 5.4M cycles * $0.02) | -$108,000 |
 | Self-hosted GPU fleet | -$120,000 |
 | Embeddings | -$3,000 |
-| **Total COGS** | **-$868,000** |
-| **Gross profit** | **$6,097,000 (88%)** |
+| **Total COGS** | **-$976,000** |
+| **Gross profit** | **$6,461,000 (87%)** |
 | Team (80 people) | -$1,200,000 |
 | Marketing | -$250,000 |
 | Legal/compliance/security | -$100,000 |
@@ -274,9 +381,9 @@ Fermi orchestrates:
 | Customer success | -$150,000 |
 | R&D (model training, custom infra) | -$200,000 |
 | **Total OpEx** | **-$2,000,000** |
-| **Net (pre-tax)** | **$4,097,000/mo** |
-| **Annual run rate** | **$49.2M ARR profit** |
-| **Annual revenue** | **$83.6M** |
+| **Net (pre-tax)** | **$4,461,000/mo** |
+| **Annual run rate** | **$53.5M ARR profit** |
+| **Annual revenue** | **$89.2M** |
 
 ---
 
@@ -284,26 +391,35 @@ Fermi orchestrates:
 
 | Stream | Monthly | % of Total |
 |--------|---------|-----------|
-| Credit sales (Layer 1) | $5,440,000 | 78.1% |
-| Agent economy tx fees (Layer 2) | $325,000 | 4.7% |
-| Enterprise contracts | $1,000,000 | 14.4% |
-| API licensing | $200,000 | 2.9% |
-| **Total** | **$6,965,000** | 100% |
+| Credit sales — user-driven (Layer 1) | $5,440,000 | 73.1% |
+| Credit sales — A2A/AKP (Layer 1) | $472,000 | 6.3% |
+| Agent economy tx fees (Layer 2) | $325,000 | 4.4% |
+| Enterprise contracts | $1,000,000 | 13.4% |
+| API licensing | $200,000 | 2.7% |
+| **Total** | **$7,437,000** | 100% |
+
+Note: A2A/AKP is **autonomous platform revenue** — no human triggers it. Agents learn, credits flow. This stream didn't exist in the initial model and adds $5.7M/year at scale.
 
 ### Credit Revenue Breakdown at 1M Users
 
-| Action | Volume/mo | Credits | Revenue |
-|--------|-----------|---------|---------|
-| Chat messages | 310M | 310,000,000 | $2,480,000 |
-| Executions | 95M | 475,000,000 | $1,900,000* |
-| Gas surcharge (10%) | 95M | 47,500,000 | $190,000* |
-| Agent creation | 500K new agents * 50 cr | 25,000,000 | $200,000 |
-| Hire/Add | 2M actions | 7,000,000 | $56,000 |
-| Consolidation | 1M cycles | 3,000,000 | $24,000 |
-| Other platform actions | - | ~75,000,000 | $590,000 |
-| **Total** | | **~942M credits** | **$5,440,000** |
+| Action | Volume/mo | Credits | Revenue | Category |
+|--------|-----------|---------|---------|----------|
+| Chat messages | 310M | 310,000,000 | $2,480,000 | User-driven |
+| Executions | 95M | 475,000,000 | $1,900,000* | User-driven |
+| Gas surcharge (10%) | 95M | 47,500,000 | $190,000* | User-driven |
+| Agent creation | 500K * 50 cr | 25,000,000 | $200,000 | One-time |
+| Hire/Add | 2M actions | 7,000,000 | $56,000 | User-driven |
+| **AKP learning cycles** | **14M cycles** | **154,000,000** | **$1,232,000** | **A2A** |
+| **Dreaming (consolidation)** | **7M cycles** | **21,000,000** | **$168,000** | **A2A** |
+| **Entity extraction** | **14M** | **28,000,000** | **$224,000** | **A2A** |
+| **Community detection** | **3.5M** | **10,500,000** | **$84,000** | **A2A** |
+| **Ontology snapshots** | **3.5M** | **3,500,000** | **$28,000** | **A2A** |
+| Other platform actions | - | ~10,000,000 | $80,000 | Mixed |
+| **Total** | | **~1.09B credits** | **$6,642,000** |  |
 
 *At blended $0.008/credit for volume buyers.
+
+**A2A / AKP credits alone: 217M credits = $1,736,000/mo (26% of credit revenue)**
 
 ---
 
@@ -338,16 +454,18 @@ This follows a power law — coordinator agents that orchestrate many sub-agents
 
 ## Growth Chart Summary
 
-| Month | Users | Revenue/mo | COGS/mo | Gross margin | Net/mo | ARR |
-|-------|-------|-----------|---------|-------------|--------|-----|
-| 3 | 200 | $0* | $159 | -100% | -$159 | - |
-| 6 | 1K | $4.2K | $933 | 78% | -$1.7K | - |
-| 12 | 10K | $57.7K | $13K | 77% | $9.7K | $116K |
-| 18 | 50K | $308K | $63K | 79% | $85K | $1.0M |
-| 24 | 200K | $1.3M | $212K | 84% | $611K | $7.3M |
-| 36 | 1M | $7.0M | $868K | 88% | $4.1M | $49.2M |
+| Month | Users | Revenue/mo | of which A2A | COGS/mo | Gross margin | Net/mo | ARR |
+|-------|-------|-----------|-------------|---------|-------------|--------|-----|
+| 3 | 200 | $0* | $88 | $159 | -100% | -$159 | - |
+| 6 | 1K | $5.1K | $880 | $933 | 82% | -$833 | - |
+| 12 | 10K | $65.6K | $7.9K | $15.7K | 76% | $14.9K | $179K |
+| 18 | 50K | $347.9K | $39.6K | $76.9K | 78% | $111K | $1.33M |
+| 24 | 200K | $1.49M | $184.8K | $264K | 82% | $744K | $8.9M |
+| 36 | 1M | $7.44M | $472K | $976K | 87% | $4.46M | $53.5M |
 
-*Beta period — free credits, no real revenue.
+*Beta period — free credits, no real revenue. A2A still generates economic value.
+
+**A2A/AKP grows from 6% to ~6.3% of revenue** — a steady, autonomous baseline that requires zero user acquisition spend to generate.
 
 ---
 
