@@ -2304,6 +2304,49 @@ async fn charge_workspace_gas(
 #[derive(Debug, Deserialize)]
 struct PostMessageRequest {
     content: String,
+    #[serde(default)]
+    message_type: Option<String>,
+    #[serde(default)]
+    metadata: Option<Value>,
+}
+
+/// Parse @agent_name mentions from message content.
+/// Returns (target_agent_name, query_text) if found.
+fn parse_at_mention(content: &str) -> Option<(String, String)> {
+    // Match @word_chars at start or after whitespace
+    let re = regex::Regex::new(r"@([a-zA-Z0-9_-]+)").ok()?;
+    let m = re.find(content)?;
+    let agent_name = re.captures(content)?.get(1)?.as_str().to_string();
+    // Query is everything except the @mention
+    let query = format!("{}{}", &content[..m.start()], &content[m.end()..])
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        return None;
+    }
+    Some((agent_name, query))
+}
+
+/// Load workspace context files from the git repo's context/ directory.
+async fn load_workspace_context(workspace_git: &WorkspaceGitManager, slug: &str) -> String {
+    let files = match workspace_git.list_files(slug, Some("context")) {
+        Ok(f) => f,
+        Err(_) => return String::new(),
+    };
+    let mut context_parts = Vec::new();
+    for file in &files {
+        if file.is_dir {
+            continue;
+        }
+        if let Ok(content) = workspace_git.read_file(slug, &file.path) {
+            context_parts.push(format!("--- {} ---\n{}", file.path, content));
+        }
+    }
+    if context_parts.is_empty() {
+        String::new()
+    } else {
+        format!("[Workspace Context]\n{}", context_parts.join("\n\n"))
+    }
 }
 
 async fn post_workspace_message_handler(
@@ -2335,15 +2378,24 @@ async fn post_workspace_message_handler(
     )
     .await?;
 
+    // Detect @agent_name invocation
+    let at_mention = parse_at_mention(&req.content);
+    let is_invocation =
+        req.message_type.as_deref() == Some("agent_invocation") || at_mention.is_some();
+
     let msg = WorkspaceMessage {
         message_id: uuid::Uuid::new_v4(),
         workspace_id: ws_uuid,
         sender_type: "user".to_string(),
         sender_id: user_id.clone(),
-        sender_name: Some(user_id),
-        content: req.content,
-        message_type: "chat".to_string(),
-        metadata: json!({}),
+        sender_name: Some(user_id.clone()),
+        content: req.content.clone(),
+        message_type: if is_invocation {
+            "agent_invocation".to_string()
+        } else {
+            "chat".to_string()
+        },
+        metadata: req.metadata.clone().unwrap_or(json!({})),
         created_at: chrono::Utc::now(),
     };
 
@@ -2352,6 +2404,217 @@ async fn post_workspace_message_handler(
         .store_workspace_message(&msg)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // If @agent invocation, spawn background execution
+    if is_invocation {
+        // Extract target agent and query
+        let (target_agent, query) = if let Some((name, q)) = at_mention {
+            (name, q)
+        } else if let Some(meta) = &req.metadata {
+            let name = meta
+                .get("target_agent")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let q = meta
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&req.content)
+                .to_string();
+            (name, q)
+        } else {
+            ("".to_string(), req.content.clone())
+        };
+
+        if !target_agent.is_empty() {
+            // Verify agent is in workspace
+            let agent_in_ws = sqlx::query(
+                "SELECT a.agent_id, a.agent_name, a.display_alias FROM workspace_agents wa
+                 JOIN agents a ON a.agent_id = wa.agent_id
+                 WHERE wa.workspace_id = $1 AND a.agent_name = $2",
+            )
+            .bind(ws_uuid)
+            .bind(&target_agent)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            if let Some(agent_row) = agent_in_ws {
+                let agent_name: String = agent_row.get("agent_name");
+                let agent_display: Option<String> = agent_row.get("display_alias");
+                let display = agent_display.unwrap_or_else(|| agent_name.clone());
+
+                // Clone what we need for the background task
+                let state2 = state.clone();
+                let ws_id = workspace_id.clone();
+                let ws_uuid2 = ws_uuid;
+                let query2 = query.clone();
+                let agent_name2 = agent_name.clone();
+                let display2 = display.clone();
+                let user_id2 = user_id.clone();
+
+                tokio::spawn(async move {
+                    // Load workspace context
+                    let slug = get_workspace_slug(&state2.db, ws_uuid2)
+                        .await
+                        .unwrap_or_default();
+                    let ws_context = load_workspace_context(&state2.workspace_git, &slug).await;
+
+                    // Build augmented query with workspace context
+                    let augmented_query = if ws_context.is_empty() {
+                        query2.clone()
+                    } else {
+                        format!("{}\n\n{}", ws_context, query2)
+                    };
+
+                    // Resolve and execute
+                    let result = async {
+                        let db_agent = resolve_agent(&state2, &agent_name2).await?;
+                        let card = state2.registry.get(&agent_name2).map_err(|e| {
+                            (
+                                StatusCode::NOT_FOUND,
+                                format!("Agent not in registry: {}", e),
+                            )
+                        })?;
+
+                        let agent_stmt = ast::AgentStmt {
+                            name: agent_name2.clone(),
+                            agent_type: Some(card.agent_type.clone()),
+                            query: augmented_query.clone(),
+                            executor: Some(ast::ExecutorType::LLM),
+                            schedule: None,
+                            driver_refs: vec![],
+                            depends_on: vec![],
+                            confidence_threshold: None,
+                        };
+                        let program = ast::Program {
+                            statements: vec![ast::Statement::Agent(agent_stmt.clone())],
+                        };
+                        let context = ExecutionContext {
+                            program,
+                            agent_card: card.clone(),
+                        };
+                        let output = state2
+                            .registry
+                            .execute_agent(&agent_stmt, &context)
+                            .await
+                            .map_err(|e| {
+                                (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    format!("Execution failed: {}", e),
+                                )
+                            })?;
+
+                        // Record stats
+                        let _ = state2.registry.record_execution(&agent_name2, &output);
+
+                        // Store episode
+                        let mut episode =
+                            agent_output_to_episode(db_agent.agent_id, &query2, &output);
+                        let embed_text = format!(
+                            "{} {}",
+                            query2,
+                            output.metadata.reasoning.as_deref().unwrap_or("")
+                        );
+                        if let Ok(embedding) = state2.embedder.generate(&embed_text).await {
+                            episode.embedding = Some(embedding);
+                        }
+                        let _ = state2.memory_store.store_episode(episode).await;
+
+                        // Charge execution gas from workspace wallet
+                        let tokens = output.tokens_used.unwrap_or(0) as i32;
+                        let (exec_fee, gas_fee) = state2.gas_fees.execution_fee(tokens);
+                        let total = exec_fee + gas_fee;
+                        let _ = charge_workspace_gas(
+                            &state2.db,
+                            ws_uuid2,
+                            &ws_id,
+                            total,
+                            "execution_fee",
+                            &format!("@{} execution ({}tk)", agent_name2, tokens),
+                            None,
+                        )
+                        .await;
+
+                        Ok::<_, (StatusCode, String)>(output)
+                    }
+                    .await;
+
+                    // Post result message
+                    let (content, metadata, msg_type) = match result {
+                        Ok(output) => {
+                            let evidence_summary = output
+                                .evidence
+                                .iter()
+                                .map(|e| {
+                                    format!("- {}", e.summary.as_deref().unwrap_or("(no summary)"))
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let reasoning = output
+                                .metadata
+                                .reasoning
+                                .as_deref()
+                                .unwrap_or("No reasoning provided");
+                            let content = format!(
+                                "{}\n\n{}",
+                                reasoning,
+                                if evidence_summary.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("**Evidence:**\n{}", evidence_summary)
+                                }
+                            );
+                            let meta = json!({
+                                "agent_name": agent_name2,
+                                "confidence": output.confidence,
+                                "execution_time_ms": output.execution_time_ms,
+                                "tokens_used": output.tokens_used,
+                                "status": format!("{:?}", output.status),
+                                "evidence_count": output.evidence.len(),
+                            });
+                            (content, meta, "execution_result".to_string())
+                        }
+                        Err((_status, err_msg)) => (
+                            format!("Execution failed: {}", err_msg),
+                            json!({"agent_name": agent_name2, "error": true}),
+                            "execution_result".to_string(),
+                        ),
+                    };
+
+                    let result_msg = WorkspaceMessage {
+                        message_id: uuid::Uuid::new_v4(),
+                        workspace_id: ws_uuid2,
+                        sender_type: "agent".to_string(),
+                        sender_id: agent_name2.clone(),
+                        sender_name: Some(display2),
+                        content,
+                        message_type: msg_type,
+                        metadata,
+                        created_at: chrono::Utc::now(),
+                    };
+                    let _ = state2
+                        .memory_store
+                        .store_workspace_message(&result_msg)
+                        .await;
+                });
+            } else {
+                // Agent not in workspace — post system error
+                let err_msg = WorkspaceMessage {
+                    message_id: uuid::Uuid::new_v4(),
+                    workspace_id: ws_uuid,
+                    sender_type: "system".to_string(),
+                    sender_id: "system".to_string(),
+                    sender_name: Some("System".to_string()),
+                    content: format!("Agent '{}' is not in this workspace. Use Hire or Add to bring them in first.", target_agent),
+                    message_type: "system_event".to_string(),
+                    metadata: json!({}),
+                    created_at: chrono::Utc::now(),
+                };
+                let _ = state.memory_store.store_workspace_message(&err_msg).await;
+            }
+        }
+    }
 
     // Auto-evaluate coherence every N messages (background, best-effort)
     let auto_eval_interval: i64 = std::env::var("COHERENCE_AUTO_EVAL_INTERVAL")

@@ -459,6 +459,7 @@
         gap: 8px;
         align-items: flex-end;
         background: var(--bg0);
+        position: relative;
       }
       .chat-input {
         flex: 1;
@@ -478,6 +479,115 @@
       }
       .chat-input::placeholder {
         color: var(--fg3);
+      }
+
+      /* ─── @ Autocomplete ─── */
+      .at-autocomplete {
+        display: none;
+        position: absolute;
+        bottom: 100%;
+        left: 16px;
+        right: 16px;
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 50;
+      }
+      .at-autocomplete.visible {
+        display: block;
+      }
+      .at-option {
+        padding: 8px 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.82rem;
+        color: var(--fg1);
+        border-bottom: 1px solid var(--bg2);
+      }
+      .at-option:last-child {
+        border-bottom: none;
+      }
+      .at-option:hover,
+      .at-option.active {
+        background: var(--bg2);
+      }
+      .at-option-dot {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.6rem;
+        color: #fff;
+        flex-shrink: 0;
+      }
+      .at-option-name {
+        font-weight: 500;
+      }
+      .at-option-type {
+        color: var(--fg3);
+        font-size: 0.7rem;
+        margin-left: auto;
+      }
+
+      /* ─── Enhanced execution result ─── */
+      .exec-result-card {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        border-left: 3px solid var(--yellow);
+        padding: 10px 12px;
+        margin-top: 6px;
+        font-size: 0.82rem;
+      }
+      .exec-result-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .exec-confidence {
+        padding: 2px 6px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        border-radius: 2px;
+      }
+      .exec-confidence.high {
+        background: var(--green);
+        color: var(--bg0-hard);
+      }
+      .exec-confidence.medium {
+        background: var(--yellow);
+        color: var(--bg0-hard);
+      }
+      .exec-confidence.low {
+        background: var(--red);
+        color: var(--bg0-hard);
+      }
+      .exec-meta {
+        font-size: 0.7rem;
+        color: var(--fg3);
+      }
+      .exec-evidence-toggle {
+        cursor: pointer;
+        color: var(--aqua);
+        font-size: 0.75rem;
+        margin-top: 6px;
+        user-select: none;
+      }
+      .exec-evidence-toggle:hover {
+        text-decoration: underline;
+      }
+      .exec-evidence-list {
+        display: none;
+        margin-top: 6px;
+        padding-left: 12px;
+        border-left: 1px solid var(--bg3);
+        font-size: 0.78rem;
+        color: var(--fg2);
       }
 
       /* ─── Right: Shelf ─── */
@@ -762,15 +872,18 @@
             </div>
           </div>
           <div class="chat-input-area">
+            <div class="at-autocomplete" id="at-autocomplete"></div>
             <textarea
               class="chat-input"
               id="chat-input"
-              placeholder="Type a message..."
+              placeholder="Type a message... (@agent to invoke)"
               rows="1"
             ></textarea>
             <button class="btn btn-send" id="send-btn">Send</button>
           </div>
-          <div class="gas-hint">1 credit per message</div>
+          <div class="gas-hint">
+            1 credit per message · @agent invocation costs execution gas
+          </div>
         </div>
 
         <!-- Files panel -->
@@ -975,6 +1088,7 @@
       })();
 
       // ─── Load workspace data ───
+      let wsAgentsList = []; // populated by loadWorkspace, used by @autocomplete
       async function loadWorkspace() {
         try {
           const res = await fetch(`/api/workspaces/${wsId}`);
@@ -1024,6 +1138,7 @@
           // Agents
           const agentsEl = document.getElementById("ws-agents-list");
           if (ws.agents && ws.agents.length > 0) {
+            wsAgentsList = ws.agents;
             agentsEl.innerHTML = ws.agents
               .map((a) => {
                 const name = a.display_alias || a.agent_name;
@@ -1127,23 +1242,66 @@
         const senderClass = isAgent ? "chat-sender-agent" : "";
         const initial = name.charAt(0).toUpperCase();
 
-        let extra = "";
+        // Deterministic color for agent dots
+        const hues = [200, 140, 30, 340, 270, 50, 170, 10];
+        const agentHue = hues[(m.sender_id || "").charCodeAt(0) % hues.length];
+        const avatarStyle = isAgent
+          ? `style="background:hsl(${agentHue},45%,35%)"`
+          : "";
+
+        // Enhanced execution result rendering
         if (m.message_type === "execution_result" && m.metadata) {
-          const metaStr =
-            typeof m.metadata === "string"
-              ? m.metadata
-              : JSON.stringify(m.metadata, null, 2);
-          if (metaStr && metaStr !== "{}") {
-            const uid = "exec-" + m.message_id;
-            extra = `
-              <div class="chat-exec-toggle" onclick="toggleExec('${uid}')">View full result</div>
-              <div class="chat-exec-result" id="${uid}" style="display:none">${escHtml(metaStr)}</div>`;
-          }
+          const meta = typeof m.metadata === "object" ? m.metadata : {};
+          const conf = meta.confidence != null ? meta.confidence : null;
+          const confClass =
+            conf != null
+              ? conf >= 0.8
+                ? "high"
+                : conf >= 0.5
+                  ? "medium"
+                  : "low"
+              : "";
+          const confLabel = conf != null ? `${(conf * 100).toFixed(0)}%` : "";
+          const tokens = meta.tokens_used || "";
+          const execTime = meta.execution_time_ms || "";
+          const evidenceCount = meta.evidence_count || 0;
+          const uid =
+            "exec-" + (m.message_id || Math.random().toString(36).slice(2));
+
+          return `
+            <div class="chat-msg">
+              <div class="chat-avatar ${avatarClass}" ${avatarStyle}>${initial}</div>
+              <div class="chat-body">
+                <div class="chat-meta-row">
+                  <span class="chat-sender ${senderClass}">${escHtml(name)}</span>
+                  ${confLabel ? `<span class="exec-confidence ${confClass}">${confLabel}</span>` : ""}
+                  <span class="chat-time">${time}</span>
+                </div>
+                <div class="chat-text">${escHtml(m.content)}</div>
+                <div class="exec-meta">
+                  ${execTime ? execTime + "ms" : ""} ${tokens ? "· " + tokens + " tokens" : ""}
+                  ${meta.status ? "· " + meta.status : ""}
+                </div>
+                ${
+                  evidenceCount > 0
+                    ? `
+                  <div class="exec-evidence-toggle" onclick="toggleExec('${uid}')">
+                    ${evidenceCount} evidence source${evidenceCount > 1 ? "s" : ""} ▸
+                  </div>
+                  <div class="exec-evidence-list" id="${uid}">
+                    ${escHtml(JSON.stringify(meta, null, 2))}
+                  </div>`
+                    : ""
+                }
+              </div>
+            </div>`;
         }
+
+        let extra = "";
 
         return `
           <div class="chat-msg">
-            <div class="chat-avatar ${avatarClass}">${initial}</div>
+            <div class="chat-avatar ${avatarClass}" ${avatarStyle}>${initial}</div>
             <div class="chat-body">
               <div class="chat-meta-row">
                 <span class="chat-sender ${senderClass}">${escHtml(name)}</span>
@@ -1216,6 +1374,117 @@
           this.style.height = "auto";
           this.style.height = Math.min(this.scrollHeight, 120) + "px";
         });
+
+      // ─── @ Autocomplete ───
+      let atActiveIdx = -1;
+      const atDropdown = document.getElementById("at-autocomplete");
+      const chatInput = document.getElementById("chat-input");
+
+      function getAtQuery() {
+        const val = chatInput.value;
+        const pos = chatInput.selectionStart;
+        // Search backward from cursor for @
+        const before = val.slice(0, pos);
+        const atIdx = before.lastIndexOf("@");
+        if (atIdx < 0) return null;
+        // @ must be at start or preceded by whitespace
+        if (atIdx > 0 && !/\s/.test(before[atIdx - 1])) return null;
+        const fragment = before.slice(atIdx + 1);
+        // No spaces in mention fragment
+        if (/\s/.test(fragment)) return null;
+        return { atIdx, fragment: fragment.toLowerCase() };
+      }
+
+      function showAtAutocomplete() {
+        const q = getAtQuery();
+        if (!q || wsAgentsList.length === 0) {
+          atDropdown.classList.remove("visible");
+          atActiveIdx = -1;
+          return;
+        }
+        const hues = [200, 140, 30, 340, 270, 50, 170, 10];
+        const filtered = wsAgentsList
+          .filter((a) => {
+            const name = (a.display_alias || a.agent_name || "").toLowerCase();
+            const sysName = (a.agent_name || "").toLowerCase();
+            return name.includes(q.fragment) || sysName.includes(q.fragment);
+          })
+          .slice(0, 8);
+
+        if (filtered.length === 0) {
+          atDropdown.classList.remove("visible");
+          atActiveIdx = -1;
+          return;
+        }
+
+        atDropdown.innerHTML = filtered
+          .map((a, i) => {
+            const name = a.display_alias || a.agent_name;
+            const hue = hues[(a.agent_name || "").charCodeAt(0) % hues.length];
+            const initial = name.charAt(0).toUpperCase();
+            return `<div class="at-option${i === atActiveIdx ? " active" : ""}" data-name="${a.agent_name}" data-idx="${i}">
+            <div class="at-option-dot" style="background:hsl(${hue},45%,35%)">${initial}</div>
+            <span class="at-option-name">${escHtml(name)}</span>
+            <span class="at-option-type">${a.agent_type || ""}</span>
+          </div>`;
+          })
+          .join("");
+        atDropdown.classList.add("visible");
+
+        // Click handler for options
+        atDropdown.querySelectorAll(".at-option").forEach((el) => {
+          el.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            insertAtMention(el.dataset.name);
+          });
+        });
+      }
+
+      function insertAtMention(agentName) {
+        const q = getAtQuery();
+        if (!q) return;
+        const val = chatInput.value;
+        const before = val.slice(0, q.atIdx);
+        const after = val.slice(chatInput.selectionStart);
+        chatInput.value = before + "@" + agentName + " " + after;
+        chatInput.focus();
+        const newPos = before.length + 1 + agentName.length + 1;
+        chatInput.setSelectionRange(newPos, newPos);
+        atDropdown.classList.remove("visible");
+        atActiveIdx = -1;
+      }
+
+      chatInput.addEventListener("input", () => showAtAutocomplete());
+      chatInput.addEventListener("keydown", (e) => {
+        if (!atDropdown.classList.contains("visible")) return;
+        const options = atDropdown.querySelectorAll(".at-option");
+        if (options.length === 0) return;
+
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          atActiveIdx = Math.min(atActiveIdx + 1, options.length - 1);
+          options.forEach((o, i) =>
+            o.classList.toggle("active", i === atActiveIdx),
+          );
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          atActiveIdx = Math.max(atActiveIdx - 1, 0);
+          options.forEach((o, i) =>
+            o.classList.toggle("active", i === atActiveIdx),
+          );
+        } else if (e.key === "Enter" && atActiveIdx >= 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          insertAtMention(options[atActiveIdx].dataset.name);
+        } else if (e.key === "Escape") {
+          atDropdown.classList.remove("visible");
+          atActiveIdx = -1;
+        }
+      });
+
+      chatInput.addEventListener("blur", () => {
+        setTimeout(() => atDropdown.classList.remove("visible"), 150);
+      });
 
       async function sendMessage() {
         const input = document.getElementById("chat-input");
