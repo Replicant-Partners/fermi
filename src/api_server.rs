@@ -1120,13 +1120,17 @@ async fn waitlist_handler(
     ))
 }
 
-async fn health() -> Json<Value> {
+async fn health(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "status": "ok",
         "service": "Agent Bestiary",
         "description": "A naturalist's catalogue of dreaming agents",
         "version": "1.0.0",
-        "api_version": "v1"
+        "api_version": "v1",
+        "embeddings": {
+            "provider": state.embedder.provider_name(),
+            "dimension": state.embedder.dimension(),
+        }
     }))
 }
 
@@ -6506,6 +6510,14 @@ async fn admin_stats_handler(
     .try_get("cnt")
     .unwrap_or(0);
 
+    let episodes_with_embeddings: i64 =
+        sqlx::query("SELECT COUNT(*) as cnt FROM episodes WHERE embedding IS NOT NULL")
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .try_get("cnt")
+            .unwrap_or(0);
+
     Ok(Json(json!({
         "total_users": total_users,
         "total_agents": total_agents,
@@ -6513,6 +6525,12 @@ async fn admin_stats_handler(
         "credits_in_circulation": total_credits,
         "credits_total_spent": total_spent,
         "transactions_24h": recent_txs,
+        "embeddings": {
+            "provider": state.embedder.provider_name(),
+            "dimension": state.embedder.dimension(),
+            "episodes_with_embeddings": episodes_with_embeddings,
+            "episodes_without_embeddings": total_episodes - episodes_with_embeddings,
+        }
     })))
 }
 

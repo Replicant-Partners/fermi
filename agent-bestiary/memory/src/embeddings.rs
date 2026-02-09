@@ -7,6 +7,7 @@ pub trait EmbeddingGenerator: Send + Sync {
     async fn generate(&self, text: &str) -> Result<Vec<f32>>;
     async fn generate_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
     fn dimension(&self) -> usize;
+    fn provider_name(&self) -> &str;
 }
 
 /// Anthropic embedding generator
@@ -87,6 +88,10 @@ impl EmbeddingGenerator for AnthropicEmbeddings {
 
     fn dimension(&self) -> usize {
         self.dimension
+    }
+
+    fn provider_name(&self) -> &str {
+        "anthropic/voyage-2"
     }
 }
 
@@ -175,6 +180,10 @@ impl EmbeddingGenerator for OpenAIEmbeddings {
     fn dimension(&self) -> usize {
         self.dimension
     }
+
+    fn provider_name(&self) -> &str {
+        "openai/text-embedding-3-large"
+    }
 }
 
 /// Mistral embedding generator
@@ -259,6 +268,10 @@ impl EmbeddingGenerator for MistralEmbeddings {
 
     fn dimension(&self) -> usize {
         self.dimension
+    }
+
+    fn provider_name(&self) -> &str {
+        "mistral/mistral-embed"
     }
 }
 
@@ -363,6 +376,10 @@ impl EmbeddingGenerator for QwenEmbeddings {
     fn dimension(&self) -> usize {
         self.dimension
     }
+
+    fn provider_name(&self) -> &str {
+        "qwen/text-embedding-v2"
+    }
 }
 
 /// Mock embedding generator for testing
@@ -405,6 +422,10 @@ impl EmbeddingGenerator for MockEmbeddings {
 
     fn dimension(&self) -> usize {
         self.dimension
+    }
+
+    fn provider_name(&self) -> &str {
+        "mock"
     }
 }
 

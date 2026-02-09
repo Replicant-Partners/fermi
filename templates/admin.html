@@ -336,6 +336,14 @@
           <div class="value" id="stat-txs24h">-</div>
           <div class="label">Transactions (24h)</div>
         </div>
+        <div class="stat-card">
+          <div class="value" id="stat-embed-provider">-</div>
+          <div class="label">Embedding Provider</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-embed-coverage">-</div>
+          <div class="label">Episodes with Embeddings</div>
+        </div>
       </div>
 
       <!-- Tabs -->
@@ -488,6 +496,14 @@
             stats.total_spent || 0;
           document.getElementById("stat-txs24h").textContent =
             stats.transactions_24h || 0;
+          if (stats.embeddings) {
+            document.getElementById("stat-embed-provider").textContent =
+              stats.embeddings.provider || "none";
+            document.getElementById("stat-embed-coverage").textContent =
+              (stats.embeddings.episodes_with_embeddings || 0) +
+              " / " +
+              (stats.total_episodes || 0);
+          }
         } catch (e) {
           console.error("Failed to load stats", e);
         }
