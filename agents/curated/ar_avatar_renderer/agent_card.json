@@ -64,7 +64,21 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "Plans augmented reality avatar placements for agent characters. Generates 3D scene instructions, interaction scripts, and ambient behaviors. Output is structured JSON for future WebXR/Google Glass rendering pipeline. Architecture-first: the brain before the eyes.",
-    "tags": ["ar", "augmented-reality", "avatar", "webxr", "spatial", "google-glass", "3d", "interaction-design"],
+    "tags": [
+      "ar",
+      "augmented-reality",
+      "avatar",
+      "webxr",
+      "spatial",
+      "google-glass",
+      "3d",
+      "interaction-design"
+    ],
+    "sample_queries": [
+      "Generate a visual identity for my market analysis agent",
+      "What avatar style best represents a risk assessment agent?",
+      "Design an animated avatar for a creative writing companion"
+    ],
     "taxonomy": {
       "kingdom": "Spatiala",
       "phylum": "Augmentivora",

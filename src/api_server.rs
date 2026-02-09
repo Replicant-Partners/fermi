@@ -353,6 +353,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/019_agent_provider_fields.sql",
         "migrations/020_stripe_and_profile.sql",
         "migrations/021_notifications.sql",
+        "migrations/022_sample_queries.sql",
     ];
 
     for file in &migration_files {
@@ -1061,6 +1062,7 @@ async fn list_agents(
                         "author": a.author,
                         "model": a.model,
                         "tags": a.tags,
+                        "sample_queries": a.sample_queries,
                         "visibility": a.visibility,
                         "owner_id": a.owner_id,
                         "system_prompt": a.system_prompt,
@@ -2043,6 +2045,7 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
+            sample_queries: card.metadata.sample_queries.clone(),
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -2168,6 +2171,7 @@ async fn create_agent_handler(
         embedding_provider: req.embedding_provider,
         embedding_model: req.embedding_model,
         embedding_dimension: req.embedding_dimension,
+        sample_queries: vec![],
     };
 
     // If education budget requested, debit from user's wallet
@@ -2382,6 +2386,7 @@ async fn import_agent_handler(
         embedding_provider: "anthropic".to_string(),
         embedding_model: "voyage-2".to_string(),
         embedding_dimension: 1024,
+        sample_queries: vec![],
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -2524,7 +2529,7 @@ async fn list_curated_agents_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let agents = state
         .registry
-        .list()
+        .list_cards()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", e)))?;
 
     let curated: Vec<Value> = agents
@@ -2939,6 +2944,7 @@ async fn create_workspace_agent_handler(
         embedding_provider: "anthropic".to_string(),
         embedding_model: "voyage-2".to_string(),
         embedding_dimension: 1024,
+        sample_queries: vec![],
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {

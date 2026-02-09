@@ -906,13 +906,36 @@
             <!-- Inline Execute Panel (hidden by default) -->
             <div id="execute-panel" style="display:none;background:var(--bg1);border:1px solid var(--bg3);padding:16px;margin-bottom:16px">
               <div style="font-size:0.85rem;color:var(--yellow);margin-bottom:8px">Execute Agent</div>
-              <input type="text" id="exec-query" placeholder="Enter your query..."
-                style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg0);padding:8px 12px;font-family:inherit;margin-bottom:8px" />
-              <button onclick="executeAgent()"
-                style="background:transparent;border:1px solid var(--yellow);color:var(--yellow);padding:6px 16px;cursor:pointer;font-family:inherit">
-                Run
-              </button>
-              <div id="exec-result" style="margin-top:12px;font-size:0.85rem;color:var(--fg2);white-space:pre-wrap"></div>
+              ${(() => {
+                const sq =
+                  agent.metadata?.sample_queries || agent.sample_queries || [];
+                if (sq.length > 0) {
+                  return (
+                    '<div id="sample-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">' +
+                    sq
+                      .map(
+                        (
+                          q,
+                        ) => `<button onclick="document.getElementById('exec-query').value=this.textContent;document.getElementById('exec-query').focus()"
+                      style="background:transparent;border:1px solid var(--yellow);color:var(--yellow);padding:4px 10px;font-size:0.78rem;cursor:pointer;font-family:inherit;opacity:0.85;transition:opacity 0.15s"
+                      onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">${q}</button>`,
+                      )
+                      .join("") +
+                    "</div>"
+                  );
+                }
+                return "";
+              })()}
+              <div style="display:flex;gap:8px">
+                <input type="text" id="exec-query" placeholder="Enter your query..."
+                  style="flex:1;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg0);padding:8px 12px;font-family:inherit"
+                  onkeydown="if(event.key==='Enter')executeAgent()" />
+                <button onclick="executeAgent()" id="exec-run-btn"
+                  style="background:transparent;border:1px solid var(--yellow);color:var(--yellow);padding:6px 16px;cursor:pointer;font-family:inherit;white-space:nowrap">
+                  Run
+                </button>
+              </div>
+              <div id="exec-result" style="margin-top:12px"></div>
             </div>
 
             <div class="cognition-panel">
@@ -1649,7 +1672,11 @@
         const query = document.getElementById("exec-query").value.trim();
         if (!query) return;
         const resultEl = document.getElementById("exec-result");
-        resultEl.textContent = "Executing...";
+        const btn = document.getElementById("exec-run-btn");
+        btn.textContent = "Running...";
+        btn.disabled = true;
+        resultEl.innerHTML =
+          '<div style="color:var(--gray);font-size:0.85rem">Executing...</div>';
         const agentId = window.location.pathname
           .split("/")
           .filter(Boolean)
@@ -1665,13 +1692,82 @@
           );
           if (res.ok) {
             const data = await res.json();
-            resultEl.textContent = JSON.stringify(data, null, 2);
+            resultEl.innerHTML = renderExecutionResult(data);
           } else {
-            resultEl.textContent = "Error: " + (await res.text());
+            resultEl.innerHTML = `<div style="color:var(--red);font-size:0.85rem">Error: ${await res.text()}</div>`;
           }
         } catch (e) {
-          resultEl.textContent = "Network error: " + e.message;
+          resultEl.innerHTML = `<div style="color:var(--red);font-size:0.85rem">Network error: ${e.message}</div>`;
+        } finally {
+          btn.textContent = "Run";
+          btn.disabled = false;
         }
+      }
+
+      function renderExecutionResult(data) {
+        const confidence = data.confidence ?? data.result?.confidence;
+        const reasoning = data.reasoning || data.result?.reasoning || "";
+        const evidence = data.evidence || data.result?.evidence || [];
+        const answer =
+          data.answer || data.result?.answer || data.result?.summary || "";
+
+        let html = '<div style="font-size:0.85rem">';
+
+        // Confidence bar
+        if (confidence != null) {
+          const pct = Math.round(confidence * 100);
+          const barColor =
+            pct >= 70
+              ? "var(--green)"
+              : pct >= 40
+                ? "var(--yellow)"
+                : "var(--red)";
+          html += `<div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+              <span style="color:var(--fg2)">Confidence</span>
+              <span style="color:${barColor};font-weight:600">${pct}%</span>
+            </div>
+            <div style="background:var(--bg3);height:4px;border-radius:2px;overflow:hidden">
+              <div style="background:${barColor};height:100%;width:${pct}%;transition:width 0.3s"></div>
+            </div>
+          </div>`;
+        }
+
+        // Answer / Summary
+        if (answer) {
+          html += `<div style="color:var(--fg1);margin-bottom:12px;line-height:1.5">${answer}</div>`;
+        }
+
+        // Key findings from evidence
+        if (evidence.length > 0) {
+          html +=
+            '<div style="margin-bottom:12px"><div style="color:var(--aqua);font-size:0.8rem;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Key Findings</div><ul style="margin:0;padding-left:16px;color:var(--fg2)">';
+          evidence.forEach((e) => {
+            const text =
+              typeof e === "string"
+                ? e
+                : e.description || e.text || e.finding || JSON.stringify(e);
+            html += `<li style="margin-bottom:4px">${text}</li>`;
+          });
+          html += "</ul></div>";
+        }
+
+        // Reasoning (collapsible)
+        if (reasoning) {
+          html += `<details style="margin-top:8px">
+            <summary style="color:var(--gray);font-size:0.8rem;cursor:pointer;user-select:none">Reasoning</summary>
+            <div style="color:var(--fg3);margin-top:6px;padding:8px;background:var(--bg0);border-radius:4px;white-space:pre-wrap;font-size:0.82rem;line-height:1.5">${reasoning}</div>
+          </details>`;
+        }
+
+        // Raw data fallback (collapsible)
+        html += `<details style="margin-top:8px">
+          <summary style="color:var(--gray);font-size:0.75rem;cursor:pointer;user-select:none">Raw Response</summary>
+          <pre style="color:var(--fg3);margin-top:6px;padding:8px;background:var(--bg0);border-radius:4px;font-size:0.75rem;overflow-x:auto">${JSON.stringify(data, null, 2)}</pre>
+        </details>`;
+
+        html += "</div>";
+        return html;
       }
     </script>
 

@@ -60,7 +60,20 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "A daily logic puzzle agent inspired by Wordle. Generates fresh puzzles each day, tracks streaks, and demonstrates recurring engagement patterns. Also serves as a template for small businesses to create branded daily challenges.",
-    "tags": ["puzzle", "daily", "wordle", "engagement", "demo", "game", "template"],
+    "tags": [
+      "puzzle",
+      "daily",
+      "wordle",
+      "engagement",
+      "demo",
+      "game",
+      "template"
+    ],
+    "sample_queries": [
+      "Give me a Fermi estimation challenge about global infrastructure",
+      "Create a probability puzzle involving Bayesian reasoning",
+      "Design a lateral thinking puzzle about emerging technology"
+    ],
     "taxonomy": {
       "kingdom": "Ludica",
       "phylum": "Cognitovora",

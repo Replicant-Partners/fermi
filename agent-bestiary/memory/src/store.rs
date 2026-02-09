@@ -16,7 +16,8 @@ const AGENT_COLUMNS: &str = r#"
     failed_executions, total_cost_usd, avg_execution_time_ms,
     dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at,
     education_budget_credits, education_credits_used, display_alias,
-    llm_provider, embedding_provider, embedding_model, embedding_dimension
+    llm_provider, embedding_provider, embedding_model, embedding_dimension,
+    sample_queries
 "#;
 
 pub struct MemoryStore {
@@ -171,9 +172,10 @@ impl MemoryStore {
                 system_prompt, visibility, user_id, tags,
                 dreaming_budget_credits, dreaming_credits_used,
                 education_budget_credits, education_credits_used, display_alias,
-                llm_provider, embedding_provider, embedding_model, embedding_dimension
+                llm_provider, embedding_provider, embedding_model, embedding_dimension,
+                sample_queries
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -184,7 +186,8 @@ impl MemoryStore {
                 temperature = EXCLUDED.temperature,
                 mcp_servers = EXCLUDED.mcp_servers,
                 description = EXCLUDED.description,
-                system_prompt = EXCLUDED.system_prompt
+                system_prompt = EXCLUDED.system_prompt,
+                sample_queries = EXCLUDED.sample_queries
             RETURNING agent_id
             "#,
         )
@@ -212,6 +215,7 @@ impl MemoryStore {
         .bind(&agent.embedding_provider)
         .bind(&agent.embedding_model)
         .bind(agent.embedding_dimension)
+        .bind(&agent.sample_queries)
         .fetch_one(&self.pool)
         .await?;
 
@@ -301,9 +305,10 @@ impl MemoryStore {
                 executor_type, model, temperature, mcp_servers, description, author,
                 system_prompt, visibility, user_id, tags,
                 dreaming_budget_credits, education_budget_credits, display_alias,
-                llm_provider, embedding_provider, embedding_model, embedding_dimension
+                llm_provider, embedding_provider, embedding_model, embedding_dimension,
+                sample_queries
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             RETURNING agent_id
             "#,
         )
@@ -329,6 +334,7 @@ impl MemoryStore {
         .bind(&agent.embedding_provider)
         .bind(&agent.embedding_model)
         .bind(agent.embedding_dimension)
+        .bind(&agent.sample_queries)
         .fetch_one(&self.pool)
         .await?;
 
@@ -495,6 +501,9 @@ impl MemoryStore {
                 .try_get("embedding_model")
                 .unwrap_or_else(|_| "voyage-2".to_string()),
             embedding_dimension: row.try_get("embedding_dimension").unwrap_or(1024),
+            sample_queries: row
+                .try_get::<Option<Vec<String>>, _>("sample_queries")?
+                .unwrap_or_default(),
         })
     }
 
@@ -1618,6 +1627,7 @@ mod tests {
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
+            sample_queries: vec![],
         };
 
         let agent_id = store.upsert_agent(agent).await.unwrap();
@@ -1683,6 +1693,7 @@ mod tests {
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
+            sample_queries: vec![],
         };
 
         let agent_id = store.upsert_agent(agent).await.unwrap();
@@ -1769,6 +1780,7 @@ mod tests {
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
+            sample_queries: vec![],
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1858,6 +1870,7 @@ mod tests {
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
+            sample_queries: vec![],
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -1945,6 +1958,7 @@ mod tests {
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
+            sample_queries: vec![],
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -2042,6 +2056,7 @@ mod tests {
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
+            sample_queries: vec![],
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

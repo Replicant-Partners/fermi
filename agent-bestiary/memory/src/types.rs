@@ -219,6 +219,8 @@ pub struct Agent {
     pub embedding_model: String,
     #[serde(default = "default_embedding_dimension")]
     pub embedding_dimension: i32,
+    #[serde(default)]
+    pub sample_queries: Vec<String>,
 }
 
 fn default_llm_provider() -> String {

@@ -58,6 +58,11 @@
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Analyzes sentiment from social media, news, and forums to gauge market perception and public opinion",
-    "tags": ["sentiment", "social-media", "public-opinion"]
+    "tags": ["sentiment", "social-media", "public-opinion"],
+    "sample_queries": [
+      "What is the current market sentiment around semiconductor stocks?",
+      "Analyze public opinion trends on remote work policies",
+      "How has consumer confidence shifted in the past quarter?"
+    ]
   }
 }

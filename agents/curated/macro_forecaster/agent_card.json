@@ -64,7 +64,21 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "Processes economic indicators and policy signals to generate macro forecasts. Covers GDP, inflation, employment, central bank policy, trade flows, and currency dynamics. Part of the Fermi research orchestra.",
-    "tags": ["economics", "macro", "forecasting", "policy", "indicators", "gdp", "inflation", "fermi-orchestra"],
+    "tags": [
+      "economics",
+      "macro",
+      "forecasting",
+      "policy",
+      "indicators",
+      "gdp",
+      "inflation",
+      "fermi-orchestra"
+    ],
+    "sample_queries": [
+      "What are the key risks to global GDP growth in 2026?",
+      "How will rising interest rates affect emerging market economies?",
+      "Forecast the impact of AI adoption on labor productivity"
+    ],
     "taxonomy": {
       "kingdom": "Quantitativa",
       "phylum": "Economivora",

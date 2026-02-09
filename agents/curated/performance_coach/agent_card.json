@@ -64,7 +64,19 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "Analyzes agent execution stats and provides actionable coaching. Diagnoses prompt weaknesses, suggests model/temperature tuning, identifies knowledge gaps, and recommends dream budget allocation. Your agent's personal trainer.",
-    "tags": ["performance", "optimization", "coaching", "agent-improvement", "meta", "diagnostics"],
+    "tags": [
+      "performance",
+      "optimization",
+      "coaching",
+      "agent-improvement",
+      "meta",
+      "diagnostics"
+    ],
+    "sample_queries": [
+      "How can I reduce my agent's token usage without losing accuracy?",
+      "What patterns in my execution history suggest prompt improvements?",
+      "Compare my agent's confidence calibration against actual outcomes"
+    ],
     "taxonomy": {
       "kingdom": "Analytica",
       "phylum": "Optimivora",

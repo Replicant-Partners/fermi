@@ -64,7 +64,19 @@
     "created": "2026-02-08",
     "author": "Fermi Team",
     "description": "Interprets and narrates embedding space projections. Guides users through PCA/t-SNE visualizations, identifies semantic clusters, explains knowledge topology, and detects temporal drift in agent cognition. Acts as a docent for the Embedding Projector, translating geometric relationships in high-dimensional space into human-readable insights about what an agent knows and how its knowledge evolves.",
-    "tags": ["embeddings", "projector", "interpretation", "dimensionality-reduction", "knowledge-topology", "guide"],
+    "tags": [
+      "embeddings",
+      "projector",
+      "interpretation",
+      "dimensionality-reduction",
+      "knowledge-topology",
+      "guide"
+    ],
+    "sample_queries": [
+      "What do the clusters in my agent's knowledge graph represent?",
+      "Why are these two concept groups drifting apart over time?",
+      "Explain the semantic distance between my rule clusters"
+    ],
     "taxonomy": {
       "kingdom": "Analytica",
       "phylum": "Interpretivora",

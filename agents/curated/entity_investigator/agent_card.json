@@ -65,7 +65,20 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "Builds knowledge graphs from investigation queries. Maps ownership structures, board connections, geographic presence, and risk indicators. Each investigation enriches a persistent graph \u2014 demonstrating the AKP compounding knowledge moat.",
-    "tags": ["osint", "investigation", "entity-resolution", "knowledge-graph", "due-diligence", "compliance", "risk"],
+    "tags": [
+      "osint",
+      "investigation",
+      "entity-resolution",
+      "knowledge-graph",
+      "due-diligence",
+      "compliance",
+      "risk"
+    ],
+    "sample_queries": [
+      "Map the key relationships between major AI research labs",
+      "Investigate the corporate structure of this conglomerate",
+      "What connections exist between these venture capital firms?"
+    ],
     "taxonomy": {
       "kingdom": "Investigativa",
       "phylum": "Intelligivora",

@@ -108,6 +108,8 @@ pub struct AgentMetadata {
     pub author: String,
     pub description: String,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub sample_queries: Vec<String>,
 }
 
 impl AgentCard {
@@ -156,6 +158,7 @@ impl AgentCard {
                 author: "Fermi Team".to_string(),
                 description: "Agent description".to_string(),
                 tags: vec![],
+                sample_queries: vec![],
             },
             system_prompt: None,
         }

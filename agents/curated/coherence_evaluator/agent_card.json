@@ -60,6 +60,11 @@
       "thagard",
       "tec",
       "constraint-satisfaction"
+    ],
+    "sample_queries": [
+      "Evaluate the coherence of claims about AI replacing software engineers",
+      "Check logical consistency of arguments for cryptocurrency regulation",
+      "Assess whether recent climate policy proposals are internally consistent"
     ]
   }
 }

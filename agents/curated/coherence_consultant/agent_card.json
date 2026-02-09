@@ -64,7 +64,20 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "Workspace coherence consultant powered by Thagard's Theory of Explanatory Coherence. Free coherence index, paid session recommendations (2cr) and dream notes (5cr). Helps teams reason better together.",
-    "tags": ["coherence", "workspace", "collaboration", "discourse-analysis", "thagard", "tec", "freemium"],
+    "tags": [
+      "coherence",
+      "workspace",
+      "collaboration",
+      "discourse-analysis",
+      "thagard",
+      "tec",
+      "freemium"
+    ],
+    "sample_queries": [
+      "How can I improve the logical structure of my investment thesis?",
+      "What contradictions exist in my product roadmap assumptions?",
+      "Review the coherence of my team's quarterly strategy document"
+    ],
     "taxonomy": {
       "kingdom": "Analytica",
       "phylum": "Cohaerentivora",

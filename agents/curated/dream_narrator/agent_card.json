@@ -60,7 +60,20 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "Transforms consolidation synopses into engaging dream narratives. When agents dream (consolidation cycles), the Dream Narrator tells the story of what they learned. Makes knowledge growth visible and emotionally resonant. The tamagotchi's diary.",
-    "tags": ["dreams", "consolidation", "narrative", "learning", "meta", "storytelling", "tamagotchi"],
+    "tags": [
+      "dreams",
+      "consolidation",
+      "narrative",
+      "learning",
+      "meta",
+      "storytelling",
+      "tamagotchi"
+    ],
+    "sample_queries": [
+      "Narrate the key themes from my agent's last consolidation cycle",
+      "What new patterns emerged during the dreaming phase?",
+      "Describe how my agent's worldview evolved after overnight processing"
+    ],
     "taxonomy": {
       "kingdom": "Narrativa",
       "phylum": "Somnivora",

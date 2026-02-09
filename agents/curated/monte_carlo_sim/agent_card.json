@@ -64,7 +64,20 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "Runs Monte Carlo simulations for probabilistic forecasting. Decomposes questions into variables, assigns distributions, simulates outcomes, and reports confidence intervals. Part of the Fermi research orchestra.",
-    "tags": ["monte-carlo", "simulation", "risk", "probability", "quantitative", "forecasting", "fermi-orchestra"],
+    "tags": [
+      "monte-carlo",
+      "simulation",
+      "risk",
+      "probability",
+      "quantitative",
+      "forecasting",
+      "fermi-orchestra"
+    ],
+    "sample_queries": [
+      "Estimate the probability of a startup reaching profitability in 18 months",
+      "Run a simulation on portfolio returns under different interest rate scenarios",
+      "What is the likely range of outcomes for this product launch?"
+    ],
     "taxonomy": {
       "kingdom": "Quantitativa",
       "phylum": "Stochastivora",

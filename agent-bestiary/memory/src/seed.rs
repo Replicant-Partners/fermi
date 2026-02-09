@@ -169,6 +169,7 @@ impl SeedData {
                 embedding_provider: "anthropic".to_string(),
                 embedding_model: "voyage-2".to_string(),
                 embedding_dimension: 1024,
+                sample_queries: vec![],
             },
             Agent {
                 agent_id: make_uuid(1, 0, 0),
@@ -209,6 +210,7 @@ impl SeedData {
                 embedding_provider: "anthropic".to_string(),
                 embedding_model: "voyage-2".to_string(),
                 embedding_dimension: 1024,
+                sample_queries: vec![],
             },
             Agent {
                 agent_id: make_uuid(2, 0, 0),
@@ -244,6 +246,7 @@ impl SeedData {
                 embedding_provider: "anthropic".to_string(),
                 embedding_model: "voyage-2".to_string(),
                 embedding_dimension: 1024,
+                sample_queries: vec![],
             },
         ]
     }

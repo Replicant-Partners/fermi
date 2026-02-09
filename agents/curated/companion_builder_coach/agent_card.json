@@ -60,7 +60,18 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "Your guide to building a companion agent. Walks you through persona design, conversation style, memory configuration, skill selection, and dream budget planning. The 'hello world' of Agent Bestiary \u2014 start here.",
-    "tags": ["companion", "tutorial", "agent-creation", "getting-started", "onboarding"],
+    "tags": [
+      "companion",
+      "tutorial",
+      "agent-creation",
+      "getting-started",
+      "onboarding"
+    ],
+    "sample_queries": [
+      "Design a research companion that helps me stay current on AI papers",
+      "What personality traits should a study buddy agent have?",
+      "Help me build a creative writing partner agent"
+    ],
     "taxonomy": {
       "kingdom": "Pedagogica",
       "phylum": "Guidavora",

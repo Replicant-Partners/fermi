@@ -60,7 +60,20 @@
     "created": "2026-02-09",
     "author": "Fermi Team",
     "description": "The creator economy template. Teaches artists, writers, musicians, and consultants how to build agents that earn. Encode your style, set pricing tiers, build a subscriber base. Keep 97.5% of revenue. The Patreon of AI agents.",
-    "tags": ["creative", "art", "patron", "monetization", "template", "artist", "creator-economy"],
+    "tags": [
+      "creative",
+      "art",
+      "patron",
+      "monetization",
+      "template",
+      "artist",
+      "creator-economy"
+    ],
+    "sample_queries": [
+      "Design a reward structure for contributors to my forecasting agent",
+      "How should I price API access to my specialized research agent?",
+      "Create a patron tier system for my community knowledge base"
+    ],
     "taxonomy": {
       "kingdom": "Economica",
       "phylum": "Creativora",
