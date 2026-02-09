@@ -553,6 +553,14 @@ async fn main() {
             "/api/agents/:agent_id/episodes",
             get(get_agent_episodes_handler),
         )
+        .route(
+            "/api/agents/:agent_id/versions",
+            get(list_agent_versions_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/versions/:version_num",
+            get(get_agent_version_handler),
+        )
         .route("/api/agents/:agent_id/ontology", get(get_ontology))
         // Ontology evolution (public, read-only)
         .route(
@@ -645,6 +653,10 @@ async fn main() {
         .route("/api/agents/mine", get(list_my_agents_handler))
         .route("/api/agents/:agent_id", put(update_agent_handler))
         .route("/api/agents/:agent_id", delete(delete_agent_handler))
+        .route(
+            "/api/agents/:agent_id/versions/:version_num/restore",
+            post(restore_agent_version_handler),
+        )
         // Agent avatar generation (credit-gated)
         .route(
             "/api/agents/:agent_id/avatar/generate",
@@ -2834,12 +2846,23 @@ async fn update_agent_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
 
+    let user_id = principal.user_id();
+
     // Owner check
-    if db_agent.owner_id.as_deref() != Some(&principal.user_id()) {
+    if db_agent.owner_id.as_deref() != Some(&user_id) {
         return Err((
             StatusCode::FORBIDDEN,
             "Not the owner of this agent".to_string(),
         ));
+    }
+
+    // Snapshot current state before applying updates
+    if let Err(e) = state
+        .memory_store
+        .create_agent_version(db_agent.agent_id, &user_id)
+        .await
+    {
+        eprintln!("Warning: failed to create version snapshot: {}", e);
     }
 
     state
@@ -2854,6 +2877,111 @@ async fn update_agent_handler(
         })?;
 
     Ok(Json(json!({ "message": "Agent updated successfully" })))
+}
+
+// ─── Agent Version History ─────────────────────────────────────────
+
+async fn list_agent_versions_handler(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let versions = state
+        .memory_store
+        .list_agent_versions(db_agent.agent_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "versions": versions.iter().map(|v| json!({
+            "version_number": v.version_number,
+            "description": v.description,
+            "tags": v.tags,
+            "model": v.model,
+            "visibility": v.visibility,
+            "display_alias": v.display_alias,
+            "changed_by": v.changed_by,
+            "created_at": v.created_at.to_rfc3339(),
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+async fn get_agent_version_handler(
+    State(state): State<AppState>,
+    Path((agent_id, version_num)): Path<(String, i32)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let version = state
+        .memory_store
+        .get_agent_version(db_agent.agent_id, version_num)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, format!("Version not found: {}", e)))?;
+
+    Ok(Json(json!({
+        "version_number": version.version_number,
+        "description": version.description,
+        "system_prompt": version.system_prompt,
+        "tags": version.tags,
+        "model": version.model,
+        "temperature": version.temperature,
+        "visibility": version.visibility,
+        "display_alias": version.display_alias,
+        "changed_by": version.changed_by,
+        "created_at": version.created_at.to_rfc3339(),
+    })))
+}
+
+async fn restore_agent_version_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path((agent_id, version_num)): Path<(String, i32)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    if db_agent.owner_id.as_deref() != Some(&user_id) {
+        return Err((StatusCode::FORBIDDEN, "Not the owner".to_string()));
+    }
+
+    // Snapshot current state before restoring
+    if let Err(e) = state
+        .memory_store
+        .create_agent_version(db_agent.agent_id, &user_id)
+        .await
+    {
+        eprintln!("Warning: failed to snapshot before restore: {}", e);
+    }
+
+    // Load the target version
+    let version = state
+        .memory_store
+        .get_agent_version(db_agent.agent_id, version_num)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, format!("Version not found: {}", e)))?;
+
+    // Apply as update
+    let updates = AgentUpdate {
+        description: version.description,
+        system_prompt: version.system_prompt,
+        visibility: version.visibility,
+        tags: Some(version.tags),
+        model: version.model,
+        temperature: version.temperature,
+        display_alias: version.display_alias,
+        ..Default::default()
+    };
+
+    state
+        .memory_store
+        .update_agent(db_agent.agent_id, &updates)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "message": format!("Restored to version {}", version_num),
+        "version_restored": version_num,
+    })))
 }
 
 async fn delete_agent_handler(

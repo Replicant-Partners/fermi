@@ -253,6 +253,23 @@ pub struct AgentUpdate {
     pub display_alias: Option<String>,
 }
 
+/// Snapshot of mutable agent fields at a point in time
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentVersion {
+    pub version_id: Uuid,
+    pub agent_id: Uuid,
+    pub version_number: i32,
+    pub description: Option<String>,
+    pub system_prompt: Option<String>,
+    pub tags: Vec<String>,
+    pub model: Option<String>,
+    pub temperature: Option<f64>,
+    pub visibility: Option<String>,
+    pub display_alias: Option<String>,
+    pub changed_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Community (clustered group of entities)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Community {

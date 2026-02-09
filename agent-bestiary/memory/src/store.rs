@@ -1,6 +1,6 @@
 use crate::{
-    Agent, AgentUpdate, CoherenceEvaluation, Community, ConsolidationJob, Entity, Episode, Fact,
-    MemoryError, Result, SemanticRule, VerificationStatus, WorkspaceMessage,
+    Agent, AgentUpdate, AgentVersion, CoherenceEvaluation, Community, ConsolidationJob, Entity,
+    Episode, Fact, MemoryError, Result, SemanticRule, VerificationStatus, WorkspaceMessage,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
@@ -421,6 +421,103 @@ impl MemoryStore {
     }
 
     /// Delete an agent and cascade (episodes, rules, entities, facts, communities)
+    // ─── Agent Version History ────────────────────────────────────
+
+    /// Snapshot current agent state as a version row
+    pub async fn create_agent_version(
+        &self,
+        agent_id: Uuid,
+        changed_by: &str,
+    ) -> Result<AgentVersion> {
+        let row = sqlx::query(
+            "INSERT INTO agent_versions (agent_id, version_number, description, system_prompt, tags, model, temperature, visibility, display_alias, changed_by)
+             SELECT agent_id,
+                    COALESCE((SELECT MAX(version_number) FROM agent_versions WHERE agent_id = $1), 0) + 1,
+                    description, system_prompt, tags, model, temperature, visibility, display_alias, $2
+             FROM agents WHERE agent_id = $1
+             RETURNING version_id, agent_id, version_number, description, system_prompt, tags, model, temperature, visibility, display_alias, changed_by, created_at"
+        )
+        .bind(agent_id)
+        .bind(changed_by)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(AgentVersion {
+            version_id: row.try_get("version_id")?,
+            agent_id: row.try_get("agent_id")?,
+            version_number: row.try_get("version_number")?,
+            description: row.try_get("description")?,
+            system_prompt: row.try_get("system_prompt")?,
+            tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+            model: row.try_get("model")?,
+            temperature: row.try_get("temperature")?,
+            visibility: row.try_get("visibility")?,
+            display_alias: row.try_get("display_alias")?,
+            changed_by: row.try_get("changed_by")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
+
+    /// List all versions for an agent (newest first)
+    pub async fn list_agent_versions(&self, agent_id: Uuid) -> Result<Vec<AgentVersion>> {
+        let rows = sqlx::query(
+            "SELECT version_id, agent_id, version_number, description, system_prompt, tags, model, temperature, visibility, display_alias, changed_by, created_at
+             FROM agent_versions WHERE agent_id = $1 ORDER BY version_number DESC"
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| AgentVersion {
+                version_id: row.try_get("version_id").unwrap_or_default(),
+                agent_id: row.try_get("agent_id").unwrap_or_default(),
+                version_number: row.try_get("version_number").unwrap_or(0),
+                description: row.try_get("description").ok(),
+                system_prompt: row.try_get("system_prompt").ok(),
+                tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+                model: row.try_get("model").ok(),
+                temperature: row.try_get("temperature").ok(),
+                visibility: row.try_get("visibility").ok(),
+                display_alias: row.try_get("display_alias").ok(),
+                changed_by: row.try_get("changed_by").ok(),
+                created_at: row.try_get("created_at").unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// Get a specific version by number
+    pub async fn get_agent_version(
+        &self,
+        agent_id: Uuid,
+        version_number: i32,
+    ) -> Result<AgentVersion> {
+        let row = sqlx::query(
+            "SELECT version_id, agent_id, version_number, description, system_prompt, tags, model, temperature, visibility, display_alias, changed_by, created_at
+             FROM agent_versions WHERE agent_id = $1 AND version_number = $2"
+        )
+        .bind(agent_id)
+        .bind(version_number)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(AgentVersion {
+            version_id: row.try_get("version_id")?,
+            agent_id: row.try_get("agent_id")?,
+            version_number: row.try_get("version_number")?,
+            description: row.try_get("description")?,
+            system_prompt: row.try_get("system_prompt")?,
+            tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+            model: row.try_get("model")?,
+            temperature: row.try_get("temperature")?,
+            visibility: row.try_get("visibility")?,
+            display_alias: row.try_get("display_alias")?,
+            changed_by: row.try_get("changed_by")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
+
     pub async fn delete_agent(&self, agent_id: Uuid) -> Result<()> {
         // Delete in dependency order
         sqlx::query("DELETE FROM facts WHERE agent_id = $1")

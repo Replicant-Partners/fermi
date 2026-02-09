@@ -1692,6 +1692,7 @@
               <button class="owner-btn" onclick="toggleHistoryPanel()">Execution History</button>
               <button class="owner-btn" onclick="toggleTopupPanel()">Top Up Dreams</button>
               <button class="owner-btn" onclick="toggleConsolidatePanel()">Run Consolidation</button>
+              <button class="owner-btn" onclick="toggleVersionsPanel('${agentId}')">Version History</button>
               <button class="owner-btn danger" onclick="document.getElementById('delete-modal').classList.add('visible')">Delete</button>
             </div>
 
@@ -1745,48 +1746,121 @@
               <button class="owner-btn" id="consolidate-btn" onclick="runConsolidation('${agentId}')" style="border-color:var(--aqua);color:var(--aqua)">Consolidate Now</button>
               <div id="consolidate-result" style="margin-top:8px;font-size:0.85em;color:var(--fg3)"></div>
             </div>
+
+            <!-- Version History -->
+            <div class="edit-field" id="versions-panel">
+              <div id="versions-list" style="font-size:0.85em;color:var(--fg3)">Loading versions...</div>
+            </div>
           </div>
         `;
       }
 
+      const ownerPanelIds = [
+        "edit-panel",
+        "history-panel",
+        "topup-panel",
+        "consolidate-panel",
+        "versions-panel",
+      ];
+      function hideAllOwnerPanels(except) {
+        ownerPanelIds.forEach((id) => {
+          if (id !== except)
+            document.getElementById(id)?.classList.remove("visible");
+        });
+      }
+
       function toggleEditPanel() {
+        hideAllOwnerPanels("edit-panel");
         document.getElementById("edit-panel")?.classList.toggle("visible");
-        document.getElementById("history-panel")?.classList.remove("visible");
-        document.getElementById("topup-panel")?.classList.remove("visible");
-        document
-          .getElementById("consolidate-panel")
-          ?.classList.remove("visible");
       }
 
       function toggleHistoryPanel() {
         const panel = document.getElementById("history-panel");
         if (!panel) return;
         const wasVisible = panel.classList.contains("visible");
-        document.getElementById("edit-panel")?.classList.remove("visible");
-        document.getElementById("topup-panel")?.classList.remove("visible");
-        document
-          .getElementById("consolidate-panel")
-          ?.classList.remove("visible");
+        hideAllOwnerPanels("history-panel");
         panel.classList.toggle("visible");
         if (!wasVisible) loadEpisodes(0);
       }
 
       function toggleTopupPanel() {
-        document.getElementById("edit-panel")?.classList.remove("visible");
-        document.getElementById("history-panel")?.classList.remove("visible");
-        document
-          .getElementById("consolidate-panel")
-          ?.classList.remove("visible");
+        hideAllOwnerPanels("topup-panel");
         document.getElementById("topup-panel")?.classList.toggle("visible");
       }
 
       function toggleConsolidatePanel() {
-        document.getElementById("edit-panel")?.classList.remove("visible");
-        document.getElementById("history-panel")?.classList.remove("visible");
-        document.getElementById("topup-panel")?.classList.remove("visible");
+        hideAllOwnerPanels("consolidate-panel");
         document
           .getElementById("consolidate-panel")
           ?.classList.toggle("visible");
+      }
+
+      function toggleVersionsPanel(agentId) {
+        const panel = document.getElementById("versions-panel");
+        if (!panel) return;
+        const wasVisible = panel.classList.contains("visible");
+        hideAllOwnerPanels("versions-panel");
+        panel.classList.toggle("visible");
+        if (!wasVisible) loadVersions(agentId);
+      }
+
+      async function loadVersions(agentId) {
+        const el = document.getElementById("versions-list");
+        el.innerHTML = '<span style="color:var(--gray)">Loading...</span>';
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/versions`,
+          );
+          const data = await res.json();
+          const versions = data.versions || [];
+          if (versions.length === 0) {
+            el.innerHTML =
+              '<span style="color:var(--fg3)">No version history yet. Versions are created when you edit the agent.</span>';
+            return;
+          }
+          el.innerHTML = versions
+            .map(
+              (v) => `
+            <div style="border-bottom:1px solid var(--bg2);padding:8px 0;display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <strong style="color:var(--fg1)">v${v.version_number}</strong>
+                <span style="color:var(--gray);margin-left:8px">${new Date(v.created_at).toLocaleString()}</span>
+                <span style="color:var(--fg3);margin-left:8px">${v.changed_by || ""}</span>
+                ${v.description ? '<div style="color:var(--fg2);margin-top:2px;font-size:0.8em">' + v.description.substring(0, 80) + (v.description.length > 80 ? "..." : "") + "</div>" : ""}
+              </div>
+              <button class="owner-btn" onclick="restoreVersion('${agentId}', ${v.version_number})"
+                style="font-size:0.75em;padding:2px 8px;border-color:var(--aqua);color:var(--aqua)">Restore</button>
+            </div>
+          `,
+            )
+            .join("");
+        } catch (e) {
+          el.innerHTML = `<span style="color:var(--red)">Failed to load versions: ${e.message}</span>`;
+        }
+      }
+
+      async function restoreVersion(agentId, versionNum) {
+        if (
+          !confirm(
+            `Restore to version ${versionNum}? Current state will be saved as a new version first.`,
+          )
+        )
+          return;
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/versions/${versionNum}/restore`,
+            { method: "POST" },
+          );
+          if (!res.ok) {
+            const t = await res.text();
+            alert("Restore failed: " + t);
+            return;
+          }
+          alert(`Restored to version ${versionNum}. Reloading...`);
+          location.reload();
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
       }
 
       async function runConsolidation(agentId) {
