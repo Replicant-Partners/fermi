@@ -595,7 +595,7 @@
             return;
           }
 
-          // Load avatar
+          // Load cached avatar
           const avatarResponse = await fetch(`/api/agents/${agentId}/avatar`);
           let avatarUrl = null;
           if (avatarResponse.ok) {
@@ -603,41 +603,75 @@
             avatarUrl = `data:${avatarData.image.mime_type};base64,${avatarData.image.data}`;
           }
 
+          const displayName = agent.display_alias || agentId.replace(/_/g, " ");
           const skills = agent.capabilities?.skills || [];
           const mcpTools = agent.capabilities?.mcp_tools || [];
-          const model = agent.capabilities?.model || "N/A";
+          const model = agent.model || agent.capabilities?.model || "N/A";
           const executor = agent.capabilities?.executor || "N/A";
           const temperature = agent.capabilities?.temperature || "N/A";
+          const tags = agent.tags || agent.metadata?.tags || [];
 
-          const totalExec = agent.usage?.total_executions || 0;
-          const successExec = agent.usage?.successful_executions || 0;
-          const failedExec = agent.usage?.failed_executions || 0;
+          const totalExec =
+            agent.execution_stats?.total_executions ||
+            agent.usage?.total_executions ||
+            0;
+          const successExec =
+            agent.execution_stats?.successful_executions ||
+            agent.usage?.successful_executions ||
+            0;
+          const failedExec =
+            agent.execution_stats?.failed_executions ||
+            agent.usage?.failed_executions ||
+            0;
           const accuracy = agent.performance?.accuracy_rate || 0;
           const confidence = agent.performance?.avg_confidence || 0;
-          const cost = agent.usage?.total_cost_usd || 0;
-          const avgTime = agent.usage?.avg_execution_time_ms || 0;
+          const cost =
+            agent.execution_stats?.total_cost_usd ||
+            agent.usage?.total_cost_usd ||
+            0;
+          const avgTime =
+            agent.execution_stats?.avg_execution_time_ms ||
+            agent.usage?.avg_execution_time_ms ||
+            0;
 
           const ontology = agent.ontology_stats || {};
           const wallet = agent.wallet || null;
           const secrets = agent.secrets || null;
 
+          // Deterministic color for initial dot
+          const hues = [200, 140, 30, 340, 270, 50, 170, 10];
+          const hue = hues[agentId.charCodeAt(0) % hues.length];
+          const initial = displayName.charAt(0).toUpperCase();
+
           document.getElementById("agent-content").innerHTML = `
             <div class="specimen-header">
-              <div class="specimen-avatar-large ${!avatarUrl ? "loading" : ""}" id="avatar">
-                ${avatarUrl ? `<img src="${avatarUrl}" alt="${agentId}">` : '<span class="placeholder">◈</span>'}
+              <div class="specimen-avatar-large" id="avatar"
+                   style="${avatarUrl ? "" : `background: hsl(${hue}, 45%, 35%); color: #fff; font-size: 2.8em; font-weight: 300;`}">
+                ${avatarUrl ? `<img src="${avatarUrl}" alt="${agentId}">` : initial}
               </div>
               <div class="specimen-header-info">
-                <div class="specimen-title">${agentId.replace(/_/g, " ")}</div>
-                <div class="specimen-description">${agent.metadata?.description || "A mysterious agent"}</div>
+                <div class="specimen-title">${displayName}</div>
+                ${agent.display_alias ? `<div style="font-size:0.8em;color:var(--gray);font-family:'SF Mono',monospace;margin-bottom:6px">${agentId}</div>` : ""}
+                <div class="specimen-description">${agent.description || agent.metadata?.description || "A mysterious agent"}</div>
                 <div class="badges">
                   <span class="badge">${agent.tier || "curated"}</span>
                   <span class="badge">v${agent.version || "1.0.0"}</span>
+                  ${agent.visibility ? `<span class="badge">${agent.visibility}</span>` : ""}
                   ${agent.metadata?.author ? `<span class="badge">${agent.metadata.author}</span>` : ""}
                 </div>
               </div>
-              <button class="hire-button" id="execute-btn" onclick="toggleExecutePanel()">
-                Execute Agent
-              </button>
+              <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+                <button class="hire-button" id="execute-btn" onclick="toggleExecutePanel()">
+                  Execute Agent
+                </button>
+                ${
+                  !avatarUrl
+                    ? `<button class="hire-button" style="background:var(--aqua);font-size:0.75em;padding:6px 12px" onclick="generateNewAvatar('${agentId}')">
+                  Generate Avatar (3 cr)
+                </button>`
+                    : ""
+                }
+              </div>
             </div>
 
             <!-- Inline Execute Panel (hidden by default) -->
@@ -906,11 +940,11 @@
                     : ""
                 }
                 ${
-                  agent.metadata?.tags
+                  tags.length > 0
                     ? `
                 <div class="field-label" style="margin-top: 16px; margin-bottom: 8px;">Tags</div>
                 <div class="tags">
-                  ${agent.metadata.tags.map((tag) => `<span class="tag">${tag}</span>`).join("")}
+                  ${tags.map((tag) => `<span class="tag">${tag}</span>`).join("")}
                 </div>
                 `
                     : ""
@@ -1340,6 +1374,43 @@
         if (panel.style.display === "block")
           document.getElementById("exec-query").focus();
       }
+      async function generateNewAvatar(agentId) {
+        const btn = event.target;
+        btn.textContent = "Generating...";
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/avatar/generate`,
+            {
+              method: "POST",
+            },
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const avatarDiv = document.getElementById("avatar");
+            if (avatarDiv && data.image) {
+              avatarDiv.innerHTML = `<img src="data:${data.image.mime_type};base64,${data.image.data}" alt="${agentId}">`;
+              avatarDiv.style.background = "";
+              avatarDiv.style.color = "";
+              avatarDiv.style.fontSize = "";
+            }
+            btn.parentElement.removeChild(btn);
+          } else {
+            const err = await res.text();
+            btn.textContent = "Failed";
+            setTimeout(() => {
+              btn.textContent = "Generate Avatar (3 cr)";
+              btn.disabled = false;
+            }, 2000);
+            alert(err);
+          }
+        } catch (e) {
+          btn.textContent = "Generate Avatar (3 cr)";
+          btn.disabled = false;
+          alert("Network error: " + e.message);
+        }
+      }
+
       async function executeAgent() {
         const query = document.getElementById("exec-query").value.trim();
         if (!query) return;

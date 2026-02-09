@@ -289,7 +289,7 @@ async fn main() {
         .route("/api/health", get(health))
         .route("/api/debug/startup", get(debug_startup))
         .route("/api/agents", get(list_agents))
-        .route("/api/agents/:agent_id/avatar", get(generate_avatar))
+        .route("/api/agents/:agent_id/avatar", get(get_cached_avatar))
         .route("/api/agents/:agent_id/ontology", get(get_ontology))
         // Ontology evolution (public, read-only)
         .route(
@@ -368,6 +368,11 @@ async fn main() {
         .route("/api/agents/mine", get(list_my_agents_handler))
         .route("/api/agents/:agent_id", put(update_agent_handler))
         .route("/api/agents/:agent_id", delete(delete_agent_handler))
+        // Agent avatar generation (credit-gated)
+        .route(
+            "/api/agents/:agent_id/avatar/generate",
+            post(generate_avatar),
+        )
         // Agent execution
         .route("/api/agents/:agent_id/execute", post(execute_agent_handler))
         // Dreaming budget
@@ -637,12 +642,15 @@ async fn list_agents(
 
                     let mut agent_val = json!({
                         "agent_id": a.agent_name,
+                        "display_alias": a.display_alias,
                         "agent_type": a.agent_type,
                         "version": a.version,
                         "tier": a.tier,
                         "description": a.description,
                         "author": a.author,
                         "model": a.model,
+                        "tags": a.tags,
+                        "visibility": a.visibility,
                         "capabilities": {
                             "executor": a.executor_type,
                             "model": a.model,
@@ -731,42 +739,63 @@ async fn list_agents(
     Json(json!({ "agents": agents, "total": agents.len() }))
 }
 
-async fn generate_avatar(
-    State(state): State<AppState>,
+/// Public endpoint: serves cached avatar only (no generation)
+async fn get_cached_avatar(
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    // PAUSED: Avatar generation disabled to avoid Gemini API costs during development.
-    // Remove this block to re-enable.
-    if true {
-        // Still serve from cache if available
-        let cache_path = format!("avatars_cache/{}.json", agent_id);
-        if let Ok(cached) = std::fs::read_to_string(&cache_path) {
-            if let Ok(cached_data) = serde_json::from_str::<Value>(&cached) {
-                return Ok(Json(cached_data));
-            }
+    let cache_path = format!("avatars_cache/{}.json", agent_id);
+    if let Ok(cached) = std::fs::read_to_string(&cache_path) {
+        if let Ok(cached_data) = serde_json::from_str::<Value>(&cached) {
+            return Ok(Json(cached_data));
         }
-        return Err((
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Avatar generation paused (cost saving)".to_string(),
-        ));
     }
+    Err((
+        StatusCode::NOT_FOUND,
+        "No cached avatar. Use POST /api/agents/:id/avatar/generate to create one.".to_string(),
+    ))
+}
+
+/// Protected endpoint: generates avatar via Gemini, charges credits
+async fn generate_avatar(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Check cache first (free)
+    let cache_dir = "avatars_cache";
+    std::fs::create_dir_all(cache_dir).ok();
+    let cache_path = format!("{}/{}.json", cache_dir, agent_id);
+    if let Ok(cached) = std::fs::read_to_string(&cache_path) {
+        if let Ok(cached_data) = serde_json::from_str::<Value>(&cached) {
+            return Ok(Json(cached_data));
+        }
+    }
+
+    // Charge credits for generation
+    let user_id = principal.user_id();
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        state.gas_fees.avatar_generate,
+        "avatar_generate",
+        &format!("Avatar generation for {}", agent_id),
+        Some(&agent_id),
+    )
+    .await?;
 
     if state.gemini_api_key.is_empty() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             "Avatar generation disabled (GEMINI_API_KEY not set)".to_string(),
         ));
-    }
-
-    let cache_dir = "avatars_cache";
-    std::fs::create_dir_all(cache_dir).ok();
-    let cache_path = format!("{}/{}.json", cache_dir, agent_id);
-
-    if let Ok(cached) = std::fs::read_to_string(&cache_path) {
-        if let Ok(cached_data) = serde_json::from_str::<Value>(&cached) {
-            println!("Using cached avatar for {}", agent_id);
-            return Ok(Json(cached_data));
-        }
     }
 
     let beasts = [
@@ -1747,10 +1776,12 @@ async fn list_my_agents_handler(
             json!({
                 "agent_id": a.agent_id,
                 "agent_name": a.agent_name,
+                "display_alias": a.display_alias,
                 "agent_type": a.agent_type,
                 "description": a.description,
                 "visibility": a.visibility,
                 "tags": a.tags,
+                "model": a.model,
                 "total_executions": a.total_executions,
                 "education_budget_credits": a.education_budget_credits,
                 "education_credits_used": a.education_credits_used,
@@ -2029,6 +2060,7 @@ async fn list_workspace_agents_handler(
     // Query workspace_agents junction table joined with agents
     let rows = sqlx::query(
         "SELECT a.agent_id, a.agent_name, a.agent_type, a.description, a.total_executions,
+                a.display_alias, a.model,
                 wa.relationship, wa.added_by, wa.added_at
          FROM workspace_agents wa
          JOIN agents a ON a.agent_id = wa.agent_id
@@ -2046,7 +2078,9 @@ async fn list_workspace_agents_handler(
             json!({
                 "agent_id": r.get::<uuid::Uuid, _>("agent_id"),
                 "agent_name": r.get::<String, _>("agent_name"),
+                "display_alias": r.get::<Option<String>, _>("display_alias"),
                 "agent_type": r.get::<String, _>("agent_type"),
+                "model": r.get::<String, _>("model"),
                 "description": r.get::<Option<String>, _>("description"),
                 "total_executions": r.get::<i32, _>("total_executions"),
                 "relationship": r.get::<String, _>("relationship"),

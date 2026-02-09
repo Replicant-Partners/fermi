@@ -1025,16 +1025,20 @@
           const agentsEl = document.getElementById("ws-agents-list");
           if (ws.agents && ws.agents.length > 0) {
             agentsEl.innerHTML = ws.agents
-              .map(
-                (a) => `
-              <a href="/agents/${a.agent_id}" style="text-decoration:none;color:inherit">
+              .map((a) => {
+                const name = a.display_alias || a.agent_name;
+                const initial = name.charAt(0).toUpperCase();
+                const hues = [200, 140, 30, 340, 270, 50, 170, 10];
+                const hue =
+                  hues[(a.agent_name || "").charCodeAt(0) % hues.length];
+                return `
+              <a href="/agent/${a.agent_name}" style="text-decoration:none;color:inherit">
                 <div class="agent-item">
-                  <div class="agent-dot"></div>
-                  <span class="member-name">${escHtml(a.agent_name)}</span>
+                  <div class="agent-dot" style="background:hsl(${hue},45%,35%);color:#fff;font-size:0.55rem;display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%">${initial}</div>
+                  <span class="member-name">${escHtml(name)}</span>
                 </div>
-              </a>
-            `,
-              )
+              </a>`;
+              })
               .join("");
             document.getElementById("stat-agents").textContent =
               ws.agents.length;
@@ -1317,7 +1321,8 @@
                 (a) => `
             <div class="modal-agent-row">
               <div>
-                <div class="modal-agent-name">${escHtml(a.agent_name)}</div>
+                <div class="modal-agent-name">${escHtml(a.display_alias || a.agent_name)}</div>
+                ${a.display_alias ? `<div style="font-size:0.7rem;color:var(--fg3);font-family:monospace">${escHtml(a.agent_name)}</div>` : ""}
                 <div class="modal-agent-desc">${escHtml(a.description || "")}</div>
               </div>
               <button class="btn btn-primary" onclick="hireAgent('${a.agent_id}', this)">Hire (5 cr)</button>
@@ -1391,7 +1396,8 @@
               (a) => `
             <div class="modal-agent-row">
               <div>
-                <div class="modal-agent-name">${escHtml(a.agent_name)}</div>
+                <div class="modal-agent-name">${escHtml(a.display_alias || a.agent_name)}</div>
+                ${a.display_alias ? `<div style="font-size:0.7rem;color:var(--fg3);font-family:monospace">${escHtml(a.agent_name)}</div>` : ""}
                 <div class="modal-agent-desc">${escHtml(a.description || "")}</div>
               </div>
               <button class="btn" onclick="addAgent('${a.agent_id}', this)">Add (2 cr)</button>
