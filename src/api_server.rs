@@ -540,6 +540,9 @@ async fn main() {
         .route("/agent/:agent_id/ontology", get(ontology_view))
         .route("/api/health", get(health))
         .route("/api/debug/startup", get(debug_startup))
+        // Per-agent MCP endpoints
+        .route("/mcp/agents/:agent_id", get(mcp_agent_manifest))
+        .route("/mcp/agents/:agent_id", post(mcp_agent_rpc))
         .route("/api/agents", get(list_agents))
         .route("/api/waitlist", post(waitlist_handler))
         .route("/api/models/catalogue", get(model_catalogue_handler))
@@ -879,6 +882,193 @@ async fn ontology_view() -> Html<String> {
 }
 
 // ─── API routes ────────────────────────────────────────────────────
+
+// ─── Per-Agent MCP Endpoints ────────────────────────────────────────
+
+async fn mcp_agent_manifest(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    Ok(Json(json!({
+        "jsonrpc": "2.0",
+        "serverInfo": {
+            "name": format!("agent-bestiary:{}", agent_id),
+            "version": db_agent.version,
+        },
+        "capabilities": {
+            "tools": {}
+        },
+        "tools": [{
+            "name": "execute",
+            "description": format!("Execute the {} agent with a research query", agent_id),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The research query to execute"
+                    }
+                },
+                "required": ["query"]
+            }
+        }],
+        "agent": {
+            "agent_id": db_agent.agent_name,
+            "description": db_agent.description,
+            "model": db_agent.model,
+            "tags": db_agent.tags,
+            "sample_queries": db_agent.sample_queries,
+        }
+    })))
+}
+
+#[derive(Deserialize)]
+struct McpRpcRequest {
+    jsonrpc: Option<String>,
+    id: Option<Value>,
+    method: String,
+    params: Option<Value>,
+}
+
+async fn mcp_agent_rpc(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Json(req): Json<McpRpcRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let rpc_id = req.id.clone().unwrap_or(Value::Null);
+
+    match req.method.as_str() {
+        "initialize" => {
+            let db_agent = resolve_agent(&state, &agent_id).await?;
+            Ok(Json(json!({
+                "jsonrpc": "2.0",
+                "id": rpc_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "serverInfo": {
+                        "name": format!("agent-bestiary:{}", agent_id),
+                        "version": db_agent.version,
+                    },
+                    "capabilities": { "tools": {} }
+                }
+            })))
+        }
+        "tools/list" => {
+            let db_agent = resolve_agent(&state, &agent_id).await?;
+            Ok(Json(json!({
+                "jsonrpc": "2.0",
+                "id": rpc_id,
+                "result": {
+                    "tools": [{
+                        "name": "execute",
+                        "description": format!("Execute the {} agent", db_agent.agent_name),
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": { "type": "string", "description": "The research query" }
+                            },
+                            "required": ["query"]
+                        }
+                    }]
+                }
+            })))
+        }
+        "tools/call" => {
+            let params = req.params.unwrap_or(Value::Null);
+            let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if tool_name != "execute" {
+                return Ok(Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "error": { "code": -32602, "message": format!("Unknown tool: {}", tool_name) }
+                })));
+            }
+
+            let query = params
+                .get("arguments")
+                .and_then(|a| a.get("query"))
+                .and_then(|q| q.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if query.is_empty() {
+                return Ok(Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "error": { "code": -32602, "message": "Missing required parameter: query" }
+                })));
+            }
+
+            // Execute agent (unauthenticated for public agents)
+            let card = state.registry.get(&agent_id).map_err(|e| {
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("Agent not in registry: {}", e),
+                )
+            })?;
+
+            let agent_stmt = ast::AgentStmt {
+                name: agent_id.clone(),
+                agent_type: Some(card.agent_type.clone()),
+                query: query.clone(),
+                executor: Some(ast::ExecutorType::LLM),
+                schedule: None,
+                driver_refs: vec![],
+                depends_on: vec![],
+                confidence_threshold: None,
+            };
+
+            let program = ast::Program {
+                statements: vec![ast::Statement::Agent(agent_stmt.clone())],
+            };
+
+            let context = ExecutionContext {
+                program,
+                agent_card: card.clone(),
+            };
+
+            match state.registry.execute_agent(&agent_stmt, &context).await {
+                Ok(output) => {
+                    let result_json = json!({
+                        "status": format!("{:?}", output.status),
+                        "confidence": output.confidence,
+                        "execution_time_ms": output.execution_time_ms,
+                        "tokens_used": output.tokens_used,
+                        "evidence": output.evidence.iter().map(|e| json!({
+                            "source": e.source,
+                            "summary": e.summary,
+                            "key_findings": e.key_findings,
+                            "relevance": e.relevance,
+                        })).collect::<Vec<_>>(),
+                        "reasoning": output.metadata.reasoning,
+                    });
+                    Ok(Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": rpc_id,
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": serde_json::to_string_pretty(&result_json).unwrap_or_default()
+                            }]
+                        }
+                    })))
+                }
+                Err(e) => Ok(Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "error": { "code": -32000, "message": format!("Execution error: {}", e) }
+                }))),
+            }
+        }
+        _ => Ok(Json(json!({
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": { "code": -32601, "message": format!("Unknown method: {}", req.method) }
+        }))),
+    }
+}
 
 // ─── Waitlist ───────────────────────────────────────────────────────
 

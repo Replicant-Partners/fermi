@@ -938,6 +938,16 @@
               <div id="exec-result" style="margin-top:12px"></div>
             </div>
 
+            <!-- MCP Endpoint -->
+            <div style="margin-bottom:16px;padding:10px 14px;background:var(--bg1);border:1px solid var(--bg2);font-size:0.78rem;display:flex;align-items:center;justify-content:space-between;gap:12px">
+              <div style="color:var(--fg3)">
+                <span style="color:var(--aqua);font-weight:500">MCP</span>
+                <code id="mcp-url" style="margin-left:8px;color:var(--fg2);user-select:all">${window.location.origin}/mcp/agents/${agentId}</code>
+              </div>
+              <button onclick="navigator.clipboard.writeText(document.getElementById('mcp-url').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)"
+                style="background:none;border:1px solid var(--bg3);color:var(--fg3);padding:3px 10px;cursor:pointer;font-size:0.78rem;font-family:inherit;white-space:nowrap">Copy</button>
+            </div>
+
             <div class="cognition-panel">
               <div class="cognition-card">
                 <span class="cognition-label">Cognition / Knowledge Graph</span>
