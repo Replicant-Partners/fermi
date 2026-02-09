@@ -1013,6 +1013,22 @@
             ><span class="stat-val">1 cr</span>
           </div>
         </div>
+
+        <div class="shelf-section">
+          <div class="shelf-label">History</div>
+          <button
+            class="btn btn-sm"
+            id="load-history-btn"
+            onclick="loadWorkspaceHistory()"
+            style="font-size: 0.75em; margin-bottom: 6px"
+          >
+            Load History
+          </button>
+          <div
+            id="ws-history"
+            style="font-size: 0.8em; color: var(--fg3)"
+          ></div>
+        </div>
       </div>
     </div>
 
@@ -2113,6 +2129,71 @@
         const d = document.createElement("div");
         d.textContent = str;
         return d.innerHTML;
+      }
+
+      // ─── History (coherence + git) ───
+      async function loadWorkspaceHistory() {
+        const wsId = window.location.pathname.split("/").pop();
+        const el = document.getElementById("ws-history");
+        const btn = document.getElementById("load-history-btn");
+        if (!el) return;
+        if (btn) btn.disabled = true;
+        el.innerHTML = '<span style="color:var(--gray)">Loading...</span>';
+
+        let html = "";
+
+        // Coherence history
+        try {
+          const res = await fetch(
+            `/api/workspaces/${encodeURIComponent(wsId)}/coherence/history`,
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const evals = data.evaluations || data.history || [];
+            if (evals.length > 0) {
+              html +=
+                '<div style="margin-bottom:8px;color:var(--yellow);font-size:0.75em;text-transform:uppercase;letter-spacing:0.06em">Coherence</div>';
+              evals.slice(0, 5).forEach((ev) => {
+                const date = ev.created_at
+                  ? new Date(ev.created_at).toLocaleDateString()
+                  : "";
+                const score = ev.score != null ? ev.score.toFixed(2) : "?";
+                html += `<div style="padding:3px 0;border-bottom:1px solid var(--bg2);display:flex;justify-content:space-between">
+                  <span>${score}</span><span style="color:var(--fg4)">${date}</span>
+                </div>`;
+              });
+            }
+          }
+        } catch {}
+
+        // Git log
+        try {
+          const res = await fetch(
+            `/api/workspaces/${encodeURIComponent(wsId)}/git/log?limit=5`,
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const commits = data.commits || data.log || [];
+            if (commits.length > 0) {
+              html +=
+                '<div style="margin-top:8px;margin-bottom:8px;color:var(--aqua);font-size:0.75em;text-transform:uppercase;letter-spacing:0.06em">Git Log</div>';
+              commits.slice(0, 5).forEach((c) => {
+                const msg = (c.message || c.summary || "").substring(0, 60);
+                const date = c.timestamp
+                  ? new Date(c.timestamp).toLocaleDateString()
+                  : "";
+                html += `<div style="padding:3px 0;border-bottom:1px solid var(--bg2)">
+                  <div style="color:var(--fg1)">${escHtml(msg)}</div>
+                  <div style="color:var(--fg4);font-size:0.85em">${date}</div>
+                </div>`;
+              });
+            }
+          }
+        } catch {}
+
+        el.innerHTML =
+          html || '<span style="color:var(--fg4)">No history yet</span>';
+        if (btn) btn.style.display = "none";
       }
     </script>
     <script src="/static/js/widgets/xaman-ek.js"></script>

@@ -476,3 +476,63 @@ a:hover {
 .xaman-help-link:hover {
   text-decoration: underline;
 }
+
+/* ── Notification Bell ── */
+.nav-bell {
+  position: relative;
+}
+.nav-bell-btn {
+  background: none;
+  border: none;
+  color: var(--fg3);
+  font-size: 1.1em;
+  cursor: pointer;
+  position: relative;
+  padding: 4px 8px;
+  font-family: inherit;
+}
+.nav-bell-btn:hover {
+  color: var(--yellow);
+}
+.nav-bell-badge {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  background: var(--red);
+  color: #fff;
+  font-size: 0.6em;
+  padding: 1px 4px;
+  border-radius: 8px;
+  min-width: 14px;
+  text-align: center;
+  line-height: 1.3;
+}
+.nav-bell-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: 300px;
+  background: var(--bg0-hard, var(--bg0));
+  border: 1px solid var(--bg2);
+  z-index: 8000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.nav-bell-dropdown.visible {
+  display: block;
+}
+.nav-bell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bg2);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg3);
+}
+.theme-op1 .nav-bell-dropdown {
+  border-radius: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
