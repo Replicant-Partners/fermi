@@ -770,6 +770,7 @@
 
     <script src="/static/js/widgets/tabs.js"></script>
     <script src="/static/js/widgets/tag-renderer.js"></script>
+    <script src="/static/js/widgets/micro-chart.js"></script>
     <script src="/static/js/widgets/toast.js"></script>
     <script src="/static/js/widgets/modal.js"></script>
     <script src="/static/js/widgets/fork-modal.js"></script>
@@ -1862,6 +1863,18 @@
                 </div>
                 <div id="eval-cases-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
               </div>
+              <div class="section" id="eval-charts-section" style="display:none">
+                <div style="display:flex;gap:24px;flex-wrap:wrap">
+                  <div style="flex:1;min-width:180px">
+                    <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Pass Rate Trend</div>
+                    <div id="eval-regression-sparkline"></div>
+                  </div>
+                  <div style="flex:1;min-width:180px">
+                    <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Judge Score Distribution</div>
+                    <div id="eval-judge-histogram"></div>
+                  </div>
+                </div>
+              </div>
               <div class="section">
                 <div class="section-title">Run History</div>
                 <div id="eval-runs-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
@@ -2109,11 +2122,68 @@
               })
               .join("");
           }
+
+          // --- Render eval charts ---
+          renderEvalCharts(runs);
         } catch (e) {
           runsList.innerHTML =
             '<span style="color:var(--red)">Error: ' +
             escapeHtml(e.message) +
             "</span>";
+        }
+      }
+
+      function renderEvalCharts(runs) {
+        const chartsSection = document.getElementById("eval-charts-section");
+        const sparkEl = document.getElementById("eval-regression-sparkline");
+        const histEl = document.getElementById("eval-judge-histogram");
+        if (!chartsSection || !sparkEl || !histEl) return;
+
+        const completedRuns = runs
+          .filter((r) => r.status === "completed")
+          .reverse(); // oldest first
+        if (completedRuns.length < 2) return;
+
+        chartsSection.style.display = "";
+
+        // Pass rate sparkline
+        const passRates = completedRuns.map((r) =>
+          r.total_cases > 0 ? (r.passed / r.total_cases) * 100 : 0,
+        );
+        const regressionDots = [];
+        completedRuns.forEach((r, i) => {
+          if (r.regression_detected) regressionDots.push(i);
+        });
+        sparkEl.innerHTML = MicroChart.sparkline(passRates, {
+          width: 220,
+          height: 44,
+          color: "var(--green)",
+          dotColor: "var(--red)",
+          dots: regressionDots,
+        });
+
+        // Judge score histogram (from latest run with judge scores)
+        const judgeRun = completedRuns
+          .slice()
+          .reverse()
+          .find((r) => r.avg_judge_score != null && r.case_results);
+        if (judgeRun && judgeRun.case_results) {
+          const buckets = [0, 0, 0, 0, 0]; // scores 1-5
+          const results = Array.isArray(judgeRun.case_results)
+            ? judgeRun.case_results
+            : [];
+          results.forEach((cr) => {
+            const score =
+              cr.judge_score != null ? Math.round(cr.judge_score) : 0;
+            if (score >= 1 && score <= 5) buckets[score - 1]++;
+          });
+          histEl.innerHTML = MicroChart.histogram(
+            buckets.map((v, i) => ({ label: String(i + 1), value: v })),
+            { width: 180, height: 56, color: "var(--purple)" },
+          );
+        } else {
+          histEl.innerHTML =
+            '<span style="font-size:0.8em;color:var(--fg4)">Run with judge to see scores</span>';
         }
       }
 
