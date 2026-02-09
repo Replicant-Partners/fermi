@@ -258,6 +258,84 @@
         border-color: var(--yellow);
         color: var(--yellow);
       }
+      /* Buy credits cards */
+      .pricing-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 12px;
+      }
+      @media (max-width: 600px) {
+        .pricing-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .pricing-card {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 16px;
+        text-align: center;
+        cursor: pointer;
+        transition: border-color 0.2s;
+        position: relative;
+      }
+      .pricing-card:hover {
+        border-color: var(--yellow);
+      }
+      .pricing-card.loading {
+        opacity: 0.6;
+        pointer-events: none;
+      }
+      .pricing-credits {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: var(--fg0);
+      }
+      .pricing-price {
+        font-size: 1.1rem;
+        color: var(--green);
+        margin: 4px 0;
+      }
+      .pricing-per {
+        font-size: 0.75rem;
+        color: var(--fg3);
+      }
+      .pricing-discount {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        font-size: 0.65rem;
+        background: var(--yellow);
+        color: var(--bg0-hard);
+        padding: 2px 6px;
+        font-weight: bold;
+      }
+      .toast {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        padding: 12px 20px;
+        font-family: inherit;
+        font-size: 0.85rem;
+        z-index: 1000;
+        opacity: 0;
+        transform: translateY(-10px);
+        transition: all 0.3s ease;
+      }
+      .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .toast-success {
+        background: var(--bg0);
+        border: 1px solid var(--green);
+        color: var(--green);
+      }
+      .toast-error {
+        background: var(--bg0);
+        border: 1px solid var(--red);
+        color: var(--red);
+      }
     </style>
   </head>
   <body>
@@ -268,6 +346,7 @@
       <div>
         <a href="/">Catalogue</a>
         <a href="/agents/new" style="color: var(--yellow)">+ Create Agent</a>
+        <a href="/profile">Profile</a>
         <a href="#" id="user-name"></a>
         <button
           id="theme-toggle"
@@ -296,6 +375,14 @@
             <div style="color: var(--fg2)" id="wallet-spent">--</div>
             <div class="wallet-label">total spent</div>
           </div>
+        </div>
+      </div>
+
+      <!-- Buy Credits -->
+      <div class="section" style="margin-bottom: 24px" id="buy-credits-section">
+        <div class="section-title">Buy Credits</div>
+        <div class="pricing-grid" id="pricing-grid">
+          <div class="empty-state">Loading pricing...</div>
         </div>
       </div>
 
@@ -333,6 +420,33 @@
     </div>
 
     <script>
+      // Toast helper
+      function showToast(message, type = "success") {
+        const existing = document.querySelector(".toast");
+        if (existing) existing.remove();
+        const toast = document.createElement("div");
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add("show"));
+        setTimeout(() => {
+          toast.classList.remove("show");
+          setTimeout(() => toast.remove(), 300);
+        }, 4000);
+      }
+
+      // Check for payment return
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("payment") === "success") {
+        showToast(
+          "Payment successful! Credits have been added to your wallet.",
+        );
+        window.history.replaceState({}, "", "/dashboard");
+      } else if (urlParams.get("payment") === "cancelled") {
+        showToast("Payment cancelled.", "error");
+        window.history.replaceState({}, "", "/dashboard");
+      }
+
       // Auth check — redirect to home if not logged in
       (async () => {
         try {
@@ -438,6 +552,33 @@
           }
         } catch {}
 
+        // Load pricing tiers
+        try {
+          const res = await fetch("/api/billing/tiers");
+          if (res.ok) {
+            const data = await res.json();
+            const grid = document.getElementById("pricing-grid");
+            if (!data.stripe_configured) {
+              grid.innerHTML =
+                '<div class="empty-state">Credit purchases coming soon. Contact admin for beta credits.</div>';
+            } else if (data.tiers && data.tiers.length > 0) {
+              grid.innerHTML = data.tiers
+                .map(
+                  (t) => `
+                <div class="pricing-card" onclick="buyCredits(${t.credits})" id="tier-${t.credits}">
+                  ${t.discount_pct > 0 ? `<div class="pricing-discount">${t.discount_pct}% off</div>` : ""}
+                  <div class="pricing-credits">${t.credits}</div>
+                  <div style="font-size:0.75rem;color:var(--fg3)">credits</div>
+                  <div class="pricing-price">${t.price_display}</div>
+                  <div class="pricing-per">${t.per_credit_cents}c / credit</div>
+                </div>
+              `,
+                )
+                .join("");
+            }
+          }
+        } catch {}
+
         // Load transactions
         try {
           const res = await fetch("/api/wallet/transactions?limit=10");
@@ -467,6 +608,32 @@
           }
         } catch {}
       })();
+
+      // Buy credits — redirect to Stripe Checkout
+      async function buyCredits(credits) {
+        const card = document.getElementById("tier-" + credits);
+        if (card) card.classList.add("loading");
+        try {
+          const res = await fetch("/api/billing/checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ credits }),
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            showToast(err, "error");
+            if (card) card.classList.remove("loading");
+            return;
+          }
+          const data = await res.json();
+          if (data.checkout_url) {
+            window.location.href = data.checkout_url;
+          }
+        } catch (e) {
+          showToast("Failed to start checkout", "error");
+          if (card) card.classList.remove("loading");
+        }
+      }
 
       // Create workspace
       document

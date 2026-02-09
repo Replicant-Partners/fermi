@@ -1,3 +1,4 @@
+use axum::body::Bytes;
 use axum::{
     extract::{Extension, Path, Query, State},
     http::{header, StatusCode},
@@ -43,6 +44,61 @@ use coherence_core::types::{ConversationId, Message as CoherenceMessage, Partici
 use coherence_engine::SettlingEngine;
 use coherence_observer::ConversationObserver;
 
+/// Stripe configuration — pricing tiers for credit purchases.
+#[derive(Clone, Default)]
+struct StripeConfig {
+    secret_key: String,
+    webhook_secret: String,
+    publishable_key: String,
+}
+
+impl StripeConfig {
+    fn from_env() -> Self {
+        Self {
+            secret_key: std::env::var("STRIPE_SECRET_KEY").unwrap_or_default(),
+            webhook_secret: std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default(),
+            publishable_key: std::env::var("STRIPE_PUBLISHABLE_KEY").unwrap_or_default(),
+        }
+    }
+
+    fn is_configured(&self) -> bool {
+        !self.secret_key.is_empty()
+    }
+
+    fn client(&self) -> stripe::Client {
+        stripe::Client::new(&self.secret_key)
+    }
+}
+
+/// Credit pricing tiers
+struct CreditTier {
+    credits: i32,
+    price_cents: i64,
+    label: &'static str,
+    discount_pct: i32,
+}
+
+const CREDIT_TIERS: &[CreditTier] = &[
+    CreditTier {
+        credits: 100,
+        price_cents: 500,
+        label: "Starter",
+        discount_pct: 0,
+    },
+    CreditTier {
+        credits: 500,
+        price_cents: 2000,
+        label: "Builder",
+        discount_pct: 20,
+    },
+    CreditTier {
+        credits: 1000,
+        price_cents: 3500,
+        label: "Pro",
+        discount_pct: 30,
+    },
+];
+
 #[derive(Clone)]
 struct AppState {
     db: PgPool,
@@ -56,6 +112,7 @@ struct AppState {
     jwt_secret: String,
     oauth: OAuthConfig,
     gas_fees: GasFees,
+    stripe: StripeConfig,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -265,6 +322,13 @@ async fn main() {
         WorkspaceGitManager::new(git_config).expect("Failed to initialize WorkspaceGitManager"),
     );
 
+    let stripe_config = StripeConfig::from_env();
+    if stripe_config.is_configured() {
+        println!("Stripe configured (credit purchases enabled)");
+    } else {
+        eprintln!("Note: STRIPE_SECRET_KEY not set. Credit purchases will be disabled.");
+    }
+
     let state = AppState {
         db: db.clone(),
         memory_store,
@@ -277,6 +341,7 @@ async fn main() {
         jwt_secret: jwt_secret.clone(),
         oauth,
         gas_fees: GasFees::from_env(),
+        stripe: stripe_config,
     };
 
     let auth_state = AuthState { jwt_secret, db };
@@ -326,6 +391,10 @@ async fn main() {
         .route("/auth/github", get(auth_github))
         .route("/auth/callback", get(auth_callback))
         .route("/auth/logout", post(auth_logout))
+        // Stripe webhook (no auth — Stripe calls this directly)
+        .route("/webhooks/stripe", post(stripe_webhook_handler))
+        // Profile page
+        .route("/profile", get(profile_view))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             optional_auth_middleware,
@@ -437,6 +506,12 @@ async fn main() {
         // Wallet / credits
         .route("/api/wallet", get(get_wallet_handler))
         .route("/api/wallet/transactions", get(get_transactions_handler))
+        // Billing (Stripe)
+        .route("/api/billing/tiers", get(billing_tiers_handler))
+        .route("/api/billing/checkout", post(billing_checkout_handler))
+        // Profile
+        .route("/api/profile", get(get_profile_handler))
+        .route("/api/profile", put(update_profile_handler))
         // Coherence evaluation
         .route(
             "/api/workspaces/:workspace_id/coherence/evaluate",
@@ -4778,4 +4853,402 @@ async fn popular_tags_handler(
         .collect();
 
     Ok(Json(json!({ "tags": tags })))
+}
+
+// ─── Profile page ──────────────────────────────────────────────────
+
+async fn profile_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/profile.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/profile.html: {}", e);
+            format!("<h1>Profile</h1><p>Error loading template: {}</p>", e)
+        }
+    };
+    Html(html)
+}
+
+// ─── Profile API ───────────────────────────────────────────────────
+
+async fn get_profile_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    // Fetch user record
+    let user_row = sqlx::query(
+        "SELECT user_id, email, display_name, avatar_url, role, auth_provider,
+                github_username, ethereum_address, ens_name, bio, created_at
+         FROM users WHERE user_id = $1",
+    )
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "User not found".to_string()))?;
+
+    // Wallet
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Agent count + execution stats
+    let stats_row = sqlx::query(
+        "SELECT COUNT(*) as agent_count,
+                COALESCE(SUM(total_executions), 0) as total_executions
+         FROM agents WHERE owner_id = $1",
+    )
+    .bind(&user_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Public agents
+    let public_agents = sqlx::query(
+        "SELECT agent_name, display_alias, agent_type, description, total_executions
+         FROM agents WHERE owner_id = $1 AND visibility = 'public'
+         ORDER BY total_executions DESC LIMIT 20",
+    )
+    .bind(&user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let agents: Vec<Value> = public_agents
+        .iter()
+        .map(|r| {
+            json!({
+                "agent_name": r.get::<String, _>("agent_name"),
+                "display_alias": r.get::<Option<String>, _>("display_alias"),
+                "agent_type": r.get::<String, _>("agent_type"),
+                "description": r.get::<Option<String>, _>("description"),
+                "total_executions": r.get::<i32, _>("total_executions"),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "user_id": user_row.get::<String, _>("user_id"),
+        "email": user_row.get::<Option<String>, _>("email"),
+        "display_name": user_row.get::<Option<String>, _>("display_name"),
+        "avatar_url": user_row.get::<Option<String>, _>("avatar_url"),
+        "role": user_row.get::<String, _>("role"),
+        "auth_provider": user_row.get::<Option<String>, _>("auth_provider"),
+        "github_username": user_row.get::<Option<String>, _>("github_username"),
+        "ethereum_address": user_row.get::<Option<String>, _>("ethereum_address"),
+        "ens_name": user_row.get::<Option<String>, _>("ens_name"),
+        "bio": user_row.get::<Option<String>, _>("bio"),
+        "created_at": user_row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+        "wallet": {
+            "balance": wallet.balance,
+            "total_deposited": wallet.total_deposited,
+            "total_spent": wallet.total_spent,
+        },
+        "stats": {
+            "agents_created": stats_row.get::<i64, _>("agent_count"),
+            "total_executions": stats_row.get::<i64, _>("total_executions"),
+            "credits_spent": wallet.total_spent,
+        },
+        "public_agents": agents,
+        "connected_accounts": {
+            "google": user_row.get::<Option<String>, _>("auth_provider").as_deref() == Some("google"),
+            "github": user_row.get::<Option<String>, _>("github_username").is_some(),
+            "ethereum": user_row.get::<Option<String>, _>("ethereum_address").is_some(),
+        },
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateProfileRequest {
+    display_name: Option<String>,
+    bio: Option<String>,
+}
+
+async fn update_profile_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<UpdateProfileRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    if let Some(ref name) = req.display_name {
+        sqlx::query("UPDATE users SET display_name = $1 WHERE user_id = $2")
+            .bind(name)
+            .bind(&user_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    if let Some(ref bio) = req.bio {
+        sqlx::query("UPDATE users SET bio = $1 WHERE user_id = $2")
+            .bind(bio)
+            .bind(&user_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(json!({ "message": "Profile updated" })))
+}
+
+// ─── Billing / Stripe ──────────────────────────────────────────────
+
+/// Return pricing tiers (public info, but behind auth so we can show personalized data)
+async fn billing_tiers_handler(State(state): State<AppState>) -> Json<Value> {
+    let tiers: Vec<Value> = CREDIT_TIERS
+        .iter()
+        .map(|t| {
+            json!({
+                "credits": t.credits,
+                "price_cents": t.price_cents,
+                "price_display": format!("${:.2}", t.price_cents as f64 / 100.0),
+                "per_credit_cents": (t.price_cents as f64 / t.credits as f64 * 100.0).round() / 100.0,
+                "label": t.label,
+                "discount_pct": t.discount_pct,
+            })
+        })
+        .collect();
+
+    Json(json!({
+        "tiers": tiers,
+        "stripe_configured": state.stripe.is_configured(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct CheckoutRequest {
+    credits: i32,
+}
+
+/// Create a Stripe Checkout Session for credit purchase
+async fn billing_checkout_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<CheckoutRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    if !state.stripe.is_configured() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Stripe not configured".to_string(),
+        ));
+    }
+
+    // Find matching tier
+    let tier = CREDIT_TIERS
+        .iter()
+        .find(|t| t.credits == req.credits)
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Invalid credit amount. Choose from: {}",
+                CREDIT_TIERS
+                    .iter()
+                    .map(|t| t.credits.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ))?;
+
+    let user_id = principal.user_id();
+    let client = state.stripe.client();
+
+    // Get user email for pre-fill
+    let user_email: Option<String> = sqlx::query("SELECT email FROM users WHERE user_id = $1")
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|row| row.try_get("email").ok())
+        .flatten();
+
+    // Build Checkout Session
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("user_id".to_string(), user_id.clone());
+    metadata.insert("credits".to_string(), tier.credits.to_string());
+
+    let mut params = stripe::CreateCheckoutSession::new();
+    params.mode = Some(stripe::CheckoutSessionMode::Payment);
+    params.success_url = Some("/dashboard?payment=success");
+    params.cancel_url = Some("/dashboard?payment=cancelled");
+    params.metadata = Some(metadata);
+    params.customer_email = user_email.as_deref();
+
+    params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
+        price_data: Some(stripe::CreateCheckoutSessionLineItemsPriceData {
+            currency: stripe::Currency::USD,
+            product_data: Some(stripe::CreateCheckoutSessionLineItemsPriceDataProductData {
+                name: format!("{} Credits — {}", tier.credits, tier.label),
+                description: if tier.discount_pct > 0 {
+                    Some(format!("{}% discount", tier.discount_pct))
+                } else {
+                    None
+                },
+                ..Default::default()
+            }),
+            unit_amount: Some(tier.price_cents),
+            ..Default::default()
+        }),
+        quantity: Some(1),
+        ..Default::default()
+    }]);
+
+    let session = stripe::CheckoutSession::create(&client, params)
+        .await
+        .map_err(|e| {
+            eprintln!("Stripe checkout session creation failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create checkout session: {}", e),
+            )
+        })?;
+
+    let checkout_url = session.url.ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "No checkout URL returned".to_string(),
+    ))?;
+
+    Ok(Json(json!({
+        "checkout_url": checkout_url,
+        "session_id": session.id.as_str(),
+    })))
+}
+
+/// Stripe webhook handler — verifies signature, processes events.
+/// This endpoint has NO auth middleware (Stripe calls it directly).
+async fn stripe_webhook_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if !state.stripe.is_configured() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Stripe not configured".to_string(),
+        ));
+    }
+
+    let signature = headers
+        .get("stripe-signature")
+        .and_then(|v| v.to_str().ok())
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "Missing stripe-signature header".to_string(),
+        ))?;
+
+    let payload = std::str::from_utf8(&body).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Invalid UTF-8 in request body".to_string(),
+        )
+    })?;
+
+    let event = stripe::Webhook::construct_event(payload, signature, &state.stripe.webhook_secret)
+        .map_err(|e| {
+            eprintln!("Stripe webhook verification failed: {}", e);
+            (
+                StatusCode::UNAUTHORIZED,
+                "Invalid webhook signature".to_string(),
+            )
+        })?;
+
+    match event.type_ {
+        stripe::EventType::CheckoutSessionCompleted => {
+            if let stripe::EventObject::CheckoutSession(session) = event.data.object {
+                handle_checkout_completed(&state, session).await;
+            }
+        }
+        other => {
+            println!("Stripe webhook: unhandled event type {:?}", other);
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
+
+/// Process a completed Stripe checkout — credit the user's wallet.
+async fn handle_checkout_completed(state: &AppState, session: stripe::CheckoutSession) {
+    let metadata = match &session.metadata {
+        Some(m) => m,
+        None => {
+            eprintln!("Stripe checkout: no metadata on session {}", session.id);
+            return;
+        }
+    };
+
+    let user_id = match metadata.get("user_id") {
+        Some(id) => id.clone(),
+        None => {
+            eprintln!("Stripe checkout: missing user_id in metadata");
+            return;
+        }
+    };
+
+    let credits: i32 = match metadata.get("credits").and_then(|c| c.parse().ok()) {
+        Some(c) => c,
+        None => {
+            eprintln!("Stripe checkout: missing or invalid credits in metadata");
+            return;
+        }
+    };
+
+    // Idempotency: check if this session was already processed
+    let session_id_str = session.id.as_str().to_string();
+    let existing =
+        sqlx::query("SELECT tx_id FROM credit_ledger WHERE stripe_session_id = $1 LIMIT 1")
+            .bind(&session_id_str)
+            .fetch_optional(&state.db)
+            .await;
+
+    if let Ok(Some(_)) = existing {
+        println!(
+            "Stripe checkout: session {} already processed, skipping",
+            session_id_str
+        );
+        return;
+    }
+
+    // Credit the user's wallet
+    match get_or_create_wallet(&state.db, "user", &user_id).await {
+        Ok(wallet) => {
+            match fermi_auth::credit_deposit(
+                &state.db,
+                wallet.wallet_id,
+                credits,
+                &format!("Stripe purchase: {} credits", credits),
+            )
+            .await
+            {
+                Ok(tx) => {
+                    // Record stripe_session_id on the ledger entry
+                    let _ = sqlx::query(
+                        "UPDATE credit_ledger SET stripe_session_id = $1 WHERE tx_id = $2",
+                    )
+                    .bind(&session_id_str)
+                    .bind(tx.tx_id)
+                    .execute(&state.db)
+                    .await;
+
+                    println!(
+                        "Stripe checkout: credited {} credits to user {} (session {})",
+                        credits, user_id, session_id_str
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Stripe checkout: failed to deposit credits for user {}: {}",
+                        user_id, e
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "Stripe checkout: failed to get/create wallet for user {}: {}",
+                user_id, e
+            );
+        }
+    }
 }

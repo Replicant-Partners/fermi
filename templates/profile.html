@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Profile - Agent Bestiary</title>
+    <style>
+      :root {
+        --bg0-hard: #1d2021;
+        --bg0: #282828;
+        --bg1: #3c3836;
+        --bg2: #504945;
+        --bg3: #665c54;
+        --fg0: #fbf1c7;
+        --fg1: #ebdbb2;
+        --fg2: #d5c4a1;
+        --fg3: #bdae93;
+        --yellow: #fabd2f;
+        --green: #b8bb26;
+        --red: #fb4934;
+        --aqua: #8ec07c;
+        --gray: #928374;
+        --blue: #83a598;
+        --purple: #d3869b;
+      }
+      .theme-op1 {
+        --bg0-hard: #f5f5f0;
+        --bg0: #ffffff;
+        --bg1: #f0f0eb;
+        --bg2: #e0e0db;
+        --bg3: #c8c8c3;
+        --fg0: #1a1a1a;
+        --fg1: #2d2d2d;
+        --fg2: #4a4a4a;
+        --fg3: #6b6b6b;
+        --yellow: #ff6b00;
+        --green: #00c853;
+        --red: #ff1744;
+        --aqua: #00b8d4;
+        --gray: #9e9e9e;
+        --blue: #2979ff;
+        --purple: #d500f9;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        background: var(--bg0-hard);
+        color: var(--fg1);
+        font-family: "Berkeley Mono", "JetBrains Mono", monospace;
+        line-height: 1.6;
+      }
+      header {
+        background: var(--bg0);
+        border-bottom: 1px solid var(--bg2);
+        padding: 16px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      header h1 { font-size: 1.2rem; color: var(--fg0); }
+      header a {
+        color: var(--fg3);
+        text-decoration: none;
+        font-size: 0.85rem;
+        margin-left: 16px;
+      }
+      header a:hover { color: var(--yellow); }
+      .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+      .section {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .section-title {
+        font-size: 0.9rem;
+        color: var(--yellow);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 16px;
+      }
+      .profile-header {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .avatar {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: var(--bg2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2rem;
+        color: var(--fg3);
+        overflow: hidden;
+        flex-shrink: 0;
+      }
+      .avatar img { width: 100%; height: 100%; object-fit: cover; }
+      .profile-name { font-size: 1.4rem; color: var(--fg0); font-weight: bold; }
+      .profile-meta { font-size: 0.8rem; color: var(--fg3); }
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      @media (max-width: 600px) {
+        .stat-grid { grid-template-columns: 1fr; }
+      }
+      .stat-box { text-align: center; padding: 12px; background: var(--bg1); }
+      .stat-value { font-size: 1.5rem; font-weight: bold; color: var(--fg0); }
+      .stat-label { font-size: 0.75rem; color: var(--fg3); }
+      .bio-textarea {
+        width: 100%;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        color: var(--fg1);
+        font-family: inherit;
+        font-size: 0.85rem;
+        padding: 10px;
+        resize: vertical;
+        min-height: 80px;
+      }
+      .bio-textarea:focus { outline: none; border-color: var(--yellow); }
+      .btn {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        padding: 6px 14px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        color: var(--fg3);
+        font-family: inherit;
+      }
+      .btn:hover { border-color: var(--green); color: var(--green); }
+      .btn-primary { border-color: var(--yellow); color: var(--yellow); }
+      .btn-primary:hover { background: var(--yellow); color: var(--bg0-hard); }
+      .connected-list { display: flex; flex-direction: column; gap: 8px; }
+      .connected-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--bg1);
+      }
+      .connected-item:last-child { border-bottom: none; }
+      .connected-label { color: var(--fg2); font-size: 0.85rem; }
+      .connected-status { font-size: 0.8rem; }
+      .connected-yes { color: var(--green); }
+      .connected-no { color: var(--fg3); }
+      .agent-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--bg1);
+      }
+      .agent-row:last-child { border-bottom: none; }
+      .agent-row a { color: var(--fg0); text-decoration: none; font-size: 0.9rem; }
+      .agent-row a:hover { color: var(--yellow); }
+      .agent-row .meta { color: var(--fg3); font-size: 0.75rem; }
+      .wallet-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+      }
+      .wallet-label { color: var(--fg3); font-size: 0.85rem; }
+      .wallet-value { color: var(--fg2); font-size: 0.85rem; }
+      .wallet-value.balance { color: var(--green); font-weight: bold; font-size: 1rem; }
+      .tx-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--bg1);
+        font-size: 0.8rem;
+      }
+      .tx-row:last-child { border-bottom: none; }
+      .tx-positive { color: var(--green); }
+      .tx-negative { color: var(--red); }
+      .empty-state { color: var(--fg3); font-size: 0.85rem; font-style: italic; padding: 8px 0; }
+      .name-edit { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+      .name-input {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        color: var(--fg1);
+        font-family: inherit;
+        font-size: 0.85rem;
+        padding: 4px 8px;
+        flex: 1;
+      }
+      .name-input:focus { outline: none; border-color: var(--yellow); }
+      .theme-toggle-btn {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        padding: 4px 10px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        color: var(--fg3);
+        font-family: inherit;
+      }
+      .theme-toggle-btn:hover { border-color: var(--yellow); color: var(--yellow); }
+      .toast {
+        position: fixed; top: 16px; right: 16px;
+        padding: 12px 20px; font-family: inherit; font-size: 0.85rem;
+        z-index: 1000; opacity: 0; transform: translateY(-10px);
+        transition: all 0.3s ease;
+        background: var(--bg0); border: 1px solid var(--green); color: var(--green);
+      }
+      .toast.show { opacity: 1; transform: translateY(0); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Profile</h1>
+      <div>
+        <a href="/">Catalogue</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/agents/new" style="color: var(--yellow)">+ Create Agent</a>
+        <button id="theme-toggle" class="theme-toggle-btn" title="Toggle Theme (Ctrl+T)">OP-1</button>
+      </div>
+    </header>
+
+    <div class="container">
+      <!-- Profile Header -->
+      <div class="section">
+        <div class="profile-header">
+          <div class="avatar" id="avatar">?</div>
+          <div>
+            <div class="profile-name" id="display-name">Loading...</div>
+            <div class="profile-meta" id="profile-meta"></div>
+          </div>
+        </div>
+        <div class="name-edit">
+          <input type="text" class="name-input" id="name-input" placeholder="Display name" />
+          <button class="btn btn-primary" onclick="saveName()">Save</button>
+        </div>
+      </div>
+
+      <!-- Bio -->
+      <div class="section">
+        <div class="section-title">Bio</div>
+        <textarea class="bio-textarea" id="bio-input" placeholder="Tell us about yourself..."></textarea>
+        <div style="margin-top: 8px; text-align: right;">
+          <button class="btn btn-primary" onclick="saveBio()">Save Bio</button>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="section">
+        <div class="section-title">Stats</div>
+        <div class="stat-grid">
+          <div class="stat-box">
+            <div class="stat-value" id="stat-agents">--</div>
+            <div class="stat-label">Agents Created</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-executions">--</div>
+            <div class="stat-label">Total Executions</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-spent">--</div>
+            <div class="stat-label">Credits Spent</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Wallet -->
+      <div class="section">
+        <div class="section-title">Wallet</div>
+        <div class="wallet-row">
+          <span class="wallet-label">Balance</span>
+          <span class="wallet-value balance" id="wallet-balance">--</span>
+        </div>
+        <div class="wallet-row">
+          <span class="wallet-label">Total Deposited</span>
+          <span class="wallet-value" id="wallet-deposited">--</span>
+        </div>
+        <div class="wallet-row">
+          <span class="wallet-label">Total Spent</span>
+          <span class="wallet-value" id="wallet-spent">--</span>
+        </div>
+        <div style="margin-top: 12px;">
+          <a href="/dashboard" class="btn btn-primary">Buy Credits</a>
+        </div>
+        <div style="margin-top: 16px;">
+          <div style="font-size: 0.8rem; color: var(--fg3); margin-bottom: 8px;">Recent Transactions</div>
+          <div id="tx-list"><div class="empty-state">Loading...</div></div>
+        </div>
+      </div>
+
+      <!-- Public Agents -->
+      <div class="section">
+        <div class="section-title">Public Agents</div>
+        <div id="agents-list"><div class="empty-state">Loading...</div></div>
+      </div>
+
+      <!-- Connected Accounts -->
+      <div class="section">
+        <div class="section-title">Connected Accounts</div>
+        <div class="connected-list">
+          <div class="connected-item">
+            <span class="connected-label">Google</span>
+            <span class="connected-status" id="conn-google">--</span>
+          </div>
+          <div class="connected-item">
+            <span class="connected-label">GitHub</span>
+            <span class="connected-status" id="conn-github">--</span>
+          </div>
+          <div class="connected-item">
+            <span class="connected-label">Ethereum Wallet</span>
+            <span class="connected-status" id="conn-ethereum">--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function showToast(msg) {
+        const t = document.createElement('div');
+        t.className = 'toast';
+        t.textContent = msg;
+        document.body.appendChild(t);
+        requestAnimationFrame(() => t.classList.add('show'));
+        setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3000);
+      }
+
+      let profileData = null;
+
+      (async () => {
+        // Auth check
+        try {
+          const me = await fetch('/api/auth/me');
+          if (!me.ok) { window.location.href = '/'; return; }
+        } catch { window.location.href = '/'; return; }
+
+        // Load profile
+        try {
+          const res = await fetch('/api/profile');
+          if (!res.ok) { window.location.href = '/'; return; }
+          profileData = await res.json();
+
+          // Header
+          document.getElementById('display-name').textContent =
+            profileData.display_name || profileData.email || profileData.user_id;
+          document.getElementById('name-input').value = profileData.display_name || '';
+          document.getElementById('bio-input').value = profileData.bio || '';
+
+          // Avatar
+          const av = document.getElementById('avatar');
+          if (profileData.avatar_url) {
+            av.innerHTML = `<img src="${profileData.avatar_url}" alt="avatar" />`;
+          } else {
+            const name = profileData.display_name || profileData.email || '?';
+            av.textContent = name.charAt(0).toUpperCase();
+          }
+
+          // Meta
+          const parts = [];
+          if (profileData.role) parts.push(profileData.role);
+          if (profileData.auth_provider) parts.push('via ' + profileData.auth_provider);
+          if (profileData.created_at) {
+            const d = new Date(profileData.created_at);
+            parts.push('member since ' + d.toLocaleDateString());
+          }
+          document.getElementById('profile-meta').textContent = parts.join(' | ');
+
+          // Stats
+          document.getElementById('stat-agents').textContent = profileData.stats.agents_created;
+          document.getElementById('stat-executions').textContent = profileData.stats.total_executions;
+          document.getElementById('stat-spent').textContent = profileData.stats.credits_spent;
+
+          // Wallet
+          document.getElementById('wallet-balance').textContent = profileData.wallet.balance;
+          document.getElementById('wallet-deposited').textContent = profileData.wallet.total_deposited;
+          document.getElementById('wallet-spent').textContent = profileData.wallet.total_spent;
+
+          // Connected accounts
+          const conn = profileData.connected_accounts;
+          document.getElementById('conn-google').innerHTML =
+            conn.google ? '<span class="connected-yes">Connected</span>' : '<span class="connected-no">Not connected</span>';
+          document.getElementById('conn-github').innerHTML =
+            conn.github ? `<span class="connected-yes">Connected (${profileData.github_username || ''})</span>` : '<span class="connected-no">Not connected</span>';
+          document.getElementById('conn-ethereum').innerHTML =
+            conn.ethereum ? `<span class="connected-yes">${profileData.ethereum_address ? profileData.ethereum_address.slice(0,6) + '...' + profileData.ethereum_address.slice(-4) : 'Connected'}</span>` : '<span class="connected-no">Not connected</span>';
+
+          // Public agents
+          const agentsEl = document.getElementById('agents-list');
+          if (!profileData.public_agents || profileData.public_agents.length === 0) {
+            agentsEl.innerHTML = '<div class="empty-state">No public agents yet.</div>';
+          } else {
+            agentsEl.innerHTML = profileData.public_agents.map(a => `
+              <div class="agent-row">
+                <div>
+                  <a href="/agent/${a.agent_name}">${a.display_alias || a.agent_name}</a>
+                  <div class="meta">${a.agent_type} | ${a.total_executions} executions</div>
+                </div>
+              </div>
+            `).join('');
+          }
+        } catch (e) {
+          console.error('Failed to load profile:', e);
+        }
+
+        // Load recent transactions
+        try {
+          const res = await fetch('/api/wallet/transactions?limit=10');
+          if (res.ok) {
+            const data = await res.json();
+            const el = document.getElementById('tx-list');
+            if (!data.transactions || data.transactions.length === 0) {
+              el.innerHTML = '<div class="empty-state">No transactions yet.</div>';
+            } else {
+              el.innerHTML = data.transactions.map(t => `
+                <div class="tx-row">
+                  <div>
+                    <span style="color:var(--fg3)">${t.tx_type}</span>
+                    ${t.description ? `<span style="color:var(--fg2);margin-left:6px">${t.description}</span>` : ''}
+                  </div>
+                  <span class="${t.amount >= 0 ? 'tx-positive' : 'tx-negative'}">${t.amount >= 0 ? '+' : ''}${t.amount}</span>
+                </div>
+              `).join('');
+            }
+          }
+        } catch {}
+      })();
+
+      async function saveName() {
+        const name = document.getElementById('name-input').value.trim();
+        if (!name) return;
+        try {
+          const res = await fetch('/api/profile', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ display_name: name }),
+          });
+          if (res.ok) {
+            document.getElementById('display-name').textContent = name;
+            showToast('Name updated');
+          }
+        } catch {}
+      }
+
+      async function saveBio() {
+        const bio = document.getElementById('bio-input').value;
+        try {
+          const res = await fetch('/api/profile', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bio }),
+          });
+          if (res.ok) showToast('Bio updated');
+        } catch {}
+      }
+
+      // Theme toggle
+      const themes = ['hasui', 'op1'];
+      const labels = { hasui: 'OP-1', op1: 'Hasui' };
+      function setTheme(t) {
+        document.documentElement.className = 'theme-' + t;
+        localStorage.setItem('fermi-theme', t);
+        document.getElementById('theme-toggle').textContent = labels[t];
+      }
+      const saved = localStorage.getItem('fermi-theme');
+      if (saved && themes.includes(saved)) setTheme(saved);
+      document.getElementById('theme-toggle').addEventListener('click', () => {
+        const current = localStorage.getItem('fermi-theme') || 'hasui';
+        setTheme(current === 'hasui' ? 'op1' : 'hasui');
+      });
+      document.addEventListener('keydown', e => {
+        if (e.ctrlKey && e.key === 't') { e.preventDefault(); document.getElementById('theme-toggle').click(); }
+      });
+    </script>
+  </body>
+</html>
