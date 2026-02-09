@@ -264,7 +264,10 @@
 
         <!-- My Workspaces -->
         <div class="section">
-          <div class="section-title">Workspaces</div>
+          <div class="section-title">
+            Workspaces
+            <button class="btn btn-primary" id="create-ws-btn">+ New</button>
+          </div>
           <div id="workspaces-list">
             <div class="empty-state">Loading...</div>
           </div>
@@ -358,13 +361,15 @@
                         )
                       : 0;
                   return `
-                  <div class="workspace-row">
-                    <div>
-                      <div class="agent-name">${w.name}</div>
-                      <div class="agent-meta">${w.workspace_remaining} / ${w.workspace_budget} credits remaining</div>
-                      <div class="budget-bar"><div class="budget-fill" style="width:${pct}%"></div></div>
+                  <a href="/workspace/${w.id}" style="text-decoration:none;color:inherit">
+                    <div class="workspace-row" style="cursor:pointer">
+                      <div>
+                        <div class="agent-name">${w.name}</div>
+                        <div class="agent-meta">${w.workspace_remaining} / ${w.workspace_budget} credits remaining</div>
+                        <div class="budget-bar"><div class="budget-fill" style="width:${pct}%"></div></div>
+                      </div>
                     </div>
-                  </div>
+                  </a>
                 `;
                 })
                 .join("");
@@ -401,6 +406,39 @@
           }
         } catch {}
       })();
+
+      // Create workspace
+      document
+        .getElementById("create-ws-btn")
+        .addEventListener("click", async () => {
+          const name = prompt("Workspace name:");
+          if (!name || !name.trim()) return;
+          const slug = name
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "");
+          try {
+            const res = await fetch("/api/teams", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: name.trim(),
+                slug,
+                description: "",
+              }),
+            });
+            if (!res.ok) {
+              const err = await res.text();
+              alert("Failed to create workspace: " + err);
+              return;
+            }
+            const team = await res.json();
+            window.location.href = "/workspace/" + team.id;
+          } catch (e) {
+            alert("Failed to create workspace");
+          }
+        });
 
       // Theme toggle
       const themes = ["hasui", "op1"];
