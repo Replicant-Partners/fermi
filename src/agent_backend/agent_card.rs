@@ -58,6 +58,12 @@ pub struct AgentCapabilities {
     pub skills: Vec<String>,
     pub model: String,
     pub temperature: f64,
+    #[serde(default = "default_provider")]
+    pub provider: String,
+}
+
+fn default_provider() -> String {
+    "anthropic".to_string()
 }
 
 /// Agent performance metrics
@@ -126,6 +132,7 @@ impl AgentCard {
                 skills: vec![],
                 model: "claude-3-haiku-20240307".to_string(),
                 temperature: 0.3,
+                provider: "anthropic".to_string(),
             },
             performance: AgentPerformance {
                 forecasts_contributed: 0,

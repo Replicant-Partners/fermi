@@ -8,9 +8,13 @@ use axum::{
     Json, Router,
 };
 use fermi::agent_backend::{
-    agent_card::AgentCard,
+    agent_card::{
+        AgentCapabilities, AgentCard, AgentMetadata as CardMetadata, AgentPerformance, AgentTier,
+        AgentUsage, OntologyStats, UsageWindow,
+    },
     executor::{AgentOutput, AgentStatus, ExecutionContext},
     llm_executor::LLMExecutor,
+    multi_model_executor::MultiModelExecutor,
     registry::AgentRegistry,
 };
 use fermi::ast;
@@ -411,9 +415,12 @@ async fn main() {
     );
     println!("ADM MemoryStore initialized");
 
-    // Initialize agent registry with LLM executor
-    let registry = if let Ok(llm_executor) = LLMExecutor::from_env() {
-        println!("Using LLM Executor (Claude API)");
+    // Initialize agent registry — prefer MultiModelExecutor, fall back to LLMExecutor, then Mock
+    let registry = if let Ok(multi) = MultiModelExecutor::from_env() {
+        println!("Using Multi-Model Executor (Claude + additional providers)");
+        Arc::new(AgentRegistry::with_executor(Arc::new(multi)))
+    } else if let Ok(llm_executor) = LLMExecutor::from_env() {
+        println!("Using LLM Executor (Claude API only)");
         Arc::new(AgentRegistry::with_executor(Arc::new(llm_executor)))
     } else {
         println!("No ANTHROPIC_API_KEY found, using Mock Executor");
@@ -1016,12 +1023,8 @@ async fn mcp_agent_rpc(
             }
 
             // Execute agent (unauthenticated for public agents)
-            let card = state.registry.get(&agent_id).map_err(|e| {
-                (
-                    StatusCode::NOT_FOUND,
-                    format!("Agent not in registry: {}", e),
-                )
-            })?;
+            let db_agent = resolve_agent(&state, &agent_id).await?;
+            let card = resolve_agent_card(&state, &db_agent);
 
             let agent_stmt = ast::AgentStmt {
                 name: agent_id.clone(),
@@ -2314,6 +2317,84 @@ async fn resolve_agent(state: &AppState, agent_id: &str) -> Result<Agent, (Statu
                 format!("Agent '{}' not found: {}", agent_id, e),
             )
         })
+}
+
+/// Build an AgentCard from a DB Agent record (for agents not in the filesystem registry)
+fn agent_card_from_db(agent: &Agent) -> AgentCard {
+    AgentCard {
+        agent_id: agent.agent_name.clone(),
+        agent_type: agent.agent_type.clone(),
+        version: agent.version.clone(),
+        tier: if agent.owner_id.is_some() {
+            AgentTier::Community
+        } else {
+            AgentTier::Curated
+        },
+        capabilities: AgentCapabilities {
+            executor: match agent.executor_type.as_str() {
+                "mcp" => ast::ExecutorType::MCP,
+                "manual" => ast::ExecutorType::Manual,
+                "skill" => ast::ExecutorType::Skill,
+                _ => ast::ExecutorType::LLM,
+            },
+            mcp_tools: vec![],
+            skills: vec![],
+            model: agent.model.clone(),
+            temperature: agent.temperature,
+            provider: agent.llm_provider.clone(),
+        },
+        performance: AgentPerformance {
+            forecasts_contributed: 0,
+            avg_brier_impact: 0.0,
+            avg_confidence: 0.0,
+            accuracy_rate: 0.0,
+        },
+        usage: AgentUsage {
+            total_executions: agent.total_executions as u32,
+            successful_executions: agent.successful_executions as u32,
+            failed_executions: agent.failed_executions as u32,
+            total_tokens_used: 0,
+            total_cost_usd: 0.0,
+            avg_execution_time_ms: agent.avg_execution_time_ms as u64,
+            last_30_days: UsageWindow {
+                executions: 0,
+                tokens: 0,
+                cost_usd: 0.0,
+            },
+        },
+        wallet: None,
+        ontology_stats: OntologyStats {
+            entities: 0,
+            relationships: 0,
+            last_updated: chrono::Utc::now(),
+            evolution_commits: 0,
+        },
+        metadata: CardMetadata {
+            created: chrono::Utc::now().to_rfc3339(),
+            author: agent.author.clone(),
+            description: agent.description.clone().unwrap_or_default(),
+            tags: agent.tags.clone(),
+            sample_queries: agent.sample_queries.clone(),
+        },
+        system_prompt: agent.system_prompt.clone(),
+    }
+}
+
+/// Resolve an AgentCard: try registry first, fall back to building from DB agent.
+/// Always overrides capabilities.provider from the DB agent's llm_provider.
+fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCard {
+    let mut card = match state.registry.get(&db_agent.agent_name) {
+        Ok(c) => c,
+        Err(_) => agent_card_from_db(db_agent),
+    };
+    // Bridge DB llm_provider → card capabilities.provider
+    card.capabilities.provider = db_agent.llm_provider.clone();
+    // Also bridge model/temperature from DB (may have been updated via API)
+    card.capabilities.model = db_agent.model.clone();
+    card.capabilities.temperature = db_agent.temperature;
+    // Bridge system prompt from DB
+    card.system_prompt = db_agent.system_prompt.clone();
+    card
 }
 
 // ─── Agent CRUD handlers ───────────────────────────────────────────
@@ -3641,12 +3722,7 @@ async fn post_workspace_message_handler(
                     // Resolve and execute
                     let result = async {
                         let db_agent = resolve_agent(&state2, &agent_name2).await?;
-                        let card = state2.registry.get(&agent_name2).map_err(|e| {
-                            (
-                                StatusCode::NOT_FOUND,
-                                format!("Agent not in registry: {}", e),
-                            )
-                        })?;
+                        let card = resolve_agent_card(&state2, &db_agent);
 
                         let agent_stmt = ast::AgentStmt {
                             name: agent_name2.clone(),
@@ -4351,15 +4427,9 @@ async fn execute_agent_handler(
         ));
     }
 
-    // 1. Resolve agent in both registry and database
+    // 1. Resolve agent in database, then build card (registry or DB fallback)
     let db_agent = resolve_agent(&state, &agent_id).await?;
-
-    let card = state.registry.get(&agent_id).map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("Agent not in registry: {}", e),
-        )
-    })?;
+    let card = resolve_agent_card(&state, &db_agent);
 
     // 2. Build execution context
     let agent_stmt = ast::AgentStmt {
