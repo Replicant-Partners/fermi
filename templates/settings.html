@@ -37,7 +37,11 @@
         --aqua: #00b8d4;
         --gray: #9e9e9e;
       }
-      * { margin: 0; padding: 0; box-sizing: border-box; }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
       body {
         background: var(--bg0-hard);
         color: var(--fg1);
@@ -52,10 +56,24 @@
         justify-content: space-between;
         align-items: center;
       }
-      header h1 { font-size: 1.2rem; color: var(--fg0); }
-      header a { color: var(--fg3); text-decoration: none; font-size: 0.85rem; margin-left: 16px; }
-      header a:hover { color: var(--yellow); }
-      .container { max-width: 800px; margin: 0 auto; padding: 24px; }
+      header h1 {
+        font-size: 1.2rem;
+        color: var(--fg0);
+      }
+      header a {
+        color: var(--fg3);
+        text-decoration: none;
+        font-size: 0.85rem;
+        margin-left: 16px;
+      }
+      header a:hover {
+        color: var(--yellow);
+      }
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 24px;
+      }
       .section {
         background: var(--bg0);
         border: 1px solid var(--bg2);
@@ -81,11 +99,26 @@
         color: var(--fg3);
         font-family: inherit;
       }
-      .btn:hover { border-color: var(--green); color: var(--green); }
-      .btn-primary { border-color: var(--yellow); color: var(--yellow); }
-      .btn-primary:hover { background: var(--yellow); color: var(--bg0-hard); }
-      .btn-danger { border-color: var(--red); color: var(--red); }
-      .btn-danger:hover { background: var(--red); color: var(--bg0-hard); }
+      .btn:hover {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .btn-primary {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .btn-primary:hover {
+        background: var(--yellow);
+        color: var(--bg0-hard);
+      }
+      .btn-danger {
+        border-color: var(--red);
+        color: var(--red);
+      }
+      .btn-danger:hover {
+        background: var(--red);
+        color: var(--bg0-hard);
+      }
       .key-row {
         display: flex;
         justify-content: space-between;
@@ -93,13 +126,36 @@
         padding: 10px 0;
         border-bottom: 1px solid var(--bg1);
       }
-      .key-row:last-child { border-bottom: none; }
-      .key-name { color: var(--fg0); font-size: 0.9rem; }
-      .key-meta { color: var(--fg3); font-size: 0.75rem; }
-      .key-prefix { color: var(--aqua); font-size: 0.8rem; font-family: inherit; }
-      .empty-state { color: var(--fg3); font-size: 0.85rem; font-style: italic; padding: 8px 0; }
-      .form-row { margin-bottom: 12px; }
-      .form-label { font-size: 0.8rem; color: var(--fg3); margin-bottom: 4px; }
+      .key-row:last-child {
+        border-bottom: none;
+      }
+      .key-name {
+        color: var(--fg0);
+        font-size: 0.9rem;
+      }
+      .key-meta {
+        color: var(--fg3);
+        font-size: 0.75rem;
+      }
+      .key-prefix {
+        color: var(--aqua);
+        font-size: 0.8rem;
+        font-family: inherit;
+      }
+      .empty-state {
+        color: var(--fg3);
+        font-size: 0.85rem;
+        font-style: italic;
+        padding: 8px 0;
+      }
+      .form-row {
+        margin-bottom: 12px;
+      }
+      .form-label {
+        font-size: 0.8rem;
+        color: var(--fg3);
+        margin-bottom: 4px;
+      }
       .form-input {
         width: 100%;
         background: var(--bg1);
@@ -109,7 +165,10 @@
         font-size: 0.85rem;
         padding: 8px 10px;
       }
-      .form-input:focus { outline: none; border-color: var(--yellow); }
+      .form-input:focus {
+        outline: none;
+        border-color: var(--yellow);
+      }
       .new-key-display {
         background: var(--bg1);
         border: 1px solid var(--green);
@@ -118,8 +177,15 @@
         font-size: 0.85rem;
         word-break: break-all;
       }
-      .new-key-display .key-value { color: var(--green); font-weight: bold; }
-      .new-key-display .key-warning { color: var(--red); font-size: 0.75rem; margin-top: 6px; }
+      .new-key-display .key-value {
+        color: var(--green);
+        font-weight: bold;
+      }
+      .new-key-display .key-warning {
+        color: var(--red);
+        font-size: 0.75rem;
+        margin-top: 6px;
+      }
       .connected-item {
         display: flex;
         justify-content: space-between;
@@ -127,24 +193,41 @@
         padding: 10px 0;
         border-bottom: 1px solid var(--bg1);
       }
-      .connected-item:last-child { border-bottom: none; }
-      .conn-label { color: var(--fg2); }
-      .conn-yes { color: var(--green); font-size: 0.85rem; }
-      .conn-no { color: var(--fg3); font-size: 0.85rem; }
+      .connected-item:last-child {
+        border-bottom: none;
+      }
+      .conn-label {
+        color: var(--fg2);
+      }
+      .conn-yes {
+        color: var(--green);
+        font-size: 0.85rem;
+      }
+      .conn-no {
+        color: var(--fg3);
+        font-size: 0.85rem;
+      }
       .danger-zone {
         border-color: var(--red);
       }
-      .danger-zone .section-title { color: var(--red); }
+      .danger-zone .section-title {
+        color: var(--red);
+      }
       .modal-overlay {
         display: none;
         position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.7);
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
         z-index: 100;
         align-items: center;
         justify-content: center;
       }
-      .modal-overlay.show { display: flex; }
+      .modal-overlay.show {
+        display: flex;
+      }
       .modal {
         background: var(--bg0);
         border: 1px solid var(--bg2);
@@ -152,17 +235,40 @@
         max-width: 400px;
         width: 90%;
       }
-      .modal h3 { color: var(--red); margin-bottom: 12px; font-size: 1rem; }
-      .modal p { color: var(--fg2); font-size: 0.85rem; margin-bottom: 16px; }
-      .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
-      .toast {
-        position: fixed; top: 16px; right: 16px;
-        padding: 12px 20px; font-family: inherit; font-size: 0.85rem;
-        z-index: 1000; opacity: 0; transform: translateY(-10px);
-        transition: all 0.3s ease;
-        background: var(--bg0); border: 1px solid var(--green); color: var(--green);
+      .modal h3 {
+        color: var(--red);
+        margin-bottom: 12px;
+        font-size: 1rem;
       }
-      .toast.show { opacity: 1; transform: translateY(0); }
+      .modal p {
+        color: var(--fg2);
+        font-size: 0.85rem;
+        margin-bottom: 16px;
+      }
+      .modal-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      .toast {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        padding: 12px 20px;
+        font-family: inherit;
+        font-size: 0.85rem;
+        z-index: 1000;
+        opacity: 0;
+        transform: translateY(-10px);
+        transition: all 0.3s ease;
+        background: var(--bg0);
+        border: 1px solid var(--green);
+        color: var(--green);
+      }
+      .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
       .theme-toggle-btn {
         background: transparent;
         border: 1px solid var(--bg3);
@@ -172,17 +278,22 @@
         color: var(--fg3);
         font-family: inherit;
       }
-      .theme-toggle-btn:hover { border-color: var(--yellow); color: var(--yellow); }
+      .theme-toggle-btn:hover {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
     </style>
   </head>
   <body>
     <header>
       <h1>Settings</h1>
       <div>
-        <a href="/">Catalogue</a>
+        <a href="/catalogue">Catalogue</a>
         <a href="/dashboard">Dashboard</a>
         <a href="/profile">Profile</a>
-        <button id="theme-toggle" class="theme-toggle-btn" title="Ctrl+T">OP-1</button>
+        <button id="theme-toggle" class="theme-toggle-btn" title="Ctrl+T">
+          OP-1
+        </button>
       </div>
     </header>
 
@@ -191,15 +302,24 @@
       <div class="section">
         <div class="section-title">
           API Keys
-          <button class="btn btn-primary" onclick="showCreateKey()">+ New Key</button>
+          <button class="btn btn-primary" onclick="showCreateKey()">
+            + New Key
+          </button>
         </div>
-        <div id="create-key-form" style="display:none; margin-bottom: 16px;">
+        <div id="create-key-form" style="display: none; margin-bottom: 16px">
           <div class="form-row">
             <div class="form-label">Key Name</div>
-            <input type="text" class="form-input" id="key-name-input" placeholder="e.g. CI Pipeline" />
+            <input
+              type="text"
+              class="form-input"
+              id="key-name-input"
+              placeholder="e.g. CI Pipeline"
+            />
           </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-primary" onclick="createKey()">Create</button>
+          <div style="display: flex; gap: 8px">
+            <button class="btn btn-primary" onclick="createKey()">
+              Create
+            </button>
             <button class="btn" onclick="hideCreateKey()">Cancel</button>
           </div>
           <div id="new-key-result"></div>
@@ -227,10 +347,13 @@
       <!-- Danger Zone -->
       <div class="section danger-zone">
         <div class="section-title">Danger Zone</div>
-        <p style="color:var(--fg3);font-size:0.85rem;margin-bottom:12px;">
-          Deleting your account is permanent. All agents, workspaces, and data will be lost.
+        <p style="color: var(--fg3); font-size: 0.85rem; margin-bottom: 12px">
+          Deleting your account is permanent. All agents, workspaces, and data
+          will be lost.
         </p>
-        <button class="btn btn-danger" onclick="showDeleteModal()">Delete Account</button>
+        <button class="btn btn-danger" onclick="showDeleteModal()">
+          Delete Account
+        </button>
       </div>
     </div>
 
@@ -238,47 +361,74 @@
     <div class="modal-overlay" id="delete-modal">
       <div class="modal">
         <h3>Delete Account</h3>
-        <p>This action cannot be undone. All your agents, workspaces, credits, and data will be permanently deleted.</p>
-        <p style="font-size:0.8rem;">Type <strong style="color:var(--red)">DELETE</strong> to confirm:</p>
-        <input type="text" class="form-input" id="delete-confirm-input" placeholder="Type DELETE" style="margin-bottom:12px;" />
+        <p>
+          This action cannot be undone. All your agents, workspaces, credits,
+          and data will be permanently deleted.
+        </p>
+        <p style="font-size: 0.8rem">
+          Type <strong style="color: var(--red)">DELETE</strong> to confirm:
+        </p>
+        <input
+          type="text"
+          class="form-input"
+          id="delete-confirm-input"
+          placeholder="Type DELETE"
+          style="margin-bottom: 12px"
+        />
         <div class="modal-actions">
           <button class="btn" onclick="hideDeleteModal()">Cancel</button>
-          <button class="btn btn-danger" id="delete-confirm-btn" onclick="deleteAccount()">Delete</button>
+          <button
+            class="btn btn-danger"
+            id="delete-confirm-btn"
+            onclick="deleteAccount()"
+          >
+            Delete
+          </button>
         </div>
       </div>
     </div>
 
     <script>
       function showToast(msg) {
-        const t = document.createElement('div');
-        t.className = 'toast';
+        const t = document.createElement("div");
+        t.className = "toast";
         t.textContent = msg;
         document.body.appendChild(t);
-        requestAnimationFrame(() => t.classList.add('show'));
-        setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3000);
+        requestAnimationFrame(() => t.classList.add("show"));
+        setTimeout(() => {
+          t.classList.remove("show");
+          setTimeout(() => t.remove(), 300);
+        }, 3000);
       }
 
       // Auth check
       (async () => {
         try {
-          const me = await fetch('/api/auth/me');
-          if (!me.ok) { window.location.href = '/'; return; }
-        } catch { window.location.href = '/'; return; }
+          const me = await fetch("/api/auth/me");
+          if (!me.ok) {
+            window.location.href = "/";
+            return;
+          }
+        } catch {
+          window.location.href = "/";
+          return;
+        }
 
         // Load profile for connected accounts
         try {
-          const res = await fetch('/api/profile');
+          const res = await fetch("/api/profile");
           if (res.ok) {
             const p = await res.json();
             const conn = p.connected_accounts || {};
-            document.getElementById('conn-google').innerHTML =
-              conn.google ? '<span class="conn-yes">Connected</span>' : '<span class="conn-no">Not connected</span>';
-            document.getElementById('conn-github').innerHTML =
-              conn.github ? '<span class="conn-yes">Connected</span>' : '<span class="conn-no">Not connected</span>';
-            document.getElementById('conn-ethereum').innerHTML =
-              conn.ethereum
-                ? `<span class="conn-yes">${p.ethereum_address ? p.ethereum_address.slice(0,6) + '...' + p.ethereum_address.slice(-4) : 'Connected'}</span>`
-                : '<button class="btn" onclick="connectWallet()">Connect Wallet</button>';
+            document.getElementById("conn-google").innerHTML = conn.google
+              ? '<span class="conn-yes">Connected</span>'
+              : '<span class="conn-no">Not connected</span>';
+            document.getElementById("conn-github").innerHTML = conn.github
+              ? '<span class="conn-yes">Connected</span>'
+              : '<span class="conn-no">Not connected</span>';
+            document.getElementById("conn-ethereum").innerHTML = conn.ethereum
+              ? `<span class="conn-yes">${p.ethereum_address ? p.ethereum_address.slice(0, 6) + "..." + p.ethereum_address.slice(-4) : "Connected"}</span>`
+              : '<button class="btn" onclick="connectWallet()">Connect Wallet</button>';
           }
         } catch {}
 
@@ -288,68 +438,80 @@
 
       async function loadKeys() {
         try {
-          const res = await fetch('/api/auth/api-keys');
+          const res = await fetch("/api/auth/api-keys");
           if (!res.ok) return;
           const data = await res.json();
-          const el = document.getElementById('keys-list');
+          const el = document.getElementById("keys-list");
           const keys = data.api_keys || [];
           if (keys.length === 0) {
-            el.innerHTML = '<div class="empty-state">No API keys. Create one to use the API programmatically.</div>';
+            el.innerHTML =
+              '<div class="empty-state">No API keys. Create one to use the API programmatically.</div>';
           } else {
-            el.innerHTML = keys.map(k => `
+            el.innerHTML = keys
+              .map(
+                (k) => `
               <div class="key-row">
                 <div>
                   <div class="key-name">${k.name}</div>
                   <div class="key-meta">
-                    <span class="key-prefix">${k.prefix || 'ferm_...'}</span>
-                    | Scopes: ${(k.scopes || ['read']).join(', ')}
+                    <span class="key-prefix">${k.prefix || "ferm_..."}</span>
+                    | Scopes: ${(k.scopes || ["read"]).join(", ")}
                     | Created: ${new Date(k.created_at).toLocaleDateString()}
                   </div>
                 </div>
                 <button class="btn btn-danger" onclick="revokeKey('${k.key_id}')">Revoke</button>
               </div>
-            `).join('');
+            `,
+              )
+              .join("");
           }
         } catch {}
       }
 
       function showCreateKey() {
-        document.getElementById('create-key-form').style.display = 'block';
-        document.getElementById('key-name-input').focus();
+        document.getElementById("create-key-form").style.display = "block";
+        document.getElementById("key-name-input").focus();
       }
       function hideCreateKey() {
-        document.getElementById('create-key-form').style.display = 'none';
-        document.getElementById('new-key-result').innerHTML = '';
+        document.getElementById("create-key-form").style.display = "none";
+        document.getElementById("new-key-result").innerHTML = "";
       }
 
       async function createKey() {
-        const name = document.getElementById('key-name-input').value.trim();
+        const name = document.getElementById("key-name-input").value.trim();
         if (!name) return;
         try {
-          const res = await fetch('/api/auth/api-keys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, scopes: ['read', 'write'] }),
+          const res = await fetch("/api/auth/api-keys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, scopes: ["read", "write"] }),
           });
-          if (!res.ok) { showToast('Failed to create key'); return; }
+          if (!res.ok) {
+            showToast("Failed to create key");
+            return;
+          }
           const data = await res.json();
-          document.getElementById('new-key-result').innerHTML = `
+          document.getElementById("new-key-result").innerHTML = `
             <div class="new-key-display">
               <div class="key-value">${data.key}</div>
               <div class="key-warning">Save this key now. It cannot be retrieved again.</div>
             </div>
           `;
-          document.getElementById('key-name-input').value = '';
+          document.getElementById("key-name-input").value = "";
           await loadKeys();
-        } catch { showToast('Failed to create key'); }
+        } catch {
+          showToast("Failed to create key");
+        }
       }
 
       async function revokeKey(keyId) {
-        if (!confirm('Revoke this API key? This cannot be undone.')) return;
+        if (!confirm("Revoke this API key? This cannot be undone.")) return;
         try {
-          const res = await fetch(`/api/auth/api-keys/${keyId}`, { method: 'DELETE' });
+          const res = await fetch(`/api/auth/api-keys/${keyId}`, {
+            method: "DELETE",
+          });
           if (res.ok) {
-            showToast('Key revoked');
+            showToast("Key revoked");
             await loadKeys();
           }
         } catch {}
@@ -357,75 +519,90 @@
 
       async function connectWallet() {
         if (!window.ethereum) {
-          showToast('No Ethereum wallet detected. Install MetaMask or another wallet.');
+          showToast(
+            "No Ethereum wallet detected. Install MetaMask or another wallet.",
+          );
           return;
         }
         try {
-          const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+          const accounts = await window.ethereum.request({
+            method: "eth_requestAccounts",
+          });
           const address = accounts[0];
 
           // Get challenge
-          const challengeRes = await fetch('/auth/siwe/challenge', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+          const challengeRes = await fetch("/auth/siwe/challenge", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ address }),
           });
-          if (!challengeRes.ok) { showToast('Failed to get challenge'); return; }
+          if (!challengeRes.ok) {
+            showToast("Failed to get challenge");
+            return;
+          }
           const { message } = await challengeRes.json();
 
           // Sign message
           const signature = await window.ethereum.request({
-            method: 'personal_sign',
+            method: "personal_sign",
             params: [message, address],
           });
 
           // Verify
-          const verifyRes = await fetch('/auth/siwe/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+          const verifyRes = await fetch("/auth/siwe/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message, signature }),
           });
           if (verifyRes.ok) {
-            showToast('Wallet connected! Redirecting...');
+            showToast("Wallet connected! Redirecting...");
             setTimeout(() => window.location.reload(), 1000);
           } else {
-            showToast('Signature verification failed');
+            showToast("Signature verification failed");
           }
         } catch (e) {
-          showToast('Wallet connection cancelled');
+          showToast("Wallet connection cancelled");
         }
       }
 
-      function showDeleteModal() { document.getElementById('delete-modal').classList.add('show'); }
+      function showDeleteModal() {
+        document.getElementById("delete-modal").classList.add("show");
+      }
       function hideDeleteModal() {
-        document.getElementById('delete-modal').classList.remove('show');
-        document.getElementById('delete-confirm-input').value = '';
+        document.getElementById("delete-modal").classList.remove("show");
+        document.getElementById("delete-confirm-input").value = "";
       }
 
       async function deleteAccount() {
-        const input = document.getElementById('delete-confirm-input').value;
-        if (input !== 'DELETE') { showToast('Type DELETE to confirm'); return; }
+        const input = document.getElementById("delete-confirm-input").value;
+        if (input !== "DELETE") {
+          showToast("Type DELETE to confirm");
+          return;
+        }
         // Not yet implemented — placeholder
-        showToast('Account deletion not yet implemented. Contact admin.');
+        showToast("Account deletion not yet implemented. Contact admin.");
         hideDeleteModal();
       }
 
       // Theme toggle
-      const themes = ['hasui', 'op1'];
-      const labels = { hasui: 'OP-1', op1: 'Hasui' };
+      const themes = ["hasui", "op1"];
+      const labels = { hasui: "OP-1", op1: "Hasui" };
       function setTheme(t) {
-        document.documentElement.className = 'theme-' + t;
-        localStorage.setItem('fermi-theme', t);
-        document.getElementById('theme-toggle').textContent = labels[t];
+        document.documentElement.className = "theme-" + t;
+        localStorage.setItem("fermi-theme", t);
+        document.getElementById("theme-toggle").textContent = labels[t];
       }
-      const saved = localStorage.getItem('fermi-theme');
+      const saved = localStorage.getItem("fermi-theme");
       if (saved && themes.includes(saved)) setTheme(saved);
-      document.getElementById('theme-toggle').addEventListener('click', () => {
-        const current = localStorage.getItem('fermi-theme') || 'hasui';
-        setTheme(current === 'hasui' ? 'op1' : 'hasui');
+      document.getElementById("theme-toggle").addEventListener("click", () => {
+        const current = localStorage.getItem("fermi-theme") || "hasui";
+        setTheme(current === "hasui" ? "op1" : "hasui");
       });
-      document.addEventListener('keydown', e => {
-        if (e.ctrlKey && e.key === 't') { e.preventDefault(); document.getElementById('theme-toggle').click(); }
+      document.addEventListener("keydown", (e) => {
+        if (e.ctrlKey && e.key === "t") {
+          e.preventDefault();
+          document.getElementById("theme-toggle").click();
+        }
       });
     </script>
   </body>

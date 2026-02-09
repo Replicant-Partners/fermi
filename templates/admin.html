@@ -43,7 +43,11 @@
         --purple: #ab47bc;
         --orange: #ff9100;
       }
-      * { margin: 0; padding: 0; box-sizing: border-box; }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
       body {
         background: var(--bg0-hard);
         color: var(--fg1);
@@ -58,15 +62,24 @@
         justify-content: space-between;
         align-items: center;
       }
-      header h1 { font-size: 1.2rem; color: var(--fg0); }
+      header h1 {
+        font-size: 1.2rem;
+        color: var(--fg0);
+      }
       header a {
         color: var(--fg3);
         text-decoration: none;
         font-size: 0.85rem;
         margin-left: 16px;
       }
-      header a:hover { color: var(--yellow); }
-      .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+      header a:hover {
+        color: var(--yellow);
+      }
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px;
+      }
 
       /* Stats grid */
       .stats-grid {
@@ -113,13 +126,19 @@
         border-right: none;
         transition: color 0.2s;
       }
-      .tab:hover { color: var(--fg1); }
+      .tab:hover {
+        color: var(--fg1);
+      }
       .tab.active {
         color: var(--yellow);
         border-bottom-color: var(--yellow);
       }
-      .tab-content { display: none; }
-      .tab-content.active { display: block; }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
 
       /* Search */
       .search-bar {
@@ -162,8 +181,12 @@
         border-bottom: 1px solid var(--bg1);
         transition: background 0.15s;
       }
-      tbody tr:hover { background: var(--bg1); }
-      td { padding: 10px 12px; }
+      tbody tr:hover {
+        background: var(--bg1);
+      }
+      td {
+        padding: 10px 12px;
+      }
       td .user-id {
         color: var(--fg3);
         font-size: 0.75rem;
@@ -182,24 +205,44 @@
         color: var(--fg1);
         transition: all 0.15s;
       }
-      .btn:hover { border-color: var(--yellow); color: var(--yellow); }
-      .btn-sm { padding: 4px 10px; font-size: 0.75rem; }
-      .btn-green { border-color: var(--green); color: var(--green); }
-      .btn-green:hover { background: var(--green); color: var(--bg0); }
-      .btn-red { border-color: var(--red); color: var(--red); }
-      .btn-red:hover { background: var(--red); color: var(--bg0); }
+      .btn:hover {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .btn-sm {
+        padding: 4px 10px;
+        font-size: 0.75rem;
+      }
+      .btn-green {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .btn-green:hover {
+        background: var(--green);
+        color: var(--bg0);
+      }
+      .btn-red {
+        border-color: var(--red);
+        color: var(--red);
+      }
+      .btn-red:hover {
+        background: var(--red);
+        color: var(--bg0);
+      }
 
       /* Grant modal */
       .modal-overlay {
         display: none;
         position: fixed;
         inset: 0;
-        background: rgba(0,0,0,0.6);
+        background: rgba(0, 0, 0, 0.6);
         z-index: 100;
         align-items: center;
         justify-content: center;
       }
-      .modal-overlay.active { display: flex; }
+      .modal-overlay.active {
+        display: flex;
+      }
       .modal {
         background: var(--bg0);
         border: 1px solid var(--bg2);
@@ -219,7 +262,8 @@
         margin-bottom: 4px;
         margin-top: 12px;
       }
-      .modal input, .modal textarea {
+      .modal input,
+      .modal textarea {
         width: 100%;
         background: var(--bg1);
         border: 1px solid var(--bg2);
@@ -229,7 +273,10 @@
         font-family: inherit;
         font-size: 0.85rem;
       }
-      .modal textarea { resize: vertical; min-height: 60px; }
+      .modal textarea {
+        resize: vertical;
+        min-height: 60px;
+      }
       .modal-actions {
         display: flex;
         gap: 8px;
@@ -253,10 +300,22 @@
         font-size: 0.7rem;
         font-weight: bold;
       }
-      .badge-green { background: rgba(184,187,38,0.15); color: var(--green); }
-      .badge-red { background: rgba(251,73,52,0.15); color: var(--red); }
-      .badge-yellow { background: rgba(250,189,47,0.15); color: var(--yellow); }
-      .badge-gray { background: rgba(146,131,116,0.15); color: var(--gray); }
+      .badge-green {
+        background: rgba(184, 187, 38, 0.15);
+        color: var(--green);
+      }
+      .badge-red {
+        background: rgba(251, 73, 52, 0.15);
+        color: var(--red);
+      }
+      .badge-yellow {
+        background: rgba(250, 189, 47, 0.15);
+        color: var(--yellow);
+      }
+      .badge-gray {
+        background: rgba(146, 131, 116, 0.15);
+        color: var(--gray);
+      }
 
       /* Ledger */
       .ledger-filters {
@@ -291,21 +350,45 @@
       <h1>Admin Panel</h1>
       <nav>
         <a href="/dashboard">Dashboard</a>
-        <a href="/">Catalogue</a>
+        <a href="/catalogue">Catalogue</a>
         <a href="/profile">Profile</a>
-        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">&#9681;</button>
+        <button
+          class="theme-toggle"
+          onclick="toggleTheme()"
+          title="Toggle theme"
+        >
+          &#9681;
+        </button>
       </nav>
     </header>
 
     <div class="container">
       <!-- Stats -->
       <div class="stats-grid" id="stats-grid">
-        <div class="stat-card"><div class="value" id="stat-users">-</div><div class="label">Total Users</div></div>
-        <div class="stat-card"><div class="value" id="stat-agents">-</div><div class="label">Total Agents</div></div>
-        <div class="stat-card"><div class="value" id="stat-episodes">-</div><div class="label">Total Episodes</div></div>
-        <div class="stat-card"><div class="value" id="stat-credits">-</div><div class="label">Credits in Circulation</div></div>
-        <div class="stat-card"><div class="value" id="stat-spent">-</div><div class="label">Credits Spent</div></div>
-        <div class="stat-card"><div class="value" id="stat-txs24h">-</div><div class="label">Transactions (24h)</div></div>
+        <div class="stat-card">
+          <div class="value" id="stat-users">-</div>
+          <div class="label">Total Users</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-agents">-</div>
+          <div class="label">Total Agents</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-episodes">-</div>
+          <div class="label">Total Episodes</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-credits">-</div>
+          <div class="label">Credits in Circulation</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-spent">-</div>
+          <div class="label">Credits Spent</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-txs24h">-</div>
+          <div class="label">Transactions (24h)</div>
+        </div>
       </div>
 
       <!-- Tabs -->
@@ -318,7 +401,11 @@
       <!-- Users Tab -->
       <div class="tab-content active" id="tab-users">
         <div class="search-bar">
-          <input type="text" id="user-search" placeholder="Search users by name or email..." />
+          <input
+            type="text"
+            id="user-search"
+            placeholder="Search users by name or email..."
+          />
         </div>
         <table>
           <thead>
@@ -339,7 +426,11 @@
       <!-- Agents Tab -->
       <div class="tab-content" id="tab-agents">
         <div class="search-bar">
-          <input type="text" id="agent-search" placeholder="Search agents by name..." />
+          <input
+            type="text"
+            id="agent-search"
+            placeholder="Search agents by name..."
+          />
         </div>
         <table>
           <thead>
@@ -387,11 +478,20 @@
     <div class="modal-overlay" id="grant-modal">
       <div class="modal">
         <h3>Grant Credits</h3>
-        <p id="grant-target" style="color:var(--fg3);font-size:0.85rem;"></p>
+        <p id="grant-target" style="color: var(--fg3); font-size: 0.85rem"></p>
         <label>Credits</label>
-        <input type="number" id="grant-amount" value="100" min="1" max="10000" />
+        <input
+          type="number"
+          id="grant-amount"
+          value="100"
+          min="1"
+          max="10000"
+        />
         <label>Reason</label>
-        <textarea id="grant-reason" placeholder="e.g., Beta tester reward"></textarea>
+        <textarea
+          id="grant-reason"
+          placeholder="e.g., Beta tester reward"
+        ></textarea>
         <div class="modal-actions">
           <button class="btn" onclick="closeGrantModal()">Cancel</button>
           <button class="btn btn-green" onclick="submitGrant()">Grant</button>
@@ -404,20 +504,23 @@
       let currentUser = null;
       async function checkAuth() {
         try {
-          const res = await fetch('/api/auth/me');
-          if (!res.ok) { window.location.href = '/'; return; }
+          const res = await fetch("/api/auth/me");
+          if (!res.ok) {
+            window.location.href = "/";
+            return;
+          }
           currentUser = await res.json();
         } catch {
-          window.location.href = '/';
+          window.location.href = "/";
         }
       }
 
       // --- Stats ---
       async function loadStats() {
         try {
-          const res = await fetch('/api/admin/stats');
+          const res = await fetch("/api/admin/stats");
           if (res.status === 403) {
-            document.querySelector('.container').innerHTML =
+            document.querySelector(".container").innerHTML =
               '<div style="text-align:center;padding:80px 0;color:var(--red);">' +
               '<h2>Access Denied</h2><p style="color:var(--fg3);margin-top:8px;">Admin role required.</p>' +
               '<a href="/dashboard" style="color:var(--yellow);margin-top:16px;display:inline-block;">Back to Dashboard</a></div>';
@@ -425,40 +528,48 @@
           }
           if (!res.ok) return;
           const stats = await res.json();
-          document.getElementById('stat-users').textContent = stats.total_users || 0;
-          document.getElementById('stat-agents').textContent = stats.total_agents || 0;
-          document.getElementById('stat-episodes').textContent = stats.total_episodes || 0;
-          document.getElementById('stat-credits').textContent = stats.total_credits || 0;
-          document.getElementById('stat-spent').textContent = stats.total_spent || 0;
-          document.getElementById('stat-txs24h').textContent = stats.transactions_24h || 0;
+          document.getElementById("stat-users").textContent =
+            stats.total_users || 0;
+          document.getElementById("stat-agents").textContent =
+            stats.total_agents || 0;
+          document.getElementById("stat-episodes").textContent =
+            stats.total_episodes || 0;
+          document.getElementById("stat-credits").textContent =
+            stats.total_credits || 0;
+          document.getElementById("stat-spent").textContent =
+            stats.total_spent || 0;
+          document.getElementById("stat-txs24h").textContent =
+            stats.transactions_24h || 0;
         } catch (e) {
-          console.error('Failed to load stats', e);
+          console.error("Failed to load stats", e);
         }
       }
 
       // --- Users ---
       let usersPage = 1;
-      async function loadUsers(search = '', page = 1) {
+      async function loadUsers(search = "", page = 1) {
         usersPage = page;
         try {
           const params = new URLSearchParams({ page, limit: 20 });
-          if (search) params.set('search', search);
-          const res = await fetch('/api/admin/users?' + params);
+          if (search) params.set("search", search);
+          const res = await fetch("/api/admin/users?" + params);
           if (!res.ok) return;
           const data = await res.json();
-          const tbody = document.getElementById('users-tbody');
-          tbody.innerHTML = '';
-          (data.users || []).forEach(u => {
-            const joined = u.created_at ? new Date(u.created_at).toLocaleDateString() : '-';
-            const tr = document.createElement('tr');
+          const tbody = document.getElementById("users-tbody");
+          tbody.innerHTML = "";
+          (data.users || []).forEach((u) => {
+            const joined = u.created_at
+              ? new Date(u.created_at).toLocaleDateString()
+              : "-";
+            const tr = document.createElement("tr");
             tr.innerHTML = `
               <td>
-                <div>${escHtml(u.display_name || u.user_id || '-')}</div>
-                <div class="user-id">${escHtml(u.email || u.user_id || '')}</div>
+                <div>${escHtml(u.display_name || u.user_id || "-")}</div>
+                <div class="user-id">${escHtml(u.email || u.user_id || "")}</div>
               </td>
-              <td>${escHtml(u.provider || '-')}</td>
-              <td style="color:var(--yellow);font-weight:bold;">${u.balance ?? '-'}</td>
-              <td>${u.agent_count ?? '-'}</td>
+              <td>${escHtml(u.provider || "-")}</td>
+              <td style="color:var(--yellow);font-weight:bold;">${u.balance ?? "-"}</td>
+              <td>${u.agent_count ?? "-"}</td>
               <td style="color:var(--fg3);">${joined}</td>
               <td>
                 <button class="btn btn-sm btn-green" onclick="openGrantModal('${escAttr(u.user_id)}', '${escAttr(u.display_name || u.user_id)}')">Grant</button>
@@ -466,167 +577,197 @@
             tbody.appendChild(tr);
           });
         } catch (e) {
-          console.error('Failed to load users', e);
+          console.error("Failed to load users", e);
         }
       }
 
       // --- Agents ---
       let agentsPage = 1;
-      async function loadAgents(search = '', page = 1) {
+      async function loadAgents(search = "", page = 1) {
         agentsPage = page;
         try {
           const params = new URLSearchParams({ page, limit: 20 });
-          if (search) params.set('search', search);
-          const res = await fetch('/api/admin/agents?' + params);
+          if (search) params.set("search", search);
+          const res = await fetch("/api/admin/agents?" + params);
           if (!res.ok) return;
           const data = await res.json();
-          const tbody = document.getElementById('agents-tbody');
-          tbody.innerHTML = '';
-          (data.agents || []).forEach(a => {
-            const created = a.created_at ? new Date(a.created_at).toLocaleDateString() : '-';
-            const visBadge = a.visibility === 'public' ? 'badge-green' :
-                             a.visibility === 'private' ? 'badge-gray' : 'badge-yellow';
-            const tr = document.createElement('tr');
+          const tbody = document.getElementById("agents-tbody");
+          tbody.innerHTML = "";
+          (data.agents || []).forEach((a) => {
+            const created = a.created_at
+              ? new Date(a.created_at).toLocaleDateString()
+              : "-";
+            const visBadge =
+              a.visibility === "public"
+                ? "badge-green"
+                : a.visibility === "private"
+                  ? "badge-gray"
+                  : "badge-yellow";
+            const tr = document.createElement("tr");
             tr.innerHTML = `
-              <td><a href="/agents/${a.id}" style="color:var(--aqua);text-decoration:none;">${escHtml(a.display_alias || a.agent_name || '-')}</a></td>
-              <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(a.owner_id || '-')}</td>
-              <td><span class="badge ${visBadge}">${escHtml(a.visibility || 'public')}</span></td>
+              <td><a href="/agents/${a.id}" style="color:var(--aqua);text-decoration:none;">${escHtml(a.display_alias || a.agent_name || "-")}</a></td>
+              <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(a.owner_id || "-")}</td>
+              <td><span class="badge ${visBadge}">${escHtml(a.visibility || "public")}</span></td>
               <td>${a.execution_count ?? 0}</td>
               <td style="color:var(--fg3);">${created}</td>
               <td>
-                ${a.visibility !== 'hidden'
-                  ? `<button class="btn btn-sm btn-red" onclick="flagAgent('${a.id}')">Hide</button>`
-                  : `<button class="btn btn-sm" onclick="unflagAgent('${a.id}')">Unhide</button>`}
+                ${
+                  a.visibility !== "hidden"
+                    ? `<button class="btn btn-sm btn-red" onclick="flagAgent('${a.id}')">Hide</button>`
+                    : `<button class="btn btn-sm" onclick="unflagAgent('${a.id}')">Unhide</button>`
+                }
               </td>`;
             tbody.appendChild(tr);
           });
         } catch (e) {
-          console.error('Failed to load agents', e);
+          console.error("Failed to load agents", e);
         }
       }
 
       // --- Ledger ---
-      async function loadLedger(typeFilter = '') {
+      async function loadLedger(typeFilter = "") {
         try {
           const params = new URLSearchParams({ limit: 50 });
-          if (typeFilter) params.set('type', typeFilter);
+          if (typeFilter) params.set("type", typeFilter);
           // Use the wallet transactions endpoint for now
-          const res = await fetch('/api/wallet/transactions?' + params);
+          const res = await fetch("/api/wallet/transactions?" + params);
           if (!res.ok) return;
           const data = await res.json();
-          const tbody = document.getElementById('ledger-tbody');
-          tbody.innerHTML = '';
-          (data.transactions || []).forEach(tx => {
-            const time = tx.created_at ? new Date(tx.created_at).toLocaleString() : '-';
-            const amountColor = tx.amount > 0 ? 'var(--green)' : 'var(--red)';
-            const tr = document.createElement('tr');
+          const tbody = document.getElementById("ledger-tbody");
+          tbody.innerHTML = "";
+          (data.transactions || []).forEach((tx) => {
+            const time = tx.created_at
+              ? new Date(tx.created_at).toLocaleString()
+              : "-";
+            const amountColor = tx.amount > 0 ? "var(--green)" : "var(--red)";
+            const tr = document.createElement("tr");
             tr.innerHTML = `
               <td style="color:var(--fg3);font-size:0.8rem;">${time}</td>
-              <td style="font-size:0.8rem;">${escHtml(tx.wallet_id || '-')}</td>
-              <td><span class="badge badge-yellow">${escHtml(tx.tx_type || '-')}</span></td>
-              <td style="color:${amountColor};font-weight:bold;">${tx.amount > 0 ? '+' : ''}${tx.amount}</td>
-              <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(tx.description || '-')}</td>`;
+              <td style="font-size:0.8rem;">${escHtml(tx.wallet_id || "-")}</td>
+              <td><span class="badge badge-yellow">${escHtml(tx.tx_type || "-")}</span></td>
+              <td style="color:${amountColor};font-weight:bold;">${tx.amount > 0 ? "+" : ""}${tx.amount}</td>
+              <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(tx.description || "-")}</td>`;
             tbody.appendChild(tr);
           });
         } catch (e) {
-          console.error('Failed to load ledger', e);
+          console.error("Failed to load ledger", e);
         }
       }
 
       // --- Grant modal ---
-      let grantTargetUserId = '';
+      let grantTargetUserId = "";
       function openGrantModal(userId, displayName) {
         grantTargetUserId = userId;
-        document.getElementById('grant-target').textContent = 'Granting to: ' + displayName;
-        document.getElementById('grant-amount').value = 100;
-        document.getElementById('grant-reason').value = '';
-        document.getElementById('grant-modal').classList.add('active');
+        document.getElementById("grant-target").textContent =
+          "Granting to: " + displayName;
+        document.getElementById("grant-amount").value = 100;
+        document.getElementById("grant-reason").value = "";
+        document.getElementById("grant-modal").classList.add("active");
       }
       function closeGrantModal() {
-        document.getElementById('grant-modal').classList.remove('active');
+        document.getElementById("grant-modal").classList.remove("active");
       }
       async function submitGrant() {
-        const credits = parseInt(document.getElementById('grant-amount').value) || 100;
-        const reason = document.getElementById('grant-reason').value || 'Admin grant';
+        const credits =
+          parseInt(document.getElementById("grant-amount").value) || 100;
+        const reason =
+          document.getElementById("grant-reason").value || "Admin grant";
         try {
-          const res = await fetch('/api/admin/users/' + encodeURIComponent(grantTargetUserId) + '/grant', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ credits, reason })
-          });
+          const res = await fetch(
+            "/api/admin/users/" +
+              encodeURIComponent(grantTargetUserId) +
+              "/grant",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ credits, reason }),
+            },
+          );
           if (res.ok) {
             closeGrantModal();
-            loadUsers(document.getElementById('user-search').value);
+            loadUsers(document.getElementById("user-search").value);
             loadStats();
           } else {
             const err = await res.text();
-            alert('Grant failed: ' + err);
+            alert("Grant failed: " + err);
           }
         } catch (e) {
-          alert('Grant failed: ' + e.message);
+          alert("Grant failed: " + e.message);
         }
       }
 
       // --- Flag/unflag agent ---
       async function flagAgent(agentId) {
-        if (!confirm('Hide this agent from the catalogue?')) return;
-        await fetch('/api/admin/agents/' + agentId + '/flag', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ visibility: 'hidden' })
+        if (!confirm("Hide this agent from the catalogue?")) return;
+        await fetch("/api/admin/agents/" + agentId + "/flag", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visibility: "hidden" }),
         });
-        loadAgents(document.getElementById('agent-search').value);
+        loadAgents(document.getElementById("agent-search").value);
       }
       async function unflagAgent(agentId) {
-        await fetch('/api/admin/agents/' + agentId + '/flag', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ visibility: 'public' })
+        await fetch("/api/admin/agents/" + agentId + "/flag", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visibility: "public" }),
         });
-        loadAgents(document.getElementById('agent-search').value);
+        loadAgents(document.getElementById("agent-search").value);
       }
 
       // --- Tabs ---
-      document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-          document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-          document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-          tab.classList.add('active');
-          document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      document.querySelectorAll(".tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          document
+            .querySelectorAll(".tab")
+            .forEach((t) => t.classList.remove("active"));
+          document
+            .querySelectorAll(".tab-content")
+            .forEach((tc) => tc.classList.remove("active"));
+          tab.classList.add("active");
+          document
+            .getElementById("tab-" + tab.dataset.tab)
+            .classList.add("active");
         });
       });
 
       // --- Search ---
       let userSearchTimeout, agentSearchTimeout;
-      document.getElementById('user-search').addEventListener('input', (e) => {
+      document.getElementById("user-search").addEventListener("input", (e) => {
         clearTimeout(userSearchTimeout);
         userSearchTimeout = setTimeout(() => loadUsers(e.target.value), 300);
       });
-      document.getElementById('agent-search').addEventListener('input', (e) => {
+      document.getElementById("agent-search").addEventListener("input", (e) => {
         clearTimeout(agentSearchTimeout);
         agentSearchTimeout = setTimeout(() => loadAgents(e.target.value), 300);
       });
-      document.getElementById('ledger-type').addEventListener('change', (e) => {
+      document.getElementById("ledger-type").addEventListener("change", (e) => {
         loadLedger(e.target.value);
       });
 
       // --- Utils ---
-      function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-      function escAttr(s) { return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+      function escHtml(s) {
+        const d = document.createElement("div");
+        d.textContent = s;
+        return d.innerHTML;
+      }
+      function escAttr(s) {
+        return String(s).replace(/'/g, "\\'").replace(/"/g, "&quot;");
+      }
 
       // --- Theme ---
       function toggleTheme() {
         const html = document.documentElement;
-        const isHasui = html.classList.contains('theme-hasui');
-        html.classList.toggle('theme-hasui', !isHasui);
-        html.classList.toggle('theme-op1', isHasui);
-        localStorage.setItem('theme', isHasui ? 'op1' : 'hasui');
+        const isHasui = html.classList.contains("theme-hasui");
+        html.classList.toggle("theme-hasui", !isHasui);
+        html.classList.toggle("theme-op1", isHasui);
+        localStorage.setItem("theme", isHasui ? "op1" : "hasui");
       }
-      (function() {
-        const saved = localStorage.getItem('theme');
-        if (saved === 'op1') {
-          document.documentElement.classList.remove('theme-hasui');
-          document.documentElement.classList.add('theme-op1');
+      (function () {
+        const saved = localStorage.getItem("theme");
+        if (saved === "op1") {
+          document.documentElement.classList.remove("theme-hasui");
+          document.documentElement.classList.add("theme-op1");
         }
       })();
 

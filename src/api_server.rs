@@ -515,7 +515,8 @@ async fn main() {
 
     // Public routes (no auth required)
     let public_routes = Router::new()
-        .route("/", get(index))
+        .route("/", get(landing))
+        .route("/catalogue", get(catalogue))
         .route("/agent/:agent_id", get(agent_detail))
         .route("/agent/:agent_id/ontology", get(ontology_view))
         .route("/api/health", get(health))
@@ -793,8 +794,22 @@ async fn fallback_404() -> (StatusCode, Html<String>) {
 
 // ─── Page routes ───────────────────────────────────────────────────
 
-async fn index() -> Html<String> {
-    println!("Index route called");
+async fn landing() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/landing.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/landing.html: {}", e);
+            format!(
+                "<h1>Agent Bestiary</h1><p>Error loading landing template: {}</p>",
+                e
+            )
+        }
+    };
+    Html(html)
+}
+
+async fn catalogue() -> Html<String> {
+    println!("Catalogue route called");
     let html = match std::fs::read_to_string("templates/index.html") {
         Ok(content) => {
             println!(
