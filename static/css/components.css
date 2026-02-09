@@ -246,6 +246,38 @@
   color: var(--fg3);
 }
 
+/* Fork modal pricing */
+.fork-pricing-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fork-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 0.9em;
+  color: var(--fg2);
+}
+.fork-line.fork-option {
+  border-top: 1px solid var(--bg2);
+  padding-top: 10px;
+}
+.fork-line.fork-option label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.fork-line.fork-total {
+  border-top: 2px solid var(--fg3);
+  padding-top: 10px;
+  font-weight: 600;
+  color: var(--fg0);
+  font-size: 1em;
+}
+
 /* OP-1 theme overrides for components */
 .theme-op1 .specimen-card {
   border-radius: 12px;
@@ -259,20 +291,47 @@
   border-radius: 50%;
   border: 2px solid #1a1a1a;
 }
-.theme-op1 .specimen-avatar img { display: none; }
-.theme-op1 .specimen-avatar .placeholder { display: none; }
-.theme-op1 .specimen-card:nth-child(8n + 1) .specimen-avatar { background: #5ac8fa; }
-.theme-op1 .specimen-card:nth-child(8n + 2) .specimen-avatar { background: #4cd964; }
-.theme-op1 .specimen-card:nth-child(8n + 3) .specimen-avatar { background: #ff6b35; }
-.theme-op1 .specimen-card:nth-child(8n + 4) .specimen-avatar { background: #ffffff; }
-.theme-op1 .specimen-card:nth-child(8n + 5) .specimen-avatar { background: #af52de; }
-.theme-op1 .specimen-card:nth-child(8n + 6) .specimen-avatar { background: #ff2d55; }
-.theme-op1 .specimen-card:nth-child(8n + 7) .specimen-avatar { background: #ffcc00; }
-.theme-op1 .specimen-card:nth-child(8n + 8) .specimen-avatar { background: #ff9500; }
+.theme-op1 .specimen-avatar img {
+  display: none;
+}
+.theme-op1 .specimen-avatar .placeholder {
+  display: none;
+}
+.theme-op1 .specimen-card:nth-child(8n + 1) .specimen-avatar {
+  background: #5ac8fa;
+}
+.theme-op1 .specimen-card:nth-child(8n + 2) .specimen-avatar {
+  background: #4cd964;
+}
+.theme-op1 .specimen-card:nth-child(8n + 3) .specimen-avatar {
+  background: #ff6b35;
+}
+.theme-op1 .specimen-card:nth-child(8n + 4) .specimen-avatar {
+  background: #ffffff;
+}
+.theme-op1 .specimen-card:nth-child(8n + 5) .specimen-avatar {
+  background: #af52de;
+}
+.theme-op1 .specimen-card:nth-child(8n + 6) .specimen-avatar {
+  background: #ff2d55;
+}
+.theme-op1 .specimen-card:nth-child(8n + 7) .specimen-avatar {
+  background: #ffcc00;
+}
+.theme-op1 .specimen-card:nth-child(8n + 8) .specimen-avatar {
+  background: #ff9500;
+}
 .theme-op1 .specimens-grid {
   gap: 1px;
   background: #1a1a1a;
 }
-.theme-op1 .stat-card { border-radius: 0; }
-.theme-op1 .section { border-radius: 0; }
-.theme-op1 .tag { border-radius: 0; color: var(--blue); }
+.theme-op1 .stat-card {
+  border-radius: 0;
+}
+.theme-op1 .section {
+  border-radius: 0;
+}
+.theme-op1 .tag {
+  border-radius: 0;
+  color: var(--blue);
+}

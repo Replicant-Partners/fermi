@@ -728,6 +728,8 @@
                   <div class="specimen-name">${displayName}</div>
                   ${agent.display_alias && agent.display_alias !== "" ? `<div class="specimen-system-name">${agentId}</div>` : ""}
                   <span class="badge">${tier}</span>
+                  ${agent.fork_count > 0 ? `<span class="badge" style="background:var(--blue);color:#fff;margin-left:4px" title="${agent.fork_count} forks">&#9906; ${agent.fork_count}</span>` : ""}
+                  ${agent.forked_from ? `<span class="badge" style="background:var(--purple);color:#fff;margin-left:4px" title="Forked agent">fork</span>` : ""}
                 </div>
               </div>
               <div class="specimen-body">

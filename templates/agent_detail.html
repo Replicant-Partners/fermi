@@ -783,6 +783,9 @@
                   <span class="badge">${agent.tier || "curated"}</span>
                   <span class="badge">v${agent.version || "1.0.0"}</span>
                   ${agent.visibility ? `<span class="badge">${agent.visibility}</span>` : ""}
+                  ${agent.status && agent.status !== "published" ? `<span class="badge" style="background:${agent.status === "draft" ? "var(--yellow)" : "var(--gray)"};color:var(--bg0)">${agent.status}</span>` : ""}
+                  ${agent.fork_count > 0 ? `<span class="badge" style="background:var(--blue);color:#fff">&#9906; ${agent.fork_count} forks</span>` : ""}
+                  ${agent.forked_from ? `<span class="badge" style="background:var(--purple);color:#fff">forked</span>` : ""}
                   ${agent.metadata?.author ? `<span class="badge">${agent.metadata.author}</span>` : ""}
                 </div>
               </div>

@@ -418,16 +418,29 @@
               el.innerHTML =
                 '<div class="empty-state">No agents yet. <a href="/agents/new" style="color:var(--yellow)">Create one</a></div>';
             } else {
-              el.innerHTML = data.agents
-                .map((a) => {
-                  const mock = mockAgentEconomics(
-                    a.agent_name,
-                    a.total_executions,
-                  );
-                  return `
-                <div class="agent-row-detail">
+              const groups = { published: [], draft: [], archived: [] };
+              data.agents.forEach((a) => {
+                const s = a.status || "draft";
+                (groups[s] || groups.draft).push(a);
+              });
+
+              const renderRow = (a) => {
+                const mock = mockAgentEconomics(
+                  a.agent_name,
+                  a.total_executions,
+                );
+                const statusColors = {
+                  draft: "var(--yellow)",
+                  published: "var(--green)",
+                  archived: "var(--gray)",
+                };
+                const statusColor =
+                  statusColors[a.status || "draft"] || "var(--fg3)";
+                return `
+                <a href="/agent/${a.agent_name}" style="text-decoration:none;color:inherit">
+                <div class="agent-row-detail" style="cursor:pointer;border-left:3px solid ${statusColor}">
                   <div class="agent-info">
-                    <div class="agent-name">${a.display_alias || a.agent_name}</div>
+                    <div class="agent-name">${a.display_alias || a.agent_name}${a.fork_count > 0 ? ` <span style="font-size:0.75em;color:var(--blue)">&#9906;${a.fork_count}</span>` : ""}</div>
                     <div class="agent-meta">${a.agent_type || "agent"} | ${a.total_executions || 0} exec | <span class="badge badge-${a.visibility || "private"}">${a.visibility || "private"}</span></div>
                   </div>
                   <div class="agent-sparks">
@@ -442,9 +455,24 @@
                       <div class="spark-total" style="color:var(--red)">${mock.totalCosts}</div>
                     </div>
                   </div>
-                </div>`;
-                })
-                .join("");
+                </div></a>`;
+              };
+
+              let html = "";
+              if (groups.published.length) {
+                html += `<div style="font-size:0.75em;color:var(--green);text-transform:uppercase;letter-spacing:0.1em;margin:12px 0 6px;font-weight:600">Published (${groups.published.length})</div>`;
+                html += groups.published.map(renderRow).join("");
+              }
+              if (groups.draft.length) {
+                html += `<div style="font-size:0.75em;color:var(--yellow);text-transform:uppercase;letter-spacing:0.1em;margin:12px 0 6px;font-weight:600">Drafts (${groups.draft.length})</div>`;
+                html += groups.draft.map(renderRow).join("");
+              }
+              if (groups.archived.length) {
+                html += `<details style="margin-top:12px"><summary style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.1em;cursor:pointer;font-weight:600">Archived (${groups.archived.length})</summary>`;
+                html += groups.archived.map(renderRow).join("");
+                html += "</details>";
+              }
+              el.innerHTML = html;
             }
           }
         } catch {}

@@ -2959,6 +2959,10 @@ async fn list_my_agents_handler(
                 "total_executions": a.total_executions,
                 "education_budget_credits": a.education_budget_credits,
                 "education_credits_used": a.education_credits_used,
+                "status": a.status,
+                "fork_pricing": a.fork_pricing,
+                "forked_from": a.forked_from,
+                "fork_count": a.fork_count,
             })
         })
         .collect();
