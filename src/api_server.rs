@@ -54,6 +54,10 @@ use coherence_observer::ConversationObserver;
 use dashmap::DashMap;
 use std::time::Instant;
 
+// Handler modules — new handlers go here instead of this file
+#[path = "handlers/mod.rs"]
+mod handlers;
+
 #[derive(Clone)]
 struct RateLimiter {
     /// Map of key -> list of request timestamps (sliding window)
@@ -259,20 +263,20 @@ const CREDIT_TIERS: &[CreditTier] = &[
 ];
 
 #[derive(Clone)]
-struct AppState {
-    db: PgPool,
-    memory_store: Arc<MemoryStore>,
-    registry: Arc<AgentRegistry>,
-    projection_engine: Arc<ProjectionEngine>,
-    projection_cache: Arc<ProjectionCache>,
-    embedder: Arc<dyn EmbeddingGenerator>,
-    workspace_git: Arc<WorkspaceGitManager>,
-    gemini_api_key: String,
-    jwt_secret: String,
-    oauth: OAuthConfig,
-    gas_fees: GasFees,
-    stripe: StripeConfig,
-    rate_limits: RateLimitConfig,
+pub(crate) struct AppState {
+    pub(crate) db: PgPool,
+    pub(crate) memory_store: Arc<MemoryStore>,
+    pub(crate) registry: Arc<AgentRegistry>,
+    pub(crate) projection_engine: Arc<ProjectionEngine>,
+    pub(crate) projection_cache: Arc<ProjectionCache>,
+    pub(crate) embedder: Arc<dyn EmbeddingGenerator>,
+    pub(crate) workspace_git: Arc<WorkspaceGitManager>,
+    pub(crate) gemini_api_key: String,
+    pub(crate) jwt_secret: String,
+    pub(crate) oauth: OAuthConfig,
+    pub(crate) gas_fees: GasFees,
+    pub(crate) stripe: StripeConfig,
+    pub(crate) rate_limits: RateLimitConfig,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -2306,7 +2310,10 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
 
 // ─── Agent resolution helper ───────────────────────────────────────
 
-async fn resolve_agent(state: &AppState, agent_id: &str) -> Result<Agent, (StatusCode, String)> {
+pub(crate) async fn resolve_agent(
+    state: &AppState,
+    agent_id: &str,
+) -> Result<Agent, (StatusCode, String)> {
     state
         .memory_store
         .get_agent_by_name(agent_id)
@@ -2320,7 +2327,7 @@ async fn resolve_agent(state: &AppState, agent_id: &str) -> Result<Agent, (Statu
 }
 
 /// Build an AgentCard from a DB Agent record (for agents not in the filesystem registry)
-fn agent_card_from_db(agent: &Agent) -> AgentCard {
+pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
     AgentCard {
         agent_id: agent.agent_name.clone(),
         agent_type: agent.agent_type.clone(),
@@ -2382,7 +2389,7 @@ fn agent_card_from_db(agent: &Agent) -> AgentCard {
 
 /// Resolve an AgentCard: try registry first, fall back to building from DB agent.
 /// Always overrides capabilities.provider from the DB agent's llm_provider.
-fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCard {
+pub(crate) fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCard {
     let mut card = match state.registry.get(&db_agent.agent_name) {
         Ok(c) => c,
         Err(_) => agent_card_from_db(db_agent),
@@ -6302,7 +6309,7 @@ async fn mark_all_notifications_read_handler(
 }
 
 /// Helper: create a notification for a user
-async fn create_notification(
+pub(crate) async fn create_notification(
     pool: &PgPool,
     user_id: &str,
     notif_type: &str,
