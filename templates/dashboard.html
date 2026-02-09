@@ -314,6 +314,62 @@
         </div>
       </div>
 
+      <!-- Platform Activity -->
+      <div
+        class="section"
+        id="platform-activity-section"
+        style="margin-bottom: 24px; display: none"
+      >
+        <div class="section-title">Platform Activity</div>
+        <div
+          id="platform-stats"
+          style="
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+          "
+        ></div>
+        <div style="display: flex; gap: 24px; flex-wrap: wrap">
+          <div style="flex: 2; min-width: 250px">
+            <div
+              style="
+                color: var(--fg3);
+                font-size: 0.7em;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                margin-bottom: 6px;
+              "
+            >
+              30-Day Executions
+            </div>
+            <div
+              id="platform-daily-chart"
+              style="
+                display: flex;
+                align-items: flex-end;
+                gap: 1px;
+                height: 56px;
+              "
+            ></div>
+          </div>
+          <div style="flex: 1; min-width: 180px">
+            <div
+              style="
+                color: var(--fg3);
+                font-size: 0.7em;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                margin-bottom: 6px;
+              "
+            >
+              Top Tools
+            </div>
+            <div id="platform-tool-freq"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="grid">
         <!-- My Agents -->
         <div class="section">
@@ -568,7 +624,122 @@
             }
           }
         } catch {}
+
+        // Load platform activity metrics
+        try {
+          const res = await fetch("/api/metrics/platform");
+          if (res.ok) {
+            const data = await res.json();
+            const section = document.getElementById(
+              "platform-activity-section",
+            );
+            const totals = data.totals || {};
+            const daily = data.daily || [];
+            const tools = data.tool_usage || [];
+
+            if ((totals.executions || 0) === 0) {
+              /* leave hidden */
+            } else {
+              section.style.display = "";
+
+              // Stat cards
+              const statsEl = document.getElementById("platform-stats");
+              const cards = [
+                {
+                  label: "Executions",
+                  value: (totals.executions || 0).toLocaleString(),
+                  color: "var(--fg0)",
+                },
+                {
+                  label: "Success Rate",
+                  value: ((totals.success_rate || 0) * 100).toFixed(1) + "%",
+                  color: "var(--green)",
+                },
+                {
+                  label: "Total Tokens",
+                  value: formatNum(totals.total_tokens || 0),
+                  color: "var(--fg2)",
+                },
+                {
+                  label: "Active Agents",
+                  value: totals.active_agents || 0,
+                  color: "var(--aqua)",
+                },
+                {
+                  label: "Total Cost",
+                  value: "$" + Number(totals.total_cost_usd || 0).toFixed(2),
+                  color: "var(--yellow)",
+                },
+              ];
+              statsEl.innerHTML = cards
+                .map(
+                  (c) => `
+                <div style="text-align:center;padding:8px;background:var(--bg1);border:1px solid var(--bg2)">
+                  <div style="font-size:1.3rem;font-weight:700;color:${c.color}">${c.value}</div>
+                  <div style="font-size:0.7em;color:var(--fg3);text-transform:uppercase;letter-spacing:0.05em">${c.label}</div>
+                </div>`,
+                )
+                .join("");
+
+              // 30-day daily chart
+              if (daily.length > 0) {
+                const chartEl = document.getElementById("platform-daily-chart");
+                const maxExec = Math.max(
+                  ...daily.map((d) => d.executions || 0),
+                  1,
+                );
+                const dayMap = {};
+                daily.forEach((d) => {
+                  dayMap[d.date] = d;
+                });
+                const today = new Date();
+                let barsHtml = "";
+                for (let i = 29; i >= 0; i--) {
+                  const dt = new Date(today);
+                  dt.setDate(dt.getDate() - i);
+                  const key = dt.toISOString().split("T")[0];
+                  const day = dayMap[key] || { executions: 0, failures: 0 };
+                  const h = Math.max(((day.executions || 0) / maxExec) * 50, 2);
+                  const failH = day.failures
+                    ? Math.max((day.failures / maxExec) * 50, 1)
+                    : 0;
+                  const succH = h - failH;
+                  barsHtml += `<div style="display:flex;flex-direction:column;justify-content:flex-end;flex:1;height:56px" title="${key}: ${day.executions} exec">
+                    ${failH > 0 ? `<div style="height:${failH}px;background:var(--red);border-radius:1px 1px 0 0"></div>` : ""}
+                    <div style="height:${succH}px;background:var(--green);border-radius:${failH > 0 ? "0" : "1px 1px"} 0 0"></div>
+                  </div>`;
+                }
+                chartEl.innerHTML = barsHtml;
+              }
+
+              // Tool usage frequency
+              if (tools.length > 0) {
+                const toolEl = document.getElementById("platform-tool-freq");
+                const maxCount = Math.max(...tools.map((t) => t.count || 0), 1);
+                toolEl.innerHTML = tools
+                  .slice(0, 5)
+                  .map((t) => {
+                    const pct = ((t.count / maxCount) * 100).toFixed(1);
+                    return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:0.8em">
+                    <span style="min-width:110px;color:var(--fg2);text-align:right;font-size:0.9em">${t.tool_name}</span>
+                    <div style="flex:1;height:8px;background:var(--bg2);border-radius:2px;overflow:hidden">
+                      <div style="width:${pct}%;height:100%;background:var(--aqua);border-radius:2px"></div>
+                    </div>
+                    <span style="color:var(--gray);font-size:0.85em;min-width:30px">${t.count}</span>
+                  </div>`;
+                  })
+                  .join("");
+              }
+            }
+          }
+        } catch {}
       })();
+
+      function formatNum(n) {
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+        if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+        return String(n);
+      }
 
       // Buy credits — redirect to Stripe Checkout
       async function buyCredits(credits) {

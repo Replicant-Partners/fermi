@@ -574,6 +574,154 @@
         margin-top: 12px;
       }
 
+      /* Episode Detail Expansion */
+      .episode-row.clickable {
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .episode-row.clickable:hover {
+        background: var(--bg1);
+      }
+      .episode-row.expanded {
+        border-bottom: none;
+      }
+      .episode-detail {
+        border-left: 3px solid var(--aqua);
+        padding: 16px 16px 16px 20px;
+        margin-bottom: 12px;
+        background: var(--bg1);
+        font-size: 0.85em;
+        animation: detailSlide 0.2s ease-out;
+      }
+      @keyframes detailSlide {
+        from {
+          opacity: 0;
+          max-height: 0;
+        }
+        to {
+          opacity: 1;
+          max-height: 2000px;
+        }
+      }
+      .detail-timing {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 16px;
+        font-size: 0.85em;
+        color: var(--gray);
+      }
+      .timing-bar {
+        flex: 1;
+        height: 14px;
+        display: flex;
+        border-radius: 3px;
+        overflow: hidden;
+        background: var(--bg2);
+      }
+      .timing-bar .llm-seg {
+        background: var(--yellow);
+        height: 100%;
+      }
+      .timing-bar .tool-seg {
+        background: var(--aqua);
+        height: 100%;
+      }
+      .detail-section-title {
+        color: var(--fg3);
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin: 12px 0 8px 0;
+      }
+      .iteration-timeline {
+        border-left: 2px solid var(--yellow);
+        margin-left: 8px;
+        padding-left: 16px;
+      }
+      .iteration-step {
+        position: relative;
+        margin-bottom: 10px;
+      }
+      .iteration-step::before {
+        content: "";
+        position: absolute;
+        left: -21px;
+        top: 6px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--yellow);
+      }
+      .iteration-step.tool-step::before {
+        background: var(--aqua);
+      }
+      .iteration-step.final-step::before {
+        background: var(--green);
+      }
+      .step-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--fg1);
+      }
+      .step-badge {
+        font-size: 0.75em;
+        padding: 1px 6px;
+        border-radius: 3px;
+      }
+      .step-badge.llm {
+        background: var(--yellow);
+        color: var(--bg0);
+      }
+      .step-badge.tool {
+        background: var(--aqua);
+        color: var(--bg0);
+      }
+      .step-badge.duration {
+        color: var(--gray);
+      }
+      .tool-detail-block {
+        margin: 6px 0 0 0;
+      }
+      .tool-detail-block summary {
+        color: var(--fg3);
+        font-size: 0.85em;
+        cursor: pointer;
+      }
+      .tool-detail-block pre {
+        margin: 4px 0;
+        padding: 8px;
+        background: var(--bg0);
+        border-radius: 3px;
+        font-size: 0.8em;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--fg2);
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      .evidence-card {
+        background: var(--bg0);
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 6px;
+        border-left: 2px solid var(--blue);
+      }
+      .evidence-card .ev-source {
+        font-size: 0.75em;
+        color: var(--gray);
+      }
+      .evidence-card .ev-summary {
+        color: var(--fg1);
+        margin: 4px 0;
+      }
+      .evidence-card .ev-findings {
+        font-size: 0.85em;
+        color: var(--fg3);
+      }
+
       /* Delete Confirmation Modal */
       .modal-overlay {
         display: none;
@@ -900,6 +1048,25 @@
                 <div id="coach-response" style="display:none;margin-top:12px;padding:16px;background:var(--bg0);border:1px solid var(--bg2);border-radius:6px;font-size:0.85em;line-height:1.6;white-space:pre-wrap;max-height:400px;overflow-y:auto"></div>
               </div>
 
+              <div class="section" id="execution-activity-section" style="display:none">
+                <div class="section-title">Execution Activity</div>
+                <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+                  <div style="flex:1;min-width:200px">
+                    <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">30-Day Activity</div>
+                    <div id="activity-sparkline" style="display:flex;align-items:flex-end;gap:2px;height:48px"></div>
+                  </div>
+                  <div style="min-width:120px;text-align:center">
+                    <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Avg Iterations</div>
+                    <div id="avg-iterations-badge" style="font-size:1.8em;color:var(--aqua);font-weight:700">—</div>
+                    <div style="color:var(--gray);font-size:0.75em">per execution</div>
+                  </div>
+                </div>
+                <div style="margin-top:16px">
+                  <div style="color:var(--fg3);font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Tool Usage</div>
+                  <div id="tool-usage-bars"></div>
+                </div>
+              </div>
+
               <div class="section">
                 <div class="section-title">Configuration</div>
                 <div class="field-grid">
@@ -1135,7 +1302,92 @@
         }
       }
 
-      loadAgentDetail().then(() => initCognitionCanvases());
+      loadAgentDetail().then(() => {
+        initCognitionCanvases();
+        loadExecutionActivity();
+      });
+
+      async function loadExecutionActivity() {
+        const agentId = window.location.pathname
+          .split("/")
+          .filter(Boolean)
+          .pop();
+        const section = document.getElementById("execution-activity-section");
+        if (!section) return;
+
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/metrics`,
+          );
+          if (!res.ok) return; // silently hide if no data
+          const data = await res.json();
+
+          const daily = data.daily || [];
+          const tools = data.tool_usage || [];
+          const avgIter = data.avg_loop_iterations;
+
+          if (daily.length === 0 && tools.length === 0) return;
+          section.style.display = "";
+
+          // 30-day sparkline
+          const sparkEl = document.getElementById("activity-sparkline");
+          if (sparkEl && daily.length > 0) {
+            const maxExec = Math.max(...daily.map((d) => d.executions || 0), 1);
+            // Fill missing days in last 30 days
+            const dayMap = {};
+            daily.forEach((d) => {
+              dayMap[d.date] = d;
+            });
+            const today = new Date();
+            let barsHtml = "";
+            for (let i = 29; i >= 0; i--) {
+              const d = new Date(today);
+              d.setDate(d.getDate() - i);
+              const key = d.toISOString().split("T")[0];
+              const day = dayMap[key] || { executions: 0, failures: 0 };
+              const h = Math.max(((day.executions || 0) / maxExec) * 44, 2);
+              const failH = day.failures
+                ? Math.max((day.failures / maxExec) * 44, 1)
+                : 0;
+              const succH = h - failH;
+              barsHtml += `<div style="display:flex;flex-direction:column;justify-content:flex-end;flex:1;height:48px" title="${key}: ${day.executions} exec, ${day.failures || 0} fail">
+                ${failH > 0 ? `<div style="height:${failH}px;background:var(--red);border-radius:1px 1px 0 0"></div>` : ""}
+                <div style="height:${succH}px;background:var(--green);border-radius:${failH > 0 ? "0" : "1px 1px"} 0 0"></div>
+              </div>`;
+            }
+            sparkEl.innerHTML = barsHtml;
+          }
+
+          // Avg iterations badge
+          if (avgIter != null) {
+            const badge = document.getElementById("avg-iterations-badge");
+            if (badge) badge.textContent = Number(avgIter).toFixed(1);
+          }
+
+          // Tool usage bars
+          const toolEl = document.getElementById("tool-usage-bars");
+          if (toolEl && tools.length > 0) {
+            const maxCount = Math.max(...tools.map((t) => t.count || 0), 1);
+            let toolHtml = "";
+            tools.slice(0, 8).forEach((t) => {
+              const pct = ((t.count / maxCount) * 100).toFixed(1);
+              const avgDur = t.avg_duration_ms
+                ? ` (avg ${Math.round(t.avg_duration_ms)}ms)`
+                : "";
+              toolHtml += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:0.85em">
+                <span style="min-width:140px;color:var(--fg2);text-align:right">${t.tool_name}</span>
+                <div style="flex:1;height:10px;background:var(--bg2);border-radius:2px;overflow:hidden">
+                  <div style="width:${pct}%;height:100%;background:var(--aqua);border-radius:2px"></div>
+                </div>
+                <span style="color:var(--gray);font-size:0.85em;min-width:60px">${t.count}${avgDur}</span>
+              </div>`;
+            });
+            toolEl.innerHTML = toolHtml;
+          }
+        } catch (e) {
+          // silently fail — section stays hidden
+        }
+      }
     </script>
 
     <script>
@@ -2118,13 +2370,15 @@
             const costStr = ep.cost_usd
               ? `$${Number(ep.cost_usd).toFixed(6)}`
               : "—";
+            const safeId = ep.episode_id.replace(/"/g, "&quot;");
             html += `
-              <div class="episode-row">
+              <div class="episode-row clickable" onclick="toggleEpisodeDetail('${safeId}', this)" id="ep-row-${safeId}">
                 <div class="episode-query" title="${ep.query.replace(/"/g, "&quot;")}">${ep.query}</div>
                 <span class="episode-status ${ep.status}">${ep.status}</span>
                 <span class="episode-cost">${costStr}</span>
                 <span class="episode-time">${date}</span>
-              </div>`;
+              </div>
+              <div class="episode-detail" id="ep-detail-${safeId}" style="display:none"></div>`;
           });
           html += "</div>";
 
@@ -2144,6 +2398,165 @@
           container.innerHTML =
             '<div style="color:var(--red)">Error: ' + e.message + "</div>";
         }
+      }
+
+      async function toggleEpisodeDetail(episodeId, rowEl) {
+        const detail = document.getElementById("ep-detail-" + episodeId);
+        if (!detail) return;
+
+        // Collapse if already expanded
+        if (detail.style.display !== "none") {
+          detail.style.display = "none";
+          rowEl.classList.remove("expanded");
+          return;
+        }
+
+        // Expand — fetch detail from API
+        rowEl.classList.add("expanded");
+        detail.style.display = "block";
+        detail.innerHTML = '<span style="color:var(--gray)">Loading...</span>';
+
+        try {
+          const res = await fetch(
+            `/api/episodes/${encodeURIComponent(episodeId)}`,
+          );
+          if (!res.ok) {
+            detail.innerHTML =
+              '<span style="color:var(--red)">Failed to load</span>';
+            return;
+          }
+          const ep = await res.json();
+
+          let html = "";
+
+          // Timing waterfall bar
+          const totalMs = ep.timing?.total_ms || ep.execution_time_ms || 0;
+          const toolMs = ep.timing?.tool_ms || 0;
+          const llmMs = ep.timing?.llm_ms || totalMs - toolMs;
+          if (totalMs > 0) {
+            const llmPct =
+              totalMs > 0 ? ((llmMs / totalMs) * 100).toFixed(1) : 100;
+            const toolPct =
+              totalMs > 0 ? ((toolMs / totalMs) * 100).toFixed(1) : 0;
+            html += `<div class="detail-timing">
+              <span>${totalMs.toLocaleString()}ms total</span>
+              <div class="timing-bar">
+                <div class="llm-seg" style="width:${llmPct}%" title="LLM: ${llmMs}ms"></div>
+                <div class="tool-seg" style="width:${toolPct}%" title="Tools: ${toolMs}ms"></div>
+              </div>
+              <span style="font-size:0.8em">
+                <span style="color:var(--yellow)">■</span> LLM ${llmMs}ms
+                <span style="color:var(--aqua);margin-left:6px">■</span> Tools ${toolMs}ms
+              </span>
+            </div>`;
+          }
+
+          // Model + iterations summary
+          const iters = ep.loop_iterations || 0;
+          const model = ep.model_used || "—";
+          html += `<div style="display:flex;gap:16px;margin-bottom:12px;font-size:0.85em;color:var(--fg3)">
+            <span>Model: <strong style="color:var(--fg1)">${model}</strong></span>
+            <span>Iterations: <strong style="color:var(--fg1)">${iters}</strong></span>
+            <span>Tokens: <strong style="color:var(--fg1)">${(ep.tokens_used || 0).toLocaleString()}</strong></span>
+          </div>`;
+
+          // Iteration timeline with tool calls
+          const tools = ep.tool_invocations || [];
+          if (tools.length > 0) {
+            html +=
+              '<div class="detail-section-title">Iteration Timeline</div>';
+            html += '<div class="iteration-timeline">';
+
+            // Group tool calls by iteration
+            const byIter = {};
+            tools.forEach((t) => {
+              const iter = t.iteration || 1;
+              if (!byIter[iter]) byIter[iter] = [];
+              byIter[iter].push(t);
+            });
+
+            const maxIter =
+              ep.loop_iterations ||
+              Math.max(...Object.keys(byIter).map(Number), 1);
+            for (let i = 1; i <= maxIter; i++) {
+              const iterTools = byIter[i] || [];
+              if (iterTools.length > 0) {
+                iterTools.forEach((t) => {
+                  const inputStr =
+                    typeof t.input === "object"
+                      ? JSON.stringify(t.input, null, 2)
+                      : String(t.input || "");
+                  const outputStr = String(t.output || "");
+                  const outputTrunc =
+                    outputStr.length > 500
+                      ? outputStr.substring(0, 500) + "..."
+                      : outputStr;
+                  html += `<div class="iteration-step tool-step">
+                    <div class="step-header">
+                      <span class="step-badge tool">${t.tool_name}</span>
+                      <span class="step-badge duration">${t.duration_ms || 0}ms</span>
+                      <span style="color:var(--gray);font-size:0.8em">iteration ${i}</span>
+                    </div>
+                    <div class="tool-detail-block">
+                      <details><summary>Input</summary><pre>${escapeHtml(inputStr)}</pre></details>
+                      <details><summary>Output</summary><pre>${escapeHtml(outputTrunc)}</pre></details>
+                    </div>
+                  </div>`;
+                });
+              } else {
+                html += `<div class="iteration-step">
+                  <div class="step-header">
+                    <span class="step-badge llm">LLM</span>
+                    <span style="color:var(--gray);font-size:0.8em">iteration ${i}</span>
+                  </div>
+                </div>`;
+              }
+            }
+
+            // Final response step
+            html += `<div class="iteration-step final-step">
+              <div class="step-header">
+                <span class="step-badge llm">Final Response</span>
+              </div>
+            </div>`;
+            html += "</div>";
+          }
+
+          // Reasoning
+          if (ep.reasoning) {
+            html += '<div class="detail-section-title">Reasoning</div>';
+            html += `<div style="color:var(--fg2);line-height:1.5">${escapeHtml(ep.reasoning)}</div>`;
+          }
+
+          // Evidence
+          const evidence = ep.evidence || [];
+          if (evidence.length > 0) {
+            html += '<div class="detail-section-title">Evidence</div>';
+            evidence.forEach((ev) => {
+              html += `<div class="evidence-card">
+                <div class="ev-source">${escapeHtml(ev.source || "")}</div>
+                <div class="ev-summary">${escapeHtml(ev.summary || "")}</div>
+                ${ev.key_findings ? `<div class="ev-findings">${escapeHtml(Array.isArray(ev.key_findings) ? ev.key_findings.join(", ") : String(ev.key_findings))}</div>` : ""}
+              </div>`;
+            });
+          }
+
+          if (!html)
+            html =
+              '<span style="color:var(--gray)">No detailed execution data available</span>';
+          detail.innerHTML = html;
+        } catch (e) {
+          detail.innerHTML =
+            '<span style="color:var(--red)">Error: ' +
+            escapeHtml(e.message) +
+            "</span>";
+        }
+      }
+
+      function escapeHtml(str) {
+        const div = document.createElement("div");
+        div.textContent = str;
+        return div.innerHTML;
       }
 
       async function askPerformanceCoach(agentId) {
