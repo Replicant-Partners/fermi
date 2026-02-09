@@ -6,6 +6,7 @@
     <title>Specimen Details - Agent Bestiary</title>
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
     <style>
       body {
         padding: 20px;
@@ -693,6 +694,9 @@
       </div>
     </div>
 
+    <script src="/static/js/widgets/toast.js"></script>
+    <script src="/static/js/widgets/modal.js"></script>
+    <script src="/static/js/api.js"></script>
     <script>
       async function loadAgentDetail() {
         const pathParts = window.location.pathname.split("/");

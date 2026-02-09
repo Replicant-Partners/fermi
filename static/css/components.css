@@ -1,0 +1,278 @@
+/* Component library — extracted from duplicate inline styles across templates */
+
+/* Buttons */
+.btn {
+  background: transparent;
+  border: 1px solid var(--bg3);
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--fg3);
+  font-family: inherit;
+  transition: all 0.2s ease;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  display: inline-block;
+}
+.btn:hover {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+.btn-primary {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+.btn-primary:hover {
+  background: var(--yellow);
+  color: #1d2021;
+}
+.btn-danger {
+  border-color: var(--red);
+  color: var(--red);
+}
+.btn-danger:hover {
+  background: var(--red);
+  color: #1d2021;
+}
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+}
+
+/* Sections */
+.section {
+  background: var(--bg0);
+  border: 1px solid var(--bg2);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+.section-title {
+  font-size: 0.9rem;
+  color: var(--yellow);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 16px;
+}
+
+/* Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.active {
+  display: flex;
+}
+.modal {
+  background: var(--bg0);
+  border: 1px solid var(--bg2);
+  padding: 24px;
+  max-width: 480px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.modal-title {
+  font-size: 1rem;
+  color: var(--yellow);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* Stats grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+}
+.stat-card {
+  text-align: center;
+  padding: 12px;
+  background: var(--bg0);
+  border-radius: 4px;
+  border: 1px solid var(--bg2);
+}
+.stat-value {
+  font-size: 1.6em;
+  font-weight: 400;
+  color: var(--yellow);
+  line-height: 1;
+}
+.stat-label {
+  color: var(--gray);
+  margin-top: 6px;
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 400;
+}
+
+/* Forms */
+.form-group {
+  margin-bottom: 12px;
+}
+.form-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.form-input {
+  width: 100%;
+  background: var(--bg1);
+  border: 1px solid var(--bg3);
+  color: var(--fg1);
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+.form-input:focus {
+  outline: none;
+  border-color: var(--yellow);
+}
+
+/* Specimen cards (agent cards in catalogue/dashboard) */
+.specimens-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.specimen-card {
+  background: var(--bg1);
+  border: 1px solid var(--bg2);
+  padding: 0;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  overflow: hidden;
+}
+.specimen-card:hover {
+  border-color: var(--yellow);
+  transform: translateY(-1px);
+}
+.specimen-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--bg2);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.specimen-avatar {
+  width: 64px;
+  height: 64px;
+  background: var(--bg2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--bg3);
+  flex-shrink: 0;
+}
+.specimen-name {
+  font-size: 1.1em;
+  font-weight: 400;
+  color: var(--fg0);
+  text-transform: capitalize;
+  letter-spacing: 0.01em;
+}
+.specimen-system-name {
+  font-size: 0.7em;
+  color: var(--gray);
+  font-family: "SF Mono", "Monaco", "Courier New", monospace;
+  letter-spacing: 0.02em;
+  margin-top: 2px;
+}
+.specimen-body {
+  padding: 16px 20px 20px;
+}
+.specimen-description {
+  color: var(--fg2);
+  font-size: 0.9em;
+  margin-bottom: 12px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.specimen-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.specimen-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 10px;
+  border-top: 1px solid var(--bg2);
+}
+.specimen-stat {
+  font-size: 0.75em;
+  color: var(--gray);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.specimen-stat-value {
+  color: var(--fg2);
+  font-weight: 500;
+}
+.meta-label {
+  color: var(--gray);
+  font-weight: 400;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tag {
+  display: inline-block;
+  padding: 2px 6px;
+  border: 1px solid var(--bg3);
+  font-size: 0.7em;
+  color: var(--fg3);
+}
+
+/* OP-1 theme overrides for components */
+.theme-op1 .specimen-card {
+  border-radius: 12px;
+  border: 2px solid var(--bg2);
+}
+.theme-op1 .specimen-card:hover {
+  border-color: var(--yellow);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+.theme-op1 .specimen-avatar {
+  border-radius: 50%;
+  border: 2px solid #1a1a1a;
+}
+.theme-op1 .specimen-avatar img { display: none; }
+.theme-op1 .specimen-avatar .placeholder { display: none; }
+.theme-op1 .specimen-card:nth-child(8n + 1) .specimen-avatar { background: #5ac8fa; }
+.theme-op1 .specimen-card:nth-child(8n + 2) .specimen-avatar { background: #4cd964; }
+.theme-op1 .specimen-card:nth-child(8n + 3) .specimen-avatar { background: #ff6b35; }
+.theme-op1 .specimen-card:nth-child(8n + 4) .specimen-avatar { background: #ffffff; }
+.theme-op1 .specimen-card:nth-child(8n + 5) .specimen-avatar { background: #af52de; }
+.theme-op1 .specimen-card:nth-child(8n + 6) .specimen-avatar { background: #ff2d55; }
+.theme-op1 .specimen-card:nth-child(8n + 7) .specimen-avatar { background: #ffcc00; }
+.theme-op1 .specimen-card:nth-child(8n + 8) .specimen-avatar { background: #ff9500; }
+.theme-op1 .specimens-grid {
+  gap: 1px;
+  background: #1a1a1a;
+}
+.theme-op1 .stat-card { border-radius: 0; }
+.theme-op1 .section { border-radius: 0; }
+.theme-op1 .tag { border-radius: 0; color: var(--blue); }

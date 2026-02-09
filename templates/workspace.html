@@ -6,6 +6,7 @@
     <title>Workspace - Agent Bestiary</title>
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
     <style>
       body {
         font-family: "Berkeley Mono", "JetBrains Mono", monospace;
@@ -1049,6 +1050,10 @@
       </div>
     </div>
 
+    <script src="/static/js/widgets/toast.js"></script>
+    <script src="/static/js/widgets/modal.js"></script>
+    <script src="/static/js/widgets/agent-card.js"></script>
+    <script src="/static/js/api.js"></script>
     <script>
       const wsId = window.location.pathname.split("/").pop();
       let currentUser = null;

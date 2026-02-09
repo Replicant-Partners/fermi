@@ -6,6 +6,7 @@
     <title>Profile - Agent Bestiary</title>
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
     <style>
       header {
         background: var(--bg0);
@@ -383,19 +384,9 @@
       </div>
     </div>
 
+    <script src="/static/js/widgets/toast.js"></script>
+    <script src="/static/js/api.js"></script>
     <script>
-      function showToast(msg) {
-        const t = document.createElement("div");
-        t.className = "toast";
-        t.textContent = msg;
-        document.body.appendChild(t);
-        requestAnimationFrame(() => t.classList.add("show"));
-        setTimeout(() => {
-          t.classList.remove("show");
-          setTimeout(() => t.remove(), 300);
-        }, 3000);
-      }
-
       let profileData = null;
 
       function showAuthPrompt() {
@@ -430,7 +421,7 @@
             } else {
               document.getElementById("display-name").textContent =
                 "Error loading profile";
-              showToast("Failed to load profile: " + res.status);
+              Toast.show("Failed to load profile: " + res.status);
             }
             return;
           }
@@ -520,7 +511,7 @@
           console.error("Failed to load profile:", e);
           document.getElementById("display-name").textContent =
             "Error loading profile";
-          showToast("Network error — check your connection");
+          Toast.show("Network error — check your connection");
         }
 
         // Load recent transactions
@@ -562,7 +553,7 @@
           });
           if (res.ok) {
             document.getElementById("display-name").textContent = name;
-            showToast("Name updated");
+            Toast.show("Name updated");
           }
         } catch {}
       }
@@ -575,7 +566,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ bio }),
           });
-          if (res.ok) showToast("Bio updated");
+          if (res.ok) Toast.show("Bio updated");
         } catch {}
       }
 
@@ -619,7 +610,7 @@
           const card = curatedAgentsCache.find((a) => a.agent_id === agentId);
           if (!card) {
             btn.textContent = "Not found";
-            showToast("Agent not found in curated list");
+            Toast.show("Agent not found in curated list");
             return;
           }
           const forkedCard = {
@@ -641,15 +632,15 @@
             btn.textContent = "Forked!";
             btn.style.color = "var(--green)";
             btn.style.borderColor = "var(--green)";
-            showToast("Agent forked to your collection");
+            Toast.show("Agent forked to your collection");
           } else {
             const err = await importRes.text();
             btn.textContent = "Error";
-            showToast("Fork failed: " + (err || "unknown error"));
+            Toast.show("Fork failed: " + (err || "unknown error"));
           }
         } catch (e) {
           btn.textContent = "Error";
-          showToast("Fork error: " + e.message);
+          Toast.show("Fork error: " + e.message);
         }
       }
     </script>

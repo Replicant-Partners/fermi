@@ -6,6 +6,7 @@
     <title>Settings - Agent Bestiary</title>
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
     <style>
       body {
         font-family: "Berkeley Mono", "JetBrains Mono", monospace;
@@ -319,19 +320,9 @@
       </div>
     </div>
 
+    <script src="/static/js/widgets/toast.js"></script>
+    <script src="/static/js/api.js"></script>
     <script>
-      function showToast(msg) {
-        const t = document.createElement("div");
-        t.className = "toast";
-        t.textContent = msg;
-        document.body.appendChild(t);
-        requestAnimationFrame(() => t.classList.add("show"));
-        setTimeout(() => {
-          t.classList.remove("show");
-          setTimeout(() => t.remove(), 300);
-        }, 3000);
-      }
-
       // Auth check
       (async () => {
         try {
@@ -418,7 +409,7 @@
             body: JSON.stringify({ name, scopes: ["read", "write"] }),
           });
           if (!res.ok) {
-            showToast("Failed to create key");
+            Toast.show("Failed to create key");
             return;
           }
           const data = await res.json();
@@ -431,7 +422,7 @@
           document.getElementById("key-name-input").value = "";
           await loadKeys();
         } catch {
-          showToast("Failed to create key");
+          Toast.show("Failed to create key");
         }
       }
 
@@ -442,7 +433,7 @@
             method: "DELETE",
           });
           if (res.ok) {
-            showToast("Key revoked");
+            Toast.show("Key revoked");
             await loadKeys();
           }
         } catch {}
@@ -450,7 +441,7 @@
 
       async function connectWallet() {
         if (!window.ethereum) {
-          showToast(
+          Toast.show(
             "No Ethereum wallet detected. Install MetaMask or another wallet.",
           );
           return;
@@ -468,7 +459,7 @@
             body: JSON.stringify({ address }),
           });
           if (!challengeRes.ok) {
-            showToast("Failed to get challenge");
+            Toast.show("Failed to get challenge");
             return;
           }
           const { message } = await challengeRes.json();
@@ -486,13 +477,13 @@
             body: JSON.stringify({ message, signature }),
           });
           if (verifyRes.ok) {
-            showToast("Wallet connected! Redirecting...");
+            Toast.show("Wallet connected! Redirecting...");
             setTimeout(() => window.location.reload(), 1000);
           } else {
-            showToast("Signature verification failed");
+            Toast.show("Signature verification failed");
           }
         } catch (e) {
-          showToast("Wallet connection cancelled");
+          Toast.show("Wallet connection cancelled");
         }
       }
 
@@ -507,11 +498,11 @@
       async function deleteAccount() {
         const input = document.getElementById("delete-confirm-input").value;
         if (input !== "DELETE") {
-          showToast("Type DELETE to confirm");
+          Toast.show("Type DELETE to confirm");
           return;
         }
         // Not yet implemented — placeholder
-        showToast("Account deletion not yet implemented. Contact admin.");
+        Toast.show("Account deletion not yet implemented. Contact admin.");
         hideDeleteModal();
       }
     </script>

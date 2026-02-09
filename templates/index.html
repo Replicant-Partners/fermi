@@ -6,6 +6,7 @@
     <title>Agent Bestiary</title>
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
     <style>
       /* OP-1 page-specific overrides */
       .theme-op1 .specimen-card {
@@ -543,6 +544,9 @@
       <div class="pagination" id="pagination" style="display: none"></div>
     </div>
 
+    <script src="/static/js/widgets/toast.js"></script>
+    <script src="/static/js/widgets/agent-card.js"></script>
+    <script src="/static/js/api.js"></script>
     <script>
       async function generateAvatar(agentId) {
         try {

@@ -6,6 +6,7 @@
     <title>Dashboard - Agent Bestiary</title>
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
     <style>
       /* Page-specific body overrides (shared common.css provides base) */
       body {
@@ -346,31 +347,18 @@
       </div>
     </div>
 
+    <script src="/static/js/widgets/toast.js"></script>
+    <script src="/static/js/api.js"></script>
     <script>
-      // Toast helper
-      function showToast(message, type = "success") {
-        const existing = document.querySelector(".toast");
-        if (existing) existing.remove();
-        const toast = document.createElement("div");
-        toast.className = `toast toast-${type}`;
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        requestAnimationFrame(() => toast.classList.add("show"));
-        setTimeout(() => {
-          toast.classList.remove("show");
-          setTimeout(() => toast.remove(), 300);
-        }, 4000);
-      }
-
       // Check for payment return
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get("payment") === "success") {
-        showToast(
+        Toast.show(
           "Payment successful! Credits have been added to your wallet.",
         );
         window.history.replaceState({}, "", "/dashboard");
       } else if (urlParams.get("payment") === "cancelled") {
-        showToast("Payment cancelled.", "error");
+        Toast.show("Payment cancelled.", "error");
         window.history.replaceState({}, "", "/dashboard");
       }
 
@@ -566,7 +554,7 @@
           });
           if (!res.ok) {
             const err = await res.text();
-            showToast(err, "error");
+            Toast.show(err, "error");
             if (card) card.classList.remove("loading");
             return;
           }
@@ -575,7 +563,7 @@
             window.location.href = data.checkout_url;
           }
         } catch (e) {
-          showToast("Failed to start checkout", "error");
+          Toast.show("Failed to start checkout", "error");
           if (card) card.classList.remove("loading");
         }
       }
