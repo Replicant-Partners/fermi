@@ -1993,6 +1993,7 @@
               <button class="owner-btn" onclick="toggleTopupPanel()">Top Up Dreams</button>
               <button class="owner-btn" onclick="toggleConsolidatePanel()">Run Consolidation</button>
               <button class="owner-btn" onclick="toggleVersionsPanel('${agentId}')">Version History</button>
+              <button class="owner-btn" onclick="toggleEvalPanel('${agentId}')" style="border-color:var(--purple);color:var(--purple)">Eval Suite</button>
               <button class="owner-btn danger" onclick="document.getElementById('delete-modal').classList.add('visible')">Delete</button>
             </div>
 
@@ -2065,6 +2066,44 @@
             <div class="edit-field" id="versions-panel">
               <div id="versions-list" style="font-size:0.85em;color:var(--fg3)">Loading versions...</div>
             </div>
+
+            <!-- Eval Suite -->
+            <div class="edit-field" id="eval-panel">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                <span style="font-size:0.85em;color:var(--fg2)">
+                  Test Cases: <strong id="eval-case-count">0</strong>
+                </span>
+                <div style="display:flex;gap:6px">
+                  <button class="owner-btn" style="border-color:var(--green);color:var(--green)"
+                          onclick="runEval('${agentId}', false)">Run Eval</button>
+                  <button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua)"
+                          onclick="runEval('${agentId}', true)">Run + Judge</button>
+                  <button class="owner-btn" onclick="toggleAddTestCase()">+ Test Case</button>
+                </div>
+              </div>
+              <div id="add-tc-form" style="display:none;margin-bottom:12px;padding:12px;background:var(--bg0);border:1px solid var(--bg2)">
+                <input type="text" id="tc-query" placeholder="Test query..."
+                  style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
+                <input type="text" id="tc-expected" placeholder="Expected output (optional)"
+                  style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
+                <input type="text" id="tc-rubric" placeholder="Scoring rubric (optional)"
+                  style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
+                <input type="text" id="tc-tags" placeholder="Tags (comma-separated)"
+                  style="width:100%;margin-bottom:4px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:6px;font-family:inherit;font-size:0.85em" />
+                <div style="display:flex;gap:6px">
+                  <button class="owner-btn" style="border-color:var(--green);color:var(--green)"
+                          onclick="saveTestCase('${agentId}')">Save</button>
+                  <button class="owner-btn" onclick="toggleAddTestCase()">Cancel</button>
+                </div>
+              </div>
+              <div id="eval-cases-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
+              <div style="margin-top:16px;border-top:1px solid var(--bg3);padding-top:12px">
+                <div style="font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;color:var(--fg4);margin-bottom:8px">
+                  Run History
+                </div>
+                <div id="eval-runs-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
+              </div>
+            </div>
           </div>
         `;
       }
@@ -2075,6 +2114,7 @@
         "topup-panel",
         "consolidate-panel",
         "versions-panel",
+        "eval-panel",
       ];
       function hideAllOwnerPanels(except) {
         ownerPanelIds.forEach((id) => {
@@ -2116,6 +2156,231 @@
         hideAllOwnerPanels("versions-panel");
         panel.classList.toggle("visible");
         if (!wasVisible) loadVersions(agentId);
+      }
+
+      function toggleEvalPanel(agentId) {
+        const panel = document.getElementById("eval-panel");
+        if (!panel) return;
+        const wasVisible = panel.classList.contains("visible");
+        hideAllOwnerPanels("eval-panel");
+        panel.classList.toggle("visible");
+        if (!wasVisible) loadEvalData(agentId);
+      }
+
+      async function loadEvalData(agentId) {
+        const casesList = document.getElementById("eval-cases-list");
+        const runsList = document.getElementById("eval-runs-list");
+        casesList.innerHTML =
+          '<span style="color:var(--gray)">Loading...</span>';
+        runsList.innerHTML =
+          '<span style="color:var(--gray)">Loading...</span>';
+
+        // Load test cases
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/eval/test-cases`,
+          );
+          if (!res.ok) {
+            casesList.innerHTML =
+              '<span style="color:var(--red)">Failed to load</span>';
+            return;
+          }
+          const data = await res.json();
+          const cases = data.test_cases || [];
+          document.getElementById("eval-case-count").textContent = cases.length;
+
+          if (cases.length === 0) {
+            casesList.innerHTML =
+              '<span style="color:var(--fg4)">No test cases yet. Add one or they\'ll be seeded from sample queries on next deploy.</span>';
+          } else {
+            casesList.innerHTML = cases
+              .map(
+                (c) => `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--bg2)">
+                <div style="flex:1;min-width:0">
+                  <div style="color:var(--fg1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(c.query)}</div>
+                  ${c.rubric ? `<div style="color:var(--fg4);font-size:0.8em">Rubric: ${escapeHtml(c.rubric)}</div>` : ""}
+                  ${c.tags && c.tags.length ? `<div style="color:var(--fg4);font-size:0.8em">${c.tags.map((t) => "#" + t).join(" ")}</div>` : ""}
+                </div>
+                <button class="owner-btn danger" style="font-size:0.75em;padding:2px 8px;margin-left:8px"
+                        onclick="deleteTestCase('${agentId}','${c.test_case_id}')">x</button>
+              </div>
+            `,
+              )
+              .join("");
+          }
+        } catch (e) {
+          casesList.innerHTML =
+            '<span style="color:var(--red)">Error: ' +
+            escapeHtml(e.message) +
+            "</span>";
+        }
+
+        // Load run history
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/eval/runs`,
+          );
+          if (!res.ok) {
+            runsList.innerHTML =
+              '<span style="color:var(--red)">Failed to load</span>';
+            return;
+          }
+          const data = await res.json();
+          const runs = data.runs || [];
+
+          if (runs.length === 0) {
+            runsList.innerHTML =
+              '<span style="color:var(--fg4)">No eval runs yet.</span>';
+          } else {
+            runsList.innerHTML = runs
+              .map((r) => {
+                const passRate =
+                  r.total_cases > 0
+                    ? ((r.passed / r.total_cases) * 100).toFixed(0)
+                    : "?";
+                const regFlag = r.regression_detected
+                  ? '<span style="color:var(--red);font-weight:bold;margin-left:6px">REGRESSION</span>'
+                  : "";
+                const judgeStr =
+                  r.avg_judge_score != null
+                    ? ` | Judge: ${r.avg_judge_score.toFixed(1)}/5`
+                    : "";
+                const statusColor =
+                  r.status === "completed"
+                    ? "var(--green)"
+                    : r.status === "running"
+                      ? "var(--yellow)"
+                      : "var(--red)";
+                const durStr = r.duration_ms
+                  ? ` | ${(r.duration_ms / 1000).toFixed(1)}s`
+                  : "";
+                return `
+                <div style="padding:6px 0;border-bottom:1px solid var(--bg2)">
+                  <div style="display:flex;justify-content:space-between">
+                    <span style="color:${statusColor};text-transform:uppercase;font-size:0.8em">${r.status}${r.judge_enabled ? " + judge" : ""}</span>
+                    <span style="color:var(--fg4)">${new Date(r.started_at).toLocaleDateString()}</span>
+                  </div>
+                  <div style="color:var(--fg1)">
+                    Pass: ${r.passed}/${r.total_cases} (${passRate}%)${judgeStr}${regFlag}
+                  </div>
+                  <div style="color:var(--fg4);font-size:0.85em">
+                    Cost: ${r.total_cost_credits} credits${durStr}
+                  </div>
+                </div>`;
+              })
+              .join("");
+          }
+        } catch (e) {
+          runsList.innerHTML =
+            '<span style="color:var(--red)">Error: ' +
+            escapeHtml(e.message) +
+            "</span>";
+        }
+      }
+
+      function toggleAddTestCase() {
+        const form = document.getElementById("add-tc-form");
+        form.style.display = form.style.display === "none" ? "block" : "none";
+      }
+
+      async function saveTestCase(agentId) {
+        const query = document.getElementById("tc-query").value.trim();
+        if (!query) return;
+        const body = {
+          query,
+          expected_output:
+            document.getElementById("tc-expected").value.trim() || undefined,
+          rubric:
+            document.getElementById("tc-rubric").value.trim() || undefined,
+          tags: document
+            .getElementById("tc-tags")
+            .value.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        };
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/eval/test-cases`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            },
+          );
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Failed: " + err);
+            return;
+          }
+          document.getElementById("tc-query").value = "";
+          document.getElementById("tc-expected").value = "";
+          document.getElementById("tc-rubric").value = "";
+          document.getElementById("tc-tags").value = "";
+          toggleAddTestCase();
+          loadEvalData(agentId);
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      }
+
+      async function deleteTestCase(agentId, tcId) {
+        try {
+          await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/eval/test-cases/${tcId}`,
+            { method: "DELETE" },
+          );
+          loadEvalData(agentId);
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      }
+
+      async function runEval(agentId, withJudge) {
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/eval/run`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ judge: withJudge }),
+            },
+          );
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Failed: " + err);
+            return;
+          }
+          const data = await res.json();
+          Toast.show(
+            `Eval run started: ${data.total_cases} test cases`,
+            "success",
+          );
+          pollEvalRun(agentId, data.run_id);
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      }
+
+      function pollEvalRun(agentId, runId) {
+        const interval = setInterval(async () => {
+          try {
+            const res = await fetch(
+              `/api/agents/${encodeURIComponent(agentId)}/eval/runs`,
+            );
+            if (!res.ok) return;
+            const data = await res.json();
+            const run = (data.runs || []).find((r) => r.run_id === runId);
+            if (run && run.status !== "running") {
+              clearInterval(interval);
+              loadEvalData(agentId);
+              Toast.show(
+                `Eval run complete: ${run.passed}/${run.total_cases} passed`,
+                run.regression_detected ? "error" : "success",
+              );
+            }
+          } catch {}
+        }, 3000);
       }
 
       async function loadVersions(agentId) {

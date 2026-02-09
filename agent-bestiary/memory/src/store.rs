@@ -1,6 +1,7 @@
 use crate::{
     Agent, AgentUpdate, AgentVersion, CoherenceEvaluation, Community, ConsolidationJob, Entity,
-    Episode, Fact, MemoryError, Result, SemanticRule, VerificationStatus, WorkspaceMessage,
+    Episode, EvalRun, EvalTestCase, Fact, MemoryError, Result, SemanticRule, VerificationStatus,
+    WorkspaceMessage,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
@@ -1662,6 +1663,207 @@ impl MemoryStore {
         .await?;
 
         Ok(row.try_get::<i64, _>("cnt").unwrap_or(0))
+    }
+
+    // ========================================================================
+    // EVAL FRAMEWORK
+    // ========================================================================
+
+    pub async fn create_eval_test_case(&self, tc: &EvalTestCase) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"INSERT INTO eval_test_cases
+                (test_case_id, agent_id, query, expected_output, rubric, tags, is_active)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               RETURNING test_case_id"#,
+        )
+        .bind(tc.test_case_id)
+        .bind(tc.agent_id)
+        .bind(&tc.query)
+        .bind(&tc.expected_output)
+        .bind(&tc.rubric)
+        .bind(&tc.tags)
+        .bind(tc.is_active)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("test_case_id")?)
+    }
+
+    pub async fn list_eval_test_cases(&self, agent_id: Uuid) -> Result<Vec<EvalTestCase>> {
+        let rows = sqlx::query(
+            r#"SELECT test_case_id, agent_id, query, expected_output, rubric,
+                      tags, is_active, created_at, updated_at
+               FROM eval_test_cases
+               WHERE agent_id = $1 AND is_active = TRUE
+               ORDER BY created_at"#,
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| EvalTestCase {
+                test_case_id: r.try_get("test_case_id").unwrap(),
+                agent_id: r.try_get("agent_id").unwrap(),
+                query: r.try_get("query").unwrap(),
+                expected_output: r.try_get("expected_output").unwrap_or(None),
+                rubric: r.try_get("rubric").unwrap_or(None),
+                tags: r.try_get("tags").unwrap_or_default(),
+                is_active: r.try_get("is_active").unwrap(),
+                created_at: r.try_get("created_at").unwrap(),
+                updated_at: r.try_get("updated_at").unwrap(),
+            })
+            .collect())
+    }
+
+    pub async fn update_eval_test_case(&self, tc: &EvalTestCase) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE eval_test_cases
+               SET query = $2, expected_output = $3, rubric = $4,
+                   tags = $5, is_active = $6, updated_at = NOW()
+               WHERE test_case_id = $1"#,
+        )
+        .bind(tc.test_case_id)
+        .bind(&tc.query)
+        .bind(&tc.expected_output)
+        .bind(&tc.rubric)
+        .bind(&tc.tags)
+        .bind(tc.is_active)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn deactivate_eval_test_case(&self, test_case_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE eval_test_cases SET is_active = FALSE, updated_at = NOW() WHERE test_case_id = $1",
+        )
+        .bind(test_case_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn create_eval_run(&self, run: &EvalRun) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"INSERT INTO eval_runs
+                (run_id, agent_id, triggered_by, status, judge_enabled, total_cases)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               RETURNING run_id"#,
+        )
+        .bind(run.run_id)
+        .bind(run.agent_id)
+        .bind(&run.triggered_by)
+        .bind(&run.status)
+        .bind(run.judge_enabled)
+        .bind(run.total_cases)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("run_id")?)
+    }
+
+    pub async fn complete_eval_run(&self, run: &EvalRun) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE eval_runs SET
+                status = $2, total_cases = $3, passed = $4, failed = $5,
+                avg_latency_ms = $6, avg_tokens = $7, avg_judge_score = $8,
+                total_cost_credits = $9, case_results = $10,
+                regression_detected = $11, regression_details = $12,
+                completed_at = NOW(),
+                duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at))::BIGINT * 1000
+               WHERE run_id = $1"#,
+        )
+        .bind(run.run_id)
+        .bind(&run.status)
+        .bind(run.total_cases)
+        .bind(run.passed)
+        .bind(run.failed)
+        .bind(run.avg_latency_ms)
+        .bind(run.avg_tokens)
+        .bind(run.avg_judge_score)
+        .bind(run.total_cost_credits)
+        .bind(&run.case_results)
+        .bind(run.regression_detected)
+        .bind(&run.regression_details)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_eval_runs(&self, agent_id: Uuid, limit: i64) -> Result<Vec<EvalRun>> {
+        let rows = sqlx::query(
+            r#"SELECT run_id, agent_id, triggered_by, status, judge_enabled,
+                      total_cases, passed, failed, avg_latency_ms, avg_tokens,
+                      avg_judge_score, total_cost_credits, case_results,
+                      regression_detected, regression_details,
+                      started_at, completed_at, duration_ms
+               FROM eval_runs
+               WHERE agent_id = $1
+               ORDER BY started_at DESC
+               LIMIT $2"#,
+        )
+        .bind(agent_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| EvalRun {
+                run_id: r.try_get("run_id").unwrap(),
+                agent_id: r.try_get("agent_id").unwrap(),
+                triggered_by: r.try_get("triggered_by").unwrap(),
+                status: r.try_get("status").unwrap(),
+                judge_enabled: r.try_get("judge_enabled").unwrap(),
+                total_cases: r.try_get("total_cases").unwrap(),
+                passed: r.try_get("passed").unwrap(),
+                failed: r.try_get("failed").unwrap(),
+                avg_latency_ms: r.try_get("avg_latency_ms").unwrap_or(None),
+                avg_tokens: r.try_get("avg_tokens").unwrap_or(None),
+                avg_judge_score: r.try_get("avg_judge_score").unwrap_or(None),
+                total_cost_credits: r.try_get("total_cost_credits").unwrap(),
+                case_results: r
+                    .try_get::<serde_json::Value, _>("case_results")
+                    .unwrap_or(serde_json::json!([])),
+                regression_detected: r.try_get("regression_detected").unwrap(),
+                regression_details: r.try_get("regression_details").unwrap_or(None),
+                started_at: r.try_get("started_at").unwrap(),
+                completed_at: r.try_get("completed_at").unwrap_or(None),
+                duration_ms: r.try_get("duration_ms").unwrap_or(None),
+            })
+            .collect())
+    }
+
+    pub async fn seed_eval_test_cases_from_samples(
+        &self,
+        agent_id: Uuid,
+        sample_queries: &[String],
+    ) -> Result<i32> {
+        let mut seeded = 0i32;
+        for q in sample_queries {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM eval_test_cases WHERE agent_id = $1 AND query = $2)",
+            )
+            .bind(agent_id)
+            .bind(q)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(true);
+
+            if !exists {
+                sqlx::query(
+                    r#"INSERT INTO eval_test_cases (test_case_id, agent_id, query)
+                       VALUES ($1, $2, $3)"#,
+                )
+                .bind(Uuid::new_v4())
+                .bind(agent_id)
+                .bind(q)
+                .execute(&self.pool)
+                .await?;
+                seeded += 1;
+            }
+        }
+        Ok(seeded)
     }
 }
 

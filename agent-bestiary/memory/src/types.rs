@@ -330,6 +330,44 @@ pub struct CoherenceEvaluation {
     pub created_at: DateTime<Utc>,
 }
 
+/// Eval test case for an agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalTestCase {
+    pub test_case_id: Uuid,
+    pub agent_id: Uuid,
+    pub query: String,
+    pub expected_output: Option<String>,
+    pub rubric: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Eval run (batch execution of test cases for an agent)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalRun {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub triggered_by: String,
+    pub status: String,
+    pub judge_enabled: bool,
+    pub total_cases: i32,
+    pub passed: i32,
+    pub failed: i32,
+    pub avg_latency_ms: Option<i64>,
+    pub avg_tokens: Option<i32>,
+    pub avg_judge_score: Option<f64>,
+    pub total_cost_credits: i32,
+    pub case_results: serde_json::Value,
+    pub regression_detected: bool,
+    pub regression_details: Option<serde_json::Value>,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub duration_ms: Option<i64>,
+}
+
 /// Workspace chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceMessage {
