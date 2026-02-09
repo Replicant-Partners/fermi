@@ -20,6 +20,9 @@
         --red: #fb4934;
         --aqua: #8ec07c;
         --gray: #928374;
+        --blue: #83a598;
+        --purple: #d3869b;
+        --orange: #fe8019;
       }
       .theme-op1 {
         --bg0-hard: #f5f5f0;
@@ -36,175 +39,1150 @@
         --red: #ff1744;
         --aqua: #00b8d4;
         --gray: #9e9e9e;
+        --blue: #2979ff;
+        --purple: #d500f9;
+        --orange: #ff9100;
       }
-      * { margin: 0; padding: 0; box-sizing: border-box; }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
       body {
         background: var(--bg0-hard);
         color: var(--fg1);
         font-family: "Berkeley Mono", "JetBrains Mono", monospace;
         line-height: 1.6;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
       }
-      header {
+
+      /* ─── Header ─── */
+      .ws-header {
         background: var(--bg0);
         border-bottom: 1px solid var(--bg2);
-        padding: 16px 24px;
+        padding: 10px 20px;
         display: flex;
         justify-content: space-between;
         align-items: center;
+        flex-shrink: 0;
       }
-      header h1 { font-size: 1.2rem; color: var(--fg0); }
-      header a { color: var(--fg3); text-decoration: none; font-size: 0.85rem; margin-left: 16px; }
-      header a:hover { color: var(--yellow); }
-      .container { max-width: 900px; margin: 0 auto; padding: 24px; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
-      @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
-      .section { background: var(--bg0); border: 1px solid var(--bg2); padding: 20px; margin-bottom: 16px; }
-      .section-title {
-        font-size: 0.85rem;
+      .ws-header-left {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .ws-header-left h1 {
+        font-size: 1.1rem;
+        color: var(--fg0);
+      }
+      .ws-header-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .ws-header a {
+        color: var(--fg3);
+        text-decoration: none;
+        font-size: 0.8rem;
+      }
+      .ws-header a:hover {
         color: var(--yellow);
+      }
+
+      .budget-inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.8rem;
+        color: var(--fg3);
+      }
+      .budget-inline .budget-bar {
+        width: 80px;
+        height: 6px;
+        background: var(--bg2);
+        display: inline-block;
+        vertical-align: middle;
+      }
+      .budget-inline .budget-fill {
+        height: 100%;
+        background: var(--aqua);
+      }
+      .budget-inline .budget-text {
+        color: var(--aqua);
+        font-weight: bold;
+      }
+
+      /* ─── Three-panel layout ─── */
+      .ws-body {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+
+      /* ─── Left: Members ─── */
+      .panel-members {
+        width: 220px;
+        min-width: 220px;
+        background: var(--bg0);
+        border-right: 1px solid var(--bg2);
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+      }
+      .panel-section-title {
+        font-size: 0.7rem;
+        color: var(--fg3);
         text-transform: uppercase;
         letter-spacing: 1px;
+        padding: 12px 14px 6px;
+      }
+      .member-item,
+      .agent-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 14px;
+        font-size: 0.82rem;
+        cursor: default;
+      }
+      .member-item:hover,
+      .agent-item:hover {
+        background: var(--bg1);
+      }
+      .member-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        flex-shrink: 0;
+      }
+      .agent-dot {
+        width: 8px;
+        height: 8px;
+        background: var(--yellow);
+        flex-shrink: 0;
+        transform: rotate(45deg);
+      }
+      .member-name {
+        color: var(--fg1);
+      }
+      .member-role {
+        font-size: 0.65rem;
+        color: var(--fg3);
+        margin-left: auto;
+      }
+      .agent-rel {
+        font-size: 0.6rem;
+        color: var(--fg3);
+        margin-left: auto;
+        border: 1px solid var(--bg3);
+        padding: 0 4px;
+      }
+      .panel-actions {
+        padding: 8px 14px;
+        display: flex;
+        gap: 6px;
+        border-top: 1px solid var(--bg1);
+        margin-top: auto;
+      }
+
+      /* ─── Center: Chat ─── */
+      .panel-chat {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 16px;
+      }
+      .chat-msg {
+        margin-bottom: 8px;
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+      }
+      .chat-avatar {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7rem;
+        font-weight: bold;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+      .chat-avatar-user {
+        background: var(--blue);
+        color: var(--bg0-hard);
+      }
+      .chat-avatar-agent {
+        background: var(--yellow);
+        color: var(--bg0-hard);
+      }
+      .chat-avatar-system {
+        background: var(--bg2);
+        color: var(--fg3);
+      }
+      .chat-body {
+        min-width: 0;
+      }
+      .chat-sender {
+        font-size: 0.75rem;
+        font-weight: bold;
+        color: var(--fg2);
+      }
+      .chat-sender-agent {
+        color: var(--yellow);
+      }
+      .chat-sender-system {
+        color: var(--fg3);
+        font-style: italic;
+        font-weight: normal;
+      }
+      .chat-text {
+        font-size: 0.85rem;
+        color: var(--fg1);
+        word-break: break-word;
+      }
+      .chat-text-system {
+        color: var(--fg3);
+        font-style: italic;
+        font-size: 0.8rem;
+      }
+      .chat-time {
+        font-size: 0.6rem;
+        color: var(--fg3);
+        margin-left: 8px;
+        white-space: nowrap;
+      }
+      .chat-meta-row {
+        display: flex;
+        align-items: baseline;
+        gap: 4px;
+      }
+      .chat-exec-result {
+        margin-top: 4px;
+        background: var(--bg1);
+        border-left: 2px solid var(--yellow);
+        padding: 6px 10px;
+        font-size: 0.8rem;
+        max-height: 120px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        color: var(--fg2);
+      }
+      .chat-exec-toggle {
+        font-size: 0.7rem;
+        color: var(--aqua);
+        cursor: pointer;
+        margin-top: 2px;
+        display: inline-block;
+      }
+      .chat-exec-toggle:hover {
+        text-decoration: underline;
+      }
+
+      /* Chat input */
+      .chat-input-area {
+        border-top: 1px solid var(--bg2);
+        padding: 10px 16px;
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        background: var(--bg0);
+      }
+      .chat-input {
+        flex: 1;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        color: var(--fg1);
+        font-family: inherit;
+        font-size: 0.85rem;
+        padding: 8px 10px;
+        resize: none;
+        min-height: 36px;
+        max-height: 120px;
+        outline: none;
+      }
+      .chat-input:focus {
+        border-color: var(--fg3);
+      }
+      .chat-input::placeholder {
+        color: var(--fg3);
+      }
+
+      /* ─── Right: Shelf ─── */
+      .panel-shelf {
+        width: 220px;
+        min-width: 220px;
+        background: var(--bg0);
+        border-left: 1px solid var(--bg2);
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        padding: 12px 14px;
+      }
+      .shelf-section {
         margin-bottom: 16px;
       }
-      .budget-bar { height: 8px; background: var(--bg2); margin-top: 8px; }
-      .budget-fill { height: 100%; background: var(--aqua); transition: width 0.3s; }
-      .stat-row { display: flex; gap: 32px; margin-bottom: 8px; }
-      .stat-value { font-size: 1.5rem; color: var(--aqua); font-weight: bold; }
-      .stat-label { font-size: 0.75rem; color: var(--fg3); }
-      .item-row {
+      .shelf-label {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 6px;
+      }
+      .shelf-value {
+        font-size: 1.4rem;
+        font-weight: bold;
+      }
+      .shelf-sub {
+        font-size: 0.75rem;
+        color: var(--fg3);
+      }
+      .stat-row-small {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.8rem;
+        padding: 3px 0;
+        border-bottom: 1px solid var(--bg1);
+      }
+      .stat-row-small:last-child {
+        border-bottom: none;
+      }
+      .stat-key {
+        color: var(--fg3);
+      }
+      .stat-val {
+        color: var(--fg2);
+      }
+
+      /* ─── Buttons ─── */
+      .btn {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        padding: 4px 10px;
+        cursor: pointer;
+        font-size: 0.75rem;
+        color: var(--fg3);
+        font-family: inherit;
+        white-space: nowrap;
+      }
+      .btn:hover {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .btn-send {
+        border-color: var(--aqua);
+        color: var(--aqua);
+        padding: 8px 14px;
+        font-size: 0.8rem;
+      }
+      .btn-send:hover {
+        background: var(--aqua);
+        color: var(--bg0-hard);
+      }
+      .btn-primary {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .btn-primary:hover {
+        background: var(--yellow);
+        color: var(--bg0-hard);
+      }
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .gas-hint {
+        font-size: 0.6rem;
+        color: var(--fg3);
+        margin-top: 2px;
+        text-align: right;
+      }
+
+      /* ─── Modal ─── */
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 100;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-overlay.active {
+        display: flex;
+      }
+      .modal {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 20px;
+        min-width: 360px;
+        max-width: 500px;
+        max-height: 80vh;
+        overflow-y: auto;
+      }
+      .modal h2 {
+        font-size: 0.95rem;
+        color: var(--fg0);
+        margin-bottom: 12px;
+      }
+      .modal-agent-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
         padding: 8px 0;
         border-bottom: 1px solid var(--bg1);
       }
-      .item-row:last-child { border-bottom: none; }
-      .item-name { color: var(--fg0); font-size: 0.9rem; }
-      .item-meta { color: var(--fg3); font-size: 0.75rem; }
-      .empty-state { color: var(--fg3); font-size: 0.85rem; font-style: italic; padding: 12px 0; }
+      .modal-agent-row:last-child {
+        border-bottom: none;
+      }
+      .modal-agent-name {
+        color: var(--fg1);
+        font-size: 0.85rem;
+      }
+      .modal-agent-desc {
+        color: var(--fg3);
+        font-size: 0.7rem;
+      }
+      .modal-close {
+        margin-top: 12px;
+        font-size: 0.8rem;
+        color: var(--fg3);
+        cursor: pointer;
+        background: none;
+        border: none;
+        font-family: inherit;
+      }
+      .modal-close:hover {
+        color: var(--fg1);
+      }
+
+      /* ─── Responsive ─── */
+      @media (max-width: 900px) {
+        .panel-shelf {
+          display: none;
+        }
+      }
+      @media (max-width: 640px) {
+        .panel-members {
+          width: 0;
+          min-width: 0;
+          overflow: hidden;
+          transition: width 0.2s;
+        }
+        .panel-members.open {
+          width: 220px;
+          min-width: 220px;
+          position: absolute;
+          z-index: 50;
+          height: calc(100vh - 46px);
+        }
+        .members-toggle {
+          display: inline-block !important;
+        }
+      }
+      .members-toggle {
+        display: none;
+      }
+
       .theme-toggle-btn {
         background: transparent;
         border: 1px solid var(--bg3);
-        padding: 4px 10px;
+        padding: 2px 8px;
         cursor: pointer;
-        font-size: 0.8rem;
+        font-size: 0.7rem;
         color: var(--fg3);
         font-family: inherit;
       }
-      .theme-toggle-btn:hover { border-color: var(--yellow); color: var(--yellow); }
+      .theme-toggle-btn:hover {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
     </style>
   </head>
   <body>
-    <header>
-      <div><h1 id="ws-name">Workspace</h1></div>
-      <div>
+    <!-- ─── Header ─── -->
+    <div class="ws-header">
+      <div class="ws-header-left">
+        <button class="btn members-toggle" id="members-toggle">Members</button>
+        <h1 id="ws-name">Workspace</h1>
+        <div class="budget-inline">
+          <div class="budget-bar">
+            <div class="budget-fill" id="budget-bar-fill"></div>
+          </div>
+          <span class="budget-text" id="budget-text">--</span>
+          <span>credits</span>
+        </div>
+      </div>
+      <div class="ws-header-right">
+        <button class="btn" id="fund-btn">Fund</button>
         <a href="/dashboard">Dashboard</a>
         <a href="/">Catalogue</a>
-        <button id="theme-toggle" class="theme-toggle-btn" title="Toggle Theme (Ctrl+T)">OP-1</button>
+        <button
+          id="theme-toggle"
+          class="theme-toggle-btn"
+          title="Toggle Theme (Ctrl+T)"
+        >
+          OP-1
+        </button>
       </div>
-    </header>
+    </div>
 
-    <div class="container">
-      <!-- Budget -->
-      <div class="section">
-        <div class="section-title">Budget</div>
-        <div class="stat-row">
-          <div>
-            <div class="stat-value" id="budget-remaining">--</div>
-            <div class="stat-label">remaining</div>
-          </div>
-          <div>
-            <div class="stat-value" style="color:var(--fg2)" id="budget-total">--</div>
-            <div class="stat-label">total budget</div>
-          </div>
-          <div>
-            <div class="stat-value" style="color:var(--fg3)" id="budget-spent">--</div>
-            <div class="stat-label">spent</div>
-          </div>
-        </div>
-        <div class="budget-bar"><div class="budget-fill" id="budget-bar-fill"></div></div>
-      </div>
+    <!-- ─── Three-Panel Body ─── -->
+    <div class="ws-body">
+      <!-- Left: Members -->
+      <div class="panel-members" id="panel-members">
+        <div class="panel-section-title">People</div>
+        <div id="people-list"></div>
 
-      <div class="grid">
-        <!-- Agents -->
-        <div class="section">
-          <div class="section-title">Agents</div>
-          <div id="agents-list"><div class="empty-state">Loading...</div></div>
-        </div>
+        <div class="panel-section-title" style="margin-top: 8px">Agents</div>
+        <div id="ws-agents-list"></div>
 
-        <!-- Members -->
-        <div class="section">
-          <div class="section-title">Members</div>
-          <div id="members-list"><div class="empty-state">Loading...</div></div>
+        <div class="panel-actions">
+          <button
+            class="btn btn-primary"
+            id="hire-btn"
+            title="Hire an agent you don't own (5 cr)"
+          >
+            + Hire
+          </button>
+          <button class="btn" id="add-btn" title="Add an agent you own (2 cr)">
+            + Add
+          </button>
         </div>
       </div>
 
-      <!-- Description -->
-      <div class="section">
-        <div class="section-title">About</div>
-        <div id="ws-description" class="empty-state">Loading...</div>
+      <!-- Center: Chat -->
+      <div class="panel-chat">
+        <div class="chat-messages" id="chat-messages">
+          <div
+            style="
+              color: var(--fg3);
+              font-size: 0.8rem;
+              padding: 40px 0;
+              text-align: center;
+            "
+          >
+            Loading messages...
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <textarea
+            class="chat-input"
+            id="chat-input"
+            placeholder="Type a message..."
+            rows="1"
+          ></textarea>
+          <button class="btn btn-send" id="send-btn">Send</button>
+        </div>
+        <div class="gas-hint">1 credit per message</div>
+      </div>
+
+      <!-- Right: Shelf -->
+      <div class="panel-shelf">
+        <div class="shelf-section">
+          <div class="shelf-label">Budget</div>
+          <div
+            class="shelf-value"
+            style="color: var(--aqua)"
+            id="shelf-remaining"
+          >
+            --
+          </div>
+          <div class="shelf-sub">
+            <span id="shelf-spent">--</span> /
+            <span id="shelf-total">--</span> spent
+          </div>
+        </div>
+
+        <div class="shelf-section">
+          <div class="shelf-label">Activity</div>
+          <div class="stat-row-small">
+            <span class="stat-key">Messages</span>
+            <span class="stat-val" id="stat-messages">0</span>
+          </div>
+          <div class="stat-row-small">
+            <span class="stat-key">Agents</span>
+            <span class="stat-val" id="stat-agents">0</span>
+          </div>
+          <div class="stat-row-small">
+            <span class="stat-key">Members</span>
+            <span class="stat-val" id="stat-members">0</span>
+          </div>
+        </div>
+
+        <div class="shelf-section">
+          <div class="shelf-label">About</div>
+          <div id="ws-description" style="font-size: 0.8rem; color: var(--fg2)">
+            --
+          </div>
+        </div>
+
+        <div class="shelf-section">
+          <div class="shelf-label">Gas Fees</div>
+          <div class="stat-row-small">
+            <span class="stat-key">Message</span
+            ><span class="stat-val">1 cr</span>
+          </div>
+          <div class="stat-row-small">
+            <span class="stat-key">Hire agent</span
+            ><span class="stat-val">5 cr</span>
+          </div>
+          <div class="stat-row-small">
+            <span class="stat-key">Add agent</span
+            ><span class="stat-val">2 cr</span>
+          </div>
+          <div class="stat-row-small">
+            <span class="stat-key">Execute</span
+            ><span class="stat-val">~1cr/1k tok</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Hire Modal ─── -->
+    <div class="modal-overlay" id="hire-modal">
+      <div class="modal">
+        <h2>Hire Agent to Workspace</h2>
+        <div style="font-size: 0.75rem; color: var(--fg3); margin-bottom: 10px">
+          Search public agents. Costs 5 credits.
+        </div>
+        <div id="hire-agent-list">
+          <div style="color: var(--fg3); font-size: 0.8rem">Loading...</div>
+        </div>
+        <button class="modal-close" id="hire-modal-close">Close</button>
+      </div>
+    </div>
+
+    <!-- ─── Add Modal ─── -->
+    <div class="modal-overlay" id="add-modal">
+      <div class="modal">
+        <h2>Add Your Agent to Workspace</h2>
+        <div style="font-size: 0.75rem; color: var(--fg3); margin-bottom: 10px">
+          Add an agent you own. Costs 2 credits.
+        </div>
+        <div id="add-agent-list">
+          <div style="color: var(--fg3); font-size: 0.8rem">Loading...</div>
+        </div>
+        <button class="modal-close" id="add-modal-close">Close</button>
       </div>
     </div>
 
     <script>
-      // Get workspace ID from URL
       const wsId = window.location.pathname.split("/").pop();
+      let currentUser = null;
+      let pollTimer = null;
+      let lastMessageTime = null;
+      let messageCount = 0;
 
+      // ─── Init ───
       (async () => {
-        // Auth check
         const authRes = await fetch("/api/auth/me");
-        if (!authRes.ok) { window.location.href = "/"; return; }
+        if (!authRes.ok) {
+          window.location.href = "/";
+          return;
+        }
+        currentUser = await authRes.json();
 
-        // Load workspace
+        await loadWorkspace();
+        await loadMessages();
+        startPolling();
+      })();
+
+      // ─── Load workspace data ───
+      async function loadWorkspace() {
         try {
           const res = await fetch(`/api/workspaces/${wsId}`);
-          if (!res.ok) { document.getElementById("ws-name").textContent = "Not Found"; return; }
+          if (!res.ok) {
+            document.getElementById("ws-name").textContent = "Not Found";
+            return;
+          }
           const ws = await res.json();
 
           document.getElementById("ws-name").textContent = ws.name;
-          document.title = ws.name + " - Agent Bestiary";
-          document.getElementById("ws-description").textContent = ws.description || "No description.";
+          document.title = ws.name + " — Agent Bestiary";
+          document.getElementById("ws-description").textContent =
+            ws.description || "No description.";
 
           // Budget
-          document.getElementById("budget-remaining").textContent = ws.workspace_remaining;
-          document.getElementById("budget-total").textContent = ws.workspace_budget;
-          document.getElementById("budget-spent").textContent = ws.workspace_spent;
-          const pct = ws.workspace_budget > 0 ? Math.min(100, (ws.workspace_spent / ws.workspace_budget) * 100) : 0;
+          const remaining = ws.workspace_remaining || 0;
+          const total = ws.workspace_budget || 0;
+          const spent = ws.workspace_spent || 0;
+          document.getElementById("budget-text").textContent = remaining;
+          document.getElementById("shelf-remaining").textContent = remaining;
+          document.getElementById("shelf-spent").textContent = spent;
+          document.getElementById("shelf-total").textContent = total;
+          const pct = total > 0 ? Math.min(100, (remaining / total) * 100) : 0;
           document.getElementById("budget-bar-fill").style.width = pct + "%";
 
-          // Agents
-          const agentsEl = document.getElementById("agents-list");
-          if (!ws.agents || ws.agents.length === 0) {
-            agentsEl.innerHTML = '<div class="empty-state">No agents in this workspace.</div>';
-          } else {
-            agentsEl.innerHTML = ws.agents.map(a => `
-              <div class="item-row">
-                <div>
-                  <div class="item-name">${a.agent_name}</div>
-                  <div class="item-meta">${a.total_executions} executions</div>
-                </div>
+          // Members
+          const peopleEl = document.getElementById("people-list");
+          if (ws.members && ws.members.length > 0) {
+            peopleEl.innerHTML = ws.members
+              .map(
+                (m) => `
+              <div class="member-item">
+                <div class="member-dot"></div>
+                <span class="member-name">${escHtml(m.member_id)}</span>
+                <span class="member-role">${m.role}</span>
               </div>
-            `).join("");
+            `,
+              )
+              .join("");
+            document.getElementById("stat-members").textContent =
+              ws.members.length;
+          } else {
+            peopleEl.innerHTML =
+              '<div style="padding:4px 14px;color:var(--fg3);font-size:0.75rem">No members</div>';
           }
 
-          // Members
-          const membersEl = document.getElementById("members-list");
-          if (!ws.members || ws.members.length === 0) {
-            membersEl.innerHTML = '<div class="empty-state">No members.</div>';
+          // Agents
+          const agentsEl = document.getElementById("ws-agents-list");
+          if (ws.agents && ws.agents.length > 0) {
+            agentsEl.innerHTML = ws.agents
+              .map(
+                (a) => `
+              <a href="/agents/${a.agent_id}" style="text-decoration:none;color:inherit">
+                <div class="agent-item">
+                  <div class="agent-dot"></div>
+                  <span class="member-name">${escHtml(a.agent_name)}</span>
+                </div>
+              </a>
+            `,
+              )
+              .join("");
+            document.getElementById("stat-agents").textContent =
+              ws.agents.length;
           } else {
-            membersEl.innerHTML = ws.members.map(m => `
-              <div class="item-row">
-                <div class="item-name">${m.member_id}</div>
-                <div class="item-meta">${m.role}</div>
-              </div>
-            `).join("");
+            agentsEl.innerHTML =
+              '<div style="padding:4px 14px;color:var(--fg3);font-size:0.75rem">No agents yet</div>';
           }
         } catch (e) {
-          document.getElementById("ws-name").textContent = "Error loading workspace";
+          document.getElementById("ws-name").textContent =
+            "Error loading workspace";
         }
-      })();
+      }
 
-      // Theme toggle
+      // ─── Chat: Load messages ───
+      async function loadMessages() {
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/messages?limit=100`);
+          if (!res.ok) return;
+          const data = await res.json();
+          const el = document.getElementById("chat-messages");
+
+          if (!data.messages || data.messages.length === 0) {
+            el.innerHTML =
+              '<div style="color:var(--fg3);font-size:0.8rem;padding:40px 0;text-align:center">No messages yet. Say hello!</div>';
+            return;
+          }
+
+          messageCount = data.messages.length;
+          document.getElementById("stat-messages").textContent = messageCount;
+
+          el.innerHTML = data.messages.map(renderMessage).join("");
+          el.scrollTop = el.scrollHeight;
+
+          // Track last message time for polling
+          const last = data.messages[data.messages.length - 1];
+          if (last) lastMessageTime = last.created_at;
+        } catch (e) {
+          console.error("Failed to load messages:", e);
+        }
+      }
+
+      // ─── Render a single message ───
+      function renderMessage(m) {
+        const time = new Date(m.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        const name = m.sender_name || m.sender_id;
+
+        if (m.sender_type === "system" || m.message_type === "system_event") {
+          return `
+            <div class="chat-msg">
+              <div class="chat-avatar chat-avatar-system">S</div>
+              <div class="chat-body">
+                <div class="chat-meta-row">
+                  <span class="chat-sender chat-sender-system">system</span>
+                  <span class="chat-time">${time}</span>
+                </div>
+                <div class="chat-text chat-text-system">${escHtml(m.content)}</div>
+              </div>
+            </div>`;
+        }
+
+        const isAgent = m.sender_type === "agent";
+        const avatarClass = isAgent ? "chat-avatar-agent" : "chat-avatar-user";
+        const senderClass = isAgent ? "chat-sender-agent" : "";
+        const initial = name.charAt(0).toUpperCase();
+
+        let extra = "";
+        if (m.message_type === "execution_result" && m.metadata) {
+          const metaStr =
+            typeof m.metadata === "string"
+              ? m.metadata
+              : JSON.stringify(m.metadata, null, 2);
+          if (metaStr && metaStr !== "{}") {
+            const uid = "exec-" + m.message_id;
+            extra = `
+              <div class="chat-exec-toggle" onclick="toggleExec('${uid}')">View full result</div>
+              <div class="chat-exec-result" id="${uid}" style="display:none">${escHtml(metaStr)}</div>`;
+          }
+        }
+
+        return `
+          <div class="chat-msg">
+            <div class="chat-avatar ${avatarClass}">${initial}</div>
+            <div class="chat-body">
+              <div class="chat-meta-row">
+                <span class="chat-sender ${senderClass}">${escHtml(name)}</span>
+                <span class="chat-time">${time}</span>
+              </div>
+              <div class="chat-text">${escHtml(m.content)}</div>
+              ${extra}
+            </div>
+          </div>`;
+      }
+
+      function toggleExec(id) {
+        const el = document.getElementById(id);
+        if (el)
+          el.style.display = el.style.display === "none" ? "block" : "none";
+      }
+
+      // ─── Polling ───
+      function startPolling() {
+        pollTimer = setInterval(async () => {
+          if (!lastMessageTime) return;
+          try {
+            const res = await fetch(
+              `/api/workspaces/${wsId}/messages/poll?since=${encodeURIComponent(lastMessageTime)}`,
+            );
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.messages && data.messages.length > 0) {
+              const el = document.getElementById("chat-messages");
+              const wasAtBottom =
+                el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+
+              data.messages.forEach((m) => {
+                el.insertAdjacentHTML("beforeend", renderMessage(m));
+                messageCount++;
+              });
+
+              document.getElementById("stat-messages").textContent =
+                messageCount;
+              const last = data.messages[data.messages.length - 1];
+              lastMessageTime = last.created_at;
+
+              if (wasAtBottom) el.scrollTop = el.scrollHeight;
+            }
+          } catch {}
+        }, 3000);
+      }
+
+      // ─── Send message ───
+      document
+        .getElementById("send-btn")
+        .addEventListener("click", sendMessage);
+      document.getElementById("chat-input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      // Auto-resize textarea
+      document
+        .getElementById("chat-input")
+        .addEventListener("input", function () {
+          this.style.height = "auto";
+          this.style.height = Math.min(this.scrollHeight, 120) + "px";
+        });
+
+      async function sendMessage() {
+        const input = document.getElementById("chat-input");
+        const content = input.value.trim();
+        if (!content) return;
+
+        const btn = document.getElementById("send-btn");
+        btn.disabled = true;
+        input.value = "";
+        input.style.height = "auto";
+
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content }),
+          });
+
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Failed to send: " + err);
+            input.value = content;
+            return;
+          }
+
+          const msg = await res.json();
+          const el = document.getElementById("chat-messages");
+
+          // Remove "no messages" placeholder if present
+          const placeholder = el.querySelector(
+            "div[style*='text-align:center']",
+          );
+          if (placeholder) placeholder.remove();
+
+          el.insertAdjacentHTML(
+            "beforeend",
+            renderMessage({
+              ...msg,
+              sender_name:
+                currentUser.display_name || currentUser.email || msg.sender_id,
+            }),
+          );
+          el.scrollTop = el.scrollHeight;
+
+          messageCount++;
+          document.getElementById("stat-messages").textContent = messageCount;
+          lastMessageTime = msg.created_at;
+
+          // Refresh budget after gas charge
+          refreshBudget();
+        } catch (e) {
+          alert("Failed to send message");
+          input.value = content;
+        } finally {
+          btn.disabled = false;
+          input.focus();
+        }
+      }
+
+      async function refreshBudget() {
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}`);
+          if (!res.ok) return;
+          const ws = await res.json();
+          const remaining = ws.workspace_remaining || 0;
+          const total = ws.workspace_budget || 0;
+          const spent = ws.workspace_spent || 0;
+          document.getElementById("budget-text").textContent = remaining;
+          document.getElementById("shelf-remaining").textContent = remaining;
+          document.getElementById("shelf-spent").textContent = spent;
+          document.getElementById("shelf-total").textContent = total;
+          const pct = total > 0 ? Math.min(100, (remaining / total) * 100) : 0;
+          document.getElementById("budget-bar-fill").style.width = pct + "%";
+        } catch {}
+      }
+
+      // ─── Hire Modal ───
+      document
+        .getElementById("hire-btn")
+        .addEventListener("click", async () => {
+          document.getElementById("hire-modal").classList.add("active");
+          const listEl = document.getElementById("hire-agent-list");
+          listEl.innerHTML =
+            '<div style="color:var(--fg3);font-size:0.8rem">Loading public agents...</div>';
+
+          try {
+            const res = await fetch("/api/agents?visibility=public");
+            if (!res.ok) {
+              listEl.innerHTML = "Failed to load agents.";
+              return;
+            }
+            const data = await res.json();
+            const agents = data.agents || [];
+
+            if (agents.length === 0) {
+              listEl.innerHTML =
+                '<div style="color:var(--fg3);font-size:0.8rem">No public agents available.</div>';
+              return;
+            }
+
+            listEl.innerHTML = agents
+              .map(
+                (a) => `
+            <div class="modal-agent-row">
+              <div>
+                <div class="modal-agent-name">${escHtml(a.agent_name)}</div>
+                <div class="modal-agent-desc">${escHtml(a.description || "")}</div>
+              </div>
+              <button class="btn btn-primary" onclick="hireAgent('${a.agent_id}', this)">Hire (5 cr)</button>
+            </div>
+          `,
+              )
+              .join("");
+          } catch {
+            listEl.innerHTML = "Error loading agents.";
+          }
+        });
+
+      document
+        .getElementById("hire-modal-close")
+        .addEventListener("click", () => {
+          document.getElementById("hire-modal").classList.remove("active");
+        });
+
+      async function hireAgent(agentId, btn) {
+        btn.disabled = true;
+        btn.textContent = "Hiring...";
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/hire`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent_id: agentId }),
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Hire failed: " + err);
+            btn.disabled = false;
+            btn.textContent = "Hire (5 cr)";
+            return;
+          }
+          btn.textContent = "Hired";
+          btn.style.borderColor = "var(--green)";
+          btn.style.color = "var(--green)";
+          loadWorkspace();
+          refreshBudget();
+        } catch {
+          alert("Hire failed");
+          btn.disabled = false;
+          btn.textContent = "Hire (5 cr)";
+        }
+      }
+
+      // ─── Add Modal ───
+      document.getElementById("add-btn").addEventListener("click", async () => {
+        document.getElementById("add-modal").classList.add("active");
+        const listEl = document.getElementById("add-agent-list");
+        listEl.innerHTML =
+          '<div style="color:var(--fg3);font-size:0.8rem">Loading your agents...</div>';
+
+        try {
+          const res = await fetch("/api/agents/mine");
+          if (!res.ok) {
+            listEl.innerHTML = "Failed to load agents.";
+            return;
+          }
+          const data = await res.json();
+          const agents = data.agents || [];
+
+          if (agents.length === 0) {
+            listEl.innerHTML =
+              '<div style="color:var(--fg3);font-size:0.8rem">You have no agents. <a href="/agents/new" style="color:var(--yellow)">Create one</a></div>';
+            return;
+          }
+
+          listEl.innerHTML = agents
+            .map(
+              (a) => `
+            <div class="modal-agent-row">
+              <div>
+                <div class="modal-agent-name">${escHtml(a.agent_name)}</div>
+                <div class="modal-agent-desc">${escHtml(a.description || "")}</div>
+              </div>
+              <button class="btn" onclick="addAgent('${a.agent_id}', this)">Add (2 cr)</button>
+            </div>
+          `,
+            )
+            .join("");
+        } catch {
+          listEl.innerHTML = "Error loading agents.";
+        }
+      });
+
+      document
+        .getElementById("add-modal-close")
+        .addEventListener("click", () => {
+          document.getElementById("add-modal").classList.remove("active");
+        });
+
+      async function addAgent(agentId, btn) {
+        btn.disabled = true;
+        btn.textContent = "Adding...";
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/add`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent_id: agentId }),
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Add failed: " + err);
+            btn.disabled = false;
+            btn.textContent = "Add (2 cr)";
+            return;
+          }
+          btn.textContent = "Added";
+          btn.style.borderColor = "var(--green)";
+          btn.style.color = "var(--green)";
+          loadWorkspace();
+          refreshBudget();
+        } catch {
+          alert("Add failed");
+          btn.disabled = false;
+          btn.textContent = "Add (2 cr)";
+        }
+      }
+
+      // ─── Fund button ───
+      document
+        .getElementById("fund-btn")
+        .addEventListener("click", async () => {
+          const amount = prompt("Credits to add to workspace budget:");
+          if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return;
+          try {
+            const res = await fetch(`/api/workspaces/${wsId}/budget`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ amount: Number(amount) }),
+            });
+            if (!res.ok) {
+              const err = await res.text();
+              alert("Funding failed: " + err);
+              return;
+            }
+            refreshBudget();
+          } catch {
+            alert("Funding failed");
+          }
+        });
+
+      // ─── Mobile members toggle ───
+      document
+        .getElementById("members-toggle")
+        .addEventListener("click", () => {
+          document.getElementById("panel-members").classList.toggle("open");
+        });
+
+      // ─── Close modals on overlay click ───
+      document.querySelectorAll(".modal-overlay").forEach((overlay) => {
+        overlay.addEventListener("click", (e) => {
+          if (e.target === overlay) overlay.classList.remove("active");
+        });
+      });
+
+      // ─── Helpers ───
+      function escHtml(str) {
+        if (!str) return "";
+        const d = document.createElement("div");
+        d.textContent = str;
+        return d.innerHTML;
+      }
+
+      // ─── Theme toggle ───
       const themes = ["hasui", "op1"];
       const labels = { hasui: "OP-1", op1: "Hasui" };
       function setTheme(t) {
@@ -219,7 +1197,10 @@
         setTheme(current === "hasui" ? "op1" : "hasui");
       });
       document.addEventListener("keydown", (e) => {
-        if (e.ctrlKey && e.key === "t") { e.preventDefault(); document.getElementById("theme-toggle").click(); }
+        if (e.ctrlKey && e.key === "t") {
+          e.preventDefault();
+          document.getElementById("theme-toggle").click();
+        }
       });
     </script>
   </body>

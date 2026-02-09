@@ -261,3 +261,17 @@ pub struct ConsolidationJob {
     pub entities_created: i32,
     pub facts_created: i32,
 }
+
+/// Workspace chat message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceMessage {
+    pub message_id: Uuid,
+    pub workspace_id: Uuid,
+    pub sender_type: String,
+    pub sender_id: String,
+    pub sender_name: Option<String>,
+    pub content: String,
+    pub message_type: String,
+    pub metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}

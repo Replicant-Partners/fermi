@@ -28,9 +28,13 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 
+#[path = "gas.rs"]
+mod gas;
+use gas::{charge_gas, GasFees};
+
 use agent_bestiary_memory::{
     Agent, AgentUpdate, AnthropicEmbeddings, ConsolidationLock, ConsolidationWorker,
-    EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
+    EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings, WorkspaceMessage,
 };
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMethod};
 
@@ -45,6 +49,7 @@ struct AppState {
     gemini_api_key: String,
     jwt_secret: String,
     oauth: OAuthConfig,
+    gas_fees: GasFees,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -247,6 +252,7 @@ async fn main() {
         gemini_api_key,
         jwt_secret: jwt_secret.clone(),
         oauth,
+        gas_fees: GasFees::from_env(),
     };
 
     let auth_state = AuthState { jwt_secret, db };
@@ -356,6 +362,29 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/budget",
             put(fund_workspace_handler),
+        )
+        // Workspace chat
+        .route(
+            "/api/workspaces/:workspace_id/messages",
+            post(post_workspace_message_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/messages",
+            get(get_workspace_messages_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/messages/poll",
+            get(poll_workspace_messages_handler),
+        )
+        // Workspace agent hire/add
+        .route(
+            "/api/workspaces/:workspace_id/hire",
+            post(hire_agent_handler),
+        )
+        .route("/api/workspaces/:workspace_id/add", post(add_agent_handler))
+        .route(
+            "/api/workspaces/:workspace_id/agents/:agent_id",
+            delete(remove_workspace_agent_handler),
         )
         // Wallet / credits
         .route("/api/wallet", get(get_wallet_handler))
@@ -2072,6 +2101,415 @@ async fn fund_workspace_handler(
         "amount": req.amount,
         "workspace_id": ws_uuid,
     })))
+}
+
+// ─── Workspace Chat ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct PostMessageRequest {
+    content: String,
+}
+
+async fn post_workspace_message_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<PostMessageRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    // Verify membership
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    // Charge message gas
+    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        ws_wallet.wallet_id,
+        state.gas_fees.message_send,
+        "gas_fee",
+        "Chat message",
+        None,
+    )
+    .await?;
+
+    let msg = WorkspaceMessage {
+        message_id: uuid::Uuid::new_v4(),
+        workspace_id: ws_uuid,
+        sender_type: "user".to_string(),
+        sender_id: user_id.clone(),
+        sender_name: Some(user_id),
+        content: req.content,
+        message_type: "chat".to_string(),
+        metadata: json!({}),
+        created_at: chrono::Utc::now(),
+    };
+
+    let msg_id = state
+        .memory_store
+        .store_workspace_message(&msg)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "message_id": msg_id,
+        "sender_type": msg.sender_type,
+        "sender_id": msg.sender_id,
+        "content": msg.content,
+        "message_type": msg.message_type,
+        "created_at": msg.created_at,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageQuery {
+    limit: Option<i64>,
+    before: Option<String>,
+}
+
+async fn get_workspace_messages_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Query(params): Query<MessageQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    let limit = params.limit.unwrap_or(50).min(200);
+    let before = params.before.and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+    });
+
+    let messages = state
+        .memory_store
+        .get_workspace_messages(ws_uuid, limit, before)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let msgs: Vec<Value> = messages
+        .iter()
+        .map(|m| {
+            json!({
+                "message_id": m.message_id,
+                "sender_type": m.sender_type,
+                "sender_id": m.sender_id,
+                "sender_name": m.sender_name,
+                "content": m.content,
+                "message_type": m.message_type,
+                "metadata": m.metadata,
+                "created_at": m.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "messages": msgs })))
+}
+
+#[derive(Debug, Deserialize)]
+struct PollQuery {
+    since: String,
+}
+
+async fn poll_workspace_messages_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Query(params): Query<PollQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    let since = chrono::DateTime::parse_from_rfc3339(&params.since)
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid timestamp format".to_string(),
+            )
+        })?
+        .with_timezone(&chrono::Utc);
+
+    let messages = state
+        .memory_store
+        .get_workspace_messages_since(ws_uuid, since)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let msgs: Vec<Value> = messages
+        .iter()
+        .map(|m| {
+            json!({
+                "message_id": m.message_id,
+                "sender_type": m.sender_type,
+                "sender_id": m.sender_id,
+                "sender_name": m.sender_name,
+                "content": m.content,
+                "message_type": m.message_type,
+                "metadata": m.metadata,
+                "created_at": m.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "messages": msgs })))
+}
+
+// ─── Workspace Hire / Add ──────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct HireAddRequest {
+    agent_id: uuid::Uuid,
+}
+
+/// Post a system message to workspace chat (helper)
+async fn post_system_message(store: &MemoryStore, workspace_id: uuid::Uuid, content: &str) {
+    let msg = WorkspaceMessage {
+        message_id: uuid::Uuid::new_v4(),
+        workspace_id,
+        sender_type: "system".to_string(),
+        sender_id: "system".to_string(),
+        sender_name: None,
+        content: content.to_string(),
+        message_type: "system_event".to_string(),
+        metadata: json!({}),
+        created_at: chrono::Utc::now(),
+    };
+    let _ = store.store_workspace_message(&msg).await;
+}
+
+async fn hire_agent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<HireAddRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    // Must be admin+ to hire
+    let role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+    if !role.can_invite() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Admin role required to hire agents".to_string(),
+        ));
+    }
+
+    // Resolve agent
+    let agent = state
+        .memory_store
+        .get_agent(req.agent_id)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent not found: {}", e)))?
+        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+
+    // Must not own the agent (use /add for your own)
+    if agent.owner_id.as_deref() == Some(&user_id) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Use /add for your own agents".to_string(),
+        ));
+    }
+
+    // Agent must be public (or shared with caller — future)
+    if agent.visibility != "public" {
+        return Err((StatusCode::FORBIDDEN, "Agent is not public".to_string()));
+    }
+
+    // Charge hire gas from workspace wallet
+    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        ws_wallet.wallet_id,
+        state.gas_fees.agent_hire,
+        "gas_fee",
+        &format!("Hire agent {}", agent.agent_name),
+        Some(&req.agent_id.to_string()),
+    )
+    .await?;
+
+    // Insert workspace_agents row
+    sqlx::query(
+        "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship) VALUES ($1, $2, $3, 'hired') ON CONFLICT DO NOTHING",
+    )
+    .bind(ws_uuid)
+    .bind(req.agent_id)
+    .bind(&user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    post_system_message(
+        &state.memory_store,
+        ws_uuid,
+        &format!("{} hired {} to the workspace", user_id, agent.agent_name),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "message": "Agent hired successfully",
+        "agent_name": agent.agent_name,
+        "relationship": "hired",
+        "gas_charged": state.gas_fees.agent_hire,
+    })))
+}
+
+async fn add_agent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<HireAddRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    // Must be workspace member
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    // Resolve agent — must own it
+    let agent = state
+        .memory_store
+        .get_agent(req.agent_id)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent not found: {}", e)))?
+        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+
+    if agent.owner_id.as_deref() != Some(&user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "You don't own this agent. Use /hire instead.".to_string(),
+        ));
+    }
+
+    // Charge add gas from workspace wallet
+    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        ws_wallet.wallet_id,
+        state.gas_fees.agent_add,
+        "gas_fee",
+        &format!("Add agent {}", agent.agent_name),
+        Some(&req.agent_id.to_string()),
+    )
+    .await?;
+
+    // Insert workspace_agents row
+    sqlx::query(
+        "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship) VALUES ($1, $2, $3, 'owned') ON CONFLICT DO NOTHING",
+    )
+    .bind(ws_uuid)
+    .bind(req.agent_id)
+    .bind(&user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    post_system_message(
+        &state.memory_store,
+        ws_uuid,
+        &format!("{} added {} to the workspace", user_id, agent.agent_name),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "message": "Agent added successfully",
+        "agent_name": agent.agent_name,
+        "relationship": "owned",
+        "gas_charged": state.gas_fees.agent_add,
+    })))
+}
+
+async fn remove_workspace_agent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path((workspace_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+    let agent_uuid: uuid::Uuid = agent_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid agent ID".to_string()))?;
+
+    // Must be admin+ or the person who added
+    let role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    let row = sqlx::query(
+        "SELECT added_by FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2",
+    )
+    .bind(ws_uuid)
+    .bind(agent_uuid)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let row = row.ok_or((StatusCode::NOT_FOUND, "Agent not in workspace".to_string()))?;
+    let added_by: String = row.try_get("added_by").unwrap_or_default();
+
+    if added_by != user_id && !role.can_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Must be admin or the person who added".to_string(),
+        ));
+    }
+
+    sqlx::query("DELETE FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2")
+        .bind(ws_uuid)
+        .bind(agent_uuid)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    post_system_message(
+        &state.memory_store,
+        ws_uuid,
+        &format!("{} removed an agent from the workspace", user_id),
+    )
+    .await;
+
+    Ok(Json(json!({ "message": "Agent removed from workspace" })))
 }
 
 // ─── Agent execution ───────────────────────────────────────────────

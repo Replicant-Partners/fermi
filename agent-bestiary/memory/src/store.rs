@@ -1,6 +1,6 @@
 use crate::{
     Agent, AgentUpdate, Community, ConsolidationJob, Entity, Episode, Fact, MemoryError, Result,
-    SemanticRule, VerificationStatus,
+    SemanticRule, VerificationStatus, WorkspaceMessage,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
@@ -1260,6 +1260,112 @@ impl MemoryStore {
         .await?;
 
         Ok(())
+    }
+
+    // ─── Workspace Messages ────────────────────────────────────────
+
+    pub async fn store_workspace_message(&self, msg: &WorkspaceMessage) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO workspace_messages
+                (message_id, workspace_id, sender_type, sender_id, sender_name,
+                 content, message_type, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING message_id
+            "#,
+        )
+        .bind(msg.message_id)
+        .bind(msg.workspace_id)
+        .bind(&msg.sender_type)
+        .bind(&msg.sender_id)
+        .bind(&msg.sender_name)
+        .bind(&msg.content)
+        .bind(&msg.message_type)
+        .bind(&msg.metadata)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.try_get("message_id")?)
+    }
+
+    pub async fn get_workspace_messages(
+        &self,
+        workspace_id: Uuid,
+        limit: i64,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<WorkspaceMessage>> {
+        let rows = if let Some(before_ts) = before {
+            sqlx::query(
+                r#"
+                SELECT message_id, workspace_id, sender_type, sender_id, sender_name,
+                       content, message_type, metadata, created_at
+                FROM workspace_messages
+                WHERE workspace_id = $1 AND created_at < $2
+                ORDER BY created_at DESC
+                LIMIT $3
+                "#,
+            )
+            .bind(workspace_id)
+            .bind(before_ts)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"
+                SELECT message_id, workspace_id, sender_type, sender_id, sender_name,
+                       content, message_type, metadata, created_at
+                FROM workspace_messages
+                WHERE workspace_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                "#,
+            )
+            .bind(workspace_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        Ok(rows.iter().map(row_to_workspace_message).collect())
+    }
+
+    pub async fn get_workspace_messages_since(
+        &self,
+        workspace_id: Uuid,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<WorkspaceMessage>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT message_id, workspace_id, sender_type, sender_id, sender_name,
+                   content, message_type, metadata, created_at
+            FROM workspace_messages
+            WHERE workspace_id = $1 AND created_at > $2
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.iter().map(row_to_workspace_message).collect())
+    }
+}
+
+fn row_to_workspace_message(row: &sqlx::postgres::PgRow) -> WorkspaceMessage {
+    WorkspaceMessage {
+        message_id: row.try_get("message_id").unwrap(),
+        workspace_id: row.try_get("workspace_id").unwrap(),
+        sender_type: row.try_get("sender_type").unwrap(),
+        sender_id: row.try_get("sender_id").unwrap(),
+        sender_name: row.try_get("sender_name").unwrap_or(None),
+        content: row.try_get("content").unwrap(),
+        message_type: row.try_get("message_type").unwrap(),
+        metadata: row
+            .try_get::<serde_json::Value, _>("metadata")
+            .unwrap_or(serde_json::json!({})),
+        created_at: row.try_get("created_at").unwrap(),
     }
 }
 
