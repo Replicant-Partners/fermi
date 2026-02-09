@@ -356,6 +356,10 @@ async fn main() {
         .route("/api/agents", get(list_agents))
         .route("/api/models/catalogue", get(model_catalogue_handler))
         .route("/api/agents/:agent_id/avatar", get(get_cached_avatar))
+        .route(
+            "/api/agents/:agent_id/episodes",
+            get(get_agent_episodes_handler),
+        )
         .route("/api/agents/:agent_id/ontology", get(get_ontology))
         // Ontology evolution (public, read-only)
         .route(
@@ -463,6 +467,10 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/dreaming/budget",
             put(set_dreaming_budget),
+        )
+        .route(
+            "/api/agents/:agent_id/dreaming/topup",
+            post(topup_dreaming_budget_handler),
         )
         // Consolidation trigger
         .route(
@@ -694,9 +702,19 @@ async fn debug_startup(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct ListAgentsParams {
+    search: Option<String>,
+    tag: Option<String>,
+    sort: Option<String>, // "newest", "executions", "name"
+    page: Option<usize>,
+    limit: Option<usize>,
+}
+
 async fn list_agents(
     State(state): State<AppState>,
     caller: Option<Extension<AuthPrincipal>>,
+    Query(params): Query<ListAgentsParams>,
 ) -> Json<Value> {
     let caller_id = caller.map(|Extension(p)| p.user_id());
 
@@ -719,8 +737,58 @@ async fn list_agents(
                 false
             })
             .collect();
-        if !real_agents.is_empty() {
-            let agents: Vec<Value> = real_agents
+
+        // Apply search filter
+        let mut filtered: Vec<_> = if let Some(ref search) = params.search {
+            let q = search.to_lowercase();
+            real_agents
+                .into_iter()
+                .filter(|a| {
+                    a.agent_name.to_lowercase().contains(&q)
+                        || a.display_alias
+                            .as_deref()
+                            .map(|d| d.to_lowercase().contains(&q))
+                            .unwrap_or(false)
+                        || a.description
+                            .as_deref()
+                            .map(|d| d.to_lowercase().contains(&q))
+                            .unwrap_or(false)
+                        || a.tags.iter().any(|t| t.to_lowercase().contains(&q))
+                })
+                .collect()
+        } else {
+            real_agents
+        };
+
+        // Apply tag filter
+        if let Some(ref tag) = params.tag {
+            let t = tag.to_lowercase();
+            filtered.retain(|a| a.tags.iter().any(|at| at.to_lowercase() == t));
+        }
+
+        // Sort
+        match params.sort.as_deref() {
+            Some("executions") => {
+                filtered.sort_by(|a, b| b.total_executions.cmp(&a.total_executions))
+            }
+            Some("name") => filtered.sort_by(|a, b| {
+                let na = a.display_alias.as_deref().unwrap_or(&a.agent_name);
+                let nb = b.display_alias.as_deref().unwrap_or(&b.agent_name);
+                na.to_lowercase().cmp(&nb.to_lowercase())
+            }),
+            _ => filtered.sort_by(|a, b| b.agent_id.cmp(&a.agent_id)), // newest first (UUID v4 ~ creation order for DB-inserted)
+        }
+
+        let total = filtered.len();
+        let limit = params.limit.unwrap_or(20).min(100);
+        let page = params.page.unwrap_or(1).max(1);
+        let offset = (page - 1) * limit;
+        let pages = (total + limit - 1) / limit.max(1);
+
+        let page_agents: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
+
+        if !page_agents.is_empty() || total > 0 {
+            let agents: Vec<Value> = page_agents
                 .iter()
                 .map(|a| {
                     // Merge filesystem card data if available
@@ -742,6 +810,8 @@ async fn list_agents(
                         "model": a.model,
                         "tags": a.tags,
                         "visibility": a.visibility,
+                        "owner_id": a.owner_id,
+                        "system_prompt": a.system_prompt,
                         "capabilities": {
                             "executor": a.executor_type,
                             "model": a.model,
@@ -805,7 +875,13 @@ async fn list_agents(
                     agent_val
                 })
                 .collect();
-            return Json(json!({ "agents": agents, "total": agents.len() }));
+            return Json(json!({
+                "agents": agents,
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "pages": pages,
+            }));
         }
     }
 
@@ -827,7 +903,8 @@ async fn list_agents(
             }
         }
     }
-    Json(json!({ "agents": agents, "total": agents.len() }))
+    let fs_total = agents.len();
+    Json(json!({ "agents": agents, "total": fs_total, "page": 1, "limit": fs_total, "pages": 1 }))
 }
 
 /// Public endpoint: serves cached avatar only (no generation)
@@ -3975,6 +4052,125 @@ async fn set_dreaming_budget(
         "status": "updated",
         "agent_id": agent_id,
         "budget_credits": body.budget_credits,
+    })))
+}
+
+// ─── Paginated episodes ────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct EpisodesParams {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn get_agent_episodes_handler(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(params): Query<EpisodesParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let limit = params.limit.unwrap_or(20).min(100);
+    let offset = params.offset.unwrap_or(0);
+
+    let (episodes, total) = state
+        .memory_store
+        .get_episodes_paginated(db_agent.agent_id, limit, offset)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let episodes_json: Vec<Value> = episodes
+        .iter()
+        .map(|ep| {
+            json!({
+                "episode_id": ep.episode_id,
+                "timestamp": ep.timestamp_ref,
+                "query": ep.query,
+                "status": ep.execution_status.to_string(),
+                "error_details": ep.error_details,
+                "execution_time_ms": ep.execution_time_ms,
+                "tokens_used": ep.tokens_used,
+                "cost_usd": ep.cost_usd,
+                "consolidated": ep.consolidated,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "episodes": episodes_json,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })))
+}
+
+// ─── Dream budget top-up ───────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct TopupBudgetRequest {
+    credits: i32,
+}
+
+async fn topup_dreaming_budget_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+    Json(body): Json<TopupBudgetRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let user_id = principal.user_id();
+
+    // Only owner can top up
+    if db_agent.owner_id.as_deref() != Some(&user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the agent owner can top up dream budget".into(),
+        ));
+    }
+
+    let credits = body.credits.max(1).min(1000);
+
+    // Charge from wallet
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if wallet.balance < credits {
+        return Err((
+            StatusCode::PAYMENT_REQUIRED,
+            format!(
+                "Insufficient credits: need {}, have {}",
+                credits, wallet.balance
+            ),
+        ));
+    }
+
+    credit_charge(
+        &state.db,
+        wallet.wallet_id,
+        credits,
+        "dream_topup",
+        &format!("Dream budget top-up for agent {}", agent_id),
+        None,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Increase dreaming budget
+    let new_budget = db_agent.dreaming_budget_credits + credits;
+    sqlx::query("UPDATE agents SET dreaming_budget_credits = $1 WHERE agent_id = $2")
+        .bind(new_budget)
+        .bind(db_agent.agent_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "status": "topped_up",
+        "agent_id": agent_id,
+        "credits_added": credits,
+        "new_budget": new_budget,
+        "credits_used": db_agent.dreaming_credits_used,
+        "credits_remaining": new_budget - db_agent.dreaming_credits_used,
     })))
 }
 

@@ -1191,6 +1191,63 @@ impl MemoryStore {
         Ok(())
     }
 
+    // ========== Paginated Episode Queries ==========
+
+    /// Get paginated episodes for an agent (newest first, no embeddings for performance)
+    pub async fn get_episodes_paginated(
+        &self,
+        agent_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Episode>, i64)> {
+        let count: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM episodes WHERE agent_id = $1")
+            .bind(agent_id)
+            .fetch_one(&self.pool)
+            .await?
+            .try_get("cnt")?;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                episode_id, agent_id, timestamp_ref, query, context,
+                execution_status, error_details, execution_time_ms,
+                tokens_used, cost_usd, consolidated
+            FROM episodes
+            WHERE agent_id = $1
+            ORDER BY timestamp_ref DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(agent_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut episodes = Vec::new();
+        for row in rows {
+            episodes.push(Episode {
+                episode_id: row.try_get("episode_id")?,
+                agent_id: row.try_get("agent_id")?,
+                timestamp_ref: row.try_get("timestamp_ref")?,
+                query: row.try_get("query")?,
+                context: row.try_get("context")?,
+                execution_status: row
+                    .try_get::<String, _>("execution_status")?
+                    .parse()
+                    .unwrap(),
+                error_details: row.try_get("error_details")?,
+                execution_time_ms: row.try_get("execution_time_ms")?,
+                tokens_used: row.try_get("tokens_used")?,
+                cost_usd: row.try_get("cost_usd")?,
+                embedding: None, // omit for performance
+                consolidated: row.try_get("consolidated")?,
+            });
+        }
+
+        Ok((episodes, count))
+    }
+
     // ========== Projector Query Methods ==========
 
     /// Get all episodes with non-null embeddings for an agent

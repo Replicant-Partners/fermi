@@ -549,6 +549,192 @@
         align-items: center;
         margin-bottom: 20px;
       }
+
+      /* Owner Actions Panel */
+      .owner-panel {
+        background: var(--bg1);
+        border: 1px solid var(--yellow);
+        padding: 16px 20px;
+        margin-bottom: 16px;
+      }
+      .owner-panel-title {
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--yellow);
+        margin-bottom: 12px;
+      }
+      .owner-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .owner-btn {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        color: var(--fg3);
+        padding: 6px 14px;
+        font-size: 0.8em;
+        cursor: pointer;
+        font-family: inherit;
+        transition: all 0.2s;
+      }
+      .owner-btn:hover {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .owner-btn.danger {
+        border-color: var(--red);
+        color: var(--red);
+      }
+      .owner-btn.danger:hover {
+        background: var(--red);
+        color: var(--bg0);
+      }
+
+      /* Inline Edit */
+      .edit-field {
+        display: none;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--bg3);
+      }
+      .edit-field.visible {
+        display: block;
+      }
+      .edit-field label {
+        display: block;
+        font-size: 0.75em;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+        margin-top: 10px;
+      }
+      .edit-field input,
+      .edit-field textarea,
+      .edit-field select {
+        width: 100%;
+        background: var(--bg0);
+        border: 1px solid var(--bg3);
+        color: var(--fg1);
+        padding: 8px 10px;
+        font-family: inherit;
+        font-size: 0.9em;
+      }
+      .edit-field textarea {
+        min-height: 80px;
+        resize: vertical;
+      }
+      .edit-field .edit-save-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      /* Execution History */
+      .episodes-list {
+        margin-top: 12px;
+      }
+      .episode-row {
+        display: grid;
+        grid-template-columns: 1fr auto auto auto;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--bg2);
+        font-size: 0.85em;
+        align-items: center;
+      }
+      .episode-query {
+        color: var(--fg1);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .episode-status {
+        padding: 2px 8px;
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .episode-status.success {
+        color: var(--green);
+        border: 1px solid var(--green);
+      }
+      .episode-status.failure {
+        color: var(--red);
+        border: 1px solid var(--red);
+      }
+      .episode-status.partial {
+        color: var(--yellow);
+        border: 1px solid var(--yellow);
+      }
+      .episode-time {
+        color: var(--gray);
+        font-size: 0.8em;
+      }
+      .episode-cost {
+        color: var(--fg3);
+        font-size: 0.8em;
+      }
+      .episodes-pagination {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      /* Delete Confirmation Modal */
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+      }
+      .modal-overlay.visible {
+        display: flex;
+      }
+      .modal-box {
+        background: var(--bg1);
+        border: 1px solid var(--red);
+        padding: 24px;
+        max-width: 400px;
+        width: 90%;
+      }
+      .modal-box h3 {
+        color: var(--red);
+        margin-bottom: 12px;
+        font-size: 1em;
+      }
+      .modal-box p {
+        color: var(--fg2);
+        font-size: 0.9em;
+        margin-bottom: 16px;
+      }
+      .modal-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      /* Topup */
+      .topup-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 8px;
+      }
+      .topup-row input[type="number"] {
+        width: 80px;
+        background: var(--bg0);
+        border: 1px solid var(--bg3);
+        color: var(--fg1);
+        padding: 6px 8px;
+        font-family: inherit;
+      }
     </style>
   </head>
   <body>
@@ -570,8 +756,35 @@
         </div>
       </div>
 
+      <div id="owner-panel-slot"></div>
       <div id="agent-content">
         <div class="loading-spinner">Loading specimen details...</div>
+      </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-overlay" id="delete-modal">
+      <div class="modal-box">
+        <h3>Delete Agent</h3>
+        <p>
+          This action cannot be undone. The agent and all its episodes, rules,
+          and ontology data will be permanently deleted.
+        </p>
+        <div class="modal-actions">
+          <button
+            class="owner-btn"
+            onclick="
+              document
+                .getElementById('delete-modal')
+                .classList.remove('visible')
+            "
+          >
+            Cancel
+          </button>
+          <button class="owner-btn danger" onclick="confirmDelete()">
+            Delete Permanently
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1436,6 +1649,272 @@
             resultEl.textContent = "Error: " + (await res.text());
           }
         } catch (e) {
+          resultEl.textContent = "Network error: " + e.message;
+        }
+      }
+    </script>
+
+    <!-- Owner Actions Panel -->
+    <script>
+      (async function initOwnerPanel() {
+        const agentId = window.location.pathname
+          .split("/")
+          .filter(Boolean)
+          .pop();
+        let currentUser = null;
+        try {
+          const res = await fetch("/api/auth/me");
+          if (res.ok) currentUser = await res.json();
+        } catch (e) {
+          return;
+        }
+        if (!currentUser) return;
+
+        // Wait for agent data to load, then check ownership
+        const checkOwnership = setInterval(() => {
+          const content = document.getElementById("agent-content");
+          if (!content || content.querySelector(".loading-spinner")) return;
+          clearInterval(checkOwnership);
+
+          // Re-fetch agent to check owner_id
+          fetch("/api/agents")
+            .then((r) => r.json())
+            .then((data) => {
+              const agent = data.agents.find((a) => a.agent_id === agentId);
+              if (!agent) return;
+
+              // Check if we need owner_id — it comes from the API
+              const userId = currentUser.user_id;
+              const isOwner = agent.owner_id === userId;
+              if (!isOwner) return;
+
+              renderOwnerPanel(agentId, agent);
+            });
+        }, 200);
+      })();
+
+      function renderOwnerPanel(agentId, agent) {
+        const slot = document.getElementById("owner-panel-slot");
+        slot.innerHTML = `
+          <div class="owner-panel">
+            <div class="owner-panel-title">Owner Actions</div>
+            <div class="owner-actions">
+              <button class="owner-btn" onclick="toggleEditPanel()">Edit</button>
+              <button class="owner-btn" onclick="toggleHistoryPanel()">Execution History</button>
+              <button class="owner-btn" onclick="toggleTopupPanel()">Top Up Dreams</button>
+              <button class="owner-btn danger" onclick="document.getElementById('delete-modal').classList.add('visible')">Delete</button>
+            </div>
+
+            <!-- Inline Edit -->
+            <div class="edit-field" id="edit-panel">
+              <label>Description</label>
+              <textarea id="edit-description">${agent.description || ""}</textarea>
+              <label>System Prompt</label>
+              <textarea id="edit-system-prompt" style="min-height:120px">${agent.system_prompt || ""}</textarea>
+              <label>Tags (comma-separated)</label>
+              <input type="text" id="edit-tags" value="${(agent.tags || []).join(", ")}" />
+              <label>Visibility</label>
+              <select id="edit-visibility">
+                <option value="public" ${agent.visibility === "public" ? "selected" : ""}>Public</option>
+                <option value="private" ${agent.visibility === "private" ? "selected" : ""}>Private</option>
+                <option value="shared" ${agent.visibility === "shared" ? "selected" : ""}>Shared</option>
+              </select>
+              <div class="edit-save-row">
+                <button class="owner-btn" onclick="saveAgentEdits('${agentId}')" style="border-color:var(--green);color:var(--green)">Save Changes</button>
+                <button class="owner-btn" onclick="toggleEditPanel()">Cancel</button>
+              </div>
+            </div>
+
+            <!-- Execution History -->
+            <div class="edit-field" id="history-panel">
+              <div id="episodes-container">
+                <div style="color:var(--gray);font-size:0.85em">Loading...</div>
+              </div>
+            </div>
+
+            <!-- Dream Budget Top-up -->
+            <div class="edit-field" id="topup-panel">
+              <div style="font-size:0.85em;color:var(--fg2);margin-bottom:8px">
+                Current budget: <strong>${agent.dreaming?.budget_credits || 0}</strong> |
+                Used: <strong>${agent.dreaming?.credits_used || 0}</strong> |
+                Remaining: <strong>${agent.dreaming?.credits_remaining || 0}</strong>
+              </div>
+              <div class="topup-row">
+                <input type="number" id="topup-amount" min="1" max="1000" value="10" />
+                <button class="owner-btn" onclick="topupDreamBudget('${agentId}')" style="border-color:var(--green);color:var(--green)">Top Up (charges credits)</button>
+              </div>
+              <div id="topup-result" style="margin-top:8px;font-size:0.85em;color:var(--fg3)"></div>
+            </div>
+          </div>
+        `;
+      }
+
+      function toggleEditPanel() {
+        document.getElementById("edit-panel")?.classList.toggle("visible");
+        document.getElementById("history-panel")?.classList.remove("visible");
+        document.getElementById("topup-panel")?.classList.remove("visible");
+      }
+
+      function toggleHistoryPanel() {
+        const panel = document.getElementById("history-panel");
+        if (!panel) return;
+        const wasVisible = panel.classList.contains("visible");
+        document.getElementById("edit-panel")?.classList.remove("visible");
+        document.getElementById("topup-panel")?.classList.remove("visible");
+        panel.classList.toggle("visible");
+        if (!wasVisible) loadEpisodes(0);
+      }
+
+      function toggleTopupPanel() {
+        document.getElementById("edit-panel")?.classList.remove("visible");
+        document.getElementById("history-panel")?.classList.remove("visible");
+        document.getElementById("topup-panel")?.classList.toggle("visible");
+      }
+
+      async function saveAgentEdits(agentId) {
+        const desc = document.getElementById("edit-description").value;
+        const prompt = document.getElementById("edit-system-prompt").value;
+        const tagsStr = document.getElementById("edit-tags").value;
+        const visibility = document.getElementById("edit-visibility").value;
+        const tags = tagsStr
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                description: desc,
+                system_prompt: prompt,
+                tags,
+                visibility,
+              }),
+            },
+          );
+          if (res.ok) {
+            alert("Agent updated successfully");
+            location.reload();
+          } else {
+            alert("Update failed: " + (await res.text()));
+          }
+        } catch (e) {
+          alert("Network error: " + e.message);
+        }
+      }
+
+      async function confirmDelete() {
+        const agentId = window.location.pathname
+          .split("/")
+          .filter(Boolean)
+          .pop();
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}`,
+            { method: "DELETE" },
+          );
+          if (res.ok) {
+            window.location.href = "/dashboard";
+          } else {
+            alert("Delete failed: " + (await res.text()));
+          }
+        } catch (e) {
+          alert("Network error: " + e.message);
+        }
+      }
+
+      async function loadEpisodes(offset) {
+        const agentId = window.location.pathname
+          .split("/")
+          .filter(Boolean)
+          .pop();
+        const container = document.getElementById("episodes-container");
+        if (!container) return;
+        container.innerHTML =
+          '<div style="color:var(--gray);font-size:0.85em">Loading...</div>';
+
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/episodes?limit=10&offset=${offset}`,
+          );
+          if (!res.ok) {
+            container.innerHTML =
+              '<div style="color:var(--red)">Failed to load episodes</div>';
+            return;
+          }
+          const data = await res.json();
+
+          if (data.episodes.length === 0) {
+            container.innerHTML =
+              '<div style="color:var(--gray);font-size:0.85em">No executions yet</div>';
+            return;
+          }
+
+          let html = '<div class="episodes-list">';
+          data.episodes.forEach((ep) => {
+            const date = new Date(ep.timestamp).toLocaleString();
+            const costStr = ep.cost_usd
+              ? `$${Number(ep.cost_usd).toFixed(6)}`
+              : "—";
+            html += `
+              <div class="episode-row">
+                <div class="episode-query" title="${ep.query.replace(/"/g, "&quot;")}">${ep.query}</div>
+                <span class="episode-status ${ep.status}">${ep.status}</span>
+                <span class="episode-cost">${costStr}</span>
+                <span class="episode-time">${date}</span>
+              </div>`;
+          });
+          html += "</div>";
+
+          // Pagination
+          if (data.total > 10) {
+            html += '<div class="episodes-pagination">';
+            if (offset > 0)
+              html += `<button class="owner-btn" onclick="loadEpisodes(${offset - 10})">Prev</button>`;
+            html += `<span style="color:var(--gray);font-size:0.8em">${offset + 1}-${Math.min(offset + 10, data.total)} of ${data.total}</span>`;
+            if (offset + 10 < data.total)
+              html += `<button class="owner-btn" onclick="loadEpisodes(${offset + 10})">Next</button>`;
+            html += "</div>";
+          }
+
+          container.innerHTML = html;
+        } catch (e) {
+          container.innerHTML =
+            '<div style="color:var(--red)">Error: ' + e.message + "</div>";
+        }
+      }
+
+      async function topupDreamBudget(agentId) {
+        const amount = parseInt(document.getElementById("topup-amount").value);
+        const resultEl = document.getElementById("topup-result");
+        if (!amount || amount < 1) {
+          resultEl.textContent = "Enter a valid amount";
+          return;
+        }
+
+        resultEl.textContent = "Processing...";
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/dreaming/topup`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ credits: amount }),
+            },
+          );
+          if (res.ok) {
+            const data = await res.json();
+            resultEl.style.color = "var(--green)";
+            resultEl.textContent = `Added ${data.credits_added} credits. New budget: ${data.new_budget} (${data.credits_remaining} remaining)`;
+          } else {
+            resultEl.style.color = "var(--red)";
+            resultEl.textContent = await res.text();
+          }
+        } catch (e) {
+          resultEl.style.color = "var(--red)";
           resultEl.textContent = "Network error: " + e.message;
         }
       }

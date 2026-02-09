@@ -448,6 +448,116 @@
         padding: 20px;
         text-align: center;
       }
+
+      /* Search & Filter Controls */
+      .catalogue-controls {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .search-input {
+        flex: 1;
+        min-width: 200px;
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        color: var(--fg1);
+        padding: 8px 14px;
+        font-size: 0.9em;
+        font-family: inherit;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+      .search-input:focus {
+        border-color: var(--yellow);
+      }
+      .search-input::placeholder {
+        color: var(--gray);
+      }
+      .sort-select {
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        color: var(--fg2);
+        padding: 8px 12px;
+        font-size: 0.85em;
+        font-family: inherit;
+        cursor: pointer;
+        outline: none;
+      }
+      .sort-select:focus {
+        border-color: var(--yellow);
+      }
+      .tag-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 16px;
+      }
+      .tag-pill {
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        color: var(--fg3);
+        padding: 3px 10px;
+        font-size: 0.75em;
+        cursor: pointer;
+        transition: all 0.2s;
+        letter-spacing: 0.03em;
+      }
+      .tag-pill:hover {
+        border-color: var(--aqua);
+        color: var(--aqua);
+      }
+      .tag-pill.active {
+        background: var(--aqua);
+        color: var(--bg0);
+        border-color: var(--aqua);
+      }
+      .pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        margin-top: 24px;
+        padding-top: 16px;
+        border-top: 1px solid var(--bg2);
+      }
+      .page-btn {
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        color: var(--fg3);
+        padding: 6px 14px;
+        font-size: 0.85em;
+        cursor: pointer;
+        font-family: inherit;
+        transition: all 0.2s;
+      }
+      .page-btn:hover:not(:disabled) {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .page-btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .page-btn.active {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .page-info {
+        color: var(--gray);
+        font-size: 0.8em;
+      }
+      .theme-op1 .search-input,
+      .theme-op1 .sort-select {
+        border-radius: 8px;
+      }
+      .theme-op1 .tag-pill {
+        border-radius: 12px;
+      }
+      .theme-op1 .page-btn {
+        border-radius: 6px;
+      }
     </style>
   </head>
   <body>
@@ -484,9 +594,26 @@
     <div class="container">
       <h2 class="section-title">Catalogue</h2>
 
+      <div class="catalogue-controls">
+        <input
+          type="text"
+          class="search-input"
+          id="search-input"
+          placeholder="Search agents by name, description, or tag..."
+        />
+        <select class="sort-select" id="sort-select">
+          <option value="newest">Newest</option>
+          <option value="executions">Most Executions</option>
+          <option value="name">Name A-Z</option>
+        </select>
+      </div>
+      <div class="tag-filters" id="tag-filters"></div>
+
       <div class="specimens-grid" id="specimens-grid">
         <div class="loading">Loading...</div>
       </div>
+
+      <div class="pagination" id="pagination" style="display: none"></div>
     </div>
 
     <script>
@@ -504,9 +631,24 @@
         }
       }
 
-      async function loadAgents() {
+      // State
+      let currentPage = 1;
+      let currentSearch = "";
+      let currentTag = "";
+      let currentSort = "newest";
+      let allTags = new Set();
+
+      async function loadAgents(page = 1) {
+        currentPage = page;
+        const params = new URLSearchParams();
+        params.set("page", page);
+        params.set("limit", "20");
+        if (currentSearch) params.set("search", currentSearch);
+        if (currentTag) params.set("tag", currentTag);
+        if (currentSort) params.set("sort", currentSort);
+
         try {
-          const response = await fetch("/api/agents");
+          const response = await fetch(`/api/agents?${params}`);
           const data = await response.json();
 
           document.getElementById("total-agents").textContent = data.total;
@@ -516,9 +658,16 @@
 
           if (data.agents.length === 0) {
             grid.innerHTML =
-              '<div class="loading">No specimens catalogued</div>';
+              '<div class="loading">No specimens match your search</div>';
+            renderPagination(0, 1, 1);
             return;
           }
+
+          // Collect all tags for the filter pills
+          data.agents.forEach((agent) => {
+            (agent.tags || []).forEach((t) => allTags.add(t));
+          });
+          renderTagPills();
 
           data.agents.forEach((agent) => {
             const card = document.createElement("div");
@@ -545,7 +694,6 @@
             const tags = agent.tags || agent.metadata?.tags || [];
             const initial = displayName.charAt(0).toUpperCase();
 
-            // Deterministic color for initial dot
             const hues = [200, 140, 30, 340, 270, 50, 170, 10];
             const hue = hues[agentId.charCodeAt(0) % hues.length];
 
@@ -592,7 +740,6 @@
 
             grid.appendChild(card);
 
-            // Load cached avatar asynchronously (no generation)
             generateAvatar(agentId).then((avatarUrl) => {
               const avatarDiv = document.getElementById(
                 `avatar-${CSS.escape(agentId)}`,
@@ -604,6 +751,8 @@
               }
             });
           });
+
+          renderPagination(data.total, data.page, data.pages);
         } catch (error) {
           console.error("Error loading agents:", error);
           const grid = document.getElementById("specimens-grid");
@@ -611,6 +760,63 @@
             '<div class="error">Error loading specimens. Please try again later.</div>';
         }
       }
+
+      function renderPagination(total, page, pages) {
+        const el = document.getElementById("pagination");
+        if (pages <= 1) {
+          el.style.display = "none";
+          return;
+        }
+        el.style.display = "flex";
+        let html = `<button class="page-btn" onclick="loadAgents(${page - 1})" ${page <= 1 ? "disabled" : ""}>&laquo; Prev</button>`;
+        const start = Math.max(1, page - 2);
+        const end = Math.min(pages, page + 2);
+        for (let i = start; i <= end; i++) {
+          html += `<button class="page-btn ${i === page ? "active" : ""}" onclick="loadAgents(${i})">${i}</button>`;
+        }
+        html += `<button class="page-btn" onclick="loadAgents(${page + 1})" ${page >= pages ? "disabled" : ""}>Next &raquo;</button>`;
+        html += `<span class="page-info">${total} total</span>`;
+        el.innerHTML = html;
+      }
+
+      function renderTagPills() {
+        const el = document.getElementById("tag-filters");
+        if (allTags.size === 0) {
+          el.innerHTML = "";
+          return;
+        }
+        const sorted = [...allTags].sort();
+        el.innerHTML = sorted
+          .map(
+            (t) =>
+              `<span class="tag-pill ${currentTag === t ? "active" : ""}" onclick="toggleTag('${t.replace(/'/g, "\\'")}')">${t}</span>`,
+          )
+          .join("");
+      }
+
+      function toggleTag(tag) {
+        currentTag = currentTag === tag ? "" : tag;
+        currentPage = 1;
+        loadAgents(1);
+      }
+
+      // Wire up search (debounced)
+      let searchTimer = null;
+      document.getElementById("search-input").addEventListener("input", (e) => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          currentSearch = e.target.value.trim();
+          currentPage = 1;
+          loadAgents(1);
+        }, 300);
+      });
+
+      // Wire up sort
+      document.getElementById("sort-select").addEventListener("change", (e) => {
+        currentSort = e.target.value;
+        currentPage = 1;
+        loadAgents(1);
+      });
 
       loadAgents();
     </script>
