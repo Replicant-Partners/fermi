@@ -1282,18 +1282,18 @@ async fn list_agents(
 
                     let mut agent_val = json!({
                         "agent_id": a.agent_name,
-                        "display_alias": a.display_alias,
+                        "display_alias": a.display_alias.as_deref().unwrap_or(""),
                         "agent_type": a.agent_type,
                         "version": a.version,
                         "tier": a.tier,
-                        "description": a.description,
+                        "description": a.description.as_deref().unwrap_or(""),
                         "author": a.author,
                         "model": a.model,
                         "tags": a.tags,
                         "sample_queries": a.sample_queries,
                         "visibility": a.visibility,
-                        "owner_id": a.owner_id,
-                        "system_prompt": a.system_prompt,
+                        "owner_id": a.owner_id.as_deref().unwrap_or(""),
+                        "system_prompt": a.system_prompt.as_deref().unwrap_or(""),
                         "capabilities": {
                             "executor": a.executor_type,
                             "model": a.model,
@@ -2770,6 +2770,14 @@ async fn list_curated_agents_handler(
                 "description": card.metadata.description,
                 "tags": card.metadata.tags,
                 "model": card.capabilities.model,
+                "sample_queries": card.metadata.sample_queries,
+                "system_prompt": card.system_prompt,
+                "capabilities": {
+                    "executor": card.capabilities.executor,
+                    "model": card.capabilities.model,
+                    "mcp_tools": card.capabilities.mcp_tools.iter().map(|t| json!({"name": t.name, "description": t.description})).collect::<Vec<_>>(),
+                    "skills": card.capabilities.skills,
+                },
             })
         })
         .collect();

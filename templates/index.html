@@ -788,11 +788,13 @@
             card.className = "specimen-card";
             const agentId = agent.agent_id || "unknown";
             const displayName =
-              agent.display_alias || agentId.replace(/_/g, " ");
+              agent.display_alias && agent.display_alias !== ""
+                ? agent.display_alias
+                : agentId.replace(/_/g, " ");
             const description =
-              agent.description ||
-              agent.metadata?.description ||
-              "A mysterious agent";
+              agent.description && agent.description !== ""
+                ? agent.description
+                : agent.metadata?.description || "A mysterious agent";
             const tier = agent.tier || "curated";
             const executions =
               agent.execution_stats?.total_executions ||
@@ -824,7 +826,7 @@
                 </div>
                 <div>
                   <div class="specimen-name">${displayName}</div>
-                  ${agent.display_alias ? `<div class="specimen-system-name">${agentId}</div>` : ""}
+                  ${agent.display_alias && agent.display_alias !== "" ? `<div class="specimen-system-name">${agentId}</div>` : ""}
                   <span class="badge">${tier}</span>
                 </div>
               </div>

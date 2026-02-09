@@ -832,7 +832,10 @@
             avatarUrl = `data:${avatarData.image.mime_type};base64,${avatarData.image.data}`;
           }
 
-          const displayName = agent.display_alias || agentId.replace(/_/g, " ");
+          const displayName =
+            agent.display_alias && agent.display_alias !== ""
+              ? agent.display_alias
+              : agentId.replace(/_/g, " ");
           const skills = agent.capabilities?.skills || [];
           const mcpTools = agent.capabilities?.mcp_tools || [];
           const model = agent.model || agent.capabilities?.model || "N/A";
@@ -880,7 +883,7 @@
               </div>
               <div class="specimen-header-info">
                 <div class="specimen-title">${displayName}</div>
-                ${agent.display_alias ? `<div style="font-size:0.8em;color:var(--gray);font-family:'SF Mono',monospace;margin-bottom:6px">${agentId}</div>` : ""}
+                ${agent.display_alias && agent.display_alias !== "" ? `<div style="font-size:0.8em;color:var(--gray);font-family:'SF Mono',monospace;margin-bottom:6px">${agentId}</div>` : ""}
                 <div class="specimen-description">${agent.description || agent.metadata?.description || "A mysterious agent"}</div>
                 <div class="badges">
                   <span class="badge">${agent.tier || "curated"}</span>
@@ -1703,8 +1706,11 @@
           if (res.ok) {
             const data = await res.json();
             resultEl.innerHTML = renderExecutionResult(data);
+          } else if (res.status === 401) {
+            resultEl.innerHTML = `<div style="color:var(--yellow);font-size:0.85rem">Sign in to execute agents — <a href="/auth/google" style="color:var(--yellow);text-decoration:underline">Google</a> or <a href="/auth/github" style="color:var(--yellow);text-decoration:underline">GitHub</a></div>`;
           } else {
-            resultEl.innerHTML = `<div style="color:var(--red);font-size:0.85rem">Error: ${await res.text()}</div>`;
+            const errText = await res.text().catch(() => "Unknown error");
+            resultEl.innerHTML = `<div style="color:var(--red);font-size:0.85rem">Error: ${errText}</div>`;
           }
         } catch (e) {
           resultEl.innerHTML = `<div style="color:var(--red);font-size:0.85rem">Network error: ${e.message}</div>`;
