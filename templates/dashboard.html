@@ -595,12 +595,8 @@
             if (!data.stripe_configured) {
               grid.innerHTML = `
                 <div style="text-align:center;padding:24px">
-                  <div style="color:var(--fg2);margin-bottom:16px;font-size:0.85em">Beta mode — Stripe not configured</div>
-                  <button onclick="devTopup()" id="dev-topup-btn"
-                    style="padding:10px 28px;background:var(--aqua);color:var(--bg0);border:none;cursor:pointer;font-size:0.9em;letter-spacing:0.03em">
-                    Grant 500 beta credits
-                  </button>
-                  <div id="dev-topup-msg" style="margin-top:8px;font-size:0.8em;color:var(--fg3)"></div>
+                  <div style="color:var(--fg2);font-size:0.85em">Beta mode — Stripe not configured</div>
+                  <div style="margin-top:8px;font-size:0.8em;color:var(--fg3)">Admin: use <strong>@faucet</strong> via Xaman Ek (Ctrl+K)</div>
                 </div>
               `;
             } else if (data.tiers && data.tiers.length > 0) {
@@ -764,32 +760,6 @@
         if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
         if (n >= 1000) return (n / 1000).toFixed(1) + "K";
         return String(n);
-      }
-
-      // Dev/beta top-up — grants 500 credits when Stripe not configured
-      async function devTopup() {
-        const btn = document.getElementById("dev-topup-btn");
-        const msg = document.getElementById("dev-topup-msg");
-        if (btn) btn.disabled = true;
-        try {
-          const res = await fetch("/api/billing/dev-topup", { method: "POST" });
-          const data = await res.json();
-          if (res.ok) {
-            msg.style.color = "var(--green)";
-            msg.textContent = `+${data.credits} credits granted. Balance: ${data.new_balance}`;
-            const balEl = document.getElementById("wallet-balance");
-            if (balEl) balEl.textContent = data.new_balance;
-          } else {
-            msg.style.color = "var(--red)";
-            msg.textContent = data || "Failed";
-          }
-        } catch (e) {
-          if (msg) {
-            msg.style.color = "var(--red)";
-            msg.textContent = "Request failed";
-          }
-        }
-        if (btn) btn.disabled = false;
       }
 
       // Buy credits — redirect to Stripe Checkout
