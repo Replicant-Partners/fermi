@@ -83,8 +83,8 @@ pub async fn list_workspaces_handler(
         let agent_previews: Vec<Value> = agent_rows
             .iter()
             .map(|r| {
-                let name: String = r.get("agent_name");
-                let alias: Option<String> = r.get("display_alias");
+                let name: String = r.try_get("agent_name").unwrap_or_default();
+                let alias: Option<String> = r.try_get("display_alias").unwrap_or(None);
                 let initial = alias
                     .as_deref()
                     .unwrap_or(&name)
@@ -243,16 +243,16 @@ pub async fn list_workspace_agents_handler(
         .iter()
         .map(|r| {
             json!({
-                "agent_id": r.get::<uuid::Uuid, _>("agent_id"),
-                "agent_name": r.get::<String, _>("agent_name"),
-                "display_alias": r.get::<Option<String>, _>("display_alias"),
-                "agent_type": r.get::<String, _>("agent_type"),
-                "model": r.get::<String, _>("model"),
-                "description": r.get::<Option<String>, _>("description"),
-                "total_executions": r.get::<i32, _>("total_executions"),
-                "relationship": r.get::<String, _>("relationship"),
-                "added_by": r.get::<String, _>("added_by"),
-                "added_at": r.get::<chrono::DateTime<chrono::Utc>, _>("added_at"),
+                "agent_id": r.try_get::<uuid::Uuid, _>("agent_id").ok(),
+                "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+                "display_alias": r.try_get::<Option<String>, _>("display_alias").unwrap_or(None),
+                "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
+                "model": r.try_get::<String, _>("model").unwrap_or_default(),
+                "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
+                "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
+                "relationship": r.try_get::<String, _>("relationship").unwrap_or_default(),
+                "added_by": r.try_get::<String, _>("added_by").unwrap_or_default(),
+                "added_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("added_at").ok(),
             })
         })
         .collect();
@@ -616,8 +616,9 @@ pub async fn post_workspace_message_handler(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
             if let Some(agent_row) = agent_in_ws {
-                let agent_name: String = agent_row.get("agent_name");
-                let agent_display: Option<String> = agent_row.get("display_alias");
+                let agent_name: String = agent_row.try_get("agent_name").unwrap_or_default();
+                let agent_display: Option<String> =
+                    agent_row.try_get("display_alias").unwrap_or(None);
                 let display = agent_display.unwrap_or_else(|| agent_name.clone());
 
                 // Clone what we need for the background task
@@ -736,9 +737,9 @@ pub async fn post_workspace_message_handler(
                             .await
                             {
                                 if let Some(snap) = snapshot {
-                                    let version: i32 = snap.get("version");
-                                    let mermaid: Option<String> = snap.get("mermaid_content");
-                                    let synopsis: Option<String> = snap.get("dream_synopsis");
+                                    let version: i32 = snap.try_get("version").unwrap_or(0);
+                                    let mermaid: Option<String> = snap.try_get("mermaid_content").unwrap_or(None);
+                                    let synopsis: Option<String> = snap.try_get("dream_synopsis").unwrap_or(None);
                                     let content = format!(
                                         "# Ontology Snapshot v{}\n\n{}\n\n{}",
                                         version,
@@ -1831,13 +1832,13 @@ pub async fn get_workspace_ontology_handler(
     let mut total_facts = 0i32;
 
     for row in &rows {
-        let agent_name: String = row.get("agent_name");
-        let display_alias: Option<String> = row.get("display_alias");
-        let version: Option<i32> = row.get("version");
-        let mermaid: Option<String> = row.get("mermaid_content");
-        let synopsis: Option<String> = row.get("dream_synopsis");
-        let entities: Option<i32> = row.get("entity_count");
-        let facts: Option<i32> = row.get("fact_count");
+        let agent_name: String = row.try_get("agent_name").unwrap_or_default();
+        let display_alias: Option<String> = row.try_get("display_alias").unwrap_or(None);
+        let version: Option<i32> = row.try_get("version").unwrap_or(None);
+        let mermaid: Option<String> = row.try_get("mermaid_content").unwrap_or(None);
+        let synopsis: Option<String> = row.try_get("dream_synopsis").unwrap_or(None);
+        let entities: Option<i32> = row.try_get("entity_count").unwrap_or(None);
+        let facts: Option<i32> = row.try_get("fact_count").unwrap_or(None);
 
         total_entities += entities.unwrap_or(0);
         total_facts += facts.unwrap_or(0);
