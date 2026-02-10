@@ -389,46 +389,74 @@
         min-width: 18px;
         text-align: center;
       }
-      .pagination {
+      /* ── Compound / Deck indicators ── */
+      .specimen-avatar-wrap {
+        position: relative;
+        flex-shrink: 0;
+      }
+      .specimen-avatar-wrap.compound .specimen-avatar {
+        border: 2px solid var(--purple);
+        box-shadow:
+          0 0 0 3px var(--bg1),
+          0 0 0 5px var(--purple);
+      }
+      .specimen-avatar-wrap.system-tier .specimen-avatar {
+        border: 2px solid var(--yellow);
+        box-shadow:
+          0 0 0 3px var(--bg1),
+          0 0 0 5px var(--yellow);
+      }
+      .tool-count-ring {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--purple);
+        color: #fff;
+        font-size: 0.65em;
+        font-weight: 600;
         display: flex;
-        justify-content: center;
         align-items: center;
-        gap: 8px;
-        margin-top: 24px;
-        padding-top: 16px;
-        border-top: 1px solid var(--bg2);
+        justify-content: center;
+        border: 2px solid var(--bg1);
+        z-index: 1;
       }
-      .page-btn {
-        background: var(--bg1);
-        border: 1px solid var(--bg3);
-        color: var(--fg3);
-        padding: 6px 14px;
-        font-size: 0.85em;
-        cursor: pointer;
-        font-family: inherit;
-        transition: all 0.2s;
+      .system-tier .tool-count-ring {
+        background: var(--yellow);
+        color: var(--bg0);
       }
-      .page-btn:hover:not(:disabled) {
-        border-color: var(--yellow);
+      .complexity-badge {
+        display: inline-block;
+        padding: 2px 7px;
+        font-size: 0.65em;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        border: 1px solid;
+        margin-left: 4px;
+        vertical-align: middle;
+      }
+      .complexity-badge.compound {
+        color: var(--purple);
+        border-color: var(--purple);
+      }
+      .complexity-badge.deck {
+        color: var(--orange);
+        border-color: var(--orange);
+      }
+      .complexity-badge.system {
         color: var(--yellow);
-      }
-      .page-btn:disabled {
-        opacity: 0.4;
-        cursor: default;
-      }
-      .page-btn.active {
         border-color: var(--yellow);
-        color: var(--yellow);
       }
-      .page-info {
-        color: var(--gray);
-        font-size: 0.8em;
+      .theme-op1 .complexity-badge {
+        border-radius: 8px;
+      }
+      .theme-op1 .tool-count-ring {
+        border-radius: 50%;
       }
       .theme-op1 .sort-select {
         border-radius: 8px;
-      }
-      .theme-op1 .page-btn {
-        border-radius: 6px;
       }
     </style>
   </head>
@@ -448,6 +476,7 @@
         <select class="sort-select" id="sort-select">
           <option value="newest">Newest</option>
           <option value="executions">Most Executions</option>
+          <option value="complexity">Most Complex</option>
           <option value="name">Name A-Z</option>
         </select>
       </div>
@@ -457,8 +486,6 @@
       <div class="specimens-grid" id="specimens-grid">
         <div class="loading">Loading...</div>
       </div>
-
-      <div class="pagination" id="pagination" style="display: none"></div>
     </div>
 
     <script src="/static/js/widgets/toast.js"></script>
@@ -482,7 +509,7 @@
       const CATEGORIES = [
         {
           id: "research",
-          label: "Research & Analysis",
+          label: "Research",
           tags: [
             "forecasting",
             "economics",
@@ -492,16 +519,19 @@
             "probability",
             "quantitative",
             "risk",
+            "research",
+            "analysis",
           ],
         },
         {
           id: "creative",
-          label: "Creative & Art",
+          label: "Creative",
           tags: [
             "creative",
             "art",
             "patron",
-            "monetization",
+            "image",
+            "style",
             "artist",
             "ar",
             "augmented-reality",
@@ -509,13 +539,30 @@
           ],
         },
         {
-          id: "games",
-          label: "Games & Engagement",
-          tags: ["puzzle", "daily", "engagement", "demo", "wordle"],
+          id: "social",
+          label: "Social Media",
+          tags: [
+            "social-media",
+            "instagram",
+            "bluesky",
+            "publishing",
+            "marketing",
+            "cross-posting",
+          ],
+        },
+        {
+          id: "coherence",
+          label: "Coherence",
+          tags: ["coherence", "coordination", "thagard", "discourse-analysis"],
+        },
+        {
+          id: "billing",
+          label: "Billing",
+          tags: ["billing", "stripe", "payments", "checkout", "payout"],
         },
         {
           id: "meta",
-          label: "Meta & Platform",
+          label: "Meta",
           tags: [
             "meta",
             "performance",
@@ -523,14 +570,19 @@
             "agent-improvement",
             "dreams",
             "consolidation",
-            "tutorial",
             "companion",
-            "getting-started",
+            "navigation",
+            "platform-guide",
           ],
         },
         {
+          id: "games",
+          label: "Games",
+          tags: ["puzzle", "daily", "engagement", "demo", "wordle"],
+        },
+        {
           id: "osint",
-          label: "OSINT & Investigation",
+          label: "OSINT",
           tags: [
             "osint",
             "investigation",
@@ -540,189 +592,234 @@
           ],
         },
         {
-          id: "coherence",
-          label: "Coherence",
-          tags: ["coherence", "thagard", "discourse-analysis"],
+          id: "compound",
+          label: "Compound",
+          tags: ["compound-agent"],
+          special: true,
         },
       ];
 
-      // State
-      let currentPage = 1;
-      let currentSearch = "";
-      let currentTag = "";
+      // State — world view: load everything once, filter client-side
+      let allAgents = [];
       let currentCategory = "";
       let currentSort = "newest";
-      let categoryCounts = {};
 
-      async function loadAgents(page = 1) {
-        currentPage = page;
-        const params = new URLSearchParams();
-        params.set("page", page);
-        params.set("limit", "20");
-        if (currentSearch) params.set("search", currentSearch);
-        if (currentTag) params.set("tag", currentTag);
-        if (currentCategory && !currentTag) {
-          const cat = CATEGORIES.find((c) => c.id === currentCategory);
-          if (cat) params.set("tags", cat.tags.join(","));
-        }
-        if (currentSort) params.set("sort", currentSort);
-
+      // ── Load all agents once ──
+      async function loadWorld() {
         try {
-          const response = await fetch(`/api/agents?${params}`);
+          const response = await fetch(`/api/agents?limit=200`);
           const data = await response.json();
+          allAgents = data.agents || [];
 
           const totalEl = document.getElementById("total-agents");
-          if (totalEl) totalEl.textContent = data.total;
+          if (totalEl) totalEl.textContent = allAgents.length;
 
-          const grid = document.getElementById("specimens-grid");
-          grid.innerHTML = "";
-
-          if (data.agents.length === 0) {
-            grid.innerHTML =
-              '<div class="loading">No specimens match your search</div>';
-            renderPagination(0, 1, 1);
-            return;
-          }
-
-          // Count categories for filter badges
-          categoryCounts = {};
-          data.agents.forEach((agent) => {
-            const tags = agent.tags || [];
-            CATEGORIES.forEach((cat) => {
-              if (tags.some((t) => cat.tags.includes(t))) {
-                categoryCounts[cat.id] = (categoryCounts[cat.id] || 0) + 1;
-              }
-            });
-          });
           renderCategoryBadges();
-
-          data.agents.forEach((agent) => {
-            const card = document.createElement("div");
-            card.className = "specimen-card";
-            const agentId = agent.agent_id || "unknown";
-            const displayName =
-              agent.display_alias && agent.display_alias !== ""
-                ? agent.display_alias
-                : agentId.replace(/_/g, " ");
-            const description =
-              agent.description && agent.description !== ""
-                ? agent.description
-                : agent.metadata?.description || "A mysterious agent";
-            const tier = agent.tier || "curated";
-            const executions =
-              agent.execution_stats?.total_executions ||
-              agent.usage?.total_executions ||
-              0;
-            const model = (
-              agent.model ||
-              agent.capabilities?.model ||
-              "unknown"
-            )
-              .replace("claude-3-", "")
-              .replace("-20240307", "");
-            const tags = agent.tags || agent.metadata?.tags || [];
-            const initial = displayName.charAt(0).toUpperCase();
-
-            const hues = [200, 140, 30, 340, 270, 50, 170, 10];
-            const hue = hues[agentId.charCodeAt(0) % hues.length];
-
-            const tagHtml = tags
-              .slice(0, 4)
-              .map((t) => `<span class="specimen-tag">${t}</span>`)
-              .join("");
-
-            const wsCount = agent.workspace_count || 0;
-            const compositionLine =
-              wsCount > 0
-                ? `<div style="font-size:0.72em;color:var(--purple);margin:4px 0 2px;letter-spacing:0.03em">in ${wsCount} composition${wsCount !== 1 ? "s" : ""}</div>`
-                : "";
-
-            card.innerHTML = `
-              <div class="specimen-header">
-                <div class="specimen-avatar" id="avatar-${CSS.escape(agentId)}"
-                     style="background: hsl(${hue}, 45%, 35%); color: #fff; font-size: 1.4em; font-weight: 300;">
-                  ${initial}
-                </div>
-                <div>
-                  <div class="specimen-name">${displayName}</div>
-                  ${agent.display_alias && agent.display_alias !== "" ? `<div class="specimen-system-name">${agentId}</div>` : ""}
-                  <span class="badge">${tier}</span>
-                  ${agent.fork_count > 0 ? `<span class="badge" style="background:var(--blue);color:#fff;margin-left:4px" title="${agent.fork_count} forks">&#9906; ${agent.fork_count}</span>` : ""}
-                  ${agent.forked_from ? `<span class="badge" style="background:var(--purple);color:#fff;margin-left:4px" title="Forked agent">fork</span>` : ""}
-                </div>
-              </div>
-              <div class="specimen-body">
-                <div class="specimen-description">${description}</div>
-                ${tagHtml ? `<div class="specimen-tags">${tagHtml}</div>` : ""}
-                ${compositionLine}
-                <div class="specimen-footer">
-                  <div class="specimen-stat">
-                    <span class="meta-label">Runs</span>
-                    <span class="specimen-stat-value">${executions}</span>
-                  </div>
-                  <div class="specimen-stat">
-                    <span class="meta-label">Model</span>
-                    <span class="specimen-stat-value">${model}</span>
-                  </div>
-                  <div class="specimen-stat">
-                    <span class="meta-label">Type</span>
-                    <span class="specimen-stat-value">${agent.agent_type || "—"}</span>
-                  </div>
-                </div>
-              </div>
-            `;
-
-            card.addEventListener("click", () => {
-              window.location.href = `/agent/${agentId}`;
-            });
-
-            grid.appendChild(card);
-
-            generateAvatar(agentId).then((avatarUrl) => {
-              const avatarDiv = document.getElementById(
-                `avatar-${CSS.escape(agentId)}`,
-              );
-              if (avatarDiv && avatarUrl) {
-                avatarDiv.innerHTML = `<img src="${avatarUrl}" alt="${agentId}">`;
-                avatarDiv.style.background = "";
-                avatarDiv.classList.remove("loading");
-              }
-            });
-          });
-
-          renderPagination(data.total, data.page, data.pages);
+          renderWorld();
         } catch (error) {
           console.error("Error loading agents:", error);
-          const grid = document.getElementById("specimens-grid");
-          grid.innerHTML =
+          document.getElementById("specimens-grid").innerHTML =
             '<div class="error">Error loading specimens. Please try again later.</div>';
         }
       }
 
-      function renderPagination(total, page, pages) {
-        const el = document.getElementById("pagination");
-        if (pages <= 1) {
-          el.style.display = "none";
-          return;
-        }
-        el.style.display = "flex";
-        let html = `<button class="page-btn" onclick="loadAgents(${page - 1})" ${page <= 1 ? "disabled" : ""}>&laquo; Prev</button>`;
-        const start = Math.max(1, page - 2);
-        const end = Math.min(pages, page + 2);
-        for (let i = start; i <= end; i++) {
-          html += `<button class="page-btn ${i === page ? "active" : ""}" onclick="loadAgents(${i})">${i}</button>`;
-        }
-        html += `<button class="page-btn" onclick="loadAgents(${page + 1})" ${page >= pages ? "disabled" : ""}>Next &raquo;</button>`;
-        html += `<span class="page-info">${total} total</span>`;
-        el.innerHTML = html;
+      // ── Classify agent complexity ──
+      function classifyAgent(agent) {
+        const tags = agent.tags || agent.metadata?.tags || [];
+        const tools = agent.capabilities?.mcp_tools || [];
+        const tier = (agent.tier || "").toLowerCase();
+        const isCompound = tags.includes("compound-agent");
+        const isDeck = tools.length >= 5 && !isCompound;
+        const isSystem = tier === "system";
+        const toolCount = tools.length;
+        return { isCompound, isDeck, isSystem, toolCount };
       }
 
+      // ── Render the grid from allAgents ──
+      function renderWorld() {
+        let filtered = [...allAgents];
+
+        // Category filter (client-side)
+        if (currentCategory) {
+          const cat = CATEGORIES.find((c) => c.id === currentCategory);
+          if (cat) {
+            filtered = filtered.filter((a) => {
+              const tags = a.tags || a.metadata?.tags || [];
+              return tags.some((t) => cat.tags.includes(t));
+            });
+          }
+        }
+
+        // Sort
+        switch (currentSort) {
+          case "executions":
+            filtered.sort(
+              (a, b) =>
+                (b.execution_stats?.total_executions || 0) -
+                (a.execution_stats?.total_executions || 0),
+            );
+            break;
+          case "name":
+            filtered.sort((a, b) => {
+              const na = a.display_alias || a.agent_id || "";
+              const nb = b.display_alias || b.agent_id || "";
+              return na.toLowerCase().localeCompare(nb.toLowerCase());
+            });
+            break;
+          case "complexity":
+            filtered.sort((a, b) => {
+              const ca = (a.capabilities?.mcp_tools || []).length;
+              const cb = (b.capabilities?.mcp_tools || []).length;
+              return cb - ca;
+            });
+            break;
+          default: // newest
+            break;
+        }
+
+        const grid = document.getElementById("specimens-grid");
+        grid.innerHTML = "";
+
+        if (filtered.length === 0) {
+          grid.innerHTML =
+            '<div class="loading">No specimens match this filter</div>';
+          return;
+        }
+
+        filtered.forEach((agent) => {
+          const card = document.createElement("div");
+          card.className = "specimen-card";
+          const agentId = agent.agent_id || "unknown";
+          const displayName =
+            agent.display_alias && agent.display_alias !== ""
+              ? agent.display_alias
+              : agentId.replace(/_/g, " ");
+          const description =
+            agent.description && agent.description !== ""
+              ? agent.description
+              : agent.metadata?.description || "A mysterious agent";
+          const tier = agent.tier || "curated";
+          const executions =
+            agent.execution_stats?.total_executions ||
+            agent.usage?.total_executions ||
+            0;
+          const model = (agent.model || agent.capabilities?.model || "unknown")
+            .replace("claude-3-", "")
+            .replace("-20240307", "");
+          const tags = agent.tags || agent.metadata?.tags || [];
+          const initial = displayName.charAt(0).toUpperCase();
+
+          const hues = [200, 140, 30, 340, 270, 50, 170, 10];
+          const hue = hues[agentId.charCodeAt(0) % hues.length];
+
+          const tagHtml = tags
+            .slice(0, 4)
+            .map((t) => `<span class="specimen-tag">${t}</span>`)
+            .join("");
+
+          const wsCount = agent.workspace_count || 0;
+          const compositionLine =
+            wsCount > 0
+              ? `<div style="font-size:0.72em;color:var(--purple);margin:4px 0 2px;letter-spacing:0.03em">in ${wsCount} composition${wsCount !== 1 ? "s" : ""}</div>`
+              : "";
+
+          // Complexity classification
+          const cx = classifyAgent(agent);
+          const wrapClass = cx.isCompound
+            ? "compound"
+            : cx.isSystem
+              ? "system-tier"
+              : "";
+          const toolRing =
+            cx.toolCount > 0
+              ? `<div class="tool-count-ring" title="${cx.toolCount} tools">${cx.toolCount}</div>`
+              : "";
+
+          let complexityBadge = "";
+          if (cx.isCompound)
+            complexityBadge =
+              '<span class="complexity-badge compound">compound</span>';
+          else if (cx.isDeck)
+            complexityBadge = '<span class="complexity-badge deck">deck</span>';
+          if (cx.isSystem)
+            complexityBadge +=
+              '<span class="complexity-badge system">system</span>';
+
+          card.innerHTML = `
+            <div class="specimen-header">
+              <div class="specimen-avatar-wrap ${wrapClass}">
+                <div class="specimen-avatar" id="avatar-${CSS.escape(agentId)}"
+                     style="background: hsl(${hue}, 45%, 35%); color: #fff; font-size: 1.4em; font-weight: 300;">
+                  ${initial}
+                </div>
+                ${toolRing}
+              </div>
+              <div>
+                <div class="specimen-name">${displayName}</div>
+                ${agent.display_alias && agent.display_alias !== "" ? `<div class="specimen-system-name">${agentId}</div>` : ""}
+                <span class="badge">${tier}</span>
+                ${complexityBadge}
+                ${agent.fork_count > 0 ? `<span class="badge" style="background:var(--blue);color:#fff;margin-left:4px" title="${agent.fork_count} forks">&#9906; ${agent.fork_count}</span>` : ""}
+                ${agent.forked_from ? `<span class="badge" style="background:var(--purple);color:#fff;margin-left:4px" title="Forked agent">fork</span>` : ""}
+              </div>
+            </div>
+            <div class="specimen-body">
+              <div class="specimen-description">${description}</div>
+              ${tagHtml ? `<div class="specimen-tags">${tagHtml}</div>` : ""}
+              ${compositionLine}
+              <div class="specimen-footer">
+                <div class="specimen-stat">
+                  <span class="meta-label">Runs</span>
+                  <span class="specimen-stat-value">${executions}</span>
+                </div>
+                <div class="specimen-stat">
+                  <span class="meta-label">Model</span>
+                  <span class="specimen-stat-value">${model}</span>
+                </div>
+                <div class="specimen-stat">
+                  <span class="meta-label">Tools</span>
+                  <span class="specimen-stat-value">${cx.toolCount}</span>
+                </div>
+              </div>
+            </div>
+          `;
+
+          card.addEventListener("click", () => {
+            window.location.href = `/agent/${agentId}`;
+          });
+
+          grid.appendChild(card);
+
+          generateAvatar(agentId).then((avatarUrl) => {
+            const avatarDiv = document.getElementById(
+              `avatar-${CSS.escape(agentId)}`,
+            );
+            if (avatarDiv && avatarUrl) {
+              avatarDiv.innerHTML = `<img src="${avatarUrl}" alt="${agentId}">`;
+              avatarDiv.style.background = "";
+              avatarDiv.classList.remove("loading");
+            }
+          });
+        });
+      }
+
+      // ── Category badges with counts from full dataset ──
       function renderCategoryBadges() {
         const el = document.getElementById("category-badges");
+        const counts = {};
+        CATEGORIES.forEach((cat) => {
+          counts[cat.id] = allAgents.filter((a) => {
+            const tags = a.tags || a.metadata?.tags || [];
+            return tags.some((t) => cat.tags.includes(t));
+          }).length;
+        });
+
         el.innerHTML = CATEGORIES.map((cat) => {
-          const count = categoryCounts[cat.id] || 0;
+          const count = counts[cat.id] || 0;
+          if (count === 0 && !cat.special) return "";
           const active = currentCategory === cat.id ? "active" : "";
-          return `<div class="category-badge ${active}" onclick="toggleCategory('${cat.id}')">
+          const special = cat.special ? ' style="border-style:dashed"' : "";
+          return `<div class="category-badge ${active}"${special} onclick="toggleCategory('${cat.id}')">
             <span>${cat.label}</span>
             <span class="cat-count">${count}</span>
           </div>`;
@@ -730,24 +827,18 @@
       }
 
       function toggleCategory(catId) {
-        if (currentCategory === catId) {
-          currentCategory = "";
-        } else {
-          currentCategory = catId;
-        }
-        currentTag = "";
-        currentPage = 1;
-        loadAgents(1);
+        currentCategory = currentCategory === catId ? "" : catId;
+        renderCategoryBadges();
+        renderWorld();
       }
 
       // Wire up sort
       document.getElementById("sort-select").addEventListener("change", (e) => {
         currentSort = e.target.value;
-        currentPage = 1;
-        loadAgents(1);
+        renderWorld();
       });
 
-      loadAgents();
+      loadWorld();
     </script>
 
     <script src="/static/js/widgets/xaman-ek.js"></script>
