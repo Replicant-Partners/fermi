@@ -1451,6 +1451,7 @@ async fn main() {
     // Public routes (no auth required)
     let public_routes = Router::new()
         .route("/", get(landing))
+        .route("/aspiration", get(aspiration))
         .route("/catalogue", get(catalogue))
         .route("/agent/:agent_id", get(agent_detail))
         .route("/agent/:agent_id/ontology", get(ontology_view))
@@ -1812,6 +1813,20 @@ async fn landing() -> Html<String> {
             eprintln!("Error loading templates/landing.html: {}", e);
             format!(
                 "<h1>Agent Bestiary</h1><p>Error loading landing template: {}</p>",
+                e
+            )
+        }
+    };
+    Html(html)
+}
+
+async fn aspiration() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/aspiration.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/aspiration.html: {}", e);
+            format!(
+                "<h1>Agent Bestiary</h1><p>Error loading aspiration template: {}</p>",
                 e
             )
         }
