@@ -117,7 +117,7 @@ const Nav = {
           const time = n.created_at
             ? new Date(n.created_at).toLocaleDateString()
             : "";
-          const unread = !n.read_at ? "font-weight:500;" : "opacity:0.7;";
+          const unread = !n.read ? "font-weight:500;" : "opacity:0.7;";
           return `<div style="padding:8px 12px;border-bottom:1px solid var(--bg2);font-size:0.84em;${unread}">
           <div style="color:var(--fg1)">${Nav._esc(n.message || n.title || "")}</div>
           <div style="color:var(--fg3);font-size:0.8em;margin-top:2px">${time}</div>
@@ -132,10 +132,14 @@ const Nav = {
 
   async _markAllRead() {
     try {
-      await fetch("/api/notifications/read-all", { method: "POST" });
+      await fetch("/api/notifications/read-all", { method: "PUT" });
       const badge = document.getElementById("nav-bell-badge");
       if (badge) badge.style.display = "none";
-      this._loadNotifications();
+      // Clear the list — they're all read now
+      const list = document.getElementById("nav-bell-list");
+      if (list)
+        list.innerHTML =
+          '<div style="padding:12px;color:var(--fg3);font-size:0.85em">No notifications</div>';
     } catch {
       /* ignore */
     }
