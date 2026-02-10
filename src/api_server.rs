@@ -1018,6 +1018,12 @@ async fn main() {
             "/api/workspaces/:workspace_id/files-raw/*path",
             get(handlers::workspace::read_workspace_file_raw_handler),
         )
+        // File upload (multipart, 6MB limit to allow multipart overhead)
+        .route(
+            "/api/workspaces/:workspace_id/upload",
+            post(handlers::workspace::upload_workspace_file_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(6 * 1024 * 1024)),
+        )
         .route(
             "/api/workspaces/:workspace_id/git/log",
             get(handlers::workspace::workspace_git_log_handler),

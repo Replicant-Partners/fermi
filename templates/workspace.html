@@ -199,6 +199,7 @@
         flex-direction: column;
         min-width: 0;
         overflow: hidden;
+        position: relative;
       }
       .panel-files.active {
         display: flex;
@@ -672,6 +673,54 @@
         text-align: right;
       }
 
+      /* ─── Upload ─── */
+      .upload-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--bg2);
+        background: var(--bg0-soft);
+        font-size: 0.78rem;
+      }
+      .upload-toolbar .btn {
+        font-size: 0.72rem;
+        padding: 3px 10px;
+      }
+      .upload-toolbar label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--fg3);
+        cursor: pointer;
+        font-size: 0.72rem;
+      }
+      .upload-status {
+        flex: 1;
+        text-align: right;
+        color: var(--fg3);
+        font-size: 0.7rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .drop-overlay {
+        display: none;
+        position: absolute;
+        inset: 0;
+        background: rgba(250, 189, 47, 0.08);
+        border: 2px dashed var(--yellow);
+        z-index: 10;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+        color: var(--yellow);
+        pointer-events: none;
+      }
+      .panel-files.drag-over .drop-overlay {
+        display: flex;
+      }
+
       /* ─── Modal ─── */
       .modal-overlay {
         display: none;
@@ -901,6 +950,22 @@
 
         <!-- Files panel -->
         <div class="panel-files" id="panel-files">
+          <div class="upload-toolbar">
+            <button
+              class="btn btn-primary"
+              id="upload-btn"
+              onclick="document.getElementById('upload-input').click()"
+            >
+              Upload Files
+            </button>
+            <input type="file" id="upload-input" multiple hidden />
+            <label
+              ><input type="checkbox" id="upload-context-cb" /> Add to
+              context/</label
+            >
+            <span class="upload-status" id="upload-status"></span>
+          </div>
+          <div class="drop-overlay" id="drop-overlay">Drop files to upload</div>
           <div class="files-layout">
             <div class="files-tree" id="files-tree">
               <div style="color: var(--fg3); font-size: 0.75rem; padding: 12px">
@@ -1094,6 +1159,10 @@
           <div class="stat-row-small">
             <span class="stat-key">File write</span
             ><span class="stat-val">1 cr</span>
+          </div>
+          <div class="stat-row-small">
+            <span class="stat-key">File upload</span
+            ><span class="stat-val">1cr + 1cr/MB</span>
           </div>
         </div>
 
@@ -2584,6 +2653,121 @@
         const d = document.createElement("div");
         d.textContent = str;
         return d.innerHTML;
+      }
+
+      // ─── File Upload ───
+      const uploadInput = document.getElementById("upload-input");
+      const uploadStatus = document.getElementById("upload-status");
+      const panelFiles = document.getElementById("panel-files");
+
+      uploadInput.addEventListener("change", (e) => {
+        if (e.target.files.length > 0) uploadFiles(e.target.files);
+      });
+
+      // Drag-and-drop
+      panelFiles.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        panelFiles.classList.add("drag-over");
+      });
+      panelFiles.addEventListener("dragleave", (e) => {
+        if (!panelFiles.contains(e.relatedTarget))
+          panelFiles.classList.remove("drag-over");
+      });
+      panelFiles.addEventListener("drop", (e) => {
+        e.preventDefault();
+        panelFiles.classList.remove("drag-over");
+        if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
+      });
+
+      async function uploadFiles(fileList) {
+        const MAX = 5 * 1024 * 1024;
+        const toContext = document.getElementById("upload-context-cb").checked;
+        const fieldName = toContext ? "context" : "file";
+        const formData = new FormData();
+        let count = 0;
+
+        for (const f of fileList) {
+          if (f.size > MAX) {
+            uploadStatus.textContent = `${f.name} exceeds 5 MB limit`;
+            uploadStatus.style.color = "var(--red)";
+            return;
+          }
+          if (f.size === 0) {
+            uploadStatus.textContent = `${f.name} is empty`;
+            uploadStatus.style.color = "var(--red)";
+            return;
+          }
+          formData.append(fieldName, f, f.name);
+          count++;
+        }
+
+        uploadStatus.style.color = "var(--fg3)";
+        uploadStatus.textContent = `Uploading ${count} file${count > 1 ? "s" : ""}...`;
+        document.getElementById("upload-btn").disabled = true;
+
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/upload`, {
+            method: "POST",
+            body: formData,
+          });
+
+          if (res.status === 402) {
+            uploadStatus.textContent = "Insufficient credits";
+            uploadStatus.style.color = "var(--red)";
+            return;
+          }
+          if (res.status === 413) {
+            uploadStatus.textContent = "File too large (max 5 MB)";
+            uploadStatus.style.color = "var(--red)";
+            return;
+          }
+          if (!res.ok) {
+            const text = await res.text();
+            uploadStatus.textContent = text || "Upload failed";
+            uploadStatus.style.color = "var(--red)";
+            return;
+          }
+
+          const data = await res.json();
+          const n = data.uploaded.length;
+          uploadStatus.style.color = "var(--green)";
+          uploadStatus.textContent = `${n} file${n > 1 ? "s" : ""} uploaded (${data.total_fee} cr)`;
+
+          // Refresh file tree + git log + budget
+          filesLoaded = false;
+          loadFiles();
+          // Refresh budget display
+          try {
+            const bRes = await fetch(`/api/workspaces/${wsId}`);
+            if (bRes.ok) {
+              const ws = await bRes.json();
+              const remaining = ws.workspace_remaining || 0;
+              const total = ws.workspace_budget || 0;
+              const spent = ws.workspace_spent || 0;
+              document.getElementById("budget-text").textContent = remaining;
+              document.getElementById("shelf-remaining").textContent =
+                remaining;
+              document.getElementById("shelf-spent").textContent = spent;
+              document.getElementById("shelf-total").textContent = total;
+              const pct =
+                total > 0 ? Math.min(100, (remaining / total) * 100) : 0;
+              document.getElementById("budget-bar-fill").style.width =
+                pct + "%";
+            }
+          } catch {}
+
+          // Clear status after 4 seconds
+          setTimeout(() => {
+            uploadStatus.textContent = "";
+            uploadStatus.style.color = "var(--fg3)";
+          }, 4000);
+        } catch (err) {
+          uploadStatus.textContent = "Upload error: " + err.message;
+          uploadStatus.style.color = "var(--red)";
+        } finally {
+          document.getElementById("upload-btn").disabled = false;
+          uploadInput.value = ""; // reset for re-selecting same file
+        }
       }
 
       // ─── History (coherence + git) ───

@@ -25,6 +25,7 @@ pub struct GasFees {
     pub fork_base: i32,
     pub publish_fee: i32,
     pub eval_run: i32,
+    pub file_upload_per_mb: i32,
     pub marketplace_listing_fee: i32,
     pub marketplace_match_base: i32,
     pub marketplace_platform_pct: f64,
@@ -52,6 +53,7 @@ impl GasFees {
             fork_base: env_or("GAS_FORK_BASE", 2),
             publish_fee: env_or("GAS_PUBLISH_FEE", 1),
             eval_run: env_or("GAS_EVAL_RUN", 2),
+            file_upload_per_mb: env_or("GAS_FILE_UPLOAD_PER_MB", 1),
             marketplace_listing_fee: env_or("GAS_MARKETPLACE_LISTING", 3),
             marketplace_match_base: env_or("GAS_MARKETPLACE_MATCH", 1),
             marketplace_platform_pct: std::env::var("GAS_MARKETPLACE_PLATFORM_PCT")
@@ -63,6 +65,12 @@ impl GasFees {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.025),
         }
+    }
+
+    /// Calculate file upload fee: base file_write + per-MB surcharge (ceil, min 1 MB)
+    pub fn upload_fee(&self, size_bytes: usize) -> i32 {
+        let mb_ceil = ((size_bytes as f64) / (1024.0 * 1024.0)).ceil() as i32;
+        self.file_write + mb_ceil.max(1) * self.file_upload_per_mb
     }
 
     /// Calculate execution fee: 1 credit per 1000 tokens (min execution_min) + gas surcharge
@@ -88,6 +96,7 @@ impl Default for GasFees {
             fork_base: 2,
             publish_fee: 1,
             eval_run: 2,
+            file_upload_per_mb: 1,
             marketplace_listing_fee: 3,
             marketplace_match_base: 1,
             marketplace_platform_pct: 0.15, // 15% platform cut on match payouts

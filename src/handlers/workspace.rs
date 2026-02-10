@@ -2142,6 +2142,155 @@ pub async fn workspace_git_diff_handler(
     })))
 }
 
+// ─── File Upload (multipart) ───────────────────────────────────────
+
+/// Blocked file extensions (security)
+const BLOCKED_EXTENSIONS: &[&str] = &[".exe", ".sh", ".bat", ".dll", ".so", ".cmd", ".ps1"];
+
+/// Max file size: 5 MB
+const MAX_UPLOAD_SIZE: usize = 5 * 1024 * 1024;
+
+pub async fn upload_workspace_file_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let slug = get_workspace_slug(&state.db, ws_uuid).await?;
+
+    let mut uploaded = Vec::new();
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let field_name = field.name().unwrap_or("file").to_string();
+        let file_name = match field.file_name() {
+            Some(name) => name.to_string(),
+            None => continue, // skip non-file fields
+        };
+
+        // Read bytes
+        let bytes = field.bytes().await.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read file data: {}", e),
+            )
+        })?;
+
+        // Validate: not empty
+        if bytes.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("File '{}' is empty", file_name),
+            ));
+        }
+
+        // Validate: size limit
+        if bytes.len() > MAX_UPLOAD_SIZE {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!(
+                    "File '{}' is {} MB, max is 5 MB",
+                    file_name,
+                    bytes.len() / (1024 * 1024)
+                ),
+            ));
+        }
+
+        // Validate: blocked extensions
+        let lower_name = file_name.to_lowercase();
+        for ext in BLOCKED_EXTENSIONS {
+            if lower_name.ends_with(ext) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("File type '{}' is not allowed", ext),
+                ));
+            }
+        }
+
+        // Sanitize filename — strip path traversal
+        let safe_name = file_name
+            .replace("..", "")
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
+        let safe_name = safe_name
+            .rsplit('/')
+            .next()
+            .unwrap_or(&safe_name)
+            .to_string();
+
+        if safe_name.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "Invalid file name".to_string()));
+        }
+
+        // Determine target path based on field name
+        let target_path = if field_name == "context" {
+            format!("context/{}", safe_name)
+        } else {
+            format!("uploads/{}", safe_name)
+        };
+
+        // Calculate fee
+        let fee = state.gas_fees.upload_fee(bytes.len());
+
+        // Charge gas BEFORE writing (fail-fast on insufficient credits)
+        charge_workspace_gas(
+            &state.db,
+            ws_uuid,
+            &workspace_id,
+            fee,
+            "file_write",
+            &format!("Upload file: {} ({}B)", safe_name, bytes.len()),
+            None,
+        )
+        .await?;
+
+        // Write to git repo
+        let commit_msg = format!("{} uploaded {}", principal.user_id(), target_path);
+        let commit = state
+            .workspace_git
+            .commit_file_bytes(&slug, &target_path, &bytes, &commit_msg)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        // Update git tracking
+        let _ = sqlx::query(
+            "UPDATE teams SET git_latest_commit = $1, git_commit_count = git_commit_count + 1 WHERE id = $2",
+        )
+        .bind(&commit.sha)
+        .bind(ws_uuid)
+        .execute(&state.db)
+        .await;
+
+        uploaded.push(json!({
+            "path": target_path,
+            "size": bytes.len(),
+            "fee": fee,
+            "commit_sha": commit.sha,
+        }));
+    }
+
+    if uploaded.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No files were uploaded".to_string(),
+        ));
+    }
+
+    let total_fee: i32 = uploaded
+        .iter()
+        .filter_map(|u| u["fee"].as_i64())
+        .map(|f| f as i32)
+        .sum();
+
+    Ok(Json(json!({
+        "uploaded": uploaded,
+        "total_fee": total_fee,
+    })))
+}
+
 // ---------------------------------------------------------------------------
 // Agent creation wizard helpers
 // ---------------------------------------------------------------------------
