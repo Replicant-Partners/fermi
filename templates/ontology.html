@@ -269,6 +269,7 @@
       }
     </style>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   </head>
   <body>
     <div class="container">
@@ -338,12 +339,62 @@
             /_/g,
             " ",
           );
+          document.getElementById("commit-count").textContent =
+            ontology.evolution_commits || 0;
+
+          // DB snapshots have mermaid_content — render with mermaid.js
+          if (ontology.mermaid_content) {
+            document.getElementById("entity-count").textContent =
+              ontology.stats?.entity_count || 0;
+            document.getElementById("relationship-count").textContent =
+              ontology.stats?.fact_count || 0;
+
+            // Populate sidebar with domain sections from mermaid comments
+            const entityList = document.getElementById("entity-list");
+            const domains =
+              ontology.mermaid_content.match(/%% (.+DOMAIN.*)/g) || [];
+            const tables =
+              ontology.mermaid_content.match(/^\s{4}(\w+)\s*\{/gm) || [];
+            entityList.innerHTML = tables
+              .map((t) => {
+                const name = t.trim().replace("{", "").trim();
+                return `<div class="entity-item"><div>${name}</div><div class="entity-type">table</div></div>`;
+              })
+              .join("");
+
+            // Render mermaid ER diagram
+            const canvas = document.getElementById("graph-canvas");
+            canvas.innerHTML = "";
+            const pre = document.createElement("pre");
+            pre.className = "mermaid";
+            pre.textContent = ontology.mermaid_content;
+            canvas.appendChild(pre);
+            mermaid.initialize({
+              startOnLoad: false,
+              theme: "dark",
+              themeVariables: {
+                primaryColor: "#3c3836",
+                primaryTextColor: "#ebdbb2",
+                primaryBorderColor: "#d79921",
+                lineColor: "#a89984",
+                secondaryColor: "#504945",
+                tertiaryColor: "#665c54",
+                edgeLabelBackground: "#282828",
+                fontSize: "13px",
+              },
+              er: { useMaxWidth: false, layoutDirection: "TB" },
+            });
+            await mermaid.run({ nodes: [pre] });
+            // Make scrollable
+            canvas.style.overflow = "auto";
+            return;
+          }
+
+          // Fallback: sample JSON with entities/relationships — render D3
           document.getElementById("entity-count").textContent =
             ontology.entities?.length || 0;
           document.getElementById("relationship-count").textContent =
             ontology.relationships?.length || 0;
-          document.getElementById("commit-count").textContent =
-            ontology.evolution_commits || 0;
 
           // Populate entity list
           const entityList = document.getElementById("entity-list");

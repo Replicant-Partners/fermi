@@ -377,6 +377,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/031_waitlist_status.sql",
         "migrations/032_fix_tx_type_constraint.sql",
         "migrations/033_backfill_team_owners.sql",
+        "migrations/034_xaman_ek_system_ontology.sql",
     ];
 
     for file in &migration_files {
