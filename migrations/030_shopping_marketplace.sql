@@ -1,8 +1,6 @@
 -- Migration 030: Shopping profiles + Embedding Marketplace
 -- Three tables: shopping_profiles, marketplace_listings, marketplace_transactions
 
-BEGIN;
-
 -- Shopping preference profiles (consumer side)
 CREATE TABLE IF NOT EXISTS public.shopping_profiles (
     profile_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -86,5 +84,3 @@ ALTER TABLE credit_ledger ADD CONSTRAINT credit_ledger_tx_type_check
         'marketplace_match_purchase',
         'marketplace_match_payout'
     ));
-
-COMMIT;

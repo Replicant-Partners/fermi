@@ -36,12 +36,13 @@ pub struct AgentDependencies {
     pub optional: Vec<String>,
 }
 
-/// Agent tier (curated vs community)
+/// Agent tier (curated, community, or system)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentTier {
     Curated,
     Community,
+    System,
 }
 
 impl std::fmt::Display for AgentTier {
@@ -49,6 +50,7 @@ impl std::fmt::Display for AgentTier {
         match self {
             AgentTier::Curated => write!(f, "curated"),
             AgentTier::Community => write!(f, "community"),
+            AgentTier::System => write!(f, "system"),
         }
     }
 }
@@ -84,10 +86,16 @@ fn default_provider() -> String {
 /// Agent performance metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentPerformance {
+    #[serde(default)]
     pub forecasts_contributed: u32,
+    #[serde(default)]
     pub avg_brier_impact: f64,
+    #[serde(default)]
     pub avg_confidence: f64,
+    #[serde(default)]
     pub accuracy_rate: f64,
+    #[serde(default)]
+    pub total_queries: u32,
 }
 
 /// Agent usage and cost tracking
@@ -154,6 +162,7 @@ impl AgentCard {
                 avg_brier_impact: 0.0,
                 avg_confidence: 0.0,
                 accuracy_rate: 0.0,
+                total_queries: 0,
             },
             usage: AgentUsage {
                 total_executions: 0,

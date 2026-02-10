@@ -1243,6 +1243,7 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             avg_brier_impact: 0.0,
             avg_confidence: 0.0,
             accuracy_rate: 0.0,
+            total_queries: 0,
         },
         usage: AgentUsage {
             total_executions: agent.total_executions as u32,
