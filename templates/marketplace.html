@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Embedding Marketplace - Agent Bestiary</title>
+    <title>Similarity Lab - Agent Bestiary</title>
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
     <link rel="stylesheet" href="/static/css/components.css" />
@@ -352,7 +352,9 @@
         vertical-align: middle;
       }
       @keyframes spin {
-        to { transform: rotate(360deg); }
+        to {
+          transform: rotate(360deg);
+        }
       }
     </style>
   </head>
@@ -361,7 +363,7 @@
 
     <div class="container">
       <div class="page-header">
-        <h1>Embedding Marketplace</h1>
+        <h1>Similarity Lab</h1>
         <p>
           Run similarity queries against consumer shopping profiles. You pay
           credits per match — consumers earn. Raw embeddings are never exposed.
@@ -431,7 +433,11 @@
         <!-- Center: Results -->
         <div class="panel">
           <div class="tab-bar">
-            <div class="tab active" data-tab="results" onclick="switchTab(this)">
+            <div
+              class="tab active"
+              data-tab="results"
+              onclick="switchTab(this)"
+            >
               Match Results
             </div>
             <div class="tab" data-tab="browse" onclick="switchTab(this)">
@@ -494,7 +500,7 @@
     <script src="/static/js/auth.js"></script>
     <script src="/static/js/widgets/nav.js"></script>
     <script>
-      if (typeof renderNav === "function") renderNav("marketplace");
+      Nav.init({ current: "similarity-lab" });
 
       // ─── State ───
       const selectedCategories = new Set();
@@ -519,12 +525,9 @@
           e.target.value / 100
         ).toFixed(2);
       });
-      document
-        .getElementById("max-results")
-        .addEventListener("input", (e) => {
-          document.getElementById("max-results-val").textContent =
-            e.target.value;
-        });
+      document.getElementById("max-results").addEventListener("input", (e) => {
+        document.getElementById("max-results-val").textContent = e.target.value;
+      });
 
       // ─── Tab Switching ───
       function switchTab(el) {
@@ -560,7 +563,8 @@
 
         const body = {
           product_description: desc,
-          min_similarity: parseInt(document.getElementById("min-sim").value) / 100,
+          min_similarity:
+            parseInt(document.getElementById("min-sim").value) / 100,
           max_results: parseInt(document.getElementById("max-results").value),
         };
         if (selectedCategories.size > 0) {
@@ -612,10 +616,8 @@
         const avgSim =
           matches.reduce((s, m) => s + m.similarity_score, 0) / matches.length;
         document.getElementById("stat-matches").textContent = matches.length;
-        document.getElementById("stat-avg-sim").textContent =
-          avgSim.toFixed(3);
-        document.getElementById("stat-cost").textContent =
-          data.total_cost || 0;
+        document.getElementById("stat-avg-sim").textContent = avgSim.toFixed(3);
+        document.getElementById("stat-cost").textContent = data.total_cost || 0;
         document.getElementById("aggregate-stats").style.display = "block";
 
         // Match cards

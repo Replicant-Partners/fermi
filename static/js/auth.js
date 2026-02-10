@@ -1,10 +1,14 @@
 /* Auth UI — populates #user-area with login/logout controls.
-   Call initAuth() after DOM is ready, or include this script at end of body.
-   Optionally pass a container id (defaults to "user-area"). */
+   When Nav widget is active, it handles auth state directly via Nav._loadAuth().
+   This script is kept for backwards compatibility with pages that use
+   a standalone #user-area element outside the Nav widget. */
 
 function initAuth(containerId) {
   var area = document.getElementById(containerId || "user-area");
   if (!area) return;
+
+  // If Nav widget already controls auth, skip standalone init
+  if (document.getElementById("nav-user-area")) return;
 
   fetch("/api/auth/me")
     .then(function (res) {
@@ -14,7 +18,9 @@ function initAuth(containerId) {
     .then(function (user) {
       var name = user.display_name || user.email || "User";
       area.innerHTML =
-        '<span class="auth-user">' + name + "</span>" +
+        '<span class="auth-user">' +
+        name +
+        "</span>" +
         "<button class=\"auth-logout\" onclick=\"fetch('/auth/logout',{method:'POST'}).then(function(){location.reload()})\">sign out</button>";
     })
     .catch(function () {
@@ -31,14 +37,19 @@ function initAuth(containerId) {
 async function connectWallet() {
   if (!window.ethereum) return;
   try {
-    var accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    var accounts = await window.ethereum.request({
+      method: "eth_requestAccounts",
+    });
     var address = accounts[0];
     var challengeRes = await fetch("/auth/siwe/challenge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ address: address }),
     });
-    if (!challengeRes.ok) { alert("Failed to get challenge"); return; }
+    if (!challengeRes.ok) {
+      alert("Failed to get challenge");
+      return;
+    }
     var data = await challengeRes.json();
     var signature = await window.ethereum.request({
       method: "personal_sign",
@@ -61,7 +72,9 @@ async function connectWallet() {
 
 /* Auto-init if script loaded at end of body */
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", function () { initAuth(); });
+  document.addEventListener("DOMContentLoaded", function () {
+    initAuth();
+  });
 } else {
   initAuth();
 }
