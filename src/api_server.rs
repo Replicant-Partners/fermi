@@ -1690,6 +1690,7 @@ async fn main() {
         // Billing (Stripe)
         .route("/api/billing/tiers", get(billing_tiers_handler))
         .route("/api/billing/checkout", post(billing_checkout_handler))
+        .route("/api/billing/dev-topup", post(billing_dev_topup_handler))
         // Profile
         .route("/api/profile", get(get_profile_handler))
         .route("/api/profile", put(update_profile_handler))
@@ -7674,6 +7675,49 @@ async fn billing_checkout_handler(
     Ok(Json(json!({
         "checkout_url": checkout_url,
         "session_id": session.id.as_str(),
+    })))
+}
+
+/// Dev/beta credit faucet — grants 500 credits when Stripe is not configured.
+/// Auto-disables in production when STRIPE_SECRET_KEY is set.
+async fn billing_dev_topup_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    if state.stripe.is_configured() {
+        return Err((
+            StatusCode::GONE,
+            "Dev top-up disabled — use Stripe checkout to purchase credits.".to_string(),
+        ));
+    }
+
+    let user_id = principal.user_id();
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let grant_amount = 500;
+    credit_grant(
+        &state.db,
+        wallet.wallet_id,
+        grant_amount,
+        "Beta testing credit grant",
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Refresh balance
+    let new_balance: i32 = sqlx::query("SELECT balance FROM wallets WHERE wallet_id = $1")
+        .bind(wallet.wallet_id)
+        .fetch_one(&state.db)
+        .await
+        .map(|row| sqlx::Row::get(&row, "balance"))
+        .unwrap_or(grant_amount);
+
+    Ok(Json(json!({
+        "status": "granted",
+        "credits": grant_amount,
+        "new_balance": new_balance,
     })))
 }
 
