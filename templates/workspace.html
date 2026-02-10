@@ -181,12 +181,15 @@
         display: flex;
         flex-direction: column;
         min-width: 0;
+        min-height: 0;
+        overflow: hidden;
       }
       .panel-chat {
         flex: 1;
         display: flex;
         flex-direction: column;
         min-width: 0;
+        min-height: 0;
       }
 
       /* ─── Center: Files ─── */
@@ -418,6 +421,7 @@
         align-items: flex-end;
         background: var(--bg0);
         position: relative;
+        flex-shrink: 0;
       }
       .chat-input {
         flex: 1;
@@ -1019,6 +1023,15 @@
           </div>
         </div>
 
+        <!-- Interaction Guide -->
+        <div class="shelf-section" id="interaction-guide" style="display: none">
+          <div class="shelf-label">How to Interact</div>
+          <div
+            id="guide-content"
+            style="font-size: 0.75rem; color: var(--fg2); line-height: 1.5"
+          ></div>
+        </div>
+
         <div class="shelf-section">
           <div class="shelf-label">About</div>
           <div id="ws-description" style="font-size: 0.8rem; color: var(--fg2)">
@@ -1238,10 +1251,106 @@
             agentsEl.innerHTML =
               '<div style="padding:4px 14px;color:var(--fg3);font-size:0.75rem">No agents yet</div>';
           }
+
+          // Build interaction guide from agents
+          buildInteractionGuide(ws.agents || []);
         } catch (e) {
           document.getElementById("ws-name").textContent =
             "Error loading workspace";
         }
+      }
+
+      // ─── Interaction Guide Builder ───
+      function buildInteractionGuide(agents) {
+        const guideEl = document.getElementById("interaction-guide");
+        const contentEl = document.getElementById("guide-content");
+        if (!guideEl || !contentEl || agents.length === 0) return;
+
+        // Agent type/tag → interaction pattern
+        const patterns = {
+          "compound-agent": {
+            icon: "\u2699",
+            role: "Orchestrator",
+            verb: "Give a high-level goal",
+            color: "var(--yellow)",
+          },
+          coherence: {
+            icon: "\u2696",
+            role: "Evaluator",
+            verb: "Ask to evaluate after others contribute",
+            color: "var(--purple)",
+          },
+          creative: {
+            icon: "\u270E",
+            role: "Creator",
+            verb: "Give specific creative direction",
+            color: "var(--green)",
+          },
+          research: {
+            icon: "\uD83D\uDD0D",
+            role: "Researcher",
+            verb: "Ask to investigate a topic",
+            color: "var(--blue)",
+          },
+          meta: {
+            icon: "\u2733",
+            role: "Guide",
+            verb: "Ask for help navigating",
+            color: "var(--aqua)",
+          },
+        };
+
+        function classify(a) {
+          const tags = a.tags || [];
+          const type = a.agent_type || "";
+          if (tags.includes("compound-agent"))
+            return patterns["compound-agent"];
+          if (type === "coherence" || tags.includes("coherence"))
+            return patterns["coherence"];
+          if (type === "creative" || tags.includes("creative"))
+            return patterns["creative"];
+          if (type === "research" || tags.includes("research"))
+            return patterns["research"];
+          if (type === "meta" || tags.includes("meta")) return patterns["meta"];
+          return {
+            icon: "\u25C6",
+            role: "Specialist",
+            verb: "Invoke with a query",
+            color: "var(--fg3)",
+          };
+        }
+
+        let html = "";
+        for (const a of agents) {
+          const p = classify(a);
+          const name = a.display_alias || a.agent_name;
+          html += `<div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;cursor:pointer" onclick="document.getElementById('chat-input').value='@${a.agent_name} ';document.getElementById('chat-input').focus()">
+            <span style="color:${p.color};font-size:0.8rem">${p.icon}</span>
+            <strong style="color:var(--fg1)">@${escHtml(name)}</strong>
+          </div>
+          <div style="margin-left:18px;margin-bottom:8px;color:var(--fg3);font-size:0.7rem">${escHtml(p.verb)}</div>`;
+        }
+
+        // Multi-agent tip
+        if (agents.length >= 2) {
+          const hasEval = agents.some(
+            (a) =>
+              a.agent_type === "coherence" ||
+              (a.tags || []).includes("coherence"),
+          );
+          if (hasEval) {
+            html += `<div style="margin-top:4px;padding:4px 6px;background:var(--bg1);border-radius:3px;font-size:0.68rem;color:var(--fg3);line-height:1.4">
+              <strong style="color:var(--yellow)">Pattern:</strong> Create &rarr; Evaluate &rarr; Refine. Each agent reads the full chat.
+            </div>`;
+          } else {
+            html += `<div style="margin-top:4px;padding:4px 6px;background:var(--bg1);border-radius:3px;font-size:0.68rem;color:var(--fg3);line-height:1.4">
+              <strong style="color:var(--yellow)">Tip:</strong> @mention one at a time. They see each other's responses.
+            </div>`;
+          }
+        }
+
+        contentEl.innerHTML = html;
+        guideEl.style.display = "";
       }
 
       // ─── Chat: Load messages ───
@@ -1260,6 +1369,11 @@
 
           messageCount = data.messages.length;
           document.getElementById("stat-messages").textContent = messageCount;
+
+          // Register all initial messages for dedup
+          data.messages.forEach((m) => {
+            if (m.id) seenMessageIds.add(m.id);
+          });
 
           el.innerHTML = data.messages.map(renderMessage).join("");
           el.scrollTop = el.scrollHeight;
@@ -1396,6 +1510,9 @@
           el.style.display = el.style.display === "none" ? "block" : "none";
       }
 
+      // ─── Dedup tracking ───
+      const seenMessageIds = new Set();
+
       // ─── Polling ───
       function startPolling() {
         pollTimer = setInterval(async () => {
@@ -1412,15 +1529,21 @@
                 el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
 
               let hasCoherenceUpdate = false;
+              let newCount = 0;
               data.messages.forEach((m) => {
+                if (seenMessageIds.has(m.id)) return;
+                seenMessageIds.add(m.id);
                 el.insertAdjacentHTML("beforeend", renderMessage(m));
-                messageCount++;
+                newCount++;
                 if (m.message_type === "coherence_update")
                   hasCoherenceUpdate = true;
               });
 
-              document.getElementById("stat-messages").textContent =
-                messageCount;
+              if (newCount > 0) {
+                messageCount += newCount;
+                document.getElementById("stat-messages").textContent =
+                  messageCount;
+              }
               const last = data.messages[data.messages.length - 1];
               lastMessageTime = last.created_at;
 
@@ -1601,6 +1724,9 @@
             "div[style*='text-align:center']",
           );
           if (placeholder) placeholder.remove();
+
+          // Track this message so poll won't duplicate it
+          if (msg.id) seenMessageIds.add(msg.id);
 
           el.insertAdjacentHTML(
             "beforeend",

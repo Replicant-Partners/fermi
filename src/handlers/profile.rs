@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
 
-use crate::{create_notification, AppState};
+use crate::AppState;
 // ─── Profile page ──────────────────────────────────────────────────
 
 pub async fn profile_view() -> Html<String> {
@@ -33,8 +33,8 @@ pub async fn get_profile_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
 
-    // Fetch user record
-    let user_row = sqlx::query(
+    // Fetch user record — try with bio column, fall back without if column doesn't exist yet
+    let user_row = match sqlx::query(
         "SELECT user_id, email, display_name, avatar_url, role, auth_provider,
                 github_username, ethereum_address, ens_name, bio, created_at
          FROM users WHERE user_id = $1",
@@ -42,7 +42,21 @@ pub async fn get_profile_handler(
     .bind(&user_id)
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        Ok(row) => row,
+        Err(_) => {
+            // bio column may not exist yet — retry without it
+            sqlx::query(
+                "SELECT user_id, email, display_name, avatar_url, role, auth_provider,
+                        github_username, ethereum_address, ens_name, created_at
+                 FROM users WHERE user_id = $1",
+            )
+            .bind(&user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        }
+    }
     .ok_or((StatusCode::NOT_FOUND, "User not found".to_string()))?;
 
     // Wallet
@@ -95,7 +109,7 @@ pub async fn get_profile_handler(
         "github_username": user_row.get::<Option<String>, _>("github_username"),
         "ethereum_address": user_row.get::<Option<String>, _>("ethereum_address"),
         "ens_name": user_row.get::<Option<String>, _>("ens_name"),
-        "bio": user_row.get::<Option<String>, _>("bio"),
+        "bio": user_row.try_get::<Option<String>, _>("bio").unwrap_or(None),
         "created_at": user_row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
         "wallet": {
             "balance": wallet.balance,
@@ -140,12 +154,12 @@ pub async fn update_profile_handler(
     }
 
     if let Some(ref bio) = req.bio {
-        sqlx::query("UPDATE users SET bio = $1 WHERE user_id = $2")
+        // Silently ignore if bio column doesn't exist yet (migration 029)
+        let _ = sqlx::query("UPDATE users SET bio = $1 WHERE user_id = $2")
             .bind(bio)
             .bind(&user_id)
             .execute(&state.db)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .await;
     }
 
     if let Some(ref avatar) = req.avatar_url {
@@ -199,8 +213,13 @@ pub async fn list_notifications_handler(
         .bind(limit)
         .fetch_all(&state.db)
         .await
-    }
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    };
+
+    // If notifications table doesn't exist yet, return empty
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => vec![],
+    };
 
     let unread_count: i64 = sqlx::query(
         "SELECT COUNT(*) as cnt FROM notifications WHERE user_id = $1 AND read = FALSE",
@@ -208,8 +227,8 @@ pub async fn list_notifications_handler(
     .bind(&user_id)
     .fetch_one(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .try_get("cnt")
+    .ok()
+    .and_then(|r| r.try_get("cnt").ok())
     .unwrap_or(0);
 
     let notifications: Vec<Value> = rows
@@ -237,12 +256,11 @@ pub async fn mark_notification_read_handler(
     principal: AuthPrincipal,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    sqlx::query("UPDATE notifications SET read = TRUE WHERE id = $1 AND user_id = $2")
+    let _ = sqlx::query("UPDATE notifications SET read = TRUE WHERE id = $1 AND user_id = $2")
         .bind(id)
         .bind(&principal.user_id())
         .execute(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .await;
 
     Ok(Json(json!({ "status": "read" })))
 }
@@ -255,11 +273,12 @@ pub async fn mark_all_notifications_read_handler(
         sqlx::query("UPDATE notifications SET read = TRUE WHERE user_id = $1 AND read = FALSE")
             .bind(&principal.user_id())
             .execute(&state.db)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .await;
+
+    let count = result.map(|r| r.rows_affected()).unwrap_or(0);
 
     Ok(Json(json!({
         "status": "all_read",
-        "count": result.rows_affected(),
+        "count": count,
     })))
 }

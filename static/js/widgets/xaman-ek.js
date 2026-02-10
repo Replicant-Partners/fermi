@@ -468,6 +468,10 @@ const XamanEk = {
         action: "document.getElementById('create-ws-btn')?.click()",
       });
       suggestions.push({ label: "Browse catalogue", href: "/catalogue" });
+    } else if (path.startsWith("/workspace/")) {
+      // Workspace-aware context — fetch agents and show interaction guide
+      this._renderWorkspaceContext(ctx);
+      return;
     }
 
     if (suggestions.length === 0) {
@@ -485,6 +489,212 @@ const XamanEk = {
           return `<div class="xaman-context-item" onclick="${s.action}" style="cursor:pointer">${this._esc(s.label)}</div>`;
         })
         .join("");
+  },
+
+  // ── Interaction patterns knowledge base ──
+  // Maps agent tags/types to interaction hints
+  _INTERACTION_PATTERNS: {
+    // Compound agents — orchestrate others
+    "compound-agent": {
+      icon: "&#9881;",
+      role: "Orchestrator",
+      hint: "Coordinates other agents. @mention it with a high-level goal and it will plan the work.",
+      examples: [
+        "Create a post about [topic] for [platform]",
+        "Run the full pipeline on this brief",
+      ],
+    },
+    // Coherence agents — evaluate and coordinate
+    coherence: {
+      icon: "&#9878;",
+      role: "Evaluator",
+      hint: "Reads the conversation and scores coherence. Ask it to evaluate after other agents have contributed.",
+      examples: [
+        "How coherent is this workspace right now?",
+        "Evaluate the conversation and tell each agent what to focus on",
+        "We seem stuck — diagnose the coordination failure",
+      ],
+    },
+    // Creative agents — make things
+    creative: {
+      icon: "&#9998;",
+      role: "Creator",
+      hint: "Generates or transforms content. Give it specific creative direction.",
+      examples: [
+        "Apply a vintage style to the image at images/draft.png",
+        "Generate an image of [description]",
+      ],
+    },
+    // Research agents — find things
+    research: {
+      icon: "&#128270;",
+      role: "Researcher",
+      hint: "Investigates topics and returns evidence-based analysis.",
+      examples: [
+        "Research [topic] and summarize key findings",
+        "What are the trends in [domain]?",
+      ],
+    },
+    // Meta agents — guide and coach
+    meta: {
+      icon: "&#9733;",
+      role: "Guide",
+      hint: "Helps you navigate the platform and understand how to use other agents.",
+      examples: [
+        "What agents should I hire for [goal]?",
+        "How does [feature] work?",
+      ],
+    },
+  },
+
+  // Workspace-specific context rendering
+  async _renderWorkspaceContext(ctx) {
+    const wsId = window.location.pathname.split("/").pop();
+    if (!wsId) {
+      ctx.innerHTML = "";
+      return;
+    }
+
+    ctx.innerHTML =
+      '<div class="xaman-context-label">Loading workspace guide...</div>';
+
+    try {
+      const res = await fetch(`/api/workspaces/${wsId}`);
+      if (!res.ok) {
+        ctx.innerHTML = "";
+        return;
+      }
+      const ws = await res.json();
+      const agents = ws.agents || [];
+
+      if (agents.length === 0) {
+        ctx.innerHTML = `
+          <div class="xaman-context-label">Workspace Guide</div>
+          <div class="xaman-hint" style="font-size:0.78rem;line-height:1.5;padding:0 4px">
+            No agents yet. Hire agents to start collaborating.<br>
+            <span style="color:var(--yellow)">Tip:</span> Try hiring <strong>cohere_and_coordinate</strong> — it can evaluate and guide any team.
+          </div>
+          <div class="xaman-context-item" style="cursor:pointer" onclick="document.getElementById('hire-modal')?.classList.add('visible'); XamanEk.close()">Hire an agent</div>`;
+        return;
+      }
+
+      // Classify agents by their interaction pattern
+      const classified = agents.map((a) => {
+        const tags = a.tags || [];
+        const type = a.agent_type || "";
+        let pattern = null;
+
+        // Check tags first (compound-agent is most specific)
+        if (tags.includes("compound-agent")) {
+          pattern = this._INTERACTION_PATTERNS["compound-agent"];
+        } else if (type === "coherence" || tags.includes("coherence")) {
+          pattern = this._INTERACTION_PATTERNS["coherence"];
+        } else if (type === "creative" || tags.includes("creative")) {
+          pattern = this._INTERACTION_PATTERNS["creative"];
+        } else if (type === "research" || tags.includes("research")) {
+          pattern = this._INTERACTION_PATTERNS["research"];
+        } else if (type === "meta" || tags.includes("meta")) {
+          pattern = this._INTERACTION_PATTERNS["meta"];
+        }
+
+        return { ...a, pattern };
+      });
+
+      // Build the guide HTML
+      let html = '<div class="xaman-context-label">Interaction Guide</div>';
+
+      // Group by role
+      const groups = {};
+      for (const a of classified) {
+        const role = a.pattern ? a.pattern.role : "Specialist";
+        if (!groups[role]) groups[role] = [];
+        groups[role].push(a);
+      }
+
+      // Render each group
+      for (const [role, groupAgents] of Object.entries(groups)) {
+        const pattern = groupAgents[0].pattern;
+        const icon = pattern ? pattern.icon : "&#9670;";
+
+        for (const a of groupAgents) {
+          const name = a.display_alias || a.agent_name;
+          const p = a.pattern || {};
+          const hint = p.hint || "Invoke with a query.";
+          const examples = p.examples || [];
+          const exampleHtml =
+            examples.length > 0
+              ? examples
+                  .map(
+                    (ex) =>
+                      `<div class="xaman-ws-example" onclick="XamanEk._insertWorkspaceQuery('${a.agent_name}', '${this._esc(ex)}')" style="cursor:pointer;padding:2px 0;color:var(--aqua);font-size:0.72rem" title="Click to insert">&rarr; ${this._esc(ex)}</div>`,
+                  )
+                  .join("")
+              : "";
+
+          html += `
+            <div style="margin-bottom:10px;padding:4px 0;border-bottom:1px solid var(--bg2)">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+                <span style="font-size:0.85rem">${icon}</span>
+                <strong style="color:var(--fg1);font-size:0.8rem">@${this._esc(name)}</strong>
+                <span style="font-size:0.65rem;color:var(--fg3);background:var(--bg2);padding:0 4px;border-radius:2px">${this._esc(role)}</span>
+              </div>
+              <div style="font-size:0.72rem;color:var(--fg3);line-height:1.4;margin-bottom:3px">${this._esc(hint)}</div>
+              ${exampleHtml}
+            </div>`;
+        }
+      }
+
+      // Multi-agent workflow tip
+      const hasCoherence = classified.some(
+        (a) => a.pattern && a.pattern.role === "Evaluator",
+      );
+      const hasCreator = classified.some(
+        (a) =>
+          a.pattern &&
+          (a.pattern.role === "Creator" || a.pattern.role === "Orchestrator"),
+      );
+
+      if (hasCoherence && hasCreator) {
+        html += `
+          <div style="margin-top:6px;padding:6px;background:var(--bg1);border-radius:4px;font-size:0.72rem;line-height:1.5;color:var(--fg2)">
+            <strong style="color:var(--yellow)">Multi-agent pattern:</strong><br>
+            1. Ask the creator/orchestrator to produce work<br>
+            2. Ask the evaluator to assess coherence<br>
+            3. Feed the evaluation back to the creator<br>
+            Each agent sees the full chat history.
+          </div>`;
+      } else if (agents.length >= 2) {
+        html += `
+          <div style="margin-top:6px;padding:6px;background:var(--bg1);border-radius:4px;font-size:0.72rem;line-height:1.5;color:var(--fg2)">
+            <strong style="color:var(--yellow)">Tip:</strong> @mention one agent at a time.
+            Each agent reads the full chat — they see what others said.
+            You're the conductor threading the conversation.
+          </div>`;
+      }
+
+      // Quick actions
+      html += `
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+          <div class="xaman-context-item" style="cursor:pointer" onclick="document.getElementById('hire-modal')?.classList.add('visible'); XamanEk.close()">+ Hire</div>
+          <div class="xaman-context-item" style="cursor:pointer" onclick="XamanEk.close(); document.getElementById('chat-input')?.focus()">Chat</div>
+        </div>`;
+
+      ctx.innerHTML = html;
+    } catch (e) {
+      ctx.innerHTML = "";
+    }
+  },
+
+  // Insert an @mention query into the workspace chat input
+  _insertWorkspaceQuery(agentName, example) {
+    const input = document.getElementById("chat-input");
+    if (input) {
+      input.value = `@${agentName} ${example}`;
+      input.focus();
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 120) + "px";
+    }
+    this.close();
   },
 
   // ── Help routing ──
@@ -557,9 +767,39 @@ const XamanEk = {
         steps: [
           "Go to Dashboard → My Workspaces → + New Workspace",
           "Hire agents to your workspace (5 credits each)",
-          "Chat with agents, share context, fund the workspace budget",
+          "Chat with agents using @agent_name — they run with full tools",
+          "Each agent reads the full chat history — they see what others said",
+          "Use Ctrl+K in a workspace for an interaction guide per agent",
         ],
         link: "/dashboard",
+      },
+      {
+        match: [
+          "compound",
+          "orchestrat",
+          "pipeline",
+          "multi-agent",
+          "coordinate",
+        ],
+        title: "Compound agents in workspaces",
+        steps: [
+          "Compound agents orchestrate other agents (e.g. social_media_studio)",
+          "Hire the compound agent + its specialist agents into one workspace",
+          "@mention the compound agent with a high-level goal",
+          "It will coordinate specialists — each gets full tool access",
+          "Use cohere_and_coordinate to evaluate the team's coherence",
+        ],
+      },
+      {
+        match: ["coherence", "evaluate", "tec", "principle"],
+        title: "Coherence evaluation",
+        steps: [
+          "Hire cohere_and_coordinate into your workspace",
+          "@cohere_and_coordinate How coherent is this workspace?",
+          "It reads chat history, runs TEC evaluation, diagnoses issues",
+          "Scores 7 Thagard principles: Symmetry, Explanation, Analogy, Data Priority, Contradiction, Competition, Acceptability",
+          "Use its feedback to guide other agents",
+        ],
       },
       {
         match: ["publish", "public", "share", "visib"],

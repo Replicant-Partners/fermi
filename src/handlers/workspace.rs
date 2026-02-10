@@ -145,7 +145,7 @@ pub async fn get_workspace_handler(
     // Get workspace agents from junction table
     let agent_rows = sqlx::query(
         "SELECT a.agent_id, a.agent_name, a.description, a.total_executions,
-                a.display_alias, wa.relationship
+                a.display_alias, a.agent_type, a.tags, wa.relationship
          FROM workspace_agents wa
          JOIN agents a ON a.agent_id = wa.agent_id
          WHERE wa.workspace_id = $1
@@ -164,6 +164,8 @@ pub async fn get_workspace_handler(
                 "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
                 "display_alias": r.try_get::<Option<String>, _>("display_alias").unwrap_or(None),
                 "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
+                "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
+                "tags": r.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
                 "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
                 "relationship": r.try_get::<String, _>("relationship").unwrap_or_default(),
             })
