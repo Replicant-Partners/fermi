@@ -30,13 +30,26 @@ pub async fn create_team(
     .await
     .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
-    Ok(Team {
+    let team = Team {
         id: row.0,
         name: row.1,
         slug: row.2,
         description: row.3,
         owner_id: row.4,
-    })
+    };
+
+    // Auto-add owner as team member with 'owner' role
+    add_team_member(
+        pool,
+        team.id,
+        MemberType::User,
+        owner_id,
+        TeamRole::Owner,
+        owner_id,
+    )
+    .await?;
+
+    Ok(team)
 }
 
 pub async fn get_user_teams(pool: &PgPool, user_id: &str) -> Result<Vec<Team>, AuthError> {
