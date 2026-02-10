@@ -96,5 +96,9 @@
       "We seem to be going in circles — diagnose the coordination failure and propose a fix",
       "Run a full coherence check and write a coordination brief to the workspace"
     ]
+  },
+  "dependencies": {
+    "required": [],
+    "optional": []
   }
 }

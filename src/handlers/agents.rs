@@ -1139,3 +1139,60 @@ pub async fn delete_agent_handler(
 
     Ok(Json(json!({ "message": "Agent deleted successfully" })))
 }
+
+// ─── Agent Dependencies ────────────────────────────────────────────
+
+pub async fn get_agent_dependencies_handler(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let card = resolve_agent_card(&state, &db_agent);
+
+    let deps = &card.dependencies;
+    if deps.required.is_empty() && deps.optional.is_empty() {
+        return Ok(Json(json!({
+            "agent_name": db_agent.agent_name,
+            "has_dependencies": false,
+            "required": [],
+            "optional": [],
+            "total_hire_cost": 0,
+        })));
+    }
+
+    let hire_cost = state.gas_fees.agent_hire;
+
+    // Resolve each dependency name to an agent record
+    let mut required = Vec::new();
+    for name in &deps.required {
+        let available = state.memory_store.get_agent_by_name(name).await.is_ok();
+        required.push(json!({
+            "agent_name": name,
+            "available": available,
+            "hire_cost": hire_cost,
+        }));
+    }
+
+    let mut optional = Vec::new();
+    for name in &deps.optional {
+        let available = state.memory_store.get_agent_by_name(name).await.is_ok();
+        optional.push(json!({
+            "agent_name": name,
+            "available": available,
+            "hire_cost": hire_cost,
+        }));
+    }
+
+    let required_cost = required.len() as i32 * hire_cost;
+    let optional_cost = optional.len() as i32 * hire_cost;
+
+    Ok(Json(json!({
+        "agent_name": db_agent.agent_name,
+        "has_dependencies": true,
+        "required": required,
+        "optional": optional,
+        "required_cost": required_cost,
+        "optional_cost": optional_cost,
+        "total_hire_cost": hire_cost + required_cost + optional_cost,
+    })))
+}

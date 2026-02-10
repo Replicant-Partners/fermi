@@ -9,8 +9,8 @@ use axum::{
 };
 use fermi::agent_backend::{
     agent_card::{
-        AgentCapabilities, AgentCard, AgentMetadata as CardMetadata, AgentPerformance, AgentTier,
-        AgentUsage, OntologyStats, UsageWindow,
+        AgentCapabilities, AgentCard, AgentDependencies, AgentMetadata as CardMetadata,
+        AgentPerformance, AgentTier, AgentUsage, OntologyStats, UsageWindow,
     },
     executor::{AgentExecutor, AgentOutput, AgentStatus, ExecutionContext},
     llm_executor::LLMExecutor,
@@ -636,6 +636,10 @@ async fn main() {
             get(handlers::eval::list_eval_runs_handler),
         )
         .route(
+            "/api/agents/:agent_id/dependencies",
+            get(handlers::agents::get_agent_dependencies_handler),
+        )
+        .route(
             "/api/agents/:agent_id/versions",
             get(handlers::agents::list_agent_versions_handler),
         )
@@ -1190,6 +1194,7 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             sample_queries: agent.sample_queries.clone(),
         },
         system_prompt: agent.system_prompt.clone(),
+        dependencies: AgentDependencies::default(),
     }
 }
 

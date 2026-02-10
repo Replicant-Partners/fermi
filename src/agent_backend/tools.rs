@@ -19,17 +19,21 @@
 ///   - coherence_snapshot: get latest coherence evaluation (workspace-only)
 ///   - get_workspace_messages: read recent workspace conversation (workspace-only)
 use crate::agent_backend::agent_card::AgentCard;
+use crate::agent_backend::executor::{AgentExecutor, ExecutionContext};
 use crate::agent_backend::llm_executor::{ClaudeTool, ContentBlock};
 use crate::agent_backend::multi_model_executor::{OpenAIFunction, OpenAITool};
 use crate::agent_backend::registry::AgentRegistry;
+use crate::agent_backend::tool_executor::ToolAwareExecutor;
 use agent_bestiary_memory::embeddings::EmbeddingGenerator;
 use agent_bestiary_memory::store::MemoryStore;
 use agent_bestiary_memory::types::CoherenceEvaluation;
+use agent_bestiary_memory::WorkspaceMessage;
 use agent_bestiary_ontology::WorkspaceGitManager;
 use coherence_core::types::{ConversationId, Message as CoherenceMessage, ParticipantId};
 use coherence_engine::SettlingEngine;
 use coherence_observer::ConversationObserver;
 use serde_json::json;
+use sqlx::Row;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -51,6 +55,20 @@ struct BuiltinToolDef {
     description: &'static str,
     input_schema: serde_json::Value,
     requires_workspace: bool,
+    /// True for tools that invoke other agents (execute_agent, delegate_to_agent)
+    is_delegation: bool,
+}
+
+impl Default for BuiltinToolDef {
+    fn default() -> Self {
+        Self {
+            name: "",
+            description: "",
+            input_schema: json!({}),
+            requires_workspace: false,
+            is_delegation: false,
+        }
+    }
 }
 
 /// All 6 built-in tools
@@ -75,6 +93,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["query"]
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "query_ontology",
@@ -101,6 +120,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": []
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "execute_agent",
@@ -120,6 +140,27 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["agent_name", "query"]
             }),
             requires_workspace: false,
+            is_delegation: true,
+        },
+        BuiltinToolDef {
+            name: "delegate_to_agent",
+            description: "Delegate a task to another workspace agent who will execute with full tool access (image generation, file writing, etc). The delegation appears as a visible message in workspace chat. Use this instead of execute_agent when the target agent needs tools to do its work.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_name": {
+                        "type": "string",
+                        "description": "The name of the workspace agent to delegate to"
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "The task description for the target agent"
+                    }
+                },
+                "required": ["agent_name", "task"]
+            }),
+            requires_workspace: true,
+            is_delegation: true,
         },
         BuiltinToolDef {
             name: "list_agents",
@@ -130,6 +171,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": []
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "read_workspace_file",
@@ -145,6 +187,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["path"]
             }),
             requires_workspace: true,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "list_workspace_agents",
@@ -155,6 +198,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": []
             }),
             requires_workspace: true,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "generate_image",
@@ -170,6 +214,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["prompt"]
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "edit_image",
@@ -189,6 +234,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["prompt", "image_url"]
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "reduct_list_projects",
@@ -199,6 +245,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": []
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "reduct_get_project",
@@ -214,6 +261,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["project_id"]
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "reduct_get_transcript",
@@ -238,6 +286,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["project_id", "recording_id"]
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "reduct_create_reel",
@@ -257,6 +306,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["project_id", "title"]
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "reduct_add_block",
@@ -296,6 +346,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["project_id", "reel_id", "block_type"]
             }),
             requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "write_workspace_file",
@@ -325,6 +376,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": ["path", "content"]
             }),
             requires_workspace: true,
+            is_delegation: false,
         },
         // ─── Coherence tools ───
         BuiltinToolDef {
@@ -342,6 +394,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": []
             }),
             requires_workspace: true,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "coherence_snapshot",
@@ -352,6 +405,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": []
             }),
             requires_workspace: true,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "get_workspace_messages",
@@ -368,6 +422,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                 "required": []
             }),
             requires_workspace: true,
+            is_delegation: false,
         },
     ]
 }
@@ -375,6 +430,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
 /// Tool registry — collects available tools and dispatches execution
 pub struct ToolRegistry {
     include_workspace: bool,
+    exclude_delegation: bool,
 }
 
 impl ToolRegistry {
@@ -382,21 +438,41 @@ impl ToolRegistry {
     pub fn standard() -> Self {
         Self {
             include_workspace: false,
+            exclude_delegation: false,
         }
     }
 
-    /// Registry with workspace tools (6 tools)
+    /// Registry with workspace tools
     pub fn with_workspace() -> Self {
         Self {
             include_workspace: true,
+            exclude_delegation: false,
         }
+    }
+
+    /// Registry with workspace tools but NO delegation tools (for delegated agents)
+    pub fn with_workspace_no_delegation() -> Self {
+        Self {
+            include_workspace: true,
+            exclude_delegation: true,
+        }
+    }
+
+    fn filter_tool(&self, t: &BuiltinToolDef) -> bool {
+        if t.requires_workspace && !self.include_workspace {
+            return false;
+        }
+        if t.is_delegation && self.exclude_delegation {
+            return false;
+        }
+        true
     }
 
     /// Get available tools as Claude API format
     pub(crate) fn to_claude_tools(&self) -> Vec<ClaudeTool> {
         builtin_tools()
             .into_iter()
-            .filter(|t| !t.requires_workspace || self.include_workspace)
+            .filter(|t| self.filter_tool(t))
             .map(|t| ClaudeTool {
                 name: t.name.to_string(),
                 description: t.description.to_string(),
@@ -409,7 +485,7 @@ impl ToolRegistry {
     pub(crate) fn to_openai_tools(&self) -> Vec<OpenAITool> {
         builtin_tools()
             .into_iter()
-            .filter(|t| !t.requires_workspace || self.include_workspace)
+            .filter(|t| self.filter_tool(t))
             .map(|t| OpenAITool {
                 tool_type: "function".to_string(),
                 function: OpenAIFunction {
@@ -459,6 +535,7 @@ impl ToolRegistry {
             "reduct_get_transcript" => execute_reduct_get_transcript(input).await,
             "reduct_create_reel" => execute_reduct_create_reel(input).await,
             "reduct_add_block" => execute_reduct_add_block(input).await,
+            "delegate_to_agent" => execute_delegate_to_agent(input, ctx).await,
             "evaluate_coherence" => execute_evaluate_coherence(input, ctx).await,
             "coherence_snapshot" => execute_coherence_snapshot(ctx).await,
             "get_workspace_messages" => execute_get_workspace_messages(input, ctx).await,
@@ -654,6 +731,152 @@ async fn execute_execute_agent(
     });
 
     serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_delegate_to_agent(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_name = input
+        .get("agent_name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: agent_name")?;
+    let task = input
+        .get("task")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: task")?;
+
+    let ws_id = ctx
+        .workspace_id
+        .ok_or("delegate_to_agent requires a workspace context")?;
+    let ws_slug = ctx.workspace_slug.as_deref().unwrap_or("");
+
+    let pool = ctx.memory_store.pool();
+
+    // Verify agent is in workspace
+    let agent_row = sqlx::query(
+        "SELECT a.agent_id, a.agent_name, a.display_alias FROM workspace_agents wa
+         JOIN agents a ON a.agent_id = wa.agent_id
+         WHERE wa.workspace_id = $1 AND a.agent_name = $2",
+    )
+    .bind(ws_id)
+    .bind(agent_name)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("DB error: {}", e))?
+    .ok_or_else(|| format!("Agent '{}' is not in this workspace", agent_name))?;
+
+    let target_agent_id: Uuid = agent_row.get("agent_id");
+    let display: String = agent_row
+        .try_get::<Option<String>, _>("display_alias")
+        .unwrap_or(None)
+        .unwrap_or_else(|| agent_name.to_string());
+
+    // Post delegation message to workspace chat
+    let delegation_msg = WorkspaceMessage {
+        message_id: Uuid::new_v4(),
+        workspace_id: ws_id,
+        sender_type: "agent".to_string(),
+        sender_id: ctx
+            .current_agent_id
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+        sender_name: Some(format!(
+            "{} → {}",
+            ctx.current_agent_id.map(|_| "compound").unwrap_or("system"),
+            display
+        )),
+        content: format!("Delegating to {}: {}", display, task),
+        message_type: "system_event".to_string(),
+        metadata: json!({"delegation": true, "target": agent_name}),
+        created_at: chrono::Utc::now(),
+    };
+    let _ = ctx
+        .memory_store
+        .store_workspace_message(&delegation_msg)
+        .await;
+
+    // Resolve agent card
+    let card = ctx
+        .registry
+        .get(agent_name)
+        .map_err(|e| format!("Agent card not found: {}", e))?;
+
+    // Build execution context
+    let stmt = crate::ast::AgentStmt {
+        name: agent_name.to_string(),
+        agent_type: Some(card.agent_type.clone()),
+        query: task.to_string(),
+        executor: None,
+        schedule: None,
+        driver_refs: vec![],
+        depends_on: vec![],
+        confidence_threshold: None,
+    };
+
+    let context = ExecutionContext {
+        program: crate::ast::Program { statements: vec![] },
+        agent_card: card,
+    };
+
+    // Build a ToolAwareExecutor with workspace tools but NO delegation
+    let tool_context = Arc::new(ToolContext {
+        memory_store: ctx.memory_store.clone(),
+        embedder: ctx.embedder.clone(),
+        registry: ctx.registry.clone(),
+        current_agent_id: Some(target_agent_id),
+        workspace_id: Some(ws_id),
+        workspace_slug: Some(ws_slug.to_string()),
+        workspace_git: ctx.workspace_git.clone(),
+    });
+
+    let tool_executor = ToolAwareExecutor::new(
+        ctx.registry.executor_arc(),
+        ToolRegistry::with_workspace_no_delegation(),
+        tool_context,
+    );
+
+    let output = tool_executor
+        .execute(&stmt, &context)
+        .await
+        .map_err(|e| format!("Delegation failed: {}", e))?;
+
+    // Post the result as a workspace message from the delegated agent
+    let result_text = output
+        .evidence
+        .iter()
+        .filter_map(|e| e.summary.clone())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let result_msg = WorkspaceMessage {
+        message_id: Uuid::new_v4(),
+        workspace_id: ws_id,
+        sender_type: "agent".to_string(),
+        sender_id: target_agent_id.to_string(),
+        sender_name: Some(display.clone()),
+        content: if result_text.is_empty() {
+            "(no output)".to_string()
+        } else {
+            result_text.clone()
+        },
+        message_type: "execution_result".to_string(),
+        metadata: json!({
+            "delegated_by": ctx.current_agent_id,
+            "tokens_used": output.tokens_used,
+            "tool_invocations": output.tool_invocations.len(),
+            "loop_iterations": output.loop_iterations,
+        }),
+        created_at: chrono::Utc::now(),
+    };
+    let _ = ctx.memory_store.store_workspace_message(&result_msg).await;
+
+    // Return result to calling agent
+    Ok(if result_text.is_empty() {
+        format!("{} completed the delegation but produced no text output. Check workspace files for artifacts.", display)
+    } else {
+        result_text
+    })
 }
 
 async fn execute_list_agents(ctx: &ToolContext) -> Result<String, String> {

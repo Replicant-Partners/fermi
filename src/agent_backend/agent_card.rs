@@ -21,6 +21,19 @@ pub struct AgentCard {
     pub metadata: AgentMetadata,
     #[serde(default)]
     pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub dependencies: AgentDependencies,
+}
+
+/// Dependencies that a compound agent requires or optionally uses
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentDependencies {
+    /// Agents that must be present for the compound agent to function
+    #[serde(default)]
+    pub required: Vec<String>,
+    /// Agents that enhance functionality but aren't strictly needed
+    #[serde(default)]
+    pub optional: Vec<String>,
 }
 
 /// Agent tier (curated vs community)
@@ -170,6 +183,7 @@ impl AgentCard {
                 sample_queries: vec![],
             },
             system_prompt: None,
+            dependencies: AgentDependencies::default(),
         }
     }
 

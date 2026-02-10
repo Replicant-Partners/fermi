@@ -1050,6 +1050,8 @@ pub async fn poll_workspace_messages_handler(
 #[derive(Debug, Deserialize)]
 pub struct HireAddRequest {
     agent_id: uuid::Uuid,
+    #[serde(default)]
+    include_optional: bool,
 }
 
 /// Post a system message to workspace chat (helper)
@@ -1168,11 +1170,79 @@ pub async fn hire_agent_handler(
         }
     });
 
+    // ─── Auto-hire dependencies ───
+    let card = resolve_agent_card(&state, &agent);
+    let deps = &card.dependencies;
+    let mut deps_hired: Vec<String> = Vec::new();
+    let mut deps_gas: i32 = 0;
+
+    // Collect dep names to hire: required always, optional if requested
+    let mut dep_names: Vec<String> = deps.required.clone();
+    if req.include_optional {
+        dep_names.extend(deps.optional.clone());
+    }
+
+    for dep_name in &dep_names {
+        // Resolve dep agent by name
+        let dep_agent = match state.memory_store.get_agent_by_name(dep_name).await {
+            Ok(a) => a,
+            Err(_) => continue, // Skip if not found in DB
+        };
+
+        // Check if already in workspace
+        let already =
+            sqlx::query("SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2")
+                .bind(ws_uuid)
+                .bind(dep_agent.agent_id)
+                .fetch_optional(&state.db)
+                .await
+                .unwrap_or(None);
+
+        if already.is_some() {
+            continue; // Already hired
+        }
+
+        // Charge gas for dep hire
+        let _ = charge_workspace_gas(
+            &state.db,
+            ws_uuid,
+            &workspace_id,
+            state.gas_fees.agent_hire,
+            "gas_fee",
+            &format!("Auto-hire dep {}", dep_name),
+            None,
+        )
+        .await;
+
+        // Insert workspace_agents row
+        let _ = sqlx::query(
+            "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship) VALUES ($1, $2, $3, 'hired') ON CONFLICT DO NOTHING",
+        )
+        .bind(ws_uuid)
+        .bind(dep_agent.agent_id)
+        .bind(&user_id)
+        .execute(&state.db)
+        .await;
+
+        deps_hired.push(dep_name.clone());
+        deps_gas += state.gas_fees.agent_hire;
+    }
+
+    if !deps_hired.is_empty() {
+        post_system_message(
+            &state.memory_store,
+            ws_uuid,
+            &format!("Auto-hired dependencies: {}", deps_hired.join(", ")),
+        )
+        .await;
+    }
+
     Ok(Json(json!({
         "message": "Agent hired successfully",
         "agent_name": agent.agent_name,
         "relationship": "hired",
-        "gas_charged": state.gas_fees.agent_hire,
+        "gas_charged": state.gas_fees.agent_hire + deps_gas,
+        "dependencies_hired": deps_hired,
     })))
 }
 

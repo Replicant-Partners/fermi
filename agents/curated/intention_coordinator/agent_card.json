@@ -14,7 +14,17 @@
           "type": "object",
           "properties": {
             "agent_id": { "type": "string" },
-            "action_type": { "type": "string", "enum": ["tool_call", "research", "synthesis", "writing", "review", "idle"] },
+            "action_type": {
+              "type": "string",
+              "enum": [
+                "tool_call",
+                "research",
+                "synthesis",
+                "writing",
+                "review",
+                "idle"
+              ]
+            },
             "tool": { "type": "string" },
             "description": { "type": "string" },
             "expected_output": { "type": "string" },
@@ -29,7 +39,10 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "agent_id": { "type": "string", "description": "Optional: check conflicts for a specific agent only" }
+            "agent_id": {
+              "type": "string",
+              "description": "Optional: check conflicts for a specific agent only"
+            }
           }
         }
       },
@@ -44,7 +57,10 @@
           "type": "object",
           "properties": {
             "agent_id": { "type": "string" },
-            "status": { "type": "string", "enum": ["completed", "cancelled", "superseded"] }
+            "status": {
+              "type": "string",
+              "enum": ["completed", "cancelled", "superseded"]
+            }
           },
           "required": ["agent_id", "status"]
         }
@@ -67,7 +83,10 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "relation_type": { "type": "string", "enum": ["IntentionAligns", "IntentionConflicts"] },
+            "relation_type": {
+              "type": "string",
+              "enum": ["IntentionAligns", "IntentionConflicts"]
+            },
             "agent_a": { "type": "string" },
             "agent_b": { "type": "string" },
             "strength": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -163,5 +182,9 @@
         "url": "https://arxiv.org/abs/2508.02912"
       }
     ]
+  },
+  "dependencies": {
+    "required": [],
+    "optional": []
   }
 }

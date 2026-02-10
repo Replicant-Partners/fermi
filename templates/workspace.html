@@ -379,6 +379,36 @@
         font-style: italic;
         font-size: 0.8rem;
       }
+      /* Delegation messages */
+      .chat-delegation {
+        border-left: 2px solid var(--aqua);
+        padding-left: 8px;
+        margin-left: 4px;
+      }
+      .chat-delegation-label {
+        font-size: 0.65rem;
+        color: var(--aqua);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 2px;
+      }
+      .chat-avatar-delegation {
+        background: var(--aqua);
+        color: var(--bg0-hard);
+      }
+      /* Compound agent badge in sidebar */
+      .compound-badge {
+        font-size: 0.55rem;
+        color: var(--aqua);
+        margin-left: 4px;
+        opacity: 0.8;
+      }
+      .dep-indent {
+        margin-left: 18px;
+        font-size: 0.7rem;
+        color: var(--fg3);
+        padding: 1px 0;
+      }
       .chat-time {
         font-size: 0.6rem;
         color: var(--fg3);
@@ -1227,6 +1257,14 @@
           const agentsEl = document.getElementById("ws-agents-list");
           if (ws.agents && ws.agents.length > 0) {
             wsAgentsList = ws.agents;
+            // Build a set of dep agent names for grouping
+            const depNames = new Set();
+            ws.agents.forEach((a) => {
+              if ((a.tags || []).includes("compound-agent")) {
+                (a._deps_required || []).forEach((d) => depNames.add(d));
+              }
+            });
+
             agentsEl.innerHTML = ws.agents
               .map((a) => {
                 const name = a.display_alias || a.agent_name;
@@ -1234,13 +1272,18 @@
                 const hues = [200, 140, 30, 340, 270, 50, 170, 10];
                 const hue =
                   hues[(a.agent_name || "").charCodeAt(0) % hues.length];
-                const badge = a.relationship === "hired" ? "hired" : "";
+                const isCompound = (a.tags || []).includes("compound-agent");
+                const badge = isCompound
+                  ? '<span class="compound-badge">\u2699 orchestrator</span>'
+                  : a.relationship === "hired"
+                    ? '<span style="font-size:0.6rem;color:var(--fg3);margin-left:4px">hired</span>'
+                    : "";
                 return `
               <a href="/agent/${a.agent_name}" style="text-decoration:none;color:inherit">
                 <div class="agent-item">
                   <div class="agent-dot" style="background:hsl(${hue},45%,35%);color:#fff;font-size:0.55rem;display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%">${initial}</div>
                   <span class="member-name">${escHtml(name)}</span>
-                  ${badge ? '<span style="font-size:0.6rem;color:var(--fg3);margin-left:4px">hired</span>' : ""}
+                  ${badge}
                 </div>
               </a>`;
               })
@@ -1414,6 +1457,24 @@
             </div>`;
         }
 
+        // Delegation initiation message
+        const meta = typeof m.metadata === "object" ? m.metadata : {};
+        if (m.message_type === "system_event" && meta.delegation) {
+          const target = meta.target || "agent";
+          return `
+            <div class="chat-msg">
+              <div class="chat-avatar chat-avatar-delegation">\u2699</div>
+              <div class="chat-body chat-delegation">
+                <div class="chat-delegation-label">delegation \u2192 @${escHtml(target)}</div>
+                <div class="chat-meta-row">
+                  <span class="chat-sender" style="color:var(--aqua)">${escHtml(name)}</span>
+                  <span class="chat-time">${time}</span>
+                </div>
+                <div class="chat-text" style="color:var(--fg2);font-size:0.82rem">${escHtml(m.content)}</div>
+              </div>
+            </div>`;
+        }
+
         if (m.sender_type === "system" || m.message_type === "system_event") {
           return `
             <div class="chat-msg">
@@ -1442,8 +1503,8 @@
 
         // Enhanced execution result rendering
         if (m.message_type === "execution_result" && m.metadata) {
-          const meta = typeof m.metadata === "object" ? m.metadata : {};
-          const conf = meta.confidence != null ? meta.confidence : null;
+          const execMeta = typeof m.metadata === "object" ? m.metadata : {};
+          const conf = execMeta.confidence != null ? execMeta.confidence : null;
           const confClass =
             conf != null
               ? conf >= 0.8
@@ -1453,16 +1514,19 @@
                   : "low"
               : "";
           const confLabel = conf != null ? `${(conf * 100).toFixed(0)}%` : "";
-          const tokens = meta.tokens_used || "";
-          const execTime = meta.execution_time_ms || "";
-          const evidenceCount = meta.evidence_count || 0;
+          const tokens = execMeta.tokens_used || "";
+          const execTime = execMeta.execution_time_ms || "";
+          const evidenceCount = execMeta.evidence_count || 0;
+          const isDelegation = !!execMeta.delegated_by;
+          const toolCount = execMeta.tool_invocations || 0;
           const uid =
             "exec-" + (m.message_id || Math.random().toString(36).slice(2));
 
           return `
             <div class="chat-msg">
-              <div class="chat-avatar ${avatarClass}" ${avatarStyle}>${initial}</div>
-              <div class="chat-body">
+              <div class="chat-avatar ${isDelegation ? "chat-avatar-delegation" : avatarClass}" ${isDelegation ? "" : avatarStyle}>${isDelegation ? "\u2699" : initial}</div>
+              <div class="chat-body ${isDelegation ? "chat-delegation" : ""}">
+                ${isDelegation ? '<div class="chat-delegation-label">delegation result</div>' : ""}
                 <div class="chat-meta-row">
                   <span class="chat-sender ${senderClass}">${escHtml(name)}</span>
                   ${confLabel ? `<span class="exec-confidence ${confClass}">${confLabel}</span>` : ""}
@@ -1470,17 +1534,18 @@
                 </div>
                 <div class="chat-text">${escHtml(m.content)}</div>
                 <div class="exec-meta">
-                  ${execTime ? execTime + "ms" : ""} ${tokens ? "· " + tokens + " tokens" : ""}
-                  ${meta.status ? "· " + meta.status : ""}
+                  ${execTime ? execTime + "ms" : ""} ${tokens ? "\u00b7 " + tokens + " tokens" : ""}
+                  ${toolCount ? "\u00b7 " + toolCount + " tool calls" : ""}
+                  ${execMeta.status ? "\u00b7 " + execMeta.status : ""}
                 </div>
                 ${
                   evidenceCount > 0
                     ? `
                   <div class="exec-evidence-toggle" onclick="toggleExec('${uid}')">
-                    ${evidenceCount} evidence source${evidenceCount > 1 ? "s" : ""} ▸
+                    ${evidenceCount} evidence source${evidenceCount > 1 ? "s" : ""} \u25b8
                   </div>
                   <div class="exec-evidence-list" id="${uid}">
-                    ${escHtml(JSON.stringify(meta, null, 2))}
+                    ${escHtml(JSON.stringify(execMeta, null, 2))}
                   </div>`
                     : ""
                 }
@@ -1832,12 +1897,113 @@
 
       async function hireAgent(agentId, btn) {
         btn.disabled = true;
-        btn.textContent = "Hiring...";
+        btn.textContent = "Checking...";
+        try {
+          // Check for dependencies first
+          const depRes = await fetch(`/api/agents/${agentId}/dependencies`);
+          if (depRes.ok) {
+            const depData = await depRes.json();
+            if (depData.has_dependencies) {
+              const includeOpt = await showDepsConfirm(depData);
+              if (includeOpt === null) {
+                btn.disabled = false;
+                btn.textContent = "Hire (5 cr)";
+                return; // User cancelled
+              }
+              btn.textContent = "Hiring team...";
+              return await doHire(agentId, btn, includeOpt);
+            }
+          }
+          btn.textContent = "Hiring...";
+          await doHire(agentId, btn, false);
+        } catch {
+          alert("Hire failed");
+          btn.disabled = false;
+          btn.textContent = "Hire (5 cr)";
+        }
+      }
+
+      function showDepsConfirm(depData) {
+        return new Promise((resolve) => {
+          const overlay = document.createElement("div");
+          overlay.className = "modal-overlay active";
+          overlay.style.zIndex = "1001";
+          let html = `<div class="modal" style="max-width:420px">
+            <h3 class="modal-title">Hire Team: ${escHtml(depData.agent_name)}</h3>
+            <div style="font-size:0.82rem;color:var(--fg2);margin-bottom:12px">
+              This compound agent works with sub-agents:
+            </div>`;
+
+          if (depData.required.length > 0) {
+            html += `<div style="font-size:0.75rem;color:var(--fg3);text-transform:uppercase;margin-bottom:4px">Required</div>`;
+            depData.required.forEach((d) => {
+              const avail = d.available ? "var(--green)" : "var(--red)";
+              html += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.84rem">
+                <span style="color:${avail}">${d.available ? "\u2713" : "\u2717"} ${escHtml(d.agent_name)}</span>
+                <span style="color:var(--fg3)">${d.hire_cost} cr</span>
+              </div>`;
+            });
+          }
+
+          if (depData.optional.length > 0) {
+            html += `<div style="font-size:0.75rem;color:var(--fg3);text-transform:uppercase;margin:8px 0 4px">Optional</div>`;
+            depData.optional.forEach((d) => {
+              const avail = d.available ? "var(--green)" : "var(--fg3)";
+              html += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.84rem">
+                <span style="color:${avail}">${d.available ? "\u2610" : "\u2717"} ${escHtml(d.agent_name)}</span>
+                <span style="color:var(--fg3)">${d.hire_cost} cr</span>
+              </div>`;
+            });
+          }
+
+          const reqCost =
+            depData.required_cost + (depData.required.length > 0 ? 5 : 5);
+          html += `<div style="border-top:1px solid var(--bg2);margin-top:10px;padding-top:8px;font-size:0.84rem;display:flex;justify-content:space-between">
+            <span>Required total</span><strong style="color:var(--aqua)">${5 + depData.required_cost} cr</strong>
+          </div>`;
+          if (depData.optional.length > 0) {
+            html += `<div style="font-size:0.8rem;display:flex;justify-content:space-between;color:var(--fg3)">
+              <span>With optional</span><span>${5 + depData.required_cost + depData.optional_cost} cr</span>
+            </div>`;
+          }
+
+          html += `<div style="display:flex;gap:8px;margin-top:14px">
+            <button class="btn btn-primary" id="deps-hire-req">Hire Team</button>`;
+          if (depData.optional.length > 0) {
+            html += `<button class="btn" id="deps-hire-all" style="border-color:var(--fg3);color:var(--fg2)">Hire All</button>`;
+          }
+          html += `<button class="btn" id="deps-cancel" style="border-color:var(--fg3);color:var(--fg3)">Cancel</button>
+          </div></div>`;
+
+          overlay.innerHTML = html;
+          document.body.appendChild(overlay);
+
+          overlay.querySelector("#deps-hire-req").onclick = () => {
+            overlay.remove();
+            resolve(false);
+          };
+          if (overlay.querySelector("#deps-hire-all")) {
+            overlay.querySelector("#deps-hire-all").onclick = () => {
+              overlay.remove();
+              resolve(true);
+            };
+          }
+          overlay.querySelector("#deps-cancel").onclick = () => {
+            overlay.remove();
+            resolve(null);
+          };
+        });
+      }
+
+      async function doHire(agentId, btn, includeOptional) {
         try {
           const res = await fetch(`/api/workspaces/${wsId}/hire`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ agent_id: agentId }),
+            body: JSON.stringify({
+              agent_id: agentId,
+              include_optional: includeOptional,
+            }),
           });
           if (!res.ok) {
             const err = await res.text();
@@ -1852,7 +2018,12 @@
             btn.textContent = "Hire (5 cr)";
             return;
           }
-          btn.textContent = "Hired";
+          const data = await res.json();
+          const depsMsg =
+            data.dependencies_hired && data.dependencies_hired.length > 0
+              ? ` + ${data.dependencies_hired.join(", ")}`
+              : "";
+          btn.textContent = "Hired" + depsMsg;
           btn.style.borderColor = "var(--green)";
           btn.style.color = "var(--green)";
           loadWorkspace();
