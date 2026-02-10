@@ -4,5 +4,6 @@
 //! Shared helpers (resolve_agent, resolve_agent_card, create_notification)
 //! live in api_server.rs as pub(crate) functions.
 
+pub mod agents;
 pub mod lifecycle;
 pub mod workspace;

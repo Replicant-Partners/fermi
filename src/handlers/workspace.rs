@@ -24,9 +24,8 @@ use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
-use crate::{
-    agent_output_to_episode, resolve_agent, resolve_agent_card, AppState, CreateAgentRequest,
-};
+use super::agents::CreateAgentRequest;
+use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
 
 // ─── Workspace handlers ────────────────────────────────────────────
 
