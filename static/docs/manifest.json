@@ -69,6 +69,25 @@
       ]
     },
     {
+      "title": "Administration",
+      "guides": [
+        {
+          "slug": "waitlist-admin",
+          "title": "Waitlist & Invitation Management",
+          "description": "Managing signups, inviting test users to Google OAuth, and tracking invitation status",
+          "tags": [
+            "admin",
+            "waitlist",
+            "invite",
+            "oauth",
+            "google",
+            "test users",
+            "onboarding"
+          ]
+        }
+      ]
+    },
+    {
       "title": "Tools & Integration",
       "guides": [
         {
