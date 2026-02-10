@@ -328,31 +328,17 @@
         text-align: center;
       }
 
-      /* Search & Filter Controls */
-      .catalogue-controls {
+      /* Catalogue Header */
+      .catalogue-header {
         display: flex;
-        gap: 12px;
-        margin-bottom: 20px;
-        flex-wrap: wrap;
-        align-items: center;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 12px;
       }
-      .search-input {
-        flex: 1;
-        min-width: 200px;
-        background: var(--bg1);
-        border: 1px solid var(--bg3);
-        color: var(--fg1);
-        padding: 8px 14px;
-        font-size: 0.9em;
-        font-family: inherit;
-        outline: none;
-        transition: border-color 0.2s;
-      }
-      .search-input:focus {
-        border-color: var(--yellow);
-      }
-      .search-input::placeholder {
-        color: var(--gray);
+      .catalogue-header .section-title {
+        margin-bottom: 0;
+        border-bottom: none;
+        padding-bottom: 0;
       }
       .sort-select {
         background: var(--bg1);
@@ -403,32 +389,6 @@
         min-width: 18px;
         text-align: center;
       }
-      .tag-filters {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px 12px;
-        margin-bottom: 16px;
-        align-items: baseline;
-      }
-      .tag-word {
-        color: var(--fg3);
-        cursor: pointer;
-        transition: color 0.15s;
-        letter-spacing: 0.02em;
-        line-height: 1.6;
-        border: none;
-        background: none;
-        padding: 0;
-        font-family: inherit;
-      }
-      .tag-word:hover {
-        color: var(--fg1);
-      }
-      .tag-word.active {
-        color: var(--yellow);
-        text-decoration: underline;
-        text-underline-offset: 3px;
-      }
       .pagination {
         display: flex;
         justify-content: center;
@@ -464,12 +424,8 @@
         color: var(--gray);
         font-size: 0.8em;
       }
-      .theme-op1 .search-input,
       .theme-op1 .sort-select {
         border-radius: 8px;
-      }
-      .theme-op1 .tag-word.active {
-        color: var(--orange);
       }
       .theme-op1 .page-btn {
         border-radius: 6px;
@@ -487,24 +443,16 @@
     </script>
 
     <div class="container">
-      <h2 class="section-title">Catalogue</h2>
-
-      <div class="category-badges" id="category-badges"></div>
-
-      <div class="catalogue-controls">
-        <input
-          type="text"
-          class="search-input"
-          id="search-input"
-          placeholder="Search agents by name, description, or tag..."
-        />
+      <div class="catalogue-header">
+        <h2 class="section-title">Catalogue</h2>
         <select class="sort-select" id="sort-select">
           <option value="newest">Newest</option>
           <option value="executions">Most Executions</option>
           <option value="name">Name A-Z</option>
         </select>
       </div>
-      <div class="tag-filters" id="tag-filters"></div>
+
+      <div class="category-badges" id="category-badges"></div>
 
       <div class="specimens-grid" id="specimens-grid">
         <div class="loading">Loading...</div>
@@ -604,7 +552,6 @@
       let currentTag = "";
       let currentCategory = "";
       let currentSort = "newest";
-      let allTags = new Map();
       let categoryCounts = {};
 
       async function loadAgents(page = 1) {
@@ -637,11 +584,10 @@
             return;
           }
 
-          // Collect all tags for the filter pills + count categories
+          // Count categories for filter badges
           categoryCounts = {};
           data.agents.forEach((agent) => {
             const tags = agent.tags || [];
-            tags.forEach((t) => allTags.set(t, (allTags.get(t) || 0) + 1));
             CATEGORIES.forEach((cat) => {
               if (tags.some((t) => cat.tags.includes(t))) {
                 categoryCounts[cat.id] = (categoryCounts[cat.id] || 0) + 1;
@@ -649,7 +595,6 @@
             });
           });
           renderCategoryBadges();
-          renderTagCloud();
 
           data.agents.forEach((agent) => {
             const card = document.createElement("div");
@@ -686,6 +631,12 @@
               .map((t) => `<span class="specimen-tag">${t}</span>`)
               .join("");
 
+            const wsCount = agent.workspace_count || 0;
+            const compositionLine =
+              wsCount > 0
+                ? `<div style="font-size:0.72em;color:var(--purple);margin:4px 0 2px;letter-spacing:0.03em">in ${wsCount} composition${wsCount !== 1 ? "s" : ""}</div>`
+                : "";
+
             card.innerHTML = `
               <div class="specimen-header">
                 <div class="specimen-avatar" id="avatar-${CSS.escape(agentId)}"
@@ -703,6 +654,7 @@
               <div class="specimen-body">
                 <div class="specimen-description">${description}</div>
                 ${tagHtml ? `<div class="specimen-tags">${tagHtml}</div>` : ""}
+                ${compositionLine}
                 <div class="specimen-footer">
                   <div class="specimen-stat">
                     <span class="meta-label">Runs</span>
@@ -787,46 +739,6 @@
         currentPage = 1;
         loadAgents(1);
       }
-
-      function renderTagCloud() {
-        const el = document.getElementById("tag-filters");
-        if (allTags.size === 0) {
-          el.innerHTML = "";
-          return;
-        }
-        const counts = [...allTags.entries()];
-        const maxCount = Math.max(...counts.map(([, c]) => c));
-        const minCount = Math.min(...counts.map(([, c]) => c));
-        const range = maxCount - minCount || 1;
-        const sorted = counts.sort((a, b) => a[0].localeCompare(b[0]));
-        el.innerHTML = sorted
-          .map(([t, count]) => {
-            const weight = (count - minCount) / range;
-            const size = (0.72 + weight * 0.56).toFixed(2);
-            const opacity = (0.55 + weight * 0.45).toFixed(2);
-            return `<span class="tag-word ${currentTag === t ? "active" : ""}"
-              style="font-size:${size}em;opacity:${opacity}"
-              onclick="toggleTag('${t.replace(/'/g, "\\'")}')">${t}</span>`;
-          })
-          .join("");
-      }
-
-      function toggleTag(tag) {
-        currentTag = currentTag === tag ? "" : tag;
-        currentPage = 1;
-        loadAgents(1);
-      }
-
-      // Wire up search (debounced)
-      let searchTimer = null;
-      document.getElementById("search-input").addEventListener("input", (e) => {
-        clearTimeout(searchTimer);
-        searchTimer = setTimeout(() => {
-          currentSearch = e.target.value.trim();
-          currentPage = 1;
-          loadAgents(1);
-        }, 300);
-      });
 
       // Wire up sort
       document.getElementById("sort-select").addEventListener("change", (e) => {

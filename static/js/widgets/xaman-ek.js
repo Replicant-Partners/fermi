@@ -295,12 +295,20 @@ const XamanEk = {
       });
     } else if (path === "/catalogue" || path === "/") {
       suggestions.push({
+        label: "Search specimens",
+        action: "XamanEk._input.value=''; XamanEk._input.focus()",
+      });
+      suggestions.push({
         label: "Bestiary projector",
         href: "/projections/bestiary",
       });
       suggestions.push({ label: "Create agent", href: "/agents/new" });
     } else if (path === "/dashboard") {
       suggestions.push({ label: "Create agent", href: "/agents/new" });
+      suggestions.push({
+        label: "Assemble composition",
+        action: "document.getElementById('create-ws-btn')?.click()",
+      });
       suggestions.push({ label: "Browse catalogue", href: "/catalogue" });
     }
 

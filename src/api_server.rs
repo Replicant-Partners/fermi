@@ -2157,6 +2157,16 @@ async fn list_agents(
 ) -> Json<Value> {
     let caller_id = caller.map(|Extension(p)| p.user_id());
 
+    // Batch-load workspace membership counts for all agents
+    let workspace_counts: std::collections::HashMap<uuid::Uuid, i64> =
+        sqlx::query("SELECT agent_id, COUNT(*) as cnt FROM workspace_agents GROUP BY agent_id")
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|r| (r.get::<uuid::Uuid, _>("agent_id"), r.get::<i64, _>("cnt")))
+            .collect();
+
     // Primary: database (filter out test agents + apply visibility)
     if let Ok(db_agents) = state.memory_store.list_agents().await {
         let real_agents: Vec<_> = db_agents
@@ -2291,6 +2301,7 @@ async fn list_agents(
                             "credits_used": a.dreaming_credits_used,
                             "credits_remaining": a.dreaming_budget_credits - a.dreaming_credits_used,
                         },
+                        "workspace_count": workspace_counts.get(&a.agent_id).copied().unwrap_or(0),
                         "source": "database",
                     });
 
