@@ -45,12 +45,11 @@ Comprehensive reference for all environment variables used by the Agent Bestiary
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | No | - | Anthropic API key. Enables: (1) LLM agent execution via Claude models, (2) Voyage-2 embeddings, (3) ontology/prompt generation in the creation wizard. Without it the server falls back to mock executor and mock embeddings. |
-| `GEMINI_API_KEY` | No | `""` (disabled) | Google Gemini API key. Used exclusively for avatar image generation (`gemini-2.5-flash-image`). When empty, `POST /api/agents/:id/avatar/generate` returns 503. |
+| `GEMINI_API_KEY` | No | `""` (disabled) | Google Gemini API key. Used for avatar generation, `generate_image` tool, and `edit_image` tool (all via `gemini-2.5-flash-image`). When empty, image features return errors. |
 | `MISTRAL_API_KEY` | No | - | Mistral AI API key. Enables Mistral models (Large, Medium, Nemo) and `mistral-embed` embeddings in the model catalogue. |
 | `OPENROUTER_API_KEY` | No | - | OpenRouter API key. Enables routing to various models (Claude, Llama, Gemini, Mixtral) via OpenRouter in the model catalogue. |
 | `QWEN_API_KEY` | No | - | Qwen (Alibaba Cloud) API key. Enables Qwen models (Max, Plus, Turbo) and `text-embedding-v3` embeddings in the model catalogue. |
 | `OPENAI_API_KEY` | No | - | OpenAI API key. Enables `text-embedding-3-large` embeddings in the model catalogue. |
-| `FAL_KEY` | No | - | fal.ai API key. Enables image generation (`generate_image`) and editing (`edit_image`) tools via Nano Banana Pro (Google Imagen). Required for style_transfer and watermark agents. |
 
 ---
 
@@ -140,7 +139,6 @@ STRIPE_PUBLISHABLE_KEY=pk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 
 # Optional but recommended
-GEMINI_API_KEY=...
-FAL_KEY=...  # For image generation tools (Nano Banana)
+GEMINI_API_KEY=...  # Also powers generate_image and edit_image tools
 GIT_REPOS_PATH=/data/repos
 ```

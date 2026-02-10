@@ -146,23 +146,13 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
         },
         BuiltinToolDef {
             name: "generate_image",
-            description: "Generate an image from a text prompt using Nano Banana Pro (Google Imagen). Returns a URL to the generated image.",
+            description: "Generate an image from a text prompt using Gemini. Returns the image as base64-encoded data with its MIME type.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "prompt": {
                         "type": "string",
                         "description": "Text description of the image to generate"
-                    },
-                    "aspect_ratio": {
-                        "type": "string",
-                        "description": "Aspect ratio (default: 1:1). Options: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3",
-                        "default": "1:1"
-                    },
-                    "output_format": {
-                        "type": "string",
-                        "description": "Output format: png, jpeg, webp (default: png)",
-                        "default": "png"
                     }
                 },
                 "required": ["prompt"]
@@ -171,7 +161,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
         },
         BuiltinToolDef {
             name: "edit_image",
-            description: "Edit/transform an image using a text prompt and reference image via Nano Banana (Google Imagen). Useful for style transfer, modifications, and artistic transformations. Returns a URL to the edited image.",
+            description: "Edit/transform an image using a text prompt and a reference image URL via Gemini. Useful for style transfer, modifications, and artistic transformations. Returns the edited image as base64-encoded data.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -182,11 +172,6 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                     "image_url": {
                         "type": "string",
                         "description": "URL of the source image to edit"
-                    },
-                    "output_format": {
-                        "type": "string",
-                        "description": "Output format: png, jpeg, webp (default: png)",
-                        "default": "png"
                     }
                 },
                 "required": ["prompt", "image_url"]
@@ -580,89 +565,104 @@ async fn execute_list_workspace_agents(ctx: &ToolContext) -> Result<String, Stri
     serde_json::to_string_pretty(&agents).map_err(|e| format!("Serialization error: {}", e))
 }
 
-// ─── fal.ai image generation tools ─────────────────────────────────
+// ─── Gemini image generation tools ─────────────────────────────────
 
-/// Response shape from fal.ai endpoints
+/// Gemini API response types (shared with avatar generation)
 #[derive(serde::Deserialize)]
-struct FalImageResponse {
-    images: Vec<FalImage>,
-    #[serde(default)]
-    description: Option<String>,
+struct GeminiToolResponse {
+    candidates: Vec<GeminiToolCandidate>,
 }
 
 #[derive(serde::Deserialize)]
-struct FalImage {
-    url: String,
-    #[serde(default)]
-    content_type: Option<String>,
-    #[serde(default)]
-    file_name: Option<String>,
+struct GeminiToolCandidate {
+    content: GeminiToolContent,
 }
+
+#[derive(serde::Deserialize)]
+struct GeminiToolContent {
+    parts: Vec<GeminiToolPart>,
+}
+
+#[derive(serde::Deserialize)]
+struct GeminiToolPart {
+    text: Option<String>,
+    #[serde(rename = "inlineData")]
+    inline_data: Option<GeminiToolInlineData>,
+}
+
+#[derive(serde::Deserialize)]
+struct GeminiToolInlineData {
+    #[serde(rename = "mimeType")]
+    mime_type: String,
+    data: String,
+}
+
+const GEMINI_IMAGE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent";
 
 async fn execute_generate_image(input: &serde_json::Value) -> Result<String, String> {
-    let fal_key =
-        std::env::var("FAL_KEY").map_err(|_| "FAL_KEY not set — image generation unavailable")?;
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .map_err(|_| "GEMINI_API_KEY not set — image generation unavailable")?;
 
     let prompt = input
         .get("prompt")
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: prompt")?;
 
-    let aspect_ratio = input
-        .get("aspect_ratio")
-        .and_then(|v| v.as_str())
-        .unwrap_or("1:1");
-
-    let output_format = input
-        .get("output_format")
-        .and_then(|v| v.as_str())
-        .unwrap_or("png");
-
     let body = json!({
-        "prompt": prompt,
-        "num_images": 1,
-        "aspect_ratio": aspect_ratio,
-        "output_format": output_format,
-        "resolution": "1K"
+        "contents": [{
+            "parts": [{ "text": prompt }]
+        }],
+        "generationConfig": {
+            "responseModalities": ["IMAGE"]
+        }
     });
 
     let client = reqwest::Client::new();
     let response = client
-        .post("https://fal.run/fal-ai/nano-banana-pro")
-        .header("Authorization", format!("Key {}", fal_key))
+        .post(GEMINI_IMAGE_URL)
+        .header("x-goog-api-key", &api_key)
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("fal.ai request failed: {}", e))?;
+        .map_err(|e| format!("Gemini API request failed: {}", e))?;
 
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
-        return Err(format!("fal.ai error: {}", error_text));
+        return Err(format!("Gemini API error: {}", error_text));
     }
 
-    let fal_resp: FalImageResponse = response
+    let gemini_resp: GeminiToolResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse fal.ai response: {}", e))?;
+        .map_err(|e| format!("Failed to parse Gemini response: {}", e))?;
 
-    let result = json!({
-        "images": fal_resp.images.iter().map(|img| {
-            json!({
-                "url": img.url,
-                "content_type": img.content_type,
-                "file_name": img.file_name,
-            })
-        }).collect::<Vec<_>>(),
-        "description": fal_resp.description,
-    });
+    // Extract image data from response
+    for candidate in &gemini_resp.candidates {
+        for part in &candidate.content.parts {
+            if let Some(ref inline_data) = part.inline_data {
+                let result = json!({
+                    "image": {
+                        "mime_type": inline_data.mime_type,
+                        "data": inline_data.data,
+                    },
+                    "description": candidate.content.parts.iter()
+                        .filter_map(|p| p.text.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                });
+                return serde_json::to_string_pretty(&result)
+                    .map_err(|e| format!("Serialization error: {}", e));
+            }
+        }
+    }
 
-    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+    Err("Gemini returned no image data".to_string())
 }
 
 async fn execute_edit_image(input: &serde_json::Value) -> Result<String, String> {
-    let fal_key =
-        std::env::var("FAL_KEY").map_err(|_| "FAL_KEY not set — image editing unavailable")?;
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .map_err(|_| "GEMINI_API_KEY not set — image editing unavailable")?;
 
     let prompt = input
         .get("prompt")
@@ -674,50 +674,93 @@ async fn execute_edit_image(input: &serde_json::Value) -> Result<String, String>
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: image_url")?;
 
-    let output_format = input
-        .get("output_format")
-        .and_then(|v| v.as_str())
-        .unwrap_or("png");
+    // Fetch the source image and convert to base64
+    let client = reqwest::Client::new();
+    let img_response = client
+        .get(image_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch source image: {}", e))?;
+
+    if !img_response.status().is_success() {
+        return Err(format!(
+            "Failed to fetch image ({}): {}",
+            img_response.status(),
+            image_url
+        ));
+    }
+
+    let content_type = img_response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/png")
+        .to_string();
+    let img_bytes = img_response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+    use base64::Engine;
+    let img_b64 = base64::engine::general_purpose::STANDARD.encode(&img_bytes);
 
     let body = json!({
-        "prompt": prompt,
-        "image_urls": [image_url],
-        "num_images": 1,
-        "output_format": output_format
+        "contents": [{
+            "parts": [
+                { "text": prompt },
+                {
+                    "inline_data": {
+                        "mime_type": content_type,
+                        "data": img_b64
+                    }
+                }
+            ]
+        }],
+        "generationConfig": {
+            "responseModalities": ["TEXT", "IMAGE"]
+        }
     });
 
-    let client = reqwest::Client::new();
     let response = client
-        .post("https://fal.run/fal-ai/nano-banana/edit")
-        .header("Authorization", format!("Key {}", fal_key))
+        .post(GEMINI_IMAGE_URL)
+        .header("x-goog-api-key", &api_key)
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("fal.ai request failed: {}", e))?;
+        .map_err(|e| format!("Gemini API request failed: {}", e))?;
 
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
-        return Err(format!("fal.ai error: {}", error_text));
+        return Err(format!("Gemini API error: {}", error_text));
     }
 
-    let fal_resp: FalImageResponse = response
+    let gemini_resp: GeminiToolResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse fal.ai response: {}", e))?;
+        .map_err(|e| format!("Failed to parse Gemini response: {}", e))?;
 
-    let result = json!({
-        "images": fal_resp.images.iter().map(|img| {
-            json!({
-                "url": img.url,
-                "content_type": img.content_type,
-                "file_name": img.file_name,
-            })
-        }).collect::<Vec<_>>(),
-        "description": fal_resp.description,
-    });
+    // Extract image + text from response
+    for candidate in &gemini_resp.candidates {
+        for part in &candidate.content.parts {
+            if let Some(ref inline_data) = part.inline_data {
+                let result = json!({
+                    "image": {
+                        "mime_type": inline_data.mime_type,
+                        "data": inline_data.data,
+                    },
+                    "description": candidate.content.parts.iter()
+                        .filter_map(|p| p.text.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                });
+                return serde_json::to_string_pretty(&result)
+                    .map_err(|e| format!("Serialization error: {}", e));
+            }
+        }
+    }
 
-    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+    Err("Gemini returned no image data".to_string())
 }
 
 // ─── Workspace file write tool ─────────────────────────────────────
