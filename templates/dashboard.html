@@ -776,11 +776,14 @@
         .addEventListener("click", async () => {
           const name = prompt("Workspace name:");
           if (!name || !name.trim()) return;
-          const slug = name
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "");
+          const slug =
+            name
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, "") +
+            "-" +
+            Date.now().toString(36).slice(-4);
           try {
             const res = await fetch("/api/teams", {
               method: "POST",
