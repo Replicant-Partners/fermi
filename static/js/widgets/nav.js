@@ -52,6 +52,15 @@ const Nav = {
       body.appendChild(header);
     }
 
+    // Auto-load auth.js if not already present
+    if (typeof initAuth === "undefined") {
+      const s = document.createElement("script");
+      s.src = "/static/js/auth.js";
+      document.body.appendChild(s);
+    } else {
+      initAuth();
+    }
+
     // Load notifications if logged in
     Nav._loadNotificationCount();
 
