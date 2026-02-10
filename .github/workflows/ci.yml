@@ -17,7 +17,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: pgvector/pgvector:pg15
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: fermi_test
@@ -71,8 +71,9 @@ jobs:
             sleep 1
           done
 
-          # Enable uuid-ossp extension (pgvector not available in vanilla postgres)
+          # Enable required extensions
           psql -h localhost -U postgres -d fermi_test -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
+          psql -h localhost -U postgres -d fermi_test -c 'CREATE EXTENSION IF NOT EXISTS "vector";'
 
           # Run all migrations in order (same as api_server::run_migrations)
           for f in $(ls migrations/*.sql | grep -v rollback | sort); do
@@ -82,8 +83,13 @@ jobs:
 
           echo "All migrations complete"
 
-      - name: Run unit tests
-        run: cargo test --lib --workspace
+      - name: Run unit tests (non-DB crates)
+        run: cargo test --lib --workspace --exclude agent-bestiary-memory
+
+      - name: Run agent-bestiary-memory unit tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+        run: cargo test --lib -p agent-bestiary-memory -- --test-threads=1
 
       - name: Run API integration tests
         env:
