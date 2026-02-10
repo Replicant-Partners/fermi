@@ -2346,7 +2346,7 @@ mod tests {
             failed_executions: 0,
             total_cost_usd: None,
             avg_execution_time_ms: 0,
-            status: "active".to_string(),
+            status: "draft".to_string(),
             fork_pricing: None,
             forked_from: None,
             fork_count: 0,

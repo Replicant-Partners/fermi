@@ -869,7 +869,7 @@ mod tests {
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
             sample_queries: vec![],
-            status: "active".to_string(),
+            status: "draft".to_string(),
             fork_pricing: None,
             forked_from: None,
             fork_count: 0,
