@@ -1,7 +1,7 @@
 use crate::error::{OntologyError, Result};
 use crate::types::{DiagramMetadata, MermaidConfig, MermaidDiagram};
-use chrono::Utc;
 use agent_bestiary_memory::MemoryStore;
+use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 

@@ -126,17 +126,18 @@ async fn test_rule_lifecycle() {
     // Verified rules among active
     let verified_active: Vec<_> = active
         .iter()
-        .filter(|r| matches!(r.verification_status, agent_bestiary_memory::VerificationStatus::Verified))
+        .filter(|r| {
+            matches!(
+                r.verification_status,
+                agent_bestiary_memory::VerificationStatus::Verified
+            )
+        })
         .collect();
     assert_eq!(verified_active.len(), 2, "Expected 2 active verified rules");
 
     // Rules with embeddings
     let with_embeddings: Vec<_> = rules.iter().filter(|r| r.embedding.is_some()).collect();
-    assert_eq!(
-        with_embeddings.len(),
-        4,
-        "Expected 4 rules with embeddings"
-    );
+    assert_eq!(with_embeddings.len(), 4, "Expected 4 rules with embeddings");
 
     seed.cleanup(&store).await.unwrap();
 }
@@ -166,7 +167,10 @@ async fn test_entity_graph() {
     // Some entities should have no summary
     // The edge case entity with no summary might be invalidated, so check in seed data
     let seed_entities = seed.entities_for(agent_id);
-    let no_summary: Vec<_> = seed_entities.iter().filter(|e| e.summary.is_none()).collect();
+    let no_summary: Vec<_> = seed_entities
+        .iter()
+        .filter(|e| e.summary.is_none())
+        .collect();
     assert!(
         !no_summary.is_empty(),
         "Expected at least 1 entity with no summary in seed data"
@@ -287,11 +291,7 @@ async fn test_consolidation_jobs() {
         .await
         .unwrap();
     let consolidated: Vec<_> = all_episodes.iter().filter(|e| e.consolidated).collect();
-    assert_eq!(
-        consolidated.len(),
-        10,
-        "10 episodes should be consolidated"
-    );
+    assert_eq!(consolidated.len(), 10, "10 episodes should be consolidated");
 
     seed.cleanup(&store).await.unwrap();
 }

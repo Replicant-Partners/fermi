@@ -1,8 +1,9 @@
 /// Test program to demonstrate the agent backend
 ///
 /// Run with: cargo run --example test_agent_backend
-
-use fermi::agent_backend::{AgentCard, AgentRegistry, ExecutionContext, MockExecutor, AgentExecutor};
+use fermi::agent_backend::{
+    AgentCard, AgentExecutor, AgentRegistry, ExecutionContext, MockExecutor,
+};
 use fermi::ast::{AgentStmt, Program, Schedule, TimeUnit};
 
 fn main() {
@@ -13,10 +14,7 @@ fn main() {
     println!("✓ Created agent registry");
 
     // Create and register a market research agent
-    let mut market_agent = AgentCard::new(
-        "market_research".to_string(),
-        "research".to_string(),
-    );
+    let mut market_agent = AgentCard::new("market_research".to_string(), "research".to_string());
     market_agent.metadata.description =
         "Researches market trends and competitive dynamics".to_string();
     market_agent.metadata.tags = vec!["market".to_string(), "research".to_string()];
@@ -73,18 +71,29 @@ fn main() {
     }
 
     // Record execution
-    registry.record_execution("market_research", &result).unwrap();
+    registry
+        .record_execution("market_research", &result)
+        .unwrap();
     println!("\n✓ Recorded execution stats");
 
     // Get updated agent card
     let updated_card = registry.get("market_research").unwrap();
     println!("\n📊 Updated Agent Stats:");
-    println!("   Total executions: {}", updated_card.usage.total_executions);
-    println!("   Successful: {}", updated_card.usage.successful_executions);
+    println!(
+        "   Total executions: {}",
+        updated_card.usage.total_executions
+    );
+    println!(
+        "   Successful: {}",
+        updated_card.usage.successful_executions
+    );
     println!("   Failed: {}", updated_card.usage.failed_executions);
     println!("   Total tokens: {}", updated_card.usage.total_tokens_used);
     println!("   Total cost: ${:.4}", updated_card.usage.total_cost_usd);
-    println!("   Avg execution time: {}ms", updated_card.usage.avg_execution_time_ms);
+    println!(
+        "   Avg execution time: {}ms",
+        updated_card.usage.avg_execution_time_ms
+    );
 
     // List all agents
     println!("\n📋 Registered Agents:");

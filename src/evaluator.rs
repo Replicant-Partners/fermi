@@ -2,7 +2,6 @@
 ///
 /// This module evaluates FPL expressions during simulation, looking up
 /// driver values from the current simulation context and computing results.
-
 use crate::ast::Expression;
 use std::collections::HashMap;
 
@@ -108,9 +107,9 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
         Expression::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
 
         // Variable lookup
-        Expression::Identifier(name) => {
-            ctx.get(name).ok_or_else(|| EvalError::UndefinedVariable(name.clone()))
-        }
+        Expression::Identifier(name) => ctx
+            .get(name)
+            .ok_or_else(|| EvalError::UndefinedVariable(name.clone())),
 
         // Arithmetic operators
         Expression::Add(left, right) => {
@@ -157,9 +156,10 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
 
             // Check for invalid operations
             if b < 0.0 && e.fract() != 0.0 {
-                Err(EvalError::InvalidOperation(
-                    format!("Cannot raise negative number {} to non-integer power {}", b, e)
-                ))
+                Err(EvalError::InvalidOperation(format!(
+                    "Cannot raise negative number {} to non-integer power {}",
+                    b, e
+                )))
             } else {
                 Ok(b.powf(e))
             }
@@ -199,13 +199,21 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
         Expression::Equal(left, right) => {
             let l = evaluate(left, ctx)?;
             let r = evaluate(right, ctx)?;
-            Ok(if (l - r).abs() < f64::EPSILON { 1.0 } else { 0.0 })
+            Ok(if (l - r).abs() < f64::EPSILON {
+                1.0
+            } else {
+                0.0
+            })
         }
 
         Expression::NotEqual(left, right) => {
             let l = evaluate(left, ctx)?;
             let r = evaluate(right, ctx)?;
-            Ok(if (l - r).abs() >= f64::EPSILON { 1.0 } else { 0.0 })
+            Ok(if (l - r).abs() >= f64::EPSILON {
+                1.0
+            } else {
+                0.0
+            })
         }
 
         // Logical operators
@@ -222,7 +230,11 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
         }
 
         // Conditional expression
-        Expression::If { condition, then_expr, else_expr } => {
+        Expression::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             let cond = evaluate(condition, ctx)?;
             if cond != 0.0 {
                 evaluate(then_expr, ctx)
@@ -232,16 +244,12 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
         }
 
         // Function calls (built-in functions)
-        Expression::FunctionCall { name, args } => {
-            evaluate_function(name, args, ctx)
-        }
+        Expression::FunctionCall { name, args } => evaluate_function(name, args, ctx),
 
         // These should not appear in model expressions
-        Expression::String(_) => {
-            Err(EvalError::TypeError(
-                "String and Date literals cannot be used in model expressions".to_string()
-            ))
-        }
+        Expression::String(_) => Err(EvalError::TypeError(
+            "String and Date literals cannot be used in model expressions".to_string(),
+        )),
     }
 }
 
@@ -250,7 +258,9 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
     match name {
         "min" => {
             if args.is_empty() {
-                return Err(EvalError::InvalidOperation("min() requires at least 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "min() requires at least 1 argument".to_string(),
+                ));
             }
             let values: Result<Vec<_>, _> = args.iter().map(|arg| evaluate(arg, ctx)).collect();
             let values = values?;
@@ -259,7 +269,9 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
 
         "max" => {
             if args.is_empty() {
-                return Err(EvalError::InvalidOperation("max() requires at least 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "max() requires at least 1 argument".to_string(),
+                ));
             }
             let values: Result<Vec<_>, _> = args.iter().map(|arg| evaluate(arg, ctx)).collect();
             let values = values?;
@@ -268,7 +280,9 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
 
         "abs" => {
             if args.len() != 1 {
-                return Err(EvalError::InvalidOperation("abs() requires exactly 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "abs() requires exactly 1 argument".to_string(),
+                ));
             }
             let val = evaluate(&args[0], ctx)?;
             Ok(val.abs())
@@ -276,11 +290,15 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
 
         "sqrt" => {
             if args.len() != 1 {
-                return Err(EvalError::InvalidOperation("sqrt() requires exactly 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "sqrt() requires exactly 1 argument".to_string(),
+                ));
             }
             let val = evaluate(&args[0], ctx)?;
             if val < 0.0 {
-                Err(EvalError::InvalidOperation("sqrt() of negative number".to_string()))
+                Err(EvalError::InvalidOperation(
+                    "sqrt() of negative number".to_string(),
+                ))
             } else {
                 Ok(val.sqrt())
             }
@@ -288,11 +306,15 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
 
         "log" => {
             if args.len() != 1 {
-                return Err(EvalError::InvalidOperation("log() requires exactly 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "log() requires exactly 1 argument".to_string(),
+                ));
             }
             let val = evaluate(&args[0], ctx)?;
             if val <= 0.0 {
-                Err(EvalError::InvalidOperation("log() of non-positive number".to_string()))
+                Err(EvalError::InvalidOperation(
+                    "log() of non-positive number".to_string(),
+                ))
             } else {
                 Ok(val.ln())
             }
@@ -300,7 +322,9 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
 
         "exp" => {
             if args.len() != 1 {
-                return Err(EvalError::InvalidOperation("exp() requires exactly 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "exp() requires exactly 1 argument".to_string(),
+                ));
             }
             let val = evaluate(&args[0], ctx)?;
             Ok(val.exp())
@@ -308,7 +332,9 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
 
         "round" => {
             if args.len() != 1 {
-                return Err(EvalError::InvalidOperation("round() requires exactly 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "round() requires exactly 1 argument".to_string(),
+                ));
             }
             let val = evaluate(&args[0], ctx)?;
             Ok(val.round())
@@ -316,7 +342,9 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
 
         "floor" => {
             if args.len() != 1 {
-                return Err(EvalError::InvalidOperation("floor() requires exactly 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "floor() requires exactly 1 argument".to_string(),
+                ));
             }
             let val = evaluate(&args[0], ctx)?;
             Ok(val.floor())
@@ -324,13 +352,18 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvaluationContext) -
 
         "ceil" => {
             if args.len() != 1 {
-                return Err(EvalError::InvalidOperation("ceil() requires exactly 1 argument".to_string()));
+                return Err(EvalError::InvalidOperation(
+                    "ceil() requires exactly 1 argument".to_string(),
+                ));
             }
             let val = evaluate(&args[0], ctx)?;
             Ok(val.ceil())
         }
 
-        _ => Err(EvalError::InvalidOperation(format!("Unknown function: {}", name)))
+        _ => Err(EvalError::InvalidOperation(format!(
+            "Unknown function: {}",
+            name
+        ))),
     }
 }
 
@@ -343,7 +376,10 @@ mod tests {
         let ctx = EvaluationContext::new();
 
         assert_eq!(evaluate(&Expression::Number(42.5), &ctx).unwrap(), 42.5);
-        assert_eq!(evaluate(&Expression::Probability(0.75), &ctx).unwrap(), 0.75);
+        assert_eq!(
+            evaluate(&Expression::Probability(0.75), &ctx).unwrap(),
+            0.75
+        );
         assert_eq!(evaluate(&Expression::Boolean(true), &ctx).unwrap(), 1.0);
         assert_eq!(evaluate(&Expression::Boolean(false), &ctx).unwrap(), 0.0);
     }
@@ -353,7 +389,10 @@ mod tests {
         let mut ctx = EvaluationContext::new();
         ctx.set("x".to_string(), 100.0);
 
-        assert_eq!(evaluate(&Expression::Identifier("x".to_string()), &ctx).unwrap(), 100.0);
+        assert_eq!(
+            evaluate(&Expression::Identifier("x".to_string()), &ctx).unwrap(),
+            100.0
+        );
 
         let result = evaluate(&Expression::Identifier("y".to_string()), &ctx);
         assert!(result.is_err());
@@ -417,7 +456,10 @@ mod tests {
             Box::new(Expression::Number(0.0)),
         );
 
-        assert!(matches!(evaluate(&expr, &ctx), Err(EvalError::DivisionByZero)));
+        assert!(matches!(
+            evaluate(&expr, &ctx),
+            Err(EvalError::DivisionByZero)
+        ));
     }
 
     #[test]
@@ -427,7 +469,7 @@ mod tests {
         // -5 = -5 (using subtraction: 0 - 5)
         let expr = Expression::Subtract(
             Box::new(Expression::Number(0.0)),
-            Box::new(Expression::Number(5.0))
+            Box::new(Expression::Number(5.0)),
         );
         assert_eq!(evaluate(&expr, &ctx).unwrap(), -5.0);
 

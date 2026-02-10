@@ -1,7 +1,6 @@
 /// FPL Type System
 ///
 /// Defines the type system for FPL expressions and provides type checking utilities.
-
 use std::fmt;
 
 /// Types in the FPL language
@@ -85,7 +84,11 @@ impl Type {
     pub fn binary_op_result(left: &Type, right: &Type, op: BinaryOp) -> Type {
         match op {
             // Arithmetic operations
-            BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo => {
+            BinaryOp::Add
+            | BinaryOp::Subtract
+            | BinaryOp::Multiply
+            | BinaryOp::Divide
+            | BinaryOp::Modulo => {
                 if left.supports_arithmetic() && right.supports_arithmetic() {
                     // If either is Probability, result is Number
                     if matches!(left, Type::Probability) || matches!(right, Type::Probability) {

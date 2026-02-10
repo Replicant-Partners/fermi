@@ -2,9 +2,8 @@
 ///
 /// This module provides sampling functions for all probability distributions
 /// supported by the Forecasting Programming Language (FPL).
-
 use rand::Rng;
-use rand_distr::{Distribution, Normal, LogNormal, Uniform, Beta as BetaDist};
+use rand_distr::{Beta as BetaDist, Distribution, LogNormal, Normal, Uniform};
 
 /// Sample from a triangular distribution
 ///
@@ -173,9 +172,7 @@ pub fn calculate_statistics(samples: &[f64]) -> (f64, f64, f64, f64, f64) {
     let mean = samples.iter().sum::<f64>() / n;
 
     // Standard deviation
-    let variance = samples.iter()
-        .map(|x| (x - mean).powi(2))
-        .sum::<f64>() / n;
+    let variance = samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
     let stddev = variance.sqrt();
 
     // Percentiles (need sorted data)
@@ -209,8 +206,8 @@ fn percentile(sorted_data: &[f64], p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
     use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
     fn test_triangular_basic() {
@@ -240,14 +237,17 @@ mod tests {
             .collect();
 
         let mean = samples.iter().sum::<f64>() / samples.len() as f64;
-        let variance = samples.iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f64>() / samples.len() as f64;
+        let variance =
+            samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / samples.len() as f64;
         let stddev = variance.sqrt();
 
         // Check mean and stddev are close to parameters
         assert!((mean - 100.0).abs() < 1.0, "Mean {} not close to 100", mean);
-        assert!((stddev - 15.0).abs() < 0.5, "Stddev {} not close to 15", stddev);
+        assert!(
+            (stddev - 15.0).abs() < 0.5,
+            "Stddev {} not close to 15",
+            stddev
+        );
     }
 
     #[test]
@@ -267,7 +267,11 @@ mod tests {
         let mut sorted = samples.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let median = sorted[sorted.len() / 2];
-        assert!((median - 100.0).abs() < 5.0, "Median {} not close to 100", median);
+        assert!(
+            (median - 100.0).abs() < 5.0,
+            "Median {} not close to 100",
+            median
+        );
     }
 
     #[test]
@@ -303,7 +307,11 @@ mod tests {
 
         // For Beta(2, 5), distribution is right-skewed (peaks toward 0)
         let mean = samples.iter().sum::<f64>() / samples.len() as f64;
-        assert!(mean < 50.0, "Mean {} should be below midpoint for Beta(2,5)", mean);
+        assert!(
+            mean < 50.0,
+            "Mean {} should be below midpoint for Beta(2,5)",
+            mean
+        );
     }
 
     #[test]

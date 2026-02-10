@@ -5,7 +5,10 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use fermi_auth::{credit_deposit, get_or_create_wallet, teams, AuthPrincipal, MemberType, ObjectType, Permission, ShareType, TeamRole};
+use fermi_auth::{
+    credit_deposit, get_or_create_wallet, teams, AuthPrincipal, MemberType, ObjectType, Permission,
+    ShareType, TeamRole,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;

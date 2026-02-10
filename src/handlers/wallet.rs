@@ -5,7 +5,9 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use fermi_auth::{credit_get_balance, credit_get_transactions, get_or_create_wallet, AuthPrincipal};
+use fermi_auth::{
+    credit_get_balance, credit_get_transactions, get_or_create_wallet, AuthPrincipal,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 

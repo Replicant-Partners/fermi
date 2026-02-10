@@ -1,10 +1,6 @@
 //! Miscellaneous handlers — waitlist, health, debug.
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
