@@ -505,6 +505,31 @@
         }
       }
 
+      // Throttled avatar loading — 5 concurrent requests max
+      const avatarQueue = [];
+      let avatarLoading = 0;
+      const AVATAR_CONCURRENCY = 5;
+      function queueAvatar(agentId) {
+        avatarQueue.push(agentId);
+        drainAvatarQueue();
+      }
+      async function drainAvatarQueue() {
+        while (avatarQueue.length > 0 && avatarLoading < AVATAR_CONCURRENCY) {
+          const id = avatarQueue.shift();
+          avatarLoading++;
+          generateAvatar(id).then((url) => {
+            avatarLoading--;
+            const el = document.getElementById(`avatar-${CSS.escape(id)}`);
+            if (el && url) {
+              el.innerHTML = `<img src="${url}" alt="${id}">`;
+              el.style.background = "";
+              el.classList.remove("loading");
+            }
+            drainAvatarQueue();
+          });
+        }
+      }
+
       // Category definitions
       const CATEGORIES = [
         {
@@ -790,16 +815,7 @@
 
           grid.appendChild(card);
 
-          generateAvatar(agentId).then((avatarUrl) => {
-            const avatarDiv = document.getElementById(
-              `avatar-${CSS.escape(agentId)}`,
-            );
-            if (avatarDiv && avatarUrl) {
-              avatarDiv.innerHTML = `<img src="${avatarUrl}" alt="${agentId}">`;
-              avatarDiv.style.background = "";
-              avatarDiv.classList.remove("loading");
-            }
-          });
+          queueAvatar(agentId);
         });
       }
 

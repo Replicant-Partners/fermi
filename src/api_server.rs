@@ -372,6 +372,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/026_fork_royalty_tx_type.sql",
         "migrations/027_eval_framework.sql",
         "migrations/028_episode_tags.sql",
+        "migrations/029_fix_message_type_and_profile.sql",
     ];
 
     for file in &migration_files {
