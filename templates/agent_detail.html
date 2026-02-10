@@ -941,6 +941,7 @@
                 <button data-tab="activity">Activity</button>
                 <button data-tab="knowledge">Knowledge</button>
                 <button data-tab="economics">Economics</button>
+                <button data-tab="field-notes">Field Notes</button>
               </div>
 
               <!-- Overview Tab -->
@@ -1117,6 +1118,105 @@
                           `<div class="credential-item"><span class="credential-key">${key}</span><span class="${secrets[key] ? "status-ok" : "status-missing"}">${secrets[key] ? "✓ Configured" : "✗ Missing"}</span></div>`,
                       )
                       .join("")}
+                  </div>`
+                      : ""
+                  }
+                </div>
+              </div>
+
+              <!-- Field Notes Tab -->
+              <div data-tab-panel="field-notes" style="display:none">
+                <div class="sections">
+                  <div class="section">
+                    <div class="section-title">About This Agent</div>
+                    <div style="color:var(--fg1);font-size:0.9em;line-height:1.7">
+                      ${agent.description || agent.metadata?.description || "No description provided."}
+                    </div>
+                    ${agent.metadata?.author ? `<div style="margin-top:12px;font-size:0.8em;color:var(--fg3)">Author: <span style="color:var(--fg2)">${agent.metadata.author}</span></div>` : ""}
+                    ${agent.metadata?.created ? `<div style="font-size:0.8em;color:var(--fg3)">Created: <span style="color:var(--fg2)">${agent.metadata.created}</span></div>` : ""}
+                  </div>
+
+                  ${(() => {
+                    const sq =
+                      agent.metadata?.sample_queries ||
+                      agent.sample_queries ||
+                      [];
+                    if (sq.length === 0) return "";
+                    return (
+                      '<div class="section"><div class="section-title">Sample Queries</div><div style="color:var(--fg3);font-size:0.8em;margin-bottom:12px">Try these queries to get started with this agent.</div>' +
+                      sq
+                        .map(
+                          (q) =>
+                            '<div style="padding:8px 12px;background:var(--bg1);border-left:2px solid var(--yellow);margin-bottom:6px;font-size:0.85em;color:var(--fg1)">' +
+                            q +
+                            "</div>",
+                        )
+                        .join("") +
+                      "</div>"
+                    );
+                  })()}
+
+                  ${(() => {
+                    const skills = agent.capabilities?.skills || [];
+                    if (skills.length === 0) return "";
+                    return (
+                      '<div class="section"><div class="section-title">Skills</div><div style="display:flex;flex-wrap:wrap;gap:6px">' +
+                      skills
+                        .map(
+                          (s) =>
+                            '<span style="background:var(--bg2);color:var(--aqua);padding:4px 10px;font-size:0.8em;border-radius:3px">' +
+                            s +
+                            "</span>",
+                        )
+                        .join("") +
+                      "</div></div>"
+                    );
+                  })()}
+
+                  ${(() => {
+                    const tools = agent.capabilities?.mcp_tools || [];
+                    if (tools.length === 0) return "";
+                    return (
+                      '<div class="section"><div class="section-title">Tools</div><div class="field-grid">' +
+                      tools
+                        .map(
+                          (t) =>
+                            '<div class="field-item"><div class="field-label">' +
+                            (t.name || t) +
+                            '</div><div class="field-value">' +
+                            (t.description || "Tool") +
+                            "</div></div>",
+                        )
+                        .join("") +
+                      "</div></div>"
+                    );
+                  })()}
+
+                  <div class="section">
+                    <div class="section-title">Usage Patterns</div>
+                    <div style="color:var(--fg3);font-size:0.8em;margin-bottom:12px">How to get the most out of this agent.</div>
+                    <div style="font-size:0.85em;color:var(--fg1);line-height:1.7">
+                      ${agent.agent_type === "research" ? "<p>Best used for deep research queries. Provide specific questions with context about what you need to forecast. Combine with other research agents in a workspace for multi-perspective analysis.</p>" : ""}
+                      ${agent.agent_type === "creative" ? "<p>Works best with open-ended prompts. Describe the style, mood, or concept you want to explore. Can be combined with image generation tools in workspaces.</p>" : ""}
+                      ${agent.agent_type === "games" ? "<p>Interactive game agent. Start a session and follow the prompts. Best experienced in a dedicated workspace.</p>" : ""}
+                      ${agent.agent_type === "meta" ? "<p>Meta-agent that operates on other agents or the platform itself. Useful for orchestration, evaluation, and system-level queries.</p>" : ""}
+                      ${agent.agent_type === "osint" ? "<p>Specializes in open-source intelligence gathering. Provide specific targets, topics, or questions. Results include source attribution and confidence scores.</p>" : ""}
+                      ${!["research", "creative", "games", "meta", "osint"].includes(agent.agent_type) ? "<p>Execute with a clear, specific query. Check the sample queries above for guidance on what this agent handles well.</p>" : ""}
+                    </div>
+                    <div style="margin-top:12px;font-size:0.85em;color:var(--fg1);line-height:1.7">
+                      <p><strong style="color:var(--yellow)">In Workspaces:</strong> Hire this agent to a workspace with <code style="background:var(--bg2);padding:2px 6px;font-size:0.9em">+ Hire</code>, then mention with <code style="background:var(--bg2);padding:2px 6px;font-size:0.9em">@${agent.display_alias || agent.agent_name}</code> in chat.</p>
+                      <p><strong style="color:var(--yellow)">Direct Execution:</strong> Use the Execute button above for one-off queries (costs credits per execution).</p>
+                      <p><strong style="color:var(--yellow)">MCP Integration:</strong> Connect via the MCP endpoint for programmatic access from Claude Code, Zed, or other MCP-compatible tools.</p>
+                    </div>
+                  </div>
+
+                  ${
+                    agent.system_prompt &&
+                    window._authUser?.user_id === agent.owner_id
+                      ? `
+                  <div class="section">
+                    <div class="section-title">System Prompt <span style="font-size:0.75em;color:var(--fg3);font-weight:normal">(owner only)</span></div>
+                    <pre style="background:var(--bg1);padding:12px;font-size:0.8em;color:var(--fg2);white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;border:1px solid var(--bg2)">${agent.system_prompt}</pre>
                   </div>`
                       : ""
                   }
