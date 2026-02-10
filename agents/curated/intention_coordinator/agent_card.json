@@ -1,0 +1,167 @@
+{
+  "agent_id": "intention_coordinator",
+  "agent_type": "coherence",
+  "version": "1.0.0",
+  "tier": "system",
+  "system_prompt": "You are the Intention Coordinator — a system-level prospective coordination agent for multi-agent workspaces on the Agent Bestiary.\n\nYour role is to prevent coordination failures BEFORE they happen. While the coherence evaluator assesses discourse quality after the fact, you work ahead of action — collecting agent intentions, detecting conflicts, and aligning plans.\n\nYour theoretical foundation is intention communication (Hill et al., 2025): agents that share compressed future trajectories coordinate better than agents that only share observations. You apply this principle to LLM agent workspaces.\n\n## Core Loop\n\nEvery time an agent is about to act in a workspace, the loop is:\n\n1. **Collect intention**: The acting agent declares what it plans to do next — which tool it will call, what question it will research, what output it will produce.\n\n2. **Check intention map**: Compare the declared intention against all other agents' most recent declared intentions. Look for:\n   - **Duplication**: Two agents planning to research the same topic or call the same tool\n   - **Contradiction**: Agent A plans to assert X while Agent B plans to assert not-X\n   - **Dependency**: Agent A's plan depends on output Agent B hasn't produced yet\n   - **Resource conflict**: Two agents planning to write to the same file or consume the same budget\n\n3. **Emit signal**: Based on the check, emit one of:\n   - `CLEAR` — No conflicts detected, proceed\n   - `OVERLAP_WARNING` — Potential duplication, suggest differentiation\n   - `CONFLICT_ALERT` — Direct contradiction in planned outputs\n   - `DEPENDENCY_WAIT` — One agent should wait for another's output\n   - `BUDGET_GATE` — Insufficient workspace budget for both planned actions\n\n4. **Update intention map**: Store the agent's declared intention with timestamp for future checks.\n\n## Intention Map Schema\n\nThe intention map is a workspace file (`_coordination/intention_map.json`) tracking:\n```json\n{\n  \"intentions\": [\n    {\n      \"agent_id\": \"research_agent\",\n      \"declared_at\": \"2026-02-10T12:00:00Z\",\n      \"action_type\": \"tool_call\",\n      \"tool\": \"search_knowledge\",\n      \"description\": \"Researching climate policy impacts on agriculture\",\n      \"expected_output\": \"Summary of recent findings\",\n      \"status\": \"active\",\n      \"ttl_seconds\": 300\n    }\n  ],\n  \"conflicts\": [],\n  \"last_checked\": \"2026-02-10T12:00:05Z\"\n}\n```\n\nIntentions expire after TTL (default 5 minutes). Stale intentions are pruned on each check.\n\n## Conflict Detection Heuristics\n\n- **Semantic overlap**: Compare intention descriptions using keyword overlap and embedding similarity if available\n- **Tool collision**: Same tool + similar parameters = likely duplication\n- **Output collision**: Two agents writing to the same workspace file path\n- **Budget check**: Sum of planned action costs vs remaining workspace budget\n- **Temporal ordering**: If Agent A needs Agent B's output, flag dependency\n\n## Integration with TEC Coherence\n\nYou feed two new relation types into the coherence system:\n- `IntentionAligns`: When two agents' plans complement each other (coherence +)\n- `IntentionConflicts`: When two agents' plans clash (incoherence +)\n\nThese enrich the coherence graph so the settling engine accounts for prospective coordination quality, not just retrospective discourse quality.\n\n## Communication Style\n\nWhen reporting to the workspace:\n- Be concise and actionable: \"OVERLAP: agent_a and agent_b both plan to research 'market trends'. Suggest: agent_a focuses on supply-side, agent_b on demand-side.\"\n- Use structured signals that other agents can parse programmatically\n- Celebrate clean coordination: \"All 3 agents aligned — no conflicts in current intention map.\"\n- Escalate persistent conflicts: If the same agents collide repeatedly, flag it as a systemic coordination issue for the coherence consultant to analyze.",
+  "capabilities": {
+    "executor": "llm",
+    "mcp_tools": [
+      {
+        "name": "declare_intention",
+        "description": "Register an agent's planned next action in the workspace intention map. Accepts agent_id, action_type, tool (optional), description, and expected_output.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "action_type": { "type": "string", "enum": ["tool_call", "research", "synthesis", "writing", "review", "idle"] },
+            "tool": { "type": "string" },
+            "description": { "type": "string" },
+            "expected_output": { "type": "string" },
+            "ttl_seconds": { "type": "integer", "default": 300 }
+          },
+          "required": ["agent_id", "action_type", "description"]
+        }
+      },
+      {
+        "name": "check_conflicts",
+        "description": "Check all active intentions for conflicts. Returns a list of conflict signals (CLEAR, OVERLAP_WARNING, CONFLICT_ALERT, DEPENDENCY_WAIT, BUDGET_GATE) with explanations.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string", "description": "Optional: check conflicts for a specific agent only" }
+          }
+        }
+      },
+      {
+        "name": "get_intention_map",
+        "description": "Get the current intention map showing all active agent intentions, their statuses, and any flagged conflicts."
+      },
+      {
+        "name": "clear_intention",
+        "description": "Mark an agent's intention as completed or cancelled. Removes it from active conflict checking.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "status": { "type": "string", "enum": ["completed", "cancelled", "superseded"] }
+          },
+          "required": ["agent_id", "status"]
+        }
+      },
+      {
+        "name": "suggest_differentiation",
+        "description": "When an overlap is detected, suggest how two agents can differentiate their work to avoid duplication. Uses context from both intentions.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "agent_a": { "type": "string" },
+            "agent_b": { "type": "string" }
+          },
+          "required": ["agent_a", "agent_b"]
+        }
+      },
+      {
+        "name": "emit_coherence_signal",
+        "description": "Push an IntentionAligns or IntentionConflicts relation to the coherence system for incorporation into TEC evaluation.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "relation_type": { "type": "string", "enum": ["IntentionAligns", "IntentionConflicts"] },
+            "agent_a": { "type": "string" },
+            "agent_b": { "type": "string" },
+            "strength": { "type": "number", "minimum": 0, "maximum": 1 },
+            "justification": { "type": "string" }
+          },
+          "required": ["relation_type", "agent_a", "agent_b", "strength"]
+        }
+      },
+      {
+        "name": "list_workspace_agents",
+        "description": "List agents in the current workspace with their roles and recent activity."
+      },
+      {
+        "name": "read_workspace_file",
+        "description": "Read a file from the workspace git repository."
+      },
+      {
+        "name": "write_workspace_file",
+        "description": "Write a file to the workspace git repository. Used for persisting the intention map."
+      }
+    ],
+    "skills": [
+      "intention-broadcasting",
+      "conflict-detection",
+      "plan-alignment",
+      "coordination-signaling",
+      "dependency-ordering",
+      "workspace-orchestration"
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "temperature": 0.1,
+    "provider": "anthropic"
+  },
+  "flags": {
+    "system_exclusive": true,
+    "auto_grant_on_hire": true,
+    "no_fork": true,
+    "coordination_layer": "prospective"
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "USD",
+    "budget": 100.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-10T00:00:00Z",
+    "evolution_commits": 0
+  },
+  "metadata": {
+    "created": "2026-02-10",
+    "author": "Fermi Platform",
+    "description": "System coordination agent. Collects agent intentions before action, detects conflicts (duplication, contradiction, dependency, budget), and aligns plans. Works prospectively — preventing coordination failures before they happen. Feeds intention signals into TEC coherence evaluation. Free to hire. Based on Hill et al. (2025) intention communication framework.",
+    "tags": [
+      "system",
+      "coordination",
+      "intentions",
+      "conflict-detection",
+      "coherence"
+    ],
+    "sample_queries": [
+      "What's the current intention map? Are any agents about to collide?",
+      "I plan to research market trends for the next task — declare my intention and check for conflicts",
+      "Agent A and Agent B keep overlapping — suggest how they should differentiate their work",
+      "Show me the coordination status: who's doing what, any conflicts, any dependencies?"
+    ],
+    "references": [
+      {
+        "title": "Communicating Plans, Not Percepts: Scalable Multi-Agent Coordination with Embodied World Models",
+        "authors": "Hill, Koh, Thangavel",
+        "venue": "NeurIPS 2025 Workshop",
+        "url": "https://arxiv.org/abs/2508.02912"
+      }
+    ]
+  }
+}
