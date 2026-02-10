@@ -4345,22 +4345,30 @@ async fn get_workspace_handler(
         None => (0, 0),
     };
 
-    // Get workspace agents
-    let ws_id_str = ws_uuid.to_string();
-    let agents = state
-        .memory_store
-        .list_agents_for_owner(&ws_id_str)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Get workspace agents from junction table
+    let agent_rows = sqlx::query(
+        "SELECT a.agent_id, a.agent_name, a.description, a.total_executions,
+                a.display_alias, wa.relationship
+         FROM workspace_agents wa
+         JOIN agents a ON a.agent_id = wa.agent_id
+         WHERE wa.workspace_id = $1
+         ORDER BY wa.added_at DESC",
+    )
+    .bind(ws_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let agent_list: Vec<Value> = agents
+    let agent_list: Vec<Value> = agent_rows
         .iter()
-        .map(|a| {
+        .map(|r| {
             json!({
-                "agent_id": a.agent_id,
-                "agent_name": a.agent_name,
-                "description": a.description,
-                "total_executions": a.total_executions,
+                "agent_id": r.try_get::<uuid::Uuid, _>("agent_id").ok(),
+                "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+                "display_alias": r.try_get::<Option<String>, _>("display_alias").unwrap_or(None),
+                "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
+                "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
+                "relationship": r.try_get::<String, _>("relationship").unwrap_or_default(),
             })
         })
         .collect();

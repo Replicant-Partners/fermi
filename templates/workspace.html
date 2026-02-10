@@ -749,7 +749,47 @@
         </div>
       </div>
       <div class="ws-header-right">
-        <button class="btn" id="fund-btn">Fund</button>
+        <div
+          id="fund-area"
+          style="display: flex; align-items: center; gap: 6px"
+        >
+          <button class="btn" id="fund-btn">Fund</button>
+          <div
+            id="fund-input-wrap"
+            style="display: none; align-items: center; gap: 4px"
+          >
+            <input
+              type="number"
+              id="fund-amount"
+              min="1"
+              max="10000"
+              placeholder="credits"
+              style="
+                width: 80px;
+                padding: 3px 6px;
+                background: var(--bg1);
+                border: 1px solid var(--bg3);
+                color: var(--fg1);
+                font-size: 0.8rem;
+                font-family: inherit;
+              "
+            />
+            <button
+              class="btn btn-primary"
+              id="fund-confirm"
+              style="padding: 3px 10px; font-size: 0.75rem"
+            >
+              Add
+            </button>
+            <button
+              class="btn"
+              id="fund-cancel"
+              style="padding: 3px 8px; font-size: 0.75rem"
+            >
+              x
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1039,7 +1079,23 @@
         <div style="font-size: 0.75rem; color: var(--fg3); margin-bottom: 10px">
           Search public agents. Costs 5 credits.
         </div>
-        <div id="hire-agent-list">
+        <input
+          type="text"
+          id="hire-filter"
+          placeholder="Filter agents..."
+          style="
+            width: 100%;
+            padding: 6px 10px;
+            background: var(--bg1);
+            border: 1px solid var(--bg3);
+            color: var(--fg1);
+            font-size: 0.8rem;
+            font-family: inherit;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+          "
+        />
+        <div id="hire-agent-list" style="max-height: 50vh; overflow-y: auto">
           <div style="color: var(--fg3); font-size: 0.8rem">Loading...</div>
         </div>
         <button class="modal-close" id="hire-modal-close">Close</button>
@@ -1053,7 +1109,23 @@
         <div style="font-size: 0.75rem; color: var(--fg3); margin-bottom: 10px">
           Add an agent you own. Costs 2 credits.
         </div>
-        <div id="add-agent-list">
+        <input
+          type="text"
+          id="add-filter"
+          placeholder="Filter agents..."
+          style="
+            width: 100%;
+            padding: 6px 10px;
+            background: var(--bg1);
+            border: 1px solid var(--bg3);
+            color: var(--fg1);
+            font-size: 0.8rem;
+            font-family: inherit;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+          "
+        />
+        <div id="add-agent-list" style="max-height: 50vh; overflow-y: auto">
           <div style="color: var(--fg3); font-size: 0.8rem">Loading...</div>
         </div>
         <button class="modal-close" id="add-modal-close">Close</button>
@@ -1145,11 +1217,13 @@
                 const hues = [200, 140, 30, 340, 270, 50, 170, 10];
                 const hue =
                   hues[(a.agent_name || "").charCodeAt(0) % hues.length];
+                const badge = a.relationship === "hired" ? "hired" : "";
                 return `
               <a href="/agent/${a.agent_name}" style="text-decoration:none;color:inherit">
                 <div class="agent-item">
                   <div class="agent-dot" style="background:hsl(${hue},45%,35%);color:#fff;font-size:0.55rem;display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%">${initial}</div>
                   <span class="member-name">${escHtml(name)}</span>
+                  ${badge ? '<span style="font-size:0.6rem;color:var(--fg3);margin-left:4px">hired</span>' : ""}
                 </div>
               </a>`;
               })
@@ -1603,10 +1677,21 @@
           }
         });
 
+      document.getElementById("hire-filter").addEventListener("input", (e) => {
+        const q = e.target.value.toLowerCase();
+        document
+          .querySelectorAll("#hire-agent-list .modal-agent-row")
+          .forEach((row) => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(q) ? "" : "none";
+          });
+      });
+
       document
         .getElementById("hire-modal-close")
         .addEventListener("click", () => {
           document.getElementById("hire-modal").classList.remove("active");
+          document.getElementById("hire-filter").value = "";
         });
 
       async function hireAgent(agentId, btn) {
@@ -1678,10 +1763,21 @@
         }
       });
 
+      document.getElementById("add-filter").addEventListener("input", (e) => {
+        const q = e.target.value.toLowerCase();
+        document
+          .querySelectorAll("#add-agent-list .modal-agent-row")
+          .forEach((row) => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(q) ? "" : "none";
+          });
+      });
+
       document
         .getElementById("add-modal-close")
         .addEventListener("click", () => {
           document.getElementById("add-modal").classList.remove("active");
+          document.getElementById("add-filter").value = "";
         });
 
       async function addAgent(agentId, btn) {
@@ -1712,28 +1808,60 @@
         }
       }
 
-      // ─── Fund button ───
-      document
-        .getElementById("fund-btn")
-        .addEventListener("click", async () => {
-          const amount = prompt("Credits to add to workspace budget:");
-          if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return;
-          try {
-            const res = await fetch(`/api/workspaces/${wsId}/budget`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ amount: Number(amount) }),
-            });
-            if (!res.ok) {
-              const err = await res.text();
-              alert("Funding failed: " + err);
-              return;
-            }
-            refreshBudget();
-          } catch {
-            alert("Funding failed");
+      // ─── Fund button (inline input) ───
+      const fundBtn = document.getElementById("fund-btn");
+      const fundWrap = document.getElementById("fund-input-wrap");
+      const fundInput = document.getElementById("fund-amount");
+      const fundConfirm = document.getElementById("fund-confirm");
+      const fundCancel = document.getElementById("fund-cancel");
+
+      fundBtn.addEventListener("click", () => {
+        fundBtn.style.display = "none";
+        fundWrap.style.display = "flex";
+        fundInput.value = "";
+        fundInput.focus();
+      });
+
+      fundCancel.addEventListener("click", () => {
+        fundWrap.style.display = "none";
+        fundBtn.style.display = "";
+      });
+
+      fundInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") fundConfirm.click();
+        if (e.key === "Escape") fundCancel.click();
+      });
+
+      fundConfirm.addEventListener("click", async () => {
+        const amount = Number(fundInput.value);
+        if (!amount || amount <= 0) return;
+        fundConfirm.disabled = true;
+        fundConfirm.textContent = "...";
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/budget`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount }),
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            fundInput.style.borderColor = "var(--red)";
+            fundInput.value = "";
+            fundInput.placeholder = err.slice(0, 30);
+            fundConfirm.disabled = false;
+            fundConfirm.textContent = "Add";
+            return;
           }
-        });
+          refreshBudget();
+          fundWrap.style.display = "none";
+          fundBtn.style.display = "";
+        } catch {
+          fundInput.style.borderColor = "var(--red)";
+          fundInput.placeholder = "Failed";
+        }
+        fundConfirm.disabled = false;
+        fundConfirm.textContent = "Add";
+      });
 
       // ─── Mobile members toggle ───
       document
