@@ -1,15 +1,20 @@
 /// Built-in tool registry for agent tool-use
 ///
-/// Provides 9 platform tools that agents can invoke via the LLM tool-calling protocol:
+/// Provides 14 platform tools that agents can invoke via the LLM tool-calling protocol:
 ///   - search_knowledge: similarity search over agent's episodic memory
 ///   - query_ontology: get rules/entities/facts from knowledge graph
 ///   - execute_agent: invoke another agent (single-turn, no recursion)
 ///   - list_agents: discover available agents
 ///   - read_workspace_file: read a file from workspace git repo (workspace-only)
 ///   - list_workspace_agents: list agents in current workspace (workspace-only)
-///   - generate_image: text-to-image via fal.ai Nano Banana Pro
-///   - edit_image: image-to-image editing via fal.ai Nano Banana
+///   - generate_image: text-to-image via Gemini
+///   - edit_image: image-to-image editing via Gemini
 ///   - write_workspace_file: write a file to workspace git repo (workspace-only)
+///   - reduct_list_projects: list Reduct.video projects
+///   - reduct_get_project: get project details with recordings and reels
+///   - reduct_get_transcript: get recording transcript (JSON with timestamps)
+///   - reduct_create_reel: create a new reel in a project
+///   - reduct_add_block: add a clip or title block to a reel
 use crate::agent_backend::agent_card::AgentCard;
 use crate::agent_backend::llm_executor::{ClaudeTool, ContentBlock};
 use crate::agent_backend::multi_model_executor::{OpenAIFunction, OpenAITool};
@@ -179,6 +184,113 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: false,
         },
         BuiltinToolDef {
+            name: "reduct_list_projects",
+            description: "List all projects in the Reduct.video workspace. Returns project IDs, titles, and metadata.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "reduct_get_project",
+            description: "Get details of a Reduct.video project including its recordings and reels.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {
+                        "type": "string",
+                        "description": "The Reduct project ID"
+                    }
+                },
+                "required": ["project_id"]
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "reduct_get_transcript",
+            description: "Get the transcript of a recording in a Reduct.video project. Returns segments with start/end timestamps and speaker labels.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {
+                        "type": "string",
+                        "description": "The Reduct project ID"
+                    },
+                    "recording_id": {
+                        "type": "string",
+                        "description": "The recording ID within the project"
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Transcript format: 'json' (with timestamps) or 'txt' (plain text). Default: json",
+                        "default": "json"
+                    }
+                },
+                "required": ["project_id", "recording_id"]
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "reduct_create_reel",
+            description: "Create a new reel (highlight compilation) in a Reduct.video project. Returns the new reel ID.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {
+                        "type": "string",
+                        "description": "The Reduct project ID"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Title for the new reel"
+                    }
+                },
+                "required": ["project_id", "title"]
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "reduct_add_block",
+            description: "Add a block to a Reduct.video reel. Use type 'doc-range' for video clips (requires recording_id, start, end times) or type 'title' for title cards (requires text).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {
+                        "type": "string",
+                        "description": "The Reduct project ID"
+                    },
+                    "reel_id": {
+                        "type": "string",
+                        "description": "The reel ID to add the block to"
+                    },
+                    "block_type": {
+                        "type": "string",
+                        "description": "Block type: 'doc-range' for video clip, 'title' for title card"
+                    },
+                    "recording_id": {
+                        "type": "string",
+                        "description": "Recording ID (required for doc-range blocks)"
+                    },
+                    "start": {
+                        "type": "number",
+                        "description": "Start time in seconds (required for doc-range blocks)"
+                    },
+                    "end": {
+                        "type": "number",
+                        "description": "End time in seconds (required for doc-range blocks)"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Title text (required for title blocks)"
+                    }
+                },
+                "required": ["project_id", "reel_id", "block_type"]
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
             name: "write_workspace_file",
             description: "Write a file to the current workspace's git repository. For binary files (images), provide base64-encoded content and set is_base64 to true.",
             input_schema: json!({
@@ -292,6 +404,11 @@ impl ToolRegistry {
             "generate_image" => execute_generate_image(input).await,
             "edit_image" => execute_edit_image(input).await,
             "write_workspace_file" => execute_write_workspace_file(input, ctx).await,
+            "reduct_list_projects" => execute_reduct_list_projects().await,
+            "reduct_get_project" => execute_reduct_get_project(input).await,
+            "reduct_get_transcript" => execute_reduct_get_transcript(input).await,
+            "reduct_create_reel" => execute_reduct_create_reel(input).await,
+            "reduct_add_block" => execute_reduct_add_block(input).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -847,4 +964,212 @@ async fn execute_write_workspace_file(
         })
         .to_string())
     }
+}
+
+// ─── Reduct.video API tools ────────────────────────────────────────
+
+const REDUCT_BASE_URL: &str = "https://app.reduct.video/api/v3";
+
+fn reduct_api_key() -> Result<String, String> {
+    std::env::var("REDUCT_API_KEY")
+        .map_err(|_| "REDUCT_API_KEY not set — Reduct.video tools unavailable".to_string())
+}
+
+async fn reduct_get(path: &str) -> Result<serde_json::Value, String> {
+    let api_key = reduct_api_key()?;
+    let url = format!("{}{}", REDUCT_BASE_URL, path);
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .header("X-Auth-Key", &api_key)
+        .send()
+        .await
+        .map_err(|e| format!("Reduct API request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Reduct API error {}: {}", status, error_text));
+    }
+
+    response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Reduct response: {}", e))
+}
+
+async fn reduct_post(path: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let api_key = reduct_api_key()?;
+    let url = format!("{}{}", REDUCT_BASE_URL, path);
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .header("X-Auth-Key", &api_key)
+        .header("Content-Type", "application/json")
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("Reduct API request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Reduct API error {}: {}", status, error_text));
+    }
+
+    response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Reduct response: {}", e))
+}
+
+async fn execute_reduct_list_projects() -> Result<String, String> {
+    let data = reduct_get("/project").await?;
+    serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_reduct_get_project(input: &serde_json::Value) -> Result<String, String> {
+    let project_id = input
+        .get("project_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: project_id")?;
+
+    let data = reduct_get(&format!("/project/{}", project_id)).await?;
+    serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_reduct_get_transcript(input: &serde_json::Value) -> Result<String, String> {
+    let project_id = input
+        .get("project_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: project_id")?;
+
+    let recording_id = input
+        .get("recording_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: recording_id")?;
+
+    let format = input
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("json");
+
+    let ext = if format == "txt" { "txt" } else { "json" };
+    let path = format!(
+        "/project/{}/recording/{}/transcript.{}",
+        project_id, recording_id, ext
+    );
+
+    if ext == "txt" {
+        // Plain text transcript — fetch as text, not JSON
+        let api_key = reduct_api_key()?;
+        let url = format!("{}{}", REDUCT_BASE_URL, path);
+        let client = reqwest::Client::new();
+        let response = client
+            .get(&url)
+            .header("X-Auth-Key", &api_key)
+            .send()
+            .await
+            .map_err(|e| format!("Reduct API request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Reduct API error {}: {}", status, error_text));
+        }
+
+        response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read transcript: {}", e))
+    } else {
+        let data = reduct_get(&path).await?;
+        serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
+    }
+}
+
+async fn execute_reduct_create_reel(input: &serde_json::Value) -> Result<String, String> {
+    let project_id = input
+        .get("project_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: project_id")?;
+
+    let title = input
+        .get("title")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: title")?;
+
+    let data = reduct_post(
+        &format!("/project/{}/reel", project_id),
+        &json!({ "title": title }),
+    )
+    .await?;
+
+    serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_reduct_add_block(input: &serde_json::Value) -> Result<String, String> {
+    let project_id = input
+        .get("project_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: project_id")?;
+
+    let reel_id = input
+        .get("reel_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: reel_id")?;
+
+    let block_type = input
+        .get("block_type")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: block_type")?;
+
+    let body = match block_type {
+        "doc-range" => {
+            let recording_id = input
+                .get("recording_id")
+                .and_then(|v| v.as_str())
+                .ok_or("doc-range block requires recording_id")?;
+            let start = input
+                .get("start")
+                .and_then(|v| v.as_f64())
+                .ok_or("doc-range block requires start time")?;
+            let end = input
+                .get("end")
+                .and_then(|v| v.as_f64())
+                .ok_or("doc-range block requires end time")?;
+
+            json!({
+                "type": "doc-range",
+                "recording": recording_id,
+                "start": start,
+                "end": end
+            })
+        }
+        "title" => {
+            let text = input
+                .get("text")
+                .and_then(|v| v.as_str())
+                .ok_or("title block requires text")?;
+
+            json!({
+                "type": "title",
+                "text": text
+            })
+        }
+        other => {
+            return Err(format!(
+                "Unknown block type: {}. Use 'doc-range' or 'title'.",
+                other
+            ))
+        }
+    };
+
+    let data = reduct_post(
+        &format!("/project/{}/reel/{}/block", project_id, reel_id),
+        &body,
+    )
+    .await?;
+
+    serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
 }

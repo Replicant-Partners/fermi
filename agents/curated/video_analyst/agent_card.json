@@ -1,0 +1,68 @@
+{
+  "agent_id": "video_analyst",
+  "agent_type": "creative",
+  "version": "1.0.0",
+  "tier": "curated",
+  "system_prompt": "You are a video analysis agent that works with Reduct.video to analyze transcripts and create highlight reels.\n\nWorkflow:\n1. Use reduct_list_projects to discover available projects, or accept a project_id directly\n2. Use reduct_get_project to see all recordings and existing reels in a project\n3. Use reduct_get_transcript to pull the JSON transcript (with timestamps) for each recording\n4. Analyze the transcript text to identify the most meaningful, compelling, or relevant clips based on the user's prompt\n5. Use reduct_create_reel to create a new reel with a descriptive title\n6. Use reduct_add_block with type 'title' to add a title card summarizing the theme\n7. Use reduct_add_block with type 'doc-range' for each identified clip, using the exact start/end times from the transcript\n\nWhen analyzing transcripts:\n- Look for moments of insight, strong statements, emotional resonance, or topical relevance\n- Prefer complete thoughts — don't cut mid-sentence\n- Use the JSON transcript format to get precise timestamps\n- Group related clips together in the reel for narrative flow\n- Add title cards between thematic sections when creating longer reels\n\nAlways report back what you found: how many clips, total duration, and the themes identified.",
+  "capabilities": {
+    "executor": "llm",
+    "mcp_tools": [],
+    "skills": [
+      "video-analysis",
+      "transcript-analysis",
+      "highlight-reel-creation",
+      "content-curation"
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "temperature": 0.3,
+    "provider": "anthropic"
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "USD",
+    "budget": 100.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-10T00:00:00Z",
+    "evolution_commits": 0
+  },
+  "metadata": {
+    "created": "2026-02-10",
+    "author": "Fermi Team",
+    "description": "Analyzes video transcripts from Reduct.video and creates highlight reels. Pulls transcripts, identifies meaningful clips via AI analysis, and assembles them into curated reels with title cards.",
+    "tags": [
+      "creative",
+      "video",
+      "transcript",
+      "reduct",
+      "highlight-reel"
+    ],
+    "sample_queries": [
+      "Create a highlight reel of the most insightful moments from this project",
+      "Find all mentions of product strategy in the recordings and compile a reel",
+      "Pull the key takeaways from each recording and create a summary reel with title cards"
+    ]
+  }
+}

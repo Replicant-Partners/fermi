@@ -50,6 +50,7 @@ Comprehensive reference for all environment variables used by the Agent Bestiary
 | `OPENROUTER_API_KEY` | No | - | OpenRouter API key. Enables routing to various models (Claude, Llama, Gemini, Mixtral) via OpenRouter in the model catalogue. |
 | `QWEN_API_KEY` | No | - | Qwen (Alibaba Cloud) API key. Enables Qwen models (Max, Plus, Turbo) and `text-embedding-v3` embeddings in the model catalogue. |
 | `OPENAI_API_KEY` | No | - | OpenAI API key. Enables `text-embedding-3-large` embeddings in the model catalogue. |
+| `REDUCT_API_KEY` | No | - | Reduct.video API key (v3). Enables video transcript analysis and highlight reel creation tools (`reduct_*`). Auth via `X-Auth-Key` header. |
 
 ---
 
