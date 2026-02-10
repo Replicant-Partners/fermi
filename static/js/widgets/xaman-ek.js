@@ -145,7 +145,8 @@ const XamanEk = {
           this._faucetSearchUsers(userSearch);
         }
       } else {
-        this._results.innerHTML = `<div class="xaman-hint">Press Enter to grant <strong>${this._esc(amount)}</strong> credits to <strong>${this._esc(userSearch)}</strong></div>`;
+        const displayTarget = this._faucetDisplayName(userSearch);
+        this._results.innerHTML = `<div class="xaman-hint">Press Enter to grant <strong>${this._esc(amount)}</strong> credits to <strong>${this._esc(displayTarget)}</strong></div>`;
       }
       return;
     }
@@ -294,6 +295,8 @@ const XamanEk = {
   },
 
   // ── @faucet — admin credit grant ──
+  _faucetUserMap: {}, // user_id → display name
+
   async _faucetSearchUsers(search) {
     this._results.innerHTML =
       '<div class="xaman-hint">Searching users...</div>';
@@ -314,10 +317,17 @@ const XamanEk = {
           '<div class="xaman-hint">No users found</div>';
         return;
       }
+      // Cache display names for user IDs
+      users.forEach((u) => {
+        this._faucetUserMap[u.user_id] = u.display_name || u.email || u.user_id;
+      });
       this._results.innerHTML = users
         .map((u) => {
           const name = u.display_name || u.email || u.user_id;
-          const detail = u.email && u.email !== name ? u.email : u.user_id;
+          const detail =
+            u.email && u.email !== name
+              ? u.email
+              : u.user_id.substring(0, 8) + "...";
           return `<div class="xaman-result" style="cursor:pointer" data-uid="${this._esc(u.user_id)}" onclick="XamanEk._faucetSelectUser(this.dataset.uid)">
           <div class="xaman-result-name">${this._esc(name)}</div>
           <div class="xaman-result-desc">${this._esc(detail)} · ${this._esc(u.role || "developer")}</div>
@@ -328,6 +338,11 @@ const XamanEk = {
       this._results.innerHTML =
         '<div class="xaman-hint" style="color:var(--red)">Error searching users</div>';
     }
+  },
+
+  _faucetDisplayName(userId) {
+    if (userId === "self") return "yourself";
+    return this._faucetUserMap[userId] || userId;
   },
 
   _faucetSelectUser(userId) {
@@ -363,7 +378,8 @@ const XamanEk = {
       return;
     }
 
-    this._results.innerHTML = `<div class="xaman-hint" style="color:var(--yellow)">Granting ${amount} credits to ${this._esc(userSearch)}...</div>`;
+    const displayTarget = this._faucetDisplayName(userSearch);
+    this._results.innerHTML = `<div class="xaman-hint" style="color:var(--yellow)">Granting ${amount} credits to ${this._esc(displayTarget)}...</div>`;
 
     try {
       const res = await fetch(
@@ -390,9 +406,10 @@ const XamanEk = {
       }
 
       const data = await res.json();
+      const grantedTo = data.display_name || displayTarget;
       this._results.innerHTML = `<div class="xaman-exec-result">
         <div class="xaman-exec-agent" style="color:var(--green)">Granted</div>
-        <div style="margin:8px 0;font-size:0.95em">${data.credits} credits → ${this._esc(data.user_id)}</div>
+        <div style="margin:8px 0;font-size:0.95em">${data.credits} credits → ${this._esc(grantedTo)}</div>
         <div style="font-size:0.8em;color:var(--fg3)">${this._esc(data.reason)}</div>
       </div>`;
 

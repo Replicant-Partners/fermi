@@ -180,6 +180,16 @@ pub async fn admin_grant_credits_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Look up display name for the response
+    let display_name: Option<String> =
+        sqlx::query("SELECT COALESCE(display_name, email) as name FROM users WHERE user_id = $1")
+            .bind(&target_user_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get("name").ok());
+
     // Notify the user
     create_notification(
         &state.db,
@@ -193,6 +203,7 @@ pub async fn admin_grant_credits_handler(
     Ok(Json(json!({
         "status": "granted",
         "user_id": target_user_id,
+        "display_name": display_name,
         "credits": credits,
         "reason": reason,
     })))
