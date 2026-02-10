@@ -1,6 +1,6 @@
 /// Built-in tool registry for agent tool-use
 ///
-/// Provides 14 platform tools that agents can invoke via the LLM tool-calling protocol:
+/// Provides 17 platform tools that agents can invoke via the LLM tool-calling protocol:
 ///   - search_knowledge: similarity search over agent's episodic memory
 ///   - query_ontology: get rules/entities/facts from knowledge graph
 ///   - execute_agent: invoke another agent (single-turn, no recursion)
@@ -15,13 +15,20 @@
 ///   - reduct_get_transcript: get recording transcript (JSON with timestamps)
 ///   - reduct_create_reel: create a new reel in a project
 ///   - reduct_add_block: add a clip or title block to a reel
+///   - evaluate_coherence: run TEC evaluation on workspace messages (workspace-only)
+///   - coherence_snapshot: get latest coherence evaluation (workspace-only)
+///   - get_workspace_messages: read recent workspace conversation (workspace-only)
 use crate::agent_backend::agent_card::AgentCard;
 use crate::agent_backend::llm_executor::{ClaudeTool, ContentBlock};
 use crate::agent_backend::multi_model_executor::{OpenAIFunction, OpenAITool};
 use crate::agent_backend::registry::AgentRegistry;
 use agent_bestiary_memory::embeddings::EmbeddingGenerator;
 use agent_bestiary_memory::store::MemoryStore;
+use agent_bestiary_memory::types::CoherenceEvaluation;
 use agent_bestiary_ontology::WorkspaceGitManager;
+use coherence_core::types::{ConversationId, Message as CoherenceMessage, ParticipantId};
+use coherence_engine::SettlingEngine;
+use coherence_observer::ConversationObserver;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Instant;
@@ -319,6 +326,49 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             }),
             requires_workspace: true,
         },
+        // ─── Coherence tools ───
+        BuiltinToolDef {
+            name: "evaluate_coherence",
+            description: "Run a Thagard Explanatory Coherence (TEC) evaluation on recent workspace messages. Classifies utterances, detects coherence/incoherence relations, runs constraint-satisfaction settling, and returns global score, 7 principle scores, and health indicators. Results are stored for history.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "message_limit": {
+                        "type": "integer",
+                        "description": "Number of recent messages to evaluate (default: 50, max: 100)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: true,
+        },
+        BuiltinToolDef {
+            name: "coherence_snapshot",
+            description: "Get the latest stored coherence evaluation for the workspace without running a new evaluation. Returns global score, quality label, principle scores, and health indicators from the most recent evaluation.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+            requires_workspace: true,
+        },
+        BuiltinToolDef {
+            name: "get_workspace_messages",
+            description: "Read recent messages from the workspace conversation. Returns messages with sender name, content, type, and timestamp.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of messages to return (default: 20, max: 50)",
+                        "default": 20
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: true,
+        },
     ]
 }
 
@@ -409,6 +459,9 @@ impl ToolRegistry {
             "reduct_get_transcript" => execute_reduct_get_transcript(input).await,
             "reduct_create_reel" => execute_reduct_create_reel(input).await,
             "reduct_add_block" => execute_reduct_add_block(input).await,
+            "evaluate_coherence" => execute_evaluate_coherence(input, ctx).await,
+            "coherence_snapshot" => execute_coherence_snapshot(ctx).await,
+            "get_workspace_messages" => execute_get_workspace_messages(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -1172,4 +1225,173 @@ async fn execute_reduct_add_block(input: &serde_json::Value) -> Result<String, S
     .await?;
 
     serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Coherence tools ───────────────────────────────────────────────
+
+async fn execute_evaluate_coherence(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let workspace_id = ctx.workspace_id.ok_or("Not in a workspace context")?;
+
+    let message_limit = input
+        .get("message_limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50)
+        .min(100) as i64;
+
+    // Fetch recent messages
+    let messages = ctx
+        .memory_store
+        .get_workspace_messages(workspace_id, message_limit, None)
+        .await
+        .map_err(|e| format!("Failed to get messages: {}", e))?;
+
+    if messages.is_empty() {
+        return Ok(json!({
+            "error": "No messages in workspace to evaluate"
+        })
+        .to_string());
+    }
+
+    // Convert to coherence-core Messages (reverse: DB returns DESC, observer expects chronological)
+    let conv_id = ConversationId(workspace_id);
+    let coherence_msgs: Vec<CoherenceMessage> = messages
+        .iter()
+        .rev()
+        .map(|m| {
+            let pid = ParticipantId(
+                uuid::Uuid::parse_str(&m.sender_id).unwrap_or_else(|_| Uuid::new_v4()),
+            );
+            CoherenceMessage::new(pid, &m.content)
+        })
+        .collect();
+
+    // Run observation pipeline: classify utterances + detect relations
+    let observer = ConversationObserver::new(conv_id);
+    let mut system = observer.observe(&coherence_msgs);
+
+    // Run settling engine
+    let engine = SettlingEngine::with_defaults();
+    let _result = engine.settle(&mut system);
+
+    // Extract snapshot
+    let snapshot = system.snapshot();
+
+    let principle_scores = serde_json::to_value(&snapshot.principle_scores).unwrap_or(json!({}));
+
+    let health_indicators = json!({
+        "feedback_action": serde_json::to_value(&snapshot.feedback_action).unwrap_or(json!("unknown")),
+        "converged": snapshot.global_coherence.converged,
+        "accepted_count": snapshot.global_coherence.accepted_count,
+        "rejected_count": snapshot.global_coherence.rejected_count,
+        "settling_cycles": snapshot.global_coherence.settling_cycles,
+        "utterance_stats": {
+            "total": snapshot.utterance_stats.total,
+            "evidence_density": snapshot.utterance_stats.evidence_density(),
+            "explanation_density": snapshot.utterance_stats.explanation_density(),
+        },
+    });
+
+    // Store evaluation
+    let eval = CoherenceEvaluation {
+        eval_id: Uuid::new_v4(),
+        workspace_id,
+        global_score: snapshot.global_coherence.score,
+        quality_label: snapshot.global_coherence.quality_label().to_string(),
+        principle_scores: principle_scores.clone(),
+        health_indicators: health_indicators.clone(),
+        utterance_count: snapshot.utterance_stats.total as i32,
+        message_window: Some(json!({
+            "message_count": messages.len(),
+            "from": messages.last().map(|m| m.created_at),
+            "to": messages.first().map(|m| m.created_at),
+        })),
+        created_at: chrono::Utc::now(),
+    };
+
+    let eval_id = ctx
+        .memory_store
+        .store_coherence_evaluation(&eval)
+        .await
+        .map_err(|e| format!("Failed to store evaluation: {}", e))?;
+
+    let result = json!({
+        "eval_id": eval_id,
+        "global_score": eval.global_score,
+        "quality_label": eval.quality_label,
+        "principle_scores": principle_scores,
+        "health_indicators": health_indicators,
+        "utterance_count": eval.utterance_count,
+        "messages_evaluated": messages.len(),
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_coherence_snapshot(ctx: &ToolContext) -> Result<String, String> {
+    let workspace_id = ctx.workspace_id.ok_or("Not in a workspace context")?;
+
+    let eval = ctx
+        .memory_store
+        .get_latest_coherence(workspace_id)
+        .await
+        .map_err(|e| format!("Failed to get coherence: {}", e))?;
+
+    match eval {
+        Some(e) => {
+            let result = json!({
+                "eval_id": e.eval_id,
+                "global_score": e.global_score,
+                "quality_label": e.quality_label,
+                "principle_scores": e.principle_scores,
+                "health_indicators": e.health_indicators,
+                "utterance_count": e.utterance_count,
+                "message_window": e.message_window,
+                "evaluated_at": e.created_at.to_rfc3339(),
+            });
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| format!("Serialization error: {}", e))
+        }
+        None => Ok(json!({
+            "message": "No coherence evaluations yet for this workspace. Use evaluate_coherence to run the first evaluation."
+        })
+        .to_string()),
+    }
+}
+
+async fn execute_get_workspace_messages(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let workspace_id = ctx.workspace_id.ok_or("Not in a workspace context")?;
+
+    let limit = input
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(20)
+        .min(50) as i64;
+
+    let messages = ctx
+        .memory_store
+        .get_workspace_messages(workspace_id, limit, None)
+        .await
+        .map_err(|e| format!("Failed to get messages: {}", e))?;
+
+    let formatted: Vec<serde_json::Value> = messages
+        .iter()
+        .rev() // chronological order
+        .map(|m| {
+            json!({
+                "sender": m.sender_name.as_deref().unwrap_or(&m.sender_id),
+                "sender_type": m.sender_type,
+                "content": m.content,
+                "type": m.message_type,
+                "timestamp": m.created_at.to_rfc3339(),
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&formatted).map_err(|e| format!("Serialization error: {}", e))
 }
