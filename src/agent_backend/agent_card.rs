@@ -14,9 +14,12 @@ pub struct AgentCard {
     pub version: String,
     pub tier: AgentTier,
     pub capabilities: AgentCapabilities,
+    #[serde(default)]
     pub performance: AgentPerformance,
+    #[serde(default)]
     pub usage: AgentUsage,
     pub wallet: Option<AgentWallet>,
+    #[serde(default)]
     pub ontology_stats: OntologyStats,
     pub metadata: AgentMetadata,
     #[serde(default)]
@@ -84,7 +87,7 @@ fn default_provider() -> String {
 }
 
 /// Agent performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentPerformance {
     #[serde(default)]
     pub forecasts_contributed: u32,
@@ -99,7 +102,7 @@ pub struct AgentPerformance {
 }
 
 /// Agent usage and cost tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentUsage {
     pub total_executions: u32,
     pub successful_executions: u32,
@@ -111,7 +114,7 @@ pub struct AgentUsage {
 }
 
 /// Rolling window of usage stats
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UsageWindow {
     pub executions: u32,
     pub tokens: u64,
@@ -124,10 +127,29 @@ pub type AgentWallet = serde_json::Value;
 /// Ontology statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OntologyStats {
+    #[serde(default)]
     pub entities: u32,
+    #[serde(default)]
     pub relationships: u32,
+    #[serde(default = "default_datetime")]
     pub last_updated: DateTime<Utc>,
+    #[serde(default)]
     pub evolution_commits: u32,
+}
+
+fn default_datetime() -> DateTime<Utc> {
+    chrono::DateTime::UNIX_EPOCH
+}
+
+impl Default for OntologyStats {
+    fn default() -> Self {
+        Self {
+            entities: 0,
+            relationships: 0,
+            last_updated: default_datetime(),
+            evolution_commits: 0,
+        }
+    }
 }
 
 /// Agent metadata
