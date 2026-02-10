@@ -8,7 +8,7 @@
 - **Gas fees**: Configurable per-action fees (message, hire, add, execute, consolidate, file write, avatar, embedding import)
 - **Database**: PostgreSQL on Neon (19 migrations), pgvector for embeddings
 
-### ADM Pipeline (Autonomous Declarative Memory)
+### ADM Pipeline (Active Dream Memory)
 - Execute → Episodic memory → Consolidation → Semantic rules → Ontology evolution
 - Dream budget: per-agent credits for consolidation cycles
 - Dream synopses: LLM-generated narratives after consolidation
