@@ -41,7 +41,8 @@ use fermi::gas::{charge_gas, check_low_balance, GasFees};
 use agent_bestiary_memory::{
     Agent, AgentUpdate, AnthropicEmbeddings, CoherenceEvaluation, ConsolidationLock,
     ConsolidationWorker, EmbeddingGenerator, Episode, EvalRun, EvalTestCase, ExecutionStatus,
-    MemoryStore, MockEmbeddings, WorkspaceMessage,
+    LLMProviderConfig, LLMProviderFactory, MemoryStore, MockEmbeddings, ProviderType,
+    WorkspaceMessage,
 };
 use agent_bestiary_ontology::{GitConfig, WorkspaceGitManager};
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMethod};
@@ -6263,18 +6264,41 @@ async fn consolidate_agent_handler(
         })));
     }
 
-    // Create consolidation worker and run
+    // Create consolidation worker and run (with LLM if API key available)
     let pool = Arc::new(state.db.clone());
     let lock = Arc::new(ConsolidationLock::new(
         pool,
         format!("api-{}", uuid::Uuid::new_v4()),
     ));
-    let worker = ConsolidationWorker::new(
-        state.memory_store.clone(),
-        lock,
-        state.embedder.clone(),
-        "api-trigger".to_string(),
-    );
+    let worker = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+        match LLMProviderFactory::create(&LLMProviderConfig {
+            provider_type: ProviderType::Anthropic,
+            api_key,
+            model: "claude-haiku-4-5-20251001".to_string(),
+            base_url: None,
+        }) {
+            Ok(llm) => ConsolidationWorker::with_llm(
+                state.memory_store.clone(),
+                lock,
+                state.embedder.clone(),
+                llm,
+                "api-trigger".to_string(),
+            ),
+            Err(_) => ConsolidationWorker::new(
+                state.memory_store.clone(),
+                lock,
+                state.embedder.clone(),
+                "api-trigger".to_string(),
+            ),
+        }
+    } else {
+        ConsolidationWorker::new(
+            state.memory_store.clone(),
+            lock,
+            state.embedder.clone(),
+            "api-trigger".to_string(),
+        )
+    };
 
     let result = worker
         .consolidate_agent(db_agent.agent_id, 0.5, 2)

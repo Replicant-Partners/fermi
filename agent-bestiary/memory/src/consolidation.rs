@@ -11,9 +11,9 @@
 //! 8. Update job statistics
 
 use crate::{
-    generate_structured, ConsolidationLock, DBSCANClustering, EmbeddingGenerator, Entity, Episode,
-    EpisodeCluster, GenerationConfig, LLMProvider, MemoryError, MemoryStore, Message, MessageRole,
-    Result, SemanticRule, VerificationStatus,
+    generate_structured, Cardinality, ConsolidationLock, DBSCANClustering, EmbeddingGenerator,
+    Entity, Episode, EpisodeCluster, ExecutionStatus, Fact, GenerationConfig, LLMProvider,
+    MemoryError, MemoryStore, Message, MessageRole, Result, SemanticRule, VerificationStatus,
 };
 use chrono::Utc;
 use std::sync::Arc;
@@ -133,7 +133,7 @@ impl ConsolidationWorker {
             facts_created: 0,
         };
 
-        // Step 5: Extract semantic rules from clusters
+        // Step 5a: Extract semantic rules from failure clusters
         for cluster in &clusters {
             let rules = self.extract_rules_from_cluster(agent_id, cluster).await?;
             result.rules_extracted += rules.len();
@@ -143,16 +143,98 @@ impl ConsolidationWorker {
             }
         }
 
-        // Step 6: Extract entities from episodes (sample from all episodes)
-        let sample_size = episodes.len().min(100);
-        for episode in episodes.iter().take(sample_size) {
-            let entities = self
-                .extract_entities_from_episode(agent_id, episode)
-                .await?;
-            result.entities_created += entities.len();
+        // Step 5b: Extract knowledge rules from successful episodes (LLM only)
+        if let Some(llm) = &self.llm {
+            let success_episodes: Vec<&Episode> = episodes
+                .iter()
+                .filter(|e| matches!(e.execution_status, ExecutionStatus::Success))
+                .take(30)
+                .collect();
 
-            for entity in entities {
-                self.store.store_entity(entity).await?;
+            if !success_episodes.is_empty() {
+                match self
+                    .extract_knowledge_rules(agent_id, &success_episodes, llm)
+                    .await
+                {
+                    Ok(knowledge_rules) => {
+                        result.rules_extracted += knowledge_rules.len();
+                        for rule in knowledge_rules {
+                            self.store.store_semantic_rule(rule).await?;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Knowledge rule extraction failed (non-fatal): {}", e);
+                    }
+                }
+            }
+        }
+
+        // Step 6: Extract entities from episodes
+        let entities_stored = if let Some(llm) = &self.llm {
+            match self
+                .extract_entities_with_llm(agent_id, &episodes, llm)
+                .await
+            {
+                Ok(entities) => {
+                    result.entities_created = entities.len();
+                    let mut stored = Vec::new();
+                    for entity in entities {
+                        self.store.store_entity(entity.clone()).await?;
+                        stored.push(entity);
+                    }
+                    stored
+                }
+                Err(e) => {
+                    eprintln!(
+                        "LLM entity extraction failed, falling back to heuristic: {}",
+                        e
+                    );
+                    let mut stored = Vec::new();
+                    for episode in episodes.iter().take(100) {
+                        let entities = self
+                            .extract_entities_from_episode(agent_id, episode)
+                            .await?;
+                        result.entities_created += entities.len();
+                        for entity in entities {
+                            self.store.store_entity(entity.clone()).await?;
+                            stored.push(entity);
+                        }
+                    }
+                    stored
+                }
+            }
+        } else {
+            let mut stored = Vec::new();
+            for episode in episodes.iter().take(100) {
+                let entities = self
+                    .extract_entities_from_episode(agent_id, episode)
+                    .await?;
+                result.entities_created += entities.len();
+                for entity in entities {
+                    self.store.store_entity(entity.clone()).await?;
+                    stored.push(entity);
+                }
+            }
+            stored
+        };
+
+        // Step 6b: Extract facts (relationships) between entities (LLM only)
+        if let Some(llm) = &self.llm {
+            if entities_stored.len() >= 2 {
+                match self
+                    .extract_facts_with_llm(agent_id, &entities_stored, &episodes, llm)
+                    .await
+                {
+                    Ok(facts) => {
+                        result.facts_created = facts.len();
+                        for fact in facts {
+                            self.store.store_fact(fact).await?;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Fact extraction failed (non-fatal): {}", e);
+                    }
+                }
             }
         }
 
@@ -397,6 +479,314 @@ impl ConsolidationWorker {
         }
 
         Ok(entities)
+    }
+
+    /// LLM-powered entity extraction from a batch of episodes
+    async fn extract_entities_with_llm(
+        &self,
+        agent_id: Uuid,
+        episodes: &[Episode],
+        llm: &Arc<dyn LLMProvider>,
+    ) -> Result<Vec<Entity>> {
+        let mut all_entities = Vec::new();
+
+        // Batch episodes into groups of 20 for LLM calls
+        for chunk in episodes.chunks(20) {
+            let episode_summaries: Vec<String> = chunk
+                .iter()
+                .map(|e| {
+                    let ctx = serde_json::to_string(&e.context).unwrap_or_default();
+                    let ctx_preview = if ctx.len() > 200 {
+                        format!("{}...", &ctx[..200])
+                    } else {
+                        ctx
+                    };
+                    format!("- Query: {}\n  Context: {}", e.query, ctx_preview)
+                })
+                .collect();
+
+            let system_prompt = "You are an expert knowledge graph constructor. \
+                Extract named entities from AI agent execution logs. \
+                Identify specific people, organizations, concepts, technologies, locations, \
+                events, metrics, and domain-specific terms that represent distinct knowledge nodes. \
+                Return ONLY a JSON array. Do not extract generic words — focus on proper nouns and domain concepts.";
+
+            let user_prompt = format!(
+                "Extract named entities from these {} agent execution episodes:\n\n{}\n\n\
+                Return a JSON array:\n\
+                [{{\"name\": \"<entity name>\", \"type\": \"<Person|Organization|Concept|Technology|Location|Event|Metric|Domain>\", \"summary\": \"<one-sentence description>\"}}]",
+                chunk.len(),
+                episode_summaries.join("\n")
+            );
+
+            let messages = vec![
+                Message {
+                    role: MessageRole::System,
+                    content: system_prompt.to_string(),
+                },
+                Message {
+                    role: MessageRole::User,
+                    content: user_prompt,
+                },
+            ];
+
+            let config = GenerationConfig {
+                temperature: 0.2,
+                max_tokens: Some(2048),
+                ..Default::default()
+            };
+
+            #[derive(serde::Deserialize)]
+            struct LLMEntity {
+                name: String,
+                #[serde(rename = "type")]
+                entity_type: String,
+                summary: String,
+            }
+
+            let llm_entities: Vec<LLMEntity> =
+                match generate_structured(llm.as_ref(), messages, &config).await {
+                    Ok(e) => e,
+                    Err(e) => {
+                        eprintln!("Entity extraction batch failed: {}", e);
+                        continue;
+                    }
+                };
+
+            // Deduplicate by name (case-insensitive) within batch
+            let mut seen = std::collections::HashSet::new();
+            let episode_ids: Vec<Uuid> = chunk.iter().map(|e| e.episode_id).collect();
+
+            for llm_entity in llm_entities {
+                let key = llm_entity.name.to_lowercase();
+                if seen.contains(&key) || llm_entity.name.len() < 2 {
+                    continue;
+                }
+                seen.insert(key);
+
+                let embedding = self.embedder.generate(&llm_entity.name).await.ok();
+
+                all_entities.push(Entity {
+                    entity_id: Uuid::new_v4(),
+                    agent_id,
+                    entity_name: llm_entity.name,
+                    entity_type: llm_entity.entity_type,
+                    summary: Some(llm_entity.summary),
+                    t_valid: Utc::now(),
+                    t_invalid: None,
+                    source_episodes: episode_ids.clone(),
+                    extraction_confidence: 0.8,
+                    embedding,
+                });
+            }
+        }
+
+        Ok(all_entities)
+    }
+
+    /// LLM-powered fact (relationship) extraction between entities
+    async fn extract_facts_with_llm(
+        &self,
+        agent_id: Uuid,
+        entities: &[Entity],
+        episodes: &[Episode],
+        llm: &Arc<dyn LLMProvider>,
+    ) -> Result<Vec<Fact>> {
+        let entity_list: Vec<String> = entities
+            .iter()
+            .map(|e| format!("- {} ({})", e.entity_name, e.entity_type))
+            .collect();
+
+        let episode_context: Vec<String> = episodes
+            .iter()
+            .take(15)
+            .map(|e| format!("- {}", e.query))
+            .collect();
+
+        let system_prompt = "You are an expert at identifying relationships between entities \
+            in a knowledge domain. Given a list of entities and context from agent execution logs, \
+            identify meaningful relationships between them. \
+            Return ONLY a JSON array. Only include relationships you are confident about.";
+
+        let user_prompt = format!(
+            "Entities:\n{}\n\nContext (sample queries):\n{}\n\n\
+            Identify relationships between these entities. Return a JSON array:\n\
+            [{{\"source\": \"<source entity name>\", \"target\": \"<target entity name>\", \
+            \"relation\": \"<relationship type>\", \
+            \"cardinality\": \"one_to_one\"|\"one_to_many\"|\"many_to_one\"|\"many_to_many\", \
+            \"confidence\": <0.0-1.0>, \
+            \"reasoning\": \"<brief explanation>\"}}]",
+            entity_list.join("\n"),
+            episode_context.join("\n")
+        );
+
+        let messages = vec![
+            Message {
+                role: MessageRole::System,
+                content: system_prompt.to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: user_prompt,
+            },
+        ];
+
+        let config = GenerationConfig {
+            temperature: 0.2,
+            max_tokens: Some(2048),
+            ..Default::default()
+        };
+
+        #[derive(serde::Deserialize)]
+        struct LLMFact {
+            source: String,
+            target: String,
+            relation: String,
+            #[serde(default = "default_cardinality")]
+            cardinality: String,
+            #[serde(default = "default_confidence")]
+            confidence: f64,
+            reasoning: Option<String>,
+        }
+        fn default_cardinality() -> String {
+            "many_to_many".to_string()
+        }
+        fn default_confidence() -> f64 {
+            0.7
+        }
+
+        let llm_facts: Vec<LLMFact> = generate_structured(llm.as_ref(), messages, &config).await?;
+
+        // Build name -> entity lookup (case-insensitive)
+        let entity_map: std::collections::HashMap<String, &Entity> = entities
+            .iter()
+            .map(|e| (e.entity_name.to_lowercase(), e))
+            .collect();
+
+        let episode_ids: Vec<Uuid> = episodes.iter().take(15).map(|e| e.episode_id).collect();
+        let mut facts = Vec::new();
+
+        for llm_fact in llm_facts {
+            let source = entity_map.get(&llm_fact.source.to_lowercase());
+            let target = entity_map.get(&llm_fact.target.to_lowercase());
+
+            if let (Some(src), Some(tgt)) = (source, target) {
+                let cardinality = match llm_fact.cardinality.as_str() {
+                    "one_to_one" => Cardinality::OneToOne,
+                    "one_to_many" => Cardinality::OneToMany,
+                    "many_to_one" => Cardinality::ManyToOne,
+                    _ => Cardinality::ManyToMany,
+                };
+
+                facts.push(Fact {
+                    fact_id: Uuid::new_v4(),
+                    agent_id,
+                    source_entity_id: src.entity_id,
+                    target_entity_id: tgt.entity_id,
+                    relation_type: llm_fact.relation,
+                    relation_cardinality: cardinality,
+                    confidence: llm_fact.confidence.clamp(0.0, 1.0),
+                    reasoning: llm_fact.reasoning,
+                    t_valid: Utc::now(),
+                    t_invalid: None,
+                    source_episodes: episode_ids.clone(),
+                });
+            }
+        }
+
+        Ok(facts)
+    }
+
+    /// LLM-powered knowledge rule extraction from successful episodes
+    async fn extract_knowledge_rules(
+        &self,
+        agent_id: Uuid,
+        episodes: &[&Episode],
+        llm: &Arc<dyn LLMProvider>,
+    ) -> Result<Vec<SemanticRule>> {
+        let episode_summaries: Vec<String> = episodes
+            .iter()
+            .map(|e| {
+                let ctx = serde_json::to_string(&e.context).unwrap_or_default();
+                let ctx_preview = if ctx.len() > 300 {
+                    format!("{}...", &ctx[..300])
+                } else {
+                    ctx
+                };
+                format!("- Query: {}\n  Context: {}", e.query, ctx_preview)
+            })
+            .collect();
+
+        let episode_ids: Vec<Uuid> = episodes.iter().map(|e| e.episode_id).collect();
+
+        let system_prompt =
+            "You are an expert at distilling knowledge from AI agent execution logs. \
+            Extract 2-5 semantic rules — reusable insights, patterns, or domain knowledge that \
+            the agent has learned through its successful executions. \
+            Each rule should be a clear, actionable insight that could improve future performance. \
+            Return ONLY a JSON array.";
+
+        let user_prompt = format!(
+            "Analyze these {} successful agent executions and extract knowledge rules:\n\n{}\n\n\
+            Return a JSON array:\n\
+            [{{\"rule\": \"<concise rule statement>\", \
+            \"description\": \"<detailed explanation>\", \
+            \"confidence\": <0.0-1.0>}}]",
+            episodes.len(),
+            episode_summaries.join("\n")
+        );
+
+        let messages = vec![
+            Message {
+                role: MessageRole::System,
+                content: system_prompt.to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: user_prompt,
+            },
+        ];
+
+        let config = GenerationConfig {
+            temperature: 0.3,
+            max_tokens: Some(2048),
+            ..Default::default()
+        };
+
+        #[derive(serde::Deserialize)]
+        struct LLMRule {
+            rule: String,
+            description: String,
+            #[serde(default = "default_rule_confidence")]
+            confidence: f64,
+        }
+        fn default_rule_confidence() -> f64 {
+            0.7
+        }
+
+        let llm_rules: Vec<LLMRule> = generate_structured(llm.as_ref(), messages, &config).await?;
+
+        let mut rules = Vec::new();
+        for llm_rule in llm_rules {
+            let embedding = self.embedder.generate(&llm_rule.rule).await.ok();
+
+            rules.push(SemanticRule {
+                rule_id: Uuid::new_v4(),
+                agent_id,
+                rule_content: llm_rule.rule,
+                rule_description: Some(llm_rule.description),
+                confidence_score: llm_rule.confidence.clamp(0.0, 1.0),
+                verification_status: VerificationStatus::Pending,
+                verification_method: Some(format!("llm_knowledge_extraction:{}", llm.model_name())),
+                source_episode_cluster: episode_ids.clone(),
+                episode_count: episodes.len() as i32,
+                embedding,
+                is_active: true,
+                created_at: Utc::now(),
+            });
+        }
+
+        Ok(rules)
     }
 }
 
