@@ -7,6 +7,8 @@ const XamanEk = {
   _visible: false,
   _debounce: null,
   _recentKey: "xaman-ek-recent",
+  _currentUser: null,
+  _userLoaded: false,
 
   init() {
     // Create FAB (floating action button)
@@ -52,7 +54,11 @@ const XamanEk = {
       if (e.key === "Escape") this.close();
       if (e.key === "Enter") {
         const q = this._input.value.trim();
-        if (q.startsWith("@")) this._executeAgent(q);
+        if (q.startsWith("@faucet ")) {
+          this._executeFaucet(q);
+        } else if (q.startsWith("@")) {
+          this._executeAgent(q);
+        }
       }
     });
 
@@ -64,8 +70,24 @@ const XamanEk = {
       }
     });
 
+    // Load current user (for admin commands)
+    this._loadUser();
+
     // Show recent + context on init
     this._renderRecent();
+  },
+
+  async _loadUser() {
+    if (this._userLoaded) return;
+    try {
+      const res = await fetch("/api/auth/me");
+      if (res.ok) this._currentUser = await res.json();
+    } catch {}
+    this._userLoaded = true;
+  },
+
+  _isAdmin() {
+    return this._currentUser?.role === "admin";
   },
 
   toggle() {
@@ -101,6 +123,32 @@ const XamanEk = {
     const rec = document.getElementById("xaman-recent");
     if (ctx) ctx.innerHTML = "";
     if (rec) rec.innerHTML = "";
+
+    // @faucet syntax — admin credit grant
+    if (query.startsWith("@faucet")) {
+      if (!this._isAdmin()) {
+        this._results.innerHTML =
+          '<div class="xaman-hint" style="color:var(--red)">Admin access required</div>';
+        return;
+      }
+      const parts = query.substring(8).trim().split(/\s+/);
+      const userSearch = parts[0] || "";
+      const amount = parts[1] || "";
+      if (!userSearch) {
+        this._results.innerHTML =
+          '<div class="xaman-hint">@faucet &lt;user&gt; &lt;amount&gt; — grant credits to a user<br><span style="color:var(--fg3);font-size:0.9em">@faucet self 500 — grant to yourself</span></div>';
+      } else if (!amount) {
+        if (userSearch === "self") {
+          this._results.innerHTML =
+            '<div class="xaman-hint">@faucet self &lt;amount&gt; — type the credit amount</div>';
+        } else {
+          this._faucetSearchUsers(userSearch);
+        }
+      } else {
+        this._results.innerHTML = `<div class="xaman-hint">Press Enter to grant <strong>${this._esc(amount)}</strong> credits to <strong>${this._esc(userSearch)}</strong></div>`;
+      }
+      return;
+    }
 
     // @agent syntax — show execute hint
     if (query.startsWith("@")) {
@@ -245,6 +293,116 @@ const XamanEk = {
     }
   },
 
+  // ── @faucet — admin credit grant ──
+  async _faucetSearchUsers(search) {
+    this._results.innerHTML =
+      '<div class="xaman-hint">Searching users...</div>';
+    try {
+      const res = await fetch(
+        `/api/admin/users?search=${encodeURIComponent(search)}&limit=5`,
+      );
+      if (res.status === 403) {
+        this._results.innerHTML =
+          '<div class="xaman-hint" style="color:var(--red)">Admin access required</div>';
+        return;
+      }
+      if (!res.ok) throw new Error("Search failed");
+      const data = await res.json();
+      const users = data.users || [];
+      if (users.length === 0) {
+        this._results.innerHTML =
+          '<div class="xaman-hint">No users found</div>';
+        return;
+      }
+      this._results.innerHTML = users
+        .map((u) => {
+          const name = u.display_name || u.email || u.user_id;
+          const detail = u.email && u.email !== name ? u.email : u.user_id;
+          return `<div class="xaman-result" style="cursor:pointer" data-uid="${this._esc(u.user_id)}" onclick="XamanEk._faucetSelectUser(this.dataset.uid)">
+          <div class="xaman-result-name">${this._esc(name)}</div>
+          <div class="xaman-result-desc">${this._esc(detail)} · ${this._esc(u.role || "developer")}</div>
+        </div>`;
+        })
+        .join("");
+    } catch (e) {
+      this._results.innerHTML =
+        '<div class="xaman-hint" style="color:var(--red)">Error searching users</div>';
+    }
+  },
+
+  _faucetSelectUser(userId) {
+    // Replace the search term with the selected user_id, keep cursor at end for amount
+    const current = this._input.value.trim();
+    const parts = current.substring(8).trim().split(/\s+/);
+    const amount = parts[1] || "";
+    this._input.value = `@faucet ${userId} ${amount}`;
+    this._input.focus();
+    // Trigger search to update hint
+    this._search(this._input.value.trim());
+  },
+
+  async _executeFaucet(raw) {
+    const parts = raw.substring(8).trim().split(/\s+/);
+    let userSearch = parts[0];
+    const amount = parseInt(parts[1], 10);
+
+    // @faucet self <amount> — shorthand for granting to yourself
+    if (userSearch === "self" && this._currentUser?.user_id) {
+      userSearch = this._currentUser.user_id;
+    }
+
+    if (!userSearch || !amount || isNaN(amount) || amount < 1) {
+      this._results.innerHTML =
+        '<div class="xaman-hint" style="color:var(--orange)">Usage: @faucet &lt;user_id&gt; &lt;amount&gt;</div>';
+      return;
+    }
+
+    if (amount > 10000) {
+      this._results.innerHTML =
+        '<div class="xaman-hint" style="color:var(--orange)">Max 10,000 credits per grant</div>';
+      return;
+    }
+
+    this._results.innerHTML = `<div class="xaman-hint" style="color:var(--yellow)">Granting ${amount} credits to ${this._esc(userSearch)}...</div>`;
+
+    try {
+      const res = await fetch(
+        `/api/admin/users/${encodeURIComponent(userSearch)}/grant`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            credits: amount,
+            reason: "Faucet grant via Xaman Ek",
+          }),
+        },
+      );
+
+      if (res.status === 403) {
+        this._results.innerHTML =
+          '<div class="xaman-hint" style="color:var(--red)">Admin access required</div>';
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.text().catch(() => "Unknown error");
+        this._results.innerHTML = `<div class="xaman-hint" style="color:var(--red)">Error: ${this._esc(err)}</div>`;
+        return;
+      }
+
+      const data = await res.json();
+      this._results.innerHTML = `<div class="xaman-exec-result">
+        <div class="xaman-exec-agent" style="color:var(--green)">Granted</div>
+        <div style="margin:8px 0;font-size:0.95em">${data.credits} credits → ${this._esc(data.user_id)}</div>
+        <div style="font-size:0.8em;color:var(--fg3)">${this._esc(data.reason)}</div>
+      </div>`;
+
+      this._input.value = "";
+      this._saveRecent(raw);
+    } catch (e) {
+      this._results.innerHTML = `<div class="xaman-hint" style="color:var(--red)">Network error: ${this._esc(e.message)}</div>`;
+    }
+  },
+
   // ── Context-aware suggestions ──
   _renderContext() {
     const ctx = document.getElementById("xaman-context");
@@ -373,12 +531,13 @@ const XamanEk = {
         ],
       },
       {
-        match: ["credit", "buy", "pay", "cost"],
+        match: ["credit", "buy", "pay", "cost", "faucet", "grant"],
         title: "Credits & costs",
         steps: [
           "Go to Dashboard → Buy Credits section",
           "Execution costs: 1 credit per 1000 tokens + 10% gas",
           "Other costs: publishing (1cr), avatar generation (3cr), eval runs (2cr)",
+          "Admin: use @faucet <user> <amount> to grant credits",
         ],
         link: "/dashboard",
       },
