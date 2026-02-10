@@ -22,11 +22,11 @@ use fermi::agent_backend::{
 use fermi::ast;
 use fermi_auth::{
     api_keys, auth_middleware, build_github_auth_url, build_google_auth_url, create_session_token,
-    credit_charge, credit_get_balance, credit_get_transactions, credit_grant, generate_state,
-    get_or_create_wallet, github_exchange_code, github_fetch_user_info, google_exchange_code,
-    google_fetch_user_info, optional_auth_middleware, sync_user, teams, AuthPrincipal, AuthState,
-    CreditTransaction, MemberType, OAuthConfig, ObjectType, Permission, ShareType, TeamRole,
-    Wallet,
+    credit_charge, credit_deposit, credit_get_balance, credit_get_transactions, credit_grant,
+    generate_state, get_or_create_wallet, github_exchange_code, github_fetch_user_info,
+    google_exchange_code, google_fetch_user_info, optional_auth_middleware, sync_user, teams,
+    AuthPrincipal, AuthState, CreditTransaction, MemberType, OAuthConfig, ObjectType, Permission,
+    ShareType, TeamRole, Wallet,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -2292,6 +2292,7 @@ async fn list_agents(
 
                     let mut agent_val = json!({
                         "agent_id": a.agent_name,
+                        "uuid": a.agent_id,
                         "display_alias": a.display_alias.as_deref().unwrap_or(""),
                         "agent_type": a.agent_type,
                         "version": a.version,
@@ -3012,6 +3013,27 @@ async fn create_team_handler(
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Seed workspace with 100 starter credits
+    let ws_id_str = team.id.to_string();
+    let initial_credits: i32 = 100;
+    if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id_str).await {
+        if credit_deposit(
+            &state.db,
+            ws_wallet.wallet_id,
+            initial_credits,
+            "Workspace starter credits",
+        )
+        .await
+        .is_ok()
+        {
+            let _ = sqlx::query("UPDATE teams SET workspace_budget = $1 WHERE id = $2")
+                .bind(initial_credits)
+                .bind(team.id)
+                .execute(&state.db)
+                .await;
+        }
+    }
 
     Ok((StatusCode::CREATED, Json(json!(team))))
 }

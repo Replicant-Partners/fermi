@@ -1582,7 +1582,13 @@
 
           if (!res.ok) {
             const err = await res.text();
-            alert("Failed to send: " + err);
+            if (res.status === 402) {
+              alert(
+                "Insufficient workspace credits. Fund your workspace to continue.",
+              );
+            } else {
+              alert("Failed to send: " + err);
+            }
             input.value = content;
             return;
           }
@@ -1671,7 +1677,7 @@
                 ${a.display_alias ? `<div style="font-size:0.7rem;color:var(--fg3);font-family:monospace">${escHtml(a.agent_name)}</div>` : ""}
                 <div class="modal-agent-desc">${escHtml(a.description || "")}</div>
               </div>
-              <button class="btn btn-primary" onclick="hireAgent('${a.agent_id}', this)">Hire (5 cr)</button>
+              <button class="btn btn-primary" onclick="hireAgent('${a.uuid || a.agent_id}', this)">Hire (5 cr)</button>
             </div>
           `,
               )
@@ -1709,7 +1715,13 @@
           });
           if (!res.ok) {
             const err = await res.text();
-            alert("Hire failed: " + err);
+            if (res.status === 402) {
+              alert(
+                "Insufficient workspace credits. Fund your workspace first.",
+              );
+            } else {
+              alert("Hire failed: " + err);
+            }
             btn.disabled = false;
             btn.textContent = "Hire (5 cr)";
             return;
@@ -1757,7 +1769,7 @@
                 ${a.display_alias ? `<div style="font-size:0.7rem;color:var(--fg3);font-family:monospace">${escHtml(a.agent_name)}</div>` : ""}
                 <div class="modal-agent-desc">${escHtml(a.description || "")}</div>
               </div>
-              <button class="btn" onclick="addAgent('${a.agent_id}', this)">Add (2 cr)</button>
+              <button class="btn" onclick="addAgent('${a.uuid || a.agent_id}', this)">Add (2 cr)</button>
             </div>
           `,
             )
@@ -1795,7 +1807,13 @@
           });
           if (!res.ok) {
             const err = await res.text();
-            alert("Add failed: " + err);
+            if (res.status === 402) {
+              alert(
+                "Insufficient workspace credits. Fund your workspace first.",
+              );
+            } else {
+              alert("Add failed: " + err);
+            }
             btn.disabled = false;
             btn.textContent = "Add (2 cr)";
             return;
