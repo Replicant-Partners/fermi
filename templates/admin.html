@@ -322,12 +322,17 @@
           <div class="value" id="stat-embed-coverage">-</div>
           <div class="label">Episodes with Embeddings</div>
         </div>
+        <div class="stat-card">
+          <div class="value" id="stat-waitlist">-</div>
+          <div class="label">Waitlist Signups</div>
+        </div>
       </div>
 
       <!-- Tabs -->
       <div class="tabs">
         <button class="tab active" data-tab="users">Users</button>
         <button class="tab" data-tab="agents">Agents</button>
+        <button class="tab" data-tab="waitlist">Waitlist</button>
         <button class="tab" data-tab="ledger">Credit Ledger</button>
       </div>
 
@@ -379,6 +384,157 @@
           <tbody id="agents-tbody"></tbody>
         </table>
         <div class="pagination" id="agents-pagination"></div>
+      </div>
+
+      <!-- Waitlist Tab -->
+      <div class="tab-content" id="tab-waitlist">
+        <div
+          style="
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+          "
+        >
+          <div class="search-bar" style="margin-bottom: 0; flex: 1">
+            <input
+              type="text"
+              id="waitlist-search"
+              placeholder="Search by email..."
+            />
+          </div>
+          <select
+            id="waitlist-filter"
+            style="
+              background: var(--bg1);
+              border: 1px solid var(--bg2);
+              color: var(--fg1);
+              padding: 8px 12px;
+              border-radius: 6px;
+              font-family: inherit;
+              font-size: 0.85rem;
+            "
+          >
+            <option value="">All</option>
+            <option value="pending">Pending</option>
+            <option value="invited">Invited</option>
+          </select>
+          <button class="btn btn-green" onclick="copyPendingEmails()">
+            Copy Pending Emails
+          </button>
+          <button class="btn" onclick="copyAllEmails()">Copy All Emails</button>
+        </div>
+
+        <!-- Add email form -->
+        <div style="display: flex; gap: 8px; margin-bottom: 16px">
+          <input
+            type="email"
+            id="add-email-input"
+            placeholder="Add email manually..."
+            style="
+              flex: 1;
+              background: var(--bg1);
+              border: 1px solid var(--bg2);
+              color: var(--fg1);
+              padding: 8px 12px;
+              border-radius: 6px;
+              font-family: inherit;
+              font-size: 0.85rem;
+            "
+          />
+          <input
+            type="text"
+            id="add-email-notes"
+            placeholder="Notes (optional)"
+            style="
+              width: 200px;
+              background: var(--bg1);
+              border: 1px solid var(--bg2);
+              color: var(--fg1);
+              padding: 8px 12px;
+              border-radius: 6px;
+              font-family: inherit;
+              font-size: 0.85rem;
+            "
+          />
+          <button class="btn btn-green" onclick="addWaitlistEmail()">
+            Add
+          </button>
+        </div>
+
+        <!-- Bulk actions -->
+        <div
+          style="
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            align-items: center;
+          "
+        >
+          <label
+            style="
+              color: var(--fg3);
+              font-size: 0.8rem;
+              display: flex;
+              align-items: center;
+              gap: 6px;
+            "
+          >
+            <input
+              type="checkbox"
+              id="select-all-waitlist"
+              onchange="toggleSelectAll(this)"
+            />
+            Select All
+          </label>
+          <button class="btn btn-sm btn-green" onclick="inviteSelected()">
+            Mark Selected as Invited
+          </button>
+          <span
+            id="waitlist-selection-count"
+            style="color: var(--fg3); font-size: 0.8rem"
+          ></span>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 30px">
+                <input
+                  type="checkbox"
+                  id="select-all-header"
+                  onchange="toggleSelectAll(this)"
+                />
+              </th>
+              <th>Email</th>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Notes</th>
+              <th>Signed Up</th>
+              <th>Invited</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="waitlist-tbody"></tbody>
+        </table>
+
+        <!-- Clipboard feedback -->
+        <div
+          id="clipboard-toast"
+          style="
+            display: none;
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--green);
+            color: var(--bg0);
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            z-index: 200;
+          "
+        ></div>
       </div>
 
       <!-- Ledger Tab -->
@@ -698,11 +854,239 @@
         return String(s).replace(/'/g, "\\'").replace(/"/g, "&quot;");
       }
 
+      // --- Waitlist ---
+      let waitlistData = [];
+      async function loadWaitlist(search = "", status = "") {
+        try {
+          const params = new URLSearchParams();
+          if (search) params.set("search", search);
+          if (status) params.set("status", status);
+          const res = await fetch("/api/admin/waitlist?" + params);
+          if (!res.ok) return;
+          const data = await res.json();
+          waitlistData = data.entries || [];
+          document.getElementById("stat-waitlist").textContent =
+            (data.pending || 0) + " / " + (data.total || 0);
+          renderWaitlist(waitlistData);
+        } catch (e) {
+          console.error("Failed to load waitlist", e);
+        }
+      }
+
+      function renderWaitlist(entries) {
+        const tbody = document.getElementById("waitlist-tbody");
+        tbody.innerHTML = "";
+        entries.forEach((w) => {
+          const signedUp = w.created_at
+            ? new Date(w.created_at).toLocaleDateString()
+            : "-";
+          const invitedAt = w.invited_at
+            ? new Date(w.invited_at).toLocaleDateString()
+            : "-";
+          const statusBadge =
+            w.status === "invited"
+              ? "badge-green"
+              : w.status === "pending"
+                ? "badge-yellow"
+                : "badge-gray";
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td><input type="checkbox" class="waitlist-check" data-email="${escAttr(w.email)}" data-id="${w.id}" /></td>
+            <td style="font-weight:bold;">${escHtml(w.email)}</td>
+            <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(w.source || "-")}</td>
+            <td><span class="badge ${statusBadge}">${escHtml(w.status || "pending")}</span></td>
+            <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(w.notes || "-")}</td>
+            <td style="color:var(--fg3);">${signedUp}</td>
+            <td style="color:var(--fg3);">${invitedAt}</td>
+            <td>
+              ${w.status !== "invited" ? `<button class="btn btn-sm btn-green" onclick="inviteOne('${escAttr(w.email)}')">Invite</button>` : ""}
+              <button class="btn btn-sm btn-red" onclick="deleteWaitlistEntry('${w.id}')">Del</button>
+            </td>`;
+          tbody.appendChild(tr);
+        });
+        updateSelectionCount();
+      }
+
+      function updateSelectionCount() {
+        const checked = document.querySelectorAll(
+          ".waitlist-check:checked",
+        ).length;
+        const el = document.getElementById("waitlist-selection-count");
+        el.textContent = checked > 0 ? checked + " selected" : "";
+      }
+      document.addEventListener("change", (e) => {
+        if (e.target.classList.contains("waitlist-check"))
+          updateSelectionCount();
+      });
+
+      function toggleSelectAll(el) {
+        const checks = document.querySelectorAll(".waitlist-check");
+        checks.forEach((c) => (c.checked = el.checked));
+        // Sync both select-all checkboxes
+        document.getElementById("select-all-waitlist").checked = el.checked;
+        document.getElementById("select-all-header").checked = el.checked;
+        updateSelectionCount();
+      }
+
+      function getSelectedEmails() {
+        return Array.from(
+          document.querySelectorAll(".waitlist-check:checked"),
+        ).map((c) => c.dataset.email);
+      }
+
+      async function inviteSelected() {
+        const emails = getSelectedEmails();
+        if (emails.length === 0) return alert("No entries selected");
+        if (!confirm(`Mark ${emails.length} email(s) as invited?`)) return;
+        try {
+          const res = await fetch("/api/admin/waitlist/invite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ emails }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            showToast(`${data.invited} email(s) marked as invited`);
+            loadWaitlist(
+              document.getElementById("waitlist-search").value,
+              document.getElementById("waitlist-filter").value,
+            );
+          }
+        } catch (e) {
+          alert("Failed: " + e.message);
+        }
+      }
+
+      async function inviteOne(email) {
+        try {
+          const res = await fetch("/api/admin/waitlist/invite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ emails: [email] }),
+          });
+          if (res.ok) {
+            showToast(`Invited: ${email}`);
+            loadWaitlist(
+              document.getElementById("waitlist-search").value,
+              document.getElementById("waitlist-filter").value,
+            );
+          }
+        } catch (e) {
+          alert("Failed: " + e.message);
+        }
+      }
+
+      async function addWaitlistEmail() {
+        const email = document.getElementById("add-email-input").value.trim();
+        const notes = document.getElementById("add-email-notes").value.trim();
+        if (!email) return;
+        try {
+          const res = await fetch("/api/admin/waitlist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, notes: notes || null }),
+          });
+          if (res.ok) {
+            document.getElementById("add-email-input").value = "";
+            document.getElementById("add-email-notes").value = "";
+            showToast("Added: " + email);
+            loadWaitlist(
+              document.getElementById("waitlist-search").value,
+              document.getElementById("waitlist-filter").value,
+            );
+          } else {
+            const err = await res.text();
+            alert("Failed: " + err);
+          }
+        } catch (e) {
+          alert("Failed: " + e.message);
+        }
+      }
+
+      async function deleteWaitlistEntry(id) {
+        if (!confirm("Remove this email from the waitlist?")) return;
+        try {
+          await fetch("/api/admin/waitlist/" + id, { method: "DELETE" });
+          loadWaitlist(
+            document.getElementById("waitlist-search").value,
+            document.getElementById("waitlist-filter").value,
+          );
+        } catch (e) {
+          alert("Failed: " + e.message);
+        }
+      }
+
+      function copyPendingEmails() {
+        const emails = waitlistData
+          .filter((w) => w.status === "pending" || !w.status)
+          .map((w) => w.email);
+        copyToClipboard(emails, "pending");
+      }
+
+      function copyAllEmails() {
+        const emails = waitlistData.map((w) => w.email);
+        copyToClipboard(emails, "all");
+      }
+
+      function copyToClipboard(emails, label) {
+        if (emails.length === 0) return showToast("No emails to copy");
+        const text = emails.join("\n");
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            showToast(`Copied ${emails.length} ${label} email(s) to clipboard`);
+          })
+          .catch(() => {
+            // Fallback
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+            showToast(`Copied ${emails.length} ${label} email(s) to clipboard`);
+          });
+      }
+
+      function showToast(msg) {
+        const toast = document.getElementById("clipboard-toast");
+        toast.textContent = msg;
+        toast.style.display = "block";
+        setTimeout(() => {
+          toast.style.display = "none";
+        }, 3000);
+      }
+
+      // Waitlist search/filter
+      let waitlistSearchTimeout;
+      document
+        .getElementById("waitlist-search")
+        .addEventListener("input", (e) => {
+          clearTimeout(waitlistSearchTimeout);
+          waitlistSearchTimeout = setTimeout(
+            () =>
+              loadWaitlist(
+                e.target.value,
+                document.getElementById("waitlist-filter").value,
+              ),
+            300,
+          );
+        });
+      document
+        .getElementById("waitlist-filter")
+        .addEventListener("change", (e) => {
+          loadWaitlist(
+            document.getElementById("waitlist-search").value,
+            e.target.value,
+          );
+        });
+
       // --- Init ---
       checkAuth().then(() => {
         loadStats();
         loadUsers();
         loadAgents();
+        loadWaitlist();
         loadLedger();
       });
     </script>

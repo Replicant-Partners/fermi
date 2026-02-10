@@ -374,6 +374,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/028_episode_tags.sql",
         "migrations/029_fix_message_type_and_profile.sql",
         "migrations/030_shopping_marketplace.sql",
+        "migrations/031_waitlist_status.sql",
     ];
 
     for file in &migration_files {
@@ -1016,6 +1017,19 @@ async fn main() {
         .route(
             "/api/admin/agents/:agent_id/flag",
             put(handlers::admin::admin_flag_agent_handler),
+        )
+        .route(
+            "/api/admin/waitlist",
+            get(handlers::admin::admin_list_waitlist_handler)
+                .post(handlers::admin::admin_add_waitlist_handler),
+        )
+        .route(
+            "/api/admin/waitlist/invite",
+            post(handlers::admin::admin_invite_waitlist_handler),
+        )
+        .route(
+            "/api/admin/waitlist/:entry_id",
+            delete(handlers::admin::admin_delete_waitlist_handler),
         )
         // Marketplace routes
         .route(

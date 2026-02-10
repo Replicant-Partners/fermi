@@ -1,4 +1,4 @@
-//! Admin handlers — stats, user management, agent flagging.
+//! Admin handlers — stats, user management, agent flagging, waitlist.
 
 use axum::{
     extract::{Path, Query, State},
@@ -287,4 +287,162 @@ pub async fn admin_flag_agent_handler(
         "agent_id": agent_id,
         "visibility": body.visibility,
     })))
+}
+
+// ─── Waitlist Management ────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct WaitlistParams {
+    pub status: Option<String>,
+    pub search: Option<String>,
+}
+
+pub async fn admin_list_waitlist_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(params): Query<WaitlistParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    let rows = if let Some(ref search) = params.search {
+        let q = format!("%{}%", search);
+        sqlx::query(
+            "SELECT id, email, source, status, notes, created_at, invited_at
+             FROM waitlist WHERE email ILIKE $1
+             ORDER BY created_at DESC",
+        )
+        .bind(&q)
+        .fetch_all(&state.db)
+        .await
+    } else if let Some(ref status) = params.status {
+        sqlx::query(
+            "SELECT id, email, source, status, notes, created_at, invited_at
+             FROM waitlist WHERE status = $1
+             ORDER BY created_at DESC",
+        )
+        .bind(status)
+        .fetch_all(&state.db)
+        .await
+    } else {
+        sqlx::query(
+            "SELECT id, email, source, status, notes, created_at, invited_at
+             FROM waitlist ORDER BY created_at DESC",
+        )
+        .fetch_all(&state.db)
+        .await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let entries: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.try_get::<uuid::Uuid, _>("id").ok(),
+                "email": r.try_get::<String, _>("email").unwrap_or_default(),
+                "source": r.try_get::<Option<String>, _>("source").unwrap_or(None),
+                "status": r.try_get::<Option<String>, _>("status").unwrap_or(Some("pending".into())),
+                "notes": r.try_get::<Option<String>, _>("notes").unwrap_or(None),
+                "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
+                "invited_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("invited_at").unwrap_or(None),
+            })
+        })
+        .collect();
+
+    let total = entries.len();
+    let pending = entries.iter().filter(|e| e["status"] == "pending").count();
+    let invited = entries.iter().filter(|e| e["status"] == "invited").count();
+
+    Ok(Json(json!({
+        "entries": entries,
+        "total": total,
+        "pending": pending,
+        "invited": invited,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InviteRequest {
+    pub emails: Vec<String>,
+    pub notes: Option<String>,
+}
+
+pub async fn admin_invite_waitlist_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(body): Json<InviteRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    let notes = body.notes.unwrap_or_else(|| "Invited by admin".to_string());
+    let mut invited = 0;
+
+    for email in &body.emails {
+        let result = sqlx::query(
+            "UPDATE waitlist SET status = 'invited', invited_at = NOW(), notes = $1
+             WHERE email = $2 AND status = 'pending'",
+        )
+        .bind(&notes)
+        .bind(email.trim().to_lowercase())
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        invited += result.rows_affected();
+    }
+
+    Ok(Json(json!({
+        "status": "ok",
+        "invited": invited,
+        "total_requested": body.emails.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddWaitlistRequest {
+    pub email: String,
+    pub notes: Option<String>,
+}
+
+pub async fn admin_add_waitlist_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(body): Json<AddWaitlistRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() < 5 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid email".into()));
+    }
+
+    sqlx::query(
+        "INSERT INTO waitlist (email, source, notes) VALUES ($1, 'admin', $2)
+         ON CONFLICT (email) DO UPDATE SET notes = COALESCE($2, waitlist.notes)",
+    )
+    .bind(&email)
+    .bind(&body.notes)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "status": "ok",
+        "email": email,
+    })))
+}
+
+pub async fn admin_delete_waitlist_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(entry_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    sqlx::query("DELETE FROM waitlist WHERE id = $1")
+        .bind(entry_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "status": "deleted" })))
 }
