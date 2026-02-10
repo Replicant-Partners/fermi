@@ -11,6 +11,7 @@ pub mod billing;
 pub mod consolidation;
 pub mod eval;
 pub mod execution;
+pub mod kg;
 pub mod lifecycle;
 pub mod marketplace;
 pub mod mcp;

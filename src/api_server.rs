@@ -668,6 +668,39 @@ async fn main() {
             "/api/agents/:agent_id/ontology/diff",
             get(handlers::ontology::get_ontology_diff),
         )
+        // Knowledge graph
+        .route(
+            "/api/agents/:agent_id/kg",
+            get(handlers::kg::kg_overview_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/kg/entities",
+            get(handlers::kg::list_entities_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/kg/entities/:entity_id",
+            get(handlers::kg::get_entity_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/kg/entities/:entity_id/facts",
+            get(handlers::kg::get_entity_facts_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/kg/facts",
+            get(handlers::kg::list_facts_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/kg/rules",
+            get(handlers::kg::list_rules_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/kg/rules/:rule_id",
+            get(handlers::kg::get_rule_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/kg/communities",
+            get(handlers::kg::list_communities_handler),
+        )
         // Projector
         .route("/projector", get(handlers::pages::projector_view))
         .route(
