@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Documentation - Agent Bestiary</title>
+    <link rel="stylesheet" href="/static/css/variables.css" />
+    <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+    <style>
+      body {
+        font-family: "Berkeley Mono", "JetBrains Mono", monospace;
+        line-height: 1.6;
+        margin: 0;
+        padding: 0;
+      }
+      .docs-layout {
+        display: flex;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px 24px 48px;
+        gap: 32px;
+        min-height: calc(100vh - 80px);
+      }
+
+      /* ─── Sidebar ─── */
+      .docs-sidebar {
+        width: 240px;
+        flex-shrink: 0;
+        position: sticky;
+        top: 80px;
+        align-self: flex-start;
+        max-height: calc(100vh - 100px);
+        overflow-y: auto;
+      }
+      .docs-search {
+        width: 100%;
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        color: var(--fg1);
+        padding: 6px 10px;
+        font-family: inherit;
+        font-size: 0.75rem;
+        margin-bottom: 16px;
+        box-sizing: border-box;
+      }
+      .docs-search::placeholder {
+        color: var(--fg3);
+      }
+      .docs-search:focus {
+        outline: none;
+        border-color: var(--yellow);
+      }
+      .docs-section-title {
+        font-size: 0.65rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin: 16px 0 6px;
+      }
+      .docs-section-title:first-of-type {
+        margin-top: 0;
+      }
+      .docs-nav-link {
+        display: block;
+        padding: 5px 10px;
+        color: var(--fg2);
+        text-decoration: none;
+        font-size: 0.8rem;
+        border-left: 2px solid transparent;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .docs-nav-link:hover {
+        color: var(--fg1);
+        border-left-color: var(--bg3);
+      }
+      .docs-nav-link.active {
+        color: var(--yellow);
+        border-left-color: var(--yellow);
+      }
+      .docs-nav-link.hidden {
+        display: none;
+      }
+
+      /* ─── Content ─── */
+      .docs-content {
+        flex: 1;
+        min-width: 0;
+      }
+
+      /* ─── Hub (index) view ─── */
+      .docs-hub-title {
+        font-size: 1.6rem;
+        font-weight: 300;
+        color: var(--fg0);
+        margin: 0 0 8px;
+      }
+      .docs-hub-subtitle {
+        color: var(--fg3);
+        font-size: 0.85rem;
+        margin-bottom: 32px;
+      }
+      .docs-hub-section {
+        margin-bottom: 28px;
+      }
+      .docs-hub-section h3 {
+        font-size: 0.75rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin: 0 0 12px;
+      }
+      .docs-card {
+        display: block;
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 16px 20px;
+        margin-bottom: 8px;
+        text-decoration: none;
+        color: inherit;
+        transition: border-color 0.15s;
+      }
+      .docs-card:hover {
+        border-color: var(--yellow);
+      }
+      .docs-card-title {
+        font-size: 0.95rem;
+        color: var(--fg0);
+        font-weight: 500;
+        margin-bottom: 4px;
+      }
+      .docs-card-desc {
+        font-size: 0.78rem;
+        color: var(--fg3);
+      }
+
+      /* ─── Markdown rendered content ─── */
+      .docs-article {
+        color: var(--fg1);
+      }
+      .docs-article h1 {
+        font-size: 1.5rem;
+        font-weight: 400;
+        color: var(--fg0);
+        margin: 0 0 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--bg2);
+      }
+      .docs-article h2 {
+        font-size: 1.1rem;
+        font-weight: 500;
+        color: var(--yellow);
+        margin: 32px 0 12px;
+      }
+      .docs-article h3 {
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: var(--fg0);
+        margin: 24px 0 8px;
+      }
+      .docs-article h4 {
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--fg2);
+        margin: 16px 0 6px;
+      }
+      .docs-article p {
+        font-size: 0.85rem;
+        line-height: 1.7;
+        margin: 0 0 12px;
+      }
+      .docs-article ul,
+      .docs-article ol {
+        font-size: 0.85rem;
+        padding-left: 24px;
+        margin: 0 0 12px;
+      }
+      .docs-article li {
+        margin-bottom: 4px;
+        line-height: 1.6;
+      }
+      .docs-article code {
+        font-family: "Berkeley Mono", "JetBrains Mono", monospace;
+        background: var(--bg1);
+        padding: 1px 5px;
+        font-size: 0.82em;
+        color: var(--aqua);
+      }
+      .docs-article pre {
+        background: var(--bg0-hard);
+        border: 1px solid var(--bg2);
+        padding: 14px 16px;
+        overflow-x: auto;
+        margin: 0 0 16px;
+        font-size: 0.8rem;
+        line-height: 1.5;
+      }
+      .docs-article pre code {
+        background: none;
+        padding: 0;
+        color: var(--fg1);
+      }
+      .docs-article blockquote {
+        border-left: 3px solid var(--yellow);
+        margin: 0 0 16px;
+        padding: 8px 16px;
+        color: var(--fg2);
+        background: var(--bg0-soft);
+      }
+      .docs-article blockquote p {
+        margin: 0;
+      }
+      .docs-article table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+        margin: 0 0 16px;
+      }
+      .docs-article th,
+      .docs-article td {
+        text-align: left;
+        padding: 8px 12px;
+        border: 1px solid var(--bg2);
+      }
+      .docs-article th {
+        background: var(--bg1);
+        color: var(--fg0);
+        font-weight: 500;
+      }
+      .docs-article td {
+        color: var(--fg2);
+      }
+      .docs-article a {
+        color: var(--aqua);
+        text-decoration: none;
+      }
+      .docs-article a:hover {
+        text-decoration: underline;
+      }
+      .docs-article strong {
+        color: var(--fg0);
+      }
+      .docs-article hr {
+        border: none;
+        border-top: 1px solid var(--bg2);
+        margin: 24px 0;
+      }
+
+      /* ─── Prev/Next nav ─── */
+      .docs-pager {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid var(--bg2);
+      }
+      .docs-pager a {
+        text-decoration: none;
+        color: var(--fg2);
+        font-size: 0.8rem;
+        padding: 8px 14px;
+        border: 1px solid var(--bg2);
+        transition: border-color 0.15s, color 0.15s;
+      }
+      .docs-pager a:hover {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .docs-pager .pager-label {
+        font-size: 0.65rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        display: block;
+        margin-bottom: 2px;
+      }
+
+      /* ─── Loading ─── */
+      .docs-loading {
+        color: var(--fg3);
+        font-size: 0.85rem;
+        padding: 24px 0;
+      }
+
+      /* ─── Responsive ─── */
+      @media (max-width: 768px) {
+        .docs-layout {
+          flex-direction: column;
+          padding: 16px;
+          gap: 16px;
+        }
+        .docs-sidebar {
+          width: 100%;
+          position: static;
+          max-height: none;
+          border-bottom: 1px solid var(--bg2);
+          padding-bottom: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({ current: "docs" });
+    </script>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar">
+        <input
+          type="text"
+          class="docs-search"
+          id="docs-search"
+          placeholder="Filter guides..."
+        />
+        <div id="sidebar-nav"></div>
+      </aside>
+
+      <main class="docs-content" id="docs-content">
+        <div class="docs-loading">Loading documentation...</div>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script>
+      // ─── State ───
+      let manifest = null;
+      let allGuides = []; // flat list of {slug, title, description, tags, section}
+
+      const slug = (() => {
+        const path = window.location.pathname;
+        const match = path.match(/^\/docs\/(.+)$/);
+        return match ? match[1] : null;
+      })();
+
+      // ─── Configure marked ───
+      marked.setOptions({
+        highlight: function (code, lang) {
+          if (lang && hljs.getLanguage(lang)) {
+            return hljs.highlight(code, { language: lang }).value;
+          }
+          return hljs.highlightAuto(code).value;
+        },
+        gfm: true,
+        breaks: false,
+      });
+
+      // ─── Init ───
+      async function init() {
+        try {
+          const res = await fetch("/static/docs/manifest.json");
+          manifest = await res.json();
+
+          // Build flat guide list
+          allGuides = [];
+          manifest.sections.forEach((s) => {
+            s.guides.forEach((g) => {
+              allGuides.push({ ...g, section: s.title });
+            });
+          });
+
+          buildSidebar();
+
+          if (slug) {
+            await loadGuide(slug);
+          } else {
+            renderHub();
+          }
+        } catch (e) {
+          document.getElementById("docs-content").innerHTML =
+            '<p style="color:var(--red)">Failed to load documentation manifest.</p>';
+        }
+      }
+
+      // ─── Sidebar ───
+      function buildSidebar() {
+        const nav = document.getElementById("sidebar-nav");
+        let html = "";
+        manifest.sections.forEach((s) => {
+          html += `<div class="docs-section-title">${esc(s.title)}</div>`;
+          s.guides.forEach((g) => {
+            const active = g.slug === slug ? " active" : "";
+            const tags = (g.tags || []).join(" ").toLowerCase();
+            html += `<a href="/docs/${g.slug}" class="docs-nav-link${active}" data-tags="${esc(tags)}" data-title="${esc(g.title.toLowerCase())}">${esc(g.title)}</a>`;
+          });
+        });
+        nav.innerHTML = html;
+      }
+
+      // ─── Search filter ───
+      document
+        .getElementById("docs-search")
+        .addEventListener("input", function () {
+          const q = this.value.toLowerCase().trim();
+          document
+            .querySelectorAll(".docs-nav-link")
+            .forEach((el) => {
+              if (!q) {
+                el.classList.remove("hidden");
+                return;
+              }
+              const tags = el.dataset.tags || "";
+              const title = el.dataset.title || "";
+              const match = title.includes(q) || tags.includes(q);
+              el.classList.toggle("hidden", !match);
+            });
+        });
+
+      // ─── Hub view ───
+      function renderHub() {
+        document.title = "Documentation - Agent Bestiary";
+        let html = `
+          <h1 class="docs-hub-title">Documentation</h1>
+          <p class="docs-hub-subtitle">Guides for building, composing, and integrating agents on Agent Bestiary.</p>
+        `;
+        manifest.sections.forEach((s) => {
+          html += `<div class="docs-hub-section"><h3>${esc(s.title)}</h3>`;
+          s.guides.forEach((g) => {
+            html += `
+              <a href="/docs/${g.slug}" class="docs-card">
+                <div class="docs-card-title">${esc(g.title)}</div>
+                <div class="docs-card-desc">${esc(g.description)}</div>
+              </a>`;
+          });
+          html += "</div>";
+        });
+        document.getElementById("docs-content").innerHTML = html;
+      }
+
+      // ─── Load and render a guide ───
+      async function loadGuide(guideSlug) {
+        const content = document.getElementById("docs-content");
+        content.innerHTML = '<div class="docs-loading">Loading guide...</div>';
+
+        try {
+          const res = await fetch(`/static/docs/${guideSlug}.md`);
+          if (!res.ok) {
+            content.innerHTML = `
+              <h1 class="docs-hub-title">Guide not found</h1>
+              <p style="color:var(--fg3)">The guide "${esc(guideSlug)}" doesn't exist yet.</p>
+              <p><a href="/docs" style="color:var(--aqua)">Back to documentation hub</a></p>`;
+            return;
+          }
+          const md = await res.text();
+          const rendered = marked.parse(md);
+
+          // Set page title
+          const guide = allGuides.find((g) => g.slug === guideSlug);
+          if (guide) {
+            document.title = `${guide.title} - Agent Bestiary Docs`;
+          }
+
+          content.innerHTML = `
+            <article class="docs-article">${rendered}</article>
+            ${buildPager(guideSlug)}
+          `;
+
+          // Apply syntax highlighting to any blocks marked didn't catch
+          content.querySelectorAll("pre code").forEach((block) => {
+            hljs.highlightElement(block);
+          });
+        } catch (e) {
+          content.innerHTML =
+            '<p style="color:var(--red)">Failed to load guide.</p>';
+        }
+      }
+
+      // ─── Prev / Next pager ───
+      function buildPager(currentSlug) {
+        const idx = allGuides.findIndex((g) => g.slug === currentSlug);
+        if (idx === -1) return "";
+
+        const prev = idx > 0 ? allGuides[idx - 1] : null;
+        const next = idx < allGuides.length - 1 ? allGuides[idx + 1] : null;
+
+        return `
+          <div class="docs-pager">
+            ${
+              prev
+                ? `<a href="/docs/${prev.slug}"><span class="pager-label">Previous</span>${esc(prev.title)}</a>`
+                : "<span></span>"
+            }
+            ${
+              next
+                ? `<a href="/docs/${next.slug}"><span class="pager-label">Next</span>${esc(next.title)}</a>`
+                : "<span></span>"
+            }
+          </div>`;
+      }
+
+      // ─── Escape HTML ───
+      function esc(s) {
+        const d = document.createElement("div");
+        d.textContent = s;
+        return d.innerHTML;
+      }
+
+      init();
+    </script>
+
+    <script src="/static/js/theme.js"></script>
+    <script src="/static/js/widgets/xaman-ek.js"></script>
+  </body>
+</html>

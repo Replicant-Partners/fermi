@@ -485,6 +485,21 @@ const XamanEk = {
         action: "document.getElementById('create-ws-btn')?.click()",
       });
       suggestions.push({ label: "Browse catalogue", href: "/catalogue" });
+    } else if (path.startsWith("/docs")) {
+      suggestions.push({ label: "Browse catalogue", href: "/catalogue" });
+      suggestions.push({ label: "Create agent", href: "/agents/new" });
+      suggestions.push({
+        label: "Agent composition",
+        href: "/docs/agent-composition",
+      });
+      suggestions.push({
+        label: "Zed & MCP setup",
+        href: "/docs/zed-mcp-setup",
+      });
+      suggestions.push({
+        label: "Building your deck",
+        href: "/docs/building-your-agent-deck",
+      });
     } else if (path.startsWith("/workspace/")) {
       // Workspace-aware context — fetch agents and show interaction guide
       this._renderWorkspaceContext(ctx);
@@ -797,15 +812,40 @@ const XamanEk = {
           "pipeline",
           "multi-agent",
           "coordinate",
+          "compose",
+          "delegat",
         ],
-        title: "Compound agents in workspaces",
+        title: "Compound agents & composition",
         steps: [
           "Compound agents orchestrate other agents (e.g. social_media_studio)",
-          "Hire the compound agent + its specialist agents into one workspace",
+          "Hire the compound agent — its dependencies auto-hire with it",
           "@mention the compound agent with a high-level goal",
-          "It will coordinate specialists — each gets full tool access",
-          "Use cohere_and_coordinate to evaluate the team's coherence",
+          "It delegates to specialists via delegate_to_agent (full tool access)",
+          "execute_agent is for text-only consultation; delegate_to_agent is for action",
         ],
+        link: "/docs/agent-composition",
+      },
+      {
+        match: ["zed", "mcp", "extension", "editor", "setup"],
+        title: "Zed extension & MCP setup",
+        steps: [
+          "Build: cargo build --bin agent-mcp-server",
+          "Add to Zed settings → context_servers with ANTHROPIC_API_KEY + AGENTS_DIR",
+          "Tools: list_agents, execute_agent, search_agents, get_catalogue, ask_xaman_ek",
+          "Use in Zed assistant panel — it calls MCP tools automatically",
+        ],
+        link: "/docs/zed-mcp-setup",
+      },
+      {
+        match: ["deck", "agent card", "ontology design", "system prompt"],
+        title: "Building your agent deck",
+        steps: [
+          "Define purpose, model, temperature, and system prompt",
+          "Design ontology: 5-10 entities + relationships",
+          "Run the 11-point design checklist before publishing",
+          "Create via web wizard (/agents/new) or JSON authoring",
+        ],
+        link: "/docs/building-your-agent-deck",
       },
       {
         match: ["coherence", "evaluate", "tec", "principle"],

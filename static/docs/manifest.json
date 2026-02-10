@@ -1,0 +1,37 @@
+{
+  "sections": [
+    {
+      "title": "Getting Started",
+      "guides": [
+        {
+          "slug": "building-your-agent-deck",
+          "title": "Building Your Agent Deck",
+          "description": "Agent cards, ontology design, system prompts, and the design checklist",
+          "tags": ["agent", "create", "card", "ontology", "deck", "build", "getting started"]
+        }
+      ]
+    },
+    {
+      "title": "Workspaces & Composition",
+      "guides": [
+        {
+          "slug": "agent-composition",
+          "title": "Agent Composition",
+          "description": "Compound agents, delegation, dependencies, and workspace orchestration",
+          "tags": ["compound", "delegate", "compose", "workspace", "orchestrate", "team", "pipeline"]
+        }
+      ]
+    },
+    {
+      "title": "Tools & Integration",
+      "guides": [
+        {
+          "slug": "zed-mcp-setup",
+          "title": "Zed Extension & MCP Setup",
+          "description": "Install the Zed extension, configure MCP servers, and use tools from your editor",
+          "tags": ["zed", "mcp", "extension", "editor", "install", "setup", "tools"]
+        }
+      ]
+    }
+  ]
+}

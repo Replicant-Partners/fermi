@@ -567,6 +567,8 @@ async fn main() {
         .route("/", get(handlers::pages::landing))
         .route("/aspiration", get(handlers::pages::aspiration))
         .route("/catalogue", get(handlers::pages::catalogue))
+        .route("/docs", get(handlers::pages::docs_view))
+        .route("/docs/{slug}", get(handlers::pages::docs_view))
         .route("/agent/:agent_id", get(handlers::pages::agent_detail))
         .route(
             "/agent/:agent_id/ontology",

@@ -20,6 +20,7 @@ const Nav = {
       <div class="nav-right">
         <nav class="nav-links">
           <a href="/catalogue" class="${current === "catalogue" ? "active" : ""}">Catalogue</a>
+          <a href="/docs" class="${current === "docs" ? "active" : ""}">Docs</a>
           <a href="/dashboard" class="${current === "dashboard" ? "active" : ""}">Dashboard</a>
           <a href="/profile" class="${current === "profile" ? "active" : ""}">Profile</a>
         </nav>

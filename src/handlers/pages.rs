@@ -151,6 +151,17 @@ pub async fn settings_view() -> Html<String> {
     Html(html)
 }
 
+pub async fn docs_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/docs.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/docs.html: {}", e);
+            format!("<h1>Documentation</h1><p>Error loading template: {}</p>", e)
+        }
+    };
+    Html(html)
+}
+
 pub async fn admin_view() -> Html<String> {
     let html = match std::fs::read_to_string("templates/admin.html") {
         Ok(content) => content,
