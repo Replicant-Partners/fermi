@@ -373,6 +373,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/027_eval_framework.sql",
         "migrations/028_episode_tags.sql",
         "migrations/029_fix_message_type_and_profile.sql",
+        "migrations/030_shopping_marketplace.sql",
     ];
 
     for file in &migration_files {
@@ -713,6 +714,7 @@ async fn main() {
         // Profile + Settings pages
         .route("/profile", get(handlers::profile::profile_view))
         .route("/settings", get(handlers::pages::settings_view))
+        .route("/marketplace", get(handlers::pages::marketplace_view))
         .route("/admin", get(handlers::pages::admin_view))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -1014,6 +1016,31 @@ async fn main() {
         .route(
             "/api/admin/agents/:agent_id/flag",
             put(handlers::admin::admin_flag_agent_handler),
+        )
+        // Marketplace routes
+        .route(
+            "/api/marketplace/match",
+            post(handlers::marketplace::marketplace_match_handler),
+        )
+        .route(
+            "/api/marketplace/listings",
+            get(handlers::marketplace::list_marketplace_listings_handler),
+        )
+        .route(
+            "/api/marketplace/listings",
+            post(handlers::marketplace::create_marketplace_listing_handler),
+        )
+        .route(
+            "/api/marketplace/history",
+            get(handlers::marketplace::marketplace_history_handler),
+        )
+        .route(
+            "/api/shopping/profile",
+            get(handlers::marketplace::get_shopping_profiles_handler),
+        )
+        .route(
+            "/api/shopping/profile/:listing_id/listing",
+            put(handlers::marketplace::update_listing_handler),
         )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),

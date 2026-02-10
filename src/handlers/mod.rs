@@ -12,6 +12,7 @@ pub mod consolidation;
 pub mod eval;
 pub mod execution;
 pub mod lifecycle;
+pub mod marketplace;
 pub mod mcp;
 pub mod metrics;
 pub mod misc;

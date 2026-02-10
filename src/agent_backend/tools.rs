@@ -47,6 +47,9 @@ pub struct ToolContext {
     pub workspace_id: Option<Uuid>,
     pub workspace_slug: Option<String>,
     pub workspace_git: Option<Arc<WorkspaceGitManager>>,
+    pub db: Option<sqlx::PgPool>,
+    pub gas_fees: Option<crate::gas::GasFees>,
+    pub user_id: Option<String>,
 }
 
 /// A built-in tool definition
@@ -424,6 +427,113 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: true,
             is_delegation: false,
         },
+        // ─── Marketplace tools ───
+        BuiltinToolDef {
+            name: "get_shopping_profile",
+            description: "Retrieve the current user's shopping preference profile for a given agent. Returns metadata, category tags, brand affinities, price sensitivity, and quality bias. Never exposes raw embeddings.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "profile_name": {
+                        "type": "string",
+                        "description": "Name of the shopping profile (e.g. 'electronics', 'fitness'). Default: 'default'",
+                        "default": "default"
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: true,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "update_shopping_profile",
+            description: "Recompute the composite shopping embedding from recent episodes and update profile metadata (brand affinities, price sensitivity, quality bias, category tags). The embedding is computed server-side as a weighted centroid of episode embeddings.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "profile_name": {
+                        "type": "string",
+                        "description": "Name of the shopping profile to update. Default: 'default'",
+                        "default": "default"
+                    },
+                    "category_tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Category tags for the profile (e.g. ['electronics', 'espresso', 'kitchen'])"
+                    },
+                    "price_sensitivity": {
+                        "type": "number",
+                        "description": "Price sensitivity score 0.0 (price insensitive) to 1.0 (very price sensitive)"
+                    },
+                    "quality_bias": {
+                        "type": "number",
+                        "description": "Quality bias score 0.0 (value-focused) to 1.0 (premium-focused)"
+                    },
+                    "brand_affinities": {
+                        "type": "object",
+                        "description": "Brand affinity scores, e.g. {\"nike\": 0.85, \"breville\": 0.72}"
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: true,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "list_marketplace",
+            description: "Browse active marketplace listings where consumers have listed their shopping profiles for advertiser queries. Filter by category. Returns listing metadata and pricing — never raw embeddings.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Comma-separated category filter (e.g. 'electronics,kitchen')"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum listings to return (default: 20)",
+                        "default": 20
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: true,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "create_listing",
+            description: "List a shopping profile on the embedding marketplace so advertisers can run similarity queries against it. The consumer sets the price per query and can delist at any time. Costs a one-time listing fee.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "profile_name": {
+                        "type": "string",
+                        "description": "Name of the shopping profile to list. Default: 'default'",
+                        "default": "default"
+                    },
+                    "price_credits": {
+                        "type": "integer",
+                        "description": "Credits to charge per advertiser query (min 1)"
+                    },
+                    "max_queries_per_buyer": {
+                        "type": "integer",
+                        "description": "Optional cap on queries per buyer (privacy control)"
+                    },
+                    "category_tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Category tags for marketplace discovery"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Public description of this listing"
+                    }
+                },
+                "required": ["price_credits"]
+            }),
+            requires_workspace: true,
+            is_delegation: false,
+        },
     ]
 }
 
@@ -539,6 +649,10 @@ impl ToolRegistry {
             "evaluate_coherence" => execute_evaluate_coherence(input, ctx).await,
             "coherence_snapshot" => execute_coherence_snapshot(ctx).await,
             "get_workspace_messages" => execute_get_workspace_messages(input, ctx).await,
+            "get_shopping_profile" => execute_get_shopping_profile(input, ctx).await,
+            "update_shopping_profile" => execute_update_shopping_profile(input, ctx).await,
+            "list_marketplace" => execute_list_marketplace(input, ctx).await,
+            "create_listing" => execute_create_listing(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -588,6 +702,287 @@ async fn execute_search_knowledge(
         .collect();
 
     serde_json::to_string_pretty(&formatted).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Marketplace tool implementations ──────────────────────────────
+
+async fn execute_get_shopping_profile(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_id = ctx
+        .current_agent_id
+        .ok_or("No agent context for get_shopping_profile")?;
+    let user_id = ctx
+        .user_id
+        .as_deref()
+        .ok_or("No user context for get_shopping_profile")?;
+    let profile_name = input
+        .get("profile_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+
+    let profile = ctx
+        .memory_store
+        .get_shopping_profile(user_id, agent_id, profile_name)
+        .await
+        .map_err(|e| format!("Profile lookup failed: {}", e))?;
+
+    match profile {
+        Some(p) => {
+            let result = json!({
+                "profile_id": p.profile_id,
+                "profile_name": p.profile_name,
+                "embedding_version": p.embedding_version,
+                "episode_count": p.episode_count,
+                "category_tags": p.category_tags,
+                "price_sensitivity": p.price_sensitivity,
+                "quality_bias": p.quality_bias,
+                "brand_affinities": p.brand_affinities,
+                "is_listed": p.is_listed,
+                "updated_at": p.updated_at.to_rfc3339(),
+            });
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| format!("Serialization error: {}", e))
+        }
+        None => Ok(json!({
+            "status": "not_found",
+            "message": format!("No shopping profile '{}' found. Use update_shopping_profile to create one.", profile_name)
+        })
+        .to_string()),
+    }
+}
+
+async fn execute_update_shopping_profile(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_id = ctx
+        .current_agent_id
+        .ok_or("No agent context for update_shopping_profile")?;
+    let user_id = ctx
+        .user_id
+        .as_deref()
+        .ok_or("No user context for update_shopping_profile")?;
+    let profile_name = input
+        .get("profile_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+
+    // Extract metadata from input
+    let category_tags: Vec<String> = input
+        .get("category_tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let price_sensitivity = input.get("price_sensitivity").and_then(|v| v.as_f64());
+    let quality_bias = input.get("quality_bias").and_then(|v| v.as_f64());
+    let brand_affinities = input.get("brand_affinities").cloned().unwrap_or(json!({}));
+
+    // Compute composite embedding from episodes (weighted centroid)
+    let episodes = ctx
+        .memory_store
+        .get_all_episodes_with_embeddings(agent_id)
+        .await
+        .map_err(|e| format!("Episode fetch failed: {}", e))?;
+
+    let now = chrono::Utc::now();
+    let mut weighted_sum: Option<Vec<f64>> = None;
+    let mut total_weight = 0.0f64;
+    let mut episode_count = 0i32;
+
+    for episode in &episodes {
+        if let Some(ref emb) = episode.embedding {
+            let age_days = (now - episode.timestamp_ref).num_hours() as f64 / 24.0;
+            let recency_weight = (-0.1 * age_days).exp();
+            let success_weight = match episode.execution_status {
+                agent_bestiary_memory::ExecutionStatus::Success => 1.0,
+                _ => 0.3,
+            };
+            let w = recency_weight * success_weight;
+
+            match &mut weighted_sum {
+                Some(sum) => {
+                    for (i, &val) in emb.iter().enumerate() {
+                        if i < sum.len() {
+                            sum[i] += w * val as f64;
+                        }
+                    }
+                }
+                None => {
+                    weighted_sum = Some(emb.iter().map(|&v| w * v as f64).collect());
+                }
+            }
+            total_weight += w;
+            episode_count += 1;
+        }
+    }
+
+    // L2 normalize the composite embedding
+    let composite: Option<Vec<f32>> = weighted_sum.map(|sum| {
+        let norm: f64 = sum.iter().map(|v| v * v).sum::<f64>().sqrt();
+        if norm > 1e-10 {
+            sum.iter().map(|&v| (v / norm) as f32).collect()
+        } else {
+            sum.iter().map(|&v| v as f32).collect()
+        }
+    });
+
+    let profile_id = ctx
+        .memory_store
+        .upsert_shopping_profile(
+            user_id,
+            agent_id,
+            profile_name,
+            composite.as_deref(),
+            episode_count,
+            &category_tags,
+            price_sensitivity,
+            quality_bias,
+            &brand_affinities,
+        )
+        .await
+        .map_err(|e| format!("Profile upsert failed: {}", e))?;
+
+    let result = json!({
+        "profile_id": profile_id,
+        "profile_name": profile_name,
+        "episode_count": episode_count,
+        "embedding_computed": composite.is_some(),
+        "category_tags": category_tags,
+        "price_sensitivity": price_sensitivity,
+        "quality_bias": quality_bias,
+        "brand_affinities": brand_affinities,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_list_marketplace(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let cat_str = input.get("category").and_then(|v| v.as_str());
+    let cat_filter: Option<Vec<String>> =
+        cat_str.map(|s| s.split(',').map(|t| t.trim().to_string()).collect());
+    let limit = input.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
+
+    let listings = ctx
+        .memory_store
+        .get_active_listings(cat_filter.as_deref(), limit)
+        .await
+        .map_err(|e| format!("Marketplace query failed: {}", e))?;
+
+    let items: Vec<serde_json::Value> = listings
+        .iter()
+        .map(|l| {
+            json!({
+                "listing_id": l.listing_id,
+                "seller_id": l.seller_id,
+                "price_credits": l.price_credits,
+                "total_queries": l.total_queries,
+                "category_tags": l.category_tags,
+                "description": l.description,
+            })
+        })
+        .collect();
+
+    let result = json!({ "listings": items, "count": items.len() });
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_create_listing(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_id = ctx
+        .current_agent_id
+        .ok_or("No agent context for create_listing")?;
+    let user_id = ctx
+        .user_id
+        .as_deref()
+        .ok_or("No user context for create_listing")?;
+    let profile_name = input
+        .get("profile_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let price_credits = input
+        .get("price_credits")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1)
+        .max(1) as i32;
+    let max_queries = input
+        .get("max_queries_per_buyer")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+    let category_tags: Vec<String> = input
+        .get("category_tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let description = input.get("description").and_then(|v| v.as_str());
+
+    // Look up the profile
+    let profile = ctx
+        .memory_store
+        .get_shopping_profile(user_id, agent_id, profile_name)
+        .await
+        .map_err(|e| format!("Profile lookup failed: {}", e))?
+        .ok_or_else(|| {
+            format!(
+                "No shopping profile '{}' found. Create one with update_shopping_profile first.",
+                profile_name
+            )
+        })?;
+
+    // Charge listing fee if pool is available
+    if let (Some(db), Some(gas)) = (&ctx.db, &ctx.gas_fees) {
+        let wallet = fermi_auth::get_or_create_wallet(db, "user", user_id)
+            .await
+            .map_err(|e| format!("Wallet error: {}", e))?;
+        fermi_auth::credit_charge(
+            db,
+            wallet.wallet_id,
+            gas.marketplace_listing_fee,
+            "marketplace_listing_fee",
+            "Marketplace listing creation",
+            Some(&profile.profile_id.to_string()),
+        )
+        .await
+        .map_err(|e| format!("Insufficient credits for listing fee: {}", e))?;
+    }
+
+    let listing_id = ctx
+        .memory_store
+        .create_marketplace_listing(
+            profile.profile_id,
+            user_id,
+            price_credits,
+            max_queries,
+            &category_tags,
+            description,
+        )
+        .await
+        .map_err(|e| format!("Listing creation failed: {}", e))?;
+
+    let result = json!({
+        "listing_id": listing_id,
+        "profile_id": profile.profile_id,
+        "status": "active",
+        "price_credits": price_credits,
+        "message": format!("Profile '{}' is now listed on the marketplace at {} credits per query.", profile_name, price_credits),
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
 }
 
 async fn execute_query_ontology(
@@ -828,6 +1223,9 @@ async fn execute_delegate_to_agent(
         workspace_id: Some(ws_id),
         workspace_slug: Some(ws_slug.to_string()),
         workspace_git: ctx.workspace_git.clone(),
+        db: ctx.db.clone(),
+        gas_fees: ctx.gas_fees.clone(),
+        user_id: ctx.user_id.clone(),
     });
 
     let tool_executor = ToolAwareExecutor::new(

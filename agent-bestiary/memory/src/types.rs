@@ -70,6 +70,60 @@ pub struct SemanticRule {
     pub created_at: DateTime<Utc>,
 }
 
+/// Shopping preference profile (consumer side of embedding marketplace)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShoppingProfile {
+    pub profile_id: Uuid,
+    pub user_id: String,
+    pub agent_id: Uuid,
+    pub profile_name: String,
+    pub composite_embedding: Option<Vec<f32>>,
+    pub embedding_version: i32,
+    pub episode_count: i32,
+    #[serde(default)]
+    pub category_tags: Vec<String>,
+    pub price_sensitivity: Option<f64>,
+    pub quality_bias: Option<f64>,
+    pub brand_affinities: serde_json::Value,
+    pub metadata: serde_json::Value,
+    pub is_listed: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Marketplace listing (profile listed for advertiser queries)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketplaceListing {
+    pub listing_id: Uuid,
+    pub profile_id: Uuid,
+    pub seller_id: String,
+    pub price_credits: i32,
+    pub max_queries_per_buyer: Option<i32>,
+    pub total_queries: i32,
+    pub total_earned: i32,
+    pub status: String,
+    #[serde(default)]
+    pub category_tags: Vec<String>,
+    pub description: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Marketplace transaction (record of a match query)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketplaceTransaction {
+    pub tx_id: Uuid,
+    pub listing_id: Uuid,
+    pub buyer_id: String,
+    pub seller_id: String,
+    pub similarity_score: f64,
+    pub product_embedding_hash: Option<String>,
+    pub credits_charged: i32,
+    pub credits_to_seller: i32,
+    pub platform_fee: i32,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VerificationStatus {

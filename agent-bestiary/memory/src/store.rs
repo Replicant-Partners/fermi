@@ -1,7 +1,7 @@
 use crate::{
     Agent, AgentUpdate, AgentVersion, CoherenceEvaluation, Community, ConsolidationJob, Entity,
-    Episode, EvalRun, EvalTestCase, Fact, MemoryError, Result, SemanticRule, VerificationStatus,
-    WorkspaceMessage,
+    Episode, EvalRun, EvalTestCase, Fact, MarketplaceListing, MarketplaceTransaction, MemoryError,
+    Result, SemanticRule, ShoppingProfile, VerificationStatus, WorkspaceMessage,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
@@ -1873,6 +1873,326 @@ impl MemoryStore {
         }
         Ok(seeded)
     }
+
+    // ─── Shopping Profiles & Marketplace ────────────────────────────
+
+    pub async fn upsert_shopping_profile(
+        &self,
+        user_id: &str,
+        agent_id: Uuid,
+        profile_name: &str,
+        composite_embedding: Option<&[f32]>,
+        episode_count: i32,
+        category_tags: &[String],
+        price_sensitivity: Option<f64>,
+        quality_bias: Option<f64>,
+        brand_affinities: &serde_json::Value,
+    ) -> Result<Uuid> {
+        let embed_vec = composite_embedding.map(|e| pgvector::Vector::from(e.to_vec()));
+        let row = sqlx::query(
+            r#"INSERT INTO shopping_profiles
+                (user_id, agent_id, profile_name, composite_embedding, episode_count,
+                 category_tags, price_sensitivity, quality_bias, brand_affinities, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+               ON CONFLICT (user_id, agent_id, profile_name)
+               DO UPDATE SET
+                 composite_embedding = EXCLUDED.composite_embedding,
+                 embedding_version = shopping_profiles.embedding_version + 1,
+                 episode_count = EXCLUDED.episode_count,
+                 category_tags = EXCLUDED.category_tags,
+                 price_sensitivity = EXCLUDED.price_sensitivity,
+                 quality_bias = EXCLUDED.quality_bias,
+                 brand_affinities = EXCLUDED.brand_affinities,
+                 updated_at = NOW()
+               RETURNING profile_id"#,
+        )
+        .bind(user_id)
+        .bind(agent_id)
+        .bind(profile_name)
+        .bind(&embed_vec)
+        .bind(episode_count)
+        .bind(category_tags)
+        .bind(price_sensitivity)
+        .bind(quality_bias)
+        .bind(brand_affinities)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("profile_id")?)
+    }
+
+    pub async fn get_shopping_profile(
+        &self,
+        user_id: &str,
+        agent_id: Uuid,
+        profile_name: &str,
+    ) -> Result<Option<ShoppingProfile>> {
+        let row = sqlx::query(
+            r#"SELECT profile_id, user_id, agent_id, profile_name,
+                      embedding_version, episode_count, category_tags,
+                      price_sensitivity, quality_bias, brand_affinities,
+                      metadata, is_listed, created_at, updated_at
+               FROM shopping_profiles
+               WHERE user_id = $1 AND agent_id = $2 AND profile_name = $3"#,
+        )
+        .bind(user_id)
+        .bind(agent_id)
+        .bind(profile_name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| row_to_shopping_profile(&r)))
+    }
+
+    pub async fn get_user_shopping_profiles(&self, user_id: &str) -> Result<Vec<ShoppingProfile>> {
+        let rows = sqlx::query(
+            r#"SELECT profile_id, user_id, agent_id, profile_name,
+                      embedding_version, episode_count, category_tags,
+                      price_sensitivity, quality_bias, brand_affinities,
+                      metadata, is_listed, created_at, updated_at
+               FROM shopping_profiles WHERE user_id = $1
+               ORDER BY updated_at DESC"#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(row_to_shopping_profile).collect())
+    }
+
+    pub async fn create_marketplace_listing(
+        &self,
+        profile_id: Uuid,
+        seller_id: &str,
+        price_credits: i32,
+        max_queries_per_buyer: Option<i32>,
+        category_tags: &[String],
+        description: Option<&str>,
+    ) -> Result<Uuid> {
+        // Mark profile as listed
+        sqlx::query("UPDATE shopping_profiles SET is_listed = true WHERE profile_id = $1")
+            .bind(profile_id)
+            .execute(&self.pool)
+            .await?;
+
+        let row = sqlx::query(
+            r#"INSERT INTO marketplace_listings
+                (profile_id, seller_id, price_credits, max_queries_per_buyer,
+                 category_tags, description)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               RETURNING listing_id"#,
+        )
+        .bind(profile_id)
+        .bind(seller_id)
+        .bind(price_credits)
+        .bind(max_queries_per_buyer)
+        .bind(category_tags)
+        .bind(description)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("listing_id")?)
+    }
+
+    pub async fn update_marketplace_listing(
+        &self,
+        listing_id: Uuid,
+        seller_id: &str,
+        status: Option<&str>,
+        price_credits: Option<i32>,
+    ) -> Result<()> {
+        if let Some(s) = status {
+            sqlx::query(
+                "UPDATE marketplace_listings SET status = $1, updated_at = NOW() WHERE listing_id = $2 AND seller_id = $3",
+            )
+            .bind(s)
+            .bind(listing_id)
+            .bind(seller_id)
+            .execute(&self.pool)
+            .await?;
+
+            if s == "delisted" {
+                // Unmark profile
+                sqlx::query(
+                    "UPDATE shopping_profiles SET is_listed = false WHERE profile_id = (SELECT profile_id FROM marketplace_listings WHERE listing_id = $1)",
+                )
+                .bind(listing_id)
+                .execute(&self.pool)
+                .await?;
+            }
+        }
+        if let Some(p) = price_credits {
+            sqlx::query(
+                "UPDATE marketplace_listings SET price_credits = $1, updated_at = NOW() WHERE listing_id = $2 AND seller_id = $3",
+            )
+            .bind(p)
+            .bind(listing_id)
+            .bind(seller_id)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn get_active_listings(
+        &self,
+        category_filter: Option<&[String]>,
+        limit: i64,
+    ) -> Result<Vec<MarketplaceListing>> {
+        let rows = if let Some(cats) = category_filter {
+            sqlx::query(
+                r#"SELECT listing_id, profile_id, seller_id, price_credits,
+                          max_queries_per_buyer, total_queries, total_earned,
+                          status, category_tags, description, created_at, updated_at
+                   FROM marketplace_listings
+                   WHERE status = 'active' AND category_tags && $1
+                   ORDER BY total_queries DESC
+                   LIMIT $2"#,
+            )
+            .bind(cats)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"SELECT listing_id, profile_id, seller_id, price_credits,
+                          max_queries_per_buyer, total_queries, total_earned,
+                          status, category_tags, description, created_at, updated_at
+                   FROM marketplace_listings
+                   WHERE status = 'active'
+                   ORDER BY total_queries DESC
+                   LIMIT $1"#,
+            )
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows.iter().map(row_to_marketplace_listing).collect())
+    }
+
+    /// Core marketplace matching: cosine similarity against listed profiles
+    pub async fn match_marketplace_profiles(
+        &self,
+        product_embedding: &[f32],
+        category_filter: Option<&[String]>,
+        min_similarity: f64,
+        limit: i64,
+    ) -> Result<Vec<(MarketplaceListing, f64, Option<f64>, Option<f64>)>> {
+        let product_vec = pgvector::Vector::from(product_embedding.to_vec());
+
+        let rows = if let Some(cats) = category_filter {
+            sqlx::query(
+                r#"SELECT l.listing_id, l.profile_id, l.seller_id, l.price_credits,
+                          l.max_queries_per_buyer, l.total_queries, l.total_earned,
+                          l.status, l.category_tags, l.description,
+                          l.created_at, l.updated_at,
+                          sp.price_sensitivity, sp.quality_bias,
+                          1.0 - (sp.composite_embedding <=> $1) AS similarity
+                   FROM marketplace_listings l
+                   JOIN shopping_profiles sp ON sp.profile_id = l.profile_id
+                   WHERE l.status = 'active'
+                     AND sp.composite_embedding IS NOT NULL
+                     AND l.category_tags && $2
+                   ORDER BY sp.composite_embedding <=> $1
+                   LIMIT $3"#,
+            )
+            .bind(&product_vec)
+            .bind(cats)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"SELECT l.listing_id, l.profile_id, l.seller_id, l.price_credits,
+                          l.max_queries_per_buyer, l.total_queries, l.total_earned,
+                          l.status, l.category_tags, l.description,
+                          l.created_at, l.updated_at,
+                          sp.price_sensitivity, sp.quality_bias,
+                          1.0 - (sp.composite_embedding <=> $1) AS similarity
+                   FROM marketplace_listings l
+                   JOIN shopping_profiles sp ON sp.profile_id = l.profile_id
+                   WHERE l.status = 'active'
+                     AND sp.composite_embedding IS NOT NULL
+                   ORDER BY sp.composite_embedding <=> $1
+                   LIMIT $2"#,
+            )
+            .bind(&product_vec)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        let mut results = Vec::new();
+        for row in &rows {
+            let similarity: f64 = row.try_get("similarity").unwrap_or(0.0);
+            if similarity < min_similarity {
+                continue;
+            }
+            let listing = row_to_marketplace_listing(row);
+            let ps: Option<f64> = row.try_get("price_sensitivity").unwrap_or(None);
+            let qb: Option<f64> = row.try_get("quality_bias").unwrap_or(None);
+            results.push((listing, similarity, ps, qb));
+        }
+        Ok(results)
+    }
+
+    pub async fn record_marketplace_transaction(
+        &self,
+        listing_id: Uuid,
+        buyer_id: &str,
+        seller_id: &str,
+        similarity_score: f64,
+        product_embedding_hash: Option<&str>,
+        credits_charged: i32,
+        credits_to_seller: i32,
+        platform_fee: i32,
+    ) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"INSERT INTO marketplace_transactions
+                (listing_id, buyer_id, seller_id, similarity_score,
+                 product_embedding_hash, credits_charged, credits_to_seller, platform_fee)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING tx_id"#,
+        )
+        .bind(listing_id)
+        .bind(buyer_id)
+        .bind(seller_id)
+        .bind(similarity_score)
+        .bind(product_embedding_hash)
+        .bind(credits_charged)
+        .bind(credits_to_seller)
+        .bind(platform_fee)
+        .fetch_one(&self.pool)
+        .await?;
+
+        // Update listing counters
+        sqlx::query(
+            "UPDATE marketplace_listings SET total_queries = total_queries + 1, total_earned = total_earned + $1 WHERE listing_id = $2",
+        )
+        .bind(credits_to_seller)
+        .bind(listing_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(row.try_get("tx_id")?)
+    }
+
+    pub async fn get_match_history(
+        &self,
+        buyer_id: &str,
+        limit: i64,
+    ) -> Result<Vec<MarketplaceTransaction>> {
+        let rows = sqlx::query(
+            r#"SELECT tx_id, listing_id, buyer_id, seller_id, similarity_score,
+                      product_embedding_hash, credits_charged, credits_to_seller,
+                      platform_fee, created_at
+               FROM marketplace_transactions
+               WHERE buyer_id = $1
+               ORDER BY created_at DESC
+               LIMIT $2"#,
+        )
+        .bind(buyer_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(row_to_marketplace_transaction).collect())
+    }
 }
 
 fn row_to_coherence_evaluation(row: &sqlx::postgres::PgRow) -> CoherenceEvaluation {
@@ -1905,6 +2225,70 @@ fn row_to_workspace_message(row: &sqlx::postgres::PgRow) -> WorkspaceMessage {
         metadata: row
             .try_get::<serde_json::Value, _>("metadata")
             .unwrap_or(serde_json::json!({})),
+        created_at: row.try_get("created_at").unwrap(),
+    }
+}
+
+fn row_to_shopping_profile(row: &sqlx::postgres::PgRow) -> ShoppingProfile {
+    ShoppingProfile {
+        profile_id: row.try_get("profile_id").unwrap(),
+        user_id: row.try_get("user_id").unwrap(),
+        agent_id: row.try_get("agent_id").unwrap(),
+        profile_name: row.try_get("profile_name").unwrap(),
+        composite_embedding: None, // Never expose raw embeddings in row helpers
+        embedding_version: row.try_get("embedding_version").unwrap_or(0),
+        episode_count: row.try_get("episode_count").unwrap_or(0),
+        category_tags: row
+            .try_get::<Option<Vec<String>>, _>("category_tags")
+            .unwrap_or(None)
+            .unwrap_or_default(),
+        price_sensitivity: row.try_get("price_sensitivity").unwrap_or(None),
+        quality_bias: row.try_get("quality_bias").unwrap_or(None),
+        brand_affinities: row
+            .try_get::<serde_json::Value, _>("brand_affinities")
+            .unwrap_or(serde_json::json!({})),
+        metadata: row
+            .try_get::<serde_json::Value, _>("metadata")
+            .unwrap_or(serde_json::json!({})),
+        is_listed: row.try_get("is_listed").unwrap_or(false),
+        created_at: row.try_get("created_at").unwrap(),
+        updated_at: row.try_get("updated_at").unwrap(),
+    }
+}
+
+fn row_to_marketplace_listing(row: &sqlx::postgres::PgRow) -> MarketplaceListing {
+    MarketplaceListing {
+        listing_id: row.try_get("listing_id").unwrap(),
+        profile_id: row.try_get("profile_id").unwrap(),
+        seller_id: row.try_get("seller_id").unwrap(),
+        price_credits: row.try_get("price_credits").unwrap_or(1),
+        max_queries_per_buyer: row.try_get("max_queries_per_buyer").unwrap_or(None),
+        total_queries: row.try_get("total_queries").unwrap_or(0),
+        total_earned: row.try_get("total_earned").unwrap_or(0),
+        status: row
+            .try_get("status")
+            .unwrap_or_else(|_| "active".to_string()),
+        category_tags: row
+            .try_get::<Option<Vec<String>>, _>("category_tags")
+            .unwrap_or(None)
+            .unwrap_or_default(),
+        description: row.try_get("description").unwrap_or(None),
+        created_at: row.try_get("created_at").unwrap(),
+        updated_at: row.try_get("updated_at").unwrap(),
+    }
+}
+
+fn row_to_marketplace_transaction(row: &sqlx::postgres::PgRow) -> MarketplaceTransaction {
+    MarketplaceTransaction {
+        tx_id: row.try_get("tx_id").unwrap(),
+        listing_id: row.try_get("listing_id").unwrap(),
+        buyer_id: row.try_get("buyer_id").unwrap(),
+        seller_id: row.try_get("seller_id").unwrap(),
+        similarity_score: row.try_get("similarity_score").unwrap_or(0.0),
+        product_embedding_hash: row.try_get("product_embedding_hash").unwrap_or(None),
+        credits_charged: row.try_get("credits_charged").unwrap_or(0),
+        credits_to_seller: row.try_get("credits_to_seller").unwrap_or(0),
+        platform_fee: row.try_get("platform_fee").unwrap_or(0),
         created_at: row.try_get("created_at").unwrap(),
     }
 }

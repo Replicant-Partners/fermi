@@ -7,7 +7,15 @@
           "slug": "building-your-agent-deck",
           "title": "Building Your Agent Deck",
           "description": "Agent cards, ontology design, system prompts, and the design checklist",
-          "tags": ["agent", "create", "card", "ontology", "deck", "build", "getting started"]
+          "tags": [
+            "agent",
+            "create",
+            "card",
+            "ontology",
+            "deck",
+            "build",
+            "getting started"
+          ]
         }
       ]
     },
@@ -18,7 +26,30 @@
           "slug": "agent-composition",
           "title": "Agent Composition",
           "description": "Compound agents, delegation, dependencies, and workspace orchestration",
-          "tags": ["compound", "delegate", "compose", "workspace", "orchestrate", "team", "pipeline"]
+          "tags": [
+            "compound",
+            "delegate",
+            "compose",
+            "workspace",
+            "orchestrate",
+            "team",
+            "pipeline"
+          ]
+        },
+        {
+          "slug": "embedding-marketplace",
+          "title": "Embedding Marketplace",
+          "description": "Consumer-controlled similarity matching, shopping profiles, and reverse-SEO economics",
+          "tags": [
+            "marketplace",
+            "embedding",
+            "shopping",
+            "advertiser",
+            "consumer",
+            "similarity",
+            "privacy",
+            "credits"
+          ]
         }
       ]
     },
@@ -29,7 +60,15 @@
           "slug": "zed-mcp-setup",
           "title": "Zed Extension & MCP Setup",
           "description": "Install the Zed extension, configure MCP servers, and use tools from your editor",
-          "tags": ["zed", "mcp", "extension", "editor", "install", "setup", "tools"]
+          "tags": [
+            "zed",
+            "mcp",
+            "extension",
+            "editor",
+            "install",
+            "setup",
+            "tools"
+          ]
         }
       ]
     }

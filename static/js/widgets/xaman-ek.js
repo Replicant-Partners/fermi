@@ -500,6 +500,23 @@ const XamanEk = {
         label: "Building your deck",
         href: "/docs/building-your-agent-deck",
       });
+      suggestions.push({
+        label: "Embedding marketplace",
+        href: "/docs/embedding-marketplace",
+      });
+    } else if (path === "/marketplace") {
+      suggestions.push({
+        label: "Marketplace guide",
+        href: "/docs/embedding-marketplace",
+      });
+      suggestions.push({
+        label: "Browse catalogue",
+        href: "/catalogue",
+      });
+      suggestions.push({
+        label: "Shopping assistant",
+        href: "/agent/shopping_assistant",
+      });
     } else if (path.startsWith("/workspace/")) {
       // Workspace-aware context — fetch agents and show interaction guide
       this._renderWorkspaceContext(ctx);
@@ -857,6 +874,26 @@ const XamanEk = {
           "Scores 7 Thagard principles: Symmetry, Explanation, Analogy, Data Priority, Contradiction, Competition, Acceptability",
           "Use its feedback to guide other agents",
         ],
+      },
+      {
+        match: [
+          "marketplace",
+          "embed",
+          "shopping",
+          "advertis",
+          "listing",
+          "similarity",
+          "reverse seo",
+        ],
+        title: "Embedding Marketplace",
+        steps: [
+          "Consumers build shopping profiles via the Shopping Assistant workspace",
+          "Preference Modeler computes composite embeddings from episode history",
+          "Embedding Broker helps list profiles on the marketplace",
+          "Advertisers query similarity scores at /marketplace (never raw embeddings)",
+          "Consumer sets price per query, earns credits, can delist any time",
+        ],
+        link: "/docs/embedding-marketplace",
       },
       {
         match: ["publish", "public", "share", "visib"],

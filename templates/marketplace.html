@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Embedding Marketplace - Agent Bestiary</title>
+    <link rel="stylesheet" href="/static/css/variables.css" />
+    <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
+    <style>
+      body {
+        font-family: "Berkeley Mono", "JetBrains Mono", monospace;
+        line-height: 1.6;
+      }
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .page-header {
+        margin-bottom: 24px;
+      }
+      .page-header h1 {
+        font-size: 1.4rem;
+        color: var(--fg0);
+        margin: 0;
+      }
+      .page-header p {
+        color: var(--fg3);
+        font-size: 0.8rem;
+        margin: 4px 0 0;
+      }
+      .marketplace-grid {
+        display: grid;
+        grid-template-columns: 340px 1fr 300px;
+        gap: 16px;
+        min-height: calc(100vh - 160px);
+      }
+      @media (max-width: 1100px) {
+        .marketplace-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .panel {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 16px;
+        overflow-y: auto;
+      }
+      .panel-title {
+        font-size: 0.8rem;
+        color: var(--yellow);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--bg2);
+      }
+
+      /* Query Builder */
+      .query-builder textarea {
+        width: 100%;
+        min-height: 100px;
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        color: var(--fg0);
+        font-family: inherit;
+        font-size: 0.8rem;
+        padding: 10px;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+      .query-builder textarea:focus {
+        outline: none;
+        border-color: var(--aqua);
+      }
+      .filter-row {
+        margin: 12px 0;
+      }
+      .filter-label {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+      }
+      .chip-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chip {
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        color: var(--fg2);
+        padding: 3px 10px;
+        font-size: 0.7rem;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .chip.active {
+        background: var(--aqua);
+        color: var(--bg0);
+        border-color: var(--aqua);
+      }
+      .chip:hover {
+        border-color: var(--fg3);
+      }
+      .slider-row {
+        margin: 12px 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .slider-row label {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        min-width: 100px;
+      }
+      .slider-row input[type="range"] {
+        flex: 1;
+        accent-color: var(--aqua);
+      }
+      .slider-row .slider-value {
+        font-size: 0.75rem;
+        color: var(--fg2);
+        min-width: 30px;
+        text-align: right;
+      }
+      .cost-preview {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 8px 12px;
+        margin: 12px 0;
+        font-size: 0.75rem;
+        color: var(--fg3);
+      }
+      .cost-preview .cost-amount {
+        color: var(--green);
+        font-weight: bold;
+      }
+      .btn-match {
+        width: 100%;
+        background: var(--aqua);
+        color: var(--bg0);
+        border: none;
+        padding: 10px;
+        font-family: inherit;
+        font-size: 0.8rem;
+        font-weight: bold;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        transition: opacity 0.15s;
+      }
+      .btn-match:hover {
+        opacity: 0.9;
+      }
+      .btn-match:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+
+      /* Match Results */
+      .match-card {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 12px;
+        margin-bottom: 10px;
+      }
+      .match-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .match-seller {
+        font-size: 0.75rem;
+        color: var(--fg2);
+      }
+      .match-price {
+        font-size: 0.7rem;
+        color: var(--green);
+      }
+      .similarity-bar {
+        height: 6px;
+        background: var(--bg2);
+        margin-bottom: 8px;
+        position: relative;
+        overflow: hidden;
+      }
+      .similarity-fill {
+        height: 100%;
+        transition: width 0.5s ease-out;
+      }
+      .similarity-score {
+        font-size: 0.85rem;
+        font-weight: bold;
+        margin-bottom: 6px;
+      }
+      .match-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 6px;
+      }
+      .match-tag {
+        background: var(--bg2);
+        color: var(--fg3);
+        padding: 1px 6px;
+        font-size: 0.65rem;
+      }
+      .match-meta {
+        display: flex;
+        gap: 16px;
+        margin-top: 6px;
+        font-size: 0.7rem;
+        color: var(--fg3);
+      }
+      .match-meta span {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .aggregate-stats {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 10px;
+        margin-bottom: 12px;
+        display: flex;
+        gap: 16px;
+        font-size: 0.75rem;
+      }
+      .stat-item {
+        text-align: center;
+      }
+      .stat-value {
+        font-size: 1rem;
+        font-weight: bold;
+        color: var(--fg0);
+      }
+      .stat-label {
+        color: var(--fg3);
+        font-size: 0.65rem;
+        text-transform: uppercase;
+      }
+      .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--fg3);
+        font-size: 0.8rem;
+      }
+      .empty-state .icon {
+        font-size: 2rem;
+        margin-bottom: 8px;
+        opacity: 0.4;
+      }
+
+      /* History */
+      .history-item {
+        border-bottom: 1px solid var(--bg2);
+        padding: 8px 0;
+        font-size: 0.75rem;
+      }
+      .history-item:last-child {
+        border-bottom: none;
+      }
+      .history-date {
+        color: var(--fg3);
+        font-size: 0.65rem;
+      }
+      .history-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .history-score {
+        color: var(--aqua);
+        font-weight: bold;
+      }
+      .history-cost {
+        color: var(--red);
+        font-size: 0.7rem;
+      }
+
+      /* Browse listings */
+      .listing-card {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 10px;
+        margin-bottom: 8px;
+      }
+      .listing-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .listing-seller {
+        font-size: 0.75rem;
+        color: var(--fg2);
+      }
+      .listing-price {
+        font-size: 0.75rem;
+        color: var(--green);
+        font-weight: bold;
+      }
+      .listing-desc {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        margin-top: 4px;
+      }
+
+      /* Tabs */
+      .tab-bar {
+        display: flex;
+        gap: 0;
+        border-bottom: 1px solid var(--bg2);
+        margin-bottom: 12px;
+      }
+      .tab {
+        padding: 6px 14px;
+        font-size: 0.7rem;
+        color: var(--fg3);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .tab.active {
+        color: var(--aqua);
+        border-bottom-color: var(--aqua);
+      }
+      .tab:hover {
+        color: var(--fg2);
+      }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+
+      .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--bg3);
+        border-top-color: var(--aqua);
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="nav-mount"></div>
+
+    <div class="container">
+      <div class="page-header">
+        <h1>Embedding Marketplace</h1>
+        <p>
+          Run similarity queries against consumer shopping profiles. You pay
+          credits per match — consumers earn. Raw embeddings are never exposed.
+        </p>
+      </div>
+
+      <div class="marketplace-grid">
+        <!-- Left: Query Builder -->
+        <div class="panel query-builder">
+          <div class="panel-title">Query Builder</div>
+
+          <textarea
+            id="product-desc"
+            placeholder="Describe your product or target audience...&#10;&#10;e.g. Premium wireless noise-cancelling headphones for remote workers who value comfort and sound quality over price"
+          ></textarea>
+
+          <div class="filter-row">
+            <div class="filter-label">Category Filter</div>
+            <div class="chip-container" id="category-chips">
+              <span class="chip" data-cat="electronics">electronics</span>
+              <span class="chip" data-cat="kitchen">kitchen</span>
+              <span class="chip" data-cat="fitness">fitness</span>
+              <span class="chip" data-cat="fashion">fashion</span>
+              <span class="chip" data-cat="home">home</span>
+              <span class="chip" data-cat="outdoor">outdoor</span>
+              <span class="chip" data-cat="gaming">gaming</span>
+              <span class="chip" data-cat="office">office</span>
+            </div>
+          </div>
+
+          <div class="slider-row">
+            <label>Min Similarity</label>
+            <input
+              type="range"
+              id="min-sim"
+              min="0"
+              max="100"
+              value="30"
+              step="5"
+            />
+            <span class="slider-value" id="min-sim-val">0.30</span>
+          </div>
+
+          <div class="slider-row">
+            <label>Max Results</label>
+            <input
+              type="range"
+              id="max-results"
+              min="1"
+              max="50"
+              value="10"
+              step="1"
+            />
+            <span class="slider-value" id="max-results-val">10</span>
+          </div>
+
+          <div class="cost-preview" id="cost-preview">
+            Estimated cost: <span class="cost-amount">1-10</span> credits
+            (varies by listing price)
+          </div>
+
+          <button class="btn-match" id="run-match" onclick="runMatch()">
+            Run Match
+          </button>
+        </div>
+
+        <!-- Center: Results -->
+        <div class="panel">
+          <div class="tab-bar">
+            <div class="tab active" data-tab="results" onclick="switchTab(this)">
+              Match Results
+            </div>
+            <div class="tab" data-tab="browse" onclick="switchTab(this)">
+              Browse Listings
+            </div>
+          </div>
+
+          <div class="tab-content active" id="tab-results">
+            <div id="aggregate-stats" style="display: none">
+              <div class="aggregate-stats">
+                <div class="stat-item">
+                  <div class="stat-value" id="stat-matches">0</div>
+                  <div class="stat-label">Matches</div>
+                </div>
+                <div class="stat-item">
+                  <div class="stat-value" id="stat-avg-sim">0.00</div>
+                  <div class="stat-label">Avg Similarity</div>
+                </div>
+                <div class="stat-item">
+                  <div class="stat-value" id="stat-cost">0</div>
+                  <div class="stat-label">Credits Spent</div>
+                </div>
+              </div>
+            </div>
+            <div id="match-results">
+              <div class="empty-state">
+                <div class="icon">~</div>
+                <div>
+                  Describe your product above and run a match to find consumers
+                  with aligned preferences.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-content" id="tab-browse">
+            <div id="browse-listings">
+              <div class="empty-state">
+                <div class="icon">~</div>
+                <div>Loading listings...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: History -->
+        <div class="panel">
+          <div class="panel-title">Match History</div>
+          <div id="match-history">
+            <div class="empty-state">
+              <div class="icon">~</div>
+              <div>No match history yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/js/theme.js"></script>
+    <script src="/static/js/auth.js"></script>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      if (typeof renderNav === "function") renderNav("marketplace");
+
+      // ─── State ───
+      const selectedCategories = new Set();
+
+      // ─── Category Chips ───
+      document.querySelectorAll("#category-chips .chip").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          const cat = chip.dataset.cat;
+          if (selectedCategories.has(cat)) {
+            selectedCategories.delete(cat);
+            chip.classList.remove("active");
+          } else {
+            selectedCategories.add(cat);
+            chip.classList.add("active");
+          }
+        });
+      });
+
+      // ─── Sliders ───
+      document.getElementById("min-sim").addEventListener("input", (e) => {
+        document.getElementById("min-sim-val").textContent = (
+          e.target.value / 100
+        ).toFixed(2);
+      });
+      document
+        .getElementById("max-results")
+        .addEventListener("input", (e) => {
+          document.getElementById("max-results-val").textContent =
+            e.target.value;
+        });
+
+      // ─── Tab Switching ───
+      function switchTab(el) {
+        document
+          .querySelectorAll(".tab")
+          .forEach((t) => t.classList.remove("active"));
+        document
+          .querySelectorAll(".tab-content")
+          .forEach((c) => c.classList.remove("active"));
+        el.classList.add("active");
+        document
+          .getElementById("tab-" + el.dataset.tab)
+          .classList.add("active");
+        if (el.dataset.tab === "browse") loadListings();
+      }
+
+      // ─── Similarity Color ───
+      function simColor(score) {
+        if (score >= 0.7) return "var(--green)";
+        if (score >= 0.5) return "var(--yellow)";
+        if (score >= 0.3) return "var(--orange)";
+        return "var(--red)";
+      }
+
+      // ─── Run Match ───
+      async function runMatch() {
+        const desc = document.getElementById("product-desc").value.trim();
+        if (!desc) return;
+
+        const btn = document.getElementById("run-match");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span>Matching...';
+
+        const body = {
+          product_description: desc,
+          min_similarity: parseInt(document.getElementById("min-sim").value) / 100,
+          max_results: parseInt(document.getElementById("max-results").value),
+        };
+        if (selectedCategories.size > 0) {
+          body.category_filter = [...selectedCategories];
+        }
+
+        try {
+          const res = await fetch("/api/marketplace/match", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+
+          if (res.status === 401) {
+            document.getElementById("match-results").innerHTML =
+              '<div class="empty-state">Sign in to run marketplace queries</div>';
+            return;
+          }
+          if (res.status === 402) {
+            document.getElementById("match-results").innerHTML =
+              '<div class="empty-state">Insufficient credits. <a href="/settings" style="color:var(--aqua)">Top up</a></div>';
+            return;
+          }
+
+          const data = await res.json();
+          renderResults(data);
+          loadHistory();
+        } catch (e) {
+          document.getElementById("match-results").innerHTML =
+            `<div class="empty-state">Error: ${e.message}</div>`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Run Match";
+        }
+      }
+
+      // ─── Render Results ───
+      function renderResults(data) {
+        const matches = data.matches || [];
+
+        if (matches.length === 0) {
+          document.getElementById("aggregate-stats").style.display = "none";
+          document.getElementById("match-results").innerHTML =
+            '<div class="empty-state">No profiles matched your query. Try broader categories or lower the similarity threshold.</div>';
+          return;
+        }
+
+        // Aggregate stats
+        const avgSim =
+          matches.reduce((s, m) => s + m.similarity_score, 0) / matches.length;
+        document.getElementById("stat-matches").textContent = matches.length;
+        document.getElementById("stat-avg-sim").textContent =
+          avgSim.toFixed(3);
+        document.getElementById("stat-cost").textContent =
+          data.total_cost || 0;
+        document.getElementById("aggregate-stats").style.display = "block";
+
+        // Match cards
+        document.getElementById("match-results").innerHTML = matches
+          .map(
+            (m) => `
+          <div class="match-card">
+            <div class="match-header">
+              <span class="match-seller">${m.seller_id.substring(0, 12)}...</span>
+              <span class="match-price">${m.price_charged} cr</span>
+            </div>
+            <div class="similarity-score" style="color: ${simColor(m.similarity_score)}">
+              ${(m.similarity_score * 100).toFixed(1)}% match
+            </div>
+            <div class="similarity-bar">
+              <div class="similarity-fill" style="width: ${m.similarity_score * 100}%; background: ${simColor(m.similarity_score)}"></div>
+            </div>
+            <div class="match-meta">
+              ${m.price_sensitivity != null ? `<span>Price sens: ${(m.price_sensitivity * 100).toFixed(0)}%</span>` : ""}
+              ${m.quality_bias != null ? `<span>Quality: ${(m.quality_bias * 100).toFixed(0)}%</span>` : ""}
+            </div>
+            ${
+              m.category_tags && m.category_tags.length
+                ? `<div class="match-tags">${m.category_tags.map((t) => `<span class="match-tag">${t}</span>`).join("")}</div>`
+                : ""
+            }
+            ${m.description ? `<div class="listing-desc">${m.description}</div>` : ""}
+          </div>
+        `,
+          )
+          .join("");
+      }
+
+      // ─── Load Listings ───
+      async function loadListings() {
+        try {
+          const cats = selectedCategories.size
+            ? `?category=${[...selectedCategories].join(",")}`
+            : "";
+          const res = await fetch(`/api/marketplace/listings${cats}`);
+          if (!res.ok) {
+            document.getElementById("browse-listings").innerHTML =
+              '<div class="empty-state">Sign in to browse listings</div>';
+            return;
+          }
+          const data = await res.json();
+          const listings = data.listings || [];
+
+          if (listings.length === 0) {
+            document.getElementById("browse-listings").innerHTML =
+              '<div class="empty-state">No active listings yet. Consumers list their profiles via the Shopping Assistant workspace.</div>';
+            return;
+          }
+
+          document.getElementById("browse-listings").innerHTML = listings
+            .map(
+              (l) => `
+            <div class="listing-card">
+              <div class="listing-header">
+                <span class="listing-seller">${l.seller_id.substring(0, 12)}...</span>
+                <span class="listing-price">${l.price_credits} cr/query</span>
+              </div>
+              ${l.category_tags && l.category_tags.length ? `<div class="match-tags">${l.category_tags.map((t) => `<span class="match-tag">${t}</span>`).join("")}</div>` : ""}
+              ${l.description ? `<div class="listing-desc">${l.description}</div>` : ""}
+              <div style="font-size: 0.65rem; color: var(--fg3); margin-top: 4px">${l.total_queries} queries served</div>
+            </div>
+          `,
+            )
+            .join("");
+        } catch (e) {
+          document.getElementById("browse-listings").innerHTML =
+            `<div class="empty-state">Error: ${e.message}</div>`;
+        }
+      }
+
+      // ─── Load History ───
+      async function loadHistory() {
+        try {
+          const res = await fetch("/api/marketplace/history");
+          if (!res.ok) return;
+          const data = await res.json();
+          const txs = data.transactions || [];
+
+          if (txs.length === 0) {
+            document.getElementById("match-history").innerHTML =
+              '<div class="empty-state"><div class="icon">~</div><div>No match history yet</div></div>';
+            return;
+          }
+
+          document.getElementById("match-history").innerHTML = txs
+            .map(
+              (t) => `
+            <div class="history-item">
+              <div class="history-date">${new Date(t.created_at).toLocaleDateString()} ${new Date(t.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+              <div class="history-row">
+                <span class="history-score" style="color: ${simColor(t.similarity_score)}">${(t.similarity_score * 100).toFixed(1)}%</span>
+                <span class="history-cost">-${t.credits_charged} cr</span>
+              </div>
+            </div>
+          `,
+            )
+            .join("");
+        } catch (e) {
+          // silent
+        }
+      }
+
+      // ─── Init ───
+      loadHistory();
+    </script>
+  </body>
+</html>

@@ -675,6 +675,9 @@ pub async fn post_workspace_message_handler(
                             workspace_id: Some(ws_uuid2),
                             workspace_slug: Some(slug.clone()),
                             workspace_git: Some(state2.workspace_git.clone()),
+                            db: Some(state2.db.clone()),
+                            gas_fees: Some(state2.gas_fees.clone()),
+                            user_id: Some(user_id2.clone()),
                         });
                         let tool_executor = ToolAwareExecutor::new(
                             state2.registry.executor_arc(),
