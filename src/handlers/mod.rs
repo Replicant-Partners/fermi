@@ -4,7 +4,21 @@
 //! Shared helpers (resolve_agent, resolve_agent_card, create_notification)
 //! live in api_server.rs as pub(crate) functions.
 
+pub mod admin;
 pub mod agents;
+pub mod auth;
+pub mod billing;
+pub mod consolidation;
 pub mod eval;
+pub mod execution;
 pub mod lifecycle;
+pub mod mcp;
+pub mod metrics;
+pub mod misc;
+pub mod ontology;
+pub mod pages;
+pub mod profile;
+pub mod teams;
+pub mod wallet;
+pub mod wizard;
 pub mod workspace;
