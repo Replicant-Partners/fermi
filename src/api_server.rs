@@ -4373,10 +4373,35 @@ async fn get_workspace_handler(
         })
         .collect();
 
-    // Get members
-    let members = teams::get_team_members(&state.db, ws_uuid)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Get members with display names from users table
+    let member_rows = sqlx::query(
+        "SELECT tm.member_id, tm.role, u.display_name, u.email, u.avatar_url
+         FROM team_members tm
+         LEFT JOIN users u ON u.user_id = tm.member_id
+         WHERE tm.team_id = $1
+         ORDER BY tm.joined_at",
+    )
+    .bind(ws_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let member_list: Vec<Value> = member_rows
+        .iter()
+        .map(|r| {
+            let member_id: String = r.try_get("member_id").unwrap_or_default();
+            let display_name: Option<String> = r.try_get("display_name").unwrap_or(None);
+            let email: Option<String> = r.try_get("email").unwrap_or(None);
+            let avatar_url: Option<String> = r.try_get("avatar_url").unwrap_or(None);
+            let role: String = r.try_get("role").unwrap_or_default();
+            json!({
+                "member_id": member_id,
+                "display_name": display_name.or(email.clone()).unwrap_or_else(|| member_id.chars().take(8).collect()),
+                "avatar_url": avatar_url,
+                "role": role,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({
         "id": team.id,
@@ -4387,10 +4412,7 @@ async fn get_workspace_handler(
         "workspace_spent": spent,
         "workspace_remaining": budget - spent,
         "agents": agent_list,
-        "members": members.iter().map(|m| json!({
-            "member_id": m.member_id,
-            "role": format!("{:?}", m.role),
-        })).collect::<Vec<_>>(),
+        "members": member_list,
     })))
 }
 
