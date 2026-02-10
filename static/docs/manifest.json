@@ -16,6 +16,21 @@
             "build",
             "getting started"
           ]
+        },
+        {
+          "slug": "shopping-assistant-usecase",
+          "title": "Use Case: Shopping Assistant",
+          "description": "How the reverse-SEO marketplace works end-to-end with the shopping assistant compound agent",
+          "tags": [
+            "shopping",
+            "marketplace",
+            "use case",
+            "reverse-seo",
+            "consumer",
+            "advertiser",
+            "compound-agent",
+            "getting started"
+          ]
         }
       ]
     },

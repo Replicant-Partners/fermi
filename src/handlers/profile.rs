@@ -68,7 +68,7 @@ pub async fn get_profile_handler(
     let stats_row = sqlx::query(
         "SELECT COUNT(*) as agent_count,
                 COALESCE(SUM(total_executions), 0) as total_executions
-         FROM agents WHERE owner_id = $1",
+         FROM agents WHERE user_id = $1",
     )
     .bind(&user_id)
     .fetch_one(&state.db)
@@ -78,7 +78,7 @@ pub async fn get_profile_handler(
     // Public agents
     let public_agents = sqlx::query(
         "SELECT agent_name, display_alias, agent_type, description, total_executions
-         FROM agents WHERE owner_id = $1 AND visibility = 'public'
+         FROM agents WHERE user_id = $1 AND visibility = 'public'
          ORDER BY total_executions DESC LIMIT 20",
     )
     .bind(&user_id)
@@ -90,42 +90,46 @@ pub async fn get_profile_handler(
         .iter()
         .map(|r| {
             json!({
-                "agent_name": r.get::<String, _>("agent_name"),
-                "display_alias": r.get::<Option<String>, _>("display_alias"),
-                "agent_type": r.get::<String, _>("agent_type"),
-                "description": r.get::<Option<String>, _>("description"),
-                "total_executions": r.get::<i32, _>("total_executions"),
+                "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+                "display_alias": r.try_get::<Option<String>, _>("display_alias").unwrap_or(None),
+                "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
+                "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
+                "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
             })
         })
         .collect();
 
+    let auth_provider: Option<String> = user_row.try_get("auth_provider").unwrap_or(None);
+    let github_username: Option<String> = user_row.try_get("github_username").unwrap_or(None);
+    let ethereum_address: Option<String> = user_row.try_get("ethereum_address").unwrap_or(None);
+
     Ok(Json(json!({
-        "user_id": user_row.get::<String, _>("user_id"),
-        "email": user_row.get::<Option<String>, _>("email"),
-        "display_name": user_row.get::<Option<String>, _>("display_name"),
-        "avatar_url": user_row.get::<Option<String>, _>("avatar_url"),
-        "role": user_row.get::<String, _>("role"),
-        "auth_provider": user_row.get::<Option<String>, _>("auth_provider"),
-        "github_username": user_row.get::<Option<String>, _>("github_username"),
-        "ethereum_address": user_row.get::<Option<String>, _>("ethereum_address"),
-        "ens_name": user_row.get::<Option<String>, _>("ens_name"),
+        "user_id": user_row.try_get::<String, _>("user_id").unwrap_or_default(),
+        "email": user_row.try_get::<Option<String>, _>("email").unwrap_or(None),
+        "display_name": user_row.try_get::<Option<String>, _>("display_name").unwrap_or(None),
+        "avatar_url": user_row.try_get::<Option<String>, _>("avatar_url").unwrap_or(None),
+        "role": user_row.try_get::<String, _>("role").unwrap_or_else(|_| "user".to_string()),
+        "auth_provider": &auth_provider,
+        "github_username": &github_username,
+        "ethereum_address": &ethereum_address,
+        "ens_name": user_row.try_get::<Option<String>, _>("ens_name").unwrap_or(None),
         "bio": user_row.try_get::<Option<String>, _>("bio").unwrap_or(None),
-        "created_at": user_row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+        "created_at": user_row.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
         "wallet": {
             "balance": wallet.balance,
             "total_deposited": wallet.total_deposited,
             "total_spent": wallet.total_spent,
         },
         "stats": {
-            "agents_created": stats_row.get::<i64, _>("agent_count"),
-            "total_executions": stats_row.get::<i64, _>("total_executions"),
+            "agents_created": stats_row.try_get::<i64, _>("agent_count").unwrap_or(0),
+            "total_executions": stats_row.try_get::<i64, _>("total_executions").unwrap_or(0),
             "credits_spent": wallet.total_spent,
         },
         "public_agents": agents,
         "connected_accounts": {
-            "google": user_row.get::<Option<String>, _>("auth_provider").as_deref() == Some("google"),
-            "github": user_row.get::<Option<String>, _>("github_username").is_some(),
-            "ethereum": user_row.get::<Option<String>, _>("ethereum_address").is_some(),
+            "google": auth_provider.as_deref() == Some("google"),
+            "github": github_username.is_some(),
+            "ethereum": ethereum_address.is_some(),
         },
     })))
 }
