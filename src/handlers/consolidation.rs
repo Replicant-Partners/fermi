@@ -200,26 +200,7 @@ pub async fn consolidate_agent_handler(
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
 
-    // Charge gas fee from caller's wallet
-    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Wallet error: {}", e),
-            )
-        })?;
-    charge_gas(
-        &state.db,
-        wallet.wallet_id,
-        state.gas_fees.consolidation_cycle,
-        "gas_fee",
-        &format!("Consolidation gas for agent {}", agent_id),
-        Some(&agent_id),
-    )
-    .await?;
-
-    // Check dreaming budget
+    // Check dreaming budget BEFORE charging
     let remaining = db_agent.dreaming_budget_credits - db_agent.dreaming_credits_used;
     if remaining <= 0 {
         return Err((
@@ -231,7 +212,7 @@ pub async fn consolidate_agent_handler(
         ));
     }
 
-    // Check for unconsolidated episodes first (avoids spending a credit on empty runs)
+    // Check for unconsolidated episodes BEFORE charging
     let episodes = state
         .memory_store
         .get_unconsolidated_episodes(db_agent.agent_id)
@@ -256,6 +237,25 @@ pub async fn consolidate_agent_handler(
             "dreaming_credits_remaining": remaining,
         })));
     }
+
+    // Only charge gas after confirming there's work to do
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        state.gas_fees.consolidation_cycle,
+        "gas_fee",
+        &format!("Consolidation gas for agent {}", agent_id),
+        Some(&agent_id),
+    )
+    .await?;
 
     // Create consolidation worker and run (with LLM if API key available)
     let pool = Arc::new(state.db.clone());

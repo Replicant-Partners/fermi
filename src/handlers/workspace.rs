@@ -1689,15 +1689,17 @@ pub async fn evaluate_coherence_handler(
     });
 
     if let Some(ref consultant) = consultant_output {
-        response.as_object_mut().unwrap().insert(
-            if depth == "recommendations" {
-                "recommendations"
-            } else {
-                "dream_notes"
-            }
-            .to_string(),
-            json!(consultant),
-        );
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert(
+                if depth == "recommendations" {
+                    "recommendations"
+                } else {
+                    "dream_notes"
+                }
+                .to_string(),
+                json!(consultant),
+            );
+        }
     }
 
     Ok(Json(response))
