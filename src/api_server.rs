@@ -3895,6 +3895,27 @@ async fn list_my_agents_handler(
             )
         })?;
 
+    // Batch-load workspace memberships for all owned agents
+    let agent_ids: Vec<uuid::Uuid> = agents.iter().map(|a| a.agent_id).collect();
+    let ws_rows = sqlx::query(
+        "SELECT wa.agent_id, t.name
+         FROM workspace_agents wa
+         JOIN teams t ON t.id = wa.workspace_id
+         WHERE wa.agent_id = ANY($1)",
+    )
+    .bind(&agent_ids)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut ws_map: std::collections::HashMap<uuid::Uuid, Vec<String>> =
+        std::collections::HashMap::new();
+    for r in &ws_rows {
+        let aid: uuid::Uuid = r.get("agent_id");
+        let name: String = r.get("name");
+        ws_map.entry(aid).or_default().push(name);
+    }
+
     let agent_list: Vec<Value> = agents
         .iter()
         .map(|a| {
@@ -3914,6 +3935,8 @@ async fn list_my_agents_handler(
                 "fork_pricing": a.fork_pricing,
                 "forked_from": a.forked_from,
                 "fork_count": a.fork_count,
+                "workspace_names": ws_map.get(&a.agent_id).cloned().unwrap_or_default(),
+                "workspace_count": ws_map.get(&a.agent_id).map(|v| v.len()).unwrap_or(0),
             })
         })
         .collect();
@@ -4209,6 +4232,46 @@ async fn list_workspaces_handler(
             None => (0, 0),
         };
 
+        // Agent previews for this workspace
+        let agent_rows = sqlx::query(
+            "SELECT a.agent_name, a.display_alias
+             FROM workspace_agents wa
+             JOIN agents a ON a.agent_id = wa.agent_id
+             WHERE wa.workspace_id = $1
+             ORDER BY wa.added_at DESC
+             LIMIT 5",
+        )
+        .bind(team.id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        let agent_count: i64 =
+            sqlx::query("SELECT COUNT(*) as cnt FROM workspace_agents WHERE workspace_id = $1")
+                .bind(team.id)
+                .fetch_one(&state.db)
+                .await
+                .ok()
+                .map(|r| r.get::<i64, _>("cnt"))
+                .unwrap_or(0);
+
+        let agent_previews: Vec<Value> = agent_rows
+            .iter()
+            .map(|r| {
+                let name: String = r.get("agent_name");
+                let alias: Option<String> = r.get("display_alias");
+                let initial = alias
+                    .as_deref()
+                    .unwrap_or(&name)
+                    .chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .to_string();
+                json!({ "agent_name": name, "display_alias": alias, "initial": initial })
+            })
+            .collect();
+
         workspaces.push(json!({
             "id": team.id,
             "name": team.name,
@@ -4217,6 +4280,8 @@ async fn list_workspaces_handler(
             "workspace_budget": budget,
             "workspace_spent": spent,
             "workspace_remaining": budget - spent,
+            "agent_count": agent_count,
+            "agent_previews": agent_previews,
         }));
     }
 

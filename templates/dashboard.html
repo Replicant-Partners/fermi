@@ -27,17 +27,6 @@
         margin: 0 auto;
         padding: 24px;
       }
-      .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 24px;
-        margin-bottom: 24px;
-      }
-      @media (max-width: 768px) {
-        .grid {
-          grid-template-columns: 1fr;
-        }
-      }
       .section {
         background: var(--bg0);
         border: 1px solid var(--bg2);
@@ -259,10 +248,12 @@
     </script>
 
     <div class="container">
-      <!-- Wallet -->
+      <!-- Portfolio Summary -->
       <div class="section" style="margin-bottom: 24px">
-        <div class="section-title">Wallet</div>
-        <div style="display: flex; gap: 48px; align-items: center">
+        <div class="section-title">Portfolio</div>
+        <div
+          style="display: flex; gap: 48px; align-items: center; flex-wrap: wrap"
+        >
           <div>
             <div class="wallet-balance" id="wallet-balance">--</div>
             <div class="wallet-label">credits available</div>
@@ -274,6 +265,26 @@
           <div>
             <div style="color: var(--fg2)" id="wallet-spent">--</div>
             <div class="wallet-label">total spent</div>
+          </div>
+          <div style="margin-left: auto; display: flex; gap: 32px">
+            <div>
+              <div
+                style="font-size: 1.8em; color: var(--aqua); font-weight: 300"
+                id="portfolio-agents"
+              >
+                --
+              </div>
+              <div class="wallet-label">agents</div>
+            </div>
+            <div>
+              <div
+                style="font-size: 1.8em; color: var(--purple); font-weight: 300"
+                id="portfolio-compositions"
+              >
+                --
+              </div>
+              <div class="wallet-label">compositions</div>
+            </div>
           </div>
         </div>
       </div>
@@ -342,27 +353,25 @@
         </div>
       </div>
 
-      <div class="grid">
-        <!-- My Agents -->
-        <div class="section">
-          <div class="section-title">
-            My Agents
-            <a href="/agents/new" class="btn btn-primary">+ New</a>
-          </div>
-          <div id="agents-list">
-            <div class="empty-state">Loading...</div>
-          </div>
+      <!-- Collection -->
+      <div class="section" style="margin-bottom: 24px">
+        <div class="section-title">
+          Collection
+          <a href="/agents/new" class="btn btn-primary">+ New</a>
         </div>
+        <div id="agents-list">
+          <div class="empty-state">Loading...</div>
+        </div>
+      </div>
 
-        <!-- My Workspaces -->
-        <div class="section">
-          <div class="section-title">
-            Workspaces
-            <button class="btn btn-primary" id="create-ws-btn">+ New</button>
-          </div>
-          <div id="workspaces-list">
-            <div class="empty-state">Loading...</div>
-          </div>
+      <!-- Compositions -->
+      <div class="section" style="margin-bottom: 24px">
+        <div class="section-title">
+          Compositions
+          <button class="btn btn-primary" id="create-ws-btn">+ New</button>
+        </div>
+        <div id="workspaces-list">
+          <div class="empty-state">Loading...</div>
         </div>
       </div>
 
@@ -452,6 +461,10 @@
                 (groups[s] || groups.draft).push(a);
               });
 
+              // Portfolio counter
+              document.getElementById("portfolio-agents").textContent =
+                data.agents.length;
+
               const renderRow = (a) => {
                 const mock = mockAgentEconomics(
                   a.agent_name,
@@ -464,12 +477,18 @@
                 };
                 const statusColor =
                   statusColors[a.status || "draft"] || "var(--fg3)";
+                const wsNames = a.workspace_names || [];
+                const wsPills =
+                  wsNames.length > 0
+                    ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">${wsNames.map((n) => `<span style="font-size:0.65em;padding:1px 6px;border:1px solid var(--bg3);color:var(--purple)">${n}</span>`).join("")}</div>`
+                    : "";
                 return `
                 <a href="/agent/${a.agent_name}" style="text-decoration:none;color:inherit">
                 <div class="agent-row-detail" style="cursor:pointer;border-left:3px solid ${statusColor}">
                   <div class="agent-info">
                     <div class="agent-name">${a.display_alias || a.agent_name}${a.fork_count > 0 ? ` <span style="font-size:0.75em;color:var(--blue)">&#9906;${a.fork_count}</span>` : ""}</div>
                     <div class="agent-meta">${a.agent_type || "agent"} | ${a.total_executions || 0} exec | <span class="badge badge-${a.visibility || "private"}">${a.visibility || "private"}</span></div>
+                    ${wsPills}
                   </div>
                   <div class="agent-sparks">
                     <div class="spark-group">
@@ -511,10 +530,15 @@
           if (res.ok) {
             const data = await res.json();
             const el = document.getElementById("workspaces-list");
+            // Portfolio counter
+            document.getElementById("portfolio-compositions").textContent = (
+              data.workspaces || []
+            ).length;
             if (!data.workspaces || data.workspaces.length === 0) {
               el.innerHTML =
-                '<div class="empty-state">No workspaces yet.</div>';
+                '<div class="empty-state">No compositions yet. Assemble agents into a workspace.</div>';
             } else {
+              const hues = [200, 140, 30, 340, 270, 50, 170, 10];
               el.innerHTML = data.workspaces
                 .map((w) => {
                   const pct =
@@ -524,12 +548,33 @@
                           (w.workspace_spent / w.workspace_budget) * 100,
                         )
                       : 0;
+                  const agentCount = w.agent_count || 0;
+                  const previews = w.agent_previews || [];
+                  const avatarStack = previews
+                    .map((ap, i) => {
+                      const name = ap.display_alias || ap.agent_name;
+                      const initial = (
+                        ap.initial || name.charAt(0)
+                      ).toUpperCase();
+                      const hue =
+                        hues[ap.agent_name.charCodeAt(0) % hues.length];
+                      return `<div style="width:24px;height:24px;border-radius:50%;background:hsl(${hue},45%,35%);color:#fff;font-size:0.55rem;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg0);margin-left:${i > 0 ? "-8px" : "0"};position:relative;z-index:${5 - i}">${initial}</div>`;
+                    })
+                    .join("");
+                  const moreCount = agentCount - previews.length;
+                  const moreIndicator =
+                    moreCount > 0
+                      ? `<span style="font-size:0.7em;color:var(--fg3);margin-left:4px">+${moreCount}</span>`
+                      : "";
                   return `
                   <a href="/workspace/${w.id}" style="text-decoration:none;color:inherit">
-                    <div class="workspace-row" style="cursor:pointer">
-                      <div>
-                        <div class="agent-name">${w.name || "Unnamed Workspace"}</div>
-                        <div class="agent-meta">${w.workspace_remaining || 0} / ${w.workspace_budget || 0} credits remaining</div>
+                    <div class="workspace-row" style="cursor:pointer;padding:12px 0">
+                      <div style="flex:1">
+                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+                          <div class="agent-name">${w.name || "Unnamed"}</div>
+                          <div style="display:flex;align-items:center">${avatarStack}${moreIndicator}</div>
+                        </div>
+                        <div class="agent-meta">${agentCount} agent${agentCount !== 1 ? "s" : ""} | ${w.workspace_remaining || 0} / ${w.workspace_budget || 0} credits</div>
                         <div class="budget-bar"><div class="budget-fill" style="width:${pct}%"></div></div>
                       </div>
                     </div>
