@@ -475,7 +475,7 @@ const XamanEk = {
       });
       suggestions.push({
         label: "Bestiary projector",
-        href: "/projections/bestiary",
+        href: "/projector",
       });
       suggestions.push({ label: "Create agent", href: "/agents/new" });
     } else if (path === "/dashboard") {
