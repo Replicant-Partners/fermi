@@ -522,11 +522,10 @@
           const response = await fetch(
             `/api/agents/${encodeURIComponent(agentId)}/avatar`,
           );
-          if (!response.ok) throw new Error("Avatar generation failed");
+          if (!response.ok) return null;
           const data = await response.json();
           return `data:${data.image.mime_type};base64,${data.image.data}`;
-        } catch (error) {
-          console.error(`Error generating avatar for ${agentId}:`, error);
+        } catch {
           return null;
         }
       }
