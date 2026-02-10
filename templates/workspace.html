@@ -1415,7 +1415,7 @@
 
           // Register all initial messages for dedup
           data.messages.forEach((m) => {
-            if (m.id) seenMessageIds.add(m.id);
+            if (m.message_id) seenMessageIds.add(m.message_id);
           });
 
           el.innerHTML = data.messages.map(renderMessage).join("");
@@ -1596,8 +1596,8 @@
               let hasCoherenceUpdate = false;
               let newCount = 0;
               data.messages.forEach((m) => {
-                if (seenMessageIds.has(m.id)) return;
-                seenMessageIds.add(m.id);
+                if (seenMessageIds.has(m.message_id)) return;
+                seenMessageIds.add(m.message_id);
                 el.insertAdjacentHTML("beforeend", renderMessage(m));
                 newCount++;
                 if (m.message_type === "coherence_update")
@@ -1791,7 +1791,7 @@
           if (placeholder) placeholder.remove();
 
           // Track this message so poll won't duplicate it
-          if (msg.id) seenMessageIds.add(msg.id);
+          if (msg.message_id) seenMessageIds.add(msg.message_id);
 
           el.insertAdjacentHTML(
             "beforeend",

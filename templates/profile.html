@@ -178,40 +178,7 @@
         color: var(--fg3);
         font-size: 0.75rem;
       }
-      .wallet-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 6px 0;
-      }
-      .wallet-label {
-        color: var(--fg3);
-        font-size: 0.85rem;
-      }
-      .wallet-value {
-        color: var(--fg2);
-        font-size: 0.85rem;
-      }
-      .wallet-value.balance {
-        color: var(--green);
-        font-weight: bold;
-        font-size: 1rem;
-      }
-      .tx-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 6px 0;
-        border-bottom: 1px solid var(--bg1);
-        font-size: 0.8rem;
-      }
-      .tx-row:last-child {
-        border-bottom: none;
-      }
-      .tx-positive {
-        color: var(--green);
-      }
-      .tx-negative {
-        color: var(--red);
-      }
+
       .empty-state {
         color: var(--fg3);
         font-size: 0.85rem;
@@ -330,29 +297,22 @@
         </div>
       </div>
 
-      <!-- Wallet -->
+      <!-- Wallet (managed on Dashboard) -->
       <div class="section">
-        <div class="section-title">Wallet</div>
-        <div class="wallet-row">
-          <span class="wallet-label">Balance</span>
-          <span class="wallet-value balance" id="wallet-balance">--</span>
-        </div>
-        <div class="wallet-row">
-          <span class="wallet-label">Total Deposited</span>
-          <span class="wallet-value" id="wallet-deposited">--</span>
-        </div>
-        <div class="wallet-row">
-          <span class="wallet-label">Total Spent</span>
-          <span class="wallet-value" id="wallet-spent">--</span>
-        </div>
-        <div style="margin-top: 12px">
-          <a href="/dashboard" class="btn btn-primary">Buy Credits</a>
-        </div>
-        <div style="margin-top: 16px">
-          <div style="font-size: 0.8rem; color: var(--fg3); margin-bottom: 8px">
-            Recent Transactions
-          </div>
-          <div id="tx-list"><div class="empty-state">Loading...</div></div>
+        <div class="section-title">Credits</div>
+        <div style="display: flex; align-items: center; gap: 16px">
+          <span
+            style="font-size: 1.2rem; color: var(--green); font-weight: bold"
+            id="wallet-balance"
+            >--</span
+          >
+          <span style="font-size: 0.8rem; color: var(--fg3)">credits</span>
+          <a
+            href="/dashboard"
+            class="btn btn-primary"
+            style="margin-left: auto; font-size: 0.75rem"
+            >Manage Wallet</a
+          >
         </div>
       </div>
 
@@ -474,13 +434,9 @@
           document.getElementById("stat-spent").textContent =
             profileData.stats.credits_spent;
 
-          // Wallet
+          // Wallet (balance only — full wallet on dashboard)
           document.getElementById("wallet-balance").textContent =
             profileData.wallet.balance;
-          document.getElementById("wallet-deposited").textContent =
-            profileData.wallet.total_deposited;
-          document.getElementById("wallet-spent").textContent =
-            profileData.wallet.total_spent;
 
           // Connected accounts
           const conn = profileData.connected_accounts;
@@ -523,32 +479,7 @@
           Toast.show("Network error — check your connection");
         }
 
-        // Load recent transactions
-        try {
-          const res = await fetch("/api/wallet/transactions?limit=10");
-          if (res.ok) {
-            const data = await res.json();
-            const el = document.getElementById("tx-list");
-            if (!data.transactions || data.transactions.length === 0) {
-              el.innerHTML =
-                '<div class="empty-state">No transactions yet.</div>';
-            } else {
-              el.innerHTML = data.transactions
-                .map(
-                  (t) => `
-                <div class="tx-row">
-                  <div>
-                    <span style="color:var(--fg3)">${t.tx_type}</span>
-                    ${t.description ? `<span style="color:var(--fg2);margin-left:6px">${t.description}</span>` : ""}
-                  </div>
-                  <span class="${t.amount >= 0 ? "tx-positive" : "tx-negative"}">${t.amount >= 0 ? "+" : ""}${t.amount}</span>
-                </div>
-              `,
-                )
-                .join("");
-            }
-          }
-        } catch {}
+        // Transaction history moved to dashboard
       })();
 
       async function saveName() {
