@@ -357,8 +357,9 @@
                 <div>
                   <div class="key-name">${k.name}</div>
                   <div class="key-meta">
-                    <span class="key-prefix">${k.prefix || "ferm_..."}</span>
+                    <span class="key-prefix">${k.key_prefix || "ferm_..."}</span>
                     | Scopes: ${(k.scopes || ["read"]).join(", ")}
+                    | Used: ${k.request_count || 0} times
                     | Created: ${new Date(k.created_at).toLocaleDateString()}
                   </div>
                 </div>
@@ -387,7 +388,10 @@
           const res = await fetch("/api/auth/api-keys", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, scopes: ["read", "write"] }),
+            body: JSON.stringify({
+              name,
+              scopes: ["read", "write", "execute"],
+            }),
           });
           if (!res.ok) {
             Toast.show("Failed to create key");
@@ -396,8 +400,15 @@
           const data = await res.json();
           document.getElementById("new-key-result").innerHTML = `
             <div class="new-key-display">
-              <div class="key-value">${data.key}</div>
+              <div class="key-value" id="new-key-value">${data.key}</div>
+              <button class="btn btn-primary" onclick="navigator.clipboard.writeText('${data.key}').then(()=>Toast.show('Copied'))">Copy</button>
               <div class="key-warning">Save this key now. It cannot be retrieved again.</div>
+              <div class="key-usage">
+                <div style="margin-top:8px;font-size:0.85em;color:var(--fg3)">
+                  <strong>Use with API:</strong> <code>Authorization: Bearer ${data.key}</code><br>
+                  <strong>Use with Zed MCP:</strong> Add to context_servers env as <code>FERMI_API_KEY</code>
+                </div>
+              </div>
             </div>
           `;
           document.getElementById("key-name-input").value = "";
