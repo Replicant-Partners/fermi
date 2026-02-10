@@ -210,6 +210,113 @@ impl WorkspaceGitManager {
         })
     }
 
+    /// Commit binary data to the workspace repository.
+    /// Like `commit_file` but takes raw bytes instead of a string.
+    pub fn commit_file_bytes(
+        &self,
+        slug: &str,
+        file_path: &str,
+        content: &[u8],
+        message: &str,
+    ) -> Result<WorkspaceCommit> {
+        let repo = self.init_or_open(slug)?;
+        let root = self.repo_path(slug);
+
+        // Create parent directories if needed
+        let full_path = root.join(file_path);
+        if let Some(parent) = full_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        // Write binary file
+        fs::write(&full_path, content)?;
+
+        // Stage all
+        let mut index = repo.index()?;
+        index.add_all(["."].iter(), IndexAddOption::DEFAULT, None)?;
+        index.write()?;
+
+        let tree_oid = index.write_tree()?;
+        let tree = repo.find_tree(tree_oid)?;
+
+        // Get parent commit
+        let parent = repo
+            .head()
+            .ok()
+            .and_then(|h| h.target())
+            .and_then(|oid| repo.find_commit(oid).ok());
+
+        // Check for changes
+        if let Some(ref p) = parent {
+            if p.tree()?.id() == tree_oid {
+                return Ok(WorkspaceCommit {
+                    sha: p.id().to_string(),
+                    message: p.message().unwrap_or("").to_string(),
+                    timestamp: Utc::now(),
+                    author: self.config.author_name.clone(),
+                });
+            }
+        }
+
+        let sig = Signature::now(&self.config.author_name, &self.config.author_email)?;
+        let oid = if let Some(p) = parent {
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&p])?
+        } else {
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])?
+        };
+
+        let sha = oid.to_string();
+        info!(
+            "Workspace {}: committed binary {} ({}, {} bytes)",
+            slug,
+            file_path,
+            &sha[..8],
+            content.len()
+        );
+
+        // Auto-push
+        if self.config.auto_push {
+            if let Err(e) = self.push(&repo, slug) {
+                error!("Failed to push workspace {}: {}", slug, e);
+            }
+        }
+
+        Ok(WorkspaceCommit {
+            sha,
+            message: message.to_string(),
+            timestamp: Utc::now(),
+            author: self.config.author_name.clone(),
+        })
+    }
+
+    /// Read raw bytes from a file in the workspace repository at HEAD.
+    pub fn read_file_bytes(&self, slug: &str, file_path: &str) -> Result<Vec<u8>> {
+        let repo = self.init_or_open(slug)?;
+        let head = repo.head().map_err(|_| {
+            OntologyError::RepoNotFound(format!("No commits in workspace {}", slug))
+        })?;
+        let commit = head.peel_to_commit()?;
+        let tree = commit.tree()?;
+
+        let entry = tree
+            .get_path(std::path::Path::new(file_path))
+            .map_err(|_| {
+                OntologyError::RepoNotFound(format!(
+                    "File not found: {} in workspace {}",
+                    file_path, slug
+                ))
+            })?;
+
+        let blob = entry
+            .to_object(&repo)?
+            .into_blob()
+            .map_err(|_| OntologyError::RepoNotFound("Not a blob".to_string()))?;
+
+        Ok(blob.content().to_vec())
+    }
+
     /// List files in the workspace repository at HEAD.
     /// If `subdir` is Some, lists only files under that directory.
     pub fn list_files(&self, slug: &str, subdir: Option<&str>) -> Result<Vec<FileEntry>> {

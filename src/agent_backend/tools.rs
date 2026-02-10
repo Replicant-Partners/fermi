@@ -1,12 +1,15 @@
 /// Built-in tool registry for agent tool-use
 ///
-/// Provides 6 platform tools that agents can invoke via the LLM tool-calling protocol:
+/// Provides 9 platform tools that agents can invoke via the LLM tool-calling protocol:
 ///   - search_knowledge: similarity search over agent's episodic memory
 ///   - query_ontology: get rules/entities/facts from knowledge graph
 ///   - execute_agent: invoke another agent (single-turn, no recursion)
 ///   - list_agents: discover available agents
 ///   - read_workspace_file: read a file from workspace git repo (workspace-only)
 ///   - list_workspace_agents: list agents in current workspace (workspace-only)
+///   - generate_image: text-to-image via fal.ai Nano Banana Pro
+///   - edit_image: image-to-image editing via fal.ai Nano Banana
+///   - write_workspace_file: write a file to workspace git repo (workspace-only)
 use crate::agent_backend::agent_card::AgentCard;
 use crate::agent_backend::llm_executor::{ClaudeTool, ContentBlock};
 use crate::agent_backend::multi_model_executor::{OpenAIFunction, OpenAITool};
@@ -141,6 +144,84 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             }),
             requires_workspace: true,
         },
+        BuiltinToolDef {
+            name: "generate_image",
+            description: "Generate an image from a text prompt using Nano Banana Pro (Google Imagen). Returns a URL to the generated image.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Text description of the image to generate"
+                    },
+                    "aspect_ratio": {
+                        "type": "string",
+                        "description": "Aspect ratio (default: 1:1). Options: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3",
+                        "default": "1:1"
+                    },
+                    "output_format": {
+                        "type": "string",
+                        "description": "Output format: png, jpeg, webp (default: png)",
+                        "default": "png"
+                    }
+                },
+                "required": ["prompt"]
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "edit_image",
+            description: "Edit/transform an image using a text prompt and reference image via Nano Banana (Google Imagen). Useful for style transfer, modifications, and artistic transformations. Returns a URL to the edited image.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Text description of the desired edit/transformation"
+                    },
+                    "image_url": {
+                        "type": "string",
+                        "description": "URL of the source image to edit"
+                    },
+                    "output_format": {
+                        "type": "string",
+                        "description": "Output format: png, jpeg, webp (default: png)",
+                        "default": "png"
+                    }
+                },
+                "required": ["prompt", "image_url"]
+            }),
+            requires_workspace: false,
+        },
+        BuiltinToolDef {
+            name: "write_workspace_file",
+            description: "Write a file to the current workspace's git repository. For binary files (images), provide base64-encoded content and set is_base64 to true.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to workspace root (e.g. outputs/result.png)"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "File content as text, or base64-encoded string for binary files"
+                    },
+                    "is_base64": {
+                        "type": "boolean",
+                        "description": "If true, content is base64-encoded binary data (default: false)",
+                        "default": false
+                    },
+                    "commit_message": {
+                        "type": "string",
+                        "description": "Git commit message (default: auto-generated)",
+                        "default": ""
+                    }
+                },
+                "required": ["path", "content"]
+            }),
+            requires_workspace: true,
+        },
     ]
 }
 
@@ -223,6 +304,9 @@ impl ToolRegistry {
             "list_agents" => execute_list_agents(ctx).await,
             "read_workspace_file" => execute_read_workspace_file(input, ctx).await,
             "list_workspace_agents" => execute_list_workspace_agents(ctx).await,
+            "generate_image" => execute_generate_image(input).await,
+            "edit_image" => execute_edit_image(input).await,
+            "write_workspace_file" => execute_write_workspace_file(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -494,4 +578,230 @@ async fn execute_list_workspace_agents(ctx: &ToolContext) -> Result<String, Stri
         .collect();
 
     serde_json::to_string_pretty(&agents).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── fal.ai image generation tools ─────────────────────────────────
+
+/// Response shape from fal.ai endpoints
+#[derive(serde::Deserialize)]
+struct FalImageResponse {
+    images: Vec<FalImage>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct FalImage {
+    url: String,
+    #[serde(default)]
+    content_type: Option<String>,
+    #[serde(default)]
+    file_name: Option<String>,
+}
+
+async fn execute_generate_image(input: &serde_json::Value) -> Result<String, String> {
+    let fal_key =
+        std::env::var("FAL_KEY").map_err(|_| "FAL_KEY not set — image generation unavailable")?;
+
+    let prompt = input
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: prompt")?;
+
+    let aspect_ratio = input
+        .get("aspect_ratio")
+        .and_then(|v| v.as_str())
+        .unwrap_or("1:1");
+
+    let output_format = input
+        .get("output_format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("png");
+
+    let body = json!({
+        "prompt": prompt,
+        "num_images": 1,
+        "aspect_ratio": aspect_ratio,
+        "output_format": output_format,
+        "resolution": "1K"
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://fal.run/fal-ai/nano-banana-pro")
+        .header("Authorization", format!("Key {}", fal_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("fal.ai request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("fal.ai error: {}", error_text));
+    }
+
+    let fal_resp: FalImageResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse fal.ai response: {}", e))?;
+
+    let result = json!({
+        "images": fal_resp.images.iter().map(|img| {
+            json!({
+                "url": img.url,
+                "content_type": img.content_type,
+                "file_name": img.file_name,
+            })
+        }).collect::<Vec<_>>(),
+        "description": fal_resp.description,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_edit_image(input: &serde_json::Value) -> Result<String, String> {
+    let fal_key =
+        std::env::var("FAL_KEY").map_err(|_| "FAL_KEY not set — image editing unavailable")?;
+
+    let prompt = input
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: prompt")?;
+
+    let image_url = input
+        .get("image_url")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: image_url")?;
+
+    let output_format = input
+        .get("output_format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("png");
+
+    let body = json!({
+        "prompt": prompt,
+        "image_urls": [image_url],
+        "num_images": 1,
+        "output_format": output_format
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://fal.run/fal-ai/nano-banana/edit")
+        .header("Authorization", format!("Key {}", fal_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("fal.ai request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("fal.ai error: {}", error_text));
+    }
+
+    let fal_resp: FalImageResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse fal.ai response: {}", e))?;
+
+    let result = json!({
+        "images": fal_resp.images.iter().map(|img| {
+            json!({
+                "url": img.url,
+                "content_type": img.content_type,
+                "file_name": img.file_name,
+            })
+        }).collect::<Vec<_>>(),
+        "description": fal_resp.description,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Workspace file write tool ─────────────────────────────────────
+
+async fn execute_write_workspace_file(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let path = input
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: path")?;
+
+    let content = input
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: content")?;
+
+    let is_base64 = input
+        .get("is_base64")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let commit_message = input
+        .get("commit_message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let slug = ctx
+        .workspace_slug
+        .as_deref()
+        .ok_or("Not in a workspace context")?;
+    let git = ctx
+        .workspace_git
+        .as_ref()
+        .ok_or("Workspace git not available")?;
+
+    let message = if commit_message.is_empty() {
+        format!("agent: write {}", path)
+    } else {
+        commit_message.to_string()
+    };
+
+    if is_base64 {
+        // Decode base64 and write as binary
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(content)
+            .map_err(|e| format!("Invalid base64 content: {}", e))?;
+        let size = bytes.len();
+
+        let git = Arc::clone(git);
+        let slug = slug.to_string();
+        let path = path.to_string();
+        let commit = tokio::task::spawn_blocking(move || {
+            git.commit_file_bytes(&slug, &path, &bytes, &message)
+        })
+        .await
+        .map_err(|e| format!("Join error: {}", e))?
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+        Ok(json!({
+            "path": input.get("path").and_then(|v| v.as_str()).unwrap_or(""),
+            "sha": commit.sha,
+            "message": commit.message,
+            "size_bytes": size,
+        })
+        .to_string())
+    } else {
+        let git = Arc::clone(git);
+        let slug = slug.to_string();
+        let path = path.to_string();
+        let content = content.to_string();
+        let commit =
+            tokio::task::spawn_blocking(move || git.commit_file(&slug, &path, &content, &message))
+                .await
+                .map_err(|e| format!("Join error: {}", e))?
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+
+        Ok(json!({
+            "path": input.get("path").and_then(|v| v.as_str()).unwrap_or(""),
+            "sha": commit.sha,
+            "message": commit.message,
+        })
+        .to_string())
+    }
 }

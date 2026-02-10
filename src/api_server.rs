@@ -1735,6 +1735,10 @@ async fn main() {
             put(write_workspace_file_handler),
         )
         .route(
+            "/api/workspaces/:workspace_id/files-raw/*path",
+            get(read_workspace_file_raw_handler),
+        )
+        .route(
             "/api/workspaces/:workspace_id/git/log",
             get(workspace_git_log_handler),
         )
@@ -6837,9 +6841,51 @@ async fn read_workspace_file_handler(
     })))
 }
 
+/// Serve workspace files as raw bytes with correct Content-Type.
+/// Used for images and other binary files.
+async fn read_workspace_file_raw_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path((workspace_id, file_path)): Path<(String, String)>,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let slug = get_workspace_slug(&state.db, ws_uuid).await?;
+
+    let bytes = state
+        .workspace_git
+        .read_file_bytes(&slug, &file_path)
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+
+    // Determine content type from extension
+    let content_type = match file_path.rsplit('.').next().unwrap_or("") {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "json" => "application/json",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        "html" => "text/html; charset=utf-8",
+        _ => "application/octet-stream",
+    };
+
+    Ok(axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", content_type)
+        .header("Content-Length", bytes.len().to_string())
+        .body(axum::body::Body::from(bytes))
+        .unwrap())
+}
+
 #[derive(Debug, Deserialize)]
 struct WriteFileBody {
     content: String,
+    #[serde(default)]
+    is_base64: bool,
     message: Option<String>,
 }
 
@@ -6871,10 +6917,21 @@ async fn write_workspace_file_handler(
         .message
         .unwrap_or_else(|| format!("{} updated {}", principal.user_id(), file_path));
 
-    let commit = state
-        .workspace_git
-        .commit_file(&slug, &file_path, &body.content, &commit_msg)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let commit = if body.is_base64 {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&body.content)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid base64: {}", e)))?;
+        state
+            .workspace_git
+            .commit_file_bytes(&slug, &file_path, &bytes, &commit_msg)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    } else {
+        state
+            .workspace_git
+            .commit_file(&slug, &file_path, &body.content, &commit_msg)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    };
 
     // Update git tracking columns
     let _ = sqlx::query(

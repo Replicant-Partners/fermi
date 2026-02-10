@@ -89,6 +89,9 @@ anyhow = "1.0"
 # Rate limiting
 dashmap = "6"
 
+# Base64 encoding/decoding (for binary file tools)
+base64 = "0.22"
+
 # Stripe payments
 async-stripe = { version = "0.41", features = ["runtime-tokio-hyper-rustls", "checkout", "webhook-endpoints"] }
 

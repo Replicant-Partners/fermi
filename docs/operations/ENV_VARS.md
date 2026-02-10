@@ -50,6 +50,7 @@ Comprehensive reference for all environment variables used by the Agent Bestiary
 | `OPENROUTER_API_KEY` | No | - | OpenRouter API key. Enables routing to various models (Claude, Llama, Gemini, Mixtral) via OpenRouter in the model catalogue. |
 | `QWEN_API_KEY` | No | - | Qwen (Alibaba Cloud) API key. Enables Qwen models (Max, Plus, Turbo) and `text-embedding-v3` embeddings in the model catalogue. |
 | `OPENAI_API_KEY` | No | - | OpenAI API key. Enables `text-embedding-3-large` embeddings in the model catalogue. |
+| `FAL_KEY` | No | - | fal.ai API key. Enables image generation (`generate_image`) and editing (`edit_image`) tools via Nano Banana Pro (Google Imagen). Required for style_transfer and watermark agents. |
 
 ---
 
@@ -140,5 +141,6 @@ STRIPE_WEBHOOK_SECRET=whsec_...
 
 # Optional but recommended
 GEMINI_API_KEY=...
+FAL_KEY=...  # For image generation tools (Nano Banana)
 GIT_REPOS_PATH=/data/repos
 ```
