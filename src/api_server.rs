@@ -7460,6 +7460,7 @@ async fn get_profile_handler(
 struct UpdateProfileRequest {
     display_name: Option<String>,
     bio: Option<String>,
+    avatar_url: Option<String>,
 }
 
 async fn update_profile_handler(
@@ -7481,6 +7482,20 @@ async fn update_profile_handler(
     if let Some(ref bio) = req.bio {
         sqlx::query("UPDATE users SET bio = $1 WHERE user_id = $2")
             .bind(bio)
+            .bind(&user_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    if let Some(ref avatar) = req.avatar_url {
+        let url = avatar.trim();
+        if !url.is_empty() && !url.starts_with("https://") {
+            return Err((StatusCode::BAD_REQUEST, "Avatar URL must use HTTPS".into()));
+        }
+        let val: Option<&str> = if url.is_empty() { None } else { Some(url) };
+        sqlx::query("UPDATE users SET avatar_url = $1 WHERE user_id = $2")
+            .bind(val)
             .bind(&user_id)
             .execute(&state.db)
             .await

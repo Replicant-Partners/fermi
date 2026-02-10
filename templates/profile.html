@@ -255,6 +255,38 @@
             <div class="profile-meta" id="profile-meta"></div>
           </div>
         </div>
+        <div style="margin-top: 8px">
+          <input
+            type="text"
+            id="avatar-url-input"
+            placeholder="https://... avatar image URL"
+            style="
+              width: 100%;
+              padding: 6px 8px;
+              background: var(--bg1);
+              border: 1px solid var(--bg2);
+              color: var(--fg1);
+              font-size: 0.8em;
+              font-family: inherit;
+            "
+          />
+          <div style="margin-top: 4px; display: flex; gap: 6px">
+            <button
+              class="btn"
+              style="font-size: 0.7rem; padding: 3px 8px"
+              onclick="saveAvatar()"
+            >
+              Set Avatar
+            </button>
+            <button
+              class="btn"
+              style="font-size: 0.7rem; padding: 3px 8px; color: var(--fg3)"
+              onclick="clearAvatar()"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
         <div class="name-edit">
           <input
             type="text"
@@ -415,6 +447,8 @@
           const av = document.getElementById("avatar");
           if (profileData.avatar_url) {
             av.innerHTML = `<img src="${profileData.avatar_url}" alt="avatar" />`;
+            document.getElementById("avatar-url-input").value =
+              profileData.avatar_url;
           } else {
             const name = profileData.display_name || profileData.email || "?";
             av.textContent = name.charAt(0).toUpperCase();
@@ -529,20 +563,78 @@
           if (res.ok) {
             document.getElementById("display-name").textContent = name;
             Toast.show("Name updated");
+          } else {
+            Toast.show("Failed to update name", "error");
           }
-        } catch {}
+        } catch (e) {
+          Toast.show("Network error: " + e.message, "error");
+        }
       }
 
       async function saveBio() {
-        const bio = document.getElementById("bio-input").value;
+        const el = document.getElementById("bio-input");
+        const bio = el.value.trim();
+        el.value = bio;
         try {
           const res = await fetch("/api/profile", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ bio }),
           });
-          if (res.ok) Toast.show("Bio updated");
-        } catch {}
+          if (res.ok) {
+            Toast.show("Bio updated");
+          } else {
+            Toast.show("Failed to update bio", "error");
+          }
+        } catch (e) {
+          Toast.show("Network error: " + e.message, "error");
+        }
+      }
+
+      async function saveAvatar() {
+        const url = document.getElementById("avatar-url-input").value.trim();
+        if (!url) return;
+        if (!url.startsWith("https://")) {
+          Toast.show("URL must start with https://", "error");
+          return;
+        }
+        try {
+          const res = await fetch("/api/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ avatar_url: url }),
+          });
+          if (res.ok) {
+            const av = document.getElementById("avatar");
+            av.innerHTML = `<img src="${url}" alt="avatar" onerror="this.parentElement.textContent=document.getElementById('display-name').textContent.charAt(0).toUpperCase()">`;
+            Toast.show("Avatar updated");
+          } else {
+            Toast.show("Failed to update avatar", "error");
+          }
+        } catch (e) {
+          Toast.show("Network error: " + e.message, "error");
+        }
+      }
+
+      async function clearAvatar() {
+        try {
+          const res = await fetch("/api/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ avatar_url: "" }),
+          });
+          if (res.ok) {
+            document.getElementById("avatar-url-input").value = "";
+            const name =
+              document.getElementById("display-name").textContent || "?";
+            document.getElementById("avatar").textContent = name
+              .charAt(0)
+              .toUpperCase();
+            Toast.show("Avatar cleared");
+          }
+        } catch (e) {
+          Toast.show("Network error: " + e.message, "error");
+        }
       }
 
       // Load curated agents for forking
@@ -581,15 +673,17 @@
         btn.disabled = true;
         btn.textContent = "Forking...";
         try {
-          // Use cached curated data (already fetched) to build the fork card
           const card = curatedAgentsCache.find((a) => a.agent_id === agentId);
           if (!card) {
-            btn.textContent = "Not found";
-            Toast.show("Agent not found in curated list");
+            btn.textContent = "Fork";
+            btn.disabled = false;
+            Toast.show("Agent not found in curated list", "error");
             return;
           }
+          const suffix =
+            Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
           const forkedCard = {
-            agent_id: agentId + "_fork",
+            agent_id: agentId + "_" + suffix,
             agent_type: card.agent_type || "research",
             capabilities: card.capabilities || {},
             metadata: {
@@ -610,12 +704,14 @@
             Toast.show("Agent forked to your collection");
           } else {
             const err = await importRes.text();
-            btn.textContent = "Error";
-            Toast.show("Fork failed: " + (err || "unknown error"));
+            btn.textContent = "Fork";
+            btn.disabled = false;
+            Toast.show("Fork failed: " + (err || "unknown error"), "error");
           }
         } catch (e) {
-          btn.textContent = "Error";
-          Toast.show("Fork error: " + e.message);
+          btn.textContent = "Fork";
+          btn.disabled = false;
+          Toast.show("Fork error: " + e.message, "error");
         }
       }
     </script>

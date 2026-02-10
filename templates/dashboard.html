@@ -95,54 +95,59 @@
         color: var(--fg3);
         font-size: 0.75rem;
       }
-      /* ─── Micro sparklines ─── */
-      .agent-row-detail {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        padding: 10px 0;
-        border-bottom: 1px solid var(--bg1);
-        gap: 12px;
+      /* ─── Compact tiles ─── */
+      .tile-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 10px;
       }
-      .agent-row-detail:last-child {
-        border-bottom: none;
+      .tile {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 10px 12px;
+        cursor: pointer;
+        transition: border-color 0.15s;
+        text-decoration: none;
+        color: inherit;
+        display: block;
       }
-      .agent-info {
-        flex: 1;
-        min-width: 0;
+      .tile:hover {
+        border-color: var(--yellow);
       }
-      .agent-sparks {
-        display: flex;
-        gap: 8px;
-        align-items: flex-end;
-        flex-shrink: 0;
+      .tile-name {
+        font-size: 0.85em;
+        color: var(--yellow);
+        margin-bottom: 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
-      .spark-group {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
-      }
-      .spark-label {
-        font-size: 0.55rem;
+      .tile-meta {
+        font-size: 0.7em;
         color: var(--fg3);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
       }
-      .spark-total {
-        font-size: 0.65rem;
-        font-weight: bold;
-      }
-      .spark-bars {
+      .tile-badges {
         display: flex;
-        align-items: flex-end;
-        gap: 1px;
-        height: 20px;
+        gap: 4px;
+        margin-top: 4px;
+        flex-wrap: wrap;
       }
-      .spark-bar {
-        width: 3px;
-        min-height: 1px;
-        border-radius: 1px 1px 0 0;
+      .tile-scroll {
+        max-height: 380px;
+        overflow-y: auto;
+      }
+      .tile-budget {
+        height: 3px;
+        background: var(--bg2);
+        margin-top: 6px;
+      }
+      .tile-budget-fill {
+        height: 100%;
+        background: var(--aqua);
+      }
+      .tile-avatar-stack {
+        display: flex;
+        margin-top: 6px;
       }
       .badge {
         font-size: 0.7rem;
@@ -465,58 +470,46 @@
               document.getElementById("portfolio-agents").textContent =
                 data.agents.length;
 
-              const renderRow = (a) => {
-                const mock = mockAgentEconomics(
-                  a.agent_name,
-                  a.total_executions,
-                );
+              const renderTile = (a) => {
                 const statusColors = {
                   draft: "var(--yellow)",
                   published: "var(--green)",
                   archived: "var(--gray)",
                 };
-                const statusColor =
-                  statusColors[a.status || "draft"] || "var(--fg3)";
-                const wsNames = a.workspace_names || [];
-                const wsPills =
-                  wsNames.length > 0
-                    ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">${wsNames.map((n) => `<span style="font-size:0.65em;padding:1px 6px;border:1px solid var(--bg3);color:var(--purple)">${n}</span>`).join("")}</div>`
-                    : "";
+                const sc = statusColors[a.status || "draft"] || "var(--fg3)";
                 return `
-                <a href="/agent/${a.agent_name}" style="text-decoration:none;color:inherit">
-                <div class="agent-row-detail" style="cursor:pointer;border-left:3px solid ${statusColor}">
-                  <div class="agent-info">
-                    <div class="agent-name">${a.display_alias || a.agent_name}${a.fork_count > 0 ? ` <span style="font-size:0.75em;color:var(--blue)">&#9906;${a.fork_count}</span>` : ""}</div>
-                    <div class="agent-meta">${a.agent_type || "agent"} | ${a.total_executions || 0} exec | <span class="badge badge-${a.visibility || "private"}">${a.visibility || "private"}</span></div>
-                    ${wsPills}
+                <a href="/agent/${a.agent_name}" class="tile" style="border-left:3px solid ${sc}">
+                  <div class="tile-name">${a.display_alias || a.agent_name}${a.fork_count > 0 ? ` <span style="font-size:0.8em;color:var(--blue)">&#9906;${a.fork_count}</span>` : ""}</div>
+                  <div class="tile-meta">${a.agent_type || "agent"} &middot; ${a.total_executions || 0} exec</div>
+                  <div class="tile-badges">
+                    <span class="badge badge-${a.visibility || "private"}" style="font-size:0.6em">${a.visibility || "private"}</span>
+                    ${(a.workspace_names || []).map((n) => `<span style="font-size:0.6em;padding:1px 5px;border:1px solid var(--bg3);color:var(--purple)">${n}</span>`).join("")}
                   </div>
-                  <div class="agent-sparks">
-                    <div class="spark-group">
-                      <div class="spark-label">earn</div>
-                      ${renderSparkBars(mock.earnings, "var(--green)")}
-                      <div class="spark-total" style="color:var(--green)">${mock.totalEarnings}</div>
-                    </div>
-                    <div class="spark-group">
-                      <div class="spark-label">cost</div>
-                      ${renderSparkBars(mock.costs, "var(--red)")}
-                      <div class="spark-total" style="color:var(--red)">${mock.totalCosts}</div>
-                    </div>
-                  </div>
-                </div></a>`;
+                </a>`;
               };
 
-              let html = "";
+              let html = '<div class="tile-scroll">';
               if (groups.published.length) {
                 html += `<div style="font-size:0.75em;color:var(--green);text-transform:uppercase;letter-spacing:0.1em;margin:12px 0 6px;font-weight:600">Published (${groups.published.length})</div>`;
-                html += groups.published.map(renderRow).join("");
+                html +=
+                  '<div class="tile-grid">' +
+                  groups.published.map(renderTile).join("") +
+                  "</div>";
               }
               if (groups.draft.length) {
                 html += `<div style="font-size:0.75em;color:var(--yellow);text-transform:uppercase;letter-spacing:0.1em;margin:12px 0 6px;font-weight:600">Drafts (${groups.draft.length})</div>`;
-                html += groups.draft.map(renderRow).join("");
+                html +=
+                  '<div class="tile-grid">' +
+                  groups.draft.map(renderTile).join("") +
+                  "</div>";
               }
+              html += "</div>";
               if (groups.archived.length) {
                 html += `<details style="margin-top:12px"><summary style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.1em;cursor:pointer;font-weight:600">Archived (${groups.archived.length})</summary>`;
-                html += groups.archived.map(renderRow).join("");
+                html +=
+                  '<div class="tile-grid">' +
+                  groups.archived.map(renderTile).join("") +
+                  "</div>";
                 html += "</details>";
               }
               el.innerHTML = html;
@@ -539,49 +532,38 @@
                 '<div class="empty-state">No compositions yet. Assemble agents into a workspace.</div>';
             } else {
               const hues = [200, 140, 30, 340, 270, 50, 170, 10];
-              el.innerHTML = data.workspaces
-                .map((w) => {
-                  const pct =
-                    w.workspace_budget > 0
-                      ? Math.min(
-                          100,
-                          (w.workspace_spent / w.workspace_budget) * 100,
-                        )
-                      : 0;
-                  const agentCount = w.agent_count || 0;
-                  const previews = w.agent_previews || [];
-                  const avatarStack = previews
-                    .map((ap, i) => {
-                      const name = ap.display_alias || ap.agent_name;
-                      const initial = (
-                        ap.initial || name.charAt(0)
-                      ).toUpperCase();
-                      const hue =
-                        hues[ap.agent_name.charCodeAt(0) % hues.length];
-                      return `<div style="width:24px;height:24px;border-radius:50%;background:hsl(${hue},45%,35%);color:#fff;font-size:0.55rem;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg0);margin-left:${i > 0 ? "-8px" : "0"};position:relative;z-index:${5 - i}">${initial}</div>`;
-                    })
-                    .join("");
-                  const moreCount = agentCount - previews.length;
-                  const moreIndicator =
-                    moreCount > 0
-                      ? `<span style="font-size:0.7em;color:var(--fg3);margin-left:4px">+${moreCount}</span>`
-                      : "";
-                  return `
-                  <a href="/workspace/${w.id}" style="text-decoration:none;color:inherit">
-                    <div class="workspace-row" style="cursor:pointer;padding:12px 0">
-                      <div style="flex:1">
-                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
-                          <div class="agent-name">${w.name || "Unnamed"}</div>
-                          <div style="display:flex;align-items:center">${avatarStack}${moreIndicator}</div>
-                        </div>
-                        <div class="agent-meta">${agentCount} agent${agentCount !== 1 ? "s" : ""} | ${w.workspace_remaining || 0} / ${w.workspace_budget || 0} credits</div>
-                        <div class="budget-bar"><div class="budget-fill" style="width:${pct}%"></div></div>
-                      </div>
-                    </div>
-                  </a>
-                `;
-                })
-                .join("");
+              el.innerHTML =
+                '<div class="tile-scroll"><div class="tile-grid">' +
+                data.workspaces
+                  .map((w) => {
+                    const pct =
+                      w.workspace_budget > 0
+                        ? Math.min(
+                            100,
+                            (w.workspace_spent / w.workspace_budget) * 100,
+                          )
+                        : 0;
+                    const previews = w.agent_previews || [];
+                    const avatars = previews
+                      .map((ap, i) => {
+                        const nm = ap.display_alias || ap.agent_name;
+                        const init = (ap.initial || nm.charAt(0)).toUpperCase();
+                        const h =
+                          hues[ap.agent_name.charCodeAt(0) % hues.length];
+                        return `<div style="width:20px;height:20px;border-radius:50%;background:hsl(${h},45%,35%);color:#fff;font-size:0.5rem;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg0);margin-left:${i > 0 ? "-6px" : "0"};position:relative;z-index:${5 - i}">${init}</div>`;
+                      })
+                      .join("");
+                    const more = (w.agent_count || 0) - previews.length;
+                    return `
+                  <a href="/workspace/${w.id}" class="tile">
+                    <div class="tile-name">${w.name || "Unnamed"}</div>
+                    <div class="tile-meta">${w.agent_count || 0} agent${(w.agent_count || 0) !== 1 ? "s" : ""} &middot; ${w.workspace_remaining || 0}/${w.workspace_budget || 0} cr</div>
+                    <div class="tile-avatar-stack">${avatars}${more > 0 ? `<span style="font-size:0.6em;color:var(--fg3);margin-left:4px">+${more}</span>` : ""}</div>
+                    <div class="tile-budget"><div class="tile-budget-fill" style="width:${pct}%"></div></div>
+                  </a>`;
+                  })
+                  .join("") +
+                "</div></div>";
             }
           }
         } catch {}
@@ -821,57 +803,7 @@
           }
         });
 
-      // ─── Sparkline rendering ───
-      function renderSparkBars(values, color) {
-        const max = Math.max(...values, 1);
-        const bars = values
-          .map((v) => {
-            const h = Math.max(1, Math.round((v / max) * 20));
-            const opacity = v === 0 ? 0.2 : 0.4 + (v / max) * 0.6;
-            return `<div class="spark-bar" style="height:${h}px;background:${color};opacity:${opacity.toFixed(2)}"></div>`;
-          })
-          .join("");
-        return `<div class="spark-bars">${bars}</div>`;
-      }
-
-      // Generate deterministic mock economics for 12 weeks (3 months)
-      // Seeded by agent name hash so each agent gets consistent data across refreshes
-      function mockAgentEconomics(name, executions) {
-        let seed = 0;
-        for (let i = 0; i < name.length; i++)
-          seed = ((seed << 5) - seed + name.charCodeAt(i)) | 0;
-        const rng = () => {
-          seed = (seed * 16807 + 0) % 2147483647;
-          return (seed & 0x7fffffff) / 2147483647;
-        };
-
-        // Base activity level from actual executions (or mock if 0)
-        const activity = Math.max(executions, Math.floor(rng() * 50) + 5);
-        const earningPower = rng() * 0.8 + 0.2; // 0.2-1.0 multiplier
-        const costBase = rng() * 0.3 + 0.1; // cost is 10-40% of earnings
-
-        const weeks = 12;
-        const earnings = [];
-        const costs = [];
-
-        for (let w = 0; w < weeks; w++) {
-          // Trend upward slightly over time
-          const trend = 1 + (w / weeks) * 0.5;
-          const noise = 0.5 + rng();
-          const weekExecs = Math.floor((activity / 4) * trend * noise);
-          const earn = Math.floor(weekExecs * earningPower * (1 + rng() * 0.3));
-          const cost = Math.floor(weekExecs * costBase * (0.8 + rng() * 0.4));
-          earnings.push(earn);
-          costs.push(cost);
-        }
-
-        return {
-          earnings,
-          costs,
-          totalEarnings: earnings.reduce((a, b) => a + b, 0),
-          totalCosts: costs.reduce((a, b) => a + b, 0),
-        };
-      }
+      // (sparkline + mock economics removed — replaced by compact tiles)
     </script>
     <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
