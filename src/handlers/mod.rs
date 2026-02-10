@@ -5,3 +5,4 @@
 //! live in api_server.rs as pub(crate) functions.
 
 pub mod lifecycle;
+pub mod workspace;
