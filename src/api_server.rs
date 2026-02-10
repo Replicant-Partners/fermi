@@ -2805,8 +2805,28 @@ async fn auth_github(State(state): State<AppState>) -> Result<Redirect, (StatusC
 async fn auth_callback(
     State(state): State<AppState>,
     Query(params): Query<AuthCallbackQuery>,
-) -> Result<Response, (StatusCode, String)> {
-    let map_err = |e: fermi_auth::AuthError| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+) -> Response {
+    match auth_callback_inner(state, params).await {
+        Ok(resp) => resp,
+        Err(msg) => {
+            eprintln!("OAuth error: {}", msg);
+            // Redirect to landing with error hint instead of showing raw error
+            Response::builder()
+                .status(StatusCode::SEE_OTHER)
+                .header(header::LOCATION, "/?auth_error=1")
+                .body(axum::body::Body::empty())
+                .unwrap_or_else(|_| {
+                    Response::new(axum::body::Body::from(format!("OAuth error: {}", msg)))
+                })
+        }
+    }
+}
+
+async fn auth_callback_inner(
+    state: AppState,
+    params: AuthCallbackQuery,
+) -> Result<Response, String> {
+    let map_err = |e: fermi_auth::AuthError| e.to_string();
 
     // Determine provider from state prefix
     let (provider, _csrf) = params
@@ -2834,10 +2854,7 @@ async fn auth_callback(
                 .map_err(map_err)?
         }
         _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Unknown OAuth provider".to_string(),
-            ));
+            return Err("Unknown OAuth provider".to_string());
         }
     };
 
@@ -2866,7 +2883,7 @@ async fn auth_callback(
         .header(header::LOCATION, "/dashboard")
         .header(header::SET_COOKIE, cookie)
         .body(axum::body::Body::empty())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+        .map_err(|e| e.to_string())
 }
 
 /// Logout — clear session cookie
