@@ -786,7 +786,7 @@
         _agentId = agentId;
 
         try {
-          const response = await fetch("/api/agents");
+          const response = await fetch("/api/agents?limit=200");
           const data = await response.json();
 
           const agent = data.agents.find((a) => a.agent_id === agentId);
@@ -1764,7 +1764,7 @@
           clearInterval(checkOwnership);
 
           // Re-fetch agent to check owner_id
-          fetch("/api/agents")
+          fetch("/api/agents?limit=200")
             .then((r) => r.json())
             .then((data) => {
               const agent = data.agents.find((a) => a.agent_id === agentId);

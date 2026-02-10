@@ -1845,7 +1845,7 @@
             '<div style="color:var(--fg3);font-size:0.8rem">Loading public agents...</div>';
 
           try {
-            const res = await fetch("/api/agents?visibility=public");
+            const res = await fetch("/api/agents?visibility=public&limit=200");
             if (!res.ok) {
               listEl.innerHTML = "Failed to load agents.";
               return;

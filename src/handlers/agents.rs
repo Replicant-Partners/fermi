@@ -119,7 +119,7 @@ pub async fn list_agents(
         }
 
         let total = filtered.len();
-        let limit = params.limit.unwrap_or(20).min(100);
+        let limit = params.limit.unwrap_or(50).min(200);
         let page = params.page.unwrap_or(1).max(1);
         let offset = (page - 1) * limit;
         let pages = (total + limit - 1) / limit.max(1);

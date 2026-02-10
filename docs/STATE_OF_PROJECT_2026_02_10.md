@@ -1,204 +1,220 @@
-# State of Project — 2026-02-10
-
-## Platform Summary
-
-Agent Bestiary is live at agent-bestiary.world. 254 commits, 16 workspace crates, ~55K lines of Rust, ~15K lines of HTML templates, 27 curated agents, 122 API routes, 27 SQL migrations, 17 built-in tools, 7 MCP tools, 231 tests.
+# State of the Project
+**February 10, 2026**
 
 ---
 
-## What's Built
+## Summary
 
-### Core Infrastructure
-- **Auth**: Google/GitHub OAuth2, self-issued HS256 JWTs (`abw_session` cookie), API keys with Argon2 hashing (`ferm_` prefix), scopes (read/write/execute/admin)
-- **Credit system**: Wallets + append-only ledger, SELECT FOR UPDATE, 100 free credits on signup
-- **Gas fees**: Configurable per-action (message 1cr, hire 5cr, add 2cr, execute varies, consolidate 3cr, file write 1cr, avatar 5cr, embedding import 5cr, eval run 2cr)
-- **Database**: PostgreSQL on Neon (US East), 27 migrations, pgvector for embeddings, PgBouncer `statement_cache_capacity(0)` + `test_before_acquire(true)` + `DISCARD ALL`
-- **Stripe**: Credit purchase flow, checkout sessions, webhooks, receipts
-- **Railway**: Auto-deploy from main, custom domain agent-bestiary.world
+Agent Bestiary World is a live platform at **agent-bestiary.world** running on Railway with a Neon PostgreSQL database. In three days of intensive building (Feb 7-10), it went from a broken consolidation crate + no auth to a fully deployed multi-system platform with 32 agents, workspaces, an embedding marketplace, eval framework, and observability layer.
 
-### ADM Pipeline (Autonomous Declarative Memory)
-- Execute -> Episodic memory -> Consolidation -> Semantic rules -> Ontology evolution
-- Dream budget: per-agent credits for consolidation cycles
-- Dream synopses: LLM-generated narratives after consolidation
-- Ontology snapshots with spacetime index, diff API, version history
-
-### Agent System (27 Curated Agents)
-- **Research**: fermi (coordinator), market_research, monte_carlo_sim, macro_forecaster, sentiment_analyzer, video_analyst
-- **Creative**: micro_patron_template, style_transfer, watermark, delivery
-- **Social Media**: instagram_publisher, bluesky_publisher, social_media_studio (compound)
-- **Games**: daily_puzzle
-- **Meta**: performance_coach, companion_builder_coach, publish_coach, dream_narrator, embedding_projector_guide
-- **OSINT**: entity_investigator
-- **Coherence**: coherence_evaluator, coherence_consultant, cohere_and_coordinate, intention_coordinator
-- **Billing**: stripe_billing, stripe_connect_advisor
-- **System**: xaman_ek (platform navigator), ar_avatar_renderer
-
-Agent features:
-- Agent CRUD (POST/PUT/DELETE) with version history (snapshot-before-update, restore)
-- Multi-provider model catalogue (Anthropic/Mistral/OpenRouter/Qwen) — DB fields stored, multi-model executor dispatches by provider
-- Agent creation wizard: 5-step with import toggle, provider tabs, ontology seeds
-- Agent forking with royalty tracking
-- Custom embeddings import with dimension validation
-- Lifecycle management (draft/published/deprecated/archived)
-- Sample queries per agent (seeded into eval test cases)
-- Curated + community tiers, filesystem cards upserted to DB on startup
-
-### Execution System
-- **MultiModelExecutor**: dispatches by provider (Anthropic native, others OpenAI-compatible)
-- **ToolAwareExecutor**: agentic loop with max 5 iterations, dual-protocol (Anthropic tool_use/tool_result + OpenAI tool_calls/role:tool)
-- **17 built-in tools**: search_knowledge, query_ontology, execute_agent, list_agents, read_workspace_file, list_workspace_agents, generate_image, edit_image, write_workspace_file, reduct_list_projects, reduct_get_project, reduct_get_transcript, reduct_create_reel, reduct_add_block, evaluate_coherence, coherence_snapshot, get_workspace_messages
-- **Image generation**: Gemini `gemini-2.5-flash-image` (text-to-image + image-to-image editing)
-- Token accumulation across turns, tool invocation tracking in episode JSONB
-
-### Coherence System
-- TEC engine (Thagard 1989) — deterministic core + LLM interpretive layer
-- ConversationObserver: heuristic keyword classification
-- SettlingEngine: iterative relaxation to stable coherence scores
-- Tiered pricing: depth=index (free), recommendations (2cr), dream_notes (5cr)
-- Auto-eval every Nth message (COHERENCE_AUTO_EVAL_INTERVAL env var)
-- 3 coherence tools in built-in registry (evaluate_coherence, coherence_snapshot, get_workspace_messages)
-
-### Embedding Projector
-- PCA dimensionality reduction via linfa 0.7 + ndarray 0.15
-- Three.js 3D visualization with OrbitControls, raycaster tooltips, source-type coloring
-- Temporal scrubber with play/pause for drift animation
-- DashMap cache with 5min TTL
-- Per-agent + bestiary-wide projections
-- "Ask Guide" panel calls embedding_projector_guide agent
-
-### Workspaces
-- Teams with budget, members (Owner/Admin/Member/Viewer roles)
-- 3-panel UI: members sidebar | chat center | shelf right
-- @ agent invocation with workspace context injection
-- Workspace git repos: auto-commit on events, file browser, binary support, diff viewer
-- Coherence shelf: TEC evaluation display, auto-eval trigger
-- Slug collision prevention (timestamp suffix)
-
-### Eval Framework
-- eval_test_cases + eval_runs tables
-- Background runner via tokio::spawn, reuses ToolAwareExecutor pipeline
-- LLM-as-judge: Haiku scores relevance/accuracy/completeness (1-5)
-- Regression detection: pass rate >10% drop, judge >0.5 drop, latency >50% increase
-- Auto-seeded from agent sample_queries (42 cases across 14 agents)
-- UI: "Eval Suite" button in owner panel, test case CRUD, run history with polling
-
-### Observability
-- Episode detail: clickable rows expand with iteration timeline, timing waterfall, tool calls
-- Execution Activity on agent_detail: 30-day sparkline, tool usage bars
-- Platform Activity on dashboard: stat cards, daily chart, tool frequency
-
-### Web UI (26 templates, 15 static assets)
-- **Public**: landing, aspiration, catalogue (world view), agent_detail, ontology, projector
-- **Auth'd**: dashboard, workspace, agent_create, profile, settings, admin
-- Dual themes: Hasui (dark, default) + OP-1 (light, Teenage Engineering inspired)
-- Shared CSS variables + common.css + 12 JS widgets (nav, auth, theme, toast, modal, agent-card, fork-modal, tabs, tag-renderer, micro-chart, xaman-ek, api)
-- Catalogue: world view (no pagination), compound/deck/system visual indicators, category filtering, complexity sorting
-
-### MCP Server (7 tools)
-- Stdio transport for Zed editor integration
-- list_agents, get_agent, execute_agent, save_agent, search_agents, get_catalogue, ask_xaman_ek
-- Documented in docs/shared/MCP_SETUP.md + docs/fermi/guides/mcp-guide.md
-
-### Regression Test Seed
-- 177 deterministic records: 3 agents, 75 episodes, 18 rules, 30 entities, 36 facts, 9 communities, 6 consolidation jobs
-- 10 integration tests covering full ADM pipeline
+**154 commits** since Feb 7. ~49,000 lines of Rust. 32 migrations. 28 HTML templates. 22 static assets.
 
 ---
 
-## Codebase Metrics
+## What's Live and Working
 
-| Metric | Count |
+### Core Platform
+| System | Status | Notes |
+|--------|--------|-------|
+| Agent Registry | Live | 32 agents seeded from filesystem on startup |
+| Agent Execution | Live | Multi-model: Anthropic, Mistral, Qwen, OpenRouter |
+| Tool-Aware Execution | Live | 9 built-in tools, agentic loop (max 5 iterations) |
+| ADM Pipeline | Live | Episodes, embeddings (Voyage-2), entity/fact extraction |
+| Consolidation | Live | Dreaming cycles with LLM, budget-controlled |
+| Knowledge Graph | Live | Entities, facts, rules, communities + 8 query API endpoints |
+| Ontology Evolution | Live | Snapshots, diffs, dream synopses |
+
+### Auth & Economics
+| System | Status | Notes |
+|--------|--------|-------|
+| Auth | Live | Google + GitHub OAuth2, self-issued JWTs, API keys (Argon2) |
+| Credit System | Live | Wallets + append-only ledger, SELECT FOR UPDATE |
+| Gas Fees | Live | Configurable per-action, workspace + personal wallets |
+| Stripe Integration | Live | Credit purchase checkout flow |
+| Agent Lifecycle | Live | Fork, publish, version history, visibility controls |
+
+### Workspaces (Compositions)
+| System | Status | Notes |
+|--------|--------|-------|
+| Workspace CRUD | Live | Teams with roles (owner/admin/member) |
+| Agent Hire/Add | Live | With dependency auto-hire, duplicate detection |
+| Workspace Chat | Live | Message timeline with agent execution |
+| Git-Backed Files | Live | Auto-commit on events, file read/write |
+| Coherence Engine | Live | TEC (Thagard 1989), tiered pricing, auto-eval |
+| Dream Narrator | Live | Auto-generates narrative after consolidation |
+
+### Similarity Lab (Embedding Marketplace)
+| System | Status | Notes |
+|--------|--------|-------|
+| Shopping Profiles | Live | Composite embeddings, weighted centroids |
+| Marketplace Listings | Live | Consumer-controlled reverse-SEO |
+| Similarity Matching | Live | pgvector cosine similarity, privacy-preserving |
+| Marketplace Dashboard | Live | Query builder, results, history |
+| 4 Marketplace Agents | Live | shopping_assistant, preference_modeler, deal_finder, embedding_broker |
+
+### Observability & Eval
+| System | Status | Notes |
+|--------|--------|-------|
+| Episode Detail API | Live | Iteration timeline, tool calls, timing |
+| Platform Metrics | Live | Daily charts, tool frequency, stat cards |
+| Agent Metrics | Live | 30-day sparkline, execution stats |
+| Eval Framework | Live | Test cases (auto-seeded from sample_queries), LLM-as-judge |
+| Regression Detection | Live | Pass rate, judge score, latency comparisons |
+
+### Visualization
+| System | Status | Notes |
+|--------|--------|-------|
+| Embedding Projector | Live | PCA dimensionality reduction, Three.js 3D point cloud |
+| Temporal Projector | Live | Timeline scrubber, animated drift visualization |
+| Projector Guide Agent | Live | Interprets clusters, narrates drift |
+
+### Admin & Ops
+| System | Status | Notes |
+|--------|--------|-------|
+| Admin Dashboard | Live | Agent management, ledger audit, waitlist |
+| Waitlist System | Live | Email collection, bulk invite, status tracking |
+| Documentation System | Live | Markdown docs served from manifest.json |
+
+---
+
+## The 32 Agents
+
+### By Category
+
+**Research**: macro_forecaster, market_research, sentiment_analyzer, entity_investigator, monte_carlo_sim
+**Creative**: social_media_studio, bluesky_publisher, instagram_publisher, video_analyst, style_transfer, watermark, delivery
+**Games**: daily_puzzle, xaman_ek
+**Meta**: performance_coach, publish_coach, companion_builder_coach, embedding_projector_guide
+**OSINT**: deal_finder
+**Coherence**: coherence_evaluator, coherence_consultant, intention_coordinator, cohere_and_coordinate, dream_narrator
+**Marketplace**: shopping_assistant, preference_modeler, embedding_broker
+**Compound/Infra**: ar_avatar_renderer, ar_card_producer, stripe_billing, stripe_connect_advisor, micro_patron_template
+
+### Compound Agents (Multi-Agent Pipelines)
+- **shopping_assistant**: Orchestrates preference_modeler + deal_finder + embedding_broker
+- **ar_card_producer**: 5-stage pipeline (intake, marker gen, video gen, AR scene, delivery)
+- **cohere_and_coordinate**: Coordinates coherence_evaluator + intention_coordinator
+
+---
+
+## Architecture
+
+```
+Railway (us-west2)                    Neon (us-east)
++--------------------------+          +------------------+
+| api-server (Axum)        |          | PostgreSQL       |
+|   - 200+ routes          |--------->|   - pgvector     |
+|   - Multi-model executor |  sqlx    |   - 32 migrations|
+|   - Tool-aware executor  |          +------------------+
+|   - Agent seeder         |
+|   - Consolidation worker |
++--------------------------+
+     |
+     | serves
+     v
++------------------+
+| Static Assets    |
+|   - 28 templates |
+|   - nav.js       |
+|   - theme.js     |
+|   - auth.js      |
+|   - 10 widgets   |
++------------------+
+```
+
+### Key Design Decisions
+- **Standalone templates**: Each HTML file is self-contained (no base template inheritance)
+- **DB-first agents**: Filesystem cards seeded to DB on startup; DB is source of truth at runtime
+- **Charge-after-validate**: Gas/credit charges happen after confirming work exists (as of today's hardening)
+- **Privacy-preserving marketplace**: Raw embeddings never exposed; only cosine similarity scores
+- **Dual-protocol execution**: Anthropic (tool_use/tool_result) + OpenAI (tool_calls/role:tool)
+
+---
+
+## Reverse SEO / Similarity Lab — The Big Idea
+
+The Similarity Lab (`/marketplace`) implements **reverse SEO** — a consumer-controlled alternative to surveillance advertising.
+
+### How It Works
+1. **Consumer builds a shopping profile** by chatting with the shopping_assistant about products they want
+2. After 5+ interactions, the **preference_modeler** computes a composite embedding (weighted centroid of episode vectors, recency + success weighted, L2 normalized)
+3. Consumer **lists the profile** on the marketplace at their chosen price
+4. **Advertisers query** with product descriptions — the system returns only similarity scores (0.0-1.0), never raw embeddings
+5. Consumer earns credits; can delist any time
+
+### Why "Neighbors" Matters
+The similarity matching isn't limited to shopping. The same infrastructure supports any "who is similar to me?" analysis:
+- **Market research**: Which consumer profiles match this product concept?
+- **Audience discovery**: Find market segments you didn't know existed
+- **Competitive analysis**: How similar are two product positioning embeddings?
+- **Content recommendation**: Which users' taste profiles align with this content?
+- **Talent matching**: Skill embeddings vs role requirement embeddings
+
+The embedding projector (Three.js 3D visualization) lets you **see** these neighborhoods — clusters of similar agents, drift over time, outliers. Combined with the projector guide agent that narrates what the clusters mean, it becomes an analytical tool, not just a marketplace.
+
+### Full Documentation
+See: `static/docs/embedding-marketplace.md` (served at `/docs/embedding-marketplace`)
+
+---
+
+## Known Issues
+
+### Awaiting Deploy (fixes committed, Railway needs to pick them up)
+- Docs 404 — route syntax fix (`{slug}` to `:slug`)
+- Eval tx_type constraint — migration 032 (PgBouncer-safe)
+- Workspace creation modal — replaces ugly `prompt()` dialog
+- Agent hire/add duplicate detection — 409 Conflict instead of silent no-op
+- Consolidation charge ordering — validates before charging gas
+
+### Open Issues
+- **11 agents not seeded in production DB** — needs redeploy to trigger seeder
+- **No `/api/version` endpoint** — can't verify which commit is deployed
+- **Dependency auto-hire swallows errors** — `let _ = charge_workspace_gas(...)` hides failures
+- **No refund mechanism** — failed mid-execution charges are not refundable
+- **`base.html` is dead code** — references nonexistent files, not served anywhere
+
+### Technical Debt
+- 39 compiler warnings (mostly unused variables, dead code)
+- No CI/CD pipeline (manual Railway deploys)
+- Limited test coverage (seed dataset exists but no integration test harness in CI)
+- Theme CSS is partially inline (some templates) and partially in variables.css
+
+---
+
+## What Needs Testing
+
+The platform has a lot of functionality that hasn't been exercised with real data yet:
+
+1. **Execution pipeline end-to-end**: Execute an agent, verify episode + embedding stored, trigger consolidation, check KG populated
+2. **Workspace collaboration**: Create workspace, hire agents, chat, verify coherence evaluation fires
+3. **Similarity Lab flow**: Build shopping profile, list on marketplace, run advertiser query, verify credits flow
+4. **Eval framework**: Run eval suite on an agent, verify judge scores, check regression detection
+5. **Compound agents**: Execute ar_card_producer or shopping_assistant, verify tool delegation works
+6. **Image generation**: Test generate_image and edit_image tools (Gemini integration)
+
+---
+
+## Metrics
+
+| Metric | Value |
 |--------|-------|
-| Workspace crates | 16 |
-| Rust LOC (core src/) | 22,872 |
-| Rust LOC (memory crate) | 6,359 |
-| Rust LOC (coherence crates) | 5,213 |
-| Rust LOC (auth crate) | 2,568 |
-| Rust LOC (ontology crate) | 1,939 |
-| Rust LOC (projector crate) | 678 |
-| **Total Rust LOC** | **~39,600** |
-| HTML templates LOC | 14,772 |
-| Static JS LOC | 1,392 |
-| Static CSS LOC | 920 |
-| SQL migrations | 27 |
-| Curated agents | 27 |
-| API routes | 122 |
-| Built-in tools | 17 |
-| MCP tools | 7 |
-| Tests | 231 |
-| Git commits | 254 |
-| api_server.rs | 8,375 lines |
+| Rust LOC | ~49,000 |
+| Handler LOC | ~9,000 |
+| API Routes | 200+ |
+| DB Migrations | 32 |
+| HTML Templates | 28 |
+| Static Assets | 22 |
+| Agent Cards | 32 |
+| Commits (Feb 7-10) | 154 |
+| Crates in Workspace | 7 (fermi, fermi-auth, fermi-memory, fermi-lsp, agent-bestiary, projector, consolidate) |
 
 ---
 
-## What's Missing (Production Gaps)
+## Next Priorities
 
-### Tier 0: Core Execution Reliability
-1. **Embedding generation on execution** — episodes stored with `embedding: None`, must call EmbeddingGenerator in the execute pipeline
-2. **Multi-model execution beyond Anthropic** — DB fields exist for Mistral/OpenRouter/Qwen, MultiModelExecutor scaffolded, but non-Anthropic paths untested in production
-3. **Consolidation trigger endpoint** — `POST /api/agents/:id/consolidate` to run dreaming cycles on demand
-4. **Entity/fact extraction in consolidation** — consolidation extracts rules but not KG entities/facts yet
-
-### Tier 1: Money In
-5. **Stripe Connect for creator payouts** — stripe_connect_advisor agent exists as guide, actual Connect integration not wired
-6. **Credit top-up UX** — "Buy More" buttons wherever balance is shown, low-balance warnings
-7. **SIWE wallet connection** — stub exists in fermi-auth/src/siwe.rs, not wired to UI
-
-### Tier 2: Discovery & Engagement
-8. **Full-text search** — catalogue has client-side category filtering but no server-side text search
-9. **Notifications** — migration 021 exists, no handler/UI
-10. **Agent detail actions** — execution history tab, budget top-up from detail page
-
-### Tier 3: Platform Safety
-11. **Rate limiting** — no per-user/per-endpoint throttling
-12. **Content moderation** — no agent output filtering
-13. **Admin tools** — admin.html template exists, minimal backend
-
-### Tier 4: Polish
-14. **Mobile nav** — hamburger menu, consistent breakpoints
-15. **Error pages** — 404.html/500.html exist, not always served correctly
-16. **Analytics** — no PostHog/Plausible integration
-
----
-
-## Architecture Health
-
-| Component | Health | Notes |
-|-----------|--------|-------|
-| Core engine (FPL, agents) | 9/10 | Solid, well-tested |
-| Auth system | 8/10 | OAuth + API keys working, SIWE stubbed |
-| Credit/gas system | 8/10 | Working, ledger append-only, gas configurable |
-| Database layer | 7/10 | PgBouncer issues fixed, needs connection pool tuning |
-| ADM pipeline | 7/10 | Consolidation works, entity extraction missing |
-| Execution pipeline | 8/10 | Tool-aware loop working, multi-model scaffolded |
-| Coherence system | 8/10 | Full TEC engine, tools in registry, auto-eval |
-| Workspace system | 7/10 | Functional, slug fix applied, needs stress testing |
-| Web UI | 7/10 | 26 templates, dual themes, world view catalogue |
-| Eval framework | 7/10 | Judge + regression detection, needs more test cases |
-| MCP server | 8/10 | 7 tools, Zed integration documented |
-| Observability | 6/10 | Episode detail + metrics, needs structured logging |
-| Test coverage | 5/10 | 231 tests, heavy on integration, light on unit |
-
----
-
-## Sprint History
-
-| Sprint | Focus | Key Deliverables |
-|--------|-------|------------------|
-| A-C | Foundation | Stripe, profile, settings |
-| D-F | Agent detail | Search, notifications stubs, admin |
-| G | Visual identity | Hasui/OP-1 themes, Gruvbox palette |
-| H | Agent categories | 6 categories, tag-based filtering |
-| I | Landing page | Public hero, route restructure (/ = landing, /catalogue = index) |
-| J | Coherence | TEC engine, observer, settling, auto-eval, shelf |
-| K | Platform depth | Static assets, agent wizard, version history, multi-model, projector |
-| L | Agent creation | 5-step wizard, multi-provider catalogue, ontology seeds |
-| M | Tool execution | ToolAwareExecutor, 9 built-in tools, dual-protocol |
-| N | Observability | Episode detail, execution activity, platform metrics |
-| O | Eval framework | Test cases, background runner, LLM judge, regression detection |
-| P | Coherence tools | evaluate_coherence, coherence_snapshot, get_workspace_messages |
-| Q | Compound agents | social_media_studio, artist deck (style_transfer + watermark + delivery) |
-| R | Social publishing | instagram_publisher, bluesky_publisher, cross-posting |
-| S | Image tools | generate_image, edit_image (Gemini), write_workspace_file binary support |
-| T | Platform ops | API key UI fixes, catalogue world view, PgBouncer fix, workspace slug fix |
-| U | Public face | Aspiration page, hero ownership messaging, Xaman Ek + MCP expansion |
+1. **Verify deploy** — confirm all committed fixes are live
+2. **Test execution pipeline** — run a real agent, check embeddings + KG
+3. **Test workspace flow** — hire agents, chat, verify coherence
+4. **Test Similarity Lab** — end-to-end consumer/advertiser flow
+5. **Add `/api/version`** — so we always know what's deployed
+6. **Scheduled actions design** — clean hooks for fee-incurring background tasks (consolidation, eval, etc.)
