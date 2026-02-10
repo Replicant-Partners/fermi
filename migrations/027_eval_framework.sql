@@ -1,8 +1,6 @@
 -- Migration 027: Eval framework tables
 -- Test cases per agent + eval run results with per-case scoring
 
-BEGIN;
-
 -- Test cases: enriched versions of sample_queries with optional rubrics
 CREATE TABLE IF NOT EXISTS public.eval_test_cases (
     test_case_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -57,5 +55,3 @@ ALTER TABLE credit_ledger ADD CONSTRAINT credit_ledger_tx_type_check
         'fork_royalty', 'fork_fee', 'publish_fee',
         'eval_fee'
     ));
-
-COMMIT;

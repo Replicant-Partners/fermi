@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,88 +30,144 @@ jobs:
           - 5432:5432
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@1.85.0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.85.0
 
-    - name: Cache cargo registry
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Cache cargo index
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Cache target directory
-      uses: actions/cache@v4
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Set up database
-      env:
-        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
-      run: |
-        # Install PostgreSQL client
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client
+      - name: Pin dependency versions
+        run: |
+          cargo update time --precise 0.3.36
+          cargo update home --precise 0.5.9
 
-        # Wait for postgres to be ready
-        until pg_isready -h localhost -p 5432 -U postgres; do
-          echo "Waiting for postgres..."
-          sleep 1
-        done
+      - name: Set up database
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
 
-        # Run schema migration (if schema file exists)
-        if [ -f docs/agent-bestiary/MEMORY_SCHEMA.sql ]; then
-          psql $DATABASE_URL -f docs/agent-bestiary/MEMORY_SCHEMA.sql
-        fi
+          until pg_isready -h localhost -p 5432 -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 1
+          done
 
-    - name: Run tests
-      env:
-        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
-        TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
-      run: |
-        # Run unit tests (no database required)
-        cargo test --lib --workspace
+          # Enable uuid-ossp extension (pgvector not available in vanilla postgres)
+          psql -h localhost -U postgres -d fermi_test -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
 
-        # Run integration tests (with database)
-        cargo test --test integration_tests --package fermi-memory -- --ignored
+          # Run all migrations in order (same as api_server::run_migrations)
+          for f in $(ls migrations/*.sql | grep -v rollback | sort); do
+            echo "Running migration: $f"
+            psql -h localhost -U postgres -d fermi_test -f "$f" 2>&1 || true
+          done
+
+          echo "All migrations complete"
+
+      - name: Run unit tests
+        run: cargo test --lib --workspace
+
+      - name: Run API integration tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+        run: cargo test --test api_tests -- --test-threads=1
+
+      - name: Run fermi-memory integration tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+        run: cargo test --test integration_tests --package fermi-memory -- --ignored
+
+  migration-lint:
+    name: Migration Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for BEGIN/COMMIT in migrations (banned with PgBouncer)
+        run: |
+          FAILED=0
+          for f in migrations/*.sql; do
+            # Skip rollback files
+            case "$f" in *rollback*) continue ;; esac
+
+            # Grandfathered: migrations 001-025 predate the lint rule.
+            # Only enforce on 026+ where BEGIN/COMMIT caused production outages.
+            NUM=$(basename "$f" | grep -oP '^\d+' || echo "0")
+            if [ "$NUM" -lt 26 ] 2>/dev/null; then
+              continue
+            fi
+
+            # Check for bare BEGIN or COMMIT statements
+            if grep -Pn '^\s*(BEGIN|COMMIT)\s*;?\s*$' "$f" 2>/dev/null; then
+              echo "ERROR: $f contains BEGIN/COMMIT — banned with PgBouncer transaction mode"
+              echo "  Use IF NOT EXISTS / DROP IF EXISTS for idempotency instead"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "Migrations must not use explicit BEGIN/COMMIT."
+            echo "Neon uses PgBouncer in transaction mode which silently fails"
+            echo "when migrations contain transaction control statements."
+            exit 1
+          fi
+
+          echo "All migrations clean (026+) — no BEGIN/COMMIT found"
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@1.85.0
-      with:
-        components: clippy
-    - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy
+      - name: Pin dependency versions
+        run: |
+          cargo update time --precise 0.3.36
+          cargo update home --precise 0.5.9
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@1.85.0
-      with:
-        components: rustfmt
-    - name: Check formatting
-      run: cargo fmt --all -- --check
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
   security:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@1.85.0
-    - name: Install cargo-audit
-      run: cargo install cargo-audit
-    - name: Run security audit
-      run: cargo audit
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Run security audit
+        run: cargo audit
