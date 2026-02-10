@@ -2852,7 +2852,7 @@ async fn auth_callback(
 
     Response::builder()
         .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, "/")
+        .header(header::LOCATION, "/dashboard")
         .header(header::SET_COOKIE, cookie)
         .body(axum::body::Body::empty())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
