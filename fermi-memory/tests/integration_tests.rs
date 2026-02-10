@@ -21,6 +21,7 @@ async fn test_store_and_retrieve_episode() {
     let agent_id = Uuid::new_v4();
     let episode = Episode::new(
         agent_id,
+        "test_user".to_string(),
         "Test query: What is the AI market size?".to_string(),
         serde_json::json!({
             "result": "The AI market is worth $150B",
@@ -55,6 +56,7 @@ async fn test_get_unconsolidated_episodes() {
     for i in 0..5 {
         let episode = Episode::new(
             agent_id,
+            "test_user".to_string(),
             format!("Test query {}", i),
             serde_json::json!({"result": i}),
             ExecutionStatus::Success,
@@ -84,6 +86,7 @@ async fn test_store_and_retrieve_semantic_rule() {
 
     let rule = SemanticRule::new(
         agent_id,
+        "test_user".to_string(),
         "When analyzing market size, always check multiple sources".to_string(),
         0.85,
         episode_ids.clone(),
@@ -118,6 +121,7 @@ async fn test_mark_episodes_consolidated() {
     for i in 0..3 {
         let episode = Episode::new(
             agent_id,
+            "test_user".to_string(),
             format!("Test query {}", i),
             serde_json::json!({"result": i}),
             ExecutionStatus::Success,
@@ -152,6 +156,7 @@ async fn test_get_active_semantic_rules() {
     for i in 0..3 {
         let rule = SemanticRule::new(
             agent_id,
+            "test_user".to_string(),
             format!("Rule {}", i),
             0.5 + (i as f32 * 0.1),
             vec![Uuid::new_v4()],
@@ -187,6 +192,7 @@ async fn test_episode_creation() {
     let agent_id = Uuid::new_v4();
     let episode = Episode::new(
         agent_id,
+        "test_user".to_string(),
         "Test query".to_string(),
         serde_json::json!({"test": "data"}),
         ExecutionStatus::Success,
@@ -203,7 +209,13 @@ async fn test_semantic_rule_creation() {
     let agent_id = Uuid::new_v4();
     let episode_ids = vec![Uuid::new_v4(), Uuid::new_v4()];
 
-    let rule = SemanticRule::new(agent_id, "Test rule".to_string(), 0.75, episode_ids.clone());
+    let rule = SemanticRule::new(
+        agent_id,
+        "test_user".to_string(),
+        "Test rule".to_string(),
+        0.75,
+        episode_ids.clone(),
+    );
 
     assert_eq!(rule.agent_id, agent_id);
     assert_eq!(rule.confidence_score, 0.75);
