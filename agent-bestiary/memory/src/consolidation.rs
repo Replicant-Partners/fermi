@@ -868,6 +868,11 @@ mod tests {
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
+            sample_queries: vec![],
+            status: "active".to_string(),
+            fork_pricing: None,
+            forked_from: None,
+            fork_count: 0,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

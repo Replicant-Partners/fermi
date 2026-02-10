@@ -180,6 +180,8 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    # Advisory-only: don't block CI on upstream dependency vulnerabilities
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85.0

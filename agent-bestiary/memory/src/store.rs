@@ -2310,25 +2310,15 @@ mod tests {
         MemoryStore::new(&database_url).await.unwrap()
     }
 
-    #[tokio::test]
-    async fn test_database_connection() {
-        let _store = get_test_store().await;
-        println!("✅ Database connection successful!");
-    }
-
-    #[tokio::test]
-    async fn test_store_and_retrieve_episode() {
-        let store = get_test_store().await;
-
-        // First create an agent
-        let agent = Agent {
+    fn test_agent() -> Agent {
+        Agent {
             agent_id: Uuid::new_v4(),
             agent_name: format!("test_agent_{}", Uuid::new_v4()),
             agent_type: "test".to_string(),
             version: "1.0.0".to_string(),
             tier: "test".to_string(),
             executor_type: "llm".to_string(),
-            model: "claude-3-haiku-20240307".to_string(),
+            model: "test-model".to_string(),
             temperature: 0.3,
             mcp_servers: None,
             description: Some("Test agent".to_string()),
@@ -2351,8 +2341,30 @@ mod tests {
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
             sample_queries: vec![],
-        };
+            total_executions: 0,
+            successful_executions: 0,
+            failed_executions: 0,
+            total_cost_usd: None,
+            avg_execution_time_ms: 0,
+            status: "active".to_string(),
+            fork_pricing: None,
+            forked_from: None,
+            fork_count: 0,
+        }
+    }
 
+    #[tokio::test]
+    async fn test_database_connection() {
+        let _store = get_test_store().await;
+        println!("✅ Database connection successful!");
+    }
+
+    #[tokio::test]
+    async fn test_store_and_retrieve_episode() {
+        let store = get_test_store().await;
+
+        // First create an agent
+        let agent = test_agent();
         let agent_id = store.upsert_agent(agent).await.unwrap();
 
         // Now create an episode for that agent
@@ -2388,38 +2400,7 @@ mod tests {
         let embedder = MockEmbeddings::new(1024);
 
         // Create agent
-        let agent = Agent {
-            agent_id: Uuid::new_v4(),
-            agent_name: format!("test_agent_{}", Uuid::new_v4()),
-            agent_type: "test".to_string(),
-            version: "1.0.0".to_string(),
-            tier: "test".to_string(),
-            executor_type: "llm".to_string(),
-            model: "claude-3-haiku-20240307".to_string(),
-            temperature: 0.3,
-            mcp_servers: None,
-            description: Some("Test agent".to_string()),
-            author: "Test".to_string(),
-            current_ontology_commit: None,
-            current_ontology_snapshot_id: None,
-            last_consolidated_at: None,
-            dreaming_budget_credits: 0,
-            dreaming_credits_used: 0,
-            dreaming_budget_reset_at: None,
-            system_prompt: None,
-            visibility: "public".to_string(),
-            owner_id: None,
-            tags: vec![],
-            education_budget_credits: 0,
-            education_credits_used: 0,
-            display_alias: None,
-            llm_provider: "anthropic".to_string(),
-            embedding_provider: "anthropic".to_string(),
-            embedding_model: "voyage-2".to_string(),
-            embedding_dimension: 1024,
-            sample_queries: vec![],
-        };
-
+        let agent = test_agent();
         let agent_id = store.upsert_agent(agent).await.unwrap();
 
         // Create episodes with embeddings
@@ -2476,37 +2457,7 @@ mod tests {
         let store = get_test_store().await;
 
         // Create agent
-        let agent = Agent {
-            agent_id: Uuid::new_v4(),
-            agent_name: format!("test_agent_{}", Uuid::new_v4()),
-            agent_type: "test".to_string(),
-            version: "1.0.0".to_string(),
-            tier: "test".to_string(),
-            executor_type: "llm".to_string(),
-            model: "test-model".to_string(),
-            temperature: 0.3,
-            mcp_servers: None,
-            description: None,
-            author: "test".to_string(),
-            current_ontology_commit: None,
-            current_ontology_snapshot_id: None,
-            last_consolidated_at: None,
-            dreaming_budget_credits: 0,
-            dreaming_credits_used: 0,
-            dreaming_budget_reset_at: None,
-            system_prompt: None,
-            visibility: "public".to_string(),
-            owner_id: None,
-            tags: vec![],
-            education_budget_credits: 0,
-            education_credits_used: 0,
-            display_alias: None,
-            llm_provider: "anthropic".to_string(),
-            embedding_provider: "anthropic".to_string(),
-            embedding_model: "voyage-2".to_string(),
-            embedding_dimension: 1024,
-            sample_queries: vec![],
-        };
+        let agent = test_agent();
         store.upsert_agent(agent.clone()).await.unwrap();
 
         // Create a few test episodes
@@ -2567,37 +2518,7 @@ mod tests {
         let store = get_test_store().await;
 
         // Create agent
-        let agent = Agent {
-            agent_id: Uuid::new_v4(),
-            agent_name: format!("test_agent_{}", Uuid::new_v4()),
-            agent_type: "test".to_string(),
-            version: "1.0.0".to_string(),
-            tier: "test".to_string(),
-            executor_type: "llm".to_string(),
-            model: "test-model".to_string(),
-            temperature: 0.3,
-            mcp_servers: None,
-            description: None,
-            author: "test".to_string(),
-            current_ontology_commit: None,
-            current_ontology_snapshot_id: None,
-            last_consolidated_at: None,
-            dreaming_budget_credits: 0,
-            dreaming_credits_used: 0,
-            dreaming_budget_reset_at: None,
-            system_prompt: None,
-            visibility: "public".to_string(),
-            owner_id: None,
-            tags: vec![],
-            education_budget_credits: 0,
-            education_credits_used: 0,
-            display_alias: None,
-            llm_provider: "anthropic".to_string(),
-            embedding_provider: "anthropic".to_string(),
-            embedding_model: "voyage-2".to_string(),
-            embedding_dimension: 1024,
-            sample_queries: vec![],
-        };
+        let agent = test_agent();
         store.upsert_agent(agent.clone()).await.unwrap();
 
         // Create some episodes
@@ -2655,37 +2576,7 @@ mod tests {
         let store = get_test_store().await;
 
         // Create agent
-        let agent = Agent {
-            agent_id: Uuid::new_v4(),
-            agent_name: format!("test_agent_{}", Uuid::new_v4()),
-            agent_type: "test".to_string(),
-            version: "1.0.0".to_string(),
-            tier: "test".to_string(),
-            executor_type: "llm".to_string(),
-            model: "test-model".to_string(),
-            temperature: 0.3,
-            mcp_servers: None,
-            description: None,
-            author: "test".to_string(),
-            current_ontology_commit: None,
-            current_ontology_snapshot_id: None,
-            last_consolidated_at: None,
-            dreaming_budget_credits: 0,
-            dreaming_credits_used: 0,
-            dreaming_budget_reset_at: None,
-            system_prompt: None,
-            visibility: "public".to_string(),
-            owner_id: None,
-            tags: vec![],
-            education_budget_credits: 0,
-            education_credits_used: 0,
-            display_alias: None,
-            llm_provider: "anthropic".to_string(),
-            embedding_provider: "anthropic".to_string(),
-            embedding_model: "voyage-2".to_string(),
-            embedding_dimension: 1024,
-            sample_queries: vec![],
-        };
+        let agent = test_agent();
         store.upsert_agent(agent.clone()).await.unwrap();
 
         // Create semantic rule
@@ -2753,37 +2644,7 @@ mod tests {
         let store = get_test_store().await;
 
         // Create agent
-        let agent = Agent {
-            agent_id: Uuid::new_v4(),
-            agent_name: format!("test_agent_{}", Uuid::new_v4()),
-            agent_type: "test".to_string(),
-            version: "1.0.0".to_string(),
-            tier: "test".to_string(),
-            executor_type: "llm".to_string(),
-            model: "test-model".to_string(),
-            temperature: 0.3,
-            mcp_servers: None,
-            description: None,
-            author: "test".to_string(),
-            current_ontology_commit: None,
-            current_ontology_snapshot_id: None,
-            last_consolidated_at: None,
-            dreaming_budget_credits: 0,
-            dreaming_credits_used: 0,
-            dreaming_budget_reset_at: None,
-            system_prompt: None,
-            visibility: "public".to_string(),
-            owner_id: None,
-            tags: vec![],
-            education_budget_credits: 0,
-            education_credits_used: 0,
-            display_alias: None,
-            llm_provider: "anthropic".to_string(),
-            embedding_provider: "anthropic".to_string(),
-            embedding_model: "voyage-2".to_string(),
-            embedding_dimension: 1024,
-            sample_queries: vec![],
-        };
+        let agent = test_agent();
         store.upsert_agent(agent.clone()).await.unwrap();
 
         // Create entities
