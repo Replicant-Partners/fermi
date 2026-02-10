@@ -375,6 +375,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/029_fix_message_type_and_profile.sql",
         "migrations/030_shopping_marketplace.sql",
         "migrations/031_waitlist_status.sql",
+        "migrations/032_fix_tx_type_constraint.sql",
     ];
 
     for file in &migration_files {
@@ -570,7 +571,7 @@ async fn main() {
         .route("/aspiration", get(handlers::pages::aspiration))
         .route("/catalogue", get(handlers::pages::catalogue))
         .route("/docs", get(handlers::pages::docs_view))
-        .route("/docs/{slug}", get(handlers::pages::docs_view))
+        .route("/docs/:slug", get(handlers::pages::docs_view))
         .route("/agent/:agent_id", get(handlers::pages::agent_detail))
         .route(
             "/agent/:agent_id/ontology",

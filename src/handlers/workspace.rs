@@ -1117,6 +1117,21 @@ pub async fn hire_agent_handler(
         return Err((StatusCode::FORBIDDEN, "Agent is not public".to_string()));
     }
 
+    // Check if agent is already in workspace
+    let already =
+        sqlx::query("SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2")
+            .bind(ws_uuid)
+            .bind(req.agent_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if already.is_some() {
+        return Err((
+            StatusCode::CONFLICT,
+            "Agent is already in this workspace".to_string(),
+        ));
+    }
+
     // Charge hire gas from workspace wallet
     let agent_id_str = req.agent_id.to_string();
     charge_workspace_gas(
@@ -1278,6 +1293,21 @@ pub async fn add_agent_handler(
         return Err((
             StatusCode::FORBIDDEN,
             "You don't own this agent. Use /hire instead.".to_string(),
+        ));
+    }
+
+    // Check if agent is already in workspace
+    let already =
+        sqlx::query("SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2")
+            .bind(ws_uuid)
+            .bind(req.agent_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if already.is_some() {
+        return Err((
+            StatusCode::CONFLICT,
+            "Agent is already in this workspace".to_string(),
         ));
     }
 

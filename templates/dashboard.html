@@ -770,43 +770,159 @@
         }
       }
 
-      // Create workspace
+      // Create workspace — opens themed modal
       document
         .getElementById("create-ws-btn")
-        .addEventListener("click", async () => {
-          const name = prompt("Workspace name:");
-          if (!name || !name.trim()) return;
-          const slug =
-            name
-              .trim()
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, "-")
-              .replace(/^-|-$/g, "") +
-            "-" +
-            Date.now().toString(36).slice(-4);
-          try {
-            const res = await fetch("/api/teams", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                name: name.trim(),
-                slug,
-                description: "",
-              }),
-            });
-            if (!res.ok) {
-              const err = await res.text();
-              alert("Failed to create workspace: " + err);
-              return;
-            }
-            const team = await res.json();
-            window.location.href = "/workspace/" + team.id;
-          } catch (e) {
-            alert("Failed to create workspace");
-          }
-        });
+        .addEventListener("click", () => openWsModal());
 
       // (sparkline + mock economics removed — replaced by compact tiles)
+    </script>
+    <!-- Create Workspace Modal -->
+    <div class="modal-overlay" id="ws-modal">
+      <div
+        class="modal"
+        style="
+          width: 400px;
+          max-width: 90vw;
+          background: var(--bg0);
+          border: 1px solid var(--bg2);
+          padding: 24px;
+        "
+      >
+        <h3 style="color: var(--fg0); margin-bottom: 16px">New Composition</h3>
+        <label
+          style="
+            display: block;
+            color: var(--fg3);
+            font-size: 0.8rem;
+            margin-bottom: 4px;
+          "
+          >Name</label
+        >
+        <input
+          type="text"
+          id="ws-name-input"
+          placeholder="e.g. Market Research Team"
+          style="
+            width: 100%;
+            background: var(--bg1);
+            border: 1px solid var(--bg2);
+            color: var(--fg1);
+            padding: 8px 12px;
+            font-family: inherit;
+            font-size: 0.85rem;
+            margin-bottom: 12px;
+          "
+        />
+        <label
+          style="
+            display: block;
+            color: var(--fg3);
+            font-size: 0.8rem;
+            margin-bottom: 4px;
+          "
+          >Description
+          <span style="color: var(--fg3); font-size: 0.75rem"
+            >(optional)</span
+          ></label
+        >
+        <input
+          type="text"
+          id="ws-desc-input"
+          placeholder="What will this workspace do?"
+          style="
+            width: 100%;
+            background: var(--bg1);
+            border: 1px solid var(--bg2);
+            color: var(--fg1);
+            padding: 8px 12px;
+            font-family: inherit;
+            font-size: 0.85rem;
+            margin-bottom: 16px;
+          "
+        />
+        <div style="display: flex; gap: 8px; justify-content: flex-end">
+          <button class="btn" onclick="closeWsModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="submitCreateWs()">
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+    <style>
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 100;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-overlay.active {
+        display: flex;
+      }
+      .modal input:focus {
+        outline: none;
+        border-color: var(--yellow);
+      }
+    </style>
+    <script>
+      function openWsModal() {
+        document.getElementById("ws-name-input").value = "";
+        document.getElementById("ws-desc-input").value = "";
+        document.getElementById("ws-modal").classList.add("active");
+        setTimeout(() => document.getElementById("ws-name-input").focus(), 100);
+      }
+      function closeWsModal() {
+        document.getElementById("ws-modal").classList.remove("active");
+      }
+      async function submitCreateWs() {
+        const name = document.getElementById("ws-name-input").value.trim();
+        if (!name) {
+          document.getElementById("ws-name-input").focus();
+          return;
+        }
+        const desc = document.getElementById("ws-desc-input").value.trim();
+        const slug =
+          name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "") +
+          "-" +
+          Date.now().toString(36).slice(-4);
+        try {
+          const res = await fetch("/api/teams", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, slug, description: desc }),
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Failed to create workspace: " + err);
+            return;
+          }
+          const team = await res.json();
+          window.location.href = "/workspace/" + team.id;
+        } catch (e) {
+          alert("Failed to create workspace");
+        }
+      }
+      // Enter key submits
+      document
+        .getElementById("ws-name-input")
+        .addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitCreateWs();
+        });
+      document
+        .getElementById("ws-desc-input")
+        .addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitCreateWs();
+        });
+      // Escape closes
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeWsModal();
+      });
     </script>
     <script src="/static/js/widgets/xaman-ek.js"></script>
     <script src="/static/js/theme.js"></script>
