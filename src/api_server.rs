@@ -1297,10 +1297,13 @@ async fn main() {
     let db = PgPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(std::time::Duration::from_secs(30))
+        .test_before_acquire(true)
         .after_connect(|conn, _meta| {
             Box::pin(async move {
                 // Reset connection state — clears any aborted transaction from PgBouncer
-                sqlx::Executor::execute(conn, "RESET ALL").await.map(|_| ())
+                sqlx::Executor::execute(conn, "DISCARD ALL")
+                    .await
+                    .map(|_| ())
             })
         })
         .connect_with(connect_options)
