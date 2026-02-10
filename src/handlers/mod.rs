@@ -5,5 +5,6 @@
 //! live in api_server.rs as pub(crate) functions.
 
 pub mod agents;
+pub mod eval;
 pub mod lifecycle;
 pub mod workspace;
