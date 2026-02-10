@@ -13,6 +13,7 @@ pub mod registry;
 pub mod tool_executor;
 pub mod tools;
 
+#[allow(ambiguous_glob_reexports)]
 pub use agent_card::*;
 pub use executor::*;
 pub use llm_executor::*;

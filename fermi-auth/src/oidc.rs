@@ -128,6 +128,7 @@ pub struct UserInfoResponse {
 struct GoogleUserInfo {
     id: String,
     email: Option<String>,
+    #[allow(dead_code)]
     verified_email: Option<bool>,
     name: Option<String>,
     picture: Option<String>,
@@ -164,7 +165,7 @@ pub fn build_google_auth_url(config: &GoogleOAuthConfig, state: &str) -> String 
         ("access_type", "offline"),
         ("prompt", "consent"),
     ];
-    let query = serde_urlencoded::to_string(&params).unwrap_or_default();
+    let query = serde_urlencoded::to_string(params).unwrap_or_default();
     format!("https://accounts.google.com/o/oauth2/v2/auth?{}", query)
 }
 
@@ -244,7 +245,7 @@ pub fn build_github_auth_url(config: &GitHubOAuthConfig, state: &str) -> String 
         ("scope", "user:email read:user"),
         ("state", state),
     ];
-    let query = serde_urlencoded::to_string(&params).unwrap_or_default();
+    let query = serde_urlencoded::to_string(params).unwrap_or_default();
     format!("https://github.com/login/oauth/authorize?{}", query)
 }
 

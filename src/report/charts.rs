@@ -1,10 +1,6 @@
 /// Mermaid chart generation
 use crate::ast::*;
 use crate::executor::ExecutionResults;
-use crate::report::mermaid::{
-    generate_chart_markdown, generate_image, is_mmdc_available, ImageFormat,
-};
-use std::path::Path;
 
 /// Generate histogram using XY Chart (experimental)
 pub fn generate_histogram(

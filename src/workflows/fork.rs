@@ -1,6 +1,6 @@
 //! Fork logic — copy an agent's contract (and optionally ontology/embeddings).
 
-use super::types::{AgentLifecycleStatus, ForkPricing};
+use super::types::ForkPricing;
 use crate::gas::GasFees;
 use fermi_auth::{credit_charge, credit_grant, get_or_create_wallet};
 use sqlx::PgPool;

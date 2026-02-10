@@ -448,7 +448,6 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Delete an agent and cascade (episodes, rules, entities, facts, communities)
     // ─── Agent Version History ────────────────────────────────────
 
     /// Snapshot current agent state as a version row
@@ -859,6 +858,7 @@ impl MemoryStore {
     }
 
     /// Updates consolidation job statistics
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_consolidation_job(
         &self,
         job_id: Uuid,
@@ -1876,6 +1876,7 @@ impl MemoryStore {
 
     // ─── Shopping Profiles & Marketplace ────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_shopping_profile(
         &self,
         user_id: &str,
@@ -2132,6 +2133,7 @@ impl MemoryStore {
         Ok(results)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_marketplace_transaction(
         &self,
         listing_id: Uuid,

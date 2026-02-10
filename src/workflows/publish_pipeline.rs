@@ -6,7 +6,6 @@ use crate::gas::GasFees;
 use agent_bestiary_memory::types::Agent;
 use fermi_auth::{credit_charge, get_or_create_wallet};
 use sqlx::PgPool;
-use uuid::Uuid;
 
 /// Run publish readiness checks on an agent. Returns all checks (pass and fail).
 pub fn run_publish_checks(agent: &Agent) -> Vec<PublishCheck> {

@@ -23,7 +23,7 @@ use uuid::Uuid;
 /// Deterministic UUID from (agent_index, table_code, item_index).
 /// Table codes: Agent=0, Episode=1, Rule=2, Entity=3, Fact=4, Community=5, Job=6
 fn make_uuid(agent_idx: u8, table_code: u8, item_idx: u8) -> Uuid {
-    Uuid::from_u128((agent_idx as u128) << 96 | (table_code as u128) << 64 | (item_idx as u128))
+    Uuid::from_u128(((agent_idx as u128) << 96) | ((table_code as u128) << 64) | (item_idx as u128))
 }
 
 /// Deterministic 1024-dim embedding from a seed value.
@@ -388,7 +388,7 @@ impl SeedData {
             };
 
             // Embeddings: all success + failures have embeddings, partials: only first one
-            let has_embedding = i < 22 || i == 22;
+            let has_embedding = i <= 22;
             let embedding = if has_embedding {
                 Some(make_embedding(ai as u64 * 1000 + i as u64))
             } else {

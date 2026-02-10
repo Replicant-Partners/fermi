@@ -91,14 +91,9 @@ pub async fn optional_auth_middleware(
                 validate_session_token(&token, &auth_state.jwt_secret).ok()
             }
             TokenSource::Bearer(token) => {
-                validate_session_token(&token, &auth_state.jwt_secret)
-                    .ok()
-                    .or_else(|| {
-                        // Try API key synchronously won't work — need async.
-                        // For optional auth, we skip API key validation in the sync path.
-                        // API key users should use the enforcing middleware routes.
-                        None
-                    })
+                // Note: API key validation requires async and is skipped here.
+                // API key users should use the enforcing middleware routes.
+                validate_session_token(&token, &auth_state.jwt_secret).ok()
             }
         };
 

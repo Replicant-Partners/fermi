@@ -136,7 +136,7 @@ impl MermaidGenerator {
 
     /// Sanitize entity names for Mermaid (uppercase, no spaces)
     fn sanitize_entity_name(name: &str) -> String {
-        name.to_uppercase().replace(' ', "_").replace('-', "_")
+        name.to_uppercase().replace([' ', '-'], "_")
     }
 
     /// Get entity and relationship counts for an agent

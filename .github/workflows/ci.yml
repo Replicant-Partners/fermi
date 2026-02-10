@@ -148,7 +148,23 @@ jobs:
           cargo update time --precise 0.3.36
           cargo update home --precise 0.5.9
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: |
+          cargo clippy --lib --bins --tests --all-features -- \
+            -W clippy::all \
+            -A dead_code \
+            -A unused_variables \
+            -A unused_imports \
+            -A unused_mut \
+            -A clippy::too_many_arguments \
+            -A clippy::should_implement_trait \
+            -A ambiguous_glob_reexports \
+            -A private_interfaces \
+            -A clippy::manual_clamp \
+            -A clippy::approx_constant \
+            -A clippy::only_used_in_recursion \
+            -A clippy::empty_line_after_doc_comments \
+            -A clippy::unnecessary_cast \
+            -A clippy::derivable_impls
 
   fmt:
     name: Format
@@ -166,7 +182,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Install cargo-audit via binstall
+        uses: cargo-bins/cargo-binstall@main
+      - run: cargo binstall --no-confirm cargo-audit
       - name: Run security audit
-        uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo audit

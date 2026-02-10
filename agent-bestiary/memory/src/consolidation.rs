@@ -25,6 +25,7 @@ pub struct ConsolidationWorker {
     lock: Arc<ConsolidationLock>,
     embedder: Arc<dyn EmbeddingGenerator>,
     llm: Option<Arc<dyn LLMProvider>>,
+    #[allow(dead_code)]
     worker_id: String,
 }
 
@@ -408,7 +409,7 @@ impl ConsolidationWorker {
                 cluster.episodes.len()
             );
 
-            let rule_description = if error_messages.len() > 0 {
+            let rule_description = if !error_messages.is_empty() {
                 Some(format!("Error example: {}", &error_messages[0]))
             } else {
                 None

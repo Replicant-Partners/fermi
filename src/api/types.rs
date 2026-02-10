@@ -1,5 +1,5 @@
 /// API Request and Response Types
-use crate::agent_backend::{AgentCard, AgentOutput, AgentStatus};
+use crate::agent_backend::AgentOutput;
 use serde::{Deserialize, Serialize};
 
 /// Request to execute an agent

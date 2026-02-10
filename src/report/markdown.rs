@@ -1,7 +1,7 @@
 /// Markdown report generation
 use crate::ast::*;
 use crate::executor::ExecutionResults;
-use crate::report::{charts, charts_image, sparkline};
+use crate::report::{charts_image, sparkline};
 use crate::sensitivity::SensitivityAnalysis;
 use chrono::{DateTime, Utc};
 use std::path::Path;

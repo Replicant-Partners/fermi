@@ -15,9 +15,7 @@ use crate::agent_backend::llm_executor::{
     extract_text_from_content, ClaudeRequest, ClaudeResponse, ContentBlock, Message, MessageBlock,
     MessageContent,
 };
-use crate::agent_backend::multi_model_executor::{
-    OpenAIFunctionCall, OpenAIMessage, OpenAIRequest, OpenAIResponse, OpenAIToolCall,
-};
+use crate::agent_backend::multi_model_executor::{OpenAIMessage, OpenAIRequest, OpenAIResponse};
 use crate::agent_backend::tools::{ToolContext, ToolRegistry};
 use crate::ast::{AgentStmt, EvidenceStmt};
 use async_trait::async_trait;

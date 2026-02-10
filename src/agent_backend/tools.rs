@@ -20,7 +20,7 @@
 ///   - get_workspace_messages: read recent workspace conversation (workspace-only)
 use crate::agent_backend::agent_card::AgentCard;
 use crate::agent_backend::executor::{AgentExecutor, ExecutionContext};
-use crate::agent_backend::llm_executor::{ClaudeTool, ContentBlock};
+use crate::agent_backend::llm_executor::ClaudeTool;
 use crate::agent_backend::multi_model_executor::{OpenAIFunction, OpenAITool};
 use crate::agent_backend::registry::AgentRegistry;
 use crate::agent_backend::tool_executor::ToolAwareExecutor;
@@ -35,7 +35,6 @@ use coherence_observer::ConversationObserver;
 use serde_json::json;
 use sqlx::Row;
 use std::sync::Arc;
-use std::time::Instant;
 use uuid::Uuid;
 
 /// Context available to tools during execution

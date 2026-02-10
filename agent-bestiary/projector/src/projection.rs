@@ -26,7 +26,7 @@ impl ProjectionEngine {
         method: &ProjectionMethod,
         dimensions: u8,
     ) -> Result<ProjectionResult> {
-        if dimensions < 2 || dimensions > 3 {
+        if !(2..=3).contains(&dimensions) {
             return Err(ProjectorError::InvalidDimensions(dimensions));
         }
 
@@ -71,7 +71,7 @@ impl ProjectionEngine {
         dimensions: u8,
         limit: usize,
     ) -> Result<ProjectionResult> {
-        if dimensions < 2 || dimensions > 3 {
+        if !(2..=3).contains(&dimensions) {
             return Err(ProjectorError::InvalidDimensions(dimensions));
         }
 
@@ -117,7 +117,7 @@ impl ProjectionEngine {
         dimensions: u8,
         num_keyframes: usize,
     ) -> Result<TemporalProjectionResult> {
-        if dimensions < 2 || dimensions > 3 {
+        if !(2..=3).contains(&dimensions) {
             return Err(ProjectorError::InvalidDimensions(dimensions));
         }
 

@@ -152,6 +152,7 @@ impl ObjectType {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "agent" => Some(ObjectType::Agent),
@@ -182,6 +183,7 @@ impl Permission {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "admin" => Permission::Admin,
@@ -224,6 +226,7 @@ impl TeamRole {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "owner" => TeamRole::Owner,
@@ -249,6 +252,7 @@ impl MemberType {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "agent" => MemberType::Agent,

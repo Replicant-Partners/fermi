@@ -128,7 +128,7 @@ impl DBSCANClustering {
             if cluster_id >= 0 {
                 cluster_map
                     .entry(cluster_id)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(episodes[idx].clone());
             }
         }

@@ -404,10 +404,9 @@ impl EmbeddingGenerator for MockEmbeddings {
         text.hash(&mut hasher);
         let hash = hasher.finish();
 
-        let mut embedding = vec![0.0; self.dimension];
-        for i in 0..self.dimension {
-            embedding[i] = ((hash.wrapping_add(i as u64)) % 1000) as f32 / 1000.0;
-        }
+        let embedding: Vec<f32> = (0..self.dimension)
+            .map(|i| ((hash.wrapping_add(i as u64)) % 1000) as f32 / 1000.0)
+            .collect();
 
         Ok(embedding)
     }

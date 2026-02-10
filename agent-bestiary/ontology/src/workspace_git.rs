@@ -46,6 +46,7 @@ impl WorkspaceGitManager {
             .join(slug)
     }
 
+    #[allow(dead_code)]
     fn github_url(&self, slug: &str) -> Option<String> {
         self.config
             .github_org
@@ -425,7 +426,7 @@ impl WorkspaceGitManager {
             let oid = rev?;
             let commit = repo.find_commit(oid)?;
             let time = commit.time();
-            let ts = DateTime::from_timestamp(time.seconds(), 0).unwrap_or_else(|| Utc::now());
+            let ts = DateTime::from_timestamp(time.seconds(), 0).unwrap_or_else(Utc::now);
 
             commits.push(WorkspaceCommit {
                 sha: commit.id().to_string(),

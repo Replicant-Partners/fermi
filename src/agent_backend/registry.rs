@@ -9,7 +9,7 @@ use crate::agent_backend::executor::{
 use crate::ast::AgentStmt;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, RwLock};
 
