@@ -61,6 +61,34 @@ pub struct SaveAgentTool {
     pub agent_id: String,
 }
 
+// Tool: Search agents by tag, type, or keyword
+#[macros::mcp_tool(
+    name = "search_agents",
+    description = "Search agents by keyword, tag, type, or tier. Returns matching agents with descriptions. Examples: 'creative', 'social-media', 'system', 'coherence'"
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct SearchAgentsTool {
+    pub query: String,
+}
+
+// Tool: Get the full catalogue grouped by category
+#[macros::mcp_tool(
+    name = "get_catalogue",
+    description = "Get the complete agent catalogue organized by category (Research, Creative, Coherence, Infrastructure, Games). Shows composition patterns and team recommendations."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct GetCatalogueTool {}
+
+// Tool: Ask Xaman Ek (the platform navigator)
+#[macros::mcp_tool(
+    name = "ask_xaman_ek",
+    description = "Ask the platform navigator anything: find agents, design workspace teams, explain features, compare agents, get platform status. Xaman Ek knows every agent and composition pattern."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct AskXamanEkTool {
+    pub question: String,
+}
+
 /// Custom handler for Agent Bestiary operations
 struct AgentBestiaryHandler {
     registry: Arc<AgentRegistry>,
@@ -86,6 +114,9 @@ impl ServerHandler for AgentBestiaryHandler {
                 GetAgentTool::tool(),
                 ExecuteAgentTool::tool(),
                 SaveAgentTool::tool(),
+                SearchAgentsTool::tool(),
+                GetCatalogueTool::tool(),
+                AskXamanEkTool::tool(),
             ],
             meta: None,
             next_cursor: None,
@@ -268,8 +299,210 @@ impl ServerHandler for AgentBestiaryHandler {
                 ]))
             }
 
+            "search_agents" => {
+                let tool: SearchAgentsTool = serde_json::from_value(serde_json::Value::Object(
+                    params.arguments.unwrap_or_default(),
+                ))
+                .map_err(|e| CallToolError::new(e))?;
+
+                let agents = self.registry.list_cards().unwrap_or_default();
+                let query_lower = tool.query.to_lowercase();
+
+                let matches: Vec<_> = agents
+                    .iter()
+                    .filter(|card| {
+                        let id_match = card.agent_id.to_lowercase().contains(&query_lower);
+                        let type_match = card.agent_type.to_lowercase().contains(&query_lower);
+                        let tier_match = format!("{:?}", card.tier)
+                            .to_lowercase()
+                            .contains(&query_lower);
+                        let desc_match = card
+                            .metadata
+                            .description
+                            .to_lowercase()
+                            .contains(&query_lower);
+                        let tag_match = card
+                            .metadata
+                            .tags
+                            .iter()
+                            .any(|t| t.to_lowercase().contains(&query_lower));
+                        let skill_match = card
+                            .capabilities
+                            .skills
+                            .iter()
+                            .any(|s| s.to_lowercase().contains(&query_lower));
+                        id_match
+                            || type_match
+                            || tier_match
+                            || desc_match
+                            || tag_match
+                            || skill_match
+                    })
+                    .map(|card| {
+                        json!({
+                            "agent_id": card.agent_id,
+                            "agent_type": card.agent_type,
+                            "tier": format!("{:?}", card.tier),
+                            "description": card.metadata.description,
+                            "tags": card.metadata.tags,
+                            "model": card.capabilities.model,
+                        })
+                    })
+                    .collect();
+
+                let result = json!({
+                    "query": tool.query,
+                    "matches": matches.len(),
+                    "agents": matches,
+                });
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&result).unwrap().into(),
+                ]))
+            }
+
+            "get_catalogue" => {
+                let agents = self.registry.list_cards().unwrap_or_default();
+
+                // Group by category based on tags and type
+                let mut categories: std::collections::BTreeMap<&str, Vec<serde_json::Value>> =
+                    std::collections::BTreeMap::new();
+                for card in &agents {
+                    let category = categorize_agent(card);
+                    categories.entry(category).or_default().push(json!({
+                        "agent_id": card.agent_id,
+                        "description": &card.metadata.description[..card.metadata.description.len().min(100)],
+                        "tier": format!("{:?}", card.tier),
+                        "model": card.capabilities.model,
+                    }));
+                }
+
+                let result = json!({
+                    "total_agents": agents.len(),
+                    "categories": categories,
+                    "composition_patterns": {
+                        "Artist Deck": ["style_transfer", "watermark", "delivery"],
+                        "Social Media Studio": ["social_media_studio", "instagram_publisher", "bluesky_publisher"],
+                        "Research Team": ["macro_forecaster", "entity_investigator", "sentiment_analyzer", "monte_carlo_sim"],
+                        "Coherence Stack": ["coherence_evaluator", "coherence_consultant", "intention_coordinator"],
+                        "Full Coordination": ["cohere_and_coordinate"]
+                    }
+                });
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&result).unwrap().into(),
+                ]))
+            }
+
+            "ask_xaman_ek" => {
+                let tool: AskXamanEkTool = serde_json::from_value(serde_json::Value::Object(
+                    params.arguments.unwrap_or_default(),
+                ))
+                .map_err(|e| CallToolError::new(e))?;
+
+                // Get xaman_ek card
+                let card = self
+                    .registry
+                    .get("xaman_ek")
+                    .map_err(|e| CallToolError::new(e))?;
+
+                let agent = AgentStmt {
+                    name: "xaman_ek".to_string(),
+                    agent_type: Some("meta".to_string()),
+                    query: tool.question.clone(),
+                    executor: Some(fermi::ast::ExecutorType::LLM),
+                    schedule: None,
+                    driver_refs: vec![],
+                    depends_on: vec![],
+                    confidence_threshold: None,
+                };
+
+                let program = fermi::ast::Program {
+                    statements: vec![fermi::ast::Statement::Agent(agent.clone())],
+                };
+
+                let context = ExecutionContext {
+                    program,
+                    agent_card: card.clone(),
+                };
+
+                let result = self
+                    .registry
+                    .execute_agent(&agent, &context)
+                    .await
+                    .map_err(|e| CallToolError::new(e))?;
+
+                self.registry.record_execution("xaman_ek", &result).ok(); // Don't fail on stats update
+
+                let output = json!({
+                    "navigator": "Xaman Ek",
+                    "answer": result.evidence.first().map(|e| e.summary.clone().unwrap_or_default()).unwrap_or_default(),
+                    "confidence": format!("{:.2}", result.confidence),
+                    "evidence": result.evidence.iter().map(|e| json!({
+                        "source": e.source,
+                        "summary": e.summary.clone().unwrap_or_default(),
+                        "key_findings": e.key_findings,
+                    })).collect::<Vec<_>>(),
+                });
+
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&output).unwrap().into(),
+                ]))
+            }
+
             _ => Err(CallToolError::unknown_tool(params.name)),
         }
+    }
+}
+
+/// Categorize an agent based on its tags and type
+fn categorize_agent(card: &AgentCard) -> &'static str {
+    let tags: Vec<String> = card
+        .metadata
+        .tags
+        .iter()
+        .map(|t| t.to_lowercase())
+        .collect();
+    let agent_type = card.agent_type.to_lowercase();
+
+    if tags
+        .iter()
+        .any(|t| t.contains("coherence") || t.contains("coordination"))
+    {
+        "Coherence & Coordination"
+    } else if tags
+        .iter()
+        .any(|t| t.contains("social-media") || t.contains("instagram") || t.contains("bluesky"))
+    {
+        "Social Media & Publishing"
+    } else if agent_type.contains("creative")
+        || tags
+            .iter()
+            .any(|t| t.contains("image") || t.contains("creative") || t.contains("style"))
+    {
+        "Creative & Visual"
+    } else if tags
+        .iter()
+        .any(|t| t.contains("billing") || t.contains("stripe") || t.contains("payment"))
+    {
+        "Billing & Economics"
+    } else if tags
+        .iter()
+        .any(|t| t.contains("meta") || t.contains("navigation") || t.contains("coaching"))
+    {
+        "Meta & Platform"
+    } else if tags
+        .iter()
+        .any(|t| t.contains("game") || t.contains("puzzle") || t.contains("engagement"))
+    {
+        "Games & Engagement"
+    } else if agent_type.contains("research")
+        || agent_type.contains("analyst")
+        || tags
+            .iter()
+            .any(|t| t.contains("forecasting") || t.contains("research") || t.contains("analysis"))
+    {
+        "Research & Analysis"
+    } else {
+        "Other"
     }
 }
 
@@ -322,7 +555,7 @@ async fn main() -> SdkResult<()> {
             ..Default::default()
         },
         protocol_version: ProtocolVersion::V2025_11_25.into(),
-        instructions: Some("Use these tools to access AI-powered forecasting agents. Start with list_agents to see available agents, then execute_agent to run research queries.".into()),
+        instructions: Some("Use these tools to interact with the Fermi Agent Bestiary. Start with get_catalogue for an overview, search_agents to find specific agents, ask_xaman_ek for platform guidance, or execute_agent to run queries. 27 agents across Research, Creative, Coherence, Billing, and Social Media categories.".into()),
         meta: None,
     };
 
@@ -340,7 +573,7 @@ async fn main() -> SdkResult<()> {
     });
 
     eprintln!("🚀 Fermi Agent Bestiary MCP Server started");
-    eprintln!("   Tools: list_agents, get_agent, execute_agent, save_agent");
+    eprintln!("   Tools: list_agents, get_agent, execute_agent, save_agent, search_agents, get_catalogue, ask_xaman_ek");
 
     server.start().await
 }

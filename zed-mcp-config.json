@@ -1,12 +1,22 @@
 {
   "mcpServers": {
     "fermi-agent-bestiary": {
-      "command": "/home/ilabra/fermi/target/release/agent-mcp-server",
+      "command": "/home/ilabra/fermi/target/debug/agent-mcp-server",
       "args": [],
       "env": {
         "ANTHROPIC_API_KEY": "sk-ant-api03-YOUR_API_KEY_HERE",
-        "AGENTS_DIR": "/home/ilabra/fermi/agents/curated"
-      }
+        "AGENTS_DIR": "/home/ilabra/fermi/agents/curated",
+        "RUST_LOG": "info"
+      },
+      "_tools": [
+        "list_agents        — List all 27 agents with metadata",
+        "get_agent           — Get detailed info for a specific agent",
+        "execute_agent       — Run an agent with a query (requires ANTHROPIC_API_KEY)",
+        "save_agent          — Save agent stats to disk + git commit",
+        "search_agents       — Search by keyword, tag, type, or tier",
+        "get_catalogue       — Full catalogue grouped by category with composition patterns",
+        "ask_xaman_ek        — Ask the platform navigator anything"
+      ]
     },
     "neon": {
       "command": "npx",
