@@ -58,7 +58,11 @@
       />
     {:else}
       <div class="question-text">
-        {cell.text || <em>No question specified</em>}
+        {#if cell.text}
+          {cell.text}
+        {:else}
+          <em>No question specified</em>
+        {/if}
       </div>
     {/if}
   </div>
