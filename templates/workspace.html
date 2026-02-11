@@ -110,6 +110,24 @@
       .agent-item:hover {
         background: var(--bg1);
       }
+      .kick-btn {
+        margin-left: auto;
+        background: none;
+        border: none;
+        color: var(--fg3);
+        cursor: pointer;
+        font-size: 0.7rem;
+        padding: 2px 4px;
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      .member-item:hover .kick-btn,
+      .agent-item:hover .kick-btn {
+        opacity: 1;
+      }
+      .kick-btn:hover {
+        color: var(--red);
+      }
       .member-dot {
         width: 8px;
         height: 8px;
@@ -1318,6 +1336,7 @@
     <script>
       const wsId = window.location.pathname.split("/").pop();
       let currentUser = null;
+      let myRole = null;
       let evtSource = null;
       let lastMessageTime = null;
       let messageCount = 0;
@@ -1404,6 +1423,13 @@
           // Members
           const peopleEl = document.getElementById("people-list");
           if (ws.members && ws.members.length > 0) {
+            // Determine current user's role in this workspace
+            const me = ws.members.find(
+              (m) => m.member_id === currentUser.user_id,
+            );
+            myRole = me ? me.role : null;
+            const canKick = myRole === "owner" || myRole === "admin";
+
             peopleEl.innerHTML = ws.members
               .map((m) => {
                 const name = escHtml(m.display_name || m.member_id);
@@ -1411,11 +1437,18 @@
                 const avatar = m.avatar_url
                   ? `<img src="${escHtml(m.avatar_url)}" style="width:18px;height:18px;border-radius:50%;object-fit:cover" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" /><div class="member-dot" style="display:none;width:18px;height:18px;font-size:0.55rem;align-items:center;justify-content:center;border-radius:50%;background:var(--bg3);color:var(--fg2)">${initial}</div>`
                   : `<div class="member-dot" style="width:18px;height:18px;font-size:0.55rem;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--bg3);color:var(--fg2)">${initial}</div>`;
+                const isSelf = m.member_id === currentUser.user_id;
+                const isOwner = m.role === "owner";
+                const kickBtn =
+                  canKick && !isSelf && !isOwner
+                    ? `<button class="kick-btn" onclick="event.stopPropagation();kickMember('${escHtml(m.member_id)}','${name}')" title="Remove from workspace">\u2715</button>`
+                    : "";
                 return `
               <div class="member-item">
                 ${avatar}
                 <span class="member-name">${name}</span>
                 <span class="member-role">${escHtml(m.role)}</span>
+                ${kickBtn}
               </div>`;
               })
               .join("");
@@ -1451,12 +1484,17 @@
                   : a.relationship === "hired"
                     ? '<span style="font-size:0.6rem;color:var(--fg3);margin-left:4px">hired</span>'
                     : "";
+                const removeBtn =
+                  myRole === "owner" || myRole === "admin"
+                    ? `<button class="kick-btn" onclick="event.preventDefault();event.stopPropagation();removeAgent('${a.agent_id}','${escHtml(name)}')" title="Remove from workspace">\u2715</button>`
+                    : "";
                 return `
               <a href="/agent/${a.agent_name}" style="text-decoration:none;color:inherit">
                 <div class="agent-item">
                   <div class="agent-dot" style="background:hsl(${hue},45%,35%);color:#fff;font-size:0.55rem;display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%">${initial}</div>
                   <span class="member-name">${escHtml(name)}</span>
                   ${badge}
+                  ${removeBtn}
                 </div>
               </a>`;
               })
@@ -1791,6 +1829,44 @@
           evtSource.close();
           setTimeout(connectSSE, 2000);
         };
+      }
+
+      // ─── Kick member / remove agent ───
+      async function kickMember(memberId, displayName) {
+        if (!confirm(`Remove ${displayName} from this workspace?`)) return;
+        try {
+          const res = await fetch(
+            `/api/teams/${wsId}/members/${encodeURIComponent(memberId)}`,
+            { method: "DELETE" },
+          );
+          if (!res.ok) {
+            const err = await res.text();
+            Toast.show(err || "Failed to remove member", "error");
+            return;
+          }
+          Toast.show(`${displayName} removed`, "success");
+          loadWorkspace();
+        } catch (e) {
+          Toast.show("Failed to remove member", "error");
+        }
+      }
+
+      async function removeAgent(agentId, displayName) {
+        if (!confirm(`Remove ${displayName} from this workspace?`)) return;
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/agents/${agentId}`, {
+            method: "DELETE",
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            Toast.show(err || "Failed to remove agent", "error");
+            return;
+          }
+          Toast.show(`${displayName} removed`, "success");
+          loadWorkspace();
+        } catch (e) {
+          Toast.show("Failed to remove agent", "error");
+        }
       }
 
       // ─── Send message ───
