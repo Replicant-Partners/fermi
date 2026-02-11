@@ -97,6 +97,35 @@
       "Run a full coherence check and write a coordination brief to the workspace"
     ]
   },
+  "accepts": ["workspace-state", "coherence-scores"],
+  "produces": ["coordination-plan", "role-assignment", "diagnosis"],
+  "workflow_template": {
+    "description": "3-stage coherence coordination cycle",
+    "mermaid": "sequenceDiagram\n    participant User\n    participant cohere_and_coordinate\n    participant Workspace\n    User->>cohere_and_coordinate: Coordination request\n    Note over cohere_and_coordinate: Assess\n    cohere_and_coordinate->>Workspace: Read messages + coherence snapshot\n    Workspace-->>cohere_and_coordinate: Conversation + TEC scores\n    Note over cohere_and_coordinate: Diagnose\n    cohere_and_coordinate->>cohere_and_coordinate: Analyze 7 Thagard principles\n    Note over cohere_and_coordinate: Coordinate\n    cohere_and_coordinate->>Workspace: Role assignments + next actions\n    cohere_and_coordinate-->>User: Coordination brief + recommendations",
+    "stages": [
+      {
+        "name": "Assess",
+        "agent": "cohere_and_coordinate",
+        "accepts": ["workspace-state", "coherence-scores"],
+        "produces": ["situation-report"],
+        "description": "Read workspace conversation, list agents, get latest TEC evaluation"
+      },
+      {
+        "name": "Diagnose",
+        "agent": "cohere_and_coordinate",
+        "accepts": ["situation-report"],
+        "produces": ["diagnosis"],
+        "description": "Analyze coherence scores against 7 Thagard principles — identify weak points and drift"
+      },
+      {
+        "name": "Coordinate",
+        "agent": "cohere_and_coordinate",
+        "accepts": ["diagnosis"],
+        "produces": ["coordination-plan", "role-assignment"],
+        "description": "Assign roles, resolve conflicts, sequence work, flag gaps, recommend next actions"
+      }
+    ]
+  },
   "dependencies": {
     "required": [],
     "optional": []

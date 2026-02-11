@@ -103,5 +103,41 @@
   "dependencies": {
     "required": ["preference_modeler", "deal_finder"],
     "optional": ["embedding_broker"]
+  },
+  "accepts": ["query", "shopping-brief", "budget"],
+  "produces": ["product-comparison", "shopping-profile", "marketplace-listing"],
+  "workflow_template": {
+    "description": "4-stage shopping intelligence pipeline",
+    "mermaid": "sequenceDiagram\n    participant User\n    participant shopping_assistant\n    participant deal_finder\n    participant preference_modeler\n    participant embedding_broker\n    User->>shopping_assistant: Shopping query\n    Note over shopping_assistant: Intake\n    shopping_assistant->>deal_finder: Research request\n    deal_finder-->>shopping_assistant: Product comparison\n    Note over shopping_assistant: Learn\n    shopping_assistant->>preference_modeler: Update preferences\n    preference_modeler-->>shopping_assistant: Updated profile\n    Note over shopping_assistant: Marketplace\n    shopping_assistant->>embedding_broker: List/manage\n    embedding_broker-->>shopping_assistant: Listing status\n    shopping_assistant-->>User: Results + recommendations",
+    "stages": [
+      {
+        "name": "Intake",
+        "agent": "shopping_assistant",
+        "accepts": ["query", "shopping-brief", "budget"],
+        "produces": ["structured-request"],
+        "description": "Capture and structure the shopping request"
+      },
+      {
+        "name": "Research",
+        "agent": "deal_finder",
+        "accepts": ["structured-request", "product-category"],
+        "produces": ["product-comparison", "deal-report"],
+        "description": "Product intelligence via deal_finder"
+      },
+      {
+        "name": "Learn",
+        "agent": "preference_modeler",
+        "accepts": ["shopping-history", "interaction-signals"],
+        "produces": ["shopping-profile", "preference-scores"],
+        "description": "Extract preferences, recompute embeddings"
+      },
+      {
+        "name": "Marketplace",
+        "agent": "embedding_broker",
+        "accepts": ["shopping-profile"],
+        "produces": ["marketplace-listing"],
+        "description": "Monetize preference data on marketplace"
+      }
+    ]
   }
 }

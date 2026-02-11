@@ -110,13 +110,7 @@
     "created": "2026-02-10",
     "author": "Fermi Platform",
     "description": "System billing agent. Handles Stripe Connect onboarding, payment collection, usage metering, and owner payouts. Free to hire — the platform covers the cost because the more agents earn, the stronger the ecosystem. Cannot be forked or replicated.",
-    "tags": [
-      "system",
-      "payments",
-      "billing",
-      "stripe",
-      "monetization"
-    ],
+    "tags": ["system", "payments", "billing", "stripe", "monetization"],
     "sample_queries": [
       "Set up billing for this workspace so I can charge clients per query",
       "What's my current revenue and payout balance?",
@@ -124,5 +118,7 @@
       "Show me usage stats for the last 30 days — who's calling what and how much revenue",
       "Generate an API key for my client so they can integrate my agent into their app"
     ]
-  }
+  },
+  "accepts": ["query", "billing-context"],
+  "produces": ["billing-analysis", "recommendations"]
 }

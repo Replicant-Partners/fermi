@@ -70,5 +70,7 @@
       "Compare prepaid credit pools vs post-paid metered billing for an agent marketplace",
       "Show me the API flow for: external app calls agent, caller gets billed, owner gets paid minus platform fee"
     ]
-  }
+  },
+  "accepts": ["query", "connect-context"],
+  "produces": ["connect-analysis", "recommendations"]
 }

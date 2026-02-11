@@ -1149,8 +1149,29 @@
             ></span>
           </div>
           <div
+            id="scaffold-banner"
+            style="
+              display: none;
+              padding: 6px 16px;
+              background: rgba(69, 133, 136, 0.1);
+              border-bottom: 1px solid var(--bg2);
+              font-size: 0.75rem;
+              color: var(--aqua);
+            "
+          ></div>
+          <div
             id="workflow-diagram"
             style="flex: 1; overflow: auto; padding: 16px"
+          ></div>
+          <div
+            id="scaffold-stages"
+            style="
+              display: none;
+              padding: 8px 16px;
+              border-top: 1px solid var(--bg2);
+              max-height: 140px;
+              overflow-y: auto;
+            "
           ></div>
         </div>
       </div>
@@ -3182,8 +3203,36 @@
           const { svg } = await mermaid.render("workflow-svg", data.mermaid);
           diagramEl.innerHTML = svg;
 
-          // Legend from meta participant types
-          if (data.meta && data.meta.participants) {
+          // Scaffold banner + stage legend
+          const bannerEl = document.getElementById("scaffold-banner");
+          const stagesEl = document.getElementById("scaffold-stages");
+          if (data.meta && data.meta.is_scaffold) {
+            const agentName = data.meta.compound_agent || "compound agent";
+            bannerEl.innerHTML = `Scaffolded from <strong>${agentName}</strong>`;
+            bannerEl.style.display = "";
+            if (data.meta.stages && data.meta.stages.length > 0) {
+              stagesEl.innerHTML =
+                '<div style="font-size:0.7rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Pipeline Stages</div>' +
+                data.meta.stages
+                  .map(
+                    (s, i) =>
+                      `<div style="display:flex;gap:6px;align-items:baseline;margin:4px 0;font-size:0.8em">` +
+                      `<span style="color:var(--yellow);font-weight:600">${i + 1}.</span>` +
+                      `<span style="color:var(--fg1);font-weight:500">${s.name}</span>` +
+                      (s.agent
+                        ? `<span style="color:var(--aqua);font-size:0.85em">${s.agent}</span>`
+                        : "") +
+                      (s.description
+                        ? `<span style="color:var(--fg3);font-size:0.85em">\u2014 ${s.description}</span>`
+                        : "") +
+                      `</div>`,
+                  )
+                  .join("");
+              stagesEl.style.display = "";
+            }
+            legendEl.textContent = `${data.meta.stages ? data.meta.stages.length : 0} stages`;
+          } else if (data.meta && data.meta.participants) {
+            // Layer 1: Legend from meta participant types
             const types = { human: 0, agent: 0, tool: 0 };
             Object.values(data.meta.participants).forEach(
               (p) => types[p.type]++,

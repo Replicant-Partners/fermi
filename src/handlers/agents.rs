@@ -157,6 +157,9 @@ pub async fn list_agents(
                         "fork_pricing": a.fork_pricing,
                         "forked_from": a.forked_from,
                         "fork_count": a.fork_count,
+                        "accepts": a.accepts,
+                        "produces": a.produces,
+                        "workflow_template": a.workflow_template,
                         "capabilities": {
                             "executor": a.executor_type,
                             "model": a.model,
@@ -433,6 +436,10 @@ pub(crate) struct CreateAgentRequest {
     pub(crate) embedding_model: String,
     #[serde(default = "default_embedding_dimension")]
     pub(crate) embedding_dimension: i32,
+    #[serde(default)]
+    pub(crate) accepts: Vec<String>,
+    #[serde(default)]
+    pub(crate) produces: Vec<String>,
 }
 
 pub fn default_agent_type() -> String {
@@ -509,6 +516,9 @@ pub async fn create_agent_handler(
         fork_pricing: None,
         forked_from: None,
         fork_count: 0,
+        accepts: req.accepts,
+        produces: req.produces,
+        workflow_template: None,
     };
 
     // If education budget requested, debit from user's wallet
@@ -728,6 +738,25 @@ pub async fn import_agent_handler(
         fork_pricing: None,
         forked_from: None,
         fork_count: 0,
+        accepts: card
+            .get("accepts")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        produces: card
+            .get("produces")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        workflow_template: card.get("workflow_template").cloned(),
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -886,6 +915,9 @@ pub async fn list_curated_agents_handler(
                 "model": card.capabilities.model,
                 "sample_queries": card.metadata.sample_queries,
                 "system_prompt": card.system_prompt,
+                "accepts": card.accepts,
+                "produces": card.produces,
+                "workflow_template": card.workflow_template,
                 "capabilities": {
                     "executor": card.capabilities.executor,
                     "model": card.capabilities.model,

@@ -7,11 +7,7 @@
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [],
-    "skills": [
-      "image-delivery",
-      "content-serving",
-      "workflow-coordination"
-    ],
+    "skills": ["image-delivery", "content-serving", "workflow-coordination"],
     "model": "claude-haiku-4-5-20251001",
     "temperature": 0.2,
     "provider": "anthropic"
@@ -51,16 +47,13 @@
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Serves completed artwork from the workspace. Coordinates with style_transfer and watermark agents to fulfill requests. The public-facing endpoint of the artist composition.",
-    "tags": [
-      "creative",
-      "image",
-      "delivery",
-      "coordination"
-    ],
+    "tags": ["creative", "image", "delivery", "coordination"],
     "sample_queries": [
       "Show me the latest artwork in the collection",
       "Generate and deliver a new piece: a sunset over mountains in the artist's style",
       "List all completed pieces in the workspace"
     ]
-  }
+  },
+  "accepts": ["image", "delivery-spec"],
+  "produces": ["packaged-output"]
 }

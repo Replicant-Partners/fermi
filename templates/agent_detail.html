@@ -221,6 +221,50 @@
         font-weight: 500;
       }
 
+      .valence-section {
+        margin-top: 8px;
+      }
+      .valence-label {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 6px;
+        margin-top: 12px;
+      }
+      .valence-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .valence-pill {
+        display: inline-block;
+        padding: 3px 10px;
+        font-size: 0.78em;
+        border-radius: 3px;
+        font-weight: 500;
+      }
+      .valence-in {
+        background: rgba(69, 133, 136, 0.15);
+        color: var(--aqua);
+        border: 1px solid rgba(69, 133, 136, 0.4);
+      }
+      .valence-out {
+        background: rgba(152, 151, 26, 0.15);
+        color: var(--green);
+        border: 1px solid rgba(152, 151, 26, 0.4);
+      }
+      .workflow-diagram {
+        margin-top: 16px;
+        padding: 16px;
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        border-radius: 6px;
+      }
+      .workflow-diagram .mermaid svg {
+        max-width: 100%;
+      }
+
       .notice-box {
         background: var(--bg0);
         border-left: 3px solid var(--orange);
@@ -729,6 +773,7 @@
         border-bottom-color: var(--yellow);
       }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   </head>
   <body>
     <div class="container">
@@ -1006,6 +1051,50 @@
                   </div>`
                       : ""
                   }
+
+                  ${(() => {
+                    const accepts = agent.accepts || [];
+                    const produces = agent.produces || [];
+                    if (accepts.length === 0 && produces.length === 0)
+                      return "";
+                    return `
+                  <div class="section valence-section">
+                    <div class="section-title">Agent Valence</div>
+                    ${accepts.length > 0 ? `<div class="valence-label">Accepts</div><div class="valence-pills">${accepts.map((a) => `<span class="valence-pill valence-in">${a}</span>`).join("")}</div>` : ""}
+                    ${produces.length > 0 ? `<div class="valence-label">Produces</div><div class="valence-pills">${produces.map((p) => `<span class="valence-pill valence-out">${p}</span>`).join("")}</div>` : ""}
+                  </div>`;
+                  })()}
+
+                  ${
+                    agent.workflow_template
+                      ? `
+                  <div class="section">
+                    <div class="section-title">Workflow Template</div>
+                    ${agent.workflow_template.description ? `<div style="color:var(--fg3);font-size:0.85em;margin-bottom:12px">${agent.workflow_template.description}</div>` : ""}
+                    <div class="workflow-diagram"><div class="mermaid" id="workflow-mermaid">${agent.workflow_template.mermaid}</div></div>
+                    ${
+                      agent.workflow_template.stages
+                        ? `
+                    <div style="margin-top:12px">
+                      <div class="valence-label">Stages</div>
+                      ${agent.workflow_template.stages
+                        .map(
+                          (s, i) => `
+                        <div style="display:flex;gap:8px;align-items:baseline;margin:6px 0;font-size:0.85em">
+                          <span style="color:var(--yellow);font-weight:600;min-width:18px">${i + 1}.</span>
+                          <span style="color:var(--fg1);font-weight:500">${s.name}</span>
+                          ${s.agent ? `<span style="color:var(--aqua);font-size:0.85em">${s.agent}</span>` : '<span style="color:var(--gray);font-size:0.85em;font-style:italic">open slot</span>'}
+                          ${s.description ? `<span style="color:var(--fg3);font-size:0.85em">— ${s.description}</span>` : ""}
+                        </div>
+                      `,
+                        )
+                        .join("")}
+                    </div>`
+                        : ""
+                    }
+                  </div>`
+                      : ""
+                  }
                 </div>
               </div>
 
@@ -1250,6 +1339,26 @@
 
       loadAgentDetail().then(() => {
         initCognitionCanvases();
+        // Render mermaid workflow diagram if present
+        const mermaidEl = document.getElementById("workflow-mermaid");
+        if (mermaidEl && typeof mermaid !== "undefined") {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: "dark",
+            themeVariables: {
+              primaryColor: "#3c3836",
+              primaryTextColor: "#ebdbb2",
+              primaryBorderColor: "#504945",
+              lineColor: "#83a598",
+              secondaryColor: "#504945",
+              tertiaryColor: "#282828",
+              noteBkgColor: "#3c3836",
+              noteTextColor: "#ebdbb2",
+              noteBorderColor: "#504945",
+            },
+          });
+          mermaid.run({ nodes: [mermaidEl] });
+        }
       });
 
       async function loadExecutionActivity() {

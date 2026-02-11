@@ -212,5 +212,7 @@
       "Draft 3 post options for announcing our open-source release",
       "Post this image with alt text describing the architecture diagram"
     ]
-  }
+  },
+  "accepts": ["content", "image"],
+  "produces": ["published-post"]
 }

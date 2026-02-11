@@ -103,8 +103,56 @@
       "Take my logo and this team photo, produce an AR business card with a living-photo effect"
     ]
   },
+  "accepts": ["logo", "reference-image", "brand-guidelines"],
+  "produces": ["ar-marker", "video-frames", "scene-plan", "packaged-output"],
+  "workflow_template": {
+    "description": "5-stage AR card production pipeline",
+    "mermaid": "sequenceDiagram\n    participant User\n    participant ar_card_producer\n    participant style_transfer\n    participant ar_avatar_renderer\n    participant watermark\n    participant delivery\n    User->>ar_card_producer: Logo + reference image\n    Note over ar_card_producer: Intake\n    ar_card_producer->>ar_card_producer: Marker Generation\n    Note over ar_card_producer: Embed fiducial markers\n    ar_card_producer->>ar_card_producer: Video Generation\n    Note over ar_card_producer: Generate keyframes\n    ar_card_producer->>style_transfer: Apply brand style\n    style_transfer-->>ar_card_producer: Styled frames\n    ar_card_producer->>ar_avatar_renderer: Scene planning\n    ar_avatar_renderer-->>ar_card_producer: Scene metadata\n    ar_card_producer->>watermark: Brand protection\n    watermark-->>ar_card_producer: Watermarked assets\n    ar_card_producer->>delivery: Package output\n    delivery-->>ar_card_producer: Delivery package\n    ar_card_producer-->>User: Complete AR card package",
+    "stages": [
+      {
+        "name": "Intake",
+        "agent": "ar_card_producer",
+        "accepts": ["logo", "reference-image", "brand-guidelines"],
+        "produces": ["structured-brief"],
+        "description": "Gather logo, reference image, brand guidelines, and video style preferences"
+      },
+      {
+        "name": "Marker Generation",
+        "agent": "ar_card_producer",
+        "accepts": ["logo", "structured-brief"],
+        "produces": ["ar-marker", "printable-logo"],
+        "description": "Embed fiducial tracking markers into the logo for print"
+      },
+      {
+        "name": "Video Generation",
+        "agent": "ar_card_producer",
+        "accepts": ["reference-image", "structured-brief"],
+        "produces": ["video-frames", "video-manifest"],
+        "description": "Generate keyframe sequence from reference image with motion styles"
+      },
+      {
+        "name": "Scene Planning",
+        "agent": "ar_avatar_renderer",
+        "accepts": ["ar-marker", "video-frames"],
+        "produces": ["scene-plan"],
+        "description": "AR placement metadata — anchoring, scale, lighting, interactions"
+      },
+      {
+        "name": "Delivery",
+        "agent": "delivery",
+        "accepts": ["ar-marker", "video-frames", "scene-plan"],
+        "produces": ["packaged-output"],
+        "description": "Package printable logo, frames, manifest, and scene plan for handoff"
+      }
+    ]
+  },
   "dependencies": {
     "required": [],
-    "optional": ["ar_avatar_renderer", "style_transfer", "watermark", "delivery"]
+    "optional": [
+      "ar_avatar_renderer",
+      "style_transfer",
+      "watermark",
+      "delivery"
+    ]
   }
 }

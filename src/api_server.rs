@@ -389,6 +389,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/034_xaman_ek_system_ontology.sql",
         "migrations/035_fix_tx_type_constraint.sql",
         "migrations/036_workspace_workflow.sql",
+        "migrations/037_agent_valence_and_workflow_template.sql",
     ];
 
     for file in &migration_files {
@@ -1214,6 +1215,12 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             fork_pricing: None,
             forked_from: None,
             fork_count: 0,
+            accepts: card.accepts.clone(),
+            produces: card.produces.clone(),
+            workflow_template: card
+                .workflow_template
+                .as_ref()
+                .and_then(|t| serde_json::to_value(t).ok()),
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -1317,6 +1324,12 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
         },
         system_prompt: agent.system_prompt.clone(),
         dependencies: AgentDependencies::default(),
+        accepts: agent.accepts.clone(),
+        produces: agent.produces.clone(),
+        workflow_template: agent
+            .workflow_template
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
     }
 }
 
@@ -1334,6 +1347,13 @@ pub(crate) fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCar
     card.capabilities.temperature = db_agent.temperature;
     // Bridge system prompt from DB
     card.system_prompt = db_agent.system_prompt.clone();
+    // Bridge valence from DB (may have been updated via API)
+    if !db_agent.accepts.is_empty() {
+        card.accepts = db_agent.accepts.clone();
+    }
+    if !db_agent.produces.is_empty() {
+        card.produces = db_agent.produces.clone();
+    }
     card
 }
 

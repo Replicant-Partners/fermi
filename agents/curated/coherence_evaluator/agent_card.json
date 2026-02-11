@@ -17,9 +17,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       },
       {
@@ -33,9 +31,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       }
     ],
@@ -90,5 +86,7 @@
       "Check logical consistency of arguments for cryptocurrency regulation",
       "Assess whether recent climate policy proposals are internally consistent"
     ]
-  }
+  },
+  "accepts": ["content", "evaluation-criteria"],
+  "produces": ["coherence-scores", "principle-scores"]
 }

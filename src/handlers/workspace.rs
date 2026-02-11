@@ -322,6 +322,9 @@ pub async fn create_workspace_agent_handler(
         fork_pricing: None,
         forked_from: None,
         fork_count: 0,
+        accepts: vec![],
+        produces: vec![],
+        workflow_template: None,
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -1380,12 +1383,44 @@ pub async fn hire_agent_handler(
         .await;
     }
 
+    // ─── Inject workflow scaffold from compound agent ───
+    let mut scaffold_injected = false;
+    if let Some(ref tmpl) = card.workflow_template {
+        let existing: Option<String> =
+            sqlx::query_scalar("SELECT workflow_mermaid FROM teams WHERE id = $1")
+                .bind(ws_uuid)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+
+        if existing.as_ref().map_or(true, |s| s.is_empty()) {
+            let scaffold_meta = serde_json::json!({
+                "source": "workflow_template",
+                "compound_agent": agent.agent_name,
+                "stages": tmpl.stages,
+                "is_scaffold": true,
+                "generated_at": chrono::Utc::now().to_rfc3339(),
+            });
+            let _ = sqlx::query(
+                "UPDATE teams SET workflow_mermaid = $1, workflow_meta = $2 WHERE id = $3",
+            )
+            .bind(&tmpl.mermaid)
+            .bind(&scaffold_meta)
+            .bind(ws_uuid)
+            .execute(&state.db)
+            .await;
+            scaffold_injected = true;
+        }
+    }
+
     Ok(Json(json!({
         "message": "Agent hired successfully",
         "agent_name": agent.agent_name,
         "relationship": "hired",
         "gas_charged": state.gas_fees.agent_hire + deps_gas,
         "dependencies_hired": deps_hired,
+        "scaffold_injected": scaffold_injected,
     })))
 }
 
@@ -2562,7 +2597,31 @@ pub async fn get_workspace_workflow_handler(
         return Err((StatusCode::FORBIDDEN, "Not a workspace member".to_string()));
     }
 
-    // Fetch all messages (chronological)
+    // Check for existing scaffold (injected when compound agent was hired)
+    let existing: Option<(Option<String>, Option<serde_json::Value>)> =
+        sqlx::query_as("SELECT workflow_mermaid, workflow_meta FROM teams WHERE id = $1")
+            .bind(ws_uuid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
+    if let Some((Some(ref mermaid), Some(ref meta))) = existing {
+        if !mermaid.is_empty()
+            && meta
+                .get("is_scaffold")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            // Scaffold exists — return it as-is (don't regenerate from messages)
+            return Ok(Json(json!({
+                "mermaid": mermaid,
+                "meta": meta,
+            })));
+        }
+    }
+
+    // No scaffold — generate from messages (Layer 1 behavior)
     let mut messages = state
         .memory_store
         .get_workspace_messages(ws_uuid, 500, None)

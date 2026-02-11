@@ -17,9 +17,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       },
       {
@@ -33,9 +31,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       },
       {
@@ -49,9 +45,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       }
     ],
@@ -98,15 +92,13 @@
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Researches market trends, competitive dynamics, and market sizing for forecasts",
-    "tags": [
-      "market",
-      "research",
-      "competitive-analysis"
-    ],
+    "tags": ["market", "research", "competitive-analysis"],
     "sample_queries": [
       "What are the key growth drivers for the electric vehicle market in 2026?",
       "Analyze the competitive landscape of cloud computing providers",
       "What is the total addressable market for AI agent platforms?"
     ]
-  }
+  },
+  "accepts": ["query", "industry"],
+  "produces": ["market-analysis", "trends"]
 }

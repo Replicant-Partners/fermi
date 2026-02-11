@@ -186,5 +186,7 @@
   "dependencies": {
     "required": [],
     "optional": []
-  }
+  },
+  "accepts": ["workspace-state", "agent-intentions"],
+  "produces": ["conflict-report", "coordination-signal"]
 }

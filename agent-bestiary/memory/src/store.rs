@@ -19,7 +19,8 @@ const AGENT_COLUMNS: &str = r#"
     education_budget_credits, education_credits_used, display_alias,
     llm_provider, embedding_provider, embedding_model, embedding_dimension,
     sample_queries,
-    status, fork_pricing, forked_from, fork_count
+    status, fork_pricing, forked_from, fork_count,
+    accepts, produces, workflow_template
 "#;
 
 pub struct MemoryStore {
@@ -178,9 +179,10 @@ impl MemoryStore {
                 dreaming_budget_credits, dreaming_credits_used,
                 education_budget_credits, education_credits_used, display_alias,
                 llm_provider, embedding_provider, embedding_model, embedding_dimension,
-                sample_queries, status, fork_pricing, forked_from, fork_count
+                sample_queries, status, fork_pricing, forked_from, fork_count,
+                accepts, produces, workflow_template
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -193,7 +195,10 @@ impl MemoryStore {
                 description = EXCLUDED.description,
                 system_prompt = EXCLUDED.system_prompt,
                 sample_queries = EXCLUDED.sample_queries,
-                status = EXCLUDED.status
+                status = EXCLUDED.status,
+                accepts = EXCLUDED.accepts,
+                produces = EXCLUDED.produces,
+                workflow_template = EXCLUDED.workflow_template
             RETURNING agent_id
             "#,
         )
@@ -226,6 +231,9 @@ impl MemoryStore {
         .bind(&agent.fork_pricing)
         .bind(agent.forked_from)
         .bind(agent.fork_count)
+        .bind(&agent.accepts)
+        .bind(&agent.produces)
+        .bind(&agent.workflow_template)
         .fetch_one(&self.pool)
         .await?;
 
@@ -316,9 +324,10 @@ impl MemoryStore {
                 system_prompt, visibility, user_id, tags,
                 dreaming_budget_credits, education_budget_credits, display_alias,
                 llm_provider, embedding_provider, embedding_model, embedding_dimension,
-                sample_queries, status, fork_pricing, forked_from, fork_count
+                sample_queries, status, fork_pricing, forked_from, fork_count,
+                accepts, produces, workflow_template
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
             RETURNING agent_id
             "#,
         )
@@ -349,6 +358,9 @@ impl MemoryStore {
         .bind(&agent.fork_pricing)
         .bind(agent.forked_from)
         .bind(agent.fork_count)
+        .bind(&agent.accepts)
+        .bind(&agent.produces)
+        .bind(&agent.workflow_template)
         .fetch_one(&self.pool)
         .await?;
 
@@ -399,7 +411,19 @@ impl MemoryStore {
         }
         if updates.fork_pricing.is_some() {
             set_clauses.push(format!("fork_pricing = ${}", param_idx));
-            let _ = param_idx; // last one
+            param_idx += 1;
+        }
+        if updates.accepts.is_some() {
+            set_clauses.push(format!("accepts = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.produces.is_some() {
+            set_clauses.push(format!("produces = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.workflow_template.is_some() {
+            set_clauses.push(format!("workflow_template = ${}", param_idx));
+            let _ = param_idx;
         }
 
         if set_clauses.is_empty() {
@@ -441,6 +465,15 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.fork_pricing {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.accepts {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.produces {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.workflow_template {
             query = query.bind(v);
         }
 
@@ -634,6 +667,13 @@ impl MemoryStore {
             fork_pricing: row.try_get("fork_pricing").unwrap_or(None),
             forked_from: row.try_get("forked_from").unwrap_or(None),
             fork_count: row.try_get("fork_count").unwrap_or(0),
+            accepts: row
+                .try_get::<Option<Vec<String>>, _>("accepts")?
+                .unwrap_or_default(),
+            produces: row
+                .try_get::<Option<Vec<String>>, _>("produces")?
+                .unwrap_or_default(),
+            workflow_template: row.try_get("workflow_template").unwrap_or(None),
         })
     }
 

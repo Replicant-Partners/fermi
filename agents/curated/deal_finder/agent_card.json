@@ -66,5 +66,7 @@
       "Standing desk comparison: motorized, 60 inch, under $800",
       "Top rated mechanical keyboards for programming — Cherry MX Brown or similar"
     ]
-  }
+  },
+  "accepts": ["query", "product-category", "budget"],
+  "produces": ["product-comparison", "deal-report"]
 }

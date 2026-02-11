@@ -83,5 +83,7 @@
       "Analyze my last 10 shopping conversations and extract preference signals",
       "Recompute my composite embedding — I've been shopping for kitchen gear lately"
     ]
-  }
+  },
+  "accepts": ["shopping-history", "interaction-signals"],
+  "produces": ["shopping-profile", "preference-scores"]
 }

@@ -26,5 +26,7 @@
     "accuracy_rate": 0.0,
     "avg_confidence": 0.0,
     "total_queries": 0
-  }
+  },
+  "accepts": ["agent-card", "readiness-check"],
+  "produces": ["publish-assessment", "recommendations"]
 }

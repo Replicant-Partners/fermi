@@ -198,5 +198,7 @@
       "How did my last 5 posts perform? Show me engagement metrics",
       "Schedule a reel for next Tuesday at 6pm EST with this video"
     ]
-  }
+  },
+  "accepts": ["image", "caption", "hashtags"],
+  "produces": ["published-post", "media-id"]
 }

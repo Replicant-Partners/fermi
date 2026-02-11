@@ -26,6 +26,35 @@ pub struct AgentCard {
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub dependencies: AgentDependencies,
+    #[serde(default)]
+    pub accepts: Vec<String>,
+    #[serde(default)]
+    pub produces: Vec<String>,
+    #[serde(default)]
+    pub workflow_template: Option<WorkflowTemplate>,
+}
+
+/// Workflow template for compound agents — static mermaid diagram + stage definitions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowTemplate {
+    pub mermaid: String,
+    pub stages: Vec<WorkflowStage>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// A single stage in a compound agent's workflow pipeline
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStage {
+    pub name: String,
+    /// Agent that fills this slot, or None for an open/user slot
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub accepts: Vec<String>,
+    #[serde(default)]
+    pub produces: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Dependencies that a compound agent requires or optionally uses
@@ -215,6 +244,9 @@ impl AgentCard {
             },
             system_prompt: None,
             dependencies: AgentDependencies::default(),
+            accepts: vec![],
+            produces: vec![],
+            workflow_template: None,
         }
     }
 

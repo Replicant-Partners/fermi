@@ -200,5 +200,41 @@
   "dependencies": {
     "required": ["style_transfer", "watermark"],
     "optional": ["delivery"]
+  },
+  "accepts": ["creative-brief", "image", "brand-guidelines"],
+  "produces": ["social-post", "image", "caption"],
+  "workflow_template": {
+    "description": "4-stage social media content pipeline",
+    "mermaid": "sequenceDiagram\n    participant User\n    participant social_media_studio\n    participant style_transfer\n    participant watermark\n    participant delivery\n    User->>social_media_studio: Creative brief\n    Note over social_media_studio: Brief\n    social_media_studio->>social_media_studio: Generate image\n    Note over social_media_studio: Create\n    social_media_studio->>style_transfer: Apply style\n    style_transfer-->>social_media_studio: Styled image\n    social_media_studio->>watermark: Brand watermark\n    watermark-->>social_media_studio: Final image\n    Note over social_media_studio: Caption\n    social_media_studio->>social_media_studio: Write captions\n    Note over social_media_studio: Publish\n    social_media_studio->>delivery: Package + deliver\n    delivery-->>social_media_studio: Delivery confirmation\n    social_media_studio-->>User: Published content",
+    "stages": [
+      {
+        "name": "Brief",
+        "agent": "social_media_studio",
+        "accepts": ["creative-brief", "brand-guidelines"],
+        "produces": ["structured-brief"],
+        "description": "Flesh out creative direction and platform targets"
+      },
+      {
+        "name": "Create",
+        "agent": "style_transfer",
+        "accepts": ["image", "style-reference"],
+        "produces": ["image"],
+        "description": "Generate and style-transfer the visual content"
+      },
+      {
+        "name": "Caption",
+        "agent": "social_media_studio",
+        "accepts": ["image", "structured-brief"],
+        "produces": ["caption", "hashtags"],
+        "description": "Write platform-adapted captions"
+      },
+      {
+        "name": "Publish",
+        "agent": "delivery",
+        "accepts": ["image", "caption"],
+        "produces": ["published-post"],
+        "description": "Package and publish to target platforms"
+      }
+    ]
   }
 }

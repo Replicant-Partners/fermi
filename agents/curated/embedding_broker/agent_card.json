@@ -84,5 +84,7 @@
       "What's a good price for my profile? I have 30 shopping episodes",
       "Show me my marketplace stats — how many queries and credits earned"
     ]
-  }
+  },
+  "accepts": ["shopping-profile", "pricing-strategy"],
+  "produces": ["marketplace-listing", "match-results"]
 }
