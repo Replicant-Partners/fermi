@@ -892,6 +892,7 @@
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.1/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   </head>
   <body>
     <script src="/static/js/widgets/nav.js"></script>
@@ -1027,6 +1028,13 @@
           >
             Files
           </button>
+          <button
+            class="center-tab"
+            id="tab-workflow"
+            onclick="switchTab('workflow')"
+          >
+            Workflow
+          </button>
         </div>
 
         <!-- Chat panel -->
@@ -1109,6 +1117,41 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Workflow panel -->
+        <div
+          class="panel-workflow"
+          id="panel-workflow"
+          style="
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            min-width: 0;
+            overflow: hidden;
+          "
+        >
+          <div
+            style="
+              padding: 10px 16px;
+              border-bottom: 1px solid var(--bg2);
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+            "
+          >
+            <span style="font-size: 0.8rem; color: var(--fg3)"
+              >Sequence Diagram</span
+            >
+            <span
+              id="workflow-legend"
+              style="font-size: 0.7rem; color: var(--fg3)"
+            ></span>
+          </div>
+          <div
+            id="workflow-diagram"
+            style="flex: 1; overflow: auto; padding: 16px"
+          ></div>
         </div>
       </div>
 
@@ -2708,12 +2751,18 @@
           .getElementById("tab-files")
           .classList.toggle("active", tab === "files");
         document
+          .getElementById("tab-workflow")
+          .classList.toggle("active", tab === "workflow");
+        document
           .getElementById("panel-chat")
           .classList.toggle("hidden", tab !== "chat");
         document
           .getElementById("panel-files")
           .classList.toggle("active", tab === "files");
+        const wfPanel = document.getElementById("panel-workflow");
+        wfPanel.style.display = tab === "workflow" ? "flex" : "none";
         if (tab === "files" && !filesLoaded) loadFiles();
+        if (tab === "workflow" && !workflowLoaded) loadWorkflow();
       }
 
       // ─── Files panel ───
@@ -3082,6 +3131,72 @@
         } finally {
           document.getElementById("upload-btn").disabled = false;
           uploadInput.value = ""; // reset for re-selecting same file
+        }
+      }
+
+      // ─── Workflow (mermaid sequence diagram) ───
+      let workflowLoaded = false;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: "base",
+        themeVariables: {
+          primaryColor: "#3c3836",
+          primaryBorderColor: "#d79921",
+          lineColor: "#a89984",
+          textColor: "#ebdbb2",
+          actorBkg: "#3c3836",
+          actorBorder: "#d79921",
+          actorTextColor: "#ebdbb2",
+          signalColor: "#ebdbb2",
+          signalTextColor: "#ebdbb2",
+        },
+      });
+
+      async function loadWorkflow() {
+        const diagramEl = document.getElementById("workflow-diagram");
+        const legendEl = document.getElementById("workflow-legend");
+        diagramEl.innerHTML =
+          '<div style="color:var(--fg3);text-align:center;padding:40px 0">Loading workflow...</div>';
+
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/workflow`);
+          if (!res.ok) {
+            diagramEl.innerHTML =
+              '<div style="color:var(--fg3);text-align:center;padding:40px 0">Could not load workflow</div>';
+            workflowLoaded = true;
+            return;
+          }
+          const data = await res.json();
+
+          if (
+            !data.mermaid ||
+            data.mermaid.trim() === "sequenceDiagram\n" ||
+            data.mermaid.trim() === "sequenceDiagram"
+          ) {
+            diagramEl.innerHTML =
+              '<div style="color:var(--fg3);text-align:center;padding:40px 0">No agent interactions yet. Use @agent in chat to build a workflow.</div>';
+            workflowLoaded = true;
+            return;
+          }
+
+          const { svg } = await mermaid.render("workflow-svg", data.mermaid);
+          diagramEl.innerHTML = svg;
+
+          // Legend from meta participant types
+          if (data.meta && data.meta.participants) {
+            const types = { human: 0, agent: 0, tool: 0 };
+            Object.values(data.meta.participants).forEach(
+              (p) => types[p.type]++,
+            );
+            legendEl.textContent = `${types.human} human \u00b7 ${types.agent} agent${types.agent !== 1 ? "s" : ""} \u00b7 ${types.tool} tool${types.tool !== 1 ? "s" : ""}`;
+          }
+
+          workflowLoaded = true;
+        } catch (e) {
+          console.error("Workflow load error:", e);
+          diagramEl.innerHTML =
+            '<div style="color:var(--fg3);text-align:center;padding:40px 0">Error rendering workflow</div>';
+          workflowLoaded = true;
         }
       }
 

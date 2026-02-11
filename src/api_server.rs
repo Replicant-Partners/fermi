@@ -388,6 +388,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/033_backfill_team_owners.sql",
         "migrations/034_xaman_ek_system_ontology.sql",
         "migrations/035_fix_tx_type_constraint.sql",
+        "migrations/036_workspace_workflow.sql",
     ];
 
     for file in &migration_files {
@@ -954,6 +955,10 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/messages/stream",
             get(handlers::workspace::workspace_messages_stream_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/workflow",
+            get(handlers::workspace::get_workspace_workflow_handler),
         )
         // Workspace agent hire/add
         .route(

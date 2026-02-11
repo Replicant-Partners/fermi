@@ -2416,6 +2416,176 @@ pub async fn upload_workspace_file_handler(
     })))
 }
 
+// ─── Workflow Visualization ──────────────────────────────────────────
+
+/// Auto-generate a mermaid sequence diagram + companion metadata from workspace messages.
+fn generate_workflow_from_messages(messages: &[WorkspaceMessage]) -> (String, Value) {
+    use std::collections::BTreeMap;
+
+    // Participant registry: name → type
+    let mut participants: BTreeMap<String, Value> = BTreeMap::new();
+    let mut lines: Vec<String> = Vec::new();
+
+    // Sanitize names for mermaid (no spaces, no special chars)
+    fn safe_name(s: &str) -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    // Truncate label for arrow text
+    fn label(s: &str, max: usize) -> String {
+        let clean: String = s.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+        let trimmed = clean.trim();
+        if trimmed.len() <= max {
+            trimmed.to_string()
+        } else {
+            format!("{}...", &trimmed[..max])
+        }
+    }
+
+    for msg in messages {
+        match msg.message_type.as_str() {
+            "agent_invocation" => {
+                // User → Agent invocation
+                let user_name = safe_name(msg.sender_name.as_deref().unwrap_or(&msg.sender_id));
+                participants
+                    .entry(user_name.clone())
+                    .or_insert_with(|| json!({"type": "human"}));
+
+                // Extract target agent from @mention
+                if let Some((agent, _query)) = parse_at_mention(&msg.content) {
+                    let agent_safe = safe_name(&agent);
+                    participants
+                        .entry(agent_safe.clone())
+                        .or_insert_with(|| json!({"type": "agent"}));
+                    lines.push(format!(
+                        "    {}->>{}:{}",
+                        user_name,
+                        agent_safe,
+                        label(&msg.content, 60)
+                    ));
+                }
+            }
+            "execution_result" => {
+                // Agent → User response
+                let agent_safe = safe_name(&msg.sender_id);
+                participants
+                    .entry(agent_safe.clone())
+                    .or_insert_with(|| json!({"type": "agent"}));
+
+                // Check for tool invocations in metadata
+                if let Some(tools) = msg
+                    .metadata
+                    .get("tool_invocations")
+                    .and_then(|v| v.as_array())
+                {
+                    for tool in tools {
+                        if let Some(tool_name) = tool.get("tool_name").and_then(|v| v.as_str()) {
+                            let tool_safe = safe_name(tool_name);
+                            participants
+                                .entry(tool_safe.clone())
+                                .or_insert_with(|| json!({"type": "tool"}));
+                            lines.push(format!("    {}->>{}: invoke", agent_safe, tool_safe));
+                            lines.push(format!("    {}-->>{}:result", tool_safe, agent_safe));
+                        }
+                    }
+                }
+
+                // Find the most recent human participant for the return arrow
+                let user_name = participants
+                    .iter()
+                    .find(|(_, v)| v.get("type").and_then(|t| t.as_str()) == Some("human"))
+                    .map(|(k, _)| k.clone())
+                    .unwrap_or_else(|| "User".to_string());
+
+                let conf_label = msg
+                    .metadata
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .map(|c| format!(" ({}%)", (c * 100.0) as i32))
+                    .unwrap_or_default();
+
+                lines.push(format!(
+                    "    {}-->>{}:{}{}",
+                    agent_safe,
+                    user_name,
+                    label(&msg.content, 40),
+                    conf_label
+                ));
+            }
+            _ => {} // Skip chat, system_event, coherence_update
+        }
+    }
+
+    // Build mermaid text
+    let mut mermaid = String::from("sequenceDiagram\n");
+    for (name, _) in &participants {
+        mermaid.push_str(&format!("    participant {}\n", name));
+    }
+    for line in &lines {
+        mermaid.push_str(line);
+        mermaid.push('\n');
+    }
+
+    // Build meta
+    let meta = json!({
+        "participants": participants,
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "message_count": messages.len(),
+    });
+
+    (mermaid, meta)
+}
+
+pub async fn get_workspace_workflow_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    // Auth: must be a member
+    let role = fermi_auth::teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if role.is_none() {
+        return Err((StatusCode::FORBIDDEN, "Not a workspace member".to_string()));
+    }
+
+    // Fetch all messages (chronological)
+    let mut messages = state
+        .memory_store
+        .get_workspace_messages(ws_uuid, 500, None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    messages.reverse(); // store returns DESC, we need ASC
+
+    let (mermaid_text, meta) = generate_workflow_from_messages(&messages);
+
+    // Cache on the teams record
+    let _ = sqlx::query("UPDATE teams SET workflow_mermaid = $1, workflow_meta = $2 WHERE id = $3")
+        .bind(&mermaid_text)
+        .bind(&meta)
+        .bind(ws_uuid)
+        .execute(&state.db)
+        .await;
+
+    Ok(Json(json!({
+        "mermaid": mermaid_text,
+        "meta": meta,
+    })))
+}
+
 // ---------------------------------------------------------------------------
 // Agent creation wizard helpers
 // ---------------------------------------------------------------------------
