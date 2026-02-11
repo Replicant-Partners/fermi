@@ -840,31 +840,6 @@ async fn main() {
         .route("/settings", get(handlers::pages::settings_view))
         .route("/marketplace", get(handlers::pages::marketplace_view))
         .route("/admin", get(handlers::pages::admin_view))
-        // Fermi Notebook routes (optional auth)
-        .route(
-            "/api/notebooks",
-            get(handlers::notebooks::list_notebooks_handler),
-        )
-        .route(
-            "/api/notebooks",
-            post(handlers::notebooks::create_notebook_handler),
-        )
-        .route(
-            "/api/notebooks/:notebook_id",
-            get(handlers::notebooks::get_notebook_handler),
-        )
-        .route(
-            "/api/notebooks/:notebook_id",
-            put(handlers::notebooks::update_notebook_handler),
-        )
-        .route(
-            "/api/notebooks/:notebook_id",
-            delete(handlers::notebooks::delete_notebook_handler),
-        )
-        .route(
-            "/api/notebooks/:notebook_id/execute",
-            post(handlers::notebooks::execute_notebook_handler),
-        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit_middleware,
@@ -1176,6 +1151,31 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/git/diff",
             get(handlers::workspace::workspace_git_diff_handler),
+        )
+        // Fermi Notebook routes
+        .route(
+            "/api/notebooks",
+            get(handlers::notebooks::list_notebooks_handler),
+        )
+        .route(
+            "/api/notebooks",
+            post(handlers::notebooks::create_notebook_handler),
+        )
+        .route(
+            "/api/notebooks/:notebook_id",
+            get(handlers::notebooks::get_notebook_handler),
+        )
+        .route(
+            "/api/notebooks/:notebook_id",
+            put(handlers::notebooks::update_notebook_handler),
+        )
+        .route(
+            "/api/notebooks/:notebook_id",
+            delete(handlers::notebooks::delete_notebook_handler),
+        )
+        .route(
+            "/api/notebooks/:notebook_id/execute",
+            post(handlers::notebooks::execute_notebook_handler),
         )
         // Sharing routes
         .route("/api/shares", post(handlers::teams::share_object_handler))
