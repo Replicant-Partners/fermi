@@ -1232,6 +1232,11 @@ async fn main() {
             "/api/flights/:flight_id/end",
             put(handlers::creatures::end_flight_handler),
         )
+        // Creature minting
+        .route(
+            "/api/creatures/mint",
+            post(handlers::creatures::mint_creature_handler),
+        )
         .route(
             "/api/swarms/create",
             post(handlers::creatures::create_swarm_handler),

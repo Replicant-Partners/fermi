@@ -596,6 +596,166 @@ pub async fn end_flight_handler(
     })))
 }
 
+// ─── Creature minting ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct MintCreatureRequest {
+    pub scientific_name: String,
+    pub common_name: Option<String>,
+    pub species_group: String,
+    pub gbif_key: Option<i64>,
+    pub taxonomy: Option<serde_json::Value>,
+    pub specimen_name: Option<String>,
+    pub variation_notes: Option<String>,
+    pub generate_art: Option<bool>,
+    pub art_style: Option<String>,
+}
+
+/// POST /api/creatures/mint — mint a new creature from a GBIF species.
+/// Costs creature_mint credits (default 3). Optionally triggers art generation (+5cr).
+pub async fn mint_creature_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<MintCreatureRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Validate species_group
+    if req.species_group != "butterfly" && req.species_group != "dragonfly" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "species_group must be 'butterfly' or 'dragonfly'".into(),
+        ));
+    }
+
+    let generate_art = req.generate_art.unwrap_or(true);
+    let art_style = req.art_style.as_deref().unwrap_or("naturalist");
+
+    // Calculate total cost
+    let mint_cost = state.gas_fees.creature_mint;
+    let art_cost = if generate_art {
+        state.gas_fees.creature_art
+    } else {
+        0
+    };
+    let total_cost = mint_cost + art_cost;
+
+    // Charge upfront
+    let wallet = get_or_create_wallet(pool, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        pool,
+        wallet.wallet_id,
+        total_cost,
+        "creature_mint",
+        &format!(
+            "Mint {} ({}cr mint + {}cr art)",
+            req.scientific_name, mint_cost, art_cost
+        ),
+        None,
+    )
+    .await?;
+
+    // Auto-generate specimen name if not provided
+    let specimen_name = if let Some(ref name) = req.specimen_name {
+        name.clone()
+    } else {
+        let display = req.common_name.as_deref().unwrap_or(&req.scientific_name);
+        // Count user's existing creatures of this species
+        let count: i64 = sqlx::query(
+            "SELECT COUNT(*) as cnt FROM creatures WHERE owner_id = $1 AND scientific_name = $2",
+        )
+        .bind(&user_id)
+        .bind(&req.scientific_name)
+        .fetch_one(pool)
+        .await
+        .map(|r| r.try_get("cnt").unwrap_or(0))
+        .unwrap_or(0);
+        format!("{} #{}", display, count + 1)
+    };
+
+    // Global mint number for this species
+    let mint_number: i64 =
+        sqlx::query("SELECT COUNT(*) as cnt FROM creatures WHERE scientific_name = $1")
+            .bind(&req.scientific_name)
+            .fetch_one(pool)
+            .await
+            .map(|r| r.try_get("cnt").unwrap_or(0))
+            .unwrap_or(0);
+
+    let creature_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    let taxonomy = req.taxonomy.unwrap_or(json!({}));
+
+    sqlx::query(
+        "INSERT INTO creatures (creature_id, owner_id, scientific_name, common_name,
+         species_group, gbif_key, taxonomy, specimen_name, variation_notes,
+         asset_path, mint_number, data_card, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                 '/static/creatures/placeholder.svg', $10, '{}', $11, $11)",
+    )
+    .bind(creature_id)
+    .bind(&user_id)
+    .bind(&req.scientific_name)
+    .bind(&req.common_name)
+    .bind(&req.species_group)
+    .bind(req.gbif_key)
+    .bind(&taxonomy)
+    .bind(&specimen_name)
+    .bind(&req.variation_notes)
+    .bind((mint_number + 1) as i32)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Spawn async art generation if requested
+    let art_generating = if generate_art {
+        let pool_clone = pool.clone();
+        let sci_name = req.scientific_name.clone();
+        let common = req.common_name.clone();
+        let group = req.species_group.clone();
+        let gbif = req.gbif_key;
+        let style = art_style.to_string();
+        tokio::spawn(async move {
+            match generate_creature_image(
+                &pool_clone,
+                creature_id,
+                &sci_name,
+                common.as_deref(),
+                &group,
+                gbif,
+                &style,
+            )
+            .await
+            {
+                Ok(path) => eprintln!("[rabble] Art generated for {}: {}", sci_name, path),
+                Err(e) => eprintln!("[rabble] Art generation failed for {}: {}", sci_name, e),
+            }
+        });
+        true
+    } else {
+        false
+    };
+
+    Ok(Json(json!({
+        "creature_id": creature_id,
+        "owner_id": user_id,
+        "scientific_name": req.scientific_name,
+        "common_name": req.common_name,
+        "species_group": req.species_group,
+        "specimen_name": specimen_name,
+        "mint_number": mint_number + 1,
+        "asset_path": "/static/creatures/placeholder.svg",
+        "art_generating": art_generating,
+        "art_style": art_style,
+        "credits_charged": total_cost,
+        "created_at": now.to_rfc3339(),
+    })))
+}
+
 #[derive(Deserialize)]
 pub struct CreateSwarmRequest {
     pub h3_cell: String,
