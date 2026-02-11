@@ -12,7 +12,8 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::super::AppState;
-use fermi_auth::AuthPrincipal;
+use fermi::gas::charge_gas;
+use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
 // ─── Public endpoints ──────────────────────────────────────────────
 
@@ -435,4 +436,443 @@ pub async fn list_collections_handler(
                 .into_response()
         }
     }
+}
+
+// ─── Write endpoints (authenticated) ───────────────────────────────
+
+#[derive(Deserialize)]
+pub struct RecordFlightRequest {
+    pub creature_id: Uuid,
+    pub h3_cell: String,
+    pub h3_resolution: Option<i32>,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub location_name: Option<String>,
+    pub country_code: Option<String>,
+    pub flight_pattern: Option<String>,
+    pub beacon_id: Option<Uuid>,
+    pub swarm_id: Option<Uuid>,
+}
+
+/// POST /api/flights — record a creature flight (3 credits)
+pub async fn record_flight_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<RecordFlightRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    // Verify creature ownership
+    let pool = state.memory_store.pool();
+    let creature = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
+        .bind(req.creature_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    // Charge 3 credits
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        3,
+        "creature_flight",
+        &format!("Fly creature {}", req.creature_id),
+        Some(&req.creature_id.to_string()),
+    )
+    .await?;
+
+    let flight_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    let pattern = req.flight_pattern.as_deref().unwrap_or("wander");
+    let resolution = req.h3_resolution.unwrap_or(12);
+
+    sqlx::query(
+        "INSERT INTO creature_flights (flight_id, creature_id, beacon_id, owner_id,
+         h3_cell, h3_resolution, center_lat, center_lng, location_name, country_code,
+         flight_pattern, swarm_id, started_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+    )
+    .bind(flight_id)
+    .bind(req.creature_id)
+    .bind(req.beacon_id)
+    .bind(&user_id)
+    .bind(&req.h3_cell)
+    .bind(resolution)
+    .bind(req.center_lat)
+    .bind(req.center_lng)
+    .bind(&req.location_name)
+    .bind(&req.country_code)
+    .bind(pattern)
+    .bind(req.swarm_id)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Update creature stats
+    sqlx::query(
+        "UPDATE creatures SET total_flights = total_flights + 1, updated_at = NOW()
+         WHERE creature_id = $1",
+    )
+    .bind(req.creature_id)
+    .execute(pool)
+    .await
+    .ok(); // best-effort
+
+    Ok(Json(json!({
+        "flight_id": flight_id,
+        "creature_id": req.creature_id,
+        "h3_cell": req.h3_cell,
+        "location_name": req.location_name,
+        "started_at": now.to_rfc3339(),
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct EndFlightRequest {
+    pub duration_seconds: Option<i32>,
+}
+
+/// PUT /api/flights/:flight_id/end — end a flight
+pub async fn end_flight_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(flight_id): Path<Uuid>,
+    Json(req): Json<EndFlightRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pool = state.memory_store.pool();
+    let now = chrono::Utc::now();
+
+    let result = sqlx::query(
+        "UPDATE creature_flights SET ended_at = $1, duration_seconds = $2
+         WHERE flight_id = $3 AND owner_id = $4 AND ended_at IS NULL",
+    )
+    .bind(now)
+    .bind(req.duration_seconds)
+    .bind(flight_id)
+    .bind(principal.user_id())
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Flight not found or already ended".to_string(),
+        ));
+    }
+
+    Ok(Json(json!({
+        "flight_id": flight_id,
+        "ended_at": now.to_rfc3339(),
+        "duration_seconds": req.duration_seconds,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct CreateSwarmRequest {
+    pub h3_cell: String,
+    pub h3_resolution: Option<i32>,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub location_name: Option<String>,
+    pub grid_map_id: Option<Uuid>,
+    pub name: String,
+    pub description: Option<String>,
+    pub species_filter: Option<String>,
+    pub max_participants: Option<i32>,
+    pub starts_at: String,
+    pub ends_at: String,
+}
+
+/// POST /api/swarms — create a swarm event (5 credits)
+pub async fn create_swarm_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<CreateSwarmRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        5,
+        "swarm_create",
+        &format!("Create swarm: {}", req.name),
+        None,
+    )
+    .await?;
+
+    let swarm_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    let starts_at = chrono::DateTime::parse_from_rfc3339(&req.starts_at)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid starts_at: {}", e)))?;
+    let ends_at = chrono::DateTime::parse_from_rfc3339(&req.ends_at)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid ends_at: {}", e)))?;
+    let resolution = req.h3_resolution.unwrap_or(12);
+
+    let pool = state.memory_store.pool();
+    sqlx::query(
+        "INSERT INTO swarm_events (swarm_id, creator_id, h3_cell, h3_resolution,
+         center_lat, center_lng, location_name, grid_map_id,
+         name, description, species_filter, max_participants,
+         starts_at, ends_at, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'scheduled', $15)",
+    )
+    .bind(swarm_id)
+    .bind(&user_id)
+    .bind(&req.h3_cell)
+    .bind(resolution)
+    .bind(req.center_lat)
+    .bind(req.center_lng)
+    .bind(&req.location_name)
+    .bind(req.grid_map_id)
+    .bind(&req.name)
+    .bind(&req.description)
+    .bind(&req.species_filter)
+    .bind(req.max_participants)
+    .bind(starts_at)
+    .bind(ends_at)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "swarm_id": swarm_id,
+        "name": req.name,
+        "status": "scheduled",
+        "starts_at": starts_at.to_rfc3339(),
+        "ends_at": ends_at.to_rfc3339(),
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct JoinSwarmRequest {
+    pub creature_id: Uuid,
+}
+
+/// POST /api/swarms/:swarm_id/join — join a swarm with a creature (1 credit)
+pub async fn join_swarm_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(swarm_id): Path<Uuid>,
+    Json(req): Json<JoinSwarmRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify swarm exists and is joinable
+    let swarm = sqlx::query(
+        "SELECT status, h3_cell, center_lat, center_lng FROM swarm_events WHERE swarm_id = $1",
+    )
+    .bind(swarm_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Swarm not found".to_string()))?;
+
+    let status: String = swarm.get("status");
+    if status != "scheduled" && status != "active" {
+        return Err((StatusCode::CONFLICT, format!("Swarm is {}", status)));
+    }
+
+    // Verify creature ownership
+    let creature = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
+        .bind(req.creature_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    // Charge 1 credit
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        1,
+        "swarm_join",
+        &format!("Join swarm {}", swarm_id),
+        Some(&swarm_id.to_string()),
+    )
+    .await?;
+
+    // Record the flight at the swarm location
+    let flight_id = Uuid::new_v4();
+    let h3_cell: String = swarm.get("h3_cell");
+    let lat: f64 = swarm.get("center_lat");
+    let lng: f64 = swarm.get("center_lng");
+
+    sqlx::query(
+        "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
+         h3_cell, h3_resolution, center_lat, center_lng,
+         flight_pattern, swarm_id, started_at)
+         VALUES ($1, $2, $3, $4, 12, $5, $6, 'swarm', $7, NOW())",
+    )
+    .bind(flight_id)
+    .bind(req.creature_id)
+    .bind(&user_id)
+    .bind(&h3_cell)
+    .bind(lat)
+    .bind(lng)
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Increment swarm counters
+    sqlx::query(
+        "UPDATE swarm_events SET participant_count = participant_count + 1,
+         creature_count = creature_count + 1
+         WHERE swarm_id = $1",
+    )
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .ok();
+
+    Ok(Json(json!({
+        "swarm_id": swarm_id,
+        "flight_id": flight_id,
+        "creature_id": req.creature_id,
+        "joined": true,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct CreateCollectionRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub creature_ids: Option<Vec<Uuid>>,
+}
+
+/// POST /api/collections — create a collection
+pub async fn create_collection_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<CreateCollectionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let collection_id = Uuid::new_v4();
+    let creature_ids = req.creature_ids.unwrap_or_default();
+    let now = chrono::Utc::now();
+
+    let pool = state.memory_store.pool();
+    sqlx::query(
+        "INSERT INTO creature_collections (collection_id, owner_id, name, description, creature_ids, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $6)",
+    )
+    .bind(collection_id)
+    .bind(&user_id)
+    .bind(&req.name)
+    .bind(&req.description)
+    .bind(json!(creature_ids))
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "collection_id": collection_id,
+        "name": req.name,
+        "creature_count": creature_ids.len(),
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateCollectionRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub creature_ids: Option<Vec<Uuid>>,
+}
+
+/// PUT /api/collections/:collection_id — update a collection
+pub async fn update_collection_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(collection_id): Path<Uuid>,
+    Json(req): Json<UpdateCollectionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify ownership
+    let existing =
+        sqlx::query("SELECT owner_id FROM creature_collections WHERE collection_id = $1")
+            .bind(collection_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or((StatusCode::NOT_FOUND, "Collection not found".to_string()))?;
+
+    let owner: String = existing.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your collection".to_string()));
+    }
+
+    // Build dynamic update
+    let mut sets = vec!["updated_at = NOW()".to_string()];
+    let mut bind_idx = 1u32;
+    let mut binds: Vec<String> = Vec::new();
+
+    if let Some(ref name) = req.name {
+        bind_idx += 1;
+        sets.push(format!("name = ${}", bind_idx));
+        binds.push(name.clone());
+    }
+    if let Some(ref desc) = req.description {
+        bind_idx += 1;
+        sets.push(format!("description = ${}", bind_idx));
+        binds.push(desc.clone());
+    }
+
+    let creature_ids_json = req.creature_ids.as_ref().map(|ids| json!(ids));
+    if creature_ids_json.is_some() {
+        bind_idx += 1;
+        sets.push(format!("creature_ids = ${}", bind_idx));
+    }
+
+    let sql = format!(
+        "UPDATE creature_collections SET {} WHERE collection_id = $1 AND owner_id = ${}",
+        sets.join(", "),
+        bind_idx + 1,
+    );
+
+    let mut query = sqlx::query(&sql).bind(collection_id);
+    for s in &binds {
+        query = query.bind(s);
+    }
+    if let Some(ref ids_json) = creature_ids_json {
+        query = query.bind(ids_json);
+    }
+    query = query.bind(&user_id);
+
+    query
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "collection_id": collection_id,
+        "updated": true,
+    })))
 }

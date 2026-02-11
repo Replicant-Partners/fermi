@@ -1197,10 +1197,31 @@ async fn main() {
             "/api/shopping/profile/:listing_id/listing",
             put(handlers::marketplace::update_listing_handler),
         )
-        // Rabble.world collections (authenticated)
+        // Rabble.world (authenticated)
         .route(
             "/api/collections",
-            get(handlers::creatures::list_collections_handler),
+            get(handlers::creatures::list_collections_handler)
+                .post(handlers::creatures::create_collection_handler),
+        )
+        .route(
+            "/api/collections/:collection_id",
+            put(handlers::creatures::update_collection_handler),
+        )
+        .route(
+            "/api/flights",
+            post(handlers::creatures::record_flight_handler),
+        )
+        .route(
+            "/api/flights/:flight_id/end",
+            put(handlers::creatures::end_flight_handler),
+        )
+        .route(
+            "/api/swarms/create",
+            post(handlers::creatures::create_swarm_handler),
+        )
+        .route(
+            "/api/swarms/:swarm_id/join",
+            post(handlers::creatures::join_swarm_handler),
         )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
