@@ -1317,6 +1317,7 @@ async fn main() {
         .merge(public_routes)
         .merge(protected_routes)
         .nest_service("/static", ServeDir::new("static"))
+        .nest_service("/rabble", ServeDir::new("static/rabble"))
         .fallback(fallback_404)
         .with_state(state);
 
