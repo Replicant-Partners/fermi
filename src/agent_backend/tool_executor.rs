@@ -166,9 +166,21 @@ impl ToolAwareExecutor {
                     iteration,
                 });
 
+                // Cap tool result to ~12k chars (~3k tokens) to prevent context overflow
+                const MAX_TOOL_RESULT_CHARS: usize = 12_000;
+                let truncated_output = if output.len() > MAX_TOOL_RESULT_CHARS {
+                    format!(
+                        "{}... [truncated, {} chars total]",
+                        &output[..MAX_TOOL_RESULT_CHARS],
+                        output.len()
+                    )
+                } else {
+                    output
+                };
+
                 result_blocks.push(MessageBlock::ToolResult {
                     tool_use_id: tool_use_id.clone(),
-                    content: output,
+                    content: truncated_output,
                 });
             }
 
@@ -310,7 +322,18 @@ impl ToolAwareExecutor {
                     iteration,
                 });
 
-                messages.push(OpenAIMessage::tool_result(&call.id, &output));
+                // Cap tool result to prevent context overflow
+                const MAX_TOOL_RESULT_CHARS_OAI: usize = 12_000;
+                let truncated = if output.len() > MAX_TOOL_RESULT_CHARS_OAI {
+                    format!(
+                        "{}... [truncated, {} chars total]",
+                        &output[..MAX_TOOL_RESULT_CHARS_OAI],
+                        output.len()
+                    )
+                } else {
+                    output
+                };
+                messages.push(OpenAIMessage::tool_result(&call.id, &truncated));
             }
         }
 
