@@ -19,6 +19,7 @@ pub mod marketplace;
 pub mod mcp;
 pub mod metrics;
 pub mod misc;
+pub mod notebooks;
 pub mod ontology;
 pub mod pages;
 pub mod profile;
