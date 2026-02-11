@@ -628,10 +628,10 @@ pub async fn mint_creature_handler(
     let pool = state.memory_store.pool();
 
     // Validate species_group
-    if req.species_group != "butterfly" && req.species_group != "dragonfly" {
+    if !["butterfly", "dragonfly", "locust"].contains(&req.species_group.as_str()) {
         return Err((
             StatusCode::BAD_REQUEST,
-            "species_group must be 'butterfly' or 'dragonfly'".into(),
+            "species_group must be 'butterfly', 'dragonfly', or 'locust'".into(),
         ));
     }
 
@@ -1809,4 +1809,89 @@ async fn trigger_swarm_host_welcome(
             eprintln!("Swarm host welcome failed: {}", e);
         }
     }
+}
+
+// ─── Swarm analysis (locust event) ──────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SwarmAnalysisQuery {
+    pub swarm_id: Option<Uuid>,
+    pub species_group: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// GET /api/flights/swarm-analysis — aggregate path data for post-event visualization.
+/// Returns flights with path_samples for interactive replay/analysis.
+pub async fn swarm_analysis_handler(
+    State(state): State<AppState>,
+    Query(q): Query<SwarmAnalysisQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pool = state.memory_store.pool();
+    let limit = q.limit.unwrap_or(500).min(2000);
+
+    // Build query: flights with path_samples, optionally filtered by swarm or species
+    let rows = sqlx::query(
+        "SELECT f.flight_id, f.creature_id, f.owner_id,
+                f.h3_cell, f.center_lat, f.center_lng, f.location_name,
+                f.flight_pattern, f.swarm_id,
+                f.started_at, f.ended_at, f.duration_seconds,
+                f.path_samples,
+                c.scientific_name, c.common_name, c.species_group
+         FROM creature_flights f
+         JOIN creatures c ON c.creature_id = f.creature_id
+         WHERE f.path_samples IS NOT NULL
+           AND ($1::uuid IS NULL OR f.swarm_id = $1)
+           AND ($2::text IS NULL OR c.species_group = $2)
+         ORDER BY f.started_at DESC
+         LIMIT $3",
+    )
+    .bind(q.swarm_id)
+    .bind(&q.species_group)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let flights: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "flight_id": row.get::<Uuid, _>("flight_id"),
+                "creature_id": row.get::<Uuid, _>("creature_id"),
+                "owner_id": row.get::<String, _>("owner_id"),
+                "h3_cell": row.get::<String, _>("h3_cell"),
+                "center_lat": row.get::<f64, _>("center_lat"),
+                "center_lng": row.get::<f64, _>("center_lng"),
+                "location_name": row.get::<Option<String>, _>("location_name"),
+                "flight_pattern": row.get::<String, _>("flight_pattern"),
+                "swarm_id": row.get::<Option<Uuid>, _>("swarm_id"),
+                "started_at": row.get::<chrono::DateTime<chrono::Utc>, _>("started_at").to_rfc3339(),
+                "ended_at": row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("ended_at").map(|t| t.to_rfc3339()),
+                "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
+                "path_samples": row.get::<Option<serde_json::Value>, _>("path_samples"),
+                "scientific_name": row.get::<String, _>("scientific_name"),
+                "common_name": row.get::<Option<String>, _>("common_name"),
+                "species_group": row.get::<String, _>("species_group"),
+            })
+        })
+        .collect();
+
+    // Compute aggregate stats
+    let total_samples: usize = flights
+        .iter()
+        .filter_map(|f| f["path_samples"].as_array())
+        .map(|a| a.len())
+        .sum();
+
+    let total_duration: i64 = flights
+        .iter()
+        .filter_map(|f| f["duration_seconds"].as_i64())
+        .sum();
+
+    Ok(Json(json!({
+        "flights": flights,
+        "count": flights.len(),
+        "total_path_samples": total_samples,
+        "total_duration_seconds": total_duration,
+    })))
 }
