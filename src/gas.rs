@@ -32,6 +32,7 @@ pub struct GasFees {
     pub rabble_chat: i32,
     pub creature_mint: i32,
     pub creature_art: i32,
+    pub voice_synthesis: i32,
     /// Layer 2: Platform transaction fee on crypto token transfers (agent→owner royalties).
     /// Expressed as a fraction (e.g. 0.025 = 2.5%). Applied to every token payout.
     /// Not yet wired — requires SIWE wallet connection + settlement layer.
@@ -66,6 +67,7 @@ impl GasFees {
             rabble_chat: env_or("GAS_RABBLE_CHAT", 1),
             creature_mint: env_or("GAS_CREATURE_MINT", 3),
             creature_art: env_or("GAS_CREATURE_ART", 5),
+            voice_synthesis: env_or("GAS_VOICE_SYNTHESIS", 2),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -109,6 +111,7 @@ impl Default for GasFees {
             rabble_chat: 1,
             creature_mint: 3,
             creature_art: 5,
+            voice_synthesis: 2,
             crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
     }

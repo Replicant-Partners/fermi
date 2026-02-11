@@ -394,6 +394,29 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: true,
             is_delegation: false,
         },
+        // ─── Voice tools ───
+        BuiltinToolDef {
+            name: "speak_text",
+            description: "Convert text to natural speech using Cartesia Sonic. Returns audio as base64-encoded PCM data.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to convert to speech (max 5000 characters)"
+                    },
+                    "voice": {
+                        "type": "string",
+                        "description": "Voice style: narrator (British), conversational (friendly), or storyteller (calm)",
+                        "enum": ["narrator", "conversational", "storyteller"],
+                        "default": "narrator"
+                    }
+                },
+                "required": ["text"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
         // ─── Coherence tools ───
         BuiltinToolDef {
             name: "evaluate_coherence",
@@ -993,6 +1016,7 @@ impl ToolRegistry {
             "generate_image" => execute_generate_image(input).await,
             "edit_image" => execute_edit_image(input).await,
             "write_workspace_file" => execute_write_workspace_file(input, ctx).await,
+            "speak_text" => execute_speak_text(input).await,
             "reduct_list_projects" => execute_reduct_list_projects().await,
             "reduct_get_project" => execute_reduct_get_project(input).await,
             "reduct_get_transcript" => execute_reduct_get_transcript(input).await,
@@ -3016,6 +3040,57 @@ async fn execute_write_workspace_file(
         })
         .to_string())
     }
+}
+
+// ─── Voice synthesis tool ───────────────────────────────────────────
+
+async fn execute_speak_text(input: &serde_json::Value) -> Result<String, String> {
+    use crate::voice::{cartesia::VoiceStyle, CartesiaClient};
+
+    let text = input
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: text")?;
+
+    if text.len() > 5000 {
+        return Err("Text exceeds maximum length of 5000 characters".to_string());
+    }
+
+    let voice_str = input
+        .get("voice")
+        .and_then(|v| v.as_str())
+        .unwrap_or("narrator");
+
+    let voice_style = match voice_str {
+        "conversational" => VoiceStyle::Conversational,
+        "storyteller" => VoiceStyle::Storyteller,
+        _ => VoiceStyle::Narrator,
+    };
+
+    let api_key = std::env::var("CARTESIA_API_KEY")
+        .map_err(|_| "CARTESIA_API_KEY not set — voice synthesis unavailable".to_string())?;
+
+    let client = CartesiaClient::new(api_key);
+
+    let audio_bytes = client
+        .synthesize(text, voice_style)
+        .await
+        .map_err(|e| format!("Cartesia API error: {}", e))?;
+
+    let duration_ms = client.estimate_duration_ms(text);
+
+    // Encode as base64 for transport
+    use base64::Engine;
+    let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&audio_bytes);
+
+    Ok(json!({
+        "audio": audio_base64,
+        "format": "pcm_f32le",
+        "sample_rate": 44100,
+        "duration_ms": duration_ms,
+        "character_count": text.len(),
+    })
+    .to_string())
 }
 
 // ─── Reduct.video API tools ────────────────────────────────────────

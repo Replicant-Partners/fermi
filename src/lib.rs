@@ -24,6 +24,9 @@ pub mod api;
 pub mod gas;
 pub mod workflows;
 
+// Voice synthesis
+pub mod voice;
+
 // Re-export main types
 pub use ast::*;
 pub use evaluator::{evaluate, EvalError, EvaluationContext};
