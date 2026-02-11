@@ -34,6 +34,7 @@ use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
+use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
 use fermi::gas::{charge_gas, check_low_balance, GasFees};
@@ -1322,6 +1323,7 @@ async fn main() {
         .nest_service("/static", ServeDir::new("static"))
         .nest("/rabble", rabble_router)
         .fallback(fallback_404)
+        .layer(CorsLayer::permissive())
         .with_state(state);
 
     let port = std::env::var("PORT")
