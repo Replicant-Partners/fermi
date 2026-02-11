@@ -56,6 +56,11 @@ pub async fn auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, AuthError> {
+    // Skip auth for OPTIONS (CORS preflight) requests
+    if req.method() == axum::http::Method::OPTIONS {
+        return Ok(next.run(req).await);
+    }
+
     let token_source = extract_token(&req).ok_or(AuthError::MissingToken)?;
 
     match token_source {
@@ -85,6 +90,11 @@ pub async fn optional_auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Response {
+    // Skip auth extraction for OPTIONS (CORS preflight) requests
+    if req.method() == axum::http::Method::OPTIONS {
+        return next.run(req).await;
+    }
+
     if let Some(token_source) = extract_token(&req) {
         let principal = match token_source {
             TokenSource::Cookie(token) => {
