@@ -87,6 +87,7 @@ pub async fn get_or_create_wallet(
 }
 
 /// Deposit credits into a wallet (always succeeds)
+/// IMPORTANT: No BEGIN/COMMIT - PgBouncer transaction mode handles this
 pub async fn deposit(
     pool: &PgPool,
     wallet_id: Uuid,
@@ -99,31 +100,23 @@ pub async fn deposit(
         ));
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AuthError::Internal(format!("Transaction begin failed: {}", e)))?;
-
-    // Lock the wallet row
-    let row = sqlx::query("SELECT balance FROM wallets WHERE wallet_id = $1 FOR UPDATE")
-        .bind(wallet_id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| AuthError::Internal(format!("Wallet not found: {}", e)))?;
-
-    let current_balance: i32 = row.try_get("balance").unwrap();
-    let new_balance = current_balance + amount;
-
-    // Update wallet
-    sqlx::query(
-        "UPDATE wallets SET balance = $1, total_deposited = total_deposited + $2 WHERE wallet_id = $3",
+    // Atomic update using RETURNING to get new balance
+    let wallet_row = sqlx::query(
+        "UPDATE wallets
+         SET balance = balance + $1,
+             total_deposited = total_deposited + $1
+         WHERE wallet_id = $2
+         RETURNING balance",
     )
-    .bind(new_balance)
     .bind(amount)
     .bind(wallet_id)
-    .execute(&mut *tx)
+    .fetch_one(pool)
     .await
     .map_err(|e| AuthError::Internal(format!("Wallet update failed: {}", e)))?;
+
+    let new_balance: i32 = wallet_row
+        .try_get("balance")
+        .map_err(|e| AuthError::Internal(format!("Failed to get balance: {}", e)))?;
 
     // Create ledger entry
     let ledger_row = sqlx::query(
@@ -135,18 +128,16 @@ pub async fn deposit(
     .bind(amount)
     .bind(new_balance)
     .bind(description)
-    .fetch_one(&mut *tx)
+    .fetch_one(pool)
     .await
     .map_err(|e| AuthError::Internal(format!("Ledger insert failed: {}", e)))?;
-
-    tx.commit()
-        .await
-        .map_err(|e| AuthError::Internal(format!("Transaction commit failed: {}", e)))?;
 
     Ok(row_to_transaction(&ledger_row))
 }
 
 /// Charge credits from a wallet (fails if insufficient balance)
+/// IMPORTANT: No BEGIN/COMMIT - PgBouncer transaction mode handles this
+/// Uses conditional UPDATE with check constraint to ensure atomicity
 pub async fn charge(
     pool: &PgPool,
     wallet_id: Uuid,
@@ -161,39 +152,40 @@ pub async fn charge(
         ));
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AuthError::Internal(format!("Transaction begin failed: {}", e)))?;
-
-    // Lock the wallet row
-    let row = sqlx::query("SELECT balance FROM wallets WHERE wallet_id = $1 FOR UPDATE")
-        .bind(wallet_id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| AuthError::Internal(format!("Wallet not found: {}", e)))?;
-
-    let current_balance: i32 = row.try_get("balance").unwrap();
-
-    if current_balance < amount {
-        return Err(AuthError::InvalidInput(format!(
-            "Insufficient balance: have {}, need {}",
-            current_balance, amount
-        )));
-    }
-
-    let new_balance = current_balance - amount;
-
-    // Update wallet
-    sqlx::query(
-        "UPDATE wallets SET balance = $1, total_spent = total_spent + $2 WHERE wallet_id = $3",
+    // Atomic update with balance check - only updates if sufficient balance
+    let wallet_row = sqlx::query(
+        "UPDATE wallets
+         SET balance = balance - $1,
+             total_spent = total_spent + $1
+         WHERE wallet_id = $2 AND balance >= $1
+         RETURNING balance",
     )
-    .bind(new_balance)
     .bind(amount)
     .bind(wallet_id)
-    .execute(&mut *tx)
+    .fetch_optional(pool)
     .await
     .map_err(|e| AuthError::Internal(format!("Wallet update failed: {}", e)))?;
+
+    let new_balance: i32 = match wallet_row {
+        Some(row) => row
+            .try_get("balance")
+            .map_err(|e| AuthError::Internal(format!("Failed to get balance: {}", e)))?,
+        None => {
+            // Either wallet doesn't exist or insufficient balance
+            let current_balance: Option<i32> =
+                sqlx::query_scalar("SELECT balance FROM wallets WHERE wallet_id = $1")
+                    .bind(wallet_id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| AuthError::Internal(format!("Failed to check balance: {}", e)))?;
+
+            return Err(AuthError::InvalidInput(format!(
+                "Insufficient balance: have {}, need {}",
+                current_balance.unwrap_or(0),
+                amount
+            )));
+        }
+    };
 
     // Create ledger entry (negative amount for debit)
     let ledger_row = sqlx::query(
@@ -207,18 +199,15 @@ pub async fn charge(
     .bind(tx_type)
     .bind(description)
     .bind(related_id)
-    .fetch_one(&mut *tx)
+    .fetch_one(pool)
     .await
     .map_err(|e| AuthError::Internal(format!("Ledger insert failed: {}", e)))?;
-
-    tx.commit()
-        .await
-        .map_err(|e| AuthError::Internal(format!("Transaction commit failed: {}", e)))?;
 
     Ok(row_to_transaction(&ledger_row))
 }
 
 /// Grant free credits (e.g., new user onboarding)
+/// IMPORTANT: No BEGIN/COMMIT - PgBouncer transaction mode handles this
 pub async fn grant(
     pool: &PgPool,
     wallet_id: Uuid,
@@ -231,29 +220,23 @@ pub async fn grant(
         ));
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AuthError::Internal(format!("Transaction begin failed: {}", e)))?;
-
-    let row = sqlx::query("SELECT balance FROM wallets WHERE wallet_id = $1 FOR UPDATE")
-        .bind(wallet_id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| AuthError::Internal(format!("Wallet not found: {}", e)))?;
-
-    let current_balance: i32 = row.try_get("balance").unwrap();
-    let new_balance = current_balance + amount;
-
-    sqlx::query(
-        "UPDATE wallets SET balance = $1, total_deposited = total_deposited + $2 WHERE wallet_id = $3",
+    // Atomic update using RETURNING to get new balance
+    let wallet_row = sqlx::query(
+        "UPDATE wallets
+         SET balance = balance + $1,
+             total_deposited = total_deposited + $1
+         WHERE wallet_id = $2
+         RETURNING balance",
     )
-    .bind(new_balance)
     .bind(amount)
     .bind(wallet_id)
-    .execute(&mut *tx)
+    .fetch_one(pool)
     .await
     .map_err(|e| AuthError::Internal(format!("Wallet update failed: {}", e)))?;
+
+    let new_balance: i32 = wallet_row
+        .try_get("balance")
+        .map_err(|e| AuthError::Internal(format!("Failed to get balance: {}", e)))?;
 
     let ledger_row = sqlx::query(
         "INSERT INTO credit_ledger (wallet_id, amount, balance_after, tx_type, description)
@@ -264,13 +247,9 @@ pub async fn grant(
     .bind(amount)
     .bind(new_balance)
     .bind(description)
-    .fetch_one(&mut *tx)
+    .fetch_one(pool)
     .await
     .map_err(|e| AuthError::Internal(format!("Ledger insert failed: {}", e)))?;
-
-    tx.commit()
-        .await
-        .map_err(|e| AuthError::Internal(format!("Transaction commit failed: {}", e)))?;
 
     Ok(row_to_transaction(&ledger_row))
 }
