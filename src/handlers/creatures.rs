@@ -247,17 +247,21 @@ pub struct SwarmQuery {
     pub limit: Option<i64>,
 }
 
-/// GET /api/swarms — browse upcoming/active swarm events
+/// GET /api/swarms — browse upcoming/active swarm events.
+/// Visibility rules: public always shown; shared/private shown only to creator or invited users.
 pub async fn list_swarms_handler(
     State(state): State<AppState>,
+    caller: Option<axum::extract::Extension<AuthPrincipal>>,
     Query(q): Query<SwarmQuery>,
 ) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(20).min(50);
+    let caller_id = caller.map(|c| c.0.user_id());
 
     let mut sql = String::from(
         "SELECT swarm_id, creator_id, h3_cell, center_lat, center_lng,
          location_name, name, description, species_filter, max_participants,
-         starts_at, ends_at, status, participant_count, creature_count, created_at
+         starts_at, ends_at, status, participant_count, creature_count,
+         visibility, created_at
          FROM swarm_events WHERE 1=1",
     );
 
@@ -269,7 +273,6 @@ pub async fn list_swarms_handler(
         sql.push_str(&format!(" AND status = ${}", bind_idx));
         binds.push(status.clone());
     } else {
-        // Default: show scheduled and active
         sql.push_str(" AND status IN ('scheduled', 'active')");
     }
 
@@ -283,6 +286,20 @@ pub async fn list_swarms_handler(
         bind_idx += 1;
         sql.push_str(&format!(" AND species_filter = ${}", bind_idx));
         binds.push(species.clone());
+    }
+
+    // Visibility filter: public always; shared+private only for creator or invited
+    if let Some(ref uid) = caller_id {
+        bind_idx += 1;
+        sql.push_str(&format!(
+            " AND (visibility = 'public' OR creator_id = ${bind_idx} \
+             OR swarm_id::text IN (SELECT object_id FROM object_shares \
+             WHERE object_type = 'rabble' AND (share_target = ${bind_idx} OR share_target IN \
+             (SELECT team_id::text FROM team_members WHERE user_id = ${bind_idx}))))",
+        ));
+        binds.push(uid.clone());
+    } else {
+        sql.push_str(" AND visibility = 'public'");
     }
 
     sql.push_str(&format!(" ORDER BY starts_at ASC LIMIT {}", limit));
@@ -314,6 +331,7 @@ pub async fn list_swarms_handler(
                         "status": row.get::<String, _>("status"),
                         "participant_count": row.get::<i32, _>("participant_count"),
                         "creature_count": row.get::<i32, _>("creature_count"),
+                        "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                     })
                 })
@@ -595,6 +613,7 @@ pub struct CreateSwarmRequest {
     pub funding_mode: Option<String>,
     pub invite_pool: Option<i32>,
     pub suggested_contribution: Option<i32>,
+    pub visibility: Option<String>,
 }
 
 /// POST /api/swarms — create a swarm event (5 credits)
@@ -604,6 +623,14 @@ pub async fn create_swarm_handler(
     Json(req): Json<CreateSwarmRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
+
+    let visibility = req.visibility.as_deref().unwrap_or("public");
+    if visibility != "public" && visibility != "shared" && visibility != "private" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "visibility must be 'public', 'shared', or 'private'".into(),
+        ));
+    }
 
     let funding_mode = req.funding_mode.as_deref().unwrap_or("hosted");
     if funding_mode != "hosted" && funding_mode != "support" {
@@ -653,9 +680,9 @@ pub async fn create_swarm_handler(
          name, description, species_filter, max_participants,
          starts_at, ends_at, status, created_at,
          funding_mode, invite_pool, invite_pool_remaining,
-         suggested_contribution, qr_token)
+         suggested_contribution, qr_token, visibility)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'scheduled', $15,
-                 $16, $17, $17, $18, $19)",
+                 $16, $17, $17, $18, $19, $20)",
     )
     .bind(swarm_id)
     .bind(&user_id)
@@ -676,6 +703,7 @@ pub async fn create_swarm_handler(
     .bind(invite_pool)
     .bind(suggested_contribution)
     .bind(&qr_token)
+    .bind(visibility)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -689,6 +717,7 @@ pub async fn create_swarm_handler(
         "funding_mode": funding_mode,
         "invite_pool": invite_pool,
         "qr_token": qr_token,
+        "visibility": visibility,
     })))
 }
 
@@ -711,7 +740,8 @@ pub async fn join_swarm_handler(
 
     // Verify swarm exists and is joinable
     let swarm = sqlx::query(
-        "SELECT status, h3_cell, center_lat, center_lng, funding_mode, invite_pool_remaining, suggested_contribution
+        "SELECT status, h3_cell, center_lat, center_lng, creator_id, visibility,
+         funding_mode, invite_pool_remaining, suggested_contribution
          FROM swarm_events WHERE swarm_id = $1",
     )
     .bind(swarm_id)
@@ -724,6 +754,36 @@ pub async fn join_swarm_handler(
     if status != "scheduled" && status != "active" {
         return Err((StatusCode::CONFLICT, format!("Rabble is {}", status)));
     }
+
+    // Visibility access check
+    let visibility: String = swarm
+        .try_get("visibility")
+        .unwrap_or_else(|_| "public".into());
+    let creator_id: String = swarm.get("creator_id");
+    if visibility == "private" && creator_id != user_id {
+        // Check object_shares for direct user or team membership
+        let has_share = sqlx::query(
+            "SELECT 1 FROM object_shares
+             WHERE object_type = 'rabble' AND object_id = $1::text
+             AND (share_target = $2 OR share_target IN
+                  (SELECT team_id::text FROM team_members WHERE user_id = $2))
+             LIMIT 1",
+        )
+        .bind(swarm_id)
+        .bind(&user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if has_share.is_none() {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "This rabble is private. You need an invite to join.".into(),
+            ));
+        }
+    }
+    // shared: having the swarm_id means they have the link/QR — allow
+    // public: always allow
 
     let funding_mode: String = swarm.try_get("funding_mode").unwrap_or("hosted".into());
 

@@ -78,13 +78,16 @@ pub async fn rabble_qr_handler(
     ))
 }
 
-/// GET /api/rabble/join/:qr_token — resolve QR token to rabble details (public).
+/// GET /api/rabble/join/:qr_token — resolve QR token to rabble details.
+/// For private rabbles, returns limited info (name + requires_invite flag).
+/// For shared/public, returns full details.
 pub async fn resolve_qr_token_handler(
     State(state): State<AppState>,
+    caller: Option<axum::extract::Extension<fermi_auth::AuthPrincipal>>,
     Path(qr_token): Path<String>,
 ) -> Result<axum::Json<serde_json::Value>, (StatusCode, String)> {
     let row = sqlx::query(
-        "SELECT swarm_id, name, description, location_name, latitude, longitude,
+        "SELECT swarm_id, name, description, location_name, creator_id, visibility,
                 starts_at, ends_at, status, funding_mode, suggested_contribution,
                 invite_pool_remaining, total_contributions
          FROM swarm_events WHERE qr_token = $1",
@@ -95,8 +98,52 @@ pub async fn resolve_qr_token_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Invalid QR code".into()))?;
 
-    // Count current creatures in this rabble
     let swarm_id: uuid::Uuid = row.try_get("swarm_id").unwrap_or_default();
+    let visibility: String = row
+        .try_get("visibility")
+        .unwrap_or_else(|_| "public".into());
+    let creator_id: String = row.try_get("creator_id").unwrap_or_default();
+    let caller_id = caller.map(|c| c.0.user_id());
+
+    // Private rabbles: only show limited info unless caller is creator or invited
+    if visibility == "private" {
+        let is_authorized = caller_id.as_ref().map_or(false, |uid| uid == &creator_id);
+
+        // Check object_shares if not creator
+        let is_invited = if !is_authorized {
+            if let Some(ref uid) = caller_id {
+                sqlx::query(
+                    "SELECT 1 FROM object_shares
+                     WHERE object_type = 'rabble' AND object_id = $1::text
+                     AND (share_target = $2 OR share_target IN
+                          (SELECT team_id::text FROM team_members WHERE user_id = $2))
+                     LIMIT 1",
+                )
+                .bind(swarm_id)
+                .bind(uid)
+                .fetch_optional(&state.db)
+                .await
+                .map(|r| r.is_some())
+                .unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            true
+        };
+
+        if !is_authorized && !is_invited {
+            return Ok(axum::Json(serde_json::json!({
+                "swarm_id": swarm_id,
+                "name": row.try_get::<Option<String>, _>("name").ok().flatten(),
+                "visibility": "private",
+                "requires_invite": true,
+                "status": row.try_get::<String, _>("status").ok(),
+            })));
+        }
+    }
+
+    // Count current creatures in this rabble
     let creature_count: i64 = sqlx::query(
         "SELECT COUNT(*) as cnt FROM creature_flights WHERE swarm_id = $1 AND ended_at IS NULL",
     )
@@ -111,8 +158,7 @@ pub async fn resolve_qr_token_handler(
         "name": row.try_get::<Option<String>, _>("name").ok().flatten(),
         "description": row.try_get::<Option<String>, _>("description").ok().flatten(),
         "location_name": row.try_get::<Option<String>, _>("location_name").ok().flatten(),
-        "latitude": row.try_get::<Option<f64>, _>("latitude").ok().flatten(),
-        "longitude": row.try_get::<Option<f64>, _>("longitude").ok().flatten(),
+        "visibility": visibility,
         "starts_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("starts_at").ok().flatten().map(|t| t.to_rfc3339()),
         "ends_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("ends_at").ok().flatten().map(|t| t.to_rfc3339()),
         "status": row.try_get::<String, _>("status").ok(),

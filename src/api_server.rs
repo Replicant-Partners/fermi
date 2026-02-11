@@ -406,6 +406,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/043_seed_starter_creatures.sql",
         "migrations/044_rabble_messages.sql",
         "migrations/045_rabble_funding.sql",
+        "migrations/046_rabble_visibility.sql",
     ];
 
     for file in &migration_files {
@@ -1257,6 +1258,19 @@ async fn main() {
         .route(
             "/api/rabble/:id/stream",
             get(handlers::rabble_chat::rabble_stream),
+        )
+        // Rabble invite/members (private rabbles)
+        .route(
+            "/api/rabble/:id/invite",
+            post(handlers::rabble_chat::invite_to_rabble),
+        )
+        .route(
+            "/api/rabble/:id/invite/:user_id",
+            delete(handlers::rabble_chat::revoke_rabble_invite),
+        )
+        .route(
+            "/api/rabble/:id/members",
+            get(handlers::rabble_chat::list_rabble_members),
         )
         .route(
             "/api/rabble/join/:qr_token",

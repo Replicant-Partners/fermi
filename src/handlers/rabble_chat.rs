@@ -386,6 +386,202 @@ pub async fn insert_narrator_message(
     Ok(())
 }
 
+// ─── Invite endpoints (private rabbles) ────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct InviteRequest {
+    pub user_id: Option<String>,
+    pub team_id: Option<String>,
+}
+
+/// POST /api/rabble/:id/invite — invite a user or team to a private rabble.
+/// Only the rabble creator can invite.
+pub async fn invite_to_rabble(
+    State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
+    Path(swarm_id): Path<uuid::Uuid>,
+    Json(body): Json<InviteRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let caller = principal.user_id();
+
+    // Verify caller is creator
+    let row = sqlx::query("SELECT creator_id, name FROM swarm_events WHERE swarm_id = $1")
+        .bind(swarm_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Rabble not found".into()))?;
+
+    let creator_id: String = row.get("creator_id");
+    if creator_id != caller {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the rabble creator can invite".into(),
+        ));
+    }
+    let rabble_name: String = row.try_get("name").unwrap_or_default();
+
+    let (share_type, share_target) = if let Some(ref uid) = body.user_id {
+        ("user", uid.clone())
+    } else if let Some(ref tid) = body.team_id {
+        ("team", tid.clone())
+    } else {
+        return Err((StatusCode::BAD_REQUEST, "Provide user_id or team_id".into()));
+    };
+
+    // Check for existing invite (idempotent)
+    let existing = sqlx::query(
+        "SELECT share_id FROM object_shares
+         WHERE object_type = 'rabble' AND object_id = $1 AND share_target = $2
+         LIMIT 1",
+    )
+    .bind(swarm_id.to_string())
+    .bind(&share_target)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if existing.is_some() {
+        return Ok(Json(
+            json!({ "status": "already_invited", "share_target": share_target }),
+        ));
+    }
+
+    let share_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO object_shares (share_id, object_type, object_id, share_type, share_target, permission, granted_by, created_at)
+         VALUES ($1, 'rabble', $2, $3, $4, 'edit', $5, NOW())",
+    )
+    .bind(share_id)
+    .bind(swarm_id.to_string())
+    .bind(share_type)
+    .bind(&share_target)
+    .bind(&caller)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Create notification for invitee (only for user invites)
+    if share_type == "user" {
+        let _ = sqlx::query(
+            "INSERT INTO notifications (id, user_id, notification_type, title, body, created_at)
+             VALUES ($1, $2, 'rabble_invite', $3, $4, NOW())",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(&share_target)
+        .bind(format!("Invited to {}", rabble_name))
+        .bind(format!(
+            "You've been invited to the rabble '{}'",
+            rabble_name
+        ))
+        .execute(&state.db)
+        .await;
+    }
+
+    Ok(Json(json!({
+        "status": "invited",
+        "share_id": share_id,
+        "share_type": share_type,
+        "share_target": share_target,
+    })))
+}
+
+/// GET /api/rabble/:id/members — list rabble members (creator only).
+pub async fn list_rabble_members(
+    State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
+    Path(swarm_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let caller = principal.user_id();
+
+    // Verify caller is creator
+    let row = sqlx::query("SELECT creator_id FROM swarm_events WHERE swarm_id = $1")
+        .bind(swarm_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Rabble not found".into()))?;
+
+    let creator_id: String = row.get("creator_id");
+    if creator_id != caller {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the rabble creator can view members".into(),
+        ));
+    }
+
+    let shares = sqlx::query(
+        "SELECT share_id, share_type, share_target, permission, created_at
+         FROM object_shares
+         WHERE object_type = 'rabble' AND object_id = $1
+         ORDER BY created_at ASC",
+    )
+    .bind(swarm_id.to_string())
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let members: Vec<Value> = shares.iter().map(|r| {
+        json!({
+            "share_id": r.try_get::<uuid::Uuid, _>("share_id").ok(),
+            "share_type": r.try_get::<String, _>("share_type").ok(),
+            "share_target": r.try_get::<String, _>("share_target").ok(),
+            "permission": r.try_get::<String, _>("permission").ok(),
+            "invited_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|t| t.to_rfc3339()),
+        })
+    }).collect();
+
+    Ok(Json(json!({
+        "creator_id": creator_id,
+        "members": members,
+        "count": members.len(),
+    })))
+}
+
+/// DELETE /api/rabble/:id/invite/:user_id — revoke a rabble invite (creator only).
+pub async fn revoke_rabble_invite(
+    State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
+    Path((swarm_id, target_user_id)): Path<(uuid::Uuid, String)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let caller = principal.user_id();
+
+    // Verify caller is creator
+    let row = sqlx::query("SELECT creator_id FROM swarm_events WHERE swarm_id = $1")
+        .bind(swarm_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Rabble not found".into()))?;
+
+    let creator_id: String = row.get("creator_id");
+    if creator_id != caller {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the rabble creator can revoke invites".into(),
+        ));
+    }
+
+    let result = sqlx::query(
+        "DELETE FROM object_shares
+         WHERE object_type = 'rabble' AND object_id = $1 AND share_target = $2",
+    )
+    .bind(swarm_id.to_string())
+    .bind(&target_user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "Invite not found".into()));
+    }
+
+    Ok(Json(json!({
+        "status": "revoked",
+        "share_target": target_user_id,
+    })))
+}
+
 // ─── Helper: insert system message (join/leave) ────────────────────
 
 pub async fn insert_system_message(
