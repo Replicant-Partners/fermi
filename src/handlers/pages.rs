@@ -1,6 +1,9 @@
 //! HTML page-serving handlers.
 
-use axum::{http::StatusCode, response::Html};
+use axum::{
+    http::{header, StatusCode},
+    response::Html,
+};
 
 // ─── Fallback (404) ────────────────────────────────────────────────
 
@@ -12,7 +15,21 @@ pub async fn fallback_404() -> (StatusCode, Html<String>) {
 
 // ─── Page routes ───────────────────────────────────────────────────
 
-pub async fn landing() -> Html<String> {
+/// Landing page — serves Flutter web app for rabble.world, ABW landing for everything else
+pub async fn landing(headers: axum::http::HeaderMap) -> Html<String> {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+
+    if host.starts_with("rabble.world") {
+        // Serve Flutter web app if built, otherwise show coming soon
+        if let Ok(content) = std::fs::read_to_string("static/rabble/index.html") {
+            return Html(content);
+        }
+        return Html("<html><body style='background:#0D1B14;color:#F5F0E8;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'><div style='text-align:center'><h1>Rabble</h1><p style='color:#7A9A84'>Coming soon</p></div></body></html>".to_string());
+    }
+
     let html = match std::fs::read_to_string("templates/landing.html") {
         Ok(content) => content,
         Err(e) => {
