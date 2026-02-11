@@ -112,6 +112,30 @@
       ]
     },
     {
+      "title": "Rabble.world",
+      "guides": [
+        {
+          "slug": "rabble",
+          "title": "Rabble.world — AR Insect Menagerie",
+          "description": "Mint real insect species as AR creatures, fly them at locations, collect and swarm with friends. Powered by GBIF + H3 + Gemini.",
+          "tags": [
+            "rabble",
+            "creatures",
+            "insects",
+            "ar",
+            "gbif",
+            "menagerie",
+            "butterfly",
+            "dragonfly",
+            "mint",
+            "swarm",
+            "collection",
+            "flutter"
+          ]
+        }
+      ]
+    },
+    {
       "title": "Tools & Integration",
       "guides": [
         {

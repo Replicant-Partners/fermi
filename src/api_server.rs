@@ -395,6 +395,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/039_user_secrets.sql",
         "migrations/040_agent_requires_secrets.sql",
         "migrations/041_ar_beacons.sql",
+        "migrations/042_rabble_creatures.sql",
     ];
 
     for file in &migration_files {
@@ -763,6 +764,24 @@ async fn main() {
         .route(
             "/api/grid-maps/:map_id",
             get(handlers::beacons::get_grid_map_handler),
+        )
+        // Rabble.world creatures (public read)
+        .route(
+            "/api/creatures",
+            get(handlers::creatures::list_creatures_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id",
+            get(handlers::creatures::get_creature_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/flights",
+            get(handlers::creatures::creature_flights_handler),
+        )
+        .route("/api/swarms", get(handlers::creatures::list_swarms_handler))
+        .route(
+            "/api/swarms/:swarm_id",
+            get(handlers::creatures::get_swarm_handler),
         )
         // User profiles (public, no auth)
         .route("/user/:user_id", get(handlers::users::user_profile_view))
@@ -1177,6 +1196,11 @@ async fn main() {
         .route(
             "/api/shopping/profile/:listing_id/listing",
             put(handlers::marketplace::update_listing_handler),
+        )
+        // Rabble.world collections (authenticated)
+        .route(
+            "/api/collections",
+            get(handlers::creatures::list_collections_handler),
         )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),

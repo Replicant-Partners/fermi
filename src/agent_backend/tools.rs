@@ -1,6 +1,6 @@
 /// Built-in tool registry for agent tool-use
 ///
-/// Provides 27 platform tools that agents can invoke via the LLM tool-calling protocol:
+/// Provides 29 platform tools that agents can invoke via the LLM tool-calling protocol:
 ///   - search_knowledge: similarity search over agent's episodic memory
 ///   - query_ontology: get rules/entities/facts from knowledge graph
 ///   - execute_agent: invoke another agent (single-turn, no recursion)
@@ -28,6 +28,8 @@
 ///   - create_beacon: create an AR beacon at an H3 cell (workspace-only)
 ///   - query_beacons: find AR beacons near a location
 ///   - save_grid_map: persist a named spatial grid (workspace-only)
+///   - gbif_species_search: search GBIF for insect species data
+///   - mint_creature: store a minted creature specimen (workspace-only)
 use crate::agent_backend::agent_card::AgentCard;
 use crate::agent_backend::executor::{AgentExecutor, ExecutionContext};
 use crate::agent_backend::llm_executor::ClaudeTool;
@@ -733,6 +735,86 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: true,
             is_delegation: false,
         },
+        // ─── Rabble.world creature tools ───
+        BuiltinToolDef {
+            name: "gbif_species_search",
+            description: "Search the GBIF (Global Biodiversity Information Facility) API for insect species. Returns taxonomy, common names, and media references. Free, no API key required.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Species name (common or scientific) to search for"
+                    },
+                    "gbif_key": {
+                        "type": "integer",
+                        "description": "Specific GBIF species key for direct lookup"
+                    },
+                    "rank": {
+                        "type": "string",
+                        "description": "Taxonomic rank filter: SPECIES, GENUS, FAMILY (default: SPECIES)",
+                        "default": "SPECIES"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default: 5)",
+                        "default": 5
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "mint_creature",
+            description: "Store a minted creature in the database. Creates the creature record with species data, asset path, variation notes, and generates a specimen name. Returns the creature ID and data card.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scientific_name": {
+                        "type": "string",
+                        "description": "Scientific name of the species"
+                    },
+                    "common_name": {
+                        "type": "string",
+                        "description": "Common name (e.g. 'Red Admiral')"
+                    },
+                    "species_group": {
+                        "type": "string",
+                        "description": "Group: butterfly, dragonfly (default: butterfly)",
+                        "default": "butterfly"
+                    },
+                    "gbif_key": {
+                        "type": "integer",
+                        "description": "GBIF species key for reference"
+                    },
+                    "taxonomy": {
+                        "type": "object",
+                        "description": "Full taxonomy object (kingdom through species)"
+                    },
+                    "asset_path": {
+                        "type": "string",
+                        "description": "Path to the specimen image in workspace files"
+                    },
+                    "flight_silhouette_path": {
+                        "type": "string",
+                        "description": "Path to the flight-pose image (optional)"
+                    },
+                    "specimen_name": {
+                        "type": "string",
+                        "description": "Unique name for this specimen (e.g. 'Twilight Admiral')"
+                    },
+                    "variation_notes": {
+                        "type": "string",
+                        "description": "Description of what makes this specimen unique"
+                    }
+                },
+                "required": ["scientific_name", "asset_path"]
+            }),
+            requires_workspace: true,
+            is_delegation: false,
+        },
         BuiltinToolDef {
             name: "create_listing",
             description: "List a shopping profile on the embedding marketplace so advertisers can run similarity queries against it. The consumer sets the price per query and can delist at any time. Costs a one-time listing fee.",
@@ -892,6 +974,8 @@ impl ToolRegistry {
             "create_beacon" => execute_create_beacon(input, ctx).await,
             "query_beacons" => execute_query_beacons(input, ctx).await,
             "save_grid_map" => execute_save_grid_map(input, ctx).await,
+            "gbif_species_search" => execute_gbif_species_search(input).await,
+            "mint_creature" => execute_mint_creature(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -1518,6 +1602,201 @@ async fn execute_save_grid_map(
         "total_cells": total_cells,
         "quadrants_count": quadrants.as_array().map(|a| a.len()).unwrap_or(0),
         "zones_count": zones.as_array().map(|a| a.len()).unwrap_or(0),
+    });
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Rabble.world creature tools ───────────────────────────────────
+
+async fn execute_gbif_species_search(input: &serde_json::Value) -> Result<String, String> {
+    // Direct key lookup
+    if let Some(key) = input.get("gbif_key").and_then(|v| v.as_i64()) {
+        let url = format!("https://api.gbif.org/v1/species/{}", key);
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(&url)
+            .header("User-Agent", "AgentBestiaryWorld/1.0 (rabble.world)")
+            .send()
+            .await
+            .map_err(|e| format!("GBIF request failed: {}", e))?;
+
+        let species: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse GBIF response: {}", e))?;
+
+        // Also fetch media
+        let media_url = format!("https://api.gbif.org/v1/species/{}/media", key);
+        let media_resp = client
+            .get(&media_url)
+            .header("User-Agent", "AgentBestiaryWorld/1.0 (rabble.world)")
+            .send()
+            .await
+            .ok();
+
+        let media: Option<serde_json::Value> = if let Some(r) = media_resp {
+            r.json().await.ok()
+        } else {
+            None
+        };
+
+        let result = json!({
+            "species": species,
+            "media": media.unwrap_or(json!({"results": []})),
+        });
+        return serde_json::to_string_pretty(&result)
+            .map_err(|e| format!("Serialization error: {}", e));
+    }
+
+    // Search by name
+    let query = input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("Either 'query' or 'gbif_key' is required")?;
+    let rank = input
+        .get("rank")
+        .and_then(|v| v.as_str())
+        .unwrap_or("SPECIES");
+    let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(5);
+
+    let limit_str = limit.to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://api.gbif.org/v1/species/search")
+        .query(&[
+            ("q", query),
+            ("rank", rank),
+            ("limit", limit_str.as_str()),
+            ("highertaxonKey", "216"), // Insecta
+        ])
+        .header("User-Agent", "AgentBestiaryWorld/1.0 (rabble.world)")
+        .send()
+        .await
+        .map_err(|e| format!("GBIF request failed: {}", e))?;
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse GBIF response: {}", e))?;
+
+    // Extract just the useful fields from results
+    let results = body
+        .get("results")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let species: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|s| {
+            json!({
+                "key": s.get("key"),
+                "scientificName": s.get("scientificName"),
+                "canonicalName": s.get("canonicalName"),
+                "vernacularName": s.get("vernacularName"),
+                "kingdom": s.get("kingdom"),
+                "phylum": s.get("phylum"),
+                "class": s.get("class"),
+                "order": s.get("order"),
+                "family": s.get("family"),
+                "genus": s.get("genus"),
+                "species": s.get("species"),
+                "rank": s.get("rank"),
+                "taxonomicStatus": s.get("taxonomicStatus"),
+            })
+        })
+        .collect();
+
+    let result = json!({
+        "count": species.len(),
+        "species": species,
+        "note": "Use gbif_key with a species key for full details + media"
+    });
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_mint_creature(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let workspace_id = ctx
+        .workspace_id
+        .ok_or("mint_creature requires a workspace context")?;
+    let user_id = ctx
+        .user_id
+        .as_deref()
+        .ok_or("mint_creature requires a user context")?;
+
+    let scientific_name = input
+        .get("scientific_name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: scientific_name")?;
+    let asset_path = input
+        .get("asset_path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: asset_path")?;
+
+    let common_name = input.get("common_name").and_then(|v| v.as_str());
+    let species_group = input
+        .get("species_group")
+        .and_then(|v| v.as_str())
+        .unwrap_or("butterfly");
+    let gbif_key = input.get("gbif_key").and_then(|v| v.as_i64());
+    let taxonomy = input.get("taxonomy").cloned().unwrap_or(json!({}));
+    let flight_silhouette_path = input.get("flight_silhouette_path").and_then(|v| v.as_str());
+    let specimen_name = input.get("specimen_name").and_then(|v| v.as_str());
+    let variation_notes = input.get("variation_notes").and_then(|v| v.as_str());
+
+    let creature_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+
+    // Generate a specimen name if not provided
+    let final_specimen_name = specimen_name.map(|s| s.to_string()).unwrap_or_else(|| {
+        let base = common_name.unwrap_or(scientific_name);
+        format!("{} #{}", base, &creature_id.to_string()[..6])
+    });
+
+    let pool = ctx.memory_store.pool();
+    sqlx::query(
+        "INSERT INTO creatures (creature_id, owner_id, workspace_id,
+         scientific_name, common_name, species_group, gbif_key,
+         taxonomy, specimen_name, variation_notes,
+         asset_path, flight_silhouette_path,
+         created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)",
+    )
+    .bind(creature_id)
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(scientific_name)
+    .bind(common_name)
+    .bind(species_group)
+    .bind(gbif_key)
+    .bind(&taxonomy)
+    .bind(&final_specimen_name)
+    .bind(variation_notes)
+    .bind(asset_path)
+    .bind(flight_silhouette_path)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to mint creature: {}", e))?;
+
+    let result = json!({
+        "creature_id": creature_id,
+        "specimen_name": final_specimen_name,
+        "scientific_name": scientific_name,
+        "common_name": common_name,
+        "species_group": species_group,
+        "gbif_key": gbif_key,
+        "asset_path": asset_path,
+        "variation_notes": variation_notes,
+        "data_card": {
+            "minted_at": now.to_rfc3339(),
+            "minted_by": user_id,
+            "workspace_id": workspace_id,
+            "taxonomy": taxonomy,
+        }
     });
     serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
 }
