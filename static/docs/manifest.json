@@ -88,6 +88,30 @@
       ]
     },
     {
+      "title": "AR & Spatial",
+      "guides": [
+        {
+          "slug": "ar-spatial-suite",
+          "title": "AR Spatial Suite",
+          "description": "Place, map, and animate AR assets in physical space using H3 hexagonal grids. Digital graffiti, venue mapping, and spatial choreography.",
+          "tags": [
+            "ar",
+            "augmented-reality",
+            "h3",
+            "beacon",
+            "graffiti",
+            "spatial",
+            "geospatial",
+            "choreography",
+            "grid",
+            "location",
+            "webxr",
+            "glasses"
+          ]
+        }
+      ]
+    },
+    {
       "title": "Tools & Integration",
       "guides": [
         {

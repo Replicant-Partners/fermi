@@ -7,6 +7,7 @@
 pub mod admin;
 pub mod agents;
 pub mod auth;
+pub mod beacons;
 pub mod billing;
 pub mod consolidation;
 pub mod eval;

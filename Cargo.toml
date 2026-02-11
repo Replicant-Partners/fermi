@@ -95,6 +95,9 @@ dashmap = "6"
 # Base64 encoding/decoding (for binary file tools)
 base64 = "0.22"
 
+# H3 hexagonal grid (AR spatial suite)
+h3o = "0.6"
+
 # Stripe payments
 async-stripe = { version = "0.41", features = ["runtime-tokio-hyper-rustls", "checkout", "webhook-endpoints"] }
 

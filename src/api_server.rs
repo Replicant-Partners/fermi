@@ -394,6 +394,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/038_prompt_template.sql",
         "migrations/039_user_secrets.sql",
         "migrations/040_agent_requires_secrets.sql",
+        "migrations/041_ar_beacons.sql",
     ];
 
     for file in &migration_files {
@@ -745,6 +746,23 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/projections/temporal",
             get(handlers::ontology::get_temporal_projections),
+        )
+        // AR Beacons (public, read-only)
+        .route(
+            "/api/beacons/nearby",
+            get(handlers::beacons::nearby_beacons_handler),
+        )
+        .route(
+            "/api/beacons/:beacon_id",
+            get(handlers::beacons::get_beacon_handler),
+        )
+        .route(
+            "/api/beacons/:beacon_id/asset",
+            get(handlers::beacons::beacon_asset_handler),
+        )
+        .route(
+            "/api/grid-maps/:map_id",
+            get(handlers::beacons::get_grid_map_handler),
         )
         // User profiles (public, no auth)
         .route("/user/:user_id", get(handlers::users::user_profile_view))
