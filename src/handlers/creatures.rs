@@ -180,7 +180,8 @@ pub async fn creature_flights_handler(
     match sqlx::query(
         "SELECT flight_id, creature_id, beacon_id, owner_id,
          h3_cell, center_lat, center_lng, location_name, country_code,
-         flight_pattern, swarm_id, started_at, ended_at, duration_seconds
+         flight_pattern, swarm_id, started_at, ended_at, duration_seconds,
+         path_samples
          FROM creature_flights
          WHERE creature_id = $1
          ORDER BY started_at DESC
@@ -211,6 +212,7 @@ pub async fn creature_flights_handler(
                         "started_at": row.get::<chrono::DateTime<chrono::Utc>, _>("started_at").to_rfc3339(),
                         "ended_at": row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("ended_at").map(|t| t.to_rfc3339()),
                         "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
+                        "path_samples": row.get::<Option<serde_json::Value>, _>("path_samples"),
                     })
                 })
                 .collect();
@@ -558,6 +560,8 @@ pub async fn record_flight_handler(
 #[derive(Deserialize)]
 pub struct EndFlightRequest {
     pub duration_seconds: Option<i32>,
+    /// GPS breadcrumbs from swarm simulation: [{lat, lng, heading, t}]
+    pub path_samples: Option<serde_json::Value>,
 }
 
 /// PUT /api/flights/:flight_id/end — end a flight
@@ -571,11 +575,12 @@ pub async fn end_flight_handler(
     let now = chrono::Utc::now();
 
     let result = sqlx::query(
-        "UPDATE creature_flights SET ended_at = $1, duration_seconds = $2
-         WHERE flight_id = $3 AND owner_id = $4 AND ended_at IS NULL",
+        "UPDATE creature_flights SET ended_at = $1, duration_seconds = $2, path_samples = $3
+         WHERE flight_id = $4 AND owner_id = $5 AND ended_at IS NULL",
     )
     .bind(now)
     .bind(req.duration_seconds)
+    .bind(&req.path_samples)
     .bind(flight_id)
     .bind(principal.user_id())
     .execute(pool)
@@ -593,6 +598,7 @@ pub async fn end_flight_handler(
         "flight_id": flight_id,
         "ended_at": now.to_rfc3339(),
         "duration_seconds": req.duration_seconds,
+        "has_path": req.path_samples.is_some(),
     })))
 }
 
