@@ -1769,6 +1769,7 @@
           minute: "2-digit",
         });
         const name = m.sender_name || m.sender_id;
+        const msgAttr = m.message_id ? ` data-msg-id="${m.message_id}"` : "";
 
         if (m.message_type === "coherence_update") {
           const meta = typeof m.metadata === "object" ? m.metadata : {};
@@ -1778,7 +1779,7 @@
               : "?";
           const label = meta.quality_label || "";
           return `
-            <div class="chat-msg">
+            <div class="chat-msg"${msgAttr}>
               <div class="chat-avatar" style="background:var(--purple);color:var(--bg0-hard)">C</div>
               <div class="chat-body">
                 <div class="chat-meta-row">
@@ -1795,7 +1796,7 @@
         if (m.message_type === "system_event" && meta.delegation) {
           const target = meta.target || "agent";
           return `
-            <div class="chat-msg">
+            <div class="chat-msg"${msgAttr}>
               <div class="chat-avatar chat-avatar-delegation">\u2699</div>
               <div class="chat-body chat-delegation">
                 <div class="chat-delegation-label">delegation \u2192 @${escHtml(target)}</div>
@@ -1810,7 +1811,7 @@
 
         if (m.sender_type === "system" || m.message_type === "system_event") {
           return `
-            <div class="chat-msg">
+            <div class="chat-msg"${msgAttr}>
               <div class="chat-avatar chat-avatar-system">S</div>
               <div class="chat-body">
                 <div class="chat-meta-row">
@@ -1856,7 +1857,7 @@
             "exec-" + (m.message_id || Math.random().toString(36).slice(2));
 
           return `
-            <div class="chat-msg">
+            <div class="chat-msg"${msgAttr}>
               <div class="chat-avatar ${isDelegation ? "chat-avatar-delegation" : avatarClass}" ${isDelegation ? "" : avatarStyle}>${isDelegation ? "\u2699" : initial}</div>
               <div class="chat-body ${isDelegation ? "chat-delegation" : ""}">
                 ${isDelegation ? '<div class="chat-delegation-label">delegation result</div>' : ""}
@@ -1889,7 +1890,7 @@
         let extra = "";
 
         return `
-          <div class="chat-msg">
+          <div class="chat-msg"${msgAttr}>
             <div class="chat-avatar ${avatarClass}" ${avatarStyle}>${initial}</div>
             <div class="chat-body">
               <div class="chat-meta-row">
@@ -2230,30 +2231,40 @@
           }
 
           const msg = await res.json();
-          const el = document.getElementById("chat-messages");
 
           // Remove "no messages" placeholder if present
+          const el = document.getElementById("chat-messages");
           const placeholder = el.querySelector(
             "div[style*='text-align:center']",
           );
           if (placeholder) placeholder.remove();
 
-          // Track this message so poll won't duplicate it
+          // Don't append here — SSE broadcast is the single source of truth.
+          // Just track the message_id so we can scroll to it when SSE delivers it.
           if (msg.message_id) seenMessageIds.add(msg.message_id);
 
-          el.insertAdjacentHTML(
-            "beforeend",
-            renderMessage({
-              ...msg,
-              sender_name:
-                currentUser.display_name || currentUser.email || msg.sender_id,
-            }),
+          // If SSE already delivered it (race), we're done. If not, it will arrive shortly.
+          // Check if SSE already rendered it:
+          const alreadyRendered = el.querySelector(
+            `[data-msg-id="${msg.message_id}"]`,
           );
-          el.scrollTop = el.scrollHeight;
-
-          messageCount++;
-          document.getElementById("stat-messages").textContent = messageCount;
-          lastMessageTime = msg.created_at;
+          if (!alreadyRendered) {
+            // SSE hasn't delivered yet — render optimistically
+            el.insertAdjacentHTML(
+              "beforeend",
+              renderMessage({
+                ...msg,
+                sender_name:
+                  currentUser.display_name ||
+                  currentUser.email ||
+                  msg.sender_id,
+              }),
+            );
+            el.scrollTop = el.scrollHeight;
+            messageCount++;
+            document.getElementById("stat-messages").textContent = messageCount;
+            lastMessageTime = msg.created_at;
+          }
 
           // Refresh budget after gas charge
           refreshBudget();
