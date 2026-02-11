@@ -1313,11 +1313,13 @@ async fn main() {
             auth_middleware,
         ));
 
+    let rabble_router = Router::new().fallback(rabble_spa_fallback);
+
     let app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
         .nest_service("/static", ServeDir::new("static"))
-        .nest_service("/rabble", ServeDir::new("static/rabble"))
+        .nest("/rabble", rabble_router)
         .fallback(fallback_404)
         .with_state(state);
 
@@ -1331,6 +1333,57 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+// ─── Rabble SPA Fallback ───────────────────────────────────────────
+
+async fn rabble_spa_fallback(uri: axum::http::Uri) -> impl IntoResponse {
+    let path = uri.path();
+
+    // If it's a file with an extension, try to serve it from static/rabble
+    if path.contains('.') {
+        let file_path = format!(
+            "static/rabble{}",
+            path.strip_prefix("/rabble").unwrap_or(path)
+        );
+        if let Ok(content) = std::fs::read(&file_path) {
+            let mime_type = if path.ends_with(".js") {
+                "application/javascript"
+            } else if path.ends_with(".wasm") {
+                "application/wasm"
+            } else if path.ends_with(".json") {
+                "application/json"
+            } else if path.ends_with(".png") {
+                "image/png"
+            } else if path.ends_with(".ttf") {
+                "font/ttf"
+            } else if path.ends_with(".otf") {
+                "font/otf"
+            } else {
+                "application/octet-stream"
+            };
+
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime_type)
+                .body(axum::body::Body::from(content))
+                .unwrap();
+        }
+    }
+
+    // Otherwise, serve index.html for SPA routing
+    if let Ok(html) = std::fs::read_to_string("static/rabble/index.html") {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html")
+            .body(axum::body::Body::from(html))
+            .unwrap()
+    } else {
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(axum::body::Body::from("Rabble app not found"))
+            .unwrap()
+    }
 }
 
 // ─── Fallback (404) ────────────────────────────────────────────────
