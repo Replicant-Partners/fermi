@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <defs>
+    <style>
+      .monarch-wing { fill: none; stroke: #E8A838; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+      .monarch-body { fill: #E8A838; }
+    </style>
+  </defs>
+
+  <!-- Left upper wing -->
+  <path class="monarch-wing" d="M 200,180 Q 140,140 100,100 Q 80,80 70,90 Q 60,100 80,120 Q 100,140 140,160 Q 160,170 180,175 Z"/>
+
+  <!-- Left upper wing pattern -->
+  <path class="monarch-wing" d="M 180,175 Q 150,160 130,140"/>
+  <path class="monarch-wing" d="M 175,170 Q 145,150 125,125"/>
+  <path class="monarch-wing" d="M 170,165 Q 140,140 120,110"/>
+  <circle class="monarch-wing" cx="95" cy="115" r="4"/>
+  <circle class="monarch-wing" cx="110" cy="105" r="3"/>
+  <circle class="monarch-wing" cx="125" cy="95" r="3"/>
+  <circle class="monarch-wing" cx="85" cy="130" r="3"/>
+  <circle class="monarch-wing" cx="100" cy="125" r="3"/>
+
+  <!-- Right upper wing -->
+  <path class="monarch-wing" d="M 200,180 Q 260,140 300,100 Q 320,80 330,90 Q 340,100 320,120 Q 300,140 260,160 Q 240,170 220,175 Z"/>
+
+  <!-- Right upper wing pattern -->
+  <path class="monarch-wing" d="M 220,175 Q 250,160 270,140"/>
+  <path class="monarch-wing" d="M 225,170 Q 255,150 275,125"/>
+  <path class="monarch-wing" d="M 230,165 Q 260,140 280,110"/>
+  <circle class="monarch-wing" cx="305" cy="115" r="4"/>
+  <circle class="monarch-wing" cx="290" cy="105" r="3"/>
+  <circle class="monarch-wing" cx="275" cy="95" r="3"/>
+  <circle class="monarch-wing" cx="315" cy="130" r="3"/>
+  <circle class="monarch-wing" cx="300" cy="125" r="3"/>
+
+  <!-- Left lower wing -->
+  <path class="monarch-wing" d="M 200,180 Q 150,200 120,240 Q 100,270 90,280 Q 80,290 90,295 Q 100,300 120,280 Q 140,260 170,220 Q 185,200 195,185 Z"/>
+
+  <!-- Left lower wing pattern -->
+  <path class="monarch-wing" d="M 190,190 Q 160,210 140,240"/>
+  <path class="monarch-wing" d="M 185,195 Q 155,220 135,255"/>
+  <path class="monarch-wing" d="M 180,200 Q 150,230 130,270"/>
+  <circle class="monarch-wing" cx="115" cy="255" r="3"/>
+  <circle class="monarch-wing" cx="105" cy="270" r="3"/>
+
+  <!-- Right lower wing -->
+  <path class="monarch-wing" d="M 200,180 Q 250,200 280,240 Q 300,270 310,280 Q 320,290 310,295 Q 300,300 280,280 Q 260,260 230,220 Q 215,200 205,185 Z"/>
+
+  <!-- Right lower wing pattern -->
+  <path class="monarch-wing" d="M 210,190 Q 240,210 260,240"/>
+  <path class="monarch-wing" d="M 215,195 Q 245,220 265,255"/>
+  <path class="monarch-wing" d="M 220,200 Q 250,230 270,270"/>
+  <circle class="monarch-wing" cx="285" cy="255" r="3"/>
+  <circle class="monarch-wing" cx="295" cy="270" r="3"/>
+
+  <!-- Body -->
+  <ellipse class="monarch-body" cx="200" cy="180" rx="8" ry="35"/>
+
+  <!-- Body segments -->
+  <line class="monarch-wing" x1="195" y1="165" x2="205" y2="165"/>
+  <line class="monarch-wing" x1="195" y1="175" x2="205" y2="175"/>
+  <line class="monarch-wing" x1="195" y1="185" x2="205" y2="185"/>
+  <line class="monarch-wing" x1="195" y1="195" x2="205" y2="195"/>
+
+  <!-- Antennae -->
+  <path class="monarch-wing" d="M 200,155 Q 190,140 185,135"/>
+  <path class="monarch-wing" d="M 200,155 Q 210,140 215,135"/>
+  <circle class="monarch-body" cx="185" cy="135" r="2"/>
+  <circle class="monarch-body" cx="215" cy="135" r="2"/>
+</svg>
