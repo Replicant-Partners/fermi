@@ -873,6 +873,11 @@ mod tests {
             fork_pricing: None,
             forked_from: None,
             fork_count: 0,
+            accepts: vec![],
+            produces: vec![],
+            workflow_template: None,
+            prompt_template: None,
+            requires_secrets: None,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 

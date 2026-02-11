@@ -121,9 +121,12 @@ jobs:
               continue
             fi
 
-            # Check for bare BEGIN or COMMIT statements
-            if grep -Pn '^\s*(BEGIN|COMMIT)\s*;?\s*$' "$f" 2>/dev/null; then
-              echo "ERROR: $f contains BEGIN/COMMIT — banned with PgBouncer transaction mode"
+            # Check for bare transaction BEGIN/COMMIT (not PL/pgSQL DO $$ blocks)
+            # PL/pgSQL uses BEGIN without semicolon as block opener — that's fine.
+            # Transaction control uses BEGIN; or COMMIT; as standalone statements.
+            if grep -Pn '^\s*BEGIN\s*;\s*$' "$f" 2>/dev/null || \
+               grep -Pn '^\s*COMMIT\s*;\s*$' "$f" 2>/dev/null; then
+              echo "ERROR: $f contains BEGIN;/COMMIT; — banned with PgBouncer transaction mode"
               echo "  Use IF NOT EXISTS / DROP IF EXISTS for idempotency instead"
               FAILED=1
             fi
