@@ -37,6 +37,7 @@ use std::sync::Arc;
 use tower_http::services::ServeDir;
 
 use fermi::gas::{charge_gas, check_low_balance, GasFees};
+use tokio::sync::broadcast;
 
 use agent_bestiary_memory::{
     Agent, AgentUpdate, AnthropicEmbeddings, CoherenceEvaluation, ConsolidationLock,
@@ -265,6 +266,13 @@ pub(crate) const CREDIT_TIERS: &[CreditTier] = &[
     },
 ];
 
+/// Workspace chat event — broadcast to SSE subscribers.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct WorkspaceEvent {
+    pub workspace_id: uuid::Uuid,
+    pub message: serde_json::Value,
+}
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: PgPool,
@@ -280,6 +288,7 @@ pub(crate) struct AppState {
     pub(crate) gas_fees: GasFees,
     pub(crate) stripe: StripeConfig,
     pub(crate) rate_limits: RateLimitConfig,
+    pub(crate) ws_broadcast: broadcast::Sender<WorkspaceEvent>,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -552,6 +561,7 @@ async fn main() {
         gas_fees: GasFees::from_env(),
         stripe: stripe_config,
         rate_limits: RateLimitConfig::from_env(),
+        ws_broadcast: broadcast::channel::<WorkspaceEvent>(256).0,
     };
 
     // Spawn rate limiter cleanup task (every 5 min)
@@ -932,6 +942,11 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/messages/poll",
             get(handlers::workspace::poll_workspace_messages_handler),
+        )
+        // SSE stream (replaces polling for browser clients)
+        .route(
+            "/api/workspaces/:workspace_id/messages/stream",
+            get(handlers::workspace::workspace_messages_stream_handler),
         )
         // Workspace agent hire/add
         .route(

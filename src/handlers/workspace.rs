@@ -3,6 +3,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
+    response::sse::{Event, Sse},
     Json,
 };
 use fermi::gas::charge_gas;
@@ -10,6 +11,7 @@ use fermi_auth::{credit_charge, get_or_create_wallet, teams, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use agent_bestiary_memory::{Agent, CoherenceEvaluation, MemoryStore, WorkspaceMessage};
@@ -503,6 +505,28 @@ pub fn parse_at_mention(content: &str) -> Option<(String, String)> {
     Some((agent_name, query))
 }
 
+/// Broadcast a workspace message to SSE subscribers.
+fn broadcast_message(state: &AppState, workspace_id: uuid::Uuid, msg_json: &Value) {
+    let _ = state.ws_broadcast.send(crate::WorkspaceEvent {
+        workspace_id,
+        message: msg_json.clone(),
+    });
+}
+
+/// Build the standard message JSON shape from a WorkspaceMessage.
+fn message_to_json(m: &WorkspaceMessage) -> Value {
+    json!({
+        "message_id": m.message_id,
+        "sender_type": m.sender_type,
+        "sender_id": m.sender_id,
+        "sender_name": m.sender_name,
+        "content": m.content,
+        "message_type": m.message_type,
+        "metadata": m.metadata,
+        "created_at": m.created_at.to_rfc3339(),
+    })
+}
+
 /// Load workspace context files from the git repo's context/ directory.
 pub async fn load_workspace_context(workspace_git: &WorkspaceGitManager, slug: &str) -> String {
     let files = match workspace_git.list_files(slug, Some("context")) {
@@ -580,6 +604,9 @@ pub async fn post_workspace_message_handler(
         .store_workspace_message(&msg)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Broadcast user message to SSE subscribers
+    broadcast_message(&state, ws_uuid, &message_to_json(&msg));
 
     // If @agent invocation, spawn background execution
     if is_invocation {
@@ -816,6 +843,7 @@ pub async fn post_workspace_message_handler(
                         .memory_store
                         .store_workspace_message(&result_msg)
                         .await;
+                    broadcast_message(&state2, ws_uuid2, &message_to_json(&result_msg));
                 });
             } else {
                 // Agent not in workspace — post system error
@@ -831,6 +859,7 @@ pub async fn post_workspace_message_handler(
                     created_at: chrono::Utc::now(),
                 };
                 let _ = state.memory_store.store_workspace_message(&err_msg).await;
+                broadcast_message(&state, ws_uuid, &message_to_json(&err_msg));
             }
         }
     }
@@ -841,6 +870,7 @@ pub async fn post_workspace_message_handler(
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
     let store = state.memory_store.clone();
+    let broadcast_tx = state.ws_broadcast.clone();
     tokio::spawn(async move {
         // Check last eval time
         let since = match store.get_latest_coherence(ws_uuid).await {
@@ -926,6 +956,10 @@ pub async fn post_workspace_message_handler(
                     created_at: chrono::Utc::now(),
                 };
                 let _ = store.store_workspace_message(&update_msg).await;
+                let _ = broadcast_tx.send(crate::WorkspaceEvent {
+                    workspace_id: ws_uuid,
+                    message: message_to_json(&update_msg),
+                });
             }
         }
     });
@@ -1049,6 +1083,95 @@ pub async fn poll_workspace_messages_handler(
     Ok(Json(json!({ "messages": msgs })))
 }
 
+// ─── SSE Stream ────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct StreamQuery {
+    since: Option<String>,
+}
+
+pub async fn workspace_messages_stream_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Query(params): Query<StreamQuery>,
+) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
+{
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let _role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
+        .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
+
+    // Fetch missed messages if `since` is provided (reconnection catch-up)
+    let backfill: Vec<Value> = if let Some(ref since_str) = params.since {
+        if let Ok(since) = chrono::DateTime::parse_from_rfc3339(since_str) {
+            let since_utc = since.with_timezone(&chrono::Utc);
+            state
+                .memory_store
+                .get_workspace_messages_since(ws_uuid, since_utc)
+                .await
+                .unwrap_or_default()
+                .iter()
+                .map(message_to_json)
+                .collect()
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    let mut rx = state.ws_broadcast.subscribe();
+
+    let stream = async_stream::stream! {
+        // Send backfill messages first (catch-up on reconnect)
+        for msg_json in backfill {
+            let data = serde_json::to_string(&msg_json).unwrap_or_default();
+            yield Ok(Event::default().data(data));
+        }
+
+        // Keepalive interval (30s) to prevent proxy timeouts
+        let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(30));
+        keepalive.tick().await; // skip first immediate tick
+
+        loop {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            if event.workspace_id == ws_uuid {
+                                let data = serde_json::to_string(&event.message).unwrap_or_default();
+                                yield Ok(Event::default().data(data));
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // Buffer overflow — tell client to refetch
+                            yield Ok(Event::default().event("lagged").data("refetch"));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
+                    }
+                }
+                _ = keepalive.tick() => {
+                    yield Ok(Event::default().comment("keepalive"));
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(30))
+            .text("keepalive"),
+    ))
+}
+
 // ─── Workspace Hire / Add ──────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -1058,8 +1181,8 @@ pub struct HireAddRequest {
     include_optional: bool,
 }
 
-/// Post a system message to workspace chat (helper)
-pub async fn post_system_message(store: &MemoryStore, workspace_id: uuid::Uuid, content: &str) {
+/// Post a system message to workspace chat (helper) + broadcast to SSE.
+pub async fn post_system_message(state: &AppState, workspace_id: uuid::Uuid, content: &str) {
     let msg = WorkspaceMessage {
         message_id: uuid::Uuid::new_v4(),
         workspace_id,
@@ -1071,7 +1194,8 @@ pub async fn post_system_message(store: &MemoryStore, workspace_id: uuid::Uuid, 
         metadata: json!({}),
         created_at: chrono::Utc::now(),
     };
-    let _ = store.store_workspace_message(&msg).await;
+    let _ = state.memory_store.store_workspace_message(&msg).await;
+    broadcast_message(state, workspace_id, &message_to_json(&msg));
 }
 
 pub async fn hire_agent_handler(
@@ -1158,7 +1282,7 @@ pub async fn hire_agent_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     post_system_message(
-        &state.memory_store,
+        &state,
         ws_uuid,
         &format!("{} hired {} to the workspace", user_id, agent.agent_name),
     )
@@ -1249,7 +1373,7 @@ pub async fn hire_agent_handler(
 
     if !deps_hired.is_empty() {
         post_system_message(
-            &state.memory_store,
+            &state,
             ws_uuid,
             &format!("Auto-hired dependencies: {}", deps_hired.join(", ")),
         )
@@ -1337,7 +1461,7 @@ pub async fn add_agent_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     post_system_message(
-        &state.memory_store,
+        &state,
         ws_uuid,
         &format!("{} added {} to the workspace", user_id, agent.agent_name),
     )
@@ -1422,7 +1546,7 @@ pub async fn remove_workspace_agent_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     post_system_message(
-        &state.memory_store,
+        &state,
         ws_uuid,
         &format!("{} removed an agent from the workspace", user_id),
     )
@@ -1676,6 +1800,7 @@ pub async fn evaluate_coherence_handler(
         .memory_store
         .store_workspace_message(&update_msg)
         .await;
+    broadcast_message(&state, ws_uuid, &message_to_json(&update_msg));
 
     let mut response = json!({
         "eval_id": eval_id,

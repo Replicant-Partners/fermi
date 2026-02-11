@@ -65,6 +65,8 @@ regex = "1.10"
 
 # For async runtime
 tokio = { version = "1", features = ["full"] }
+async-stream = "0.3"
+futures-core = "0.3"
 http = "1"
 http-body-util = "0.1"
 

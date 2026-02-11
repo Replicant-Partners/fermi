@@ -806,7 +806,74 @@
       .members-toggle {
         display: none;
       }
+      /* ─── Markdown in chat ─── */
+      .chat-text p {
+        margin: 0 0 6px 0;
+      }
+      .chat-text p:last-child {
+        margin-bottom: 0;
+      }
+      .chat-text h1,
+      .chat-text h2,
+      .chat-text h3,
+      .chat-text h4 {
+        font-size: 0.88rem;
+        color: var(--yellow);
+        margin: 8px 0 4px 0;
+        font-weight: bold;
+      }
+      .chat-text h1 {
+        font-size: 0.95rem;
+      }
+      .chat-text code {
+        background: var(--bg2);
+        padding: 1px 4px;
+        font-size: 0.82em;
+      }
+      .chat-text pre {
+        background: var(--bg0-hard);
+        padding: 8px;
+        overflow-x: auto;
+        margin: 6px 0;
+        border-left: 2px solid var(--bg3);
+      }
+      .chat-text pre code {
+        background: none;
+        padding: 0;
+      }
+      .chat-text ul,
+      .chat-text ol {
+        margin: 4px 0;
+        padding-left: 18px;
+      }
+      .chat-text li {
+        margin: 2px 0;
+      }
+      .chat-text blockquote {
+        border-left: 2px solid var(--yellow);
+        padding-left: 10px;
+        margin: 6px 0;
+        color: var(--fg3);
+      }
+      .chat-text a {
+        color: var(--aqua);
+      }
+      .chat-text table {
+        border-collapse: collapse;
+        margin: 6px 0;
+        font-size: 0.82rem;
+      }
+      .chat-text th,
+      .chat-text td {
+        border: 1px solid var(--bg3);
+        padding: 4px 8px;
+      }
+      .chat-text strong {
+        color: var(--fg0);
+      }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.1/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
   </head>
   <body>
     <script src="/static/js/widgets/nav.js"></script>
@@ -1251,9 +1318,46 @@
     <script>
       const wsId = window.location.pathname.split("/").pop();
       let currentUser = null;
-      let pollTimer = null;
+      let evtSource = null;
       let lastMessageTime = null;
       let messageCount = 0;
+
+      // ─── Markdown rendering ───
+      marked.setOptions({ breaks: true, gfm: true });
+      function formatContent(content, messageType) {
+        if (!content) return "";
+        if (messageType === "system_event") return escHtml(content);
+        const html = marked.parse(content);
+        return DOMPurify.sanitize(html, {
+          ALLOWED_TAGS: [
+            "p",
+            "br",
+            "strong",
+            "em",
+            "code",
+            "pre",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "ul",
+            "ol",
+            "li",
+            "blockquote",
+            "a",
+            "table",
+            "thead",
+            "tbody",
+            "tr",
+            "th",
+            "td",
+            "hr",
+            "del",
+            "span",
+          ],
+          ALLOWED_ATTR: ["href", "target", "class"],
+        });
+      }
 
       // ─── Init ───
       (async () => {
@@ -1267,7 +1371,7 @@
         await loadWorkspace();
         await loadMessages();
         await loadCoherence();
-        startPolling();
+        connectSSE();
       })();
 
       // ─── Load workspace data ───
@@ -1521,7 +1625,7 @@
                   <span class="chat-sender" style="color:var(--purple)">Coherence Evaluator</span>
                   <span class="chat-time">${time}</span>
                 </div>
-                <div style="font-size:0.82rem;color:var(--purple)">${escHtml(m.content)}</div>
+                <div style="font-size:0.82rem;color:var(--purple)">${formatContent(m.content, m.message_type)}</div>
               </div>
             </div>`;
         }
@@ -1539,7 +1643,7 @@
                   <span class="chat-sender" style="color:var(--aqua)">${escHtml(name)}</span>
                   <span class="chat-time">${time}</span>
                 </div>
-                <div class="chat-text" style="color:var(--fg2);font-size:0.82rem">${escHtml(m.content)}</div>
+                <div class="chat-text" style="color:var(--fg2);font-size:0.82rem">${formatContent(m.content, m.message_type)}</div>
               </div>
             </div>`;
         }
@@ -1601,7 +1705,7 @@
                   ${confLabel ? `<span class="exec-confidence ${confClass}">${confLabel}</span>` : ""}
                   <span class="chat-time">${time}</span>
                 </div>
-                <div class="chat-text">${escHtml(m.content)}</div>
+                <div class="chat-text">${formatContent(m.content, m.message_type)}</div>
                 <div class="exec-meta">
                   ${execTime ? execTime + "ms" : ""} ${tokens ? "\u00b7 " + tokens + " tokens" : ""}
                   ${toolCount ? "\u00b7 " + toolCount + " tool calls" : ""}
@@ -1632,7 +1736,7 @@
                 <span class="chat-sender ${senderClass}">${escHtml(name)}</span>
                 <span class="chat-time">${time}</span>
               </div>
-              <div class="chat-text">${escHtml(m.content)}</div>
+              <div class="chat-text">${formatContent(m.content, m.message_type)}</div>
               ${extra}
             </div>
           </div>`;
@@ -1647,47 +1751,46 @@
       // ─── Dedup tracking ───
       const seenMessageIds = new Set();
 
-      // ─── Polling ───
-      function startPolling() {
-        pollTimer = setInterval(async () => {
-          if (!lastMessageTime) return;
-          try {
-            const res = await fetch(
-              `/api/workspaces/${wsId}/messages/poll?since=${encodeURIComponent(lastMessageTime)}`,
-            );
-            if (!res.ok) return;
-            const data = await res.json();
-            if (data.messages && data.messages.length > 0) {
-              const el = document.getElementById("chat-messages");
-              const wasAtBottom =
-                el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+      // ─── Server-Sent Events ───
+      function connectSSE() {
+        if (evtSource) {
+          evtSource.close();
+          evtSource = null;
+        }
+        const since = lastMessageTime
+          ? `?since=${encodeURIComponent(lastMessageTime)}`
+          : "";
+        evtSource = new EventSource(
+          `/api/workspaces/${wsId}/messages/stream${since}`,
+        );
 
-              let hasCoherenceUpdate = false;
-              let newCount = 0;
-              data.messages.forEach((m) => {
-                if (seenMessageIds.has(m.message_id)) return;
-                seenMessageIds.add(m.message_id);
-                el.insertAdjacentHTML("beforeend", renderMessage(m));
-                newCount++;
-                if (m.message_type === "coherence_update")
-                  hasCoherenceUpdate = true;
-              });
+        evtSource.onmessage = (e) => {
+          const m = JSON.parse(e.data);
+          if (seenMessageIds.has(m.message_id)) return;
+          seenMessageIds.add(m.message_id);
 
-              if (newCount > 0) {
-                messageCount += newCount;
-                document.getElementById("stat-messages").textContent =
-                  messageCount;
-              }
-              const last = data.messages[data.messages.length - 1];
-              lastMessageTime = last.created_at;
+          const el = document.getElementById("chat-messages");
+          const wasAtBottom =
+            el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+          el.insertAdjacentHTML("beforeend", renderMessage(m));
 
-              // Refresh coherence shelf if we got a coherence update
-              if (hasCoherenceUpdate) loadCoherence();
+          messageCount++;
+          document.getElementById("stat-messages").textContent = messageCount;
+          lastMessageTime = m.created_at;
 
-              if (wasAtBottom) el.scrollTop = el.scrollHeight;
-            }
-          } catch {}
-        }, 3000);
+          if (m.message_type === "coherence_update") loadCoherence();
+          if (wasAtBottom) el.scrollTop = el.scrollHeight;
+        };
+
+        evtSource.addEventListener("lagged", () => {
+          // Broadcast buffer overflow — refetch full history
+          loadMessages();
+        });
+
+        evtSource.onerror = () => {
+          evtSource.close();
+          setTimeout(connectSSE, 2000);
+        };
       }
 
       // ─── Send message ───
