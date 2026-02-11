@@ -975,6 +975,7 @@ pub async fn generate_art_handler(
         "watercolor" => "Soft watercolor painting style with visible brush strokes and subtle color bleeding.",
         "botanical" => "Precise botanical illustration on cream parchment. Fine ink linework with hand-tinted washes.",
         "field-guide" => "Clean field guide illustration. Crisp outlines, accurate proportions, white background, wings spread.",
+        "ukiyo-e" => "Japanese woodblock print (ukiyo-e) style. Bold black outlines, flat color planes, bokashi gradation on wings. Warm washi paper background. Small red hanko seal in corner. Indigo, ochre, grey tones. Multiple views at different scales.",
         _ => "Detailed naturalist scientific illustration in the style of Maria Sibylla Merian. Rich colors on aged vellum.",
     };
 
@@ -1265,6 +1266,7 @@ async fn generate_creature_image(
         "watercolor" => "Soft watercolor with visible brush strokes.",
         "botanical" => "Precise botanical illustration on cream parchment.",
         "field-guide" => "Clean field guide illustration, white background, wings spread.",
+        "ukiyo-e" => "Japanese woodblock print (ukiyo-e). Bold outlines, flat color planes, bokashi gradation. Washi paper background, red hanko seal in corner. Indigo, ochre, grey. Multiple views at different scales.",
         _ => "Naturalist scientific illustration in the style of Maria Sibylla Merian. Rich colors on aged vellum.",
     };
 

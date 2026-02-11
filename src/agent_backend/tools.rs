@@ -840,7 +840,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
                     },
                     "style": {
                         "type": "string",
-                        "description": "Art style hint: 'naturalist' (default), 'watercolor', 'botanical', 'field-guide'",
+                        "description": "Art style hint: 'naturalist' (default), 'watercolor', 'botanical', 'field-guide', 'ukiyo-e'",
                         "default": "naturalist"
                     },
                     "gbif_key": {
@@ -1942,6 +1942,7 @@ async fn execute_generate_specimen_art(
         "watercolor" => "Soft watercolor painting style with visible brush strokes and subtle color bleeding at edges. Muted earth tones with occasional vivid accents.",
         "botanical" => "Precise botanical illustration style on cream parchment background. Fine ink linework with delicate hand-tinted color washes. Labeled anatomical features.",
         "field-guide" => "Clean field guide illustration style. Crisp outlines, accurate proportions, neutral white background, specimen positioned at 3/4 view with wings spread.",
+        "ukiyo-e" => "Japanese woodblock print (ukiyo-e) style in the tradition of Edo-period naturalist prints. Bold black outlines with flat color planes. Subtle gradation (bokashi) on wings. Warm washi paper background texture. Include a small red hanko seal stamp in one corner. Muted indigo, ochre, and grey tones with selective bold color accents. Multiple views of the same specimen at different scales, as in traditional insect study prints.",
         _ => "Detailed naturalist scientific illustration in the style of Maria Sibylla Merian. Rich, accurate colors on aged vellum background. Fine detail on wing patterns and body segments.",
     };
 
