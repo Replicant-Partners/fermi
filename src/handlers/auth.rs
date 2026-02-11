@@ -25,8 +25,18 @@ pub struct AuthCallbackQuery {
     state: String,
 }
 
+/// Optional query param for mobile OAuth flows
+#[derive(Debug, Deserialize)]
+pub struct MobileAuthQuery {
+    pub mobile: Option<String>,
+}
+
 /// Redirect to Google OAuth
-pub async fn auth_google(State(state): State<AppState>) -> Result<Redirect, (StatusCode, String)> {
+/// Pass ?mobile=1 to get a deep link callback instead of cookie redirect
+pub async fn auth_google(
+    State(state): State<AppState>,
+    Query(q): Query<MobileAuthQuery>,
+) -> Result<Redirect, (StatusCode, String)> {
     let config = state.oauth.google().map_err(|_| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -34,14 +44,18 @@ pub async fn auth_google(State(state): State<AppState>) -> Result<Redirect, (Sta
         )
     })?;
     let csrf_state = generate_state();
-    // Store provider hint in state: "google:<random>"
-    let state_with_provider = format!("google:{}", csrf_state);
+    let mobile_flag = if q.mobile.is_some() { ":mobile" } else { "" };
+    let state_with_provider = format!("google:{}{}", csrf_state, mobile_flag);
     let url = build_google_auth_url(config, &state_with_provider);
     Ok(Redirect::temporary(&url))
 }
 
 /// Redirect to GitHub OAuth
-pub async fn auth_github(State(state): State<AppState>) -> Result<Redirect, (StatusCode, String)> {
+/// Pass ?mobile=1 to get a deep link callback instead of cookie redirect
+pub async fn auth_github(
+    State(state): State<AppState>,
+    Query(q): Query<MobileAuthQuery>,
+) -> Result<Redirect, (StatusCode, String)> {
     let config = state.oauth.github().map_err(|_| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -49,7 +63,8 @@ pub async fn auth_github(State(state): State<AppState>) -> Result<Redirect, (Sta
         )
     })?;
     let csrf_state = generate_state();
-    let state_with_provider = format!("github:{}", csrf_state);
+    let mobile_flag = if q.mobile.is_some() { ":mobile" } else { "" };
+    let state_with_provider = format!("github:{}{}", csrf_state, mobile_flag);
     let url = build_github_auth_url(config, &state_with_provider);
     Ok(Redirect::temporary(&url))
 }
@@ -81,11 +96,13 @@ pub async fn auth_callback_inner(
 ) -> Result<Response, String> {
     let map_err = |e: fermi_auth::AuthError| e.to_string();
 
-    // Determine provider from state prefix
-    let (provider, _csrf) = params
+    // Determine provider and mobile flag from state prefix
+    // Format: "provider:csrf[:mobile]"
+    let (provider, rest) = params
         .state
         .split_once(':')
         .unwrap_or(("unknown", &params.state));
+    let is_mobile = rest.ends_with(":mobile");
 
     let user_info = match provider {
         "google" => {
@@ -125,18 +142,27 @@ pub async fn auth_callback_inner(
     // Create session JWT
     let token = create_session_token(&user, &state.jwt_secret).map_err(map_err)?;
 
-    // Set cookie and redirect to home
-    let cookie = format!(
-        "abw_session={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800",
-        token
-    );
-
-    Response::builder()
-        .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, "/dashboard")
-        .header(header::SET_COOKIE, cookie)
-        .body(axum::body::Body::empty())
-        .map_err(|e| e.to_string())
+    if is_mobile {
+        // Mobile flow: redirect to deep link with token
+        let redirect_url = format!("rabble://auth?token={}&user_id={}", token, user.user_id);
+        Response::builder()
+            .status(StatusCode::SEE_OTHER)
+            .header(header::LOCATION, redirect_url)
+            .body(axum::body::Body::empty())
+            .map_err(|e| e.to_string())
+    } else {
+        // Web flow: set cookie and redirect to dashboard
+        let cookie = format!(
+            "abw_session={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800",
+            token
+        );
+        Response::builder()
+            .status(StatusCode::SEE_OTHER)
+            .header(header::LOCATION, "/dashboard")
+            .header(header::SET_COOKIE, cookie)
+            .body(axum::body::Body::empty())
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// Logout — clear session cookie
