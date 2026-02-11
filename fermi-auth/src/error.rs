@@ -67,6 +67,15 @@ pub enum AuthError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Encryption error: {0}")]
+    EncryptionError(String),
+
+    #[error("Secrets not configured (missing SECRETS_ENCRYPTION_KEY)")]
+    SecretsNotConfigured,
+
+    #[error("Secret not found: {0}")]
+    SecretNotFound(String),
 }
 
 impl IntoResponse for AuthError {
@@ -95,6 +104,12 @@ impl IntoResponse for AuthError {
             AuthError::OAuthError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             AuthError::InvalidInput(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AuthError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            AuthError::EncryptionError(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Encryption error".to_string(),
+            ),
+            AuthError::SecretsNotConfigured => (StatusCode::SERVICE_UNAVAILABLE, self.to_string()),
+            AuthError::SecretNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
         };
 
         let body = Json(json!({

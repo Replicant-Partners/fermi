@@ -28,6 +28,9 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres",
 argon2 = { version = "0.5", features = ["std"] }
 rand_core = { version = "0.6", features = ["std"] }
 
+# Symmetric encryption for user secrets
+aes-gcm = "0.10"
+
 # Web3 / SIWE (use rustls to avoid OpenSSL)
 siwe = { version = "0.6", default-features = false, features = ["serde"] }
 ethers = { version = "2.0", default-features = false, features = ["rustls"] }

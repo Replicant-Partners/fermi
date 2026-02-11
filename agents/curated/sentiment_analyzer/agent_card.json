@@ -96,5 +96,6 @@
     ]
   },
   "accepts": ["content", "query"],
-  "produces": ["sentiment-scores", "analysis"]
+  "produces": ["sentiment-scores", "analysis"],
+  "prompt_template": "Analyze sentiment of {{content or text}} regarding {{topic or context}}"
 }

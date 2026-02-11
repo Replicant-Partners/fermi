@@ -160,6 +160,8 @@ pub async fn list_agents(
                         "accepts": a.accepts,
                         "produces": a.produces,
                         "workflow_template": a.workflow_template,
+                        "prompt_template": a.prompt_template,
+                        "requires_secrets": a.requires_secrets,
                         "capabilities": {
                             "executor": a.executor_type,
                             "model": a.model,
@@ -440,6 +442,7 @@ pub(crate) struct CreateAgentRequest {
     pub(crate) accepts: Vec<String>,
     #[serde(default)]
     pub(crate) produces: Vec<String>,
+    pub(crate) prompt_template: Option<String>,
 }
 
 pub fn default_agent_type() -> String {
@@ -519,6 +522,8 @@ pub async fn create_agent_handler(
         accepts: req.accepts,
         produces: req.produces,
         workflow_template: None,
+        prompt_template: req.prompt_template,
+        requires_secrets: None,
     };
 
     // If education budget requested, debit from user's wallet
@@ -757,6 +762,11 @@ pub async fn import_agent_handler(
             })
             .unwrap_or_default(),
         workflow_template: card.get("workflow_template").cloned(),
+        prompt_template: card
+            .get("prompt_template")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        requires_secrets: card.get("requires_secrets").cloned(),
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -918,6 +928,8 @@ pub async fn list_curated_agents_handler(
                 "accepts": card.accepts,
                 "produces": card.produces,
                 "workflow_template": card.workflow_template,
+                "prompt_template": card.prompt_template,
+                "requires_secrets": card.requires_secrets,
                 "capabilities": {
                     "executor": card.capabilities.executor,
                     "model": card.capabilities.model,

@@ -200,5 +200,14 @@
     ]
   },
   "accepts": ["image", "caption", "hashtags"],
-  "produces": ["published-post", "media-id"]
+  "produces": ["published-post", "media-id"],
+  "prompt_template": "Publish to Instagram — image: {{image description or URL}}, caption: {{caption text}}, hashtags: {{hashtags}}",
+  "requires_secrets": [
+    {
+      "name": "instagram_token",
+      "label": "Instagram API Token",
+      "description": "Instagram Graph API access token for publishing posts",
+      "is_required": true
+    }
+  ]
 }

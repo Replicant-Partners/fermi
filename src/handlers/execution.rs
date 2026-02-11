@@ -100,6 +100,7 @@ pub async fn execute_agent_handler(
         db: Some(state.db.clone()),
         gas_fees: Some(state.gas_fees.clone()),
         user_id: Some(principal.user_id()),
+        user_secrets: None,
     });
     let tool_executor = ToolAwareExecutor::new(
         state.registry.executor_arc(),

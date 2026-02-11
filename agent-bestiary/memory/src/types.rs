@@ -288,6 +288,8 @@ pub struct Agent {
     #[serde(default)]
     pub produces: Vec<String>,
     pub workflow_template: Option<serde_json::Value>,
+    pub prompt_template: Option<String>,
+    pub requires_secrets: Option<serde_json::Value>,
 }
 
 fn default_status() -> String {
@@ -327,6 +329,8 @@ pub struct AgentUpdate {
     pub accepts: Option<Vec<String>>,
     pub produces: Option<Vec<String>>,
     pub workflow_template: Option<serde_json::Value>,
+    pub prompt_template: Option<String>,
+    pub requires_secrets: Option<serde_json::Value>,
 }
 
 /// Snapshot of mutable agent fields at a point in time

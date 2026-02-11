@@ -4,6 +4,7 @@ pub mod error;
 pub mod jwt;
 pub mod middleware;
 pub mod oidc;
+pub mod secrets;
 pub mod siwe;
 pub mod teams;
 pub mod types;
@@ -17,6 +18,10 @@ pub use oidc::{
     build_github_auth_url, build_google_auth_url, generate_state, github_exchange_code,
     github_fetch_user_info, google_exchange_code, google_fetch_user_info, sync_user,
     CallbackParams, GitHubOAuthConfig, GoogleOAuthConfig, OAuthConfig, UserInfoResponse,
+};
+pub use secrets::{
+    delete_secret, get_secret, get_secret_audit_log, get_secrets_for_agent, list_secrets,
+    log_secret_access, store_secret, SecretAccessEntry, SecretEncryptor, SecretInfo,
 };
 pub use siwe::{
     cleanup_expired_nonces, create_challenge, verify_signature, SiweChallenge,

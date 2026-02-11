@@ -513,6 +513,7 @@
         cursor: pointer;
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 8px;
         font-size: 0.82rem;
         color: var(--fg1);
@@ -543,6 +544,15 @@
         color: var(--fg3);
         font-size: 0.7rem;
         margin-left: auto;
+      }
+      .at-option-accepts {
+        display: block;
+        width: 100%;
+        font-size: 0.65rem;
+        color: var(--aqua);
+        opacity: 0.7;
+        margin-top: 1px;
+        padding-left: 28px;
       }
 
       /* ─── Enhanced execution result ─── */
@@ -2136,10 +2146,15 @@
             const name = a.display_alias || a.agent_name;
             const hue = hues[(a.agent_name || "").charCodeAt(0) % hues.length];
             const initial = name.charAt(0).toUpperCase();
+            const accepts = (a.accepts || []).slice(0, 3).join(", ");
+            const hint = accepts
+              ? `<span class="at-option-accepts">needs: ${accepts}</span>`
+              : "";
             return `<div class="at-option${i === atActiveIdx ? " active" : ""}" data-name="${a.agent_name}" data-idx="${i}">
             <div class="at-option-dot" style="background:hsl(${hue},45%,35%)">${initial}</div>
             <span class="at-option-name">${escHtml(name)}</span>
             <span class="at-option-type">${a.agent_type || ""}</span>
+            ${hint}
           </div>`;
           })
           .join("");
@@ -2157,15 +2172,47 @@
       function insertAtMention(agentName) {
         const q = getAtQuery();
         if (!q) return;
+
+        const agent = wsAgentsList.find((a) => a.agent_name === agentName);
         const val = chatInput.value;
         const before = val.slice(0, q.atIdx);
         const after = val.slice(chatInput.selectionStart);
-        chatInput.value = before + "@" + agentName + " " + after;
+
+        let scaffoldText = "";
+        if (agent && agent.prompt_template) {
+          scaffoldText = agent.prompt_template;
+        } else if (
+          agent &&
+          agent.sample_queries &&
+          agent.sample_queries.length > 0
+        ) {
+          scaffoldText =
+            agent.sample_queries[
+              Math.floor(Math.random() * agent.sample_queries.length)
+            ];
+        }
+
+        const mention = "@" + agentName + " ";
+        chatInput.value = before + mention + scaffoldText + after;
         chatInput.focus();
-        const newPos = before.length + 1 + agentName.length + 1;
-        chatInput.setSelectionRange(newPos, newPos);
+
+        const mentionEnd = before.length + mention.length;
+        if (scaffoldText) {
+          // Select scaffold text so user can immediately type to replace
+          chatInput.setSelectionRange(
+            mentionEnd,
+            mentionEnd + scaffoldText.length,
+          );
+        } else {
+          chatInput.setSelectionRange(mentionEnd, mentionEnd);
+        }
+
         atDropdown.classList.remove("visible");
         atActiveIdx = -1;
+
+        // Auto-resize textarea
+        chatInput.style.height = "auto";
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + "px";
       }
 
       chatInput.addEventListener("input", () => showAtAutocomplete());

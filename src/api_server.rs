@@ -289,6 +289,7 @@ pub(crate) struct AppState {
     pub(crate) stripe: StripeConfig,
     pub(crate) rate_limits: RateLimitConfig,
     pub(crate) ws_broadcast: broadcast::Sender<WorkspaceEvent>,
+    pub(crate) secret_encryptor: Option<Arc<fermi_auth::SecretEncryptor>>,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -390,6 +391,9 @@ async fn run_migrations(db: &PgPool) {
         "migrations/035_fix_tx_type_constraint.sql",
         "migrations/036_workspace_workflow.sql",
         "migrations/037_agent_valence_and_workflow_template.sql",
+        "migrations/038_prompt_template.sql",
+        "migrations/039_user_secrets.sql",
+        "migrations/040_agent_requires_secrets.sql",
     ];
 
     for file in &migration_files {
@@ -565,7 +569,14 @@ async fn main() {
         stripe: stripe_config,
         rate_limits: RateLimitConfig::from_env(),
         ws_broadcast: broadcast::channel::<WorkspaceEvent>(256).0,
+        secret_encryptor: fermi_auth::SecretEncryptor::from_env().ok().map(Arc::new),
     };
+
+    if state.secret_encryptor.is_some() {
+        println!("Secrets encryption configured");
+    } else {
+        eprintln!("Note: SECRETS_ENCRYPTION_KEY not set. User secrets will be disabled.");
+    }
 
     // Spawn rate limiter cleanup task (every 5 min)
     let rl_clone = state.rate_limits.clone();
@@ -1021,6 +1032,20 @@ async fn main() {
             "/api/notifications/read-all",
             put(handlers::profile::mark_all_notifications_read_handler),
         )
+        // User secrets (connections)
+        .route(
+            "/api/secrets",
+            post(handlers::profile::create_secret_handler),
+        )
+        .route("/api/secrets", get(handlers::profile::list_secrets_handler))
+        .route(
+            "/api/secrets/audit",
+            get(handlers::profile::secret_audit_handler),
+        )
+        .route(
+            "/api/secrets/:name",
+            delete(handlers::profile::delete_secret_handler),
+        )
         // Coherence evaluation
         .route(
             "/api/workspaces/:workspace_id/coherence/evaluate",
@@ -1221,6 +1246,12 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
                 .workflow_template
                 .as_ref()
                 .and_then(|t| serde_json::to_value(t).ok()),
+            prompt_template: card.prompt_template.clone(),
+            requires_secrets: if card.requires_secrets.is_empty() {
+                None
+            } else {
+                serde_json::to_value(&card.requires_secrets).ok()
+            },
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -1330,6 +1361,12 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             .workflow_template
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        prompt_template: agent.prompt_template.clone(),
+        requires_secrets: agent
+            .requires_secrets
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default(),
     }
 }
 

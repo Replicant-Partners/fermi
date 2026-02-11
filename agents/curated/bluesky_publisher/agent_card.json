@@ -214,5 +214,20 @@
     ]
   },
   "accepts": ["content", "image"],
-  "produces": ["published-post"]
+  "produces": ["published-post"],
+  "prompt_template": "Post to Bluesky: {{your post content}}",
+  "requires_secrets": [
+    {
+      "name": "bluesky_handle",
+      "label": "Bluesky Handle",
+      "description": "Your Bluesky handle (e.g. user.bsky.social)",
+      "is_required": true
+    },
+    {
+      "name": "bluesky_app_password",
+      "label": "Bluesky App Password",
+      "description": "App-specific password from Bluesky settings",
+      "is_required": true
+    }
+  ]
 }

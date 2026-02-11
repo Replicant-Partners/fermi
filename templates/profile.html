@@ -349,6 +349,179 @@
           </div>
         </div>
       </div>
+
+      <!-- Agent Connections (Secrets) -->
+      <div class="section">
+        <div class="section-title">Connections</div>
+        <div style="font-size: 0.8rem; color: var(--fg3); margin-bottom: 12px">
+          Credentials used by agents to act on your behalf. Encrypted at rest,
+          never exposed in logs.
+        </div>
+        <div id="connections-list">
+          <div class="empty-state">Loading...</div>
+        </div>
+        <div style="margin-top: 12px">
+          <button class="btn btn-primary" onclick="showAddConnectionModal()">
+            Add Connection
+          </button>
+        </div>
+      </div>
+
+      <!-- Security Audit Log -->
+      <div class="section">
+        <div class="section-title">Security</div>
+        <div style="font-size: 0.8rem; color: var(--fg3); margin-bottom: 12px">
+          Audit trail of all agent actions that used your credentials.
+        </div>
+        <div id="audit-log"><div class="empty-state">Loading...</div></div>
+      </div>
+
+      <!-- Add Connection Modal -->
+      <div
+        id="add-conn-modal"
+        style="
+          display: none;
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.6);
+          z-index: 1000;
+          align-items: center;
+          justify-content: center;
+        "
+      >
+        <div
+          style="
+            background: var(--bg1);
+            border: 1px solid var(--bg3);
+            border-radius: 4px;
+            padding: 24px;
+            width: 380px;
+            max-width: 90vw;
+          "
+        >
+          <div
+            style="
+              font-size: 1rem;
+              font-weight: 600;
+              color: var(--fg1);
+              margin-bottom: 16px;
+            "
+          >
+            Add Connection
+          </div>
+          <div style="margin-bottom: 12px">
+            <label
+              style="
+                font-size: 0.75rem;
+                color: var(--fg3);
+                display: block;
+                margin-bottom: 4px;
+              "
+              >Name</label
+            >
+            <input
+              id="conn-name"
+              type="text"
+              placeholder="e.g. instagram_token"
+              style="
+                width: 100%;
+                padding: 6px 8px;
+                background: var(--bg0);
+                border: 1px solid var(--bg3);
+                color: var(--fg1);
+                border-radius: 2px;
+                font-family: inherit;
+              "
+            />
+          </div>
+          <div style="margin-bottom: 12px">
+            <label
+              style="
+                font-size: 0.75rem;
+                color: var(--fg3);
+                display: block;
+                margin-bottom: 4px;
+              "
+              >Label</label
+            >
+            <input
+              id="conn-label"
+              type="text"
+              placeholder="e.g. Instagram Account"
+              style="
+                width: 100%;
+                padding: 6px 8px;
+                background: var(--bg0);
+                border: 1px solid var(--bg3);
+                color: var(--fg1);
+                border-radius: 2px;
+                font-family: inherit;
+              "
+            />
+          </div>
+          <div style="margin-bottom: 12px">
+            <label
+              style="
+                font-size: 0.75rem;
+                color: var(--fg3);
+                display: block;
+                margin-bottom: 4px;
+              "
+              >Value (token / password)</label
+            >
+            <input
+              id="conn-value"
+              type="password"
+              placeholder="Secret value"
+              style="
+                width: 100%;
+                padding: 6px 8px;
+                background: var(--bg0);
+                border: 1px solid var(--bg3);
+                color: var(--fg1);
+                border-radius: 2px;
+                font-family: inherit;
+              "
+            />
+          </div>
+          <div style="margin-bottom: 16px">
+            <label
+              style="
+                font-size: 0.75rem;
+                color: var(--fg3);
+                display: block;
+                margin-bottom: 4px;
+              "
+              >Scope (agent name or * for all)</label
+            >
+            <input
+              id="conn-scope"
+              type="text"
+              value="*"
+              style="
+                width: 100%;
+                padding: 6px 8px;
+                background: var(--bg0);
+                border: 1px solid var(--bg3);
+                color: var(--fg1);
+                border-radius: 2px;
+                font-family: inherit;
+              "
+            />
+          </div>
+          <div style="display: flex; gap: 8px; justify-content: flex-end">
+            <button class="btn" onclick="hideAddConnectionModal()">
+              Cancel
+            </button>
+            <button class="btn btn-primary" onclick="saveConnection()">
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script src="/static/js/widgets/toast.js"></script>
@@ -480,7 +653,151 @@
         }
 
         // Transaction history moved to dashboard
+
+        // Load connections (secrets)
+        loadConnections();
+        loadAuditLog();
       })();
+
+      async function loadConnections() {
+        try {
+          const res = await fetch("/api/secrets");
+          const el = document.getElementById("connections-list");
+          if (!res.ok) {
+            if (res.status === 503) {
+              el.innerHTML =
+                '<div class="empty-state">Secrets not configured on this instance.</div>';
+            } else {
+              el.innerHTML = '<div class="empty-state">Failed to load.</div>';
+            }
+            return;
+          }
+          const data = await res.json();
+          if (!data.secrets || data.secrets.length === 0) {
+            el.innerHTML =
+              '<div class="empty-state">No connections yet. Add credentials for agents like Instagram, Bluesky, or Stripe.</div>';
+            return;
+          }
+          el.innerHTML = data.secrets
+            .map(
+              (s) => `
+            <div class="connected-item" style="justify-content:space-between">
+              <div>
+                <span class="connected-label">${s.label || s.secret_name}</span>
+                <span style="font-size:0.7rem;color:var(--fg3);margin-left:8px">${s.scope === "*" ? "all agents" : s.scope}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="connected-yes" style="font-size:0.7rem">Set</span>
+                <button class="btn" style="font-size:0.65rem;padding:2px 6px" onclick="deleteConnection('${s.secret_name}')">Remove</button>
+              </div>
+            </div>
+          `,
+            )
+            .join("");
+        } catch (e) {
+          console.error("Failed to load connections:", e);
+        }
+      }
+
+      async function loadAuditLog() {
+        try {
+          const res = await fetch("/api/secrets/audit?limit=20");
+          const el = document.getElementById("audit-log");
+          if (!res.ok) {
+            el.innerHTML = '<div class="empty-state">No audit data.</div>';
+            return;
+          }
+          const data = await res.json();
+          if (!data.entries || data.entries.length === 0) {
+            el.innerHTML =
+              '<div class="empty-state">No credential access recorded yet.</div>';
+            return;
+          }
+          el.innerHTML = data.entries
+            .map((e) => {
+              const ago = timeAgo(new Date(e.created_at));
+              return `<div style="font-size:0.75rem;color:var(--fg2);padding:4px 0;border-bottom:1px solid var(--bg2)">
+              <span style="color:var(--aqua)">${e.agent_name}</span> ${e.action} <strong>${e.secret_name}</strong> ${ago}
+            </div>`;
+            })
+            .join("");
+        } catch (e) {
+          console.error("Failed to load audit log:", e);
+        }
+      }
+
+      function timeAgo(date) {
+        const s = Math.floor((Date.now() - date.getTime()) / 1000);
+        if (s < 60) return "just now";
+        if (s < 3600) return Math.floor(s / 60) + "m ago";
+        if (s < 86400) return Math.floor(s / 3600) + "h ago";
+        return Math.floor(s / 86400) + "d ago";
+      }
+
+      function showAddConnectionModal() {
+        document.getElementById("add-conn-modal").style.display = "flex";
+      }
+      function hideAddConnectionModal() {
+        document.getElementById("add-conn-modal").style.display = "none";
+      }
+
+      async function saveConnection() {
+        const name = document.getElementById("conn-name").value.trim();
+        const label = document.getElementById("conn-label").value.trim();
+        const value = document.getElementById("conn-value").value;
+        const scope = document.getElementById("conn-scope").value.trim() || "*";
+
+        if (!name || !value) {
+          Toast.show("Name and value are required", "error");
+          return;
+        }
+
+        try {
+          const res = await fetch("/api/secrets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              secret_name: name,
+              value,
+              scope,
+              label: label || null,
+            }),
+          });
+          if (res.ok) {
+            Toast.show("Connection saved");
+            hideAddConnectionModal();
+            document.getElementById("conn-name").value = "";
+            document.getElementById("conn-label").value = "";
+            document.getElementById("conn-value").value = "";
+            document.getElementById("conn-scope").value = "*";
+            loadConnections();
+          } else {
+            const err = await res.json().catch(() => ({}));
+            Toast.show(err.error || "Failed to save", "error");
+          }
+        } catch (e) {
+          Toast.show("Network error: " + e.message, "error");
+        }
+      }
+
+      async function deleteConnection(secretName) {
+        if (!confirm("Remove connection '" + secretName + "'?")) return;
+        try {
+          const res = await fetch(
+            "/api/secrets/" + encodeURIComponent(secretName),
+            { method: "DELETE" },
+          );
+          if (res.ok) {
+            Toast.show("Connection removed");
+            loadConnections();
+            loadAuditLog();
+          } else {
+            Toast.show("Failed to remove", "error");
+          }
+        } catch (e) {
+          Toast.show("Network error: " + e.message, "error");
+        }
+      }
 
       async function saveName() {
         const name = document.getElementById("name-input").value.trim();

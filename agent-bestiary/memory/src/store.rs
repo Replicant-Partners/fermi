@@ -20,7 +20,7 @@ const AGENT_COLUMNS: &str = r#"
     llm_provider, embedding_provider, embedding_model, embedding_dimension,
     sample_queries,
     status, fork_pricing, forked_from, fork_count,
-    accepts, produces, workflow_template
+    accepts, produces, workflow_template, prompt_template, requires_secrets
 "#;
 
 pub struct MemoryStore {
@@ -180,9 +180,9 @@ impl MemoryStore {
                 education_budget_credits, education_credits_used, display_alias,
                 llm_provider, embedding_provider, embedding_model, embedding_dimension,
                 sample_queries, status, fork_pricing, forked_from, fork_count,
-                accepts, produces, workflow_template
+                accepts, produces, workflow_template, prompt_template, requires_secrets
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -198,7 +198,9 @@ impl MemoryStore {
                 status = EXCLUDED.status,
                 accepts = EXCLUDED.accepts,
                 produces = EXCLUDED.produces,
-                workflow_template = EXCLUDED.workflow_template
+                workflow_template = EXCLUDED.workflow_template,
+                prompt_template = EXCLUDED.prompt_template,
+                requires_secrets = EXCLUDED.requires_secrets
             RETURNING agent_id
             "#,
         )
@@ -234,6 +236,8 @@ impl MemoryStore {
         .bind(&agent.accepts)
         .bind(&agent.produces)
         .bind(&agent.workflow_template)
+        .bind(&agent.prompt_template)
+        .bind(&agent.requires_secrets)
         .fetch_one(&self.pool)
         .await?;
 
@@ -325,9 +329,9 @@ impl MemoryStore {
                 dreaming_budget_credits, education_budget_credits, display_alias,
                 llm_provider, embedding_provider, embedding_model, embedding_dimension,
                 sample_queries, status, fork_pricing, forked_from, fork_count,
-                accepts, produces, workflow_template
+                accepts, produces, workflow_template, prompt_template, requires_secrets
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
             RETURNING agent_id
             "#,
         )
@@ -361,6 +365,8 @@ impl MemoryStore {
         .bind(&agent.accepts)
         .bind(&agent.produces)
         .bind(&agent.workflow_template)
+        .bind(&agent.prompt_template)
+        .bind(&agent.requires_secrets)
         .fetch_one(&self.pool)
         .await?;
 
@@ -423,6 +429,14 @@ impl MemoryStore {
         }
         if updates.workflow_template.is_some() {
             set_clauses.push(format!("workflow_template = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.prompt_template.is_some() {
+            set_clauses.push(format!("prompt_template = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.requires_secrets.is_some() {
+            set_clauses.push(format!("requires_secrets = ${}", param_idx));
             let _ = param_idx;
         }
 
@@ -474,6 +488,12 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.workflow_template {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.prompt_template {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.requires_secrets {
             query = query.bind(v);
         }
 
@@ -674,6 +694,8 @@ impl MemoryStore {
                 .try_get::<Option<Vec<String>>, _>("produces")?
                 .unwrap_or_default(),
             workflow_template: row.try_get("workflow_template").unwrap_or(None),
+            prompt_template: row.try_get("prompt_template").unwrap_or(None),
+            requires_secrets: row.try_get("requires_secrets").unwrap_or(None),
         })
     }
 

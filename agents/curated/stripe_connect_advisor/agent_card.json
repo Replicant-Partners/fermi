@@ -72,5 +72,13 @@
     ]
   },
   "accepts": ["query", "connect-context"],
-  "produces": ["connect-analysis", "recommendations"]
+  "produces": ["connect-analysis", "recommendations"],
+  "requires_secrets": [
+    {
+      "name": "stripe_api_key",
+      "label": "Stripe API Key",
+      "description": "Stripe secret key for Connect platform operations",
+      "is_required": true
+    }
+  ]
 }

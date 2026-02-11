@@ -322,6 +322,7 @@ pub async fn run_eval_cases(
             db: Some(state.db.clone()),
             gas_fees: Some(state.gas_fees.clone()),
             user_id: None,
+            user_secrets: None,
         });
         let tool_executor = ToolAwareExecutor::new(
             state.registry.executor_arc(),

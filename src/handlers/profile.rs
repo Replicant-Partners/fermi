@@ -286,3 +286,126 @@ pub async fn mark_all_notifications_read_handler(
         "count": count,
     })))
 }
+
+// ─── User Secrets (Connections) ────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSecretRequest {
+    pub secret_name: String,
+    pub value: String,
+    #[serde(default = "default_scope")]
+    pub scope: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+}
+
+fn default_scope() -> String {
+    "*".to_string()
+}
+
+pub async fn create_secret_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<CreateSecretRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let encryptor = state.secret_encryptor.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Secrets not configured".to_string(),
+    ))?;
+
+    let secret_id = fermi_auth::store_secret(
+        &state.db,
+        encryptor,
+        &principal.user_id(),
+        &req.secret_name,
+        &req.value,
+        &req.scope,
+        req.label.as_deref(),
+        req.description.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "secret_id": secret_id,
+        "secret_name": req.secret_name,
+        "message": "Secret stored"
+    })))
+}
+
+pub async fn list_secrets_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let secrets = fermi_auth::list_secrets(&state.db, &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let list: Vec<Value> = secrets
+        .iter()
+        .map(|s| {
+            json!({
+                "secret_id": s.secret_id,
+                "secret_name": s.secret_name,
+                "scope": s.scope,
+                "label": s.label,
+                "description": s.description,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "secrets": list })))
+}
+
+pub async fn delete_secret_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(secret_name): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    fermi_auth::delete_secret(&state.db, &principal.user_id(), &secret_name)
+        .await
+        .map_err(|e| match e {
+            fermi_auth::AuthError::SecretNotFound(_) => {
+                (StatusCode::NOT_FOUND, "Secret not found".to_string())
+            }
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        })?;
+
+    Ok(Json(json!({ "message": "Secret deleted" })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuditLogParams {
+    pub limit: Option<i64>,
+}
+
+pub async fn secret_audit_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(params): Query<AuditLogParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let limit = params.limit.unwrap_or(50).min(200);
+
+    let entries = fermi_auth::get_secret_audit_log(&state.db, &principal.user_id(), limit)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let list: Vec<Value> = entries
+        .iter()
+        .map(|e| {
+            json!({
+                "log_id": e.log_id,
+                "secret_name": e.secret_name,
+                "agent_name": e.agent_name,
+                "workspace_id": e.workspace_id,
+                "action": e.action,
+                "tool_name": e.tool_name,
+                "created_at": e.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "entries": list })))
+}

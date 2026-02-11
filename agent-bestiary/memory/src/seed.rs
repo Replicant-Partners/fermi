@@ -177,6 +177,8 @@ impl SeedData {
                 accepts: vec![],
                 produces: vec![],
                 workflow_template: None,
+                prompt_template: None,
+                requires_secrets: None,
             },
             Agent {
                 agent_id: make_uuid(1, 0, 0),
@@ -225,6 +227,8 @@ impl SeedData {
                 accepts: vec![],
                 produces: vec![],
                 workflow_template: None,
+                prompt_template: None,
+                requires_secrets: None,
             },
             Agent {
                 agent_id: make_uuid(2, 0, 0),
@@ -268,6 +272,8 @@ impl SeedData {
                 accepts: vec![],
                 produces: vec![],
                 workflow_template: None,
+                prompt_template: None,
+                requires_secrets: None,
             },
         ]
     }

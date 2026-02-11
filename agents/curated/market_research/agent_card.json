@@ -100,5 +100,6 @@
     ]
   },
   "accepts": ["query", "industry"],
-  "produces": ["market-analysis", "trends"]
+  "produces": ["market-analysis", "trends"],
+  "prompt_template": "Research {{topic or company}} in the {{industry or region}} market"
 }

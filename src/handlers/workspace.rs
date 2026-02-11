@@ -147,7 +147,8 @@ pub async fn get_workspace_handler(
     // Get workspace agents from junction table
     let agent_rows = sqlx::query(
         "SELECT a.agent_id, a.agent_name, a.description, a.total_executions,
-                a.display_alias, a.agent_type, a.tags, wa.relationship
+                a.display_alias, a.agent_type, a.tags, wa.relationship,
+                a.sample_queries, a.accepts, a.produces, a.prompt_template
          FROM workspace_agents wa
          JOIN agents a ON a.agent_id = wa.agent_id
          WHERE wa.workspace_id = $1
@@ -170,6 +171,10 @@ pub async fn get_workspace_handler(
                 "tags": r.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
                 "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
                 "relationship": r.try_get::<String, _>("relationship").unwrap_or_default(),
+                "sample_queries": r.try_get::<Option<Vec<String>>, _>("sample_queries").unwrap_or(None),
+                "accepts": r.try_get::<Option<Vec<String>>, _>("accepts").unwrap_or(None),
+                "produces": r.try_get::<Option<Vec<String>>, _>("produces").unwrap_or(None),
+                "prompt_template": r.try_get::<Option<String>, _>("prompt_template").unwrap_or(None),
             })
         })
         .collect();
@@ -325,6 +330,8 @@ pub async fn create_workspace_agent_handler(
         accepts: vec![],
         produces: vec![],
         workflow_template: None,
+        prompt_template: None,
+        requires_secrets: None,
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -706,6 +713,50 @@ pub async fn post_workspace_message_handler(
                             agent_card: card.clone(),
                         };
 
+                        // Resolve user secrets for this agent
+                        let user_secrets = if let Some(ref encryptor) = state2.secret_encryptor {
+                            fermi_auth::get_secrets_for_agent(
+                                &state2.db, encryptor, &user_id2, &agent_name2,
+                            )
+                            .await
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                        } else {
+                            None
+                        };
+
+                        // Check for missing required secrets
+                        if let Some(ref req_secrets) = db_agent.requires_secrets {
+                            if let Ok(requirements) = serde_json::from_value::<Vec<serde_json::Value>>(req_secrets.clone()) {
+                                let resolved = user_secrets.as_ref();
+                                let missing: Vec<String> = requirements.iter()
+                                    .filter(|r| r.get("is_required").and_then(|v| v.as_bool()).unwrap_or(true))
+                                    .filter(|r| {
+                                        let name = r.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                        !resolved.map_or(false, |s| s.contains_key(name))
+                                    })
+                                    .filter_map(|r| r.get("label").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                                    .collect();
+
+                                if !missing.is_empty() {
+                                    let hint = format!(
+                                        "@{} needs credentials to function: {}. Go to Profile > Connections to add them.",
+                                        agent_name2,
+                                        missing.join(", ")
+                                    );
+                                    // Store as system message in workspace
+                                    let _ = sqlx::query(
+                                        "INSERT INTO workspace_messages (workspace_id, sender_type, sender_id, sender_name, content, message_type, metadata)
+                                         VALUES ($1, 'system', 'system', 'System', $2, 'system', '{}'::jsonb)"
+                                    )
+                                    .bind(ws_uuid2)
+                                    .bind(&hint)
+                                    .execute(&state2.db)
+                                    .await;
+                                }
+                            }
+                        }
+
                         // Use ToolAwareExecutor with workspace tools
                         let tool_context = Arc::new(ToolContext {
                             memory_store: state2.memory_store.clone(),
@@ -718,6 +769,7 @@ pub async fn post_workspace_message_handler(
                             db: Some(state2.db.clone()),
                             gas_fees: Some(state2.gas_fees.clone()),
                             user_id: Some(user_id2.clone()),
+                            user_secrets,
                         });
                         let tool_executor = ToolAwareExecutor::new(
                             state2.registry.executor_arc(),

@@ -106,6 +106,7 @@
   },
   "accepts": ["query", "shopping-brief", "budget"],
   "produces": ["product-comparison", "shopping-profile", "marketplace-listing"],
+  "prompt_template": "I'm looking for {{product or service}} with a budget of {{budget}}. My preferences: {{any specific requirements or brand preferences}}",
   "workflow_template": {
     "description": "4-stage shopping intelligence pipeline",
     "mermaid": "sequenceDiagram\n    participant User\n    participant shopping_assistant\n    participant deal_finder\n    participant preference_modeler\n    participant embedding_broker\n    User->>shopping_assistant: Shopping query\n    Note over shopping_assistant: Intake\n    shopping_assistant->>deal_finder: Research request\n    deal_finder-->>shopping_assistant: Product comparison\n    Note over shopping_assistant: Learn\n    shopping_assistant->>preference_modeler: Update preferences\n    preference_modeler-->>shopping_assistant: Updated profile\n    Note over shopping_assistant: Marketplace\n    shopping_assistant->>embedding_broker: List/manage\n    embedding_broker-->>shopping_assistant: Listing status\n    shopping_assistant-->>User: Results + recommendations",

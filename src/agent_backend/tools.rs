@@ -49,6 +49,7 @@ pub struct ToolContext {
     pub db: Option<sqlx::PgPool>,
     pub gas_fees: Option<crate::gas::GasFees>,
     pub user_id: Option<String>,
+    pub user_secrets: Option<std::collections::HashMap<String, String>>,
 }
 
 /// A built-in tool definition
@@ -1225,6 +1226,7 @@ async fn execute_delegate_to_agent(
         db: ctx.db.clone(),
         gas_fees: ctx.gas_fees.clone(),
         user_id: ctx.user_id.clone(),
+        user_secrets: ctx.user_secrets.clone(),
     });
 
     let tool_executor = ToolAwareExecutor::new(

@@ -120,5 +120,13 @@
     ]
   },
   "accepts": ["query", "billing-context"],
-  "produces": ["billing-analysis", "recommendations"]
+  "produces": ["billing-analysis", "recommendations"],
+  "requires_secrets": [
+    {
+      "name": "stripe_api_key",
+      "label": "Stripe API Key",
+      "description": "Stripe secret key for billing operations",
+      "is_required": true
+    }
+  ]
 }

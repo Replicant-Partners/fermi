@@ -32,6 +32,10 @@ pub struct AgentCard {
     pub produces: Vec<String>,
     #[serde(default)]
     pub workflow_template: Option<WorkflowTemplate>,
+    #[serde(default)]
+    pub prompt_template: Option<String>,
+    #[serde(default)]
+    pub requires_secrets: Vec<SecretRequirement>,
 }
 
 /// Workflow template for compound agents — static mermaid diagram + stage definitions
@@ -55,6 +59,20 @@ pub struct WorkflowStage {
     pub produces: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
+}
+
+/// A credential that an agent needs to function (e.g. API tokens for publishing)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretRequirement {
+    pub name: String,
+    pub label: String,
+    pub description: String,
+    #[serde(default = "default_true")]
+    pub is_required: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Dependencies that a compound agent requires or optionally uses
@@ -247,6 +265,8 @@ impl AgentCard {
             accepts: vec![],
             produces: vec![],
             workflow_template: None,
+            prompt_template: None,
+            requires_secrets: vec![],
         }
     }
 
