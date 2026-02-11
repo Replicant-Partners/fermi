@@ -34,7 +34,7 @@ use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 use fermi::gas::{charge_gas, check_low_balance, GasFees};
@@ -1317,13 +1317,23 @@ async fn main() {
 
     let rabble_router = Router::new().fallback(rabble_spa_fallback);
 
+    // Configure CORS to allow credentials from fermi.systems
+    let cors = CorsLayer::new()
+        .allow_origin([
+            "https://fermi.systems".parse::<HeaderValue>().unwrap(),
+            "http://localhost:5173".parse::<HeaderValue>().unwrap(), // Dev
+        ])
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .allow_credentials(true);
+
     let app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
         .nest_service("/static", ServeDir::new("static"))
         .nest("/rabble", rabble_router)
         .fallback(fallback_404)
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state);
 
     let port = std::env::var("PORT")
