@@ -592,6 +592,9 @@ pub struct CreateSwarmRequest {
     pub max_participants: Option<i32>,
     pub starts_at: String,
     pub ends_at: String,
+    pub funding_mode: Option<String>,
+    pub invite_pool: Option<i32>,
+    pub suggested_contribution: Option<i32>,
 }
 
 /// POST /api/swarms — create a swarm event (5 credits)
@@ -602,15 +605,32 @@ pub async fn create_swarm_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
 
+    let funding_mode = req.funding_mode.as_deref().unwrap_or("hosted");
+    if funding_mode != "hosted" && funding_mode != "support" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "funding_mode must be 'hosted' or 'support'".into(),
+        ));
+    }
+    let invite_pool = req.invite_pool.unwrap_or(0).max(0);
+    let suggested_contribution = req.suggested_contribution.unwrap_or(1).max(1);
+
+    // Calculate total cost: 5 (create fee) + invite_pool (if hosted mode)
+    let total_cost = if funding_mode == "hosted" {
+        5 + invite_pool
+    } else {
+        5
+    };
+
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     charge_gas(
         &state.db,
         wallet.wallet_id,
-        5,
+        total_cost,
         "swarm_create",
-        &format!("Create swarm: {}", req.name),
+        &format!("Create rabble: {} ({})", req.name, funding_mode),
         None,
     )
     .await?;
@@ -623,13 +643,19 @@ pub async fn create_swarm_handler(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid ends_at: {}", e)))?;
     let resolution = req.h3_resolution.unwrap_or(12);
 
+    // Generate QR token
+    let qr_token = generate_qr_token();
+
     let pool = state.memory_store.pool();
     sqlx::query(
         "INSERT INTO swarm_events (swarm_id, creator_id, h3_cell, h3_resolution,
          center_lat, center_lng, location_name, grid_map_id,
          name, description, species_filter, max_participants,
-         starts_at, ends_at, status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'scheduled', $15)",
+         starts_at, ends_at, status, created_at,
+         funding_mode, invite_pool, invite_pool_remaining,
+         suggested_contribution, qr_token)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'scheduled', $15,
+                 $16, $17, $17, $18, $19)",
     )
     .bind(swarm_id)
     .bind(&user_id)
@@ -646,6 +672,10 @@ pub async fn create_swarm_handler(
     .bind(starts_at)
     .bind(ends_at)
     .bind(now)
+    .bind(funding_mode)
+    .bind(invite_pool)
+    .bind(suggested_contribution)
+    .bind(&qr_token)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -656,15 +686,20 @@ pub async fn create_swarm_handler(
         "status": "scheduled",
         "starts_at": starts_at.to_rfc3339(),
         "ends_at": ends_at.to_rfc3339(),
+        "funding_mode": funding_mode,
+        "invite_pool": invite_pool,
+        "qr_token": qr_token,
     })))
 }
 
 #[derive(Deserialize)]
 pub struct JoinSwarmRequest {
     pub creature_id: Uuid,
+    pub contribution: Option<i32>,
 }
 
-/// POST /api/swarms/:swarm_id/join — join a swarm with a creature (1 credit)
+/// POST /api/swarms/:swarm_id/join — join a rabble with a creature.
+/// Cost depends on funding_mode: hosted = free (pool pays), support = joiner contributes.
 pub async fn join_swarm_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -676,45 +711,77 @@ pub async fn join_swarm_handler(
 
     // Verify swarm exists and is joinable
     let swarm = sqlx::query(
-        "SELECT status, h3_cell, center_lat, center_lng FROM swarm_events WHERE swarm_id = $1",
+        "SELECT status, h3_cell, center_lat, center_lng, funding_mode, invite_pool_remaining, suggested_contribution
+         FROM swarm_events WHERE swarm_id = $1",
     )
     .bind(swarm_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((StatusCode::NOT_FOUND, "Swarm not found".to_string()))?;
+    .ok_or((StatusCode::NOT_FOUND, "Rabble not found".to_string()))?;
 
     let status: String = swarm.get("status");
     if status != "scheduled" && status != "active" {
-        return Err((StatusCode::CONFLICT, format!("Swarm is {}", status)));
+        return Err((StatusCode::CONFLICT, format!("Rabble is {}", status)));
     }
 
+    let funding_mode: String = swarm.try_get("funding_mode").unwrap_or("hosted".into());
+
     // Verify creature ownership
-    let creature = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
-        .bind(req.creature_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+    let creature = sqlx::query(
+        "SELECT owner_id, specimen_name, species_name, species_group FROM creatures WHERE creature_id = $1"
+    )
+    .bind(req.creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
 
     let owner: String = creature.get("owner_id");
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
 
-    // Charge 1 credit
-    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    charge_gas(
-        &state.db,
-        wallet.wallet_id,
-        1,
-        "swarm_join",
-        &format!("Join swarm {}", swarm_id),
-        Some(&swarm_id.to_string()),
-    )
-    .await?;
+    let creature_name: Option<String> = creature.try_get("specimen_name").ok();
+    let species_name: Option<String> = creature.try_get("species_name").ok();
+    let species_group: Option<String> = creature.try_get("species_group").ok();
+
+    // Handle funding mode
+    if funding_mode == "hosted" {
+        let remaining: i32 = swarm.try_get("invite_pool_remaining").unwrap_or(0);
+        if remaining <= 0 {
+            return Err((StatusCode::PAYMENT_REQUIRED, "Invite pool exhausted".into()));
+        }
+        sqlx::query("UPDATE swarm_events SET invite_pool_remaining = invite_pool_remaining - 1 WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .execute(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    } else {
+        // Support mode: joiner contributes
+        let suggested: i32 = swarm.try_get("suggested_contribution").unwrap_or(1);
+        let contribution = req.contribution.unwrap_or(suggested).max(1);
+
+        let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        charge_gas(
+            &state.db,
+            wallet.wallet_id,
+            contribution,
+            "swarm_join",
+            &format!("Support rabble {} ({} credits)", swarm_id, contribution),
+            Some(&swarm_id.to_string()),
+        )
+        .await?;
+
+        sqlx::query("UPDATE swarm_events SET total_contributions = total_contributions + $1 WHERE swarm_id = $2")
+            .bind(contribution)
+            .bind(swarm_id)
+            .execute(pool)
+            .await
+            .ok();
+    }
 
     // Record the flight at the swarm location
     let flight_id = Uuid::new_v4();
@@ -750,12 +817,63 @@ pub async fn join_swarm_handler(
     .await
     .ok();
 
+    // Post system message + trigger swarm host narrator welcome
+    let display_name = creature_name.as_deref().unwrap_or("A creature");
+    let species_display = species_name.as_deref().unwrap_or("unknown species");
+    let _ = super::rabble_chat::insert_system_message(
+        &state,
+        swarm_id,
+        &format!(
+            "{} ({}) has joined the rabble!",
+            display_name, species_display
+        ),
+    )
+    .await;
+
+    // Trigger swarm host agent welcome (async, non-blocking)
+    let state_clone = state.clone();
+    let creature_name_c = creature_name.clone();
+    let species_name_c = species_name.clone();
+    let species_group_c = species_group.clone();
+    tokio::spawn(async move {
+        trigger_swarm_host_welcome(
+            &state_clone,
+            swarm_id,
+            creature_name_c.as_deref().unwrap_or("creature"),
+            species_name_c.as_deref().unwrap_or("unknown"),
+            species_group_c.as_deref().unwrap_or("unknown"),
+        )
+        .await;
+    });
+
     Ok(Json(json!({
         "swarm_id": swarm_id,
         "flight_id": flight_id,
         "creature_id": req.creature_id,
         "joined": true,
+        "funding_mode": funding_mode,
     })))
+}
+
+/// POST /api/rabble/join/:qr_token — join a rabble via QR code scan.
+/// Resolves the token to a swarm_id, then delegates to the standard join logic.
+pub async fn join_by_qr_token_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(qr_token): Path<String>,
+    Json(req): Json<JoinSwarmRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let row = sqlx::query("SELECT swarm_id FROM swarm_events WHERE qr_token = $1")
+        .bind(&qr_token)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Invalid QR code".into()))?;
+
+    let swarm_id: Uuid = row.try_get("swarm_id").unwrap_or_default();
+
+    // Delegate to the standard join handler
+    join_swarm_handler(State(state), principal, Path(swarm_id), Json(req)).await
 }
 
 #[derive(Deserialize)]
@@ -1361,4 +1479,108 @@ async fn generate_creature_image(
     .map_err(|e| format!("DB update error: {}", e))?;
 
     Ok(relative_path)
+}
+
+// ─── Rabble helpers ────────────────────────────────────────────────
+
+/// Generate a short alphanumeric QR token (8 chars).
+fn generate_qr_token() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..8)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
+/// Trigger swarm host agent to generate a welcome message for a joining creature.
+async fn trigger_swarm_host_welcome(
+    state: &AppState,
+    swarm_id: Uuid,
+    creature_name: &str,
+    species_name: &str,
+    species_group: &str,
+) {
+    use crate::{resolve_agent, resolve_agent_card};
+    use fermi::agent_backend::executor::AgentExecutor;
+    use fermi::agent_backend::tool_executor::ToolAwareExecutor;
+    use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
+    use fermi::agent_backend::ExecutionContext;
+    use fermi::ast;
+    use std::sync::Arc;
+
+    let db_agent = match resolve_agent(state, "swarm_host").await {
+        Ok(a) => a,
+        Err(_) => return,
+    };
+    let card = resolve_agent_card(state, &db_agent);
+
+    let query = format!(
+        "Welcome {} ({}, {}) to the rabble! Share a fun taxonomic fact about this species.",
+        creature_name, species_name, species_group
+    );
+
+    let agent_stmt = ast::AgentStmt {
+        name: "swarm_host".to_string(),
+        agent_type: Some(card.agent_type.clone()),
+        query,
+        executor: Some(ast::ExecutorType::LLM),
+        schedule: None,
+        driver_refs: vec![],
+        depends_on: vec![],
+        confidence_threshold: None,
+    };
+
+    let program = ast::Program {
+        statements: vec![ast::Statement::Agent(agent_stmt.clone())],
+    };
+
+    let context = ExecutionContext {
+        program,
+        agent_card: card,
+    };
+
+    let tool_context = Arc::new(ToolContext {
+        memory_store: state.memory_store.clone(),
+        embedder: state.embedder.clone(),
+        registry: state.registry.clone(),
+        current_agent_id: Some(db_agent.agent_id),
+        workspace_id: None,
+        workspace_slug: None,
+        workspace_git: None,
+        db: Some(state.db.clone()),
+        gas_fees: Some(state.gas_fees.clone()),
+        user_id: None,
+        user_secrets: None,
+    });
+
+    let tool_executor = ToolAwareExecutor::new(
+        state.registry.executor_arc(),
+        ToolRegistry::standard(),
+        tool_context,
+    );
+
+    match tool_executor.execute(&agent_stmt, &context).await {
+        Ok(output) => {
+            let narrative = if let Some(reasoning) = &output.metadata.reasoning {
+                reasoning.trim().to_string()
+            } else {
+                output
+                    .evidence
+                    .first()
+                    .and_then(|e| e.summary.clone())
+                    .unwrap_or_default()
+            };
+            if !narrative.is_empty() {
+                let _ =
+                    super::rabble_chat::insert_narrator_message(state, swarm_id, &narrative).await;
+            }
+        }
+        Err(e) => {
+            eprintln!("Swarm host welcome failed: {}", e);
+        }
+    }
 }

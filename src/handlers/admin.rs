@@ -80,6 +80,26 @@ pub async fn admin_stats_handler(
             .try_get("cnt")
             .unwrap_or(0);
 
+    // Rabble stats
+    let total_creatures: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM creatures")
+        .fetch_one(&state.db)
+        .await
+        .map(|r| r.try_get("cnt").unwrap_or(0))
+        .unwrap_or(0);
+
+    let active_rabbles: i64 =
+        sqlx::query("SELECT COUNT(*) as cnt FROM swarm_events WHERE status = 'active'")
+            .fetch_one(&state.db)
+            .await
+            .map(|r| r.try_get("cnt").unwrap_or(0))
+            .unwrap_or(0);
+
+    let total_rabble_messages: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM rabble_messages")
+        .fetch_one(&state.db)
+        .await
+        .map(|r| r.try_get("cnt").unwrap_or(0))
+        .unwrap_or(0);
+
     Ok(Json(json!({
         "total_users": total_users,
         "total_agents": total_agents,
@@ -92,6 +112,11 @@ pub async fn admin_stats_handler(
             "dimension": state.embedder.dimension(),
             "episodes_with_embeddings": episodes_with_embeddings,
             "episodes_without_embeddings": total_episodes - episodes_with_embeddings,
+        },
+        "rabble": {
+            "total_creatures": total_creatures,
+            "active_rabbles": active_rabbles,
+            "total_rabble_messages": total_rabble_messages,
         }
     })))
 }

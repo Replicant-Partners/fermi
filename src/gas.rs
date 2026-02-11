@@ -29,6 +29,7 @@ pub struct GasFees {
     pub marketplace_listing_fee: i32,
     pub marketplace_match_base: i32,
     pub marketplace_platform_pct: f64,
+    pub rabble_chat: i32,
     /// Layer 2: Platform transaction fee on crypto token transfers (agent→owner royalties).
     /// Expressed as a fraction (e.g. 0.025 = 2.5%). Applied to every token payout.
     /// Not yet wired — requires SIWE wallet connection + settlement layer.
@@ -60,6 +61,7 @@ impl GasFees {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.15),
+            rabble_chat: env_or("GAS_RABBLE_CHAT", 1),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -100,7 +102,8 @@ impl Default for GasFees {
             marketplace_listing_fee: 3,
             marketplace_match_base: 1,
             marketplace_platform_pct: 0.15, // 15% platform cut on match payouts
-            crypto_tx_fee_pct: 0.025,       // 2.5% on token transfers
+            rabble_chat: 1,
+            crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
     }
 }

@@ -22,6 +22,8 @@ pub mod misc;
 pub mod ontology;
 pub mod pages;
 pub mod profile;
+pub mod qr_codes;
+pub mod rabble_chat;
 pub mod teams;
 pub mod users;
 pub mod wallet;

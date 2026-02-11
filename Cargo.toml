@@ -98,6 +98,10 @@ base64 = "0.22"
 # H3 hexagonal grid (AR spatial suite)
 h3o = "0.6"
 
+# QR code generation (Rabble events)
+qrcode = "0.14"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # Stripe payments
 async-stripe = { version = "0.41", features = ["runtime-tokio-hyper-rustls", "checkout", "webhook-endpoints"] }
 

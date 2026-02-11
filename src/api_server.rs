@@ -273,6 +273,12 @@ pub(crate) struct WorkspaceEvent {
     pub message: serde_json::Value,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct RabbleEvent {
+    pub swarm_id: uuid::Uuid,
+    pub message: serde_json::Value,
+}
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: PgPool,
@@ -289,6 +295,7 @@ pub(crate) struct AppState {
     pub(crate) stripe: StripeConfig,
     pub(crate) rate_limits: RateLimitConfig,
     pub(crate) ws_broadcast: broadcast::Sender<WorkspaceEvent>,
+    pub(crate) rabble_broadcast: broadcast::Sender<RabbleEvent>,
     pub(crate) secret_encryptor: Option<Arc<fermi_auth::SecretEncryptor>>,
 }
 
@@ -397,6 +404,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/041_ar_beacons.sql",
         "migrations/042_rabble_creatures.sql",
         "migrations/043_seed_starter_creatures.sql",
+        "migrations/044_rabble_messages.sql",
+        "migrations/045_rabble_funding.sql",
     ];
 
     for file in &migration_files {
@@ -572,6 +581,7 @@ async fn main() {
         stripe: stripe_config,
         rate_limits: RateLimitConfig::from_env(),
         ws_broadcast: broadcast::channel::<WorkspaceEvent>(256).0,
+        rabble_broadcast: broadcast::channel::<RabbleEvent>(256).0,
         secret_encryptor: fermi_auth::SecretEncryptor::from_env().ok().map(Arc::new),
     };
 
@@ -783,6 +793,11 @@ async fn main() {
         .route(
             "/api/swarms/:swarm_id",
             get(handlers::creatures::get_swarm_handler),
+        )
+        // Rabble QR (public, no auth)
+        .route(
+            "/api/rabble/:id/qr",
+            get(handlers::qr_codes::rabble_qr_handler),
         )
         // User profiles (public, no auth)
         .route("/user/:user_id", get(handlers::users::user_profile_view))
@@ -1232,6 +1247,21 @@ async fn main() {
         .route(
             "/api/creatures/generate-art-batch",
             post(handlers::creatures::generate_art_batch_handler),
+        )
+        // Rabble chat (authenticated)
+        .route(
+            "/api/rabble/:id/messages",
+            get(handlers::rabble_chat::get_rabble_messages)
+                .post(handlers::rabble_chat::post_rabble_message),
+        )
+        .route(
+            "/api/rabble/:id/stream",
+            get(handlers::rabble_chat::rabble_stream),
+        )
+        .route(
+            "/api/rabble/join/:qr_token",
+            get(handlers::qr_codes::resolve_qr_token_handler)
+                .post(handlers::creatures::join_by_qr_token_handler),
         )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
