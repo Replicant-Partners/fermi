@@ -396,6 +396,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/040_agent_requires_secrets.sql",
         "migrations/041_ar_beacons.sql",
         "migrations/042_rabble_creatures.sql",
+        "migrations/043_seed_starter_creatures.sql",
     ];
 
     for file in &migration_files {
