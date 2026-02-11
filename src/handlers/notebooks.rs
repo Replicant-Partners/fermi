@@ -12,10 +12,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::Row;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::AppState;
-use fermi_auth::AuthPrincipal;
+use fermi::gas::charge_gas;
+use fermi::{executor::Executor, lexer::Lexer, parser::Parser};
+use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
 // ─── Request/Response Types ─────────────────────────────────────────
 
@@ -368,27 +371,252 @@ pub async fn list_notebooks_handler(
 
 /// POST /api/notebooks/:id/execute
 pub async fn execute_notebook_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     principal: AuthPrincipal,
-    Path(_id): Path<Uuid>,
+    Path(id): Path<Uuid>,
     Json(req): Json<ExecuteNotebookRequest>,
 ) -> Result<Json<ExecuteNotebookResponse>, (StatusCode, String)> {
-    // TODO: Integrate with FPL executor (src/executor.rs)
-    // For now, return mock response
+    let start_time = Instant::now();
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
 
-    let _user_id = principal.user_id();
-    let _iterations = req.iterations.unwrap_or(10000);
+    // Get notebook
+    let notebook = sqlx::query("SELECT cells, owner_id FROM fermi_notebooks WHERE id = $1")
+        .bind(id.to_string())
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Notebook not found".to_string()))?;
+
+    let cells: Vec<JsonValue> = notebook.get("cells");
+    let owner_id: Uuid = notebook.get("owner_id");
+
+    // Access control: owner or shared/public
+    // (simplified - you may want to check visibility)
+    if owner_id.to_string() != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Charge credits for execution
+    let wallet = get_or_create_wallet(pool, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Base cost: 1 credit per execution + 1 credit per 1000 iterations
+    let iterations = req.iterations.unwrap_or(10000);
+    let iteration_cost = (iterations / 1000).max(1);
+    let total_cost = 1 + iteration_cost;
+
+    charge_gas(
+        pool,
+        wallet.wallet_id,
+        total_cost,
+        "notebook_execute",
+        &format!("Execute notebook {} ({} iterations)", id, iterations),
+        Some(&id.to_string()),
+    )
+    .await
+    .map_err(|e| e)?;
+
+    // Convert cells to FPL program text
+    let fpl_source = cells_to_fpl(&cells)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid cells: {}", e)))?;
+
+    // Parse FPL
+    let mut lexer = Lexer::new(&fpl_source);
+    let tokens = lexer.tokenize().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Tokenization failed: {:?}", e),
+        )
+    })?;
+
+    let mut parser = Parser::new(tokens);
+    let program = parser
+        .parse()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Parse failed: {}", e)))?;
+
+    // Execute FPL
+    let mut executor = if let Some(seed_val) = req.seed {
+        Executor::with_seed(iterations as usize, seed_val as u64)
+    } else {
+        Executor::new(iterations as usize)
+    };
+
+    let results = executor.execute(&program).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Execution failed: {}", e),
+        )
+    })?;
+
+    // Build cell outputs
+    let mut cell_outputs = serde_json::Map::new();
+
+    // For now, put the main results in a "model" cell output
+    // TODO: Map individual driver outputs to their respective cells
+    cell_outputs.insert(
+        "results".to_string(),
+        serde_json::json!({
+            "mean": results.mean,
+            "median": results.median,
+            "std_dev": results.std_dev,
+            "p5": results.p5,
+            "p25": results.p25,
+            "p75": results.p75,
+            "p95": results.p95,
+            "min": results.min,
+            "max": results.max,
+            "iterations": results.iterations,
+            "base_rate": results.base_rate,
+            "divergence_relative": results.divergence_relative,
+            "divergence_absolute": results.divergence_absolute,
+        }),
+    );
+
+    let elapsed = start_time.elapsed().as_millis() as i64;
+
+    // Update notebook execution state
+    sqlx::query(
+        "UPDATE fermi_notebooks
+         SET execution_state = 'complete',
+             last_executed_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(id.to_string())
+    .execute(pool)
+    .await
+    .ok(); // Don't fail if update fails
 
     let response = ExecuteNotebookResponse {
-        cells: serde_json::json!({}),
-        final_probability: Some(0.67),
+        cells: serde_json::Value::Object(cell_outputs),
+        final_probability: Some(results.mean),
         execution_state: ExecutionState {
             status: "success".to_string(),
-            completed_cells: vec![],
+            completed_cells: vec!["results".to_string()],
             error_message: None,
         },
-        total_time_ms: 1250,
+        total_time_ms: elapsed,
     };
 
     Ok(Json(response))
+}
+
+/// Convert notebook cells (JSONB) to FPL program text
+fn cells_to_fpl(cells: &[JsonValue]) -> Result<String, String> {
+    let mut fpl_lines = Vec::new();
+
+    for cell in cells {
+        let cell_type = cell
+            .get("type")
+            .and_then(|t| t.as_str())
+            .ok_or("Cell missing type")?;
+
+        match cell_type {
+            "question" => {
+                if let Some(text) = cell.get("text").and_then(|t| t.as_str()) {
+                    fpl_lines.push(format!("question \"{}\"", text));
+                }
+                if let Some(base_rate) = cell.get("base_rate") {
+                    if let Some(value) = base_rate.get("value").and_then(|v| v.as_f64()) {
+                        fpl_lines.push(format!("base_rate {}", value));
+                    }
+                }
+            }
+            "driver" => {
+                let name = cell
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .ok_or("Driver cell missing name")?;
+                let dist = cell
+                    .get("distribution")
+                    .ok_or("Driver cell missing distribution")?;
+                let dist_type = dist
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .ok_or("Distribution missing type")?;
+
+                // Convert distribution to FPL syntax
+                let dist_str = match dist_type {
+                    "normal" => {
+                        let mean = dist
+                            .get("mean")
+                            .and_then(|m| m.as_f64())
+                            .ok_or("Normal missing mean")?;
+                        let std = dist
+                            .get("std")
+                            .and_then(|s| s.as_f64())
+                            .ok_or("Normal missing std")?;
+                        format!("normal({}, {})", mean, std)
+                    }
+                    "uniform" => {
+                        let min = dist
+                            .get("min")
+                            .and_then(|m| m.as_f64())
+                            .ok_or("Uniform missing min")?;
+                        let max = dist
+                            .get("max")
+                            .and_then(|m| m.as_f64())
+                            .ok_or("Uniform missing max")?;
+                        format!("uniform({}, {})", min, max)
+                    }
+                    "beta" => {
+                        let alpha = dist
+                            .get("alpha")
+                            .and_then(|a| a.as_f64())
+                            .ok_or("Beta missing alpha")?;
+                        let beta = dist
+                            .get("beta")
+                            .and_then(|b| b.as_f64())
+                            .ok_or("Beta missing beta")?;
+                        format!("beta({}, {})", alpha, beta)
+                    }
+                    "triangular" => {
+                        let min = dist
+                            .get("min")
+                            .and_then(|m| m.as_f64())
+                            .ok_or("Triangular missing min")?;
+                        let mode = dist
+                            .get("mode")
+                            .and_then(|m| m.as_f64())
+                            .ok_or("Triangular missing mode")?;
+                        let max = dist
+                            .get("max")
+                            .and_then(|m| m.as_f64())
+                            .ok_or("Triangular missing max")?;
+                        format!("triangular({}, {}, {})", min, mode, max)
+                    }
+                    "lognormal" => {
+                        let mean = dist
+                            .get("mean")
+                            .and_then(|m| m.as_f64())
+                            .ok_or("LogNormal missing mean")?;
+                        let std = dist
+                            .get("std")
+                            .and_then(|s| s.as_f64())
+                            .ok_or("LogNormal missing std")?;
+                        format!("lognormal({}, {})", mean, std)
+                    }
+                    _ => return Err(format!("Unknown distribution type: {}", dist_type)),
+                };
+
+                fpl_lines.push(format!("driver {} ~ {}", name, dist_str));
+            }
+            "model" => {
+                if let Some(expr) = cell.get("expression").and_then(|e| e.as_str()) {
+                    fpl_lines.push(format!("model {}", expr));
+                }
+            }
+            _ => {
+                // Skip other cell types (markdown, visualization, etc.)
+            }
+        }
+    }
+
+    if fpl_lines.is_empty() {
+        return Err("No executable cells found".to_string());
+    }
+
+    Ok(fpl_lines.join("\n"))
 }
