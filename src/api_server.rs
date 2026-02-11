@@ -34,7 +34,7 @@ use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
 use fermi::gas::{charge_gas, check_low_balance, GasFees};
@@ -1323,8 +1323,14 @@ async fn main() {
             "https://fermi.systems".parse::<HeaderValue>().unwrap(),
             "http://localhost:5173".parse::<HeaderValue>().unwrap(), // Dev
         ])
-        .allow_methods(Any)
-        .allow_headers(Any)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::COOKIE])
         .allow_credentials(true);
 
     let app = Router::new()
