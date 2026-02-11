@@ -1,10 +1,16 @@
 # Fermi Notebook - Railway Deployment Instructions
 
+## Architecture
+
+**Two Separate Railway Instances:**
+- **Backend**: agent-bestiary project (existing) - Rust API on agent-bestiary.world
+- **Frontend**: NEW fermi-systems project - Svelte UI on fermi.systems
+
 ## Option 1: Deploy via Railway Dashboard (Recommended)
 
 1. **Go to Railway Dashboard**: https://railway.app/dashboard
-2. **Select Project**: `agent-bestiary` (or create new project "fermi-systems")
-3. **Add New Service**:
+2. **Create NEW Project**: Click "New Project" → Name: `fermi-systems`
+3. **Add Service to NEW Project**:
    - Click "+ New"
    - Select "GitHub Repo"
    - Choose: `Replicant-Partners/fermi`
@@ -30,18 +36,18 @@
 ```bash
 cd /home/ilabra/fermi/fermi-notebook
 
-# Link to Railway project (select agent-bestiary)
-railway link
-
-# Create new service (via dashboard, then link)
-# After service is created in dashboard:
-railway service link
+# Create NEW Railway project
+railway init
+# When prompted: Enter "fermi-systems" as project name
 
 # Set environment variables
 railway variables set VITE_API_BASE_URL=https://agent-bestiary.world
 
 # Deploy
 railway up
+
+# Add custom domain
+# (Do this in Railway dashboard: Settings → Domains → Add fermi.systems)
 ```
 
 ## Environment Variables Required
