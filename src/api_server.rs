@@ -791,10 +791,6 @@ async fn main() {
             "/api/creatures/:creature_id/flights",
             get(handlers::creatures::creature_flights_handler),
         )
-        .route(
-            "/api/flights/swarm-analysis",
-            get(handlers::creatures::swarm_analysis_handler),
-        )
         .route("/api/swarms", get(handlers::creatures::list_swarms_handler))
         .route(
             "/api/swarms/:swarm_id",
