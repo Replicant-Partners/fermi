@@ -1224,6 +1224,15 @@ async fn main() {
             "/api/swarms/:swarm_id/join",
             post(handlers::creatures::join_swarm_handler),
         )
+        // Rabble.world art generation
+        .route(
+            "/api/creatures/:creature_id/generate-art",
+            post(handlers::creatures::generate_art_handler),
+        )
+        .route(
+            "/api/creatures/generate-art-batch",
+            post(handlers::creatures::generate_art_batch_handler),
+        )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,

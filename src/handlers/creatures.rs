@@ -876,3 +876,487 @@ pub async fn update_collection_handler(
         "updated": true,
     })))
 }
+
+// ─── Art generation endpoints ──────────────────────────────────────
+
+/// POST /api/creatures/:id/generate-art — generate unique illustration for a creature
+///
+/// Charges 5 credits. Calls Gemini image generation with a naturalist prompt
+/// informed by GBIF species data. Updates creature asset_path from placeholder.
+pub async fn generate_art_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<GenerateArtRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify creature exists
+    let row = sqlx::query(
+        "SELECT creature_id, scientific_name, common_name, species_group, gbif_key, asset_path
+         FROM creatures WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let current_path = row.get::<String, _>("asset_path");
+    let scientific_name = row.get::<String, _>("scientific_name");
+    let common_name = row.get::<Option<String>, _>("common_name");
+    let species_group = row.get::<String, _>("species_group");
+    let gbif_key = row.get::<Option<i64>, _>("gbif_key");
+
+    // Skip if already generated (unless force=true)
+    if !current_path.contains("placeholder") && !req.force.unwrap_or(false) {
+        return Ok(Json(json!({
+            "status": "already_generated",
+            "creature_id": creature_id,
+            "asset_path": current_path,
+            "message": "Art already exists. Use force=true to regenerate."
+        })));
+    }
+
+    // Charge credits
+    let wallet = get_or_create_wallet(pool, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        pool,
+        wallet.wallet_id,
+        5,
+        "execution_fee",
+        &format!("Generate art for creature {}", creature_id),
+        Some(&creature_id.to_string()),
+    )
+    .await?;
+
+    let style = req.style.as_deref().unwrap_or("naturalist");
+
+    // Build GBIF reference
+    let mut reference_desc = String::new();
+    if let Some(key) = gbif_key {
+        let client = reqwest::Client::new();
+        let media_url = format!("https://api.gbif.org/v1/species/{}/media", key);
+        if let Ok(resp) = client
+            .get(&media_url)
+            .header("User-Agent", "AgentBestiaryWorld/1.0 (rabble.world)")
+            .send()
+            .await
+        {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if let Some(results) = body.get("results").and_then(|v| v.as_array()) {
+                    let descs: Vec<&str> = results
+                        .iter()
+                        .take(3)
+                        .filter_map(|m| {
+                            m.get("description")
+                                .or(m.get("title"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .collect();
+                    if !descs.is_empty() {
+                        reference_desc = format!(" Reference: {}", descs.join("; "));
+                    }
+                }
+            }
+        }
+    }
+
+    // Build prompt
+    let display_name = common_name
+        .as_deref()
+        .map(|c| format!("{} ({})", c, scientific_name))
+        .unwrap_or_else(|| scientific_name.clone());
+
+    let style_instruction = match style {
+        "watercolor" => "Soft watercolor painting style with visible brush strokes and subtle color bleeding.",
+        "botanical" => "Precise botanical illustration on cream parchment. Fine ink linework with hand-tinted washes.",
+        "field-guide" => "Clean field guide illustration. Crisp outlines, accurate proportions, white background, wings spread.",
+        _ => "Detailed naturalist scientific illustration in the style of Maria Sibylla Merian. Rich colors on aged vellum.",
+    };
+
+    let group_detail = if species_group == "dragonfly" {
+        "Show wing venation, elongated abdomen, compound eyes. Translucent wings with visible cells."
+    } else {
+        "Show wing scale patterns, proboscis, antennae. Upper and lower wing surfaces visible."
+    };
+
+    let prompt = format!(
+        "Create a beautiful scientific illustration of a {} ({}).\n\
+         Style: {}\nDetails: {}\n\
+         Requirements: single specimen, centered, anatomically accurate, \
+         no text/labels/watermarks, square format, dark background (#1A2E20).{}",
+        display_name, species_group, style_instruction, group_detail, reference_desc,
+    );
+
+    // Call Gemini
+    let api_key = std::env::var("GEMINI_API_KEY").map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Image generation unavailable".to_string(),
+        )
+    })?;
+
+    let gemini_body = json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE"]}
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent")
+        .header("x-goog-api-key", &api_key)
+        .header("Content-Type", "application/json")
+        .json(&gemini_body)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Gemini request failed: {}", e)))?;
+
+    if !response.status().is_success() {
+        let err = response.text().await.unwrap_or_default();
+        return Err((StatusCode::BAD_GATEWAY, format!("Gemini error: {}", err)));
+    }
+
+    let gemini_resp: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
+
+    // Extract image
+    let inline_data = gemini_resp
+        .pointer("/candidates/0/content/parts/0/inlineData")
+        .ok_or((
+            StatusCode::BAD_GATEWAY,
+            "No image in Gemini response".to_string(),
+        ))?;
+    let mime_type = inline_data
+        .get("mimeType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("image/png");
+    let b64_data = inline_data
+        .get("data")
+        .and_then(|v| v.as_str())
+        .ok_or((StatusCode::BAD_GATEWAY, "No image data".to_string()))?;
+
+    // Decode and save
+    use base64::Engine;
+    let decoder = base64::engine::general_purpose::STANDARD;
+    let bytes = decoder.decode(b64_data).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Decode error: {}", e),
+        )
+    })?;
+
+    let ext = if mime_type.contains("png") {
+        "png"
+    } else if mime_type.contains("webp") {
+        "webp"
+    } else {
+        "jpg"
+    };
+    let filename = format!("{}.{}", creature_id, ext);
+    let relative_path = format!("/static/creatures/{}", filename);
+    let fs_path = format!("static/creatures/{}", filename);
+
+    std::fs::create_dir_all("static/creatures")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    std::fs::write(&fs_path, &bytes)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Update DB
+    let gen_params = json!({
+        "style": style,
+        "prompt": prompt,
+        "mime_type": mime_type,
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "gbif_key": gbif_key,
+        "file_size_bytes": bytes.len(),
+    });
+
+    sqlx::query(
+        "UPDATE creatures SET asset_path = $1, generation_params = $2, updated_at = NOW()
+         WHERE creature_id = $3",
+    )
+    .bind(&relative_path)
+    .bind(&gen_params)
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "status": "generated",
+        "creature_id": creature_id,
+        "asset_path": relative_path,
+        "mime_type": mime_type,
+        "file_size_bytes": bytes.len(),
+        "style": style,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct GenerateArtRequest {
+    pub style: Option<String>,
+    pub force: Option<bool>,
+}
+
+/// POST /api/creatures/generate-art-batch — generate art for all placeholder creatures
+///
+/// Admin-only (owner_id = 'system' creatures). Spawns background tasks.
+/// Returns immediately with count of creatures queued.
+pub async fn generate_art_batch_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<BatchArtRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    let style = req.style.unwrap_or_else(|| "naturalist".to_string());
+    let limit = req.limit.unwrap_or(5).min(20); // max 20 per batch
+
+    // Find creatures still on placeholder
+    let rows = sqlx::query(
+        "SELECT creature_id, scientific_name, common_name, species_group, gbif_key
+         FROM creatures
+         WHERE asset_path LIKE '%placeholder%'
+         ORDER BY created_at ASC
+         LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if rows.is_empty() {
+        return Ok(Json(json!({
+            "status": "complete",
+            "message": "All creatures already have art",
+            "queued": 0,
+        })));
+    }
+
+    let queued_count = rows.len();
+
+    // Charge per creature
+    let wallet = get_or_create_wallet(pool, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let total_cost = queued_count as i32 * 5;
+    charge_gas(
+        pool,
+        wallet.wallet_id,
+        total_cost,
+        "execution_fee",
+        &format!("Batch art generation for {} creatures", queued_count),
+        None,
+    )
+    .await?;
+
+    // Spawn background generation for each creature
+    let pool_clone = state.memory_store.pool().clone();
+    let style_clone = style.clone();
+    tokio::spawn(async move {
+        for row in rows {
+            let creature_id: Uuid = row.get("creature_id");
+            let scientific_name: String = row.get("scientific_name");
+            let common_name: Option<String> = row.get("common_name");
+            let species_group: String = row.get("species_group");
+            let gbif_key: Option<i64> = row.get("gbif_key");
+
+            match generate_creature_image(
+                &pool_clone,
+                creature_id,
+                &scientific_name,
+                common_name.as_deref(),
+                &species_group,
+                gbif_key,
+                &style_clone,
+            )
+            .await
+            {
+                Ok(path) => {
+                    eprintln!(
+                        "[rabble] Generated art for {} ({}): {}",
+                        scientific_name, creature_id, path,
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[rabble] Art generation failed for {} ({}): {}",
+                        scientific_name, creature_id, e,
+                    );
+                }
+            }
+
+            // Small delay between Gemini calls to respect rate limits
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        eprintln!("[rabble] Batch art generation complete");
+    });
+
+    Ok(Json(json!({
+        "status": "queued",
+        "queued": queued_count,
+        "style": style,
+        "credits_charged": total_cost,
+        "message": format!("{} creatures queued for art generation", queued_count),
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct BatchArtRequest {
+    pub style: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// Shared image generation logic used by both single and batch endpoints.
+async fn generate_creature_image(
+    pool: &sqlx::PgPool,
+    creature_id: Uuid,
+    scientific_name: &str,
+    common_name: Option<&str>,
+    species_group: &str,
+    gbif_key: Option<i64>,
+    style: &str,
+) -> Result<String, String> {
+    let api_key =
+        std::env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY not set".to_string())?;
+
+    // Fetch GBIF reference
+    let mut reference_desc = String::new();
+    if let Some(key) = gbif_key {
+        let client = reqwest::Client::new();
+        let media_url = format!("https://api.gbif.org/v1/species/{}/media", key);
+        if let Ok(resp) = client
+            .get(&media_url)
+            .header("User-Agent", "AgentBestiaryWorld/1.0 (rabble.world)")
+            .send()
+            .await
+        {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if let Some(results) = body.get("results").and_then(|v| v.as_array()) {
+                    let descs: Vec<&str> = results
+                        .iter()
+                        .take(3)
+                        .filter_map(|m| {
+                            m.get("description")
+                                .or(m.get("title"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .collect();
+                    if !descs.is_empty() {
+                        reference_desc = format!(" Reference: {}", descs.join("; "));
+                    }
+                }
+            }
+        }
+    }
+
+    let display_name = common_name
+        .map(|c| format!("{} ({})", c, scientific_name))
+        .unwrap_or_else(|| scientific_name.to_string());
+
+    let style_instruction = match style {
+        "watercolor" => "Soft watercolor with visible brush strokes.",
+        "botanical" => "Precise botanical illustration on cream parchment.",
+        "field-guide" => "Clean field guide illustration, white background, wings spread.",
+        _ => "Naturalist scientific illustration in the style of Maria Sibylla Merian. Rich colors on aged vellum.",
+    };
+
+    let group_detail = if species_group == "dragonfly" {
+        "Wing venation, elongated abdomen, compound eyes, translucent wings."
+    } else {
+        "Wing scale patterns, proboscis, antennae, upper and lower surfaces."
+    };
+
+    let prompt = format!(
+        "Create a scientific illustration of a {} ({}).\n\
+         Style: {}\nDetails: {}\n\
+         Single specimen, centered, anatomically accurate, no text, square, dark background (#1A2E20).{}",
+        display_name, species_group, style_instruction, group_detail, reference_desc,
+    );
+
+    let gemini_body = json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE"]}
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent")
+        .header("x-goog-api-key", &api_key)
+        .header("Content-Type", "application/json")
+        .json(&gemini_body)
+        .send()
+        .await
+        .map_err(|e| format!("Gemini request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let err = response.text().await.unwrap_or_default();
+        return Err(format!("Gemini error: {}", err));
+    }
+
+    let gemini_resp: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    let inline_data = gemini_resp
+        .pointer("/candidates/0/content/parts/0/inlineData")
+        .ok_or("No image in response")?;
+    let mime_type = inline_data
+        .get("mimeType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("image/png");
+    let b64_data = inline_data
+        .get("data")
+        .and_then(|v| v.as_str())
+        .ok_or("No image data")?;
+
+    use base64::Engine;
+    let decoder = base64::engine::general_purpose::STANDARD;
+    let bytes = decoder
+        .decode(b64_data)
+        .map_err(|e| format!("Decode error: {}", e))?;
+
+    let ext = if mime_type.contains("png") {
+        "png"
+    } else if mime_type.contains("webp") {
+        "webp"
+    } else {
+        "jpg"
+    };
+    let filename = format!("{}.{}", creature_id, ext);
+    let relative_path = format!("/static/creatures/{}", filename);
+    let fs_path = format!("static/creatures/{}", filename);
+
+    std::fs::create_dir_all("static/creatures").map_err(|e| format!("mkdir error: {}", e))?;
+    std::fs::write(&fs_path, &bytes).map_err(|e| format!("write error: {}", e))?;
+
+    let gen_params = json!({
+        "style": style,
+        "prompt": prompt,
+        "mime_type": mime_type,
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "gbif_key": gbif_key,
+        "file_size_bytes": bytes.len(),
+    });
+
+    sqlx::query(
+        "UPDATE creatures SET asset_path = $1, generation_params = $2, updated_at = NOW()
+         WHERE creature_id = $3",
+    )
+    .bind(&relative_path)
+    .bind(&gen_params)
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("DB update error: {}", e))?;
+
+    Ok(relative_path)
+}

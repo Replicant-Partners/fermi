@@ -1,6 +1,6 @@
 /// Built-in tool registry for agent tool-use
 ///
-/// Provides 29 platform tools that agents can invoke via the LLM tool-calling protocol:
+/// Provides 30 platform tools that agents can invoke via the LLM tool-calling protocol:
 ///   - search_knowledge: similarity search over agent's episodic memory
 ///   - query_ontology: get rules/entities/facts from knowledge graph
 ///   - execute_agent: invoke another agent (single-turn, no recursion)
@@ -30,6 +30,7 @@
 ///   - save_grid_map: persist a named spatial grid (workspace-only)
 ///   - gbif_species_search: search GBIF for insect species data
 ///   - mint_creature: store a minted creature specimen (workspace-only)
+///   - generate_specimen_art: generate unique naturalist illustration for a creature via Gemini
 use crate::agent_backend::agent_card::AgentCard;
 use crate::agent_backend::executor::{AgentExecutor, ExecutionContext};
 use crate::agent_backend::llm_executor::ClaudeTool;
@@ -816,6 +817,43 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             is_delegation: false,
         },
         BuiltinToolDef {
+            name: "generate_specimen_art",
+            description: "Generate a unique naturalist illustration for a creature using Gemini image generation. Fetches GBIF reference media for the species, then generates a stylized scientific illustration. Saves the image to static/creatures/ and updates the creature record.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "creature_id": {
+                        "type": "string",
+                        "description": "UUID of the creature to generate art for"
+                    },
+                    "scientific_name": {
+                        "type": "string",
+                        "description": "Scientific name (used for GBIF lookup and prompt). Required if creature_id not provided."
+                    },
+                    "common_name": {
+                        "type": "string",
+                        "description": "Common name for prompt enrichment"
+                    },
+                    "species_group": {
+                        "type": "string",
+                        "description": "butterfly or dragonfly — affects illustration style"
+                    },
+                    "style": {
+                        "type": "string",
+                        "description": "Art style hint: 'naturalist' (default), 'watercolor', 'botanical', 'field-guide'",
+                        "default": "naturalist"
+                    },
+                    "gbif_key": {
+                        "type": "integer",
+                        "description": "GBIF species key for reference media lookup"
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
             name: "create_listing",
             description: "List a shopping profile on the embedding marketplace so advertisers can run similarity queries against it. The consumer sets the price per query and can delist at any time. Costs a one-time listing fee.",
             input_schema: json!({
@@ -976,6 +1014,7 @@ impl ToolRegistry {
             "save_grid_map" => execute_save_grid_map(input, ctx).await,
             "gbif_species_search" => execute_gbif_species_search(input).await,
             "mint_creature" => execute_mint_creature(input, ctx).await,
+            "generate_specimen_art" => execute_generate_specimen_art(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -1797,6 +1836,246 @@ async fn execute_mint_creature(
             "workspace_id": workspace_id,
             "taxonomy": taxonomy,
         }
+    });
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// Generate a unique naturalist illustration for a creature.
+///
+/// Pipeline: resolve species → fetch GBIF media → build art prompt → Gemini generate → save PNG → update DB
+async fn execute_generate_specimen_art(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .map_err(|_| "GEMINI_API_KEY not set — image generation unavailable")?;
+
+    let pool = ctx.memory_store.pool();
+
+    // ── Step 1: Resolve creature data ──
+    // Either from creature_id (DB lookup) or from input params directly
+    let (creature_id, scientific_name, common_name, species_group, gbif_key) =
+        if let Some(id_str) = input.get("creature_id").and_then(|v| v.as_str()) {
+            let cid =
+                Uuid::parse_str(id_str).map_err(|_| format!("Invalid creature_id: {}", id_str))?;
+            let row = sqlx::query(
+                "SELECT creature_id, scientific_name, common_name, species_group, gbif_key
+                 FROM creatures WHERE creature_id = $1",
+            )
+            .bind(cid)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("DB lookup failed: {}", e))?
+            .ok_or_else(|| format!("Creature {} not found", cid))?;
+
+            (
+                Some(cid),
+                row.get::<String, _>("scientific_name"),
+                row.get::<Option<String>, _>("common_name"),
+                row.get::<String, _>("species_group"),
+                row.get::<Option<i64>, _>("gbif_key"),
+            )
+        } else {
+            let sci = input
+                .get("scientific_name")
+                .and_then(|v| v.as_str())
+                .ok_or("Either creature_id or scientific_name is required")?;
+            (
+                None,
+                sci.to_string(),
+                input
+                    .get("common_name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                input
+                    .get("species_group")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("butterfly")
+                    .to_string(),
+                input.get("gbif_key").and_then(|v| v.as_i64()),
+            )
+        };
+
+    let style = input
+        .get("style")
+        .and_then(|v| v.as_str())
+        .unwrap_or("naturalist");
+
+    // ── Step 2: Fetch GBIF reference media description ──
+    let mut reference_desc = String::new();
+    if let Some(key) = gbif_key {
+        let client = reqwest::Client::new();
+        let media_url = format!("https://api.gbif.org/v1/species/{}/media", key);
+        if let Ok(resp) = client
+            .get(&media_url)
+            .header("User-Agent", "AgentBestiaryWorld/1.0 (rabble.world)")
+            .send()
+            .await
+        {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if let Some(results) = body.get("results").and_then(|v| v.as_array()) {
+                    // Collect descriptions from first few media items for reference
+                    let descs: Vec<&str> = results
+                        .iter()
+                        .take(3)
+                        .filter_map(|m| {
+                            m.get("description")
+                                .or(m.get("title"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .collect();
+                    if !descs.is_empty() {
+                        reference_desc = format!(" Reference descriptions: {}", descs.join("; "));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Step 3: Build art generation prompt ──
+    let display_name = common_name
+        .as_deref()
+        .map(|c| format!("{} ({})", c, scientific_name))
+        .unwrap_or_else(|| scientific_name.clone());
+
+    let style_instruction = match style {
+        "watercolor" => "Soft watercolor painting style with visible brush strokes and subtle color bleeding at edges. Muted earth tones with occasional vivid accents.",
+        "botanical" => "Precise botanical illustration style on cream parchment background. Fine ink linework with delicate hand-tinted color washes. Labeled anatomical features.",
+        "field-guide" => "Clean field guide illustration style. Crisp outlines, accurate proportions, neutral white background, specimen positioned at 3/4 view with wings spread.",
+        _ => "Detailed naturalist scientific illustration in the style of Maria Sibylla Merian. Rich, accurate colors on aged vellum background. Fine detail on wing patterns and body segments.",
+    };
+
+    let group_detail = if species_group == "dragonfly" {
+        "Show detailed wing venation patterns, elongated abdomen segments, and compound eye structure. Wings should be translucent with visible cells."
+    } else {
+        "Show detailed wing scale patterns, proboscis, antennae, and leg segments. Upper and lower wing surfaces visible."
+    };
+
+    let prompt = format!(
+        "Create a beautiful scientific illustration of a {} ({}).\n\n\
+         Style: {}\n\n\
+         Species details: {}\n\n\
+         Requirements:\n\
+         - Single specimen, centered composition\n\
+         - Anatomically accurate proportions and markings\n\
+         - {}\n\
+         - No text, labels, or watermarks\n\
+         - Square format, high detail\n\
+         - Dark background (#1A2E20) to make the specimen pop{}",
+        display_name,
+        species_group,
+        style_instruction,
+        group_detail,
+        if species_group == "dragonfly" {
+            "Include subtle iridescence on wings and thorax"
+        } else {
+            "Include subtle iridescence on wing scales where appropriate"
+        },
+        reference_desc
+    );
+
+    // ── Step 4: Generate image via Gemini ──
+    let body = json!({
+        "contents": [{
+            "parts": [{ "text": prompt }]
+        }],
+        "generationConfig": {
+            "responseModalities": ["IMAGE"]
+        }
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(GEMINI_IMAGE_URL)
+        .header("x-goog-api-key", &api_key)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Gemini API request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Gemini API error: {}", error_text));
+    }
+
+    let gemini_resp: GeminiToolResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Gemini response: {}", e))?;
+
+    // Extract base64 image data
+    let (mime_type, image_data) = gemini_resp
+        .candidates
+        .iter()
+        .flat_map(|c| c.content.parts.iter())
+        .find_map(|p| {
+            p.inline_data
+                .as_ref()
+                .map(|d| (d.mime_type.clone(), d.data.clone()))
+        })
+        .ok_or("Gemini returned no image data")?;
+
+    // ── Step 5: Save image to static/creatures/ ──
+    let extension = if mime_type.contains("png") {
+        "png"
+    } else if mime_type.contains("webp") {
+        "webp"
+    } else {
+        "jpg"
+    };
+
+    let file_id = creature_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let filename = format!("{}.{}", file_id, extension);
+    let relative_path = format!("/static/creatures/{}", filename);
+    let fs_path = format!("static/creatures/{}", filename);
+
+    // Decode base64 and write
+    use base64::Engine;
+    let decoder = base64::engine::general_purpose::STANDARD;
+    let bytes = decoder
+        .decode(&image_data)
+        .map_err(|e| format!("Failed to decode image data: {}", e))?;
+
+    // Ensure directory exists
+    std::fs::create_dir_all("static/creatures")
+        .map_err(|e| format!("Failed to create creatures directory: {}", e))?;
+    std::fs::write(&fs_path, &bytes).map_err(|e| format!("Failed to write image: {}", e))?;
+
+    // ── Step 6: Update creature record if creature_id provided ──
+    let generation_params = json!({
+        "style": style,
+        "prompt": prompt,
+        "mime_type": mime_type,
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "gbif_key": gbif_key,
+        "file_size_bytes": bytes.len(),
+    });
+
+    if let Some(cid) = creature_id {
+        sqlx::query(
+            "UPDATE creatures SET asset_path = $1, generation_params = $2, updated_at = NOW()
+             WHERE creature_id = $3",
+        )
+        .bind(&relative_path)
+        .bind(&generation_params)
+        .bind(cid)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to update creature record: {}", e))?;
+    }
+
+    let result = json!({
+        "status": "generated",
+        "creature_id": creature_id,
+        "asset_path": relative_path,
+        "mime_type": mime_type,
+        "file_size_bytes": bytes.len(),
+        "style": style,
+        "scientific_name": scientific_name,
+        "common_name": common_name,
     });
     serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
 }
