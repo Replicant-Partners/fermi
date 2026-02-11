@@ -586,12 +586,21 @@ pub async fn post_workspace_message_handler(
     let is_invocation =
         req.message_type.as_deref() == Some("agent_invocation") || at_mention.is_some();
 
+    // Look up user display name
+    let display_name: Option<String> =
+        sqlx::query_scalar("SELECT display_name FROM users WHERE user_id = $1")
+            .bind(&user_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
     let msg = WorkspaceMessage {
         message_id: uuid::Uuid::new_v4(),
         workspace_id: ws_uuid,
         sender_type: "user".to_string(),
         sender_id: user_id.clone(),
-        sender_name: Some(user_id.clone()),
+        sender_name: display_name.or_else(|| Some(user_id.clone())),
         content: req.content.clone(),
         message_type: if is_invocation {
             "agent_invocation".to_string()
@@ -2485,11 +2494,27 @@ fn generate_workflow_from_messages(messages: &[WorkspaceMessage]) -> (String, Va
         }
     }
 
+    // Detect UUID-like strings and replace with "User"
+    fn display_name(name: Option<&str>, fallback: &str) -> String {
+        let raw = name.unwrap_or(fallback);
+        // If it looks like a UUID (32+ hex chars with hyphens/underscores), use "User"
+        if raw.len() >= 32
+            && raw
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == '-' || c == '_')
+        {
+            "User".to_string()
+        } else {
+            raw.to_string()
+        }
+    }
+
     for msg in messages {
         match msg.message_type.as_str() {
             "agent_invocation" => {
                 // User → Agent invocation
-                let user_name = safe_name(msg.sender_name.as_deref().unwrap_or(&msg.sender_id));
+                let user_name =
+                    safe_name(&display_name(msg.sender_name.as_deref(), &msg.sender_id));
                 participants
                     .entry(user_name.clone())
                     .or_insert_with(|| json!({"type": "human"}));
