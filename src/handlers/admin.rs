@@ -141,9 +141,12 @@ pub async fn admin_list_users_handler(
     let rows = if let Some(ref search) = params.search {
         let q = format!("%{}%", search);
         sqlx::query(
-            "SELECT user_id, email, display_name, role, auth_provider, created_at
-             FROM users WHERE user_id ILIKE $1 OR email ILIKE $1 OR display_name ILIKE $1
-             ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+            "SELECT u.user_id, u.email, u.display_name, u.role, u.auth_provider, u.created_at,
+                    COALESCE(w.balance, 0) as balance
+             FROM users u
+             LEFT JOIN wallets w ON w.owner_type = 'user' AND w.owner_id = u.user_id
+             WHERE u.user_id ILIKE $1 OR u.email ILIKE $1 OR u.display_name ILIKE $1
+             ORDER BY u.created_at DESC LIMIT $2 OFFSET $3",
         )
         .bind(&q)
         .bind(limit)
@@ -152,8 +155,11 @@ pub async fn admin_list_users_handler(
         .await
     } else {
         sqlx::query(
-            "SELECT user_id, email, display_name, role, auth_provider, created_at
-             FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+            "SELECT u.user_id, u.email, u.display_name, u.role, u.auth_provider, u.created_at,
+                    COALESCE(w.balance, 0) as balance
+             FROM users u
+             LEFT JOIN wallets w ON w.owner_type = 'user' AND w.owner_id = u.user_id
+             ORDER BY u.created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)
         .bind(offset)
@@ -165,7 +171,6 @@ pub async fn admin_list_users_handler(
     let users: Vec<Value> = rows
         .iter()
         .map(|r| {
-            // Get wallet balance
             json!({
                 "user_id": r.try_get::<String, _>("user_id").unwrap_or_default(),
                 "email": r.try_get::<String, _>("email").unwrap_or_default(),
@@ -173,6 +178,7 @@ pub async fn admin_list_users_handler(
                 "role": r.try_get::<String, _>("role").unwrap_or_default(),
                 "auth_provider": r.try_get::<String, _>("auth_provider").unwrap_or_default(),
                 "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
+                "balance": r.try_get::<i32, _>("balance").unwrap_or(0),
             })
         })
         .collect();
