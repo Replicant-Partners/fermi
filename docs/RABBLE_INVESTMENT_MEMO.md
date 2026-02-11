@@ -1,4 +1,4 @@
-# Rabble.world: AR Nature Companions Powered by a Learning Economy
+# Rabble.world: Location-Based AR Companions Powered by a Learning Economy
 
 ## An Investment Memo
 
@@ -10,7 +10,7 @@
 
 Rabble.world is a consumer application built on the Agent Bestiary World (ABW) platform. It is described separately because it faces a different market, a different user, and a different adoption curve --- but it shares the same economic engine, the same intelligence infrastructure, and the same philosophical commitments. If ABW is the ecology, Rabble is the first species designed to thrive in it.
 
-This memo describes what Rabble is, how it makes money, why AR glasses will be the catalyst, and --- critically --- how every creature minted and every rabble gathered feeds intelligence back into the Bestiary, making the entire ecology smarter.
+This memo describes what Rabble is, how it makes money, why AR glasses will be the catalyst, and --- critically --- how every creature minted and every rabble gathered feeds intelligence back into the Bestiary, making the entire ecology smarter. Rabble launches with nature and biodiversity, but the underlying mechanic --- location-anchored creatures that people gather around --- extends to education, sports, live events, tourism, and brand experiences wherever people share physical space.
 
 ---
 
@@ -60,9 +60,21 @@ AR glasses change this fundamentally. When creatures are visible in your periphe
 We are building for this transition. The phone AR experience is the seed. The glasses experience is the flower.
 
 **Timeline:**
-- **2026--2027**: Phone AR. Niche adoption among nature enthusiasts, butterfly collectors, birding communities.
-- **2028--2029**: First affordable AR glasses ($300--800). Meta Orion, Apple lite, others. Rabble becomes a daily companion app for nature walks.
-- **2030+**: AR glasses mainstream. Rabble creatures are persistent companions visible to anyone wearing glasses in the same location.
+- **2026--2027**: Phone AR. Niche adoption among nature enthusiasts, butterfly collectors, birding communities. Pilot education partnerships.
+- **2028--2029**: First affordable AR glasses ($300--800). Meta Orion, Apple lite, others. Rabble becomes a daily companion app. Sports and live event integrations begin.
+- **2030+**: AR glasses mainstream. Rabble creatures are persistent companions visible to anyone wearing glasses in the same location. Brand, tourism, and drone integration layers mature.
+
+### Beyond Nature
+
+The creature mechanic is not inherently ecological. A creature is a digital companion anchored to a physical location, owned by a person, visible to others nearby. This abstraction applies wherever people gather:
+
+- A **fan creature** trailing a cyclist in the Tour de France, visible to drones and broadcast cameras
+- A **classroom creature** that a student mints on a biology field trip, carrying observation data
+- A **festival creature** minted at a concert stage, its flight history a record of which sets you attended
+- A **tourism creature** representing a regional species, collected as visitors explore a destination
+- A **brand creature** appearing at retail locations, turning foot traffic into interactive experiences
+
+Nature is the beachhead because it provides the strongest emotional and taxonomic foundation. But the platform is designed to support any context where physical presence deserves a digital companion. (See Section V for the full market analysis.)
 
 ---
 
@@ -160,9 +172,9 @@ At the Builder tier ($0.04/credit), a typical active user spends **$2.40--$6.00/
 
 ### Scenario Projections (5-Year)
 
-#### Scenario A: Pessimistic --- AR Stays Niche
+#### Scenario A: Pessimistic --- AR Stays Niche, Nature Only
 
-AR glasses remain expensive ($2,000+) or delayed. Growth limited to nature enthusiast communities. No viral moments, no institutional partnerships.
+AR glasses remain expensive ($2,000+) or delayed. Growth limited to nature enthusiast communities. No viral moments, no institutional partnerships. Education and sports verticals don't materialize.
 
 | Year | MAU | ARPU/mo | MRR | Annual Rev |
 |------|-----|---------|-----|------------|
@@ -172,35 +184,35 @@ AR glasses remain expensive ($2,000+) or delayed. Growth limited to nature enthu
 | 2029 | 4,000 | $4 | $16K | $192K |
 | 2030 | 6,000 | $4 | $24K | $288K |
 
-5-year cumulative: ~$586K. Break-even: ~2029 (at $8--10K/mo operating costs).
+5-year cumulative: ~$586K. Break-even: ~2029 (at $8--10K/mo operating costs). This is the floor --- a viable niche product that sustains itself.
 
-#### Scenario B: Base Case --- AR Glasses Hit Consumer ~2028
+#### Scenario B: Base Case --- AR Consumer Glasses + Vertical Expansion
 
-$500--800 AR glasses from Meta or others. Nature/hiking community adopts Rabble as "the Strava of wildlife." Partnerships with 2--3 nature organizations (Audubon, RSPB, iNaturalist).
+$500--800 AR glasses from Meta or others in 2028. Nature community adopts Rabble as "the Strava of wildlife." Education pilots in 2--3 school districts. First sports event integration (a cycling series or marathon). Partnerships with 2--3 nature organizations.
 
-| Year | MAU | ARPU/mo | MRR | Annual Rev |
-|------|-----|---------|-----|------------|
-| 2026 | 500 | $2 | $1K | $12K |
-| 2027 | 2,000 | $3 | $6K | $72K |
-| 2028 | 8,000 | $5 | $40K | $480K |
-| 2029 | 25,000 | $6 | $150K | $1.8M |
-| 2030 | 60,000 | $7 | $420K | $5M |
+| Year | MAU | ARPU/mo | MRR | Annual Rev | Growth Drivers |
+|------|-----|---------|-----|------------|----------------|
+| 2026 | 500 | $2 | $1K | $12K | Nature beachhead |
+| 2027 | 3,000 | $3 | $9K | $108K | + education pilots |
+| 2028 | 12,000 | $5 | $60K | $720K | + AR glasses + first sports event |
+| 2029 | 35,000 | $6 | $210K | $2.5M | + tourism partnerships |
+| 2030 | 80,000 | $7 | $560K | $6.7M | + brand activations |
 
-5-year cumulative: ~$7.4M. Break-even: mid-2028.
+5-year cumulative: ~$10M. Break-even: early 2028. The key assumption: each new vertical adds an incremental user base that the nature-only scenario never reaches. Education alone (institutional credit purchases) can contribute 10--15% of revenue by 2029.
 
-#### Scenario C: Optimistic --- Viral + Early AR
+#### Scenario C: Optimistic --- Multi-Vertical + Early AR + Viral
 
-TikTok/Instagram viral moment ("AR butterflies in the park"). AR glasses at $300--500 by late 2027. Nature org partnerships + school education programs. Creature trading/marketplace emerges.
+TikTok/Instagram viral moment (AR creatures at a cycling race or festival). AR glasses at $300--500 by late 2027. Multiple concurrent verticals: nature, education, sports, tourism. Creature trading/marketplace emerges. A major brand partnership (tourism board or sports league) drives awareness.
 
-| Year | MAU | ARPU/mo | MRR | Annual Rev |
-|------|-----|---------|-----|------------|
-| 2026 | 1,500 | $3 | $4.5K | $54K |
-| 2027 | 10,000 | $5 | $50K | $600K |
-| 2028 | 50,000 | $7 | $350K | $4.2M |
-| 2029 | 150,000 | $8 | $1.2M | $14.4M |
-| 2030 | 400,000 | $8 | $3.2M | $38.4M |
+| Year | MAU | ARPU/mo | MRR | Annual Rev | Growth Drivers |
+|------|-----|---------|-----|------------|----------------|
+| 2026 | 1,500 | $3 | $4.5K | $54K | Nature + early education |
+| 2027 | 15,000 | $5 | $75K | $900K | + viral moment + AR early adopters |
+| 2028 | 60,000 | $7 | $420K | $5M | + sports/events + brand deals |
+| 2029 | 180,000 | $8 | $1.4M | $17M | + tourism boards + drone integration |
+| 2030 | 500,000 | $8 | $4M | $48M | + B2B licensing + international |
 
-5-year cumulative: ~$57.7M. Break-even: late 2027.
+5-year cumulative: ~$71M. Break-even: late 2027. The optimistic case depends on *two or more verticals* achieving traction simultaneously with AR glasses adoption. This is ambitious but not unreasonable --- the cycling-drone scenario alone, if it goes viral, could drive 50K users in a single quarter.
 
 ### Cost Structure
 
@@ -228,33 +240,93 @@ This 2--3x ARPU increase, applied to a user base that is simultaneously growing 
 
 ## V. Addressable Market
 
-### Primary: Nature Enthusiasts
+Rabble begins with nature enthusiasts --- but the underlying mechanic (location-anchored AR creatures that people gather around) is not specific to nature. Anywhere people gather in physical space, there is a use case for creatures that are *there with them*. The platform is a location-based social layer with a creature metaphor. The creature can be a butterfly in a park, a mascot at a stadium, a branded character on a city tour, or a classroom companion on a field trip.
 
-| Segment | Global Estimate | Rabble Relevance |
-|---------|-----------------|-------------------|
-| Birdwatchers | 50M | High --- location-based, social, species-aware |
-| Butterfly/insect enthusiasts | 10M | Very high --- exact species focus |
-| Hikers/nature walkers | 500M | Medium --- casual, but large |
-| iNaturalist users | 3M | Very high --- citizen science overlap |
+### Tier 1: Nature & Biodiversity (Launch Market)
 
-### Secondary: AR Early Adopters
+| Segment | Global Estimate | Entry Strategy |
+|---------|-----------------|----------------|
+| Birdwatchers | 50M | Location-based, social, species-aware --- natural fit |
+| Butterfly/insect enthusiasts | 10M | Exact species focus, GBIF integration |
+| Hikers/nature walkers | 500M | Casual but reachable via trail apps and park partnerships |
+| Citizen science (iNaturalist, eBird) | 5M+ | Data-driven, already recording species observations |
 
-| Segment | Estimate (2028) | Notes |
-|---------|----------------|-------|
-| AR glasses owners | 10--30M | Meta Quest 3 already 20M+; glasses form factor will expand |
-| AR app users (phone) | 100M+ | Snapchat Lenses, Pokemon Go precedent |
+This is the beachhead. Nature enthusiasts value taxonomic authenticity, have existing social structures (walking groups, societies, reserves), and will be early AR glasses adopters. But it is the *starting point*, not the ceiling.
+
+### Tier 2: Education (2027+)
+
+| Segment | Global Estimate | Use Case |
+|---------|-----------------|----------|
+| K-12 students in science programs | 200M+ | Field trip companions, classroom species projects |
+| University biology/ecology courses | 20M+ | Fieldwork data collection via creature flights |
+| Museums and science centers | 100K+ institutions | AR exhibits with mintable creatures tied to collections |
+| Environmental education nonprofits | 50K+ orgs | Gamified conservation awareness |
+
+A school licenses Rabble for a field trip. Each student mints a creature from their local ecosystem, flies it through the nature reserve, records observations. The teacher sees a dashboard of species diversity encountered. The museum partner gets foot traffic data. Credits are purchased at institutional rates.
+
+This is not speculative --- educational gaming is a $4B market growing at 20%+ annually, and AR in education has proven engagement lifts of 30--70% in controlled studies.
+
+### Tier 3: Sports & Live Events (2028+)
+
+| Segment | Global Estimate | Use Case |
+|---------|-----------------|----------|
+| Live sports spectators | 2B+ annually | Fan swarms trailing athletes, stadium creatures |
+| Running/cycling events | 60M participants/yr | Creature companions on race routes, fan interaction |
+| Music festivals | 50M+ attendees/yr | Location-anchored creature experiences, artist-branded mints |
+| Conferences and conventions | 400M+ attendees/yr | Networking via creature exchange, sponsor creatures |
+
+Picture this: a drone films a professional cycling race. Its client app sees the AR layer --- thousands of fan creatures trailing the peloton, swarming at mountain passes, gathering at the finish line. The broadcast cuts to the AR overlay and the commentator notes the fan creature density at the Alpe d'Huez switchbacks. Each fan creature is a minted specimen that cost credits. The race sponsor's branded creature leads the swarm.
+
+Or: a music festival where each stage has a creature habitat. Attendees mint creatures at different stages, fly them between sets, gather in rabbles at the main stage for the headliner. The festival sells a branded creature pack as part of premium tickets.
+
+The key insight: **Rabble turns physical attendance into a persistent digital artifact**. Your creature was *there*. Its flight history proves it. This is digital memorabilia that compounds with emotional value over time.
+
+### Tier 4: Brands & Advertising (2028+)
+
+| Segment | Global Estimate | Use Case |
+|---------|-----------------|----------|
+| Location-based advertising | $40B market | Sponsored creatures at retail locations, geo-triggered experiences |
+| Brand activations | $60B experiential marketing | Branded creature mints, AR scavenger hunts |
+| Tourism boards | 200+ national, 10K+ regional | Destination creatures, regional species as tourism ambassadors |
+| Hospitality | 700K+ hotels globally | Hotel/resort creatures, local species guides |
+
+A tourism board commissions 50 regional species as mintable creatures. Visitors who mint and fly all 50 unlock a "Complete Collection" achievement. Each mint costs credits. The tourism board pays a partnership fee. The visitor gets a digital souvenir tied to real places they visited. The board gets foot traffic analytics (anonymized) across their attractions.
+
+This is not advertising in the interruptive sense. It is **experiential marketing where the marketing *is* the product**. The creature is the ad, the souvenir, and the social object simultaneously.
+
+### Tier 5: Drone Integration (2029+)
+
+Rabble's location-anchored AR layer is not limited to human-held devices. Any device with GPS and a camera can participate:
+
+- **Drone filming** at sporting events sees the AR creature layer, enabling broadcast-quality AR overlays
+- **Agricultural drones** could visualize pollinator distribution data as creature overlays
+- **Security/surveillance drones** (with appropriate partnerships) could use the creature layer for benign crowd density visualization
+
+This is a longer-term play, but the protocol is device-agnostic by design.
+
+### Total Addressable Market
+
+| Tier | Addressable Population | Realistic Penetration (5yr) | Potential Users |
+|------|----------------------|----------------------------|-----------------|
+| Nature & Biodiversity | 550M | 0.01--0.1% | 55K--550K |
+| Education | 220M+ | 0.005--0.05% | 11K--110K |
+| Sports & Live Events | 2B+ | 0.001--0.01% | 20K--200K |
+| Brands & Tourism | indirect (B2B) | partnership-driven | 10K--100K |
+| **Combined** | **~2.5B reachable** | | **100K--960K** |
+
+We are not claiming we will reach 2.5 billion people. We are noting that the *mechanic* applies to a population of that scale, and that even tiny penetration rates yield substantial user bases. The bottom-up calculation from credit economics (Section IV) is the more reliable guide.
 
 ### Geographic Strategy
 
-Phase 1 (2026): English-speaking markets (US, UK, Australia, Canada). These have the densest nature enthusiast communities and earliest AR glasses adoption.
+Phase 1 (2026): English-speaking markets (US, UK, Australia, Canada). Nature enthusiast beachhead + earliest AR glasses adoption.
 
-Phase 2 (2027--2028): Biodiversity hotspots --- Costa Rica, Colombia, Madagascar, Southeast Asia, Australia. These locations have the most compelling species diversity and growing ecotourism markets.
+Phase 2 (2027--2028): Biodiversity hotspots (Costa Rica, Colombia, Southeast Asia) for eco-tourism. Pilot education partnerships in 2--3 school districts. First sports event integrations.
 
-Phase 3 (2029+): Global, following AR glasses adoption curves.
+Phase 3 (2029+): Global, following AR glasses curves. Brand and tourism partnerships. Drone integration pilots.
 
 ### Seasonality
 
-Nature activity is seasonal in temperate climates. Expect 60% of annual activity in April--September (northern hemisphere). This is not a weakness --- it creates natural marketing cycles ("spring migration," "summer rabble season") and predictable revenue patterns. Southern hemisphere expansion provides counter-seasonal balance.
+Nature activity is seasonal in temperate climates (60% in April--September). But the expanded market segments reduce seasonality risk: sports events are year-round, education follows academic calendars, festivals and tourism have their own seasons. As the product diversifies beyond nature, revenue smoothing occurs naturally.
 
 ---
 
@@ -392,10 +464,12 @@ Rabble.world needs the same thing any location-based social app needs: **density
 
 4. **The moat deepens with usage.** After 12 months of real-world data, Rabble's agents will have learned things about species-human-location interaction that no competitor can replicate without their own 12 months of equivalent usage.
 
-5. **The downside is bounded.** Even in the pessimistic scenario (AR stays niche, slow organic growth), the credit economy generates ~$586K over 5 years against costs of ~$200K. The platform doesn't need AR glasses to survive --- it needs them to thrive.
+5. **Multiple expansion paths beyond nature.** The creature mechanic is vertical-agnostic. Education, sports, tourism, and brand partnerships each represent independent growth vectors. Even if one vertical underperforms, others can compensate. The base case requires only one additional vertical to outperform the nature-only scenario by 35%.
+
+6. **The downside is bounded.** Even in the pessimistic scenario (AR stays niche, nature only, no vertical expansion), the credit economy generates ~$586K over 5 years against costs of ~$200K. The platform doesn't need AR glasses or new verticals to survive --- it needs them to thrive.
 
 ---
 
-*Rabble.world is where the Agent Bestiary meets the physical world. It's where cultivated intelligence becomes a companion on a walk through the park.*
+*Rabble.world is where the Agent Bestiary meets the physical world. It's where cultivated intelligence becomes a companion --- on a walk through the park, at a race, in a classroom, at a festival.*
 
 *rabble.world --- February 2026*
