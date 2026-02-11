@@ -166,6 +166,43 @@ pub async fn add_member_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Notify user-type members they were added
+    if member_type == MemberType::User {
+        let team_name: String = sqlx::query("SELECT name FROM teams WHERE id = $1")
+            .bind(team_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get("name").ok())
+            .unwrap_or_default();
+
+        let inviter_name: String = sqlx::query("SELECT display_name FROM users WHERE user_id = $1")
+            .bind(&principal.user_id())
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| {
+                r.try_get::<Option<String>, _>("display_name")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_else(|| principal.user_id());
+
+        crate::create_notification(
+            &state.db,
+            &body.member_id,
+            "workspace_invite",
+            &format!("You were added to {}", team_name),
+            Some(&format!(
+                "{} added you to the workspace '{}'",
+                inviter_name, team_name
+            )),
+        )
+        .await;
+    }
+
     Ok((StatusCode::CREATED, Json(json!({ "status": "added" }))))
 }
 

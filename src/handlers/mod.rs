@@ -21,6 +21,7 @@ pub mod ontology;
 pub mod pages;
 pub mod profile;
 pub mod teams;
+pub mod users;
 pub mod wallet;
 pub mod wizard;
 pub mod workspace;

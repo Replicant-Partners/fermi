@@ -244,6 +244,59 @@
         padding: 2px 6px;
         font-weight: bold;
       }
+      /* ─── People widget ─── */
+      .people-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 12px;
+      }
+      .person-tile {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        text-decoration: none;
+        color: inherit;
+        transition: border-color 0.15s;
+      }
+      .person-tile:hover {
+        border-color: var(--yellow);
+      }
+      .person-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--bg3);
+        color: var(--fg2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        flex-shrink: 0;
+      }
+      .person-avatar img {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+      }
+      .person-info {
+        min-width: 0;
+      }
+      .person-name {
+        font-size: 0.82rem;
+        color: var(--fg1);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .person-meta {
+        font-size: 0.7rem;
+        color: var(--fg3);
+      }
     </style>
   </head>
   <body>
@@ -367,6 +420,16 @@
         <div id="workspaces-list">
           <div class="empty-state">Loading...</div>
         </div>
+      </div>
+
+      <!-- People -->
+      <div
+        class="section"
+        style="margin-bottom: 24px; display: none"
+        id="people-section"
+      >
+        <div class="section-title">People</div>
+        <div id="people-list"></div>
       </div>
 
       <!-- Collection -->
@@ -733,6 +796,38 @@
                   })
                   .join("");
               }
+            }
+          }
+        } catch {}
+
+        // Load people (collaborators)
+        try {
+          const res = await fetch("/api/users/collaborators");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.collaborators && data.collaborators.length > 0) {
+              const section = document.getElementById("people-section");
+              section.style.display = "";
+              document.getElementById("people-list").innerHTML =
+                '<div class="people-grid">' +
+                data.collaborators
+                  .map((p) => {
+                    const name = p.display_name || p.user_id;
+                    const initial = name.charAt(0).toUpperCase();
+                    const avatar = p.avatar_url
+                      ? `<img src="${escHtml(p.avatar_url)}" onerror="this.parentElement.textContent='${initial}'">`
+                      : initial;
+                    return `
+                    <a href="/user/${encodeURIComponent(p.user_id)}" class="person-tile">
+                      <div class="person-avatar">${avatar}</div>
+                      <div class="person-info">
+                        <div class="person-name">${escHtml(name)}</div>
+                        <div class="person-meta">${p.shared_workspaces} shared workspace${p.shared_workspaces !== 1 ? "s" : ""}</div>
+                      </div>
+                    </a>`;
+                  })
+                  .join("") +
+                "</div>";
             }
           }
         } catch {}

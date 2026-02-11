@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>User Profile - Agent Bestiary</title>
+    <link rel="stylesheet" href="/static/css/variables.css" />
+    <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
+    <style>
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .section {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .section-title {
+        font-size: 0.9rem;
+        color: var(--yellow);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 16px;
+      }
+      .profile-header {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .avatar {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: var(--bg2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2rem;
+        color: var(--fg3);
+        flex-shrink: 0;
+        overflow: hidden;
+      }
+      .avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .profile-info h1 {
+        font-size: 1.3rem;
+        color: var(--fg0);
+        margin: 0 0 4px 0;
+      }
+      .profile-meta {
+        font-size: 0.8rem;
+        color: var(--fg3);
+      }
+      .profile-bio {
+        font-size: 0.85rem;
+        color: var(--fg2);
+        margin-top: 8px;
+        line-height: 1.5;
+      }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .stat-card {
+        background: var(--bg1);
+        padding: 12px;
+        text-align: center;
+      }
+      .stat-value {
+        font-size: 1.4rem;
+        color: var(--aqua);
+        font-weight: bold;
+      }
+      .stat-label {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 4px;
+      }
+      .agents-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+      }
+      .agent-tile {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        padding: 14px;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+        transition: border-color 0.15s;
+      }
+      .agent-tile:hover {
+        border-color: var(--yellow);
+      }
+      .agent-tile-name {
+        font-size: 0.88rem;
+        color: var(--fg1);
+        font-weight: bold;
+        margin-bottom: 4px;
+      }
+      .agent-tile-type {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .agent-tile-desc {
+        font-size: 0.78rem;
+        color: var(--fg2);
+        margin-top: 6px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .agent-tile-stats {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        margin-top: 8px;
+      }
+      .edit-link {
+        display: none;
+        font-size: 0.8rem;
+        color: var(--aqua);
+        text-decoration: none;
+        margin-left: 12px;
+      }
+      .edit-link:hover {
+        color: var(--yellow);
+      }
+      .empty-state {
+        color: var(--fg3);
+        font-size: 0.82rem;
+        padding: 20px 0;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({ current: "" });
+    </script>
+
+    <div class="container">
+      <!-- Profile Header -->
+      <div class="section">
+        <div class="profile-header">
+          <div class="avatar" id="avatar">?</div>
+          <div class="profile-info">
+            <h1>
+              <span id="display-name">Loading...</span>
+              <a href="/profile" class="edit-link" id="edit-link">Edit Profile</a>
+            </h1>
+            <div class="profile-meta" id="member-since"></div>
+          </div>
+        </div>
+        <div class="profile-bio" id="bio"></div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-agents">0</div>
+          <div class="stat-label">Public Agents</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-executions">0</div>
+          <div class="stat-label">Total Executions</div>
+        </div>
+      </div>
+
+      <!-- Public Agents -->
+      <div class="section">
+        <div class="section-title">Public Agents</div>
+        <div id="agents-list" class="empty-state">Loading...</div>
+      </div>
+    </div>
+
+    <script src="/static/js/api.js"></script>
+    <script>
+      function escHtml(str) {
+        if (!str) return "";
+        return str
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      const userId = decodeURIComponent(
+        window.location.pathname.split("/").pop(),
+      );
+
+      (async () => {
+        // Load public profile
+        const res = await fetch(`/api/users/${encodeURIComponent(userId)}`);
+        if (!res.ok) {
+          document.getElementById("display-name").textContent = "User not found";
+          return;
+        }
+        const data = await res.json();
+
+        // Header
+        const name = data.display_name || data.user_id;
+        document.title = `${name} - Agent Bestiary`;
+        document.getElementById("display-name").textContent = name;
+
+        const avatarEl = document.getElementById("avatar");
+        if (data.avatar_url) {
+          avatarEl.innerHTML = `<img src="${escHtml(data.avatar_url)}" alt="${escHtml(name)}" onerror="this.parentElement.textContent='${name.charAt(0).toUpperCase()}'">`;
+        } else {
+          avatarEl.textContent = name.charAt(0).toUpperCase();
+        }
+
+        if (data.created_at) {
+          const d = new Date(data.created_at);
+          document.getElementById("member-since").textContent =
+            `Member since ${d.toLocaleDateString("en-US", { month: "long", year: "numeric" })}`;
+        }
+
+        if (data.bio) {
+          document.getElementById("bio").textContent = data.bio;
+        }
+
+        // Stats
+        document.getElementById("stat-agents").textContent =
+          data.stats.public_agents || 0;
+        document.getElementById("stat-executions").textContent =
+          data.stats.total_executions || 0;
+
+        // Agents grid
+        const agentsEl = document.getElementById("agents-list");
+        if (data.public_agents && data.public_agents.length > 0) {
+          agentsEl.innerHTML = '<div class="agents-grid">' +
+            data.public_agents
+              .map((a) => {
+                const aName = a.display_alias || a.agent_name;
+                const desc = a.description
+                  ? `<div class="agent-tile-desc">${escHtml(a.description)}</div>`
+                  : "";
+                return `
+                <a href="/agent/${encodeURIComponent(a.agent_name)}" class="agent-tile">
+                  <div class="agent-tile-name">${escHtml(aName)}</div>
+                  <div class="agent-tile-type">${escHtml(a.agent_type)}</div>
+                  ${desc}
+                  <div class="agent-tile-stats">${a.total_executions} executions</div>
+                </a>`;
+              })
+              .join("") + '</div>';
+        } else {
+          agentsEl.innerHTML =
+            '<div class="empty-state">No public agents yet</div>';
+        }
+
+        // Check if viewing own profile
+        try {
+          const authRes = await fetch("/api/auth/me");
+          if (authRes.ok) {
+            const me = await authRes.json();
+            if (me.user_id === data.user_id) {
+              document.getElementById("edit-link").style.display = "inline";
+            }
+          }
+        } catch {}
+      })();
+    </script>
+    <script src="/static/js/theme.js"></script>
+  </body>
+</html>

@@ -965,7 +965,32 @@
     <div class="ws-body">
       <!-- Left: Members -->
       <div class="panel-members" id="panel-members">
-        <div class="panel-section-title">People</div>
+        <div
+          class="panel-section-title"
+          style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          "
+        >
+          People
+          <button
+            class="btn-sm"
+            id="invite-btn"
+            style="
+              display: none;
+              font-size: 0.65rem;
+              padding: 2px 8px;
+              cursor: pointer;
+              background: var(--bg2);
+              border: 1px solid var(--bg3);
+              color: var(--fg2);
+            "
+            title="Invite user"
+          >
+            + Invite
+          </button>
+        </div>
         <div id="people-list"></div>
 
         <div class="panel-section-title" style="margin-top: 8px">Agents</div>
@@ -1269,6 +1294,37 @@
       </div>
     </div>
 
+    <!-- ─── Invite User Modal ─── -->
+    <div class="modal-overlay" id="invite-modal">
+      <div class="modal">
+        <h2>Invite User to Workspace</h2>
+        <div style="font-size: 0.75rem; color: var(--fg3); margin-bottom: 10px">
+          Search by name to find and add people.
+        </div>
+        <input
+          type="text"
+          id="invite-search"
+          placeholder="Search by name..."
+          style="
+            width: 100%;
+            padding: 6px 10px;
+            background: var(--bg1);
+            border: 1px solid var(--bg3);
+            color: var(--fg1);
+            font-size: 0.8rem;
+            font-family: inherit;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+          "
+        />
+        <div
+          id="invite-results"
+          style="max-height: 50vh; overflow-y: auto"
+        ></div>
+        <button class="modal-close" id="invite-modal-close">Close</button>
+      </div>
+    </div>
+
     <!-- ─── Hire Modal ─── -->
     <div class="modal-overlay" id="hire-modal">
       <div class="modal">
@@ -1429,6 +1485,8 @@
             );
             myRole = me ? me.role : null;
             const canKick = myRole === "owner" || myRole === "admin";
+            if (canKick)
+              document.getElementById("invite-btn").style.display = "inline";
 
             peopleEl.innerHTML = ws.members
               .map((m) => {
@@ -1866,6 +1924,84 @@
           loadWorkspace();
         } catch (e) {
           Toast.show("Failed to remove agent", "error");
+        }
+      }
+
+      // ─── Invite user modal ───
+      document.getElementById("invite-btn").addEventListener("click", () => {
+        document.getElementById("invite-modal").classList.add("active");
+        document.getElementById("invite-search").value = "";
+        document.getElementById("invite-results").innerHTML = "";
+        document.getElementById("invite-search").focus();
+      });
+      document
+        .getElementById("invite-modal-close")
+        .addEventListener("click", () => {
+          document.getElementById("invite-modal").classList.remove("active");
+        });
+      document.getElementById("invite-modal").addEventListener("click", (e) => {
+        if (e.target.classList.contains("modal-overlay"))
+          e.target.classList.remove("active");
+      });
+
+      let inviteDebounce = null;
+      document
+        .getElementById("invite-search")
+        .addEventListener("input", (e) => {
+          clearTimeout(inviteDebounce);
+          const q = e.target.value.trim();
+          if (q.length < 2) {
+            document.getElementById("invite-results").innerHTML = "";
+            return;
+          }
+          inviteDebounce = setTimeout(() => searchUsersForInvite(q), 300);
+        });
+
+      async function searchUsersForInvite(q) {
+        try {
+          const res = await fetch(
+            `/api/users/search?q=${encodeURIComponent(q)}&limit=10`,
+          );
+          if (!res.ok) return;
+          const data = await res.json();
+          const el = document.getElementById("invite-results");
+          if (!data.users || !data.users.length) {
+            el.innerHTML =
+              '<div style="padding:10px;color:var(--fg3);font-size:0.8rem">No users found</div>';
+            return;
+          }
+          el.innerHTML = data.users
+            .map((u) => {
+              const name = u.display_name || u.user_id;
+              const initial = name.charAt(0).toUpperCase();
+              return `
+              <div class="member-item" style="cursor:pointer" onclick="inviteUser('${escHtml(u.user_id)}','${escHtml(name)}')">
+                <div class="member-dot" style="width:24px;height:24px;font-size:0.65rem;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--bg3);color:var(--fg2)">${initial}</div>
+                <span class="member-name">${escHtml(name)}</span>
+                <span style="font-size:0.7rem;color:var(--fg3);margin-left:auto">${u.public_agent_count || 0} agents</span>
+              </div>`;
+            })
+            .join("");
+        } catch {}
+      }
+
+      async function inviteUser(userId, displayName) {
+        try {
+          const res = await fetch(`/api/teams/${wsId}/members`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ member_id: userId, role: "member" }),
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            Toast.show(err || "Failed to invite", "error");
+            return;
+          }
+          Toast.show(`${displayName} added to workspace`, "success");
+          document.getElementById("invite-modal").classList.remove("active");
+          loadWorkspace();
+        } catch (e) {
+          Toast.show("Failed to invite user", "error");
         }
       }
 

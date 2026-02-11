@@ -733,6 +733,12 @@ async fn main() {
             "/api/agents/:agent_id/projections/temporal",
             get(handlers::ontology::get_temporal_projections),
         )
+        // User profiles (public, no auth)
+        .route("/user/:user_id", get(handlers::users::user_profile_view))
+        .route(
+            "/api/users/:user_id",
+            get(handlers::users::get_public_profile_handler),
+        )
         // Page routes (serve HTML templates)
         .route("/dashboard", get(handlers::pages::dashboard_view))
         .route("/agents/new", get(handlers::pages::agent_create_view))
@@ -980,6 +986,15 @@ async fn main() {
         .route(
             "/api/billing/dev-topup",
             post(handlers::billing::billing_dev_topup_handler),
+        )
+        // User discovery
+        .route(
+            "/api/users/search",
+            get(handlers::users::search_users_handler),
+        )
+        .route(
+            "/api/users/collaborators",
+            get(handlers::users::get_collaborators_handler),
         )
         // Profile
         .route("/api/profile", get(handlers::profile::get_profile_handler))
