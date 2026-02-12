@@ -119,7 +119,7 @@ pub async fn get_creature_handler(
          species_group, gbif_key, taxonomy, specimen_name, variation_notes,
          asset_path, flight_silhouette_path, generation_params,
          mint_number, total_flights, total_flight_time_seconds, unique_locations,
-         data_card, created_at, updated_at
+         data_card, sosa_opt_in, created_at, updated_at
          FROM creatures WHERE creature_id = $1",
     )
     .bind(id)
@@ -146,6 +146,7 @@ pub async fn get_creature_handler(
                 "total_flight_time_seconds": row.get::<i64, _>("total_flight_time_seconds"),
                 "unique_locations": row.get::<i32, _>("unique_locations"),
                 "data_card": row.get::<serde_json::Value, _>("data_card"),
+                "sosa_opt_in": row.try_get::<bool, _>("sosa_opt_in").unwrap_or(false),
                 "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                 "updated_at": row.get::<chrono::DateTime<chrono::Utc>, _>("updated_at").to_rfc3339(),
             });
@@ -263,7 +264,7 @@ pub async fn list_swarms_handler(
         "SELECT swarm_id, creator_id, h3_cell, center_lat, center_lng,
          location_name, name, description, species_filter, max_participants,
          starts_at, ends_at, status, participant_count, creature_count,
-         visibility, created_at
+         visibility, funding_mode, qr_token, created_at
          FROM swarm_events WHERE 1=1",
     );
 
@@ -334,6 +335,8 @@ pub async fn list_swarms_handler(
                         "participant_count": row.get::<i32, _>("participant_count"),
                         "creature_count": row.get::<i32, _>("creature_count"),
                         "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
+                        "funding_mode": row.try_get::<String, _>("funding_mode").unwrap_or_else(|_| "hosted".into()),
+                        "qr_token": row.try_get::<Option<String>, _>("qr_token").unwrap_or(None),
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                     })
                 })
@@ -366,7 +369,8 @@ pub async fn get_swarm_handler(
          center_lat, center_lng, location_name, grid_map_id,
          name, description, species_filter, max_participants,
          starts_at, ends_at, status, participant_count, creature_count,
-         metadata, created_at
+         metadata, created_at, visibility, funding_mode, invite_pool,
+         invite_pool_remaining, suggested_contribution, total_contributions, qr_token
          FROM swarm_events WHERE swarm_id = $1",
     )
     .bind(id)
@@ -395,6 +399,13 @@ pub async fn get_swarm_handler(
                 "creature_count": row.get::<i32, _>("creature_count"),
                 "metadata": row.get::<serde_json::Value, _>("metadata"),
                 "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+                "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
+                "funding_mode": row.try_get::<String, _>("funding_mode").unwrap_or_else(|_| "hosted".into()),
+                "invite_pool": row.try_get::<i32, _>("invite_pool").unwrap_or(0),
+                "invite_pool_remaining": row.try_get::<i32, _>("invite_pool_remaining").unwrap_or(0),
+                "suggested_contribution": row.try_get::<i32, _>("suggested_contribution").unwrap_or(1),
+                "total_contributions": row.try_get::<i32, _>("total_contributions").unwrap_or(0),
+                "qr_token": row.try_get::<Option<String>, _>("qr_token").unwrap_or(None),
             });
             (StatusCode::OK, Json(swarm)).into_response()
         }
