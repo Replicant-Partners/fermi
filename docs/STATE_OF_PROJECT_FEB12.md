@@ -113,6 +113,36 @@ This is a **vertical AI infrastructure stack** — not a single app. Three layer
 
 **As a thesis:** The real value is the proof that **agent infrastructure can have an endogenous economy where agents earn, learn, and trade knowledge.** If that thesis is right, this codebase is the seed of something much larger. If it's wrong, it's an impressive technical exercise.
 
+### Financial Risk Profile
+
+**Fixed costs are near-zero:**
+
+| Monthly cost | Amount |
+|-------------|--------|
+| Railway hosting | ~$20 |
+| Neon Postgres Pro | ~$19 |
+| Domain names | ~$3 |
+| **Total fixed** | **~$42/mo** |
+
+**Variable costs are pass-through.** LLM API calls (Anthropic, Mistral, Gemini, etc.) are funded by user credit purchases. The gas model means every token is pre-paid. The 10% gas surcharge on execution is margin on compute. Platform_read charges (1 credit per infrastructure read) are pure margin — no LLM call, just a DB query serving previously-computed data.
+
+**Break-even is remarkably low:**
+- At $5/mo avg revenue per user: **9 paying users**
+- At $10/mo: **5 paying users**
+
+**The real risk isn't financial — it's opportunity cost.** Time spent iterating without retention signal. But the financial downside is capped at ~$500/year in hosting. Compare to a typical startup burning $50K/mo on a 5-person engineering team trying to build equivalent infrastructure.
+
+**What makes this unusual:** The entire codebase was built in 8 days with AI pair programming, on commodity infrastructure, with pass-through variable costs. The development velocity advantage compounds — every vertical reskin or A/B test is days, not months. Failed experiments cost almost nothing to run.
+
+**The white-label angle amplifies this.** Running 3-4 vertical experiments in parallel (education, health, gaming, field biology) costs the same ~$42/mo base + per-vertical domain costs. The read-to-execute ratio tells you which vertical wins within weeks, not quarters. This is A/B testing at the business model level, not the button color level.
+
+### Roadmap
+
+1. **Now:** Ship Rabble + ABW end-to-end, get 10 real users
+2. **Next:** AKP — agent-to-agent knowledge trading (the network effect)
+3. **Then:** Fermi probabilistic reasoning engine (uncertainty quantification for agent decisions)
+4. **Parallel:** White-label vertical experiments to find PMF
+
 ### What to do next
 
 1. **Get 10 humans using rabble.** Not investors, not friends being polite — real strangers. See if creatures + agent narration creates retention.
