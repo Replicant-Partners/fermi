@@ -163,7 +163,6 @@ pub async fn auth_callback_inner(
             .map_err(|e| e.to_string())
     } else {
         // Web flow: set cookie and redirect
-        // Allow redirect to rabble.world (full URL) or internal path
         let dest = redirect_to
             .filter(|r| {
                 (r.starts_with('/') && !r.contains("//")) || r.starts_with("https://rabble.world")
@@ -173,19 +172,19 @@ pub async fn auth_callback_inner(
             "abw_session={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800",
             token
         );
-        let mut builder = Response::builder()
+        // Cross-domain redirect: pass token in URL for the app to pick up
+        let final_dest = if dest.starts_with("https://rabble.world") {
+            format!(
+                "https://rabble.world/#/auth?token={}&user_id={}",
+                token, user.user_id
+            )
+        } else {
+            dest
+        };
+        Response::builder()
             .status(StatusCode::SEE_OTHER)
-            .header(header::LOCATION, &dest)
-            .header(header::SET_COOKIE, &cookie);
-        // If redirecting to rabble.world, also set cookie scoped to that domain
-        if dest.starts_with("https://rabble.world") {
-            let rabble_cookie = format!(
-                "abw_session={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800; Domain=rabble.world",
-                token
-            );
-            builder = builder.header(header::SET_COOKIE, rabble_cookie);
-        }
-        builder
+            .header(header::LOCATION, &final_dest)
+            .header(header::SET_COOKIE, cookie)
             .body(axum::body::Body::empty())
             .map_err(|e| e.to_string())
     }
