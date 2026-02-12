@@ -1553,6 +1553,10 @@ async fn rabble_spa_fallback(uri: axum::http::Uri) -> impl IntoResponse {
             return Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, mime_type)
+                .header(
+                    "Permissions-Policy",
+                    "geolocation=(self), camera=(self), microphone=()",
+                )
                 .body(axum::body::Body::from(content))
                 .unwrap();
         }
@@ -1563,6 +1567,10 @@ async fn rabble_spa_fallback(uri: axum::http::Uri) -> impl IntoResponse {
         Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/html")
+            .header(
+                "Permissions-Policy",
+                "geolocation=(self), camera=(self), microphone=()",
+            )
             .body(axum::body::Body::from(html))
             .unwrap()
     } else {
