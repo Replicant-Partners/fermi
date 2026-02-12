@@ -17,7 +17,7 @@ use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
-use fermi::gas::{charge_and_distribute, get_workspace_agent_ids};
+use fermi::gas::{charge_and_distribute, charge_gas, get_workspace_agent_ids};
 
 use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
 
@@ -667,4 +667,172 @@ impl Default for FlockParams {
             cohesion_weight: Some(1.0),
         }
     }
+}
+
+/// GET /api/rabble/:id/flock-history — returns all creature path data normalized to XY for visualization.
+///
+/// Takes lat/lng path_samples from all creature flights in the swarm, normalizes them
+/// relative to the swarm centroid so they fit in a [0,1] x [0,1] viewport. Each creature
+/// gets a color and a trail of (x, y, t) points.
+///
+/// Charges platform_read gas (1 credit). Agents already got paid when they processed
+/// the flights — this just covers infrastructure cost of serving the data.
+pub async fn flock_history_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    axum::extract::Path(swarm_id): axum::extract::Path<Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    // Charge platform read gas — no agent payout, just infrastructure
+    let user_wallet = get_or_create_wallet(pool, "user", &user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+    charge_gas(
+        pool,
+        user_wallet.wallet_id,
+        state.gas_fees.platform_read,
+        "platform_read",
+        "Flock visualization data",
+        Some(&swarm_id.to_string()),
+    )
+    .await?;
+
+    // Get swarm center as reference point
+    let swarm =
+        sqlx::query("SELECT center_lat, center_lng, name FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or((StatusCode::NOT_FOUND, "Rabble not found".to_string()))?;
+
+    let center_lat: f64 = swarm.try_get("center_lat").unwrap_or(0.0);
+    let center_lng: f64 = swarm.try_get("center_lng").unwrap_or(0.0);
+    let swarm_name: String = swarm.try_get("name").unwrap_or_default();
+
+    // Get all flights in this swarm with their path_samples
+    let flights = sqlx::query(
+        "SELECT cf.creature_id, cf.center_lat, cf.center_lng, cf.path_samples, cf.started_at,
+                c.specimen_name, c.species_group
+         FROM creature_flights cf
+         JOIN creatures c ON c.creature_id = cf.creature_id
+         WHERE cf.swarm_id = $1
+         ORDER BY cf.started_at ASC",
+    )
+    .bind(swarm_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if flights.is_empty() {
+        return Ok(Json(json!({
+            "swarm_id": swarm_id,
+            "swarm_name": swarm_name,
+            "creatures": [],
+            "bounds": { "min_x": 0, "max_x": 1, "min_y": 0, "max_y": 1 },
+        })));
+    }
+
+    // Collect all lat/lng points to compute bounds for normalization
+    let mut all_lats: Vec<f64> = vec![center_lat];
+    let mut all_lngs: Vec<f64> = vec![center_lng];
+
+    let colors = [
+        "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
+        "#BB8FCE", "#85C1E9",
+    ];
+
+    let mut creature_data: Vec<Value> = Vec::new();
+
+    for (i, flight) in flights.iter().enumerate() {
+        let creature_id: Uuid = flight.try_get("creature_id").unwrap_or_default();
+        let name: String = flight.try_get("specimen_name").unwrap_or_default();
+        let species: String = flight.try_get("species_group").unwrap_or_default();
+        let origin_lat: f64 = flight.try_get("center_lat").unwrap_or(center_lat);
+        let origin_lng: f64 = flight.try_get("center_lng").unwrap_or(center_lng);
+        let color = colors[i % colors.len()];
+
+        // Build points array: origin + path_samples
+        let mut points: Vec<Value> = vec![json!({
+            "lat": origin_lat, "lng": origin_lng, "t": 0,
+        })];
+
+        all_lats.push(origin_lat);
+        all_lngs.push(origin_lng);
+
+        if let Ok(Some(samples)) = flight.try_get::<Option<serde_json::Value>, _>("path_samples") {
+            if let Some(arr) = samples.as_array() {
+                for s in arr {
+                    let lat = s.get("lat").and_then(|v| v.as_f64()).unwrap_or(origin_lat);
+                    let lng = s.get("lng").and_then(|v| v.as_f64()).unwrap_or(origin_lng);
+                    let t = s.get("t").and_then(|v| v.as_i64()).unwrap_or(0);
+                    points.push(json!({ "lat": lat, "lng": lng, "t": t }));
+                    all_lats.push(lat);
+                    all_lngs.push(lng);
+                }
+            }
+        }
+
+        creature_data.push(json!({
+            "creature_id": creature_id,
+            "name": name,
+            "species": species,
+            "color": color,
+            "points": points,
+        }));
+    }
+
+    // Compute bounds for normalization
+    let min_lat = all_lats.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_lat = all_lats.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let min_lng = all_lngs.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_lng = all_lngs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    // Add padding (10%) so dots aren't on edges
+    let lat_range = (max_lat - min_lat).max(0.0001); // min range to avoid division by zero
+    let lng_range = (max_lng - min_lng).max(0.0001);
+    let pad_lat = lat_range * 0.1;
+    let pad_lng = lng_range * 0.1;
+    let norm_min_lat = min_lat - pad_lat;
+    let norm_max_lat = max_lat + pad_lat;
+    let norm_min_lng = min_lng - pad_lng;
+    let norm_max_lng = max_lng + pad_lng;
+    let norm_lat_range = norm_max_lat - norm_min_lat;
+    let norm_lng_range = norm_max_lng - norm_min_lng;
+
+    // Normalize all points to [0, 1] x [0, 1]
+    for creature in &mut creature_data {
+        if let Some(points) = creature.get_mut("points").and_then(|p| p.as_array_mut()) {
+            for point in points.iter_mut() {
+                let lat = point.get("lat").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let lng = point.get("lng").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let x = (lng - norm_min_lng) / norm_lng_range;
+                let y = 1.0 - (lat - norm_min_lat) / norm_lat_range; // invert Y so north is up
+                point.as_object_mut().map(|m| {
+                    m.insert("x".to_string(), json!(x));
+                    m.insert("y".to_string(), json!(y));
+                });
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "swarm_id": swarm_id,
+        "swarm_name": swarm_name,
+        "center": { "lat": center_lat, "lng": center_lng },
+        "creatures": creature_data,
+        "bounds": {
+            "min_lat": min_lat, "max_lat": max_lat,
+            "min_lng": min_lng, "max_lng": max_lng,
+            "lat_range_m": lat_range * 111_000.0,
+            "lng_range_m": lng_range * 111_000.0 * (center_lat.to_radians().cos()),
+        },
+    })))
 }

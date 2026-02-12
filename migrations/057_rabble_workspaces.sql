@@ -36,7 +36,8 @@ ALTER TABLE credit_ledger ADD CONSTRAINT credit_ledger_tx_type_check
         'swarm_session_create', 'swarm_telemetry_ingest',
         'observation_session_create', 'observation_ingest',
         'execution_royalty', 'agent_collaboration_payout',
-        'creature_art'
+        'creature_art',
+        'platform_read'
     ));
 
 -- Personal workspace tracking

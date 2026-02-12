@@ -1401,6 +1401,10 @@ async fn main() {
             "/api/rabble/:id/flock",
             post(handlers::rabble_workspace::flock_tick_handler),
         )
+        .route(
+            "/api/rabble/:id/flock-history",
+            get(handlers::rabble_workspace::flock_history_handler),
+        )
         // Swarm telemetry
         .route(
             "/api/swarm/sessions",
