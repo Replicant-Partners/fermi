@@ -1337,8 +1337,9 @@ async fn main() {
         .merge(public_routes)
         .merge(protected_routes)
         .nest_service("/static", ServeDir::new("static"))
+        .route("/rabble/", get(|| async { Redirect::permanent("/rabble") }))
         .nest("/rabble", rabble_router)
-        .fallback(fallback_404)
+        .fallback(host_aware_fallback)
         .layer(cors)
         .with_state(state);
 
@@ -1352,6 +1353,23 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+// ─── Host-Aware Fallback ──────────────────────────────────────────
+
+/// Fallback handler: serves Rabble SPA for rabble.world requests, ABW 404 otherwise.
+async fn host_aware_fallback(req: axum::extract::Request) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if host.starts_with("rabble.world") {
+        rabble_spa_fallback(req.uri().clone()).await.into_response()
+    } else {
+        fallback_404().await.into_response()
+    }
 }
 
 // ─── Rabble SPA Fallback ───────────────────────────────────────────
