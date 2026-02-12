@@ -1059,6 +1059,10 @@ async fn main() {
             "/api/wallet/transactions",
             get(handlers::wallet::get_transactions_handler),
         )
+        .route(
+            "/api/wallet/transfer",
+            post(handlers::wallet::transfer_credits_handler),
+        )
         // Billing (Stripe)
         .route(
             "/api/billing/tiers",
@@ -1322,6 +1326,10 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/status",
             put(handlers::creatures::update_creature_status_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/transfer",
+            post(handlers::creatures::transfer_creature_handler),
         )
         // Device pairing (authenticated)
         .route(

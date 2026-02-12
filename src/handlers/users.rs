@@ -77,6 +77,28 @@ pub async fn get_public_profile_handler(
         })
         .collect();
 
+    // Rabble stats (creatures, flights, rabbles)
+    let rabble_stats = sqlx::query(
+        "SELECT
+            (SELECT COUNT(*) FROM creatures WHERE owner_id = $1 AND status = 'active') as creature_count,
+            (SELECT COUNT(*) FROM flights WHERE owner_id = $1) as flight_count,
+            (SELECT COUNT(DISTINCT s.swarm_id) FROM swarm_participants sp
+             JOIN swarm_events s ON s.swarm_id = sp.swarm_id
+             WHERE sp.user_id = $1) as rabble_count",
+    )
+    .bind(&user_id)
+    .fetch_one(&state.db)
+    .await;
+
+    let (creature_count, flight_count, rabble_count) = match rabble_stats {
+        Ok(row) => (
+            row.try_get::<i64, _>("creature_count").unwrap_or(0),
+            row.try_get::<i64, _>("flight_count").unwrap_or(0),
+            row.try_get::<i64, _>("rabble_count").unwrap_or(0),
+        ),
+        Err(_) => (0, 0, 0),
+    };
+
     Ok(Json(json!({
         "user_id": user_row.try_get::<String, _>("user_id").unwrap_or_default(),
         "display_name": user_row.try_get::<Option<String>, _>("display_name").unwrap_or(None),
@@ -86,6 +108,9 @@ pub async fn get_public_profile_handler(
         "stats": {
             "public_agents": stats_row.try_get::<i64, _>("agent_count").unwrap_or(0),
             "total_executions": stats_row.try_get::<i64, _>("total_executions").unwrap_or(0),
+            "creatures": creature_count,
+            "flights": flight_count,
+            "rabbles": rabble_count,
         },
         "public_agents": agents,
     })))

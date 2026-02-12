@@ -2544,3 +2544,95 @@ pub async fn persist_creature_image(
     .execute(pool)
     .await;
 }
+
+// ─── Creature Transfer (Gift) ──────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct TransferCreatureRequest {
+    pub recipient_id: String,
+}
+
+/// POST /api/creatures/:creature_id/transfer — gift a creature to another user.
+pub async fn transfer_creature_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<String>,
+    Json(body): Json<TransferCreatureRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let owner_id = principal.user_id();
+    let cid = Uuid::parse_str(&creature_id)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid creature ID".into()))?;
+
+    if body.recipient_id == owner_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cannot transfer to yourself".into(),
+        ));
+    }
+
+    // Verify ownership
+    let current_owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM creatures WHERE creature_id = $1")
+            .bind(cid)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match current_owner {
+        None => return Err((StatusCode::NOT_FOUND, "Creature not found".into())),
+        Some(ref oid) if oid != &owner_id => {
+            return Err((StatusCode::FORBIDDEN, "You don't own this creature".into()));
+        }
+        _ => {}
+    }
+
+    // Verify recipient exists
+    let recipient_exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE user_id = $1)")
+            .bind(&body.recipient_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if !recipient_exists {
+        return Err((StatusCode::NOT_FOUND, "Recipient not found".into()));
+    }
+
+    // Transfer ownership
+    sqlx::query("UPDATE creatures SET owner_id = $1 WHERE creature_id = $2")
+        .bind(&body.recipient_id)
+        .bind(cid)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Get creature name for notification
+    let creature_name: String = sqlx::query_scalar(
+        "SELECT COALESCE(specimen_name, common_name, scientific_name) FROM creatures WHERE creature_id = $1",
+    )
+    .bind(cid)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or_else(|_| "a creature".to_string());
+
+    // Notify recipient
+    let _ = sqlx::query(
+        "INSERT INTO notifications (id, user_id, notification_type, title, body, created_at)
+         VALUES ($1, $2, 'creature_gift', $3, $4, NOW())",
+    )
+    .bind(Uuid::new_v4())
+    .bind(&body.recipient_id)
+    .bind(format!("You received {}!", creature_name))
+    .bind(format!(
+        "Someone gifted you the creature '{}'",
+        creature_name
+    ))
+    .execute(&state.db)
+    .await;
+
+    Ok(Json(json!({
+        "status": "transferred",
+        "creature_id": creature_id,
+        "new_owner": body.recipient_id,
+    })))
+}
