@@ -1,24 +1,46 @@
-# Build stage
-FROM rust:1.85 as builder
-
+# ─── Stage 1: Chef prepare (generate dependency recipe) ────────────
+FROM rust:1.85 as chef
+RUN cargo install cargo-chef
 WORKDIR /app
 
-# Copy manifests
-COPY Cargo.toml ./
-COPY rust-toolchain.toml ./
-
-# Copy source code
+# Copy manifests and source structure for recipe generation
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src ./src
 COPY agent-bestiary ./agent-bestiary
 COPY fermi-memory ./fermi-memory
 COPY fermi-auth ./fermi-auth
 COPY fermi-lsp ./fermi-lsp
 
-# Downgrade incompatible dependencies for Rust 1.85
+# Pin versions BEFORE generating recipe so lock file is consistent
 RUN cargo update time --precise 0.3.36 && \
     cargo update home --precise 0.5.9
 
-# Build the api-server binary
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ─── Stage 2: Chef cook (build dependencies only — cached) ────────
+FROM rust:1.85 as deps
+RUN cargo install cargo-chef
+WORKDIR /app
+
+COPY --from=chef /app/recipe.json recipe.json
+COPY --from=chef /app/Cargo.lock ./Cargo.lock
+COPY rust-toolchain.toml Cargo.toml ./
+
+# Cook: builds all dependencies but NOT our source code
+# This layer is cached until Cargo.toml/Cargo.lock change
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# ─── Stage 3: Build our source code (fast — deps already compiled) ─
+FROM deps as builder
+
+# Copy actual source code
+COPY src ./src
+COPY agent-bestiary ./agent-bestiary
+COPY fermi-memory ./fermi-memory
+COPY fermi-auth ./fermi-auth
+COPY fermi-lsp ./fermi-lsp
+
+# Build the api-server binary (dependencies already compiled in stage 2)
 RUN cargo build --release --bin api-server && \
     ls -la /app/target/release/ | grep api-server
 
