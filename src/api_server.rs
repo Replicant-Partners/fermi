@@ -410,6 +410,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/046_rabble_visibility.sql",
         "migrations/047_flight_path_samples.sql",
         "migrations/048_voice_assets.sql",
+        "migrations/050_fix_tx_type_constraint_rabble.sql",
     ];
 
     for file in &migration_files {
