@@ -6,7 +6,8 @@ use fermi::agent_backend::{
 };
 use fermi::ast::{AgentStmt, Program, Schedule, TimeUnit};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     println!("🤖 Fermi Agent Backend Demo\n");
 
     // Create registry
@@ -47,7 +48,7 @@ fn main() {
 
     // Execute agent
     println!("\n⚙️  Executing agent with MockExecutor...");
-    let result = registry.execute_agent(&agent_stmt, &context).unwrap();
+    let result = registry.execute_agent(&agent_stmt, &context).await.unwrap();
 
     println!("\n✅ Execution Results:");
     println!("   Status: {:?}", result.status);

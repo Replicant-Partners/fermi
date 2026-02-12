@@ -40,6 +40,11 @@ ALTER TABLE credit_ledger ADD CONSTRAINT credit_ledger_tx_type_check
         'platform_read'
     ));
 
+-- Allow 'agent' wallet type for agent royalty payouts
+ALTER TABLE wallets DROP CONSTRAINT IF EXISTS wallets_owner_type_check;
+ALTER TABLE wallets ADD CONSTRAINT wallets_owner_type_check
+    CHECK (owner_type IN ('user', 'workspace', 'agent'));
+
 -- Personal workspace tracking
 ALTER TABLE users ADD COLUMN IF NOT EXISTS personal_workspace_id UUID;
 

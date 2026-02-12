@@ -21,12 +21,21 @@ impl ConsolidationLock {
     pub async fn acquire(&self, agent_id: Uuid, timeout_minutes: i32) -> Result<bool> {
         let expires_at = Utc::now() + Duration::minutes(timeout_minutes as i64);
 
-        // Try to insert lock
+        // Try to insert or steal in one atomic upsert.
+        // If no row exists → INSERT succeeds.
+        // If row exists but expired → DO UPDATE steals it (WHERE clause guards non-expired).
+        // If row exists, not expired, same worker → DO UPDATE is a no-op refresh.
+        // If row exists, not expired, different worker → DO UPDATE WHERE fails, rows_affected=0.
         let result = sqlx::query(
             r#"
             INSERT INTO consolidation_locks (agent_id, locked_by, locked_at, expires_at)
             VALUES ($1, $2, NOW(), $3)
-            ON CONFLICT (agent_id) DO NOTHING
+            ON CONFLICT (agent_id) DO UPDATE
+            SET locked_by = EXCLUDED.locked_by,
+                locked_at = NOW(),
+                expires_at = EXCLUDED.expires_at
+            WHERE consolidation_locks.expires_at < NOW()
+               OR consolidation_locks.locked_by = EXCLUDED.locked_by
             "#,
         )
         .bind(agent_id)
@@ -35,53 +44,7 @@ impl ConsolidationLock {
         .execute(&*self.pool)
         .await?;
 
-        // If we inserted a row, we got the lock
-        if result.rows_affected() > 0 {
-            return Ok(true);
-        }
-
-        // Check if existing lock is ours or expired
-        let row = sqlx::query(
-            r#"
-            SELECT locked_by, expires_at
-            FROM consolidation_locks
-            WHERE agent_id = $1
-            "#,
-        )
-        .bind(agent_id)
-        .fetch_optional(&*self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let locked_by: String = row.try_get("locked_by")?;
-            let expires_at: DateTime<Utc> = row.try_get("expires_at")?;
-
-            // Check if it's our lock
-            if locked_by == self.worker_id {
-                return Ok(true);
-            }
-
-            // Check if expired
-            if expires_at < Utc::now() {
-                // Try to steal expired lock
-                let result = sqlx::query(
-                    r#"
-                    UPDATE consolidation_locks
-                    SET locked_by = $1, locked_at = NOW(), expires_at = $2
-                    WHERE agent_id = $3 AND expires_at < NOW()
-                    "#,
-                )
-                .bind(&self.worker_id)
-                .bind(expires_at)
-                .bind(agent_id)
-                .execute(&*self.pool)
-                .await?;
-
-                return Ok(result.rows_affected() > 0);
-            }
-        }
-
-        Ok(false)
+        Ok(result.rows_affected() > 0)
     }
 
     /// Release a lock for an agent
@@ -296,27 +259,31 @@ mod tests {
         .await
         .unwrap();
 
-        // Create expired lock by setting very short timeout
+        // Worker 1 acquires a lock, then we force-expire it, then worker 2 steals it.
+        // This avoids the race with test_cleanup_expired_locks which deletes ALL expired
+        // locks globally — by acquiring a valid lock first, then expiring it in place.
         let lock1 = ConsolidationLock::new(pool.clone(), "worker-1".to_string());
+        let acquired = lock1.acquire(agent_id, 5).await.unwrap();
+        assert!(acquired, "Worker 1 should acquire lock");
 
-        // Manually insert expired lock
+        // Force-expire the lock (simulate time passing)
         sqlx::query(
-            r#"
-            INSERT INTO consolidation_locks (agent_id, locked_by, locked_at, expires_at)
-            VALUES ($1, 'worker-1', NOW() - INTERVAL '10 minutes', NOW() - INTERVAL '5 minutes')
-            ON CONFLICT (agent_id) DO UPDATE
-            SET locked_by = 'worker-1', expires_at = NOW() - INTERVAL '5 minutes'
-            "#,
+            "UPDATE consolidation_locks SET expires_at = NOW() - INTERVAL '5 minutes' WHERE agent_id = $1"
         )
         .bind(agent_id)
         .execute(&*pool)
         .await
         .unwrap();
 
-        // Worker 2 should be able to steal expired lock
+        // Worker 2 should steal the expired lock.
+        // If test_cleanup_expired_locks races and deletes it between our UPDATE and
+        // this acquire, acquire will INSERT a fresh lock (also returns true).
         let lock2 = ConsolidationLock::new(pool.clone(), "worker-2".to_string());
         let acquired = lock2.acquire(agent_id, 5).await.unwrap();
-        assert!(acquired, "Should steal expired lock");
+        assert!(
+            acquired,
+            "Worker 2 should acquire (steal expired or insert fresh)"
+        );
 
         // Verify worker 2 owns the lock now
         let info = lock2.check(agent_id).await.unwrap();
@@ -366,11 +333,27 @@ mod tests {
         .await
         .unwrap();
 
-        // Clean up expired locks
+        // Clean up expired locks (this deletes ALL expired locks globally, which can
+        // race with other tests — but our assertions only check our own agent_ids)
         let cleaned = ConsolidationLock::cleanup_expired_locks(&pool)
             .await
             .unwrap();
         assert!(cleaned >= 2, "Should clean at least 2 expired locks");
+
+        // Verify OUR locks are gone (don't assert about other tests' locks)
+        let row1 = sqlx::query("SELECT 1 FROM consolidation_locks WHERE agent_id = $1")
+            .bind(agent_id1)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(row1.is_none(), "Lock 1 should be cleaned up");
+
+        let row2 = sqlx::query("SELECT 1 FROM consolidation_locks WHERE agent_id = $1")
+            .bind(agent_id2)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(row2.is_none(), "Lock 2 should be cleaned up");
 
         println!("✅ Cleanup expired locks works! Cleaned: {}", cleaned);
     }
