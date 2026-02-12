@@ -1337,9 +1337,11 @@ async fn main() {
         .merge(public_routes)
         .merge(protected_routes)
         .nest_service("/static", ServeDir::new("static"))
+        .nest("/rabble/", rabble_router.clone())
         .nest("/rabble", rabble_router)
         .fallback(fallback_404)
         .layer(cors)
+        .layer(axum::middleware::from_fn(rabble_host_rewrite))
         .with_state(state);
 
     let port = std::env::var("PORT")
@@ -1352,6 +1354,45 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+// ─── Rabble Host Rewrite Middleware ────────────────────────────────
+
+/// Requests from rabble.world get rewritten to /rabble/* so they hit the rabble router.
+async fn rabble_host_rewrite(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if host.starts_with("rabble.world")
+        && !req.uri().path().starts_with("/rabble")
+        && !req.uri().path().starts_with("/api/")
+        && !req.uri().path().starts_with("/auth/")
+    {
+        // Rewrite URI to /rabble/* prefix
+        let new_path = format!("/rabble{}", req.uri().path());
+        let new_uri = axum::http::Uri::builder()
+            .path_and_query(
+                req.uri()
+                    .query()
+                    .map(|q| format!("{}?{}", new_path, q))
+                    .unwrap_or(new_path),
+            )
+            .build()
+            .unwrap_or_else(|_| req.uri().clone());
+
+        let (mut parts, body) = req.into_parts();
+        parts.uri = new_uri;
+        let req = axum::extract::Request::from_parts(parts, body);
+        next.run(req).await
+    } else {
+        next.run(req).await
+    }
 }
 
 // ─── Rabble SPA Fallback ───────────────────────────────────────────
