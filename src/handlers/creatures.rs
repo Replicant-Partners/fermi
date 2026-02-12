@@ -298,7 +298,7 @@ pub async fn list_swarms_handler(
             " AND (visibility = 'public' OR creator_id = ${bind_idx} \
              OR swarm_id::text IN (SELECT object_id FROM object_shares \
              WHERE object_type = 'rabble' AND (share_target = ${bind_idx} OR share_target IN \
-             (SELECT team_id::text FROM team_members WHERE user_id = ${bind_idx}))))",
+             (SELECT team_id::text FROM team_members WHERE member_id = ${bind_idx}))))",
         ));
         binds.push(uid.clone());
     } else {
