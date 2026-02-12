@@ -74,16 +74,17 @@ pub async fn post_rabble_message(
         .ok_or((StatusCode::NOT_FOUND, "Rabble not found".into()))?;
 
     let status: String = swarm.try_get("status").unwrap_or_default();
-    if status != "active" {
-        return Err((StatusCode::CONFLICT, "Rabble is not active".into()));
+    if status != "active" && status != "scheduled" {
+        return Err((StatusCode::CONFLICT, format!("Rabble is {}", status)));
     }
 
-    // Verify sender has a creature in this rabble (via creature_flights)
+    // Verify sender has a creature in this rabble (via creature_flights, current or past)
     let has_creature = sqlx::query(
         "SELECT cf.creature_id, c.specimen_name, c.species_name, c.species_group
          FROM creature_flights cf
          JOIN creatures c ON c.creature_id = cf.creature_id
-         WHERE cf.swarm_id = $1 AND c.owner_id = $2 AND cf.ended_at IS NULL
+         WHERE cf.swarm_id = $1 AND c.owner_id = $2
+         ORDER BY cf.started_at DESC
          LIMIT 1",
     )
     .bind(swarm_id)
