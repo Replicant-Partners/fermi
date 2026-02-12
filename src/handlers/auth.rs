@@ -25,17 +25,19 @@ pub struct AuthCallbackQuery {
     state: String,
 }
 
-/// Optional query param for mobile OAuth flows
+/// Optional query params for OAuth flows
 #[derive(Debug, Deserialize)]
-pub struct MobileAuthQuery {
+pub struct OAuthQuery {
     pub mobile: Option<String>,
+    /// Where to redirect after auth (e.g. "/rabble/" for Rabble web)
+    pub redirect: Option<String>,
 }
 
 /// Redirect to Google OAuth
 /// Pass ?mobile=1 to get a deep link callback instead of cookie redirect
 pub async fn auth_google(
     State(state): State<AppState>,
-    Query(q): Query<MobileAuthQuery>,
+    Query(q): Query<OAuthQuery>,
 ) -> Result<Redirect, (StatusCode, String)> {
     let config = state.oauth.google().map_err(|_| {
         (
@@ -45,7 +47,11 @@ pub async fn auth_google(
     })?;
     let csrf_state = generate_state();
     let mobile_flag = if q.mobile.is_some() { ":mobile" } else { "" };
-    let state_with_provider = format!("google:{}{}", csrf_state, mobile_flag);
+    let redirect_flag = match &q.redirect {
+        Some(r) => format!(":redirect={}", r),
+        None => String::new(),
+    };
+    let state_with_provider = format!("google:{}{}{}", csrf_state, mobile_flag, redirect_flag);
     let url = build_google_auth_url(config, &state_with_provider);
     Ok(Redirect::temporary(&url))
 }
@@ -54,7 +60,7 @@ pub async fn auth_google(
 /// Pass ?mobile=1 to get a deep link callback instead of cookie redirect
 pub async fn auth_github(
     State(state): State<AppState>,
-    Query(q): Query<MobileAuthQuery>,
+    Query(q): Query<OAuthQuery>,
 ) -> Result<Redirect, (StatusCode, String)> {
     let config = state.oauth.github().map_err(|_| {
         (
@@ -64,7 +70,11 @@ pub async fn auth_github(
     })?;
     let csrf_state = generate_state();
     let mobile_flag = if q.mobile.is_some() { ":mobile" } else { "" };
-    let state_with_provider = format!("github:{}{}", csrf_state, mobile_flag);
+    let redirect_flag = match &q.redirect {
+        Some(r) => format!(":redirect={}", r),
+        None => String::new(),
+    };
+    let state_with_provider = format!("github:{}{}{}", csrf_state, mobile_flag, redirect_flag);
     let url = build_github_auth_url(config, &state_with_provider);
     Ok(Redirect::temporary(&url))
 }
@@ -96,13 +106,14 @@ pub async fn auth_callback_inner(
 ) -> Result<Response, String> {
     let map_err = |e: fermi_auth::AuthError| e.to_string();
 
-    // Determine provider and mobile flag from state prefix
-    // Format: "provider:csrf[:mobile]"
+    // Determine provider, mobile flag, and redirect from state prefix
+    // Format: "provider:csrf[:mobile][:redirect=/path]"
     let (provider, rest) = params
         .state
         .split_once(':')
         .unwrap_or(("unknown", &params.state));
-    let is_mobile = rest.ends_with(":mobile");
+    let is_mobile = rest.contains(":mobile");
+    let redirect_to = rest.split(":redirect=").nth(1).map(|s| s.to_string());
 
     let user_info = match provider {
         "google" => {
@@ -151,14 +162,17 @@ pub async fn auth_callback_inner(
             .body(axum::body::Body::empty())
             .map_err(|e| e.to_string())
     } else {
-        // Web flow: set cookie and redirect to dashboard
+        // Web flow: set cookie and redirect (to custom path or /dashboard)
+        let dest = redirect_to
+            .filter(|r| r.starts_with('/') && !r.contains("//"))
+            .unwrap_or_else(|| "/dashboard".to_string());
         let cookie = format!(
             "abw_session={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800",
             token
         );
         Response::builder()
             .status(StatusCode::SEE_OTHER)
-            .header(header::LOCATION, "/dashboard")
+            .header(header::LOCATION, &dest)
             .header(header::SET_COOKIE, cookie)
             .body(axum::body::Body::empty())
             .map_err(|e| e.to_string())
