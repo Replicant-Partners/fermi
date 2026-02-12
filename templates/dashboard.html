@@ -548,6 +548,7 @@
                     <span class="badge badge-${a.visibility || "private"}" style="font-size:0.6em">${a.visibility || "private"}</span>
                     ${(a.workspace_names || []).map((n) => `<span style="font-size:0.6em;padding:1px 5px;border:1px solid var(--bg3);color:var(--purple)">${n}</span>`).join("")}
                   </div>
+                  <div id="wallet-${a.agent_id}" style="font-size:0.7em;color:var(--fg4);margin-top:4px"></div>
                 </a>`;
               };
 
@@ -576,6 +577,19 @@
                 html += "</details>";
               }
               el.innerHTML = html;
+
+              // Load wallet balances for each agent tile
+              for (const a of data.agents) {
+                fetch(`/api/agents/${encodeURIComponent(a.agent_id)}/wallet`)
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((w) => {
+                    if (!w) return;
+                    const wd = document.getElementById(`wallet-${a.agent_id}`);
+                    if (wd)
+                      wd.innerHTML = `<span style="color:var(--green)">${w.balance} cr</span> balance &middot; ${w.total_earned} cr earned`;
+                  })
+                  .catch(() => {});
+              }
             }
           }
         } catch {}

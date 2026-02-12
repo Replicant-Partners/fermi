@@ -190,8 +190,41 @@ Continuous Index: Updated probability, tracked over time
 
 ---
 
+## 4. Flock Coordination MMOG
+
+**Status:** Deferred — natural extension of existing Reynolds flocking + creature presence
+
+### Vision
+
+Turn Rabble's flock mechanics into a multiplayer online game. Players coordinate creature swarms in real-time to achieve objectives — herding, formation flying, territorial control, migration races. The Reynolds flocking engine, creature presence system, and flock visualization already exist as infrastructure.
+
+### Game Modes (Brainstorm)
+
+- **Formation challenge:** Coordinate N creatures into a target shape (V-formation, ring, spiral). Score based on coherence + speed.
+- **Migration race:** Guide a flock from A to B through obstacles. Flock cohesion matters — stragglers cost points.
+- **Territory control:** Swarms compete for zones. Density + time held = score. Flocking coordination determines whether your swarm stays together or fragments.
+- **Predator-prey:** One swarm hunts, another evades. Reynolds behaviors (separation, alignment, cohesion) become tactical tools.
+- **Murmuration art:** Collaborative — players shape a massive flock into patterns. Scored by audience votes.
+
+### Why It Works
+
+- **Existing infra:** Reynolds engine computes physics, flock_viz renders, creature presence tracks state, workspace agents narrate
+- **Agent economy tie-in:** Navigator agent analyzes strategy, naturalist provides species-specific movement traits, keeper manages stamina/fatigue
+- **Creature differentiation matters:** Species have different flight characteristics (speed, turn radius, stamina) — team composition becomes strategic
+- **Social layer:** Rabbles are already multiplayer. Chat + flock coordination = emergent gameplay
+- **Platform read revenue:** Real-time flock state visualization = high-frequency platform_read charges
+
+### Dependencies
+- Real-time WebSocket/SSE for low-latency flock state sync (currently polling)
+- Objective system + scoring engine
+- Matchmaking or lobby system
+- Creature stats that affect flocking parameters (speed, turn radius per species)
+
+---
+
 ## Priority Order
 
 1. **Fermi Orchestrator** — Highest demo value, proves the multi-agent thesis
 2. **Agent Contract Negotiation** — Enables the agent economy, needed for A2A pricing
-3. **AR Avatar Renderer** — Compelling vision, hardware-dependent, longest timeline
+3. **Flock Coordination MMOG** — Natural extension of existing mechanics, high engagement potential
+4. **AR Avatar Renderer** — Compelling vision, hardware-dependent, longest timeline

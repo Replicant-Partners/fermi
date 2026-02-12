@@ -266,6 +266,8 @@ pub struct Agent {
     pub education_budget_credits: i32,
     #[serde(default)]
     pub education_credits_used: i32,
+    #[serde(default)]
+    pub auto_collect_pct: i32,
     pub display_alias: Option<String>,
     #[serde(default = "default_llm_provider")]
     pub llm_provider: String,

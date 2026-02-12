@@ -135,6 +135,55 @@ pub async fn deposit(
     Ok(row_to_transaction(&ledger_row))
 }
 
+/// Deposit credits with a custom tx_type (for agent_collect_in, execution_royalty, etc.)
+/// Same as deposit() but allows caller to specify the ledger tx_type.
+pub async fn deposit_typed(
+    pool: &PgPool,
+    wallet_id: Uuid,
+    amount: i32,
+    tx_type: &str,
+    description: &str,
+) -> Result<CreditTransaction, AuthError> {
+    if amount <= 0 {
+        return Err(AuthError::InvalidInput(
+            "Deposit amount must be positive".into(),
+        ));
+    }
+
+    let wallet_row = sqlx::query(
+        "UPDATE wallets
+         SET balance = balance + $1,
+             total_deposited = total_deposited + $1
+         WHERE wallet_id = $2
+         RETURNING balance",
+    )
+    .bind(amount)
+    .bind(wallet_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AuthError::Internal(format!("Wallet update failed: {}", e)))?;
+
+    let new_balance: i32 = wallet_row
+        .try_get("balance")
+        .map_err(|e| AuthError::Internal(format!("Failed to get balance: {}", e)))?;
+
+    let ledger_row = sqlx::query(
+        "INSERT INTO credit_ledger (wallet_id, amount, balance_after, tx_type, description)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING tx_id, wallet_id, amount, balance_after, tx_type, description, related_id, created_at",
+    )
+    .bind(wallet_id)
+    .bind(amount)
+    .bind(new_balance)
+    .bind(tx_type)
+    .bind(description)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AuthError::Internal(format!("Ledger insert failed: {}", e)))?;
+
+    Ok(row_to_transaction(&ledger_row))
+}
+
 /// Charge credits from a wallet (fails if insufficient balance)
 /// IMPORTANT: No BEGIN/COMMIT - PgBouncer transaction mode handles this
 /// Uses conditional UPDATE with check constraint to ensure atomicity

@@ -16,7 +16,7 @@ const AGENT_COLUMNS: &str = r#"
     last_consolidated_at, total_executions, successful_executions,
     failed_executions, total_cost_usd, avg_execution_time_ms,
     dreaming_budget_credits, dreaming_credits_used, dreaming_budget_reset_at,
-    education_budget_credits, education_credits_used, display_alias,
+    education_budget_credits, education_credits_used, auto_collect_pct, display_alias,
     llm_provider, embedding_provider, embedding_model, embedding_dimension,
     sample_queries,
     status, fork_pricing, forked_from, fork_count,
@@ -667,6 +667,7 @@ impl MemoryStore {
             dreaming_budget_reset_at: row.try_get("dreaming_budget_reset_at")?,
             education_budget_credits: row.try_get("education_budget_credits").unwrap_or(0),
             education_credits_used: row.try_get("education_credits_used").unwrap_or(0),
+            auto_collect_pct: row.try_get("auto_collect_pct").unwrap_or(0),
             display_alias: row.try_get("display_alias").unwrap_or(None),
             llm_provider: row
                 .try_get("llm_provider")

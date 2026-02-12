@@ -39,7 +39,7 @@ pub use types::{
 pub use visibility::{can_access, can_access_anonymous, can_edit, can_view, AccessLevel};
 
 pub use credits::{
-    charge as credit_charge, deposit as credit_deposit, get_balance as credit_get_balance,
-    get_or_create_wallet, get_transactions as credit_get_transactions, grant as credit_grant,
-    CreditTransaction, Wallet,
+    charge as credit_charge, deposit as credit_deposit, deposit_typed as credit_deposit_typed,
+    get_balance as credit_get_balance, get_or_create_wallet,
+    get_transactions as credit_get_transactions, grant as credit_grant, CreditTransaction, Wallet,
 };

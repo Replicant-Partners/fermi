@@ -2122,6 +2122,12 @@
                 </div>
               </div>
 
+              <!-- Agent Wallet -->
+              <div class="section" id="agent-wallet-section">
+                <div class="section-title">Agent Wallet</div>
+                <div id="agent-wallet-content" style="color:var(--fg3);font-size:0.85em">Loading wallet data...</div>
+              </div>
+
               <!-- Edit Description / Prompt -->
               <div class="section">
                 <div class="section-title">Edit Agent</div>
@@ -2223,6 +2229,7 @@
             loadEvalData(agentId);
           } else if (tabName === "manage") {
             loadVersions(agentId);
+            loadAgentWallet(agentId);
           }
         });
       }
@@ -2982,6 +2989,175 @@
           responseEl.textContent = "Network error: " + e.message;
         }
         btn.disabled = false;
+      }
+
+      async function loadAgentWallet(agentId) {
+        const el = document.getElementById("agent-wallet-content");
+        if (!el) return;
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/wallet`,
+          );
+          if (res.status === 403) {
+            el.textContent = "Not authorized";
+            return;
+          }
+          if (!res.ok) {
+            el.textContent = "Could not load wallet";
+            return;
+          }
+          const w = await res.json();
+          el.innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:14px">
+              <div><div style="font-size:0.75em;color:var(--fg4);text-transform:uppercase;letter-spacing:0.06em">Balance</div>
+                <div style="font-size:1.6em;font-weight:bold;color:var(--green)">${w.balance} cr</div></div>
+              <div><div style="font-size:0.75em;color:var(--fg4);text-transform:uppercase;letter-spacing:0.06em">Total Earned</div>
+                <div style="font-size:1.2em;color:var(--fg1)">${w.total_earned} cr</div></div>
+              <div><div style="font-size:0.75em;color:var(--fg4);text-transform:uppercase;letter-spacing:0.06em">Collected</div>
+                <div style="font-size:1.2em;color:var(--fg1)">${w.total_collected} cr</div></div>
+              <div><div style="font-size:0.75em;color:var(--fg4);text-transform:uppercase;letter-spacing:0.06em">Allocated</div>
+                <div style="font-size:1.2em;color:var(--fg1)">${w.total_allocated} cr</div></div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:10px;background:var(--bg0);border:1px solid var(--bg3);border-radius:6px">
+              <label style="font-size:0.8em;color:var(--fg3);white-space:nowrap">Auto-collect</label>
+              <input type="range" id="auto-collect-slider" min="0" max="100" value="${w.auto_collect_pct}" style="flex:1" oninput="document.getElementById('auto-collect-val').textContent=this.value+'%'" />
+              <span id="auto-collect-val" style="font-size:0.85em;color:var(--fg1);min-width:36px">${w.auto_collect_pct}%</span>
+              <button class="owner-btn" style="border-color:var(--blue);color:var(--blue);font-size:0.8em;padding:4px 10px" onclick="setAutoCollect('${agentId}')">Set</button>
+            </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="collect-amount" min="1" max="${w.balance}" value="${w.balance}" style="width:80px;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:5px 8px;font-family:inherit;font-size:0.85em" />
+                <button class="owner-btn" style="border-color:var(--green);color:var(--green);font-size:0.8em;padding:4px 10px" onclick="collectFromAgent('${agentId}')">Collect</button>
+                <button class="owner-btn" style="border-color:var(--green);color:var(--green);font-size:0.8em;padding:4px 10px" onclick="collectFromAgent('${agentId}','all')">Collect All</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <select id="allocate-service" style="background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:5px 8px;font-family:inherit;font-size:0.85em">
+                  <option value="dream_cycle">Dream Cycle</option>
+                  <option value="education">Education</option>
+                  <option value="coherence_eval">Coherence Eval</option>
+                </select>
+                <input type="number" id="allocate-amount" min="1" value="5" style="width:60px;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:5px 8px;font-family:inherit;font-size:0.85em" />
+                <button class="owner-btn" style="border-color:var(--purple);color:var(--purple);font-size:0.8em;padding:4px 10px" onclick="allocateAgentCredits('${agentId}')">Allocate</button>
+              </div>
+            </div>
+            <div id="wallet-action-result" style="font-size:0.85em;color:var(--fg3);min-height:1.2em"></div>
+          `;
+        } catch (e) {
+          el.innerHTML =
+            '<span style="color:var(--red)">Error: ' +
+            escapeHtml(e.message) +
+            "</span>";
+        }
+      }
+
+      async function collectFromAgent(agentId, mode) {
+        const resultEl = document.getElementById("wallet-action-result");
+        const body =
+          mode === "all"
+            ? { amount: "all" }
+            : {
+                amount: parseInt(
+                  document.getElementById("collect-amount").value,
+                ),
+              };
+        if (mode !== "all" && (!body.amount || body.amount < 1)) {
+          resultEl.style.color = "var(--red)";
+          resultEl.textContent = "Enter a valid amount";
+          return;
+        }
+        resultEl.style.color = "var(--fg3)";
+        resultEl.textContent = "Collecting...";
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/collect`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            },
+          );
+          if (res.ok) {
+            const d = await res.json();
+            resultEl.style.color = "var(--green)";
+            resultEl.textContent = `Collected ${d.collected} cr. Agent balance: ${d.agent_balance} cr, Your balance: ${d.owner_balance} cr`;
+            loadAgentWallet(agentId);
+          } else {
+            resultEl.style.color = "var(--red)";
+            resultEl.textContent = await res.text();
+          }
+        } catch (e) {
+          resultEl.style.color = "var(--red)";
+          resultEl.textContent = "Network error: " + e.message;
+        }
+      }
+
+      async function allocateAgentCredits(agentId) {
+        const resultEl = document.getElementById("wallet-action-result");
+        const service = document.getElementById("allocate-service").value;
+        const amount = parseInt(
+          document.getElementById("allocate-amount").value,
+        );
+        if (!amount || amount < 1) {
+          resultEl.style.color = "var(--red)";
+          resultEl.textContent = "Enter a valid amount";
+          return;
+        }
+        resultEl.style.color = "var(--fg3)";
+        resultEl.textContent = "Allocating...";
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/allocate`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ service, amount }),
+            },
+          );
+          if (res.ok) {
+            const d = await res.json();
+            resultEl.style.color = "var(--green)";
+            resultEl.textContent = `Allocated ${d.allocated} cr to ${d.service}. Agent balance: ${d.agent_balance} cr`;
+            loadAgentWallet(agentId);
+          } else {
+            resultEl.style.color = "var(--red)";
+            resultEl.textContent = await res.text();
+          }
+        } catch (e) {
+          resultEl.style.color = "var(--red)";
+          resultEl.textContent = "Network error: " + e.message;
+        }
+      }
+
+      async function setAutoCollect(agentId) {
+        const pct = parseInt(
+          document.getElementById("auto-collect-slider").value,
+        );
+        const resultEl = document.getElementById("wallet-action-result");
+        resultEl.style.color = "var(--fg3)";
+        resultEl.textContent = "Saving...";
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/auto-collect`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pct }),
+            },
+          );
+          if (res.ok) {
+            const d = await res.json();
+            resultEl.style.color = "var(--green)";
+            resultEl.textContent = `Auto-collect set to ${d.auto_collect_pct}%`;
+          } else {
+            resultEl.style.color = "var(--red)";
+            resultEl.textContent = await res.text();
+          }
+        } catch (e) {
+          resultEl.style.color = "var(--red)";
+          resultEl.textContent = "Network error: " + e.message;
+        }
       }
 
       async function topupDreamBudget(agentId) {

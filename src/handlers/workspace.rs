@@ -317,6 +317,7 @@ pub async fn create_workspace_agent_handler(
         dreaming_budget_reset_at: None,
         education_budget_credits: req.education_budget_credits,
         education_credits_used: 0,
+        auto_collect_pct: 0,
         display_alias: None,
         llm_provider: "anthropic".to_string(),
         embedding_provider: "anthropic".to_string(),

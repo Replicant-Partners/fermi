@@ -419,6 +419,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/056_devices.sql",
         "migrations/057_rabble_workspaces.sql",
         "migrations/058_creature_presence.sql",
+        "migrations/059_agent_wallet_admin.sql",
     ];
 
     for file in &migration_files {
@@ -753,6 +754,27 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/kg/communities",
             get(handlers::kg::list_communities_handler),
+        )
+        // Agent Wallet Admin
+        .route(
+            "/api/agents/:agent_id/wallet",
+            get(handlers::agent_wallet::get_agent_wallet_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/earnings",
+            get(handlers::agent_wallet::get_agent_earnings_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/collect",
+            post(handlers::agent_wallet::collect_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/allocate",
+            post(handlers::agent_wallet::allocate_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/auto-collect",
+            put(handlers::agent_wallet::set_auto_collect_handler),
         )
         // Projector
         .route("/projector", get(handlers::pages::projector_view))
@@ -1627,6 +1649,7 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             tags: card.metadata.tags.clone(),
             education_budget_credits: 0,
             education_credits_used: 0,
+            auto_collect_pct: 0,
             display_alias: None,
             llm_provider: "anthropic".to_string(),
             embedding_provider: "anthropic".to_string(),

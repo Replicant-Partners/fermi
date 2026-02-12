@@ -6,7 +6,7 @@
 //!
 //! Gas fees fund the platform. Configurable via env vars with sensible defaults.
 
-use fermi_auth::{credit_charge, credit_deposit, get_or_create_wallet};
+use fermi_auth::{credit_charge, credit_deposit, credit_deposit_typed, get_or_create_wallet};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -257,6 +257,48 @@ pub async fn charge_and_distribute(
             .bind(payout)
             .execute(pool)
             .await;
+
+            // Auto-collect: if agent has auto_collect_pct > 0, forward that % to owner
+            if let Ok(Some(row)) =
+                sqlx::query("SELECT auto_collect_pct, user_id FROM agents WHERE agent_id = $1")
+                    .bind(agent_id)
+                    .fetch_optional(pool)
+                    .await
+            {
+                let auto_pct: i32 = row.try_get("auto_collect_pct").unwrap_or(0);
+                let owner_id: Option<String> = row.try_get("user_id").unwrap_or(None);
+
+                if auto_pct > 0 {
+                    let auto_amount = std::cmp::max(1, payout * auto_pct / 100);
+                    if let Some(oid) = owner_id {
+                        // Debit agent wallet
+                        if credit_charge(
+                            pool,
+                            agent_wallet.wallet_id,
+                            auto_amount,
+                            "agent_collect_out",
+                            "Auto-collect",
+                            None,
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            // Credit owner wallet
+                            if let Ok(owner_wallet) = get_or_create_wallet(pool, "user", &oid).await
+                            {
+                                let _ = credit_deposit_typed(
+                                    pool,
+                                    owner_wallet.wallet_id,
+                                    auto_amount,
+                                    "agent_collect_in",
+                                    &format!("Auto-collect from {}", agent_id_str),
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
