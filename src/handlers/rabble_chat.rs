@@ -81,7 +81,7 @@ pub async fn post_rabble_message(
 
     // Verify sender has a creature in this rabble (via creature_flights, current or past)
     let has_creature = sqlx::query(
-        "SELECT cf.creature_id, c.specimen_name, c.species_name, c.species_group
+        "SELECT cf.creature_id, c.specimen_name, c.scientific_name AS species_name, c.species_group
          FROM creature_flights cf
          JOIN creatures c ON c.creature_id = cf.creature_id
          WHERE cf.swarm_id = $1 AND c.owner_id = $2

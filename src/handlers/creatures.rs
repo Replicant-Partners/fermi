@@ -345,7 +345,7 @@ pub async fn list_swarms_handler(
                         .map(|i| format!("${}", i + 1))
                         .collect();
                     let my_sql = format!(
-                        "SELECT DISTINCT ON (cf.swarm_id) cf.swarm_id, cf.creature_id, c.specimen_name, c.species_name
+                        "SELECT DISTINCT ON (cf.swarm_id) cf.swarm_id, cf.creature_id, c.specimen_name, c.scientific_name AS species_name
                          FROM creature_flights cf
                          JOIN creatures c ON c.creature_id = cf.creature_id
                          WHERE cf.swarm_id IN ({}) AND c.owner_id = $1
@@ -1354,7 +1354,7 @@ pub async fn join_swarm_handler(
 
     // Verify creature ownership and presence
     let creature = sqlx::query(
-        "SELECT owner_id, specimen_name, species_name, species_group, presence FROM creatures WHERE creature_id = $1"
+        "SELECT owner_id, specimen_name, scientific_name AS species_name, species_group, presence FROM creatures WHERE creature_id = $1"
     )
     .bind(req.creature_id)
     .fetch_optional(pool)
