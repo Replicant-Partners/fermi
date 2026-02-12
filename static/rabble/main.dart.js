@@ -96605,13 +96605,13 @@ return A.G($async$t4,r)},
 uq(){var s=0,r=A.H(t.H),q=this
 var $async$uq=A.D(function(a,b){if(a===1)return A.E(b,r)
 while(true)switch(s){case 0:s=2
-return A.C(A.aB7(A.da(q.a.a+"/auth/google?redirect=/rabble/",0,null),B.ps),$async$uq)
+return A.C(A.aB7(A.da(q.a.a+"/auth/google?redirect=https://rabble.world/",0,null),B.ps),$async$uq)
 case 2:return A.F(null,r)}})
 return A.G($async$uq,r)},
 uo(){var s=0,r=A.H(t.H),q=this
 var $async$uo=A.D(function(a,b){if(a===1)return A.E(b,r)
 while(true)switch(s){case 0:s=2
-return A.C(A.aB7(A.da(q.a.a+"/auth/github?redirect=/rabble/",0,null),B.ps),$async$uo)
+return A.C(A.aB7(A.da(q.a.a+"/auth/github?redirect=https://rabble.world/",0,null),B.ps),$async$uo)
 case 2:return A.F(null,r)}})
 return A.G($async$uo,r)},
 q9(){var s=0,r=A.H(t.H),q=this,p
