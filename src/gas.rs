@@ -6,8 +6,8 @@
 //!
 //! Gas fees fund the platform. Configurable via env vars with sensible defaults.
 
-use fermi_auth::credit_charge;
-use sqlx::PgPool;
+use fermi_auth::{credit_charge, credit_deposit, get_or_create_wallet};
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 /// Layer 1: Credit gas fee schedule (the product)
@@ -170,4 +170,102 @@ pub async fn check_low_balance(pool: &PgPool, wallet_id: Uuid) -> bool {
         .and_then(|row| sqlx::Row::try_get::<i32, _>(&row, "balance").ok())
         .map(|b| b < LOW_BALANCE_THRESHOLD)
         .unwrap_or(false)
+}
+
+/// Charge a user and distribute the fee among workspace agents.
+///
+/// Flow:
+/// 1. Debit total_amount from source_wallet (atomic)
+/// 2. Platform keeps gas_pct (10%) as platform fee
+/// 3. Remaining 90% split equally among agents, deposited to each agent's wallet
+/// 4. Record payouts in agent_episode_payouts for audit
+///
+/// Returns total amount charged.
+pub async fn charge_and_distribute(
+    pool: &PgPool,
+    source_wallet_id: Uuid,
+    total_amount: i32,
+    tx_type: &str,
+    description: &str,
+    agent_ids: &[Uuid],
+    episode_id: Option<&str>,
+    workspace_id: Option<Uuid>,
+) -> std::result::Result<i32, (axum::http::StatusCode, String)> {
+    // 1. Charge the user
+    charge_gas(
+        pool,
+        source_wallet_id,
+        total_amount,
+        tx_type,
+        description,
+        episode_id,
+    )
+    .await?;
+
+    if agent_ids.is_empty() {
+        return Ok(total_amount);
+    }
+
+    // 2. Calculate platform cut vs agent share
+    let platform_cut = std::cmp::max(1, (total_amount as f64 * 0.10) as i32);
+    let agent_pool = total_amount - platform_cut;
+
+    if agent_pool <= 0 {
+        return Ok(total_amount);
+    }
+
+    // 3. Split equally among agents (last agent gets remainder)
+    let per_agent = agent_pool / agent_ids.len() as i32;
+    let remainder = agent_pool - (per_agent * agent_ids.len() as i32);
+
+    for (i, agent_id) in agent_ids.iter().enumerate() {
+        let payout = if i == agent_ids.len() - 1 {
+            per_agent + remainder
+        } else {
+            per_agent
+        };
+
+        if payout <= 0 {
+            continue;
+        }
+
+        // Get or create agent wallet
+        let agent_id_str = agent_id.to_string();
+        if let Ok(agent_wallet) = get_or_create_wallet(pool, "agent", &agent_id_str).await {
+            let _ = credit_deposit(
+                pool,
+                agent_wallet.wallet_id,
+                payout,
+                &format!("Royalty: {}", description),
+            )
+            .await;
+
+            // Record payout for audit
+            let ep_id = episode_id.and_then(|e| Uuid::parse_str(e).ok());
+            let _ = sqlx::query(
+                "INSERT INTO agent_episode_payouts (episode_id, agent_id, workspace_id, amount, contribution_tier)
+                 VALUES ($1, $2, $3, $4, 'equal')"
+            )
+            .bind(ep_id.unwrap_or_else(Uuid::nil))
+            .bind(agent_id)
+            .bind(workspace_id)
+            .bind(payout)
+            .execute(pool)
+            .await;
+        }
+    }
+
+    Ok(total_amount)
+}
+
+/// Look up all agent UUIDs in a workspace for fee distribution.
+pub async fn get_workspace_agent_ids(pool: &PgPool, workspace_id: Uuid) -> Vec<Uuid> {
+    sqlx::query("SELECT agent_id FROM workspace_agents WHERE workspace_id = $1")
+        .bind(workspace_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|r| r.try_get::<Uuid, _>("agent_id").ok())
+        .collect()
 }

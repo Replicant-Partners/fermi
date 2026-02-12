@@ -417,6 +417,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/054_creature_management.sql",
         "migrations/055_contacts.sql",
         "migrations/056_devices.sql",
+        "migrations/057_rabble_workspaces.sql",
+        "migrations/058_creature_presence.sql",
     ];
 
     for file in &migration_files {
@@ -1085,6 +1087,11 @@ async fn main() {
             "/api/users/collaborators",
             get(handlers::users::get_collaborators_handler),
         )
+        // Personal workspace (menagerie)
+        .route(
+            "/api/me/workspace",
+            get(handlers::rabble_workspace::get_personal_workspace_handler),
+        )
         // Profile
         .route("/api/profile", get(handlers::profile::get_profile_handler))
         .route(
@@ -1326,6 +1333,10 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/status",
             put(handlers::creatures::update_creature_status_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/presence",
+            put(handlers::creatures::update_creature_presence_handler),
         )
         .route(
             "/api/creatures/:creature_id/transfer",

@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use std::convert::Infallible;
 
+use super::rabble_workspace;
 use crate::{AppState, RabbleEvent};
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -92,6 +93,28 @@ pub async fn post_rabble_message(
     .fetch_optional(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Check creature presence if they have one in this rabble
+    if let Some(ref row) = has_creature {
+        let cid = row.try_get::<uuid::Uuid, _>("creature_id").ok();
+        if let Some(creature_uuid) = cid {
+            let presence: String =
+                sqlx::query("SELECT presence FROM creatures WHERE creature_id = $1")
+                    .bind(creature_uuid)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.try_get("presence").ok())
+                    .unwrap_or_else(|| "active".to_string());
+            if presence != "active" {
+                return Err((
+                    StatusCode::CONFLICT,
+                    format!("Your creature is {} — wake it first", presence),
+                ));
+            }
+        }
+    }
 
     // Use the creature from the flight, or the one specified in the request
     let (creature_id, creature_name, species_name, species_group) = if let Some(row) = &has_creature
@@ -198,6 +221,56 @@ pub async fn post_rabble_message(
         swarm_id,
         message: msg_json.clone(),
     });
+
+    // Every Nth message, dispatch swarm_host narrator (non-blocking)
+    let narrator_interval: i64 = std::env::var("RABBLE_NARRATOR_INTERVAL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+
+    let msg_count: i64 = sqlx::query(
+        "SELECT COUNT(*) as cnt FROM rabble_messages WHERE swarm_id = $1 AND message_type = 'chat'",
+    )
+    .bind(swarm_id)
+    .fetch_one(&state.db)
+    .await
+    .map(|r| r.try_get("cnt").unwrap_or(0))
+    .unwrap_or(0);
+
+    if msg_count > 0 && msg_count % narrator_interval == 0 {
+        let swarm_ws_id: Option<uuid::Uuid> =
+            sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+                .bind(swarm_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|r| {
+                    r.try_get::<Option<uuid::Uuid>, _>("workspace_id")
+                        .ok()
+                        .flatten()
+                });
+
+        if let Some(ws_id) = swarm_ws_id {
+            let state2 = state.clone();
+            let user_id2 = user_id.clone();
+            tokio::spawn(async move {
+                let query = "Narrate what's happening in this rabble based on the recent conversation. Keep it brief and fun.".to_string();
+                if let Ok(narration) = rabble_workspace::dispatch_rabble_action(
+                    &state2,
+                    ws_id,
+                    "swarm_host",
+                    "rabble_narration",
+                    &query,
+                    &user_id2,
+                )
+                .await
+                {
+                    let _ = insert_narrator_message(&state2, swarm_id, &narration).await;
+                }
+            });
+        }
+    }
 
     Ok(Json(msg_json))
 }

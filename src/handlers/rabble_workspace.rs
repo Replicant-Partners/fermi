@@ -1,0 +1,425 @@
+//! Rabble ↔ Workspace integration — auto-workspace creation, agent dispatch, fee distribution.
+//!
+//! Every rabble (swarm) gets its own workspace with 4 system agents.
+//! Every user gets a personal workspace (menagerie) on first mint.
+//! Actions route through agents, who earn fractional fees and build knowledge.
+
+use axum::{extract::State, http::StatusCode, Json};
+use fermi_auth::{credit_deposit, get_or_create_wallet, teams, AuthPrincipal};
+use serde_json::{json, Value};
+use sqlx::{PgPool, Row};
+use std::sync::Arc;
+use uuid::Uuid;
+
+use agent_bestiary_memory::WorkspaceMessage;
+use fermi::agent_backend::executor::AgentExecutor;
+use fermi::agent_backend::tool_executor::ToolAwareExecutor;
+use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
+use fermi::agent_backend::ExecutionContext;
+use fermi::ast;
+use fermi::gas::{charge_and_distribute, get_workspace_agent_ids};
+
+use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
+
+/// The 4 system agents auto-hired into every rabble workspace.
+const RABBLE_SYSTEM_AGENTS: &[&str] = &["naturalist", "navigator", "swarm_host", "keeper"];
+
+/// Create a workspace for a rabble (swarm) and hire the 4 system agents.
+///
+/// Returns the workspace UUID (team.id).
+pub async fn create_rabble_workspace(
+    state: &AppState,
+    creator_id: &str,
+    name: &str,
+    swarm_id: Option<Uuid>,
+) -> Result<Uuid, (StatusCode, String)> {
+    // Generate a URL-safe slug from the name
+    let slug = format!(
+        "rabble-{}",
+        name.to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string()
+    );
+    // Append short UUID suffix to guarantee uniqueness
+    let slug = format!("{}-{}", slug, &Uuid::new_v4().to_string()[..8]);
+
+    // Create the team (workspace) — auto-adds owner to team_members
+    let team = teams::create_team(
+        &state.db,
+        name,
+        &slug,
+        Some("Auto-created workspace for rabble"),
+        creator_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create rabble workspace: {}", e),
+        )
+    })?;
+
+    let ws_id = team.id;
+
+    // Seed workspace with 50 starter credits
+    let ws_id_str = ws_id.to_string();
+    if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id_str).await {
+        if credit_deposit(
+            &state.db,
+            ws_wallet.wallet_id,
+            50,
+            "Rabble workspace starter credits",
+        )
+        .await
+        .is_ok()
+        {
+            let _ = sqlx::query("UPDATE teams SET workspace_budget = 50 WHERE id = $1")
+                .bind(ws_id)
+                .execute(&state.db)
+                .await;
+        }
+    }
+
+    // Auto-hire the 4 system agents
+    for agent_name in RABBLE_SYSTEM_AGENTS {
+        // Look up agent UUID from agents table
+        let agent_row =
+            sqlx::query("SELECT agent_id FROM agents WHERE agent_name = $1 AND status = 'active'")
+                .bind(agent_name)
+                .fetch_optional(&state.db)
+                .await;
+
+        if let Ok(Some(row)) = agent_row {
+            if let Ok(agent_id) = row.try_get::<Uuid, _>("agent_id") {
+                // Insert into workspace_agents with 'system' relationship
+                let _ = sqlx::query(
+                    "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
+                     VALUES ($1, $2, $3, 'system')
+                     ON CONFLICT (workspace_id, agent_id) DO NOTHING",
+                )
+                .bind(ws_id)
+                .bind(agent_id)
+                .bind(creator_id)
+                .execute(&state.db)
+                .await;
+            }
+        }
+    }
+
+    // Link swarm to workspace if provided
+    if let Some(sid) = swarm_id {
+        let _ = sqlx::query("UPDATE swarm_events SET workspace_id = $1 WHERE swarm_id = $2")
+            .bind(ws_id)
+            .bind(sid)
+            .execute(&state.db)
+            .await;
+    }
+
+    // Initialize workspace git repo
+    let _ = state.workspace_git.init_or_open(&slug);
+
+    tracing::info!(
+        workspace_id = %ws_id,
+        swarm_id = ?swarm_id,
+        "Created rabble workspace with {} system agents",
+        RABBLE_SYSTEM_AGENTS.len()
+    );
+
+    Ok(ws_id)
+}
+
+/// Ensure a user has a personal workspace (menagerie). Creates one if missing.
+///
+/// Returns the personal workspace UUID.
+pub async fn ensure_personal_workspace(
+    state: &AppState,
+    user_id: &str,
+) -> Result<Uuid, (StatusCode, String)> {
+    // Check if user already has a personal workspace
+    let existing = sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("DB error: {}", e),
+            )
+        })?;
+
+    if let Some(row) = existing {
+        if let Ok(Some(ws_id)) = row.try_get::<Option<Uuid>, _>("personal_workspace_id") {
+            return Ok(ws_id);
+        }
+    }
+
+    // Get display name for workspace title
+    let display_name: String = sqlx::query("SELECT display_name FROM users WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| {
+            r.try_get::<Option<String>, _>("display_name")
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_else(|| "My".to_string());
+
+    let ws_name = format!("{}'s Menagerie", display_name);
+
+    // Create the workspace
+    let ws_id = create_rabble_workspace(state, user_id, &ws_name, None).await?;
+
+    // Link to user
+    let _ = sqlx::query("UPDATE users SET personal_workspace_id = $1 WHERE user_id = $2")
+        .bind(ws_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await;
+
+    tracing::info!(user_id = %user_id, workspace_id = %ws_id, "Created personal menagerie workspace");
+
+    Ok(ws_id)
+}
+
+/// Dispatch a Rabble action to a workspace agent for execution.
+///
+/// Mirrors the workspace message execution flow:
+/// 1. Resolve agent from workspace_agents
+/// 2. Build ExecutionContext + ToolContext
+/// 3. Execute via ToolAwareExecutor
+/// 4. Record episode with embedding
+/// 5. Post result as workspace message
+/// 6. Return the agent's text response
+///
+/// This is fire-and-forget safe — callers should wrap in tokio::spawn.
+pub async fn dispatch_rabble_action(
+    state: &AppState,
+    workspace_id: Uuid,
+    agent_name: &str,
+    action_type: &str,
+    query: &str,
+    user_id: &str,
+) -> Result<String, String> {
+    // Resolve agent
+    let db_agent = resolve_agent(state, agent_name)
+        .await
+        .map_err(|(_code, msg)| msg)?;
+    let card = resolve_agent_card(state, &db_agent);
+
+    // Build AST for execution
+    let agent_stmt = ast::AgentStmt {
+        name: agent_name.to_string(),
+        agent_type: Some(card.agent_type.clone()),
+        query: query.to_string(),
+        executor: Some(ast::ExecutorType::LLM),
+        schedule: None,
+        driver_refs: vec![],
+        depends_on: vec![],
+        confidence_threshold: None,
+    };
+    let program = ast::Program {
+        statements: vec![ast::Statement::Agent(agent_stmt.clone())],
+    };
+    let context = ExecutionContext {
+        program,
+        agent_card: card.clone(),
+    };
+
+    // Get workspace slug for git context
+    let slug: String = sqlx::query("SELECT slug FROM teams WHERE id = $1")
+        .bind(workspace_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.try_get("slug").ok())
+        .unwrap_or_default();
+
+    // Build ToolContext
+    let tool_context = Arc::new(ToolContext {
+        memory_store: state.memory_store.clone(),
+        embedder: state.embedder.clone(),
+        registry: state.registry.clone(),
+        current_agent_id: Some(db_agent.agent_id),
+        workspace_id: Some(workspace_id),
+        workspace_slug: Some(slug.clone()),
+        workspace_git: Some(state.workspace_git.clone()),
+        db: Some(state.db.clone()),
+        gas_fees: Some(state.gas_fees.clone()),
+        user_id: Some(user_id.to_string()),
+        user_secrets: None,
+    });
+
+    // Execute with tool-aware executor
+    let tool_executor = ToolAwareExecutor::new(
+        state.registry.executor_arc(),
+        ToolRegistry::with_workspace(),
+        tool_context,
+    );
+    let output = tool_executor
+        .execute(&agent_stmt, &context)
+        .await
+        .map_err(|e| format!("Agent execution failed: {:?}", e))?;
+
+    // Extract response text
+    let response_text = output
+        .metadata
+        .reasoning
+        .clone()
+        .unwrap_or_else(|| "(no response)".to_string());
+
+    // Record episode with embedding
+    let mut episode = agent_output_to_episode(db_agent.agent_id, query, &output);
+    let embed_text = format!("{} {}", query, &response_text);
+    if let Ok(embedding) = state.embedder.generate(&embed_text).await {
+        episode.embedding = Some(embedding);
+    }
+    let _ = state.memory_store.store_episode(episode).await;
+
+    // Store as workspace message
+    let msg = WorkspaceMessage {
+        message_id: Uuid::new_v4(),
+        workspace_id,
+        sender_type: "agent".to_string(),
+        sender_id: db_agent.agent_id.to_string(),
+        sender_name: Some(agent_name.to_string()),
+        content: response_text.clone(),
+        message_type: action_type.to_string(),
+        metadata: json!({
+            "action_type": action_type,
+            "tokens_used": output.tokens_used,
+            "confidence": output.confidence,
+        }),
+        created_at: chrono::Utc::now(),
+    };
+    let _ = state.memory_store.store_workspace_message(&msg).await;
+
+    // Charge execution gas from workspace wallet + distribute to agents
+    let tokens = output.tokens_used.unwrap_or(0) as i32;
+    let (exec_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
+    let total = exec_fee + gas_fee;
+    let agent_ids = get_workspace_agent_ids(&state.db, workspace_id).await;
+    let ws_id_str = workspace_id.to_string();
+    if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id_str).await {
+        let _ = charge_and_distribute(
+            &state.db,
+            ws_wallet.wallet_id,
+            total,
+            "execution_fee",
+            &format!("@{} {} ({}tk)", agent_name, action_type, tokens),
+            &agent_ids,
+            None,
+            Some(workspace_id),
+        )
+        .await;
+    }
+
+    tracing::info!(
+        agent = %agent_name,
+        action = %action_type,
+        workspace = %workspace_id,
+        tokens = tokens,
+        "Dispatched rabble action through agent"
+    );
+
+    Ok(response_text)
+}
+
+/// GET /api/me/workspace — return the caller's personal workspace (menagerie) details.
+pub async fn get_personal_workspace_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let ws_id = sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .and_then(|r| {
+            r.try_get::<Option<Uuid>, _>("personal_workspace_id")
+                .ok()
+                .flatten()
+        });
+
+    let ws_id = match ws_id {
+        Some(id) => id,
+        None => {
+            return Ok(Json(json!({
+                "workspace_id": null,
+                "exists": false,
+                "message": "No personal workspace yet. Mint a creature to create one."
+            })));
+        }
+    };
+
+    // Get workspace details
+    let team = sqlx::query("SELECT id, name, slug, workspace_budget FROM teams WHERE id = $1")
+        .bind(ws_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let (name, slug, budget) = if let Some(t) = team {
+        (
+            t.try_get::<String, _>("name").unwrap_or_default(),
+            t.try_get::<String, _>("slug").unwrap_or_default(),
+            t.try_get::<i32, _>("workspace_budget").unwrap_or(0),
+        )
+    } else {
+        return Err((StatusCode::NOT_FOUND, "Workspace not found".to_string()));
+    };
+
+    // Get workspace agents
+    let agents = sqlx::query(
+        "SELECT wa.agent_id, a.agent_name, a.display_alias, wa.relationship
+         FROM workspace_agents wa
+         JOIN agents a ON a.agent_id = wa.agent_id
+         WHERE wa.workspace_id = $1",
+    )
+    .bind(ws_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let agent_list: Vec<Value> = agents
+        .iter()
+        .map(|r| {
+            json!({
+                "agent_id": r.try_get::<Uuid, _>("agent_id").ok(),
+                "agent_name": r.try_get::<String, _>("agent_name").ok(),
+                "display_alias": r.try_get::<Option<String>, _>("display_alias").ok().flatten(),
+                "relationship": r.try_get::<String, _>("relationship").ok(),
+            })
+        })
+        .collect();
+
+    // Count episodes for workspace agents
+    let episode_count: i64 = sqlx::query(
+        "SELECT COUNT(*) as cnt FROM episodes WHERE agent_id = ANY(
+            SELECT agent_id FROM workspace_agents WHERE workspace_id = $1
+        )",
+    )
+    .bind(ws_id)
+    .fetch_one(&state.db)
+    .await
+    .map(|r| r.try_get("cnt").unwrap_or(0))
+    .unwrap_or(0);
+
+    Ok(Json(json!({
+        "workspace_id": ws_id,
+        "exists": true,
+        "name": name,
+        "slug": slug,
+        "budget": budget,
+        "agents": agent_list,
+        "episode_count": episode_count,
+    })))
+}

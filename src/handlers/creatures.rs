@@ -12,6 +12,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::super::AppState;
+use super::rabble_workspace;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
@@ -557,9 +558,9 @@ pub async fn record_flight_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
 
-    // Verify creature ownership
+    // Verify creature ownership and presence
     let pool = state.memory_store.pool();
-    let creature = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
+    let creature = sqlx::query("SELECT owner_id, presence FROM creatures WHERE creature_id = $1")
         .bind(req.creature_id)
         .fetch_optional(pool)
         .await
@@ -569,6 +570,16 @@ pub async fn record_flight_handler(
     let owner: String = creature.get("owner_id");
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    let presence: String = creature
+        .try_get("presence")
+        .unwrap_or_else(|_| "active".to_string());
+    if presence != "active" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Creature is {} — wake it first", presence),
+        ));
     }
 
     // Charge 3 credits
@@ -622,6 +633,59 @@ pub async fn record_flight_handler(
     .execute(pool)
     .await
     .ok(); // best-effort
+
+    // Dispatch navigator agent for flight narration (non-blocking)
+    // Use the swarm's workspace if flying to a swarm, else personal workspace
+    let dispatch_ws_id = if let Some(sid) = req.swarm_id {
+        sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+            .bind(sid)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten())
+    } else {
+        sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
+            .bind(&user_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| {
+                r.try_get::<Option<Uuid>, _>("personal_workspace_id")
+                    .ok()
+                    .flatten()
+            })
+    };
+
+    if let Some(ws_id) = dispatch_ws_id {
+        let state2 = state.clone();
+        let user_id2 = user_id.clone();
+        let loc = req
+            .location_name
+            .clone()
+            .unwrap_or_else(|| format!("({}, {})", req.center_lat, req.center_lng));
+        let cid = req.creature_id;
+        tokio::spawn(async move {
+            let query = format!(
+                "Creature is flying from {}. Describe the habitat and what it might observe.",
+                loc
+            );
+            match rabble_workspace::dispatch_rabble_action(
+                &state2,
+                ws_id,
+                "navigator",
+                "creature_flight",
+                &query,
+                &user_id2,
+            )
+            .await
+            {
+                Ok(_) => eprintln!("[rabble] Navigator described flight for creature {}", cid),
+                Err(e) => eprintln!("[rabble] Navigator dispatch failed: {}", e),
+            }
+        });
+    }
 
     Ok(Json(json!({
         "flight_id": flight_id,
@@ -930,6 +994,11 @@ pub async fn mint_creature_handler(
     )
     .await?;
 
+    // Ensure user has a personal workspace (menagerie)
+    let personal_ws_id = rabble_workspace::ensure_personal_workspace(&state, &user_id)
+        .await
+        .ok();
+
     // Auto-generate specimen name if not provided
     let specimen_name = if let Some(ref name) = req.specimen_name {
         name.clone()
@@ -1012,6 +1081,51 @@ pub async fn mint_creature_handler(
         false
     };
 
+    // Dispatch naturalist agent to generate specimen description (non-blocking)
+    if let Some(ws_id) = personal_ws_id {
+        let state2 = state.clone();
+        let user_id2 = user_id.clone();
+        let spec_name = specimen_name.clone();
+        let sci_name2 = req.scientific_name.clone();
+        let group2 = req.species_group.clone();
+        tokio::spawn(async move {
+            let query = format!(
+                "New creature minted: {} ({}, {}). Generate a specimen description and a fun taxonomic fact.",
+                spec_name, sci_name2, group2
+            );
+            match rabble_workspace::dispatch_rabble_action(
+                &state2,
+                ws_id,
+                "naturalist",
+                "creature_mint",
+                &query,
+                &user_id2,
+            )
+            .await
+            {
+                Ok(desc) => {
+                    // Store description in variation_notes
+                    let _ = sqlx::query(
+                        "UPDATE creatures SET variation_notes = $1 WHERE creature_id = $2",
+                    )
+                    .bind(&desc)
+                    .bind(creature_id)
+                    .execute(&state2.db)
+                    .await;
+                    eprintln!(
+                        "[rabble] Naturalist described {}: {}...",
+                        spec_name,
+                        &desc[..desc.len().min(80)]
+                    );
+                }
+                Err(e) => eprintln!(
+                    "[rabble] Naturalist dispatch failed for {}: {}",
+                    spec_name, e
+                ),
+            }
+        });
+    }
+
     Ok(Json(json!({
         "creature_id": creature_id,
         "owner_id": user_id,
@@ -1024,6 +1138,7 @@ pub async fn mint_creature_handler(
         "art_generating": art_generating,
         "art_style": art_style,
         "credits_charged": total_cost,
+        "personal_workspace_id": personal_ws_id,
         "created_at": now.to_rfc3339(),
     })))
 }
@@ -1151,6 +1266,12 @@ pub async fn create_swarm_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Auto-create workspace for this rabble + hire system agents
+    let workspace_id =
+        rabble_workspace::create_rabble_workspace(&state, &user_id, &req.name, Some(swarm_id))
+            .await
+            .ok();
+
     Ok(Json(json!({
         "swarm_id": swarm_id,
         "name": req.name,
@@ -1161,6 +1282,7 @@ pub async fn create_swarm_handler(
         "invite_pool": invite_pool,
         "qr_token": qr_token,
         "visibility": visibility,
+        "workspace_id": workspace_id,
     })))
 }
 
@@ -1230,9 +1352,9 @@ pub async fn join_swarm_handler(
 
     let funding_mode: String = swarm.try_get("funding_mode").unwrap_or("hosted".into());
 
-    // Verify creature ownership
+    // Verify creature ownership and presence
     let creature = sqlx::query(
-        "SELECT owner_id, specimen_name, species_name, species_group FROM creatures WHERE creature_id = $1"
+        "SELECT owner_id, specimen_name, species_name, species_group, presence FROM creatures WHERE creature_id = $1"
     )
     .bind(req.creature_id)
     .fetch_optional(pool)
@@ -1243,6 +1365,16 @@ pub async fn join_swarm_handler(
     let owner: String = creature.get("owner_id");
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    let presence: String = creature
+        .try_get("presence")
+        .unwrap_or_else(|_| "active".to_string());
+    if presence != "active" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Creature is {} — wake it first", presence),
+        ));
     }
 
     let creature_name: Option<String> = creature.try_get("specimen_name").ok();
@@ -1333,21 +1465,73 @@ pub async fn join_swarm_handler(
     )
     .await;
 
-    // Trigger swarm host agent welcome (async, non-blocking)
-    let state_clone = state.clone();
-    let creature_name_c = creature_name.clone();
-    let species_name_c = species_name.clone();
-    let species_group_c = species_group.clone();
-    tokio::spawn(async move {
-        trigger_swarm_host_welcome(
-            &state_clone,
-            swarm_id,
-            creature_name_c.as_deref().unwrap_or("creature"),
-            species_name_c.as_deref().unwrap_or("unknown"),
-            species_group_c.as_deref().unwrap_or("unknown"),
-        )
-        .await;
-    });
+    // Route through workspace agents (swarm_host welcome + keeper log)
+    let swarm_ws_id: Option<Uuid> =
+        sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
+
+    if let Some(ws_id) = swarm_ws_id {
+        // Dispatch swarm_host welcome via workspace
+        let state2 = state.clone();
+        let user_id2 = user_id.clone();
+        let c_name = creature_name
+            .clone()
+            .unwrap_or_else(|| "creature".to_string());
+        let s_name = species_name
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        let s_group = species_group
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        tokio::spawn(async move {
+            let query = format!(
+                "Welcome {} ({}, {}) to the rabble! Share a fun taxonomic fact.",
+                c_name, s_name, s_group
+            );
+            if let Ok(welcome) = rabble_workspace::dispatch_rabble_action(
+                &state2,
+                ws_id,
+                "swarm_host",
+                "swarm_join",
+                &query,
+                &user_id2,
+            )
+            .await
+            {
+                // Insert welcome as narrator message in rabble chat
+                let _ = sqlx::query(
+                    "INSERT INTO rabble_messages (message_id, swarm_id, sender_id, creature_id, creature_name, content, message_type)
+                     VALUES ($1, $2, 'system', NULL, 'Swarm Host', $3, 'narrator')"
+                )
+                .bind(Uuid::new_v4())
+                .bind(swarm_id)
+                .bind(&welcome)
+                .execute(&state2.db)
+                .await;
+            }
+        });
+    } else {
+        // Fallback: legacy swarm host welcome (no workspace yet)
+        let state_clone = state.clone();
+        let creature_name_c = creature_name.clone();
+        let species_name_c = species_name.clone();
+        let species_group_c = species_group.clone();
+        tokio::spawn(async move {
+            trigger_swarm_host_welcome(
+                &state_clone,
+                swarm_id,
+                creature_name_c.as_deref().unwrap_or("creature"),
+                species_name_c.as_deref().unwrap_or("unknown"),
+                species_group_c.as_deref().unwrap_or("unknown"),
+            )
+            .await;
+        });
+    }
 
     Ok(Json(json!({
         "swarm_id": swarm_id,
@@ -2163,6 +2347,100 @@ pub async fn update_creature_status_handler(
     Ok(Json(json!({
         "creature_id": creature_id,
         "status": req.status,
+    })))
+}
+
+// ─── Creature presence (active/sleeping/parked) ───────────────────
+
+#[derive(Deserialize)]
+pub struct UpdatePresenceRequest {
+    pub presence: String,
+}
+
+/// PUT /api/creatures/:creature_id/presence — set creature presence state.
+/// Owner only. Dispatches keeper agent to log the transition.
+pub async fn update_creature_presence_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<UpdatePresenceRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    if !["active", "sleeping", "parked"].contains(&req.presence.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Presence must be 'active', 'sleeping', or 'parked'".to_string(),
+        ));
+    }
+
+    let creature = sqlx::query(
+        "SELECT owner_id, specimen_name, personal_workspace_id FROM creatures c
+         JOIN users u ON u.user_id = c.owner_id
+         WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    let specimen_name: String = creature.try_get("specimen_name").unwrap_or_default();
+    let personal_ws: Option<Uuid> = creature
+        .try_get::<Option<Uuid>, _>("personal_workspace_id")
+        .ok()
+        .flatten();
+
+    let result = sqlx::query(
+        "UPDATE creatures SET presence = $1, presence_changed_at = NOW(), updated_at = NOW()
+         WHERE creature_id = $2 AND owner_id = $3",
+    )
+    .bind(&req.presence)
+    .bind(creature_id)
+    .bind(&user_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Creature not found or not owned by you".to_string(),
+        ));
+    }
+
+    // Dispatch keeper agent to log the transition (non-blocking)
+    if let Some(ws_id) = personal_ws {
+        let state2 = state.clone();
+        let user_id2 = user_id.clone();
+        let presence2 = req.presence.clone();
+        let name2 = specimen_name.clone();
+        tokio::spawn(async move {
+            let query = format!(
+                "Creature {} is now {}. Log the transition.",
+                name2, presence2
+            );
+            let _ = rabble_workspace::dispatch_rabble_action(
+                &state2,
+                ws_id,
+                "keeper",
+                "presence_change",
+                &query,
+                &user_id2,
+            )
+            .await;
+        });
+    }
+
+    Ok(Json(json!({
+        "creature_id": creature_id,
+        "presence": req.presence,
     })))
 }
 
