@@ -1614,6 +1614,12 @@ pub async fn generate_art_handler(
     std::fs::write(&fs_path, &bytes)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Persist to database for cross-deploy durability
+    persist_creature_image(pool, creature_id, &bytes, mime_type).await;
+
+    // Use API endpoint as asset_path (survives redeploys, unlike static files)
+    let api_path = format!("/api/creatures/{}/image", creature_id);
+
     // Update DB
     let gen_params = json!({
         "style": style,
@@ -1628,7 +1634,7 @@ pub async fn generate_art_handler(
         "UPDATE creatures SET asset_path = $1, generation_params = $2, updated_at = NOW()
          WHERE creature_id = $3",
     )
-    .bind(&relative_path)
+    .bind(&api_path)
     .bind(&gen_params)
     .bind(creature_id)
     .execute(pool)
@@ -1638,7 +1644,7 @@ pub async fn generate_art_handler(
     Ok(Json(json!({
         "status": "generated",
         "creature_id": creature_id,
-        "asset_path": relative_path,
+        "asset_path": api_path,
         "mime_type": mime_type,
         "file_size_bytes": bytes.len(),
         "style": style,
@@ -1886,6 +1892,12 @@ async fn generate_creature_image(
     std::fs::create_dir_all("static/creatures").map_err(|e| format!("mkdir error: {}", e))?;
     std::fs::write(&fs_path, &bytes).map_err(|e| format!("write error: {}", e))?;
 
+    // Persist to database for cross-deploy durability
+    persist_creature_image(pool, creature_id, &bytes, mime_type).await;
+
+    // Use API endpoint as asset_path (survives redeploys)
+    let api_path = format!("/api/creatures/{}/image", creature_id);
+
     let gen_params = json!({
         "style": style,
         "prompt": prompt,
@@ -1899,14 +1911,14 @@ async fn generate_creature_image(
         "UPDATE creatures SET asset_path = $1, generation_params = $2, updated_at = NOW()
          WHERE creature_id = $3",
     )
-    .bind(&relative_path)
+    .bind(&api_path)
     .bind(&gen_params)
     .bind(creature_id)
     .execute(pool)
     .await
     .map_err(|e| format!("DB update error: {}", e))?;
 
-    Ok(relative_path)
+    Ok(api_path)
 }
 
 // ─── SOSA opt-in toggle ────────────────────────────────────────────
@@ -2058,4 +2070,110 @@ async fn trigger_swarm_host_welcome(
             eprintln!("Swarm host welcome failed: {}", e);
         }
     }
+}
+
+// ─── Image serving (persistent, from DB) ───────────────────────────
+
+/// GET /api/creatures/:creature_id/image — serve creature art from database
+///
+/// Falls back to filesystem, then placeholder SVG.
+/// Sets Cache-Control for browser caching.
+pub async fn creature_image_handler(
+    State(state): State<AppState>,
+    Path(creature_id): Path<Uuid>,
+) -> impl IntoResponse {
+    let pool = state.memory_store.pool();
+
+    // Try DB first
+    if let Ok(Some(row)) =
+        sqlx::query("SELECT image_bytes, mime_type FROM creature_images WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+    {
+        let bytes: Vec<u8> = row.get("image_bytes");
+        let mime: String = row.get("mime_type");
+        return (
+            StatusCode::OK,
+            [
+                (axum::http::header::CONTENT_TYPE, mime),
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "public, max-age=86400".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response();
+    }
+
+    // Fallback: try filesystem (works during same deploy that generated it)
+    let fs_path = format!("static/creatures/{}.png", creature_id);
+    if let Ok(bytes) = std::fs::read(&fs_path) {
+        // Also persist to DB for next deploy
+        let _ = sqlx::query(
+            "INSERT INTO creature_images (creature_id, image_bytes, mime_type, file_size)
+             VALUES ($1, $2, 'image/png', $3)
+             ON CONFLICT (creature_id) DO UPDATE
+             SET image_bytes = $2, mime_type = 'image/png', file_size = $3, updated_at = NOW()",
+        )
+        .bind(creature_id)
+        .bind(&bytes)
+        .bind(bytes.len() as i32)
+        .execute(pool)
+        .await;
+
+        return (
+            StatusCode::OK,
+            [
+                (axum::http::header::CONTENT_TYPE, "image/png".to_string()),
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "public, max-age=86400".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response();
+    }
+
+    // Final fallback: placeholder SVG
+    let placeholder = std::fs::read("static/creatures/placeholder.svg")
+        .unwrap_or_else(|_| b"<svg></svg>".to_vec());
+    (
+        StatusCode::OK,
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "image/svg+xml".to_string(),
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "public, max-age=60".to_string(),
+            ),
+        ],
+        placeholder,
+    )
+        .into_response()
+}
+
+/// Helper: persist image bytes to creature_images table
+pub async fn persist_creature_image(
+    pool: &sqlx::PgPool,
+    creature_id: Uuid,
+    bytes: &[u8],
+    mime_type: &str,
+) {
+    let _ = sqlx::query(
+        "INSERT INTO creature_images (creature_id, image_bytes, mime_type, file_size)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (creature_id) DO UPDATE
+         SET image_bytes = $2, mime_type = $3, file_size = $4, updated_at = NOW()",
+    )
+    .bind(creature_id)
+    .bind(bytes)
+    .bind(mime_type)
+    .bind(bytes.len() as i32)
+    .execute(pool)
+    .await;
 }

@@ -413,6 +413,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/050_fix_tx_type_constraint_rabble.sql",
         "migrations/051_swarm_telemetry.sql",
         "migrations/052_sosa_observations.sql",
+        "migrations/053_creature_image_storage.sql",
     ];
 
     for file in &migration_files {
@@ -795,6 +796,10 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/flights",
             get(handlers::creatures::creature_flights_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/image",
+            get(handlers::creatures::creature_image_handler),
         )
         .route("/api/swarms", get(handlers::creatures::list_swarms_handler))
         .route(
