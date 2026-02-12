@@ -126,8 +126,168 @@ pub async fn admin_stats_handler(
             "total_devices": sqlx::query("SELECT COUNT(*) as cnt FROM creature_devices")
                 .fetch_one(&state.db).await
                 .map(|r| r.try_get::<i64, _>("cnt").unwrap_or(0)).unwrap_or(0),
-        }
+        },
+        "gas_economics": build_gas_economics(&state.db).await,
     })))
+}
+
+/// Build gas economics report: execution vs platform_read breakdown,
+/// top-read agents, read-to-execute ratios, hourly volume.
+/// This is the system optimization signal — shows where value flows.
+async fn build_gas_economics(pool: &sqlx::PgPool) -> Value {
+    // Total by tx_type (execution_fee vs platform_read vs gas_fee etc)
+    let tx_breakdown: Vec<Value> = sqlx::query(
+        "SELECT tx_type, COUNT(*) as count, COALESCE(SUM(amount), 0) as total_credits
+         FROM credit_ledger
+         WHERE tx_type IN ('execution_fee', 'platform_read', 'gas_fee', 'execution_royalty',
+                           'creature_mint', 'rabble_chat', 'creature_art', 'creature_flight')
+         GROUP BY tx_type
+         ORDER BY total_credits DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(|r| {
+        json!({
+            "tx_type": r.try_get::<String, _>("tx_type").unwrap_or_default(),
+            "count": r.try_get::<i64, _>("count").unwrap_or(0),
+            "total_credits": r.try_get::<i64, _>("total_credits").unwrap_or(0),
+        })
+    })
+    .collect();
+
+    // Top agents by platform_read demand (which agent data do users pay to view?)
+    let top_read_agents: Vec<Value> = sqlx::query(
+        "SELECT cl.related_id as agent_ref, COUNT(*) as reads,
+                COALESCE(a.agent_name, cl.related_id) as agent_name
+         FROM credit_ledger cl
+         LEFT JOIN agents a ON a.agent_id::text = cl.related_id
+         WHERE cl.tx_type = 'platform_read' AND cl.related_id IS NOT NULL
+         GROUP BY cl.related_id, a.agent_name
+         ORDER BY reads DESC
+         LIMIT 20",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(|r| {
+        json!({
+            "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+            "reads": r.try_get::<i64, _>("reads").unwrap_or(0),
+        })
+    })
+    .collect();
+
+    // Read-to-execute ratio per agent (high = durable value, low = ephemeral)
+    let read_exec_ratio: Vec<Value> = sqlx::query(
+        "SELECT COALESCE(a.agent_name, cl.related_id) as agent_name,
+                SUM(CASE WHEN cl.tx_type = 'platform_read' THEN 1 ELSE 0 END) as reads,
+                SUM(CASE WHEN cl.tx_type = 'execution_fee' THEN 1 ELSE 0 END) as executions
+         FROM credit_ledger cl
+         LEFT JOIN agents a ON a.agent_id::text = cl.related_id
+         WHERE cl.tx_type IN ('platform_read', 'execution_fee')
+           AND cl.related_id IS NOT NULL
+         GROUP BY COALESCE(a.agent_name, cl.related_id)
+         HAVING SUM(CASE WHEN cl.tx_type = 'execution_fee' THEN 1 ELSE 0 END) > 0
+         ORDER BY SUM(CASE WHEN cl.tx_type = 'platform_read' THEN 1 ELSE 0 END)::float /
+                  NULLIF(SUM(CASE WHEN cl.tx_type = 'execution_fee' THEN 1 ELSE 0 END), 0) DESC
+         LIMIT 20",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(|r| {
+        let reads = r.try_get::<i64, _>("reads").unwrap_or(0);
+        let execs = r.try_get::<i64, _>("executions").unwrap_or(0);
+        let ratio = if execs > 0 {
+            reads as f64 / execs as f64
+        } else {
+            0.0
+        };
+        json!({
+            "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+            "reads": reads,
+            "executions": execs,
+            "read_to_execute_ratio": (ratio * 100.0).round() / 100.0,
+        })
+    })
+    .collect();
+
+    // 24h hourly read volume (capacity planning)
+    let hourly_reads: Vec<Value> = sqlx::query(
+        "SELECT date_trunc('hour', created_at) as hour, COUNT(*) as reads
+         FROM credit_ledger
+         WHERE tx_type = 'platform_read' AND created_at > NOW() - INTERVAL '24 hours'
+         GROUP BY hour
+         ORDER BY hour ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(|r| {
+        json!({
+            "hour": r.try_get::<chrono::DateTime<chrono::Utc>, _>("hour").ok(),
+            "reads": r.try_get::<i64, _>("reads").unwrap_or(0),
+        })
+    })
+    .collect();
+
+    // Platform read totals
+    let read_totals = sqlx::query(
+        "SELECT COUNT(*) as total_reads,
+                COALESCE(SUM(amount), 0) as total_revenue,
+                COUNT(DISTINCT wallet_id) as unique_readers
+         FROM credit_ledger
+         WHERE tx_type = 'platform_read'",
+    )
+    .fetch_one(pool)
+    .await;
+
+    let (total_reads, total_revenue, unique_readers) = match read_totals {
+        Ok(r) => (
+            r.try_get::<i64, _>("total_reads").unwrap_or(0),
+            r.try_get::<i64, _>("total_revenue").unwrap_or(0),
+            r.try_get::<i64, _>("unique_readers").unwrap_or(0),
+        ),
+        Err(_) => (0, 0, 0),
+    };
+
+    // Agent royalty totals (how much agents have earned)
+    let agent_earnings = sqlx::query(
+        "SELECT COUNT(*) as total_payouts,
+                COALESCE(SUM(amount), 0) as total_earned
+         FROM agent_episode_payouts",
+    )
+    .fetch_one(pool)
+    .await;
+
+    let (total_payouts, total_earned) = match agent_earnings {
+        Ok(r) => (
+            r.try_get::<i64, _>("total_payouts").unwrap_or(0),
+            r.try_get::<i64, _>("total_earned").unwrap_or(0),
+        ),
+        Err(_) => (0, 0),
+    };
+
+    json!({
+        "platform_reads": {
+            "total_reads": total_reads,
+            "total_revenue_credits": total_revenue,
+            "unique_readers": unique_readers,
+            "hourly_volume_24h": hourly_reads,
+            "top_read_agents": top_read_agents,
+        },
+        "agent_economics": {
+            "total_royalty_payouts": total_payouts,
+            "total_agent_earnings_credits": total_earned,
+            "read_to_execute_ratios": read_exec_ratio,
+        },
+        "tx_breakdown": tx_breakdown,
+    })
 }
 
 #[derive(Debug, Deserialize)]
