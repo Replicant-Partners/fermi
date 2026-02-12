@@ -262,6 +262,10 @@
         background: rgba(146, 131, 116, 0.15);
         color: var(--gray);
       }
+      .badge-blue {
+        background: rgba(131, 165, 152, 0.15);
+        color: var(--aqua);
+      }
 
       /* Ledger */
       .ledger-filters {
@@ -375,9 +379,10 @@
             <tr>
               <th>Agent</th>
               <th>Owner</th>
+              <th>Tier</th>
               <th>Visibility</th>
+              <th>Status</th>
               <th>Executions</th>
-              <th>Created</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -693,22 +698,32 @@
           const tbody = document.getElementById("agents-tbody");
           tbody.innerHTML = "";
           (data.agents || []).forEach((a) => {
-            const created = a.created_at
-              ? new Date(a.created_at).toLocaleDateString()
-              : "-";
             const visBadge =
               a.visibility === "public"
                 ? "badge-green"
                 : a.visibility === "private"
                   ? "badge-gray"
                   : "badge-yellow";
+            const statusBadge =
+              a.status === "published"
+                ? "badge-green"
+                : a.status === "draft"
+                  ? "badge-yellow"
+                  : "badge-gray";
+            const tierBadge =
+              a.tier === "curated"
+                ? "badge-blue"
+                : a.tier === "system"
+                  ? "badge-gray"
+                  : "badge-yellow";
             const tr = document.createElement("tr");
             tr.innerHTML = `
               <td><a href="/agents/${a.id}" style="color:var(--aqua);text-decoration:none;">${escHtml(a.display_alias || a.agent_name || "-")}</a></td>
               <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(a.owner_id || "-")}</td>
+              <td><span class="badge ${tierBadge}">${escHtml(a.tier || "-")}</span></td>
               <td><span class="badge ${visBadge}">${escHtml(a.visibility || "public")}</span></td>
+              <td><span class="badge ${statusBadge}">${escHtml(a.status || "-")}</span></td>
               <td>${a.execution_count ?? 0}</td>
-              <td style="color:var(--fg3);">${created}</td>
               <td>
                 ${
                   a.visibility !== "hidden"

@@ -286,13 +286,19 @@ pub async fn admin_list_agents_handler(
         .iter()
         .map(|a| {
             json!({
+                "id": a.agent_name,
+                "agent_id": a.agent_id,
                 "agent_name": a.agent_name,
                 "display_alias": a.display_alias,
                 "owner_id": a.owner_id,
                 "visibility": a.visibility,
+                "status": a.status,
+                "execution_count": a.total_executions,
                 "total_executions": a.total_executions,
                 "tier": a.tier,
                 "model": a.model,
+                "description": a.description,
+                "llm_provider": a.llm_provider,
             })
         })
         .collect();
