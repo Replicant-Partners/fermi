@@ -33,6 +33,10 @@ pub struct GasFees {
     pub creature_mint: i32,
     pub creature_art: i32,
     pub voice_synthesis: i32,
+    pub swarm_session_create: i32,
+    pub swarm_telemetry_ingest: i32,
+    pub observation_session_create: i32,
+    pub observation_ingest: i32,
     /// Layer 2: Platform transaction fee on crypto token transfers (agent→owner royalties).
     /// Expressed as a fraction (e.g. 0.025 = 2.5%). Applied to every token payout.
     /// Not yet wired — requires SIWE wallet connection + settlement layer.
@@ -68,6 +72,10 @@ impl GasFees {
             creature_mint: env_or("GAS_CREATURE_MINT", 3),
             creature_art: env_or("GAS_CREATURE_ART", 5),
             voice_synthesis: env_or("GAS_VOICE_SYNTHESIS", 2),
+            swarm_session_create: env_or("GAS_SWARM_SESSION_CREATE", 2),
+            swarm_telemetry_ingest: env_or("GAS_SWARM_TELEMETRY_INGEST", 1),
+            observation_session_create: env_or("GAS_OBSERVATION_SESSION_CREATE", 2),
+            observation_ingest: env_or("GAS_OBSERVATION_INGEST", 1),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -112,6 +120,10 @@ impl Default for GasFees {
             creature_mint: 3,
             creature_art: 5,
             voice_synthesis: 2,
+            swarm_session_create: 2,
+            swarm_telemetry_ingest: 1,
+            observation_session_create: 2,
+            observation_ingest: 1,
             crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
     }

@@ -411,6 +411,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/047_flight_path_samples.sql",
         "migrations/048_voice_assets.sql",
         "migrations/050_fix_tx_type_constraint_rabble.sql",
+        "migrations/051_swarm_telemetry.sql",
+        "migrations/052_sosa_observations.sql",
     ];
 
     for file in &migration_files {
@@ -1283,6 +1285,10 @@ async fn main() {
             "/api/creatures/generate-art-batch",
             post(handlers::creatures::generate_art_batch_handler),
         )
+        .route(
+            "/api/creatures/:creature_id/sosa-opt-in",
+            put(handlers::creatures::sosa_opt_in_handler),
+        )
         // Rabble chat (authenticated)
         .route(
             "/api/rabble/:id/messages",
@@ -1310,6 +1316,61 @@ async fn main() {
             "/api/rabble/join/:qr_token",
             get(handlers::qr_codes::resolve_qr_token_handler)
                 .post(handlers::creatures::join_by_qr_token_handler),
+        )
+        // Swarm telemetry
+        .route(
+            "/api/swarm/sessions",
+            post(handlers::swarm_telemetry::create_session_handler)
+                .get(handlers::swarm_telemetry::list_sessions_handler),
+        )
+        .route(
+            "/api/swarm/sessions/:session_id",
+            get(handlers::swarm_telemetry::get_session_handler),
+        )
+        .route(
+            "/api/swarm/sessions/:session_id/end",
+            put(handlers::swarm_telemetry::end_session_handler),
+        )
+        .route(
+            "/api/swarm/sessions/:session_id/telemetry",
+            post(handlers::swarm_telemetry::ingest_telemetry_handler)
+                .get(handlers::swarm_telemetry::query_telemetry_handler),
+        )
+        .route(
+            "/api/swarm/sessions/:session_id/summary",
+            get(handlers::swarm_telemetry::session_summary_handler),
+        )
+        .route(
+            "/api/swarm/sessions/:session_id/experience",
+            get(handlers::swarm_telemetry::experience_export_handler),
+        )
+        // Universal SOSA observations
+        .route(
+            "/api/observe/platforms",
+            post(handlers::observations::create_platform_handler)
+                .get(handlers::observations::list_platforms_handler),
+        )
+        .route(
+            "/api/observe/sessions",
+            post(handlers::observations::create_observation_session_handler)
+                .get(handlers::observations::list_observation_sessions_handler),
+        )
+        .route(
+            "/api/observe/sessions/:session_id/end",
+            put(handlers::observations::end_observation_session_handler),
+        )
+        .route(
+            "/api/observe/sessions/:session_id/observations",
+            post(handlers::observations::ingest_observations_handler)
+                .get(handlers::observations::query_observations_handler),
+        )
+        .route(
+            "/api/observe/sessions/:session_id/summary",
+            get(handlers::observations::observation_summary_handler),
+        )
+        .route(
+            "/api/observe/sessions/:session_id/experience",
+            get(handlers::observations::observation_experience_handler),
         )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),

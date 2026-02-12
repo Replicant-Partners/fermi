@@ -594,6 +594,197 @@ pub async fn end_flight_handler(
         ));
     }
 
+    // Bridge to SOSA: convert path_samples into universal observations (fire-and-forget).
+    // Only fires if creature.sosa_opt_in = true (AKP consent model).
+    if let Some(ref samples) = req.path_samples {
+        if let Some(arr) = samples.as_array() {
+            if !arr.is_empty() {
+                let spawn_db = state.db.clone();
+                let spawn_pool = state.memory_store.pool().clone();
+                let user_id = principal.user_id();
+                let path_data = arr.clone();
+                let fid = flight_id;
+
+                tokio::spawn(async move {
+                    // Look up flight details + AKP consent flag
+                    let flight_row = sqlx::query(
+                        "SELECT f.creature_id, f.swarm_id, c.species_group, c.scientific_name, c.sosa_opt_in
+                         FROM creature_flights f
+                         JOIN creatures c ON f.creature_id = c.creature_id
+                         WHERE f.flight_id = $1",
+                    )
+                    .bind(fid)
+                    .fetch_optional(&spawn_pool)
+                    .await
+                    .ok()
+                    .flatten();
+
+                    let flight_row = match flight_row {
+                        Some(r) => r,
+                        None => return,
+                    };
+
+                    // Respect AKP consent: only emit SOSA if creature owner opted in
+                    let opt_in: bool = flight_row.get("sosa_opt_in");
+                    if !opt_in {
+                        return;
+                    }
+
+                    let creature_id: Uuid = flight_row.get("creature_id");
+                    let species: String = flight_row.get("species_group");
+                    let sci_name: Option<String> = flight_row.get("scientific_name");
+                    let feature = sci_name.unwrap_or_else(|| species.clone());
+
+                    // Get or create platform for this creature
+                    let platform_id = match sqlx::query(
+                        "SELECT platform_id FROM sosa_platforms
+                         WHERE owner_id = $1 AND name = $2 LIMIT 1",
+                    )
+                    .bind(&user_id)
+                    .bind(&format!("creature-{}", creature_id))
+                    .fetch_optional(&spawn_db)
+                    .await
+                    .ok()
+                    .flatten()
+                    {
+                        Some(row) => row.get::<Uuid, _>("platform_id"),
+                        None => {
+                            let pid = Uuid::new_v4();
+                            let _ = sqlx::query(
+                                "INSERT INTO sosa_platforms (platform_id, owner_id, name, platform_type, description)
+                                 VALUES ($1, $2, $3, $4, $5)"
+                            )
+                            .bind(pid)
+                            .bind(&user_id)
+                            .bind(&format!("creature-{}", creature_id))
+                            .bind("ar_creature")
+                            .bind(&format!("Rabble AR {} ({})", species, feature))
+                            .execute(&spawn_db)
+                            .await;
+                            pid
+                        }
+                    };
+
+                    // Get or create observation session for this flight
+                    let session_id = Uuid::new_v4();
+                    let _ = sqlx::query(
+                        "INSERT INTO observation_sessions (session_id, owner_id, platform_id, name, description)
+                         VALUES ($1, $2, $3, $4, $5)"
+                    )
+                    .bind(session_id)
+                    .bind(&user_id)
+                    .bind(platform_id)
+                    .bind(&format!("flight-{}", fid))
+                    .bind(&format!("AR {} flight path → SOSA", species))
+                    .execute(&spawn_db)
+                    .await;
+
+                    // Convert path_samples [{lat, lng, heading, t}] → SOSA observations
+                    // Each sample produces 2-3 observations: position, heading, (speed if derivable)
+                    let mut obs_count = 0u32;
+                    for (i, sample) in path_data.iter().enumerate() {
+                        let t = sample.get("t").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let lat = sample.get("lat").and_then(|v| v.as_f64());
+                        let lng = sample.get("lng").and_then(|v| v.as_f64());
+                        let heading = sample.get("heading").and_then(|v| v.as_f64());
+
+                        if let (Some(lat_v), Some(lng_v)) = (lat, lng) {
+                            // Position X (longitude as proxy)
+                            let _ = sqlx::query(
+                                "INSERT INTO sosa_observations (observation_id, session_id, platform_id,
+                                 observable_property, feature_of_interest, result_value, result_unit,
+                                 phenomenon_time) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+                            )
+                            .bind(Uuid::new_v4()).bind(session_id).bind(platform_id)
+                            .bind("onto4mat:xLocation").bind(&feature)
+                            .bind(lng_v).bind("deg").bind(t)
+                            .execute(&spawn_db).await;
+
+                            // Position Y (latitude)
+                            let _ = sqlx::query(
+                                "INSERT INTO sosa_observations (observation_id, session_id, platform_id,
+                                 observable_property, feature_of_interest, result_value, result_unit,
+                                 phenomenon_time) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+                            )
+                            .bind(Uuid::new_v4()).bind(session_id).bind(platform_id)
+                            .bind("onto4mat:yLocation").bind(&feature)
+                            .bind(lat_v).bind("deg").bind(t)
+                            .execute(&spawn_db).await;
+
+                            obs_count += 2;
+                        }
+
+                        if let Some(h) = heading {
+                            let _ = sqlx::query(
+                                "INSERT INTO sosa_observations (observation_id, session_id, platform_id,
+                                 observable_property, feature_of_interest, result_value, result_unit,
+                                 phenomenon_time) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+                            )
+                            .bind(Uuid::new_v4()).bind(session_id).bind(platform_id)
+                            .bind("onto4mat:hasHeading").bind(&feature)
+                            .bind(h).bind("deg").bind(t)
+                            .execute(&spawn_db).await;
+                            obs_count += 1;
+                        }
+
+                        // Derive speed from consecutive samples
+                        if i > 0 {
+                            let prev = &path_data[i - 1];
+                            let prev_t = prev.get("t").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let dt = (t - prev_t) as f64 / 1000.0; // seconds
+                            if dt > 0.0 {
+                                if let (Some(plat), Some(plng), Some(clat), Some(clng)) = (
+                                    prev.get("lat").and_then(|v| v.as_f64()),
+                                    prev.get("lng").and_then(|v| v.as_f64()),
+                                    lat,
+                                    lng,
+                                ) {
+                                    // Haversine-lite: approximate m/s at small scales
+                                    let dlat = (clat - plat).to_radians();
+                                    let dlng = (clng - plng).to_radians();
+                                    let a = (dlat / 2.0).sin().powi(2)
+                                        + clat.to_radians().cos()
+                                            * plat.to_radians().cos()
+                                            * (dlng / 2.0).sin().powi(2);
+                                    let dist_m = 2.0 * 6_371_000.0 * a.sqrt().asin();
+                                    let speed = dist_m / dt;
+
+                                    let _ = sqlx::query(
+                                        "INSERT INTO sosa_observations (observation_id, session_id, platform_id,
+                                         observable_property, feature_of_interest, result_value, result_unit,
+                                         phenomenon_time) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+                                    )
+                                    .bind(Uuid::new_v4()).bind(session_id).bind(platform_id)
+                                    .bind("onto4mat:hasSpeed").bind(&feature)
+                                    .bind(speed).bind("m/s").bind(t)
+                                    .execute(&spawn_db).await;
+                                    obs_count += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    // Close the session
+                    let _ = sqlx::query(
+                        "UPDATE observation_sessions SET status = 'completed', ended_at = NOW()
+                         WHERE session_id = $1",
+                    )
+                    .bind(session_id)
+                    .execute(&spawn_db)
+                    .await;
+
+                    eprintln!(
+                        "SOSA bridge: flight {} → {} observations ({} path samples, species: {})",
+                        fid,
+                        obs_count,
+                        path_data.len(),
+                        species
+                    );
+                });
+            }
+        }
+    }
+
     Ok(Json(json!({
         "flight_id": flight_id,
         "ended_at": now.to_rfc3339(),
@@ -1705,6 +1896,53 @@ async fn generate_creature_image(
     .map_err(|e| format!("DB update error: {}", e))?;
 
     Ok(relative_path)
+}
+
+// ─── SOSA opt-in toggle ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SosaOptInRequest {
+    pub opt_in: bool,
+}
+
+/// PUT /api/creatures/:creature_id/sosa-opt-in — toggle SOSA data sharing for a creature.
+/// AKP consent: creature owner must explicitly opt in before flight data is bridged to SOSA.
+pub async fn sosa_opt_in_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<SosaOptInRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    let result = sqlx::query(
+        "UPDATE creatures SET sosa_opt_in = $1, updated_at = NOW()
+         WHERE creature_id = $2 AND owner_id = $3",
+    )
+    .bind(req.opt_in)
+    .bind(creature_id)
+    .bind(&user_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Creature not found or not owned by you".to_string(),
+        ));
+    }
+
+    Ok(Json(json!({
+        "creature_id": creature_id,
+        "sosa_opt_in": req.opt_in,
+        "message": if req.opt_in {
+            "SOSA data sharing enabled — future flights will generate universal sensor observations"
+        } else {
+            "SOSA data sharing disabled — flight data stays private"
+        },
+    })))
 }
 
 // ─── Rabble helpers ────────────────────────────────────────────────
