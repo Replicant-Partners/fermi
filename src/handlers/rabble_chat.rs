@@ -131,6 +131,20 @@ pub async fn post_rabble_message(
         (None, None, None, None)
     };
 
+    // Fetch sender display name
+    let sender_display_name: Option<String> =
+        sqlx::query("SELECT display_name FROM users WHERE user_id = $1")
+            .bind(&user_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| {
+                r.try_get::<Option<String>, _>("display_name")
+                    .ok()
+                    .flatten()
+            });
+
     // Charge gas
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
         .await
@@ -169,6 +183,7 @@ pub async fn post_rabble_message(
         "message_id": message_id,
         "swarm_id": swarm_id,
         "sender_id": user_id,
+        "sender_display_name": sender_display_name,
         "creature_id": creature_id,
         "creature_name": creature_name,
         "species_name": species_name,
@@ -202,10 +217,12 @@ pub async fn get_rabble_messages(
             .with_timezone(&chrono::Utc);
 
         sqlx::query(
-            "SELECT message_id, swarm_id, sender_id, creature_id, creature_name, species_name, species_group, content, message_type, created_at
-             FROM rabble_messages
-             WHERE swarm_id = $1 AND created_at < $2
-             ORDER BY created_at DESC
+            "SELECT m.message_id, m.swarm_id, m.sender_id, m.creature_id, m.creature_name, m.species_name, m.species_group, m.content, m.message_type, m.created_at,
+                    u.display_name AS sender_display_name
+             FROM rabble_messages m
+             LEFT JOIN users u ON u.user_id = m.sender_id
+             WHERE m.swarm_id = $1 AND m.created_at < $2
+             ORDER BY m.created_at DESC
              LIMIT $3"
         )
         .bind(swarm_id)
@@ -216,10 +233,12 @@ pub async fn get_rabble_messages(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     } else {
         sqlx::query(
-            "SELECT message_id, swarm_id, sender_id, creature_id, creature_name, species_name, species_group, content, message_type, created_at
-             FROM rabble_messages
-             WHERE swarm_id = $1
-             ORDER BY created_at DESC
+            "SELECT m.message_id, m.swarm_id, m.sender_id, m.creature_id, m.creature_name, m.species_name, m.species_group, m.content, m.message_type, m.created_at,
+                    u.display_name AS sender_display_name
+             FROM rabble_messages m
+             LEFT JOIN users u ON u.user_id = m.sender_id
+             WHERE m.swarm_id = $1
+             ORDER BY m.created_at DESC
              LIMIT $2"
         )
         .bind(swarm_id)
@@ -234,6 +253,7 @@ pub async fn get_rabble_messages(
             "message_id": row.try_get::<uuid::Uuid, _>("message_id").ok(),
             "swarm_id": row.try_get::<uuid::Uuid, _>("swarm_id").ok(),
             "sender_id": row.try_get::<String, _>("sender_id").ok(),
+            "sender_display_name": row.try_get::<Option<String>, _>("sender_display_name").ok().flatten(),
             "creature_id": row.try_get::<Option<uuid::Uuid>, _>("creature_id").ok().flatten(),
             "creature_name": row.try_get::<Option<String>, _>("creature_name").ok().flatten(),
             "species_name": row.try_get::<Option<String>, _>("species_name").ok().flatten(),
@@ -271,10 +291,12 @@ pub async fn rabble_stream(
         if let Ok(since) = chrono::DateTime::parse_from_rfc3339(since_str) {
             let since_utc = since.with_timezone(&chrono::Utc);
             let rows = sqlx::query(
-                "SELECT message_id, swarm_id, sender_id, creature_id, creature_name, species_name, species_group, content, message_type, created_at
-                 FROM rabble_messages
-                 WHERE swarm_id = $1 AND created_at > $2
-                 ORDER BY created_at ASC
+                "SELECT m.message_id, m.swarm_id, m.sender_id, m.creature_id, m.creature_name, m.species_name, m.species_group, m.content, m.message_type, m.created_at,
+                        u.display_name AS sender_display_name
+                 FROM rabble_messages m
+                 LEFT JOIN users u ON u.user_id = m.sender_id
+                 WHERE m.swarm_id = $1 AND m.created_at > $2
+                 ORDER BY m.created_at ASC
                  LIMIT 200"
             )
             .bind(swarm_id)
@@ -288,6 +310,7 @@ pub async fn rabble_stream(
                     "message_id": row.try_get::<uuid::Uuid, _>("message_id").ok(),
                     "swarm_id": row.try_get::<uuid::Uuid, _>("swarm_id").ok(),
                     "sender_id": row.try_get::<String, _>("sender_id").ok(),
+                    "sender_display_name": row.try_get::<Option<String>, _>("sender_display_name").ok().flatten(),
                     "creature_id": row.try_get::<Option<uuid::Uuid>, _>("creature_id").ok().flatten(),
                     "creature_name": row.try_get::<Option<String>, _>("creature_name").ok().flatten(),
                     "species_name": row.try_get::<Option<String>, _>("species_name").ok().flatten(),

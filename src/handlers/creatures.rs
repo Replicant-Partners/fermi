@@ -332,11 +332,56 @@ pub async fn list_swarms_handler(
     let pool = state.memory_store.pool();
     match query.fetch_all(pool).await {
         Ok(rows) => {
+            // Collect swarm IDs for participation lookup
+            let swarm_ids: Vec<Uuid> = rows.iter().map(|r| r.get::<Uuid, _>("swarm_id")).collect();
+
+            // Look up caller's creature in each swarm (if authenticated)
+            let mut my_creatures: std::collections::HashMap<Uuid, (Uuid, String)> =
+                std::collections::HashMap::new();
+            if let Some(ref uid) = caller_id {
+                if !swarm_ids.is_empty() {
+                    let placeholders: Vec<String> = (1..=swarm_ids.len())
+                        .map(|i| format!("${}", i + 1))
+                        .collect();
+                    let my_sql = format!(
+                        "SELECT DISTINCT ON (cf.swarm_id) cf.swarm_id, cf.creature_id, c.specimen_name, c.species_name
+                         FROM creature_flights cf
+                         JOIN creatures c ON c.creature_id = cf.creature_id
+                         WHERE cf.swarm_id IN ({}) AND c.owner_id = $1
+                         ORDER BY cf.swarm_id, cf.started_at DESC",
+                        placeholders.join(", ")
+                    );
+                    let mut my_query = sqlx::query(&my_sql).bind(uid);
+                    for sid in &swarm_ids {
+                        my_query = my_query.bind(sid);
+                    }
+                    if let Ok(my_rows) = my_query.fetch_all(pool).await {
+                        for r in &my_rows {
+                            let sid: Uuid = r.get("swarm_id");
+                            let cid: Uuid = r.get("creature_id");
+                            let cname: String = r
+                                .try_get::<Option<String>, _>("specimen_name")
+                                .ok()
+                                .flatten()
+                                .or_else(|| {
+                                    r.try_get::<Option<String>, _>("species_name")
+                                        .ok()
+                                        .flatten()
+                                })
+                                .unwrap_or_else(|| "Creature".into());
+                            my_creatures.insert(sid, (cid, cname));
+                        }
+                    }
+                }
+            }
+
             let swarms: Vec<serde_json::Value> = rows
                 .iter()
                 .map(|row| {
+                    let sid = row.get::<Uuid, _>("swarm_id");
+                    let (my_cid, my_cname) = my_creatures.get(&sid).map(|(c, n)| (Some(*c), Some(n.clone()))).unwrap_or((None, None));
                     json!({
-                        "swarm_id": row.get::<Uuid, _>("swarm_id"),
+                        "swarm_id": sid,
                         "creator_id": row.get::<String, _>("creator_id"),
                         "h3_cell": row.get::<String, _>("h3_cell"),
                         "center_lat": row.get::<f64, _>("center_lat"),
@@ -355,6 +400,8 @@ pub async fn list_swarms_handler(
                         "funding_mode": row.try_get::<String, _>("funding_mode").unwrap_or_else(|_| "hosted".into()),
                         "qr_token": row.try_get::<Option<String>, _>("qr_token").unwrap_or(None),
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+                        "my_creature_id": my_cid,
+                        "my_creature_name": my_cname,
                     })
                 })
                 .collect();
@@ -993,8 +1040,8 @@ pub struct CreateSwarmRequest {
     pub description: Option<String>,
     pub species_filter: Option<String>,
     pub max_participants: Option<i32>,
-    pub starts_at: String,
-    pub ends_at: String,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
     pub funding_mode: Option<String>,
     pub invite_pool: Option<i32>,
     pub suggested_contribution: Option<i32>,
@@ -1049,10 +1096,21 @@ pub async fn create_swarm_handler(
 
     let swarm_id = Uuid::new_v4();
     let now = chrono::Utc::now();
-    let starts_at = chrono::DateTime::parse_from_rfc3339(&req.starts_at)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid starts_at: {}", e)))?;
-    let ends_at = chrono::DateTime::parse_from_rfc3339(&req.ends_at)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid ends_at: {}", e)))?;
+    let starts_at = if let Some(ref s) = req.starts_at {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid starts_at: {}", e)))?
+            .with_timezone(&chrono::Utc)
+    } else {
+        now
+    };
+    // No ends_at = persistent rabble (10 years out)
+    let ends_at = if let Some(ref s) = req.ends_at {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid ends_at: {}", e)))?
+            .with_timezone(&chrono::Utc)
+    } else {
+        now + chrono::Duration::days(3650)
+    };
     let resolution = req.h3_resolution.unwrap_or(12);
 
     // Generate QR token
