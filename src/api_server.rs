@@ -414,6 +414,9 @@ async fn run_migrations(db: &PgPool) {
         "migrations/051_swarm_telemetry.sql",
         "migrations/052_sosa_observations.sql",
         "migrations/053_creature_image_storage.sql",
+        "migrations/054_creature_management.sql",
+        "migrations/055_contacts.sql",
+        "migrations/056_devices.sql",
     ];
 
     for file in &migration_files {
@@ -1225,6 +1228,23 @@ async fn main() {
             "/api/admin/waitlist/:entry_id",
             delete(handlers::admin::admin_delete_waitlist_handler),
         )
+        // Admin Rabble routes
+        .route(
+            "/api/admin/creatures",
+            get(handlers::admin::admin_list_creatures_handler),
+        )
+        .route(
+            "/api/admin/creatures/:creature_id/flag",
+            put(handlers::admin::admin_flag_creature_handler),
+        )
+        .route(
+            "/api/admin/swarms",
+            get(handlers::admin::admin_list_swarms_handler),
+        )
+        .route(
+            "/api/admin/swarms/:swarm_id/status",
+            put(handlers::admin::admin_update_swarm_status_handler),
+        )
         // Marketplace routes
         .route(
             "/api/marketplace/match",
@@ -1293,6 +1313,41 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/sosa-opt-in",
             put(handlers::creatures::sosa_opt_in_handler),
+        )
+        // Creature CRUD (authenticated)
+        .route(
+            "/api/creatures/:creature_id/update",
+            put(handlers::creatures::update_creature_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/status",
+            put(handlers::creatures::update_creature_status_handler),
+        )
+        // Device pairing (authenticated)
+        .route(
+            "/api/creatures/:creature_id/devices",
+            get(handlers::creatures::list_devices_handler)
+                .post(handlers::creatures::pair_device_handler),
+        )
+        .route(
+            "/api/devices/:device_id",
+            put(handlers::creatures::update_device_handler)
+                .delete(handlers::creatures::unpair_device_handler),
+        )
+        .route(
+            "/api/devices/:device_id/location",
+            post(handlers::creatures::report_device_location_handler),
+        )
+        // Contacts (authenticated)
+        .route(
+            "/api/contacts",
+            get(handlers::social::list_contacts_handler)
+                .post(handlers::social::add_contact_handler),
+        )
+        .route(
+            "/api/contacts/:contact_id",
+            put(handlers::social::update_contact_handler)
+                .delete(handlers::social::remove_contact_handler),
         )
         // Rabble chat (authenticated)
         .route(

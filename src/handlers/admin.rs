@@ -117,6 +117,15 @@ pub async fn admin_stats_handler(
             "total_creatures": total_creatures,
             "active_rabbles": active_rabbles,
             "total_rabble_messages": total_rabble_messages,
+            "total_flights": sqlx::query("SELECT COUNT(*) as cnt FROM creature_flights")
+                .fetch_one(&state.db).await
+                .map(|r| r.try_get::<i64, _>("cnt").unwrap_or(0)).unwrap_or(0),
+            "total_contacts": sqlx::query("SELECT COUNT(*) as cnt FROM contacts")
+                .fetch_one(&state.db).await
+                .map(|r| r.try_get::<i64, _>("cnt").unwrap_or(0)).unwrap_or(0),
+            "total_devices": sqlx::query("SELECT COUNT(*) as cnt FROM creature_devices")
+                .fetch_one(&state.db).await
+                .map(|r| r.try_get::<i64, _>("cnt").unwrap_or(0)).unwrap_or(0),
         }
     })))
 }
@@ -476,4 +485,190 @@ pub async fn admin_delete_waitlist_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({ "status": "deleted" })))
+}
+
+// ─── Rabble admin handlers ─────────────────────────────────────────
+
+/// GET /api/admin/creatures — list all creatures (paginated, searchable)
+pub async fn admin_list_creatures_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(params): Query<AdminSearchParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = (params.page.unwrap_or(1).max(1) - 1) * limit;
+
+    let (sql, binds) = if let Some(ref search) = params.search {
+        (
+            "SELECT c.creature_id, c.owner_id, c.specimen_name, c.scientific_name,
+             c.species_group, c.status, c.flagged, c.flag_reason, c.total_flights,
+             c.created_at, u.display_name as owner_name
+             FROM creatures c LEFT JOIN users u ON u.user_id = c.owner_id
+             WHERE c.specimen_name ILIKE $1 OR c.scientific_name ILIKE $1 OR c.owner_id ILIKE $1
+             ORDER BY c.created_at DESC LIMIT $2 OFFSET $3"
+                .to_string(),
+            vec![format!("%{}%", search)],
+        )
+    } else {
+        (
+            "SELECT c.creature_id, c.owner_id, c.specimen_name, c.scientific_name,
+             c.species_group, c.status, c.flagged, c.flag_reason, c.total_flights,
+             c.created_at, u.display_name as owner_name
+             FROM creatures c LEFT JOIN users u ON u.user_id = c.owner_id
+             ORDER BY c.created_at DESC LIMIT $1 OFFSET $2"
+                .to_string(),
+            vec![],
+        )
+    };
+
+    let rows = if binds.is_empty() {
+        sqlx::query(&sql)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+    } else {
+        sqlx::query(&sql)
+            .bind(&binds[0])
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let creatures: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "creature_id": row.get::<uuid::Uuid, _>("creature_id"),
+                "owner_id": row.get::<String, _>("owner_id"),
+                "owner_name": row.get::<Option<String>, _>("owner_name"),
+                "specimen_name": row.get::<Option<String>, _>("specimen_name"),
+                "scientific_name": row.get::<String, _>("scientific_name"),
+                "species_group": row.get::<String, _>("species_group"),
+                "status": row.try_get::<String, _>("status").unwrap_or_else(|_| "active".to_string()),
+                "flagged": row.try_get::<bool, _>("flagged").unwrap_or(false),
+                "flag_reason": row.get::<Option<String>, _>("flag_reason"),
+                "total_flights": row.get::<i32, _>("total_flights"),
+                "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "creatures": creatures })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FlagCreatureRequest {
+    pub flagged: bool,
+    pub reason: Option<String>,
+}
+
+/// PUT /api/admin/creatures/:id/flag — flag/unflag a creature
+pub async fn admin_flag_creature_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<uuid::Uuid>,
+    Json(req): Json<FlagCreatureRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    sqlx::query(
+        "UPDATE creatures SET flagged = $1, flag_reason = $2, updated_at = NOW() WHERE creature_id = $3",
+    )
+    .bind(req.flagged)
+    .bind(&req.reason)
+    .bind(creature_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "creature_id": creature_id,
+        "flagged": req.flagged,
+    })))
+}
+
+/// GET /api/admin/swarms — list all swarms (paginated)
+pub async fn admin_list_swarms_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(params): Query<AdminSearchParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = (params.page.unwrap_or(1).max(1) - 1) * limit;
+
+    let rows = sqlx::query(
+        "SELECT s.swarm_id, s.creator_id, s.name, s.location_name, s.status,
+         s.participant_count, s.creature_count, s.visibility, s.starts_at, s.ends_at,
+         s.created_at, u.display_name as creator_name
+         FROM swarm_events s LEFT JOIN users u ON u.user_id = s.creator_id
+         ORDER BY s.created_at DESC LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let swarms: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "swarm_id": row.get::<uuid::Uuid, _>("swarm_id"),
+                "creator_id": row.get::<String, _>("creator_id"),
+                "creator_name": row.get::<Option<String>, _>("creator_name"),
+                "name": row.get::<String, _>("name"),
+                "location_name": row.get::<Option<String>, _>("location_name"),
+                "status": row.get::<String, _>("status"),
+                "participant_count": row.get::<i32, _>("participant_count"),
+                "creature_count": row.get::<i32, _>("creature_count"),
+                "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".to_string()),
+                "starts_at": row.get::<chrono::DateTime<chrono::Utc>, _>("starts_at").to_rfc3339(),
+                "ends_at": row.get::<chrono::DateTime<chrono::Utc>, _>("ends_at").to_rfc3339(),
+                "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "swarms": swarms })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSwarmStatusRequest {
+    pub status: String,
+}
+
+/// PUT /api/admin/swarms/:id/status — update swarm status
+pub async fn admin_update_swarm_status_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(swarm_id): Path<uuid::Uuid>,
+    Json(req): Json<UpdateSwarmStatusRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    if !["scheduled", "active", "completed", "cancelled"].contains(&req.status.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Status must be scheduled, active, completed, or cancelled".to_string(),
+        ));
+    }
+
+    sqlx::query("UPDATE swarm_events SET status = $1 WHERE swarm_id = $2")
+        .bind(&req.status)
+        .bind(swarm_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "swarm_id": swarm_id,
+        "status": req.status,
+    })))
 }
