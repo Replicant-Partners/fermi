@@ -1396,6 +1396,11 @@ async fn main() {
             get(handlers::qr_codes::resolve_qr_token_handler)
                 .post(handlers::creatures::join_by_qr_token_handler),
         )
+        // Reynolds flocking
+        .route(
+            "/api/rabble/:id/flock",
+            post(handlers::rabble_workspace::flock_tick_handler),
+        )
         // Swarm telemetry
         .route(
             "/api/swarm/sessions",

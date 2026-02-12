@@ -423,3 +423,248 @@ pub async fn get_personal_workspace_handler(
         "episode_count": episode_count,
     })))
 }
+
+/// POST /api/rabble/:id/flock — compute one Reynolds flocking tick for all creatures in a rabble.
+///
+/// Gathers current creature positions from active flights, dispatches reynolds_flock agent,
+/// returns updated positions + narration. Charges gas via workspace.
+pub async fn flock_tick_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    axum::extract::Path(swarm_id): axum::extract::Path<Uuid>,
+    Json(params): Json<Option<FlockParams>>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    // Verify swarm exists and get its workspace
+    let swarm = sqlx::query("SELECT workspace_id, status FROM swarm_events WHERE swarm_id = $1")
+        .bind(swarm_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Rabble not found".to_string()))?;
+
+    let ws_id: Uuid = swarm
+        .try_get::<Option<Uuid>, _>("workspace_id")
+        .ok()
+        .flatten()
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "Rabble has no workspace — create one first".to_string(),
+        ))?;
+
+    // Check reynolds_flock agent is in this workspace
+    let has_flock_agent = sqlx::query(
+        "SELECT 1 FROM workspace_agents wa
+         JOIN agents a ON a.agent_id = wa.agent_id
+         WHERE wa.workspace_id = $1 AND a.agent_name = 'reynolds_flock'",
+    )
+    .bind(ws_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if has_flock_agent.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "reynolds_flock agent not hired in this rabble workspace. Hire it first.".to_string(),
+        ));
+    }
+
+    // Gather all active creature flights in this swarm
+    let flights = sqlx::query(
+        "SELECT cf.creature_id, cf.center_lat, cf.center_lng, cf.flight_pattern,
+                c.specimen_name, c.species_group,
+                cf.path_samples
+         FROM creature_flights cf
+         JOIN creatures c ON c.creature_id = cf.creature_id
+         WHERE cf.swarm_id = $1 AND cf.ended_at IS NULL
+         ORDER BY cf.started_at ASC",
+    )
+    .bind(swarm_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if flights.is_empty() {
+        return Ok(Json(json!({
+            "swarm_id": swarm_id,
+            "creatures": [],
+            "message": "No active flights in this rabble"
+        })));
+    }
+
+    // Build creature position array for the agent
+    let creatures: Vec<Value> = flights
+        .iter()
+        .map(|f| {
+            let path_samples: Option<serde_json::Value> = f.try_get("path_samples").ok();
+
+            // Use last path sample if available, otherwise flight origin
+            let (lat, lng, heading, speed) = if let Some(ref samples) = path_samples {
+                if let Some(arr) = samples.as_array() {
+                    if let Some(last) = arr.last() {
+                        (
+                            last.get("lat")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or_else(|| f.try_get("center_lat").unwrap_or(0.0)),
+                            last.get("lng")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or_else(|| f.try_get("center_lng").unwrap_or(0.0)),
+                            last.get("heading").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                            last.get("speed").and_then(|v| v.as_f64()).unwrap_or(1.0),
+                        )
+                    } else {
+                        (
+                            f.try_get("center_lat").unwrap_or(0.0),
+                            f.try_get("center_lng").unwrap_or(0.0),
+                            0.0,
+                            1.0,
+                        )
+                    }
+                } else {
+                    (
+                        f.try_get("center_lat").unwrap_or(0.0),
+                        f.try_get("center_lng").unwrap_or(0.0),
+                        0.0,
+                        1.0,
+                    )
+                }
+            } else {
+                (
+                    f.try_get("center_lat").unwrap_or(0.0),
+                    f.try_get("center_lng").unwrap_or(0.0),
+                    0.0,
+                    1.0,
+                )
+            };
+
+            json!({
+                "id": f.try_get::<Uuid, _>("creature_id").ok(),
+                "name": f.try_get::<String, _>("specimen_name").ok().unwrap_or_default(),
+                "species": f.try_get::<String, _>("species_group").ok().unwrap_or_default(),
+                "lat": lat,
+                "lng": lng,
+                "heading": heading,
+                "speed": speed,
+            })
+        })
+        .collect();
+
+    // Build flocking params
+    let flock_params = params.unwrap_or_default();
+    let query = json!({
+        "creatures": creatures,
+        "params": {
+            "separation_radius": flock_params.separation_radius,
+            "alignment_radius": flock_params.alignment_radius,
+            "cohesion_radius": flock_params.cohesion_radius,
+            "max_speed": flock_params.max_speed,
+            "separation_weight": flock_params.separation_weight,
+            "alignment_weight": flock_params.alignment_weight,
+            "cohesion_weight": flock_params.cohesion_weight,
+        }
+    });
+
+    let query_str = format!(
+        "Compute one Reynolds flocking tick for these creatures:\n{}",
+        serde_json::to_string_pretty(&query).unwrap_or_default()
+    );
+
+    // Dispatch to reynolds_flock agent
+    let response = dispatch_rabble_action(
+        &state,
+        ws_id,
+        "reynolds_flock",
+        "flock_tick",
+        &query_str,
+        &user_id,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Try to parse agent response as JSON for structured output
+    let parsed: Value = serde_json::from_str(&response).unwrap_or_else(|_| {
+        json!({
+            "raw_response": response,
+            "note": "Agent response was not valid JSON"
+        })
+    });
+
+    // If we got updated positions, store them as path samples on the flights
+    if let Some(updated) = parsed.get("updated").and_then(|u| u.as_array()) {
+        for update in updated {
+            let creature_id = update
+                .get("id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok());
+            let lat = update.get("lat").and_then(|v| v.as_f64());
+            let lng = update.get("lng").and_then(|v| v.as_f64());
+            let heading = update.get("heading").and_then(|v| v.as_f64());
+
+            if let (Some(cid), Some(lat), Some(lng)) = (creature_id, lat, lng) {
+                let sample = json!({
+                    "lat": lat,
+                    "lng": lng,
+                    "heading": heading.unwrap_or(0.0),
+                    "t": chrono::Utc::now().timestamp_millis(),
+                });
+
+                // Append to path_samples JSONB array
+                let _ = sqlx::query(
+                    "UPDATE creature_flights
+                     SET path_samples = COALESCE(path_samples, '[]'::jsonb) || $1::jsonb
+                     WHERE creature_id = $2 AND swarm_id = $3 AND ended_at IS NULL",
+                )
+                .bind(json!([sample]))
+                .bind(cid)
+                .bind(swarm_id)
+                .execute(pool)
+                .await;
+            }
+        }
+    }
+
+    // Broadcast flock update to rabble SSE
+    let flock_event = json!({
+        "type": "flock_tick",
+        "swarm_id": swarm_id,
+        "data": parsed,
+    });
+    let _ = state.rabble_broadcast.send(crate::RabbleEvent {
+        swarm_id,
+        message: flock_event,
+    });
+
+    Ok(Json(json!({
+        "swarm_id": swarm_id,
+        "creature_count": creatures.len(),
+        "result": parsed,
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct FlockParams {
+    pub separation_radius: Option<f64>,
+    pub alignment_radius: Option<f64>,
+    pub cohesion_radius: Option<f64>,
+    pub max_speed: Option<f64>,
+    pub separation_weight: Option<f64>,
+    pub alignment_weight: Option<f64>,
+    pub cohesion_weight: Option<f64>,
+}
+
+impl Default for FlockParams {
+    fn default() -> Self {
+        Self {
+            separation_radius: Some(0.0001), // ~11m
+            alignment_radius: Some(0.0005),  // ~55m
+            cohesion_radius: Some(0.001),    // ~111m
+            max_speed: Some(2.0),
+            separation_weight: Some(1.5),
+            alignment_weight: Some(1.0),
+            cohesion_weight: Some(1.0),
+        }
+    }
+}
