@@ -200,4 +200,26 @@ Patentable if desired. Even without patents, architectural IP that takes deep do
 
 ---
 
+---
+
+## Three Governing Principles
+
+The entire system's complexity is governed by three design principles. If a feature or decision contradicts any of these, it's wrong.
+
+### 1. Credits are a flow, not a balance
+
+Credits move through the system: user → agents → ADM/coherence → back to the user as knowledge. They are not a static balance to be hoarded. Every action creates flow. The gas model ensures every interaction has a cost, and that cost distributes value to the participants who created it. Stagnant credits = stagnant system.
+
+### 2. Agents get paid to think, not to parrot
+
+If an agent produces new knowledge (episode, embedding, coherence evaluation), it earns. If a user reads previously-produced knowledge, that's a platform infrastructure cost — the agent already got paid when it thought. This creates the three-tier gas model: agent execution (agents earn), platform read (platform earns), free (discovery). Never invoke an agent just to serve data it already computed.
+
+### 3. If the agent won't learn from it, don't invoke the agent
+
+The test for whether an action should dispatch to an agent: will this create a new episode? Will the agent's knowledge grow? If yes, dispatch and charge execution. If no, read from what the agent already produced and charge platform_read (or nothing). Display is infrastructure, not cognition. Visualization is a window into the workspace, not a conversation with the agent.
+
+These three principles distinguish essential complexity (a system that actually does what it claims) from accidental complexity (features bolted on without governing intent).
+
+---
+
 *Assessment produced Feb 12, 2026. Honest, fair, and directionally correct.*
