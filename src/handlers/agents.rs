@@ -260,11 +260,32 @@ pub async fn list_agents(
 
 /// Public endpoint: serves cached avatar only (no generation)
 pub async fn get_cached_avatar(
+    State(state): State<crate::AppState>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // Try DB first
+    if let Ok(Some(row)) = sqlx::query("SELECT avatar_json FROM agent_avatars WHERE agent_id = $1")
+        .bind(&agent_id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        let avatar: Value = row.get("avatar_json");
+        return Ok(Json(avatar));
+    }
+
+    // Fallback: try filesystem (migrate to DB on hit)
     let cache_path = format!("avatars_cache/{}.json", agent_id);
     if let Ok(cached) = std::fs::read_to_string(&cache_path) {
         if let Ok(cached_data) = serde_json::from_str::<Value>(&cached) {
+            // Persist to DB for next deploy
+            let _ = sqlx::query(
+                "INSERT INTO agent_avatars (agent_id, avatar_json)
+                 VALUES ($1, $2) ON CONFLICT (agent_id) DO NOTHING",
+            )
+            .bind(&agent_id)
+            .bind(&cached_data)
+            .execute(&state.db)
+            .await;
             return Ok(Json(cached_data));
         }
     }
@@ -280,10 +301,20 @@ pub async fn generate_avatar(
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    // Check cache first (free)
+    // Check cache first (free) — DB then filesystem
     let cache_dir = "avatars_cache";
     std::fs::create_dir_all(cache_dir).ok();
     let cache_path = format!("{}/{}.json", cache_dir, agent_id);
+
+    if let Ok(Some(row)) = sqlx::query("SELECT avatar_json FROM agent_avatars WHERE agent_id = $1")
+        .bind(&agent_id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        let avatar: Value = row.get("avatar_json");
+        return Ok(Json(avatar));
+    }
+
     if let Ok(cached) = std::fs::read_to_string(&cache_path) {
         if let Ok(cached_data) = serde_json::from_str::<Value>(&cached) {
             return Ok(Json(cached_data));
@@ -394,8 +425,18 @@ pub async fn generate_avatar(
                     }
                 });
 
+                // Persist to DB (durable) and filesystem (fast local cache)
+                let _ = sqlx::query(
+                    "INSERT INTO agent_avatars (agent_id, avatar_json)
+                     VALUES ($1, $2)
+                     ON CONFLICT (agent_id) DO UPDATE SET avatar_json = $2, created_at = NOW()",
+                )
+                .bind(&agent_id)
+                .bind(&result)
+                .execute(&state.db)
+                .await;
                 std::fs::write(&cache_path, serde_json::to_string(&result).unwrap()).ok();
-                println!("Cached new avatar for {}", agent_id);
+                println!("Cached new avatar for {} (DB + filesystem)", agent_id);
 
                 return Ok(Json(result));
             }

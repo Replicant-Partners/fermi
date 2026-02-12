@@ -17,3 +17,10 @@ UPDATE creatures
 SET asset_path = '/api/creatures/' || creature_id || '/image'
 WHERE asset_path LIKE '/static/creatures/%'
   AND asset_path NOT LIKE '%placeholder%';
+
+-- Agent avatar cache (same ephemeral filesystem problem)
+CREATE TABLE IF NOT EXISTS agent_avatars (
+    agent_id TEXT PRIMARY KEY,
+    avatar_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
