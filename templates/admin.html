@@ -668,7 +668,7 @@
             const tr = document.createElement("tr");
             tr.innerHTML = `
               <td>
-                <div>${escHtml(u.display_name || u.user_id || "-")}</div>
+                <div><a href="/user/${encodeURIComponent(u.user_id)}" style="color:var(--aqua);text-decoration:none">${escHtml(u.display_name || u.user_id || "-")}</a></div>
                 <div class="user-id">${escHtml(u.email || u.user_id || "")}</div>
               </td>
               <td>${escHtml(u.provider || "-")}</td>
@@ -718,8 +718,8 @@
                   : "badge-yellow";
             const tr = document.createElement("tr");
             tr.innerHTML = `
-              <td><a href="/agents/${a.id}" style="color:var(--aqua);text-decoration:none;">${escHtml(a.display_alias || a.agent_name || "-")}</a></td>
-              <td style="color:var(--fg3);font-size:0.8rem;">${escHtml(a.owner_id || "-")}</td>
+              <td><a href="/agent/${a.id}" style="color:var(--aqua);text-decoration:none;">${escHtml(a.display_alias || a.agent_name || "-")}</a></td>
+              <td style="font-size:0.8rem;">${a.owner_id ? `<a href="/user/${encodeURIComponent(a.owner_id)}" style="color:var(--fg2);text-decoration:none">${escHtml(a.owner_display_name || a.owner_id.slice(0, 12) + "…")}</a>` : '<span style="color:var(--fg3)">-</span>'}</td>
               <td><span class="badge ${tierBadge}">${escHtml(a.tier || "-")}</span></td>
               <td><span class="badge ${visBadge}">${escHtml(a.visibility || "public")}</span></td>
               <td><span class="badge ${statusBadge}">${escHtml(a.status || "-")}</span></td>

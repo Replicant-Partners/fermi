@@ -10,6 +10,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
 
+use std::collections::HashMap;
+
 use crate::{create_notification, AppState};
 // ─── Admin API handlers ────────────────────────────────────────────
 
@@ -311,9 +313,11 @@ pub async fn admin_list_users_handler(
         let q = format!("%{}%", search);
         sqlx::query(
             "SELECT u.user_id, u.email, u.display_name, u.role, u.auth_provider, u.created_at,
-                    COALESCE(w.balance, 0) as balance
+                    COALESCE(w.balance, 0) as balance,
+                    COALESCE(ac.cnt, 0) as agent_count
              FROM users u
              LEFT JOIN wallets w ON w.owner_type = 'user' AND w.owner_id = u.user_id
+             LEFT JOIN (SELECT user_id, COUNT(*) as cnt FROM agents GROUP BY user_id) ac ON ac.user_id = u.user_id
              WHERE u.user_id ILIKE $1 OR u.email ILIKE $1 OR u.display_name ILIKE $1
              ORDER BY u.created_at DESC LIMIT $2 OFFSET $3",
         )
@@ -325,9 +329,11 @@ pub async fn admin_list_users_handler(
     } else {
         sqlx::query(
             "SELECT u.user_id, u.email, u.display_name, u.role, u.auth_provider, u.created_at,
-                    COALESCE(w.balance, 0) as balance
+                    COALESCE(w.balance, 0) as balance,
+                    COALESCE(ac.cnt, 0) as agent_count
              FROM users u
              LEFT JOIN wallets w ON w.owner_type = 'user' AND w.owner_id = u.user_id
+             LEFT JOIN (SELECT user_id, COUNT(*) as cnt FROM agents GROUP BY user_id) ac ON ac.user_id = u.user_id
              ORDER BY u.created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)
@@ -348,6 +354,7 @@ pub async fn admin_list_users_handler(
                 "auth_provider": r.try_get::<String, _>("auth_provider").unwrap_or_default(),
                 "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
                 "balance": r.try_get::<i32, _>("balance").unwrap_or(0),
+                "agent_count": r.try_get::<i64, _>("agent_count").unwrap_or(0),
             })
         })
         .collect();
@@ -442,15 +449,48 @@ pub async fn admin_list_agents_handler(
         });
     }
 
+    // Batch-load owner display names
+    let owner_ids: Vec<String> = filtered
+        .iter()
+        .filter_map(|a| a.owner_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let owner_names: HashMap<String, String> = if !owner_ids.is_empty() {
+        sqlx::query(
+            "SELECT user_id, COALESCE(display_name, email, user_id) as name FROM users WHERE user_id = ANY($1)",
+        )
+        .bind(&owner_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| {
+            (
+                r.get::<String, _>("user_id"),
+                r.get::<String, _>("name"),
+            )
+        })
+        .collect()
+    } else {
+        HashMap::new()
+    };
+
     let agents_json: Vec<Value> = filtered
         .iter()
         .map(|a| {
+            let owner_name = a
+                .owner_id
+                .as_deref()
+                .and_then(|oid| owner_names.get(oid))
+                .cloned();
             json!({
                 "id": a.agent_name,
                 "agent_id": a.agent_id,
                 "agent_name": a.agent_name,
                 "display_alias": a.display_alias,
                 "owner_id": a.owner_id,
+                "owner_display_name": owner_name,
                 "visibility": a.visibility,
                 "status": a.status,
                 "execution_count": a.total_executions,

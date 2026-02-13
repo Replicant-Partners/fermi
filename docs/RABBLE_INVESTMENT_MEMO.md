@@ -60,6 +60,7 @@ AR glasses change this fundamentally. When creatures are visible in your periphe
 We are building for this transition. The phone AR experience is the seed. The glasses experience is the flower.
 
 **Timeline:**
+
 - **2026--2027**: Phone AR. Niche adoption among nature enthusiasts, butterfly collectors, birding communities. Pilot education partnerships.
 - **2028--2029**: First affordable AR glasses ($300--800). Meta Orion, Apple lite, others. Rabble becomes a daily companion app. Sports and live event integrations begin.
 - **2030+**: AR glasses mainstream. Rabble creatures are persistent companions visible to anyone wearing glasses in the same location. Brand, tourism, and drone integration layers mature.
@@ -95,6 +96,7 @@ Each user action creates an episode in the ABW memory system. A creature mint is
 The ABW platform runs a biologically-inspired consolidation cycle --- the "dreaming" process. During sleep phases, unconsolidated episodes are clustered, patterns are extracted as rules, entities and facts are identified, and the agent's knowledge graph evolves.
 
 For Rabble, this means:
+
 - The **swarm host agent** learns from every rabble it narrates. After 1,000 rabbles, it knows which taxonomic facts land well, which greeting styles work for different group sizes, how to handle late arrivals, which species combinations create interesting conversations.
 - A **species intelligence agent** (future) could learn migration patterns, seasonal abundance, geographic distribution anomalies --- all from the aggregate of where users fly their creatures and which species they choose.
 - A **social dynamics agent** (future) could learn which rabble configurations produce the most engagement --- time of day, group size, species diversity, location type.
@@ -136,11 +138,11 @@ Rabble's intelligence doesn't stay in Rabble. It flows back into the broader ABW
 
 The Bestiary's investment memo describes a three-tier economic architecture: Credits, Learning Economy, and Marketplace. Rabble activates all three simultaneously:
 
-| ABW Tier | Rabble Activation |
-|----------|-------------------|
-| **Credits** | Every mint, flight, rabble, chat message consumes credits |
+| ABW Tier             | Rabble Activation                                                   |
+| -------------------- | ------------------------------------------------------------------- |
+| **Credits**          | Every mint, flight, rabble, chat message consumes credits           |
 | **Learning Economy** | Rabble agents dream and consolidate autonomously, consuming credits |
-| **Marketplace** | Rabble-trained agents and embeddings are tradeable assets |
+| **Marketplace**      | Rabble-trained agents and embeddings are tradeable assets           |
 
 ---
 
@@ -150,23 +152,23 @@ The Bestiary's investment memo describes a three-tier economic architecture: Cre
 
 Credits purchased via Stripe. Three tiers:
 
-| Pack | Credits | Price | Per Credit |
-|------|---------|-------|------------|
-| Starter | 100 | $5.00 | $0.050 |
-| Builder | 500 | $20.00 | $0.040 |
-| Pro | 1,000 | $35.00 | $0.035 |
+| Pack    | Credits | Price  | Per Credit |
+| ------- | ------- | ------ | ---------- |
+| Starter | 100     | $5.00  | $0.050     |
+| Builder | 500     | $20.00 | $0.040     |
+| Pro     | 1,000   | $35.00 | $0.035     |
 
 ### Credit Consumption
 
-| Action | Credits | Frequency (per active user/month) |
-|--------|---------|-------------------------------------|
-| Mint creature | 3 | 1--2x |
-| Art generation | 5 | 1--2x (bundled with mint) |
-| Record flight | 3 | 8--15x |
-| Create rabble | 5+ | 1--2x |
-| Join rabble | 1--5 | 3--5x |
-| Chat message | 1 | 20--50x |
-| **Typical monthly spend** | **60--150** | |
+| Action                    | Credits     | Frequency (per active user/month) |
+| ------------------------- | ----------- | --------------------------------- |
+| Mint creature             | 3           | 1--2x                             |
+| Art generation            | 5           | 1--2x (bundled with mint)         |
+| Record flight             | 3           | 8--15x                            |
+| Create rabble             | 5+          | 1--2x                             |
+| Join rabble               | 1--5        | 3--5x                             |
+| Chat message              | 1           | 20--50x                           |
+| **Typical monthly spend** | **60--150** |                                   |
 
 At the Builder tier ($0.04/credit), a typical active user spends **$2.40--$6.00/month**.
 
@@ -176,13 +178,13 @@ At the Builder tier ($0.04/credit), a typical active user spends **$2.40--$6.00/
 
 AR glasses remain expensive ($2,000+) or delayed. Growth limited to nature enthusiast communities. No viral moments, no institutional partnerships. Education and sports verticals don't materialize.
 
-| Year | MAU | ARPU/mo | MRR | Annual Rev |
-|------|-----|---------|-----|------------|
-| 2026 | 200 | $2 | $400 | $5K |
-| 2027 | 800 | $3 | $2.4K | $29K |
-| 2028 | 2,000 | $3 | $6K | $72K |
-| 2029 | 4,000 | $4 | $16K | $192K |
-| 2030 | 6,000 | $4 | $24K | $288K |
+| Year | MAU   | ARPU/mo | MRR   | Annual Rev |
+| ---- | ----- | ------- | ----- | ---------- |
+| 2026 | 200   | $2      | $400  | $5K        |
+| 2027 | 800   | $3      | $2.4K | $29K       |
+| 2028 | 2,000 | $3      | $6K   | $72K       |
+| 2029 | 4,000 | $4      | $16K  | $192K      |
+| 2030 | 6,000 | $4      | $24K  | $288K      |
 
 5-year cumulative: ~$586K. Break-even: ~2029 (at $8--10K/mo operating costs). This is the floor --- a viable niche product that sustains itself.
 
@@ -190,13 +192,13 @@ AR glasses remain expensive ($2,000+) or delayed. Growth limited to nature enthu
 
 $500--800 AR glasses from Meta or others in 2028. Nature community adopts Rabble as "the Strava of wildlife." Education pilots in 2--3 school districts. First sports event integration (a cycling series or marathon). Partnerships with 2--3 nature organizations.
 
-| Year | MAU | ARPU/mo | MRR | Annual Rev | Growth Drivers |
-|------|-----|---------|-----|------------|----------------|
-| 2026 | 500 | $2 | $1K | $12K | Nature beachhead |
-| 2027 | 3,000 | $3 | $9K | $108K | + education pilots |
-| 2028 | 12,000 | $5 | $60K | $720K | + AR glasses + first sports event |
-| 2029 | 35,000 | $6 | $210K | $2.5M | + tourism partnerships |
-| 2030 | 80,000 | $7 | $560K | $6.7M | + brand activations |
+| Year | MAU    | ARPU/mo | MRR   | Annual Rev | Growth Drivers                    |
+| ---- | ------ | ------- | ----- | ---------- | --------------------------------- |
+| 2026 | 500    | $2      | $1K   | $12K       | Nature beachhead                  |
+| 2027 | 3,000  | $3      | $9K   | $108K      | + education pilots                |
+| 2028 | 12,000 | $5      | $60K  | $720K      | + AR glasses + first sports event |
+| 2029 | 35,000 | $6      | $210K | $2.5M      | + tourism partnerships            |
+| 2030 | 80,000 | $7      | $560K | $6.7M      | + brand activations               |
 
 5-year cumulative: ~$10M. Break-even: early 2028. The key assumption: each new vertical adds an incremental user base that the nature-only scenario never reaches. Education alone (institutional credit purchases) can contribute 10--15% of revenue by 2029.
 
@@ -204,26 +206,26 @@ $500--800 AR glasses from Meta or others in 2028. Nature community adopts Rabble
 
 TikTok/Instagram viral moment (AR creatures at a cycling race or festival). AR glasses at $300--500 by late 2027. Multiple concurrent verticals: nature, education, sports, tourism. Creature trading/marketplace emerges. A major brand partnership (tourism board or sports league) drives awareness.
 
-| Year | MAU | ARPU/mo | MRR | Annual Rev | Growth Drivers |
-|------|-----|---------|-----|------------|----------------|
-| 2026 | 1,500 | $3 | $4.5K | $54K | Nature + early education |
-| 2027 | 15,000 | $5 | $75K | $900K | + viral moment + AR early adopters |
-| 2028 | 60,000 | $7 | $420K | $5M | + sports/events + brand deals |
-| 2029 | 180,000 | $8 | $1.4M | $17M | + tourism boards + drone integration |
-| 2030 | 500,000 | $8 | $4M | $48M | + B2B licensing + international |
+| Year | MAU     | ARPU/mo | MRR   | Annual Rev | Growth Drivers                       |
+| ---- | ------- | ------- | ----- | ---------- | ------------------------------------ |
+| 2026 | 1,500   | $3      | $4.5K | $54K       | Nature + early education             |
+| 2027 | 15,000  | $5      | $75K  | $900K      | + viral moment + AR early adopters   |
+| 2028 | 60,000  | $7      | $420K | $5M        | + sports/events + brand deals        |
+| 2029 | 180,000 | $8      | $1.4M | $17M       | + tourism boards + drone integration |
+| 2030 | 500,000 | $8      | $4M   | $48M       | + B2B licensing + international      |
 
 5-year cumulative: ~$71M. Break-even: late 2027. The optimistic case depends on *two or more verticals* achieving traction simultaneously with AR glasses adoption. This is ambitious but not unreasonable --- the cycling-drone scenario alone, if it goes viral, could drive 50K users in a single quarter.
 
 ### Cost Structure
 
-| Cost | 1K MAU | 10K MAU | 100K MAU |
-|------|--------|---------|----------|
-| Railway hosting | $50 | $200 | $1,500 |
-| Neon PostgreSQL | $20 | $70 | $500 |
-| Anthropic API (agents) | $100 | $500 | $3,000 |
-| Gemini API (art gen) | $50 | $300 | $2,000 |
-| Stripe fees (2.9%) | $30 | $300 | $3,000 |
-| **Total** | **$250** | **$1,370** | **$10,000** |
+| Cost                   | 1K MAU   | 10K MAU    | 100K MAU    |
+| ---------------------- | -------- | ---------- | ----------- |
+| Railway hosting        | $50      | $200       | $1,500      |
+| Neon PostgreSQL        | $20      | $70        | $500        |
+| Anthropic API (agents) | $100     | $500       | $3,000      |
+| Gemini API (art gen)   | $50      | $300       | $2,000      |
+| Stripe fees (2.9%)     | $30      | $300       | $3,000      |
+| **Total**              | **$250** | **$1,370** | **$10,000** |
 
 Gross margin: ~80% at all scales. API costs scale linearly; hosting scales sublinearly.
 
@@ -244,23 +246,23 @@ Rabble begins with nature enthusiasts --- but the underlying mechanic (location-
 
 ### Tier 1: Nature & Biodiversity (Launch Market)
 
-| Segment | Global Estimate | Entry Strategy |
-|---------|-----------------|----------------|
-| Birdwatchers | 50M | Location-based, social, species-aware --- natural fit |
-| Butterfly/insect enthusiasts | 10M | Exact species focus, GBIF integration |
-| Hikers/nature walkers | 500M | Casual but reachable via trail apps and park partnerships |
-| Citizen science (iNaturalist, eBird) | 5M+ | Data-driven, already recording species observations |
+| Segment                              | Global Estimate | Entry Strategy                                            |
+| ------------------------------------ | --------------- | --------------------------------------------------------- |
+| Birdwatchers                         | 50M             | Location-based, social, species-aware --- natural fit     |
+| Butterfly/insect enthusiasts         | 10M             | Exact species focus, GBIF integration                     |
+| Hikers/nature walkers                | 500M            | Casual but reachable via trail apps and park partnerships |
+| Citizen science (iNaturalist, eBird) | 5M+             | Data-driven, already recording species observations       |
 
 This is the beachhead. Nature enthusiasts value taxonomic authenticity, have existing social structures (walking groups, societies, reserves), and will be early AR glasses adopters. But it is the *starting point*, not the ceiling.
 
 ### Tier 2: Education (2027+)
 
-| Segment | Global Estimate | Use Case |
-|---------|-----------------|----------|
-| K-12 students in science programs | 200M+ | Field trip companions, classroom species projects |
-| University biology/ecology courses | 20M+ | Fieldwork data collection via creature flights |
-| Museums and science centers | 100K+ institutions | AR exhibits with mintable creatures tied to collections |
-| Environmental education nonprofits | 50K+ orgs | Gamified conservation awareness |
+| Segment                            | Global Estimate    | Use Case                                                |
+| ---------------------------------- | ------------------ | ------------------------------------------------------- |
+| K-12 students in science programs  | 200M+              | Field trip companions, classroom species projects       |
+| University biology/ecology courses | 20M+               | Fieldwork data collection via creature flights          |
+| Museums and science centers        | 100K+ institutions | AR exhibits with mintable creatures tied to collections |
+| Environmental education nonprofits | 50K+ orgs          | Gamified conservation awareness                         |
 
 A school licenses Rabble for a field trip. Each student mints a creature from their local ecosystem, flies it through the nature reserve, records observations. The teacher sees a dashboard of species diversity encountered. The museum partner gets foot traffic data. Credits are purchased at institutional rates.
 
@@ -268,12 +270,12 @@ This is not speculative --- educational gaming is a $4B market growing at 20%+ a
 
 ### Tier 3: Sports & Live Events (2028+)
 
-| Segment | Global Estimate | Use Case |
-|---------|-----------------|----------|
-| Live sports spectators | 2B+ annually | Fan swarms trailing athletes, stadium creatures |
-| Running/cycling events | 60M participants/yr | Creature companions on race routes, fan interaction |
-| Music festivals | 50M+ attendees/yr | Location-anchored creature experiences, artist-branded mints |
-| Conferences and conventions | 400M+ attendees/yr | Networking via creature exchange, sponsor creatures |
+| Segment                     | Global Estimate     | Use Case                                                     |
+| --------------------------- | ------------------- | ------------------------------------------------------------ |
+| Live sports spectators      | 2B+ annually        | Fan swarms trailing athletes, stadium creatures              |
+| Running/cycling events      | 60M participants/yr | Creature companions on race routes, fan interaction          |
+| Music festivals             | 50M+ attendees/yr   | Location-anchored creature experiences, artist-branded mints |
+| Conferences and conventions | 400M+ attendees/yr  | Networking via creature exchange, sponsor creatures          |
 
 Picture this: a drone films a professional cycling race. Its client app sees the AR layer --- thousands of fan creatures trailing the peloton, swarming at mountain passes, gathering at the finish line. The broadcast cuts to the AR overlay and the commentator notes the fan creature density at the Alpe d'Huez switchbacks. Each fan creature is a minted specimen that cost credits. The race sponsor's branded creature leads the swarm.
 
@@ -283,12 +285,12 @@ The key insight: **Rabble turns physical attendance into a persistent digital ar
 
 ### Tier 4: Brands & Advertising (2028+)
 
-| Segment | Global Estimate | Use Case |
-|---------|-----------------|----------|
-| Location-based advertising | $40B market | Sponsored creatures at retail locations, geo-triggered experiences |
-| Brand activations | $60B experiential marketing | Branded creature mints, AR scavenger hunts |
-| Tourism boards | 200+ national, 10K+ regional | Destination creatures, regional species as tourism ambassadors |
-| Hospitality | 700K+ hotels globally | Hotel/resort creatures, local species guides |
+| Segment                    | Global Estimate              | Use Case                                                           |
+| -------------------------- | ---------------------------- | ------------------------------------------------------------------ |
+| Location-based advertising | $40B market                  | Sponsored creatures at retail locations, geo-triggered experiences |
+| Brand activations          | $60B experiential marketing  | Branded creature mints, AR scavenger hunts                         |
+| Tourism boards             | 200+ national, 10K+ regional | Destination creatures, regional species as tourism ambassadors     |
+| Hospitality                | 700K+ hotels globally        | Hotel/resort creatures, local species guides                       |
 
 A tourism board commissions 50 regional species as mintable creatures. Visitors who mint and fly all 50 unlock a "Complete Collection" achievement. Each mint costs credits. The tourism board pays a partnership fee. The visitor gets a digital souvenir tied to real places they visited. The board gets foot traffic analytics (anonymized) across their attractions.
 
@@ -306,13 +308,13 @@ This is a longer-term play, but the protocol is device-agnostic by design.
 
 ### Total Addressable Market
 
-| Tier | Addressable Population | Realistic Penetration (5yr) | Potential Users |
-|------|----------------------|----------------------------|-----------------|
-| Nature & Biodiversity | 550M | 0.01--0.1% | 55K--550K |
-| Education | 220M+ | 0.005--0.05% | 11K--110K |
-| Sports & Live Events | 2B+ | 0.001--0.01% | 20K--200K |
-| Brands & Tourism | indirect (B2B) | partnership-driven | 10K--100K |
-| **Combined** | **~2.5B reachable** | | **100K--960K** |
+| Tier                  | Addressable Population | Realistic Penetration (5yr) | Potential Users |
+| --------------------- | ---------------------- | --------------------------- | --------------- |
+| Nature & Biodiversity | 550M                   | 0.01--0.1%                  | 55K--550K       |
+| Education             | 220M+                  | 0.005--0.05%                | 11K--110K       |
+| Sports & Live Events  | 2B+                    | 0.001--0.01%                | 20K--200K       |
+| Brands & Tourism      | indirect (B2B)         | partnership-driven          | 10K--100K       |
+| **Combined**          | **~2.5B reachable**    |                             | **100K--960K**  |
 
 We are not claiming we will reach 2.5 billion people. We are noting that the *mechanic* applies to a population of that scale, and that even tiny penetration rates yield substantial user bases. The bottom-up calculation from credit economics (Section IV) is the more reliable guide.
 
@@ -334,12 +336,12 @@ Nature activity is seasonal in temperate climates (60% in April--September). But
 
 ### What Exists
 
-| Product | Model | Rabble Difference |
-|---------|-------|--------------------|
-| Pokemon Go | Fictional creatures, phone AR | Real species, real taxonomy, social gathering focus |
-| iNaturalist | Real species, observation logging | AR visualization, social events, credit economy |
-| Merlin (Cornell Lab) | Bird ID, audio recognition | AR companions, broader taxa, economic layer |
-| Peridot (Niantic) | Virtual pets, phone AR | Real species data, knowledge accumulation, ABW intelligence |
+| Product              | Model                             | Rabble Difference                                           |
+| -------------------- | --------------------------------- | ----------------------------------------------------------- |
+| Pokemon Go           | Fictional creatures, phone AR     | Real species, real taxonomy, social gathering focus         |
+| iNaturalist          | Real species, observation logging | AR visualization, social events, credit economy             |
+| Merlin (Cornell Lab) | Bird ID, audio recognition        | AR companions, broader taxa, economic layer                 |
+| Peridot (Niantic)    | Virtual pets, phone AR            | Real species data, knowledge accumulation, ABW intelligence |
 
 ### The Moat
 
@@ -356,6 +358,7 @@ Every rabble narrated, every flight recorded, every creature minted feeds the AD
 **3. Network Effects (Location-Dependent)**
 
 Rabble's network effects are local. A user in Brooklyn cares about how many other users are in Brooklyn, not in Tokyo. This means:
+
 - Once local critical mass is achieved, it's sticky (your rabble group is your friends)
 - Competitors must achieve local density independently in each market
 - Early mover advantage compounds geographically
@@ -368,26 +371,26 @@ Rabble.world is not a standalone app that happens to use some AI. It is a **cons
 
 ### What ABW Provides to Rabble
 
-| ABW Capability | Rabble Usage |
-|----------------|--------------|
-| Credit economy + wallets | All Rabble transactions |
+| ABW Capability           | Rabble Usage                                   |
+| ------------------------ | ---------------------------------------------- |
+| Credit economy + wallets | All Rabble transactions                        |
 | Agent execution pipeline | Swarm host narration, art generation prompting |
-| OAuth + user management | Google/GitHub sign-in, profiles |
-| ADM consolidation | Agents learn from rabble interactions |
-| Coherence evaluation | Knowledge quality assurance |
-| Embedding generation | Semantic search, similarity, marketplace |
-| Tool-aware executor | Multi-step agent actions during rabbles |
+| OAuth + user management  | Google/GitHub sign-in, profiles                |
+| ADM consolidation        | Agents learn from rabble interactions          |
+| Coherence evaluation     | Knowledge quality assurance                    |
+| Embedding generation     | Semantic search, similarity, marketplace       |
+| Tool-aware executor      | Multi-step agent actions during rabbles        |
 
 ### What Rabble Provides to ABW
 
-| Rabble Output | ABW Value |
-|---------------|-----------|
-| High-volume credit consumption | Platform revenue, economic activity |
-| Location-behavior episodes | Rich training data for biodiversity agents |
-| Social interaction patterns | Data for coherence and collaboration research |
-| Consumer user base | Market validation, network growth |
+| Rabble Output                   | ABW Value                                     |
+| ------------------------------- | --------------------------------------------- |
+| High-volume credit consumption  | Platform revenue, economic activity           |
+| Location-behavior episodes      | Rich training data for biodiversity agents    |
+| Social interaction patterns     | Data for coherence and collaboration research |
+| Consumer user base              | Market validation, network growth             |
 | Real-world embedding generation | Marketplace-tradeable location-species assets |
-| Creature art generation volume | Gemini pipeline refinement, style evolution |
+| Creature art generation volume  | Gemini pipeline refinement, style evolution   |
 
 ### The Strategic Argument
 
@@ -418,24 +421,24 @@ Together, they are an ecology where consumer activity funds intelligence generat
 
 ### What's Next (MVP to Launch)
 
-| Priority | Feature | Effort |
-|----------|---------|--------|
-| HIGH | Profile/account screen (wallet balance, creature stats) | 1 day |
-| HIGH | Push notifications for rabble invites | 2 days |
-| MEDIUM | Creature trading/gifting | 3 days |
-| MEDIUM | Flight analytics (heatmap, distance, species diversity) | 2 days |
-| LOW | Creature evolution/leveling based on flight history | 1 week |
-| LOW | Sound design (ambient nature, creature calls) | 1 week |
+| Priority | Feature                                                 | Effort |
+| -------- | ------------------------------------------------------- | ------ |
+| HIGH     | Profile/account screen (wallet balance, creature stats) | 1 day  |
+| HIGH     | Push notifications for rabble invites                   | 2 days |
+| MEDIUM   | Creature trading/gifting                                | 3 days |
+| MEDIUM   | Flight analytics (heatmap, distance, species diversity) | 2 days |
+| LOW      | Creature evolution/leveling based on flight history     | 1 week |
+| LOW      | Sound design (ambient nature, creature calls)           | 1 week |
 
 ### Infrastructure
 
-| Component | Provider | Cost (current) |
-|-----------|----------|----------------|
-| Backend | Railway | $5/mo |
-| Database | Neon PostgreSQL | $0/mo (free tier) |
-| Art generation | Google Gemini API | Pay-per-call |
-| Agent execution | Anthropic Claude API | Pay-per-call |
-| Domain | agent-bestiary.world | $12/yr |
+| Component       | Provider             | Cost (current)    |
+| --------------- | -------------------- | ----------------- |
+| Backend         | Railway              | $5/mo             |
+| Database        | Neon PostgreSQL      | $0/mo (free tier) |
+| Art generation  | Google Gemini API    | Pay-per-call      |
+| Agent execution | Anthropic Claude API | Pay-per-call      |
+| Domain          | agent-bestiary.world | $12/yr            |
 
 Total current operating cost: **~$10/month**. This scales to ~$250/mo at 1K MAU and ~$10K/mo at 100K MAU.
 
@@ -447,12 +450,12 @@ Rabble.world needs the same thing any location-based social app needs: **density
 
 ### Use of Funds
 
-| Allocation | % | Purpose |
-|------------|---|---------|
-| User acquisition | 35% | Geo-targeted campaigns in 5 pilot cities; nature community partnerships |
-| Engineering | 30% | AR glasses SDK integration, creature evolution system, trading marketplace |
-| Content | 20% | Species expansion beyond Lepidoptera/Odonata, regional species packs, educational content |
-| Operations | 15% | Community management, nature org partnerships, App Store presence |
+| Allocation       | %   | Purpose                                                                                   |
+| ---------------- | --- | ----------------------------------------------------------------------------------------- |
+| User acquisition | 35% | Geo-targeted campaigns in 5 pilot cities; nature community partnerships                   |
+| Engineering      | 30% | AR glasses SDK integration, creature evolution system, trading marketplace                |
+| Content          | 20% | Species expansion beyond Lepidoptera/Odonata, regional species packs, educational content |
+| Operations       | 15% | Community management, nature org partnerships, App Store presence                         |
 
 ### What Makes This Investable
 

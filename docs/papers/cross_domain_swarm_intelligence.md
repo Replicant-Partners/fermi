@@ -117,12 +117,12 @@ A Rabble creature flight produces a sequence of path samples:
 
 Each sample is converted to SOSA observations:
 
-| Path Sample Field | SOSA Observable Property | SOSA URI | Unit |
-|---|---|---|---|
-| `lng` | xLocation | `onto4mat:xLocation` | degrees |
-| `lat` | yLocation | `onto4mat:yLocation` | degrees |
-| `heading` | hasHeading | `onto4mat:hasHeading` | degrees |
-| (derived) | hasSpeed | `onto4mat:hasSpeed` | m/s |
+| Path Sample Field | SOSA Observable Property | SOSA URI              | Unit    |
+| ----------------- | ------------------------ | --------------------- | ------- |
+| `lng`             | xLocation                | `onto4mat:xLocation`  | degrees |
+| `lat`             | yLocation                | `onto4mat:yLocation`  | degrees |
+| `heading`         | hasHeading               | `onto4mat:hasHeading` | degrees |
+| (derived)         | hasSpeed                 | `onto4mat:hasSpeed`   | m/s     |
 
 Speed is derived via haversine distance between consecutive samples divided by time delta:
 
@@ -153,16 +153,16 @@ Drone swarm telemetry from Crazyswarm2 / Crazyflie platforms arrives with explic
 
 These map directly to SOSA:
 
-| Onto4MAT Property | SOSA Observable Property | Unit |
-|---|---|---|
-| `x_location` | `onto4mat:xLocation` | m (local frame) |
-| `y_location` | `onto4mat:yLocation` | m (local frame) |
-| `heading` | `onto4mat:hasHeading` | degrees |
-| `speed` | `onto4mat:hasSpeed` | m/s |
-| `energy` | `onto4mat:hasEnergy` | ratio (0--1) |
-| `team_alignment` | `onto4mat:hasAlignmentWithTeam` | ratio (0--1) |
-| `team_cohesion` | `onto4mat:hasCohesionWithTeam` | ratio (0--1) |
-| `team_separation` | `onto4mat:hasTeamSeparation` | m |
+| Onto4MAT Property | SOSA Observable Property        | Unit            |
+| ----------------- | ------------------------------- | --------------- |
+| `x_location`      | `onto4mat:xLocation`            | m (local frame) |
+| `y_location`      | `onto4mat:yLocation`            | m (local frame) |
+| `heading`         | `onto4mat:hasHeading`           | degrees         |
+| `speed`           | `onto4mat:hasSpeed`             | m/s             |
+| `energy`          | `onto4mat:hasEnergy`            | ratio (0--1)    |
+| `team_alignment`  | `onto4mat:hasAlignmentWithTeam` | ratio (0--1)    |
+| `team_cohesion`   | `onto4mat:hasCohesionWithTeam`  | ratio (0--1)    |
+| `team_separation` | `onto4mat:hasTeamSeparation`    | m               |
 
 ### 3.3 The Commensurability Claim
 
@@ -242,15 +242,15 @@ This returns the current experience table as a JSON array of `{embedding, action
 
 ### 4.4 Comparison with Conventional Approaches
 
-| Property | Neural Network | Experience Table |
-|---|---|---|
-| Training required | Yes (hours/days) | No |
-| GPU at inference | Yes (or edge TPU) | No |
-| Incorporates new data | Retrain or fine-tune | Append |
-| Interpretable | Limited | Each entry traceable to source observation |
-| Memory footprint | Model-dependent (10MB--1GB) | ~4KB per entry ($N \times 1024 \times 4$ bytes) |
-| Latency | Forward pass (~1--10ms GPU) | kNN lookup (~0.1--1ms CPU) |
-| Provenance | Opaque | Each embedding linked to episode, agent, session, contributor |
+| Property              | Neural Network              | Experience Table                                              |
+| --------------------- | --------------------------- | ------------------------------------------------------------- |
+| Training required     | Yes (hours/days)            | No                                                            |
+| GPU at inference      | Yes (or edge TPU)           | No                                                            |
+| Incorporates new data | Retrain or fine-tune        | Append                                                        |
+| Interpretable         | Limited                     | Each entry traceable to source observation                    |
+| Memory footprint      | Model-dependent (10MB--1GB) | ~4KB per entry ($N \times 1024 \times 4$ bytes)               |
+| Latency               | Forward pass (~1--10ms GPU) | kNN lookup (~0.1--1ms CPU)                                    |
+| Provenance            | Opaque                      | Each embedding linked to episode, agent, session, contributor |
 
 The experience table trades generalization capacity for transparency and simplicity. A neural network may generalize to states far from any training example; the experience table is limited to interpolation between known experiences. For environments where contributors have generated dense coverage (e.g., a well-walked park), this limitation is negligible. For novel environments, the table will have sparse coverage and degrade to uncertain action selection --- a known limitation that the system handles by returning confidence scores based on cosine similarity magnitude.
 
@@ -280,13 +280,13 @@ This consent architecture follows the AKP principle that **the default state is 
 
 ### 5.2 Ownership Model
 
-| Asset | Owner | Created By | Transferable |
-|---|---|---|---|
-| Raw flight path (`path_samples`) | Creature owner | User's physical movement | No (personal data) |
-| SOSA observations | Creature owner | Automatic bridge (opt-in) | Yes (via marketplace) |
-| Agent episode + embedding | Platform | Agent execution | Licensed to contributors |
-| Consolidated knowledge (rules, entities) | Agent owner | ADM dreaming | Via AKP contracts |
-| Experience table entries | Composite | Aggregation of above | Yes (via marketplace) |
+| Asset                                    | Owner          | Created By                | Transferable             |
+| ---------------------------------------- | -------------- | ------------------------- | ------------------------ |
+| Raw flight path (`path_samples`)         | Creature owner | User's physical movement  | No (personal data)       |
+| SOSA observations                        | Creature owner | Automatic bridge (opt-in) | Yes (via marketplace)    |
+| Agent episode + embedding                | Platform       | Agent execution           | Licensed to contributors |
+| Consolidated knowledge (rules, entities) | Agent owner    | ADM dreaming              | Via AKP contracts        |
+| Experience table entries                 | Composite      | Aggregation of above      | Yes (via marketplace)    |
 
 The key distinction: raw flight paths are personal data (GPS traces of a person's movement). SOSA observations are *derived* data --- structured, anonymized sensor readings that retain navigational structure but shed personal identity. The bridge strips user identity from the observations; only the creature's taxonomic identity (feature of interest) and the platform type (`ar_creature`) are preserved.
 

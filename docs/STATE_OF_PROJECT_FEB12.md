@@ -2,20 +2,20 @@
 
 ## Numbers
 
-| Metric | Count |
-|--------|-------|
-| Age | **8 days** (Feb 4 → Feb 12, 2026) |
-| Commits | 389 |
-| Hand-written code | ~82,000 lines |
-| Rust (backend) | 40,600 lines across 75 source files |
-| Dart (mobile/web) | 11,463 lines |
-| HTML templates | 18,477 lines across 29 templates |
-| SQL migrations | 58 migrations, 2,469 lines |
-| Agent cards | 45 curated agents |
-| API routes | 217 registered, ~110+ unique endpoints |
-| Handler modules | 31 |
+| Metric                | Count                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Age                   | **8 days** (Feb 4 → Feb 12, 2026)                                                                                  |
+| Commits               | 389                                                                                                                |
+| Hand-written code     | ~82,000 lines                                                                                                      |
+| Rust (backend)        | 40,600 lines across 75 source files                                                                                |
+| Dart (mobile/web)     | 11,463 lines                                                                                                       |
+| HTML templates        | 18,477 lines across 29 templates                                                                                   |
+| SQL migrations        | 58 migrations, 2,469 lines                                                                                         |
+| Agent cards           | 45 curated agents                                                                                                  |
+| API routes            | 217 registered, ~110+ unique endpoints                                                                             |
+| Handler modules       | 31                                                                                                                 |
 | External integrations | 12 (Anthropic, Mistral, Qwen, OpenRouter, Gemini, Voyage, Stripe, GBIF, Twelve Labs, Cartesia, Instagram, Bluesky) |
-| Docs | 177 markdown files |
+| Docs                  | 177 markdown files                                                                                                 |
 
 ## What's Built and Working
 
@@ -117,16 +117,17 @@ This is a **vertical AI infrastructure stack** — not a single app. Three layer
 
 **Fixed costs are near-zero:**
 
-| Monthly cost | Amount |
-|-------------|--------|
-| Railway hosting | ~$20 |
-| Neon Postgres Pro | ~$19 |
-| Domain names | ~$3 |
-| **Total fixed** | **~$42/mo** |
+| Monthly cost      | Amount      |
+| ----------------- | ----------- |
+| Railway hosting   | ~$20        |
+| Neon Postgres Pro | ~$19        |
+| Domain names      | ~$3         |
+| **Total fixed**   | **~$42/mo** |
 
 **Variable costs are pass-through.** LLM API calls (Anthropic, Mistral, Gemini, etc.) are funded by user credit purchases. The gas model means every token is pre-paid. The 10% gas surcharge on execution is margin on compute. Platform_read charges (1 credit per infrastructure read) are pure margin — no LLM call, just a DB query serving previously-computed data.
 
 **Break-even is remarkably low:**
+
 - At $5/mo avg revenue per user: **9 paying users**
 - At $10/mo: **5 paying users**
 
@@ -148,6 +149,7 @@ This is a **vertical AI infrastructure stack** — not a single app. Three layer
 Traditional startup valuation penalizes risk: high burn ($50K-500K/mo) = short runway = existential pressure = discount. Need to raise capital = dilution. Miss PMF in 18 months = dead. Investors price that mortality risk in.
 
 This structure inverts the model:
+
 - $42/mo burn = effectively infinite runway on personal cash
 - No investors needed = no dilution = 100% ownership
 - Failed experiment costs ~$500/year, not $500K
@@ -160,32 +162,34 @@ This structure inverts the model:
 **1. Option Value.** This is a portfolio of call options on multiple verticals. Each white-label experiment is a low-cost option. The option doesn't expire (infinite runway). Classical option pricing: value increases with time to expiry and number of underlying assets. Infinite time, and new underlyings (verticals) can be created for ~$0 marginal cost.
 
 **2. Revenue Multiple at Scale.** If any vertical hits:
+
 - 100 users x $10/mo = $12K ARR → $120K at 10x
 - 1,000 users x $10/mo = $120K ARR → $1.2M at 10x
 - 10,000 users x $10/mo = $1.2M ARR → $12M at 10x
 
 The path from 100 to 10,000 doesn't require raising capital. Scale on Railway/Neon, costs grow sub-linearly (Postgres handles 10K users on the $19 plan).
 
-**3. Replacement Cost + Velocity Premium.** $500K-$1M replacement cost for the code. But the real asset is development velocity — 82K lines in 8 days means pivoting faster than anyone who needs to hire engineers. A competitor with a $2M seed round and 5 engineers takes 6 months to build what exists here. By then, 10 experiments have run and the winning vertical is found.
+**3. Replacement Cost + Velocity Premium.** $500K-$1M replacement cost for the code. But the real asset is development velocity — 82K lines in 8 days means pivoting faster than anyone who needs to hire engineers. A competitor with a $2M seed round and 5 engineers takes 6 months to build what exists here. By then, 10 experiments have run and the winning vertical is found. *keller dynamics*
 
 **4. IP Value.** Three novel pieces of IP that don't exist elsewhere:
+
 - Three-tier gas model with read-to-execute ratio as value signal
 - TEC coherence evaluation for multi-agent discourse governance
 - AKP design (agent P2P knowledge trading with endogenous economics)
 
-Patentable if desired. Even without patents, architectural IP that takes deep domain thinking to replicate.
+**Patentable if desired. Even without patents, architectural IP that takes deep domain thinking to replicate.**
 
 #### Valuation Summary
 
-| Frame | Value | Rationale |
-|-------|-------|-----------|
-| Liquidation / acqui-hire | $200-500K | Code + IP + demonstrated AI-augmented dev capability |
-| Revenue (pre-revenue) | ~$0 | No users, no revenue |
-| Replacement cost | $500K-$1M | 82K lines, 12 integrations, deployed |
-| Option portfolio | $1-3M | Multiple verticals x infinite runway x near-zero experiment cost |
-| At 1K paying users | $1-2M | $120K ARR x 10-15x SaaS multiple |
-| At 10K paying users | $10-15M | $1.2M ARR x 10-12x |
-| If AKP creates network effects | $20-50M+ | Network effects in agent knowledge = defensible platform |
+| Frame                          | Value     | Rationale                                                        |
+| ------------------------------ | --------- | ---------------------------------------------------------------- |
+| Liquidation / acqui-hire       | $200-500K | Code + IP + demonstrated AI-augmented dev capability             |
+| Revenue (pre-revenue)          | ~$0       | No users, no revenue                                             |
+| Replacement cost               | $500K-$1M | 82K lines, 12 integrations, deployed                             |
+| Option portfolio               | $1-3M     | Multiple verticals x infinite runway x near-zero experiment cost |
+| At 1K paying users             | $1-2M     | $120K ARR x 10-15x SaaS multiple                                 |
+| At 10K paying users            | $10-15M   | $1.2M ARR x 10-12x                                               |
+| If AKP creates network effects | $20-50M+  | Network effects in agent knowledge = defensible platform         |
 
 **The key insight:** Most early-stage valuations are heavily discounted by mortality risk — "this company will probably die before finding PMF." Mortality risk here is essentially zero because burn is $42/mo. That removes the biggest discount factor in early-stage valuation. This isn't betting the farm — it's running cheap experiments with unlimited time.
 

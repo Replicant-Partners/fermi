@@ -163,7 +163,26 @@
           <div class="profile-info">
             <h1>
               <span id="display-name">Loading...</span>
-              <a href="/profile" class="edit-link" id="edit-link">Edit Profile</a>
+              <a href="/profile" class="edit-link" id="edit-link"
+                >Edit Profile</a
+              >
+              <button
+                id="contact-btn"
+                style="
+                  display: none;
+                  margin-left: 8px;
+                  background: none;
+                  border: 1px solid var(--yellow);
+                  color: var(--yellow);
+                  padding: 3px 12px;
+                  cursor: pointer;
+                  font-family: inherit;
+                  font-size: 0.75rem;
+                "
+                onclick="toggleContact()"
+              >
+                + Add Contact
+              </button>
             </h1>
             <div class="profile-meta" id="member-since"></div>
           </div>
@@ -209,7 +228,8 @@
         // Load public profile
         const res = await fetch(`/api/users/${encodeURIComponent(userId)}`);
         if (!res.ok) {
-          document.getElementById("display-name").textContent = "User not found";
+          document.getElementById("display-name").textContent =
+            "User not found";
           return;
         }
         const data = await res.json();
@@ -245,7 +265,8 @@
         // Agents grid
         const agentsEl = document.getElementById("agents-list");
         if (data.public_agents && data.public_agents.length > 0) {
-          agentsEl.innerHTML = '<div class="agents-grid">' +
+          agentsEl.innerHTML =
+            '<div class="agents-grid">' +
             data.public_agents
               .map((a) => {
                 const aName = a.display_alias || a.agent_name;
@@ -260,23 +281,81 @@
                   <div class="agent-tile-stats">${a.total_executions} executions</div>
                 </a>`;
               })
-              .join("") + '</div>';
+              .join("") +
+            "</div>";
         } else {
           agentsEl.innerHTML =
             '<div class="empty-state">No public agents yet</div>';
         }
 
-        // Check if viewing own profile
+        // Check if viewing own profile, or show contact button
         try {
           const authRes = await fetch("/api/auth/me");
           if (authRes.ok) {
             const me = await authRes.json();
             if (me.user_id === data.user_id) {
               document.getElementById("edit-link").style.display = "inline";
+            } else {
+              // Show contact button for other users
+              const contactBtn = document.getElementById("contact-btn");
+              contactBtn.style.display = "inline-block";
+              contactBtn.dataset.targetId = data.user_id;
+              // Check if already a contact
+              try {
+                const cRes = await fetch("/api/contacts");
+                if (cRes.ok) {
+                  const cData = await cRes.json();
+                  const existing = (cData.contacts || []).find(
+                    (c) => c.contact_id === data.user_id,
+                  );
+                  if (existing) {
+                    contactBtn.textContent = "Remove Contact";
+                    contactBtn.dataset.contactRowId = existing.id;
+                    contactBtn.style.borderColor = "var(--red)";
+                    contactBtn.style.color = "var(--red)";
+                  }
+                }
+              } catch {}
             }
           }
         } catch {}
       })();
+
+      async function toggleContact() {
+        const btn = document.getElementById("contact-btn");
+        const targetId = btn.dataset.targetId;
+        if (btn.dataset.contactRowId) {
+          // Remove
+          try {
+            const res = await fetch(
+              `/api/contacts/${btn.dataset.contactRowId}`,
+              { method: "DELETE" },
+            );
+            if (res.ok) {
+              btn.textContent = "+ Add Contact";
+              delete btn.dataset.contactRowId;
+              btn.style.borderColor = "var(--yellow)";
+              btn.style.color = "var(--yellow)";
+            }
+          } catch {}
+        } else {
+          // Add
+          try {
+            const res = await fetch("/api/contacts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contact_id: targetId }),
+            });
+            if (res.ok) {
+              const d = await res.json();
+              btn.textContent = "Remove Contact";
+              btn.dataset.contactRowId = d.id;
+              btn.style.borderColor = "var(--red)";
+              btn.style.color = "var(--red)";
+            }
+          } catch {}
+        }
+      }
     </script>
     <script src="/static/js/theme.js"></script>
   </body>

@@ -126,6 +126,28 @@ pub async fn list_agents(
 
         let page_agents: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
 
+        // Batch-load owner display names
+        let owner_ids: Vec<String> = page_agents
+            .iter()
+            .filter_map(|a| a.owner_id.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let owner_names: std::collections::HashMap<String, String> = if !owner_ids.is_empty() {
+            sqlx::query(
+                "SELECT user_id, COALESCE(display_name, email, user_id) as name FROM users WHERE user_id = ANY($1)",
+            )
+            .bind(&owner_ids)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|r| (r.get::<String, _>("user_id"), r.get::<String, _>("name")))
+            .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
         if !page_agents.is_empty() || total > 0 {
             let agents: Vec<Value> = page_agents
                 .iter()
@@ -137,6 +159,10 @@ pub async fn list_agents(
                         std::fs::read_to_string(&path).ok()
                             .and_then(|s| serde_json::from_str::<Value>(&s).ok())
                     });
+
+                    let owner_display = a.owner_id.as_deref()
+                        .and_then(|oid| owner_names.get(oid))
+                        .cloned();
 
                     let mut agent_val = json!({
                         "agent_id": a.agent_name,
@@ -152,6 +178,7 @@ pub async fn list_agents(
                         "sample_queries": a.sample_queries,
                         "visibility": a.visibility,
                         "owner_id": a.owner_id.as_deref().unwrap_or(""),
+                        "owner_display_name": owner_display,
                         "system_prompt": a.system_prompt.as_deref().unwrap_or(""),
                         "status": a.status,
                         "fork_pricing": a.fork_pricing,

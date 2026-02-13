@@ -914,7 +914,7 @@
                   ${agent.status && agent.status !== "published" ? `<span class="badge" style="background:${agent.status === "draft" ? "var(--yellow)" : "var(--gray)"};color:var(--bg0)">${agent.status}</span>` : ""}
                   ${agent.fork_count > 0 ? `<span class="badge" style="background:var(--blue);color:#fff">&#9906; ${agent.fork_count} forks</span>` : ""}
                   ${agent.forked_from ? `<span class="badge" style="background:var(--purple);color:#fff">forked</span>` : ""}
-                  ${agent.metadata?.author ? `<span class="badge">${agent.metadata.author}</span>` : ""}
+                  ${agent.owner_display_name || agent.metadata?.author ? `<a href="/user/${encodeURIComponent(agent.owner_id)}" class="badge" style="text-decoration:none;color:inherit">${agent.owner_display_name || agent.metadata?.author}</a>` : ""}
                 </div>
               </div>
               <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
@@ -1025,7 +1025,7 @@
                       <div class="field-item"><div class="field-label">Temperature</div><div class="field-value">${temperature}</div></div>
                       <div class="field-item"><div class="field-label">Type</div><div class="field-value">${agent.agent_type || "N/A"}</div></div>
                       <div class="field-item"><div class="field-label">First Observed</div><div class="field-value">${agent.metadata?.created || "N/A"}</div></div>
-                      <div class="field-item"><div class="field-label">Researcher</div><div class="field-value">${agent.metadata?.author || "N/A"}</div></div>
+                      <div class="field-item"><div class="field-label">Researcher</div><div class="field-value">${agent.owner_id ? `<a href="/user/${encodeURIComponent(agent.owner_id)}" style="color:var(--aqua);text-decoration:none">${agent.owner_display_name || agent.metadata?.author || "N/A"}</a>` : agent.metadata?.author || "N/A"}</div></div>
                     </div>
                   </div>
 
@@ -1221,7 +1221,7 @@
                     <div style="color:var(--fg1);font-size:0.9em;line-height:1.7">
                       ${agent.description || agent.metadata?.description || "No description provided."}
                     </div>
-                    ${agent.metadata?.author ? `<div style="margin-top:12px;font-size:0.8em;color:var(--fg3)">Author: <span style="color:var(--fg2)">${agent.metadata.author}</span></div>` : ""}
+                    ${agent.owner_display_name || agent.metadata?.author ? `<div style="margin-top:12px;font-size:0.8em;color:var(--fg3)">Author: ${agent.owner_id ? `<a href="/user/${encodeURIComponent(agent.owner_id)}" style="color:var(--aqua);text-decoration:none">${agent.owner_display_name || agent.metadata?.author}</a>` : `<span style="color:var(--fg2)">${agent.metadata?.author}</span>`}</div>` : ""}
                     ${agent.metadata?.created ? `<div style="font-size:0.8em;color:var(--fg3)">Created: <span style="color:var(--fg2)">${agent.metadata.created}</span></div>` : ""}
                   </div>
 

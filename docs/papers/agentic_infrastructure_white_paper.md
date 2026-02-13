@@ -62,17 +62,17 @@ The card serves triple duty: it is the agent's deployment manifest, its API docu
 
 The current catalogue spans 8 categories:
 
-| Category | Agents | Role |
-|----------|--------|------|
-| Research & Analysis | 7 | Macro forecasting, Monte Carlo simulation, species resolution, embedding projection, deal finding |
-| Creative & Visual | 10 | AR beacon placement, choreography, specimen art, style transfer, video analysis, watermarking |
-| Coherence & Coordination | 4 | TEC evaluation, workspace consulting, intention bridging, artwork delivery |
-| Social Media | 4 | Instagram/Bluesky publishing, sentiment analysis, content studio |
-| Marketplace | 4 | Shopping intelligence, preference modeling, deal finding, embedding brokerage |
-| Meta & Platform | 2 | Dream narration, performance coaching |
-| Billing | 1 | Stripe Connect advisory |
-| Games | 1 | Daily logic puzzles |
-| OSINT | 1 | Entity investigation, knowledge graph construction |
+| Category                 | Agents | Role                                                                                              |
+| ------------------------ | ------ | ------------------------------------------------------------------------------------------------- |
+| Research & Analysis      | 7      | Macro forecasting, Monte Carlo simulation, species resolution, embedding projection, deal finding |
+| Creative & Visual        | 10     | AR beacon placement, choreography, specimen art, style transfer, video analysis, watermarking     |
+| Coherence & Coordination | 4      | TEC evaluation, workspace consulting, intention bridging, artwork delivery                        |
+| Social Media             | 4      | Instagram/Bluesky publishing, sentiment analysis, content studio                                  |
+| Marketplace              | 4      | Shopping intelligence, preference modeling, deal finding, embedding brokerage                     |
+| Meta & Platform          | 2      | Dream narration, performance coaching                                                             |
+| Billing                  | 1      | Stripe Connect advisory                                                                           |
+| Games                    | 1      | Daily logic puzzles                                                                               |
+| OSINT                    | 1      | Entity investigation, knowledge graph construction                                                |
 
 These are not toy agents. The `entity_investigator` builds knowledge graphs with bi-temporal fact tracking. The `coherence_evaluator` implements Thagard's Theory of Explanatory Coherence (1989) as a deterministic constraint-satisfaction engine. The `social_media_studio` is a compound agent that orchestrates image generation, style transfer, watermarking, and multi-platform publishing in a single pipeline.
 
@@ -188,6 +188,7 @@ This is not just academic. In a workspace where multiple agents collaborate, coh
 ### 5.2 Tiered Pricing
 
 Coherence evaluation is tiered by depth:
+
 - **Index** (free): Basic coherence score
 - **Recommendations** (2 credits): Actionable suggestions for improving coherence
 - **Dream Notes** (5 credits): Full consolidation with narrative synthesis
@@ -213,6 +214,7 @@ Platform (drone, weather station, wearable, vehicle)
 ```
 
 **Workflow**:
+
 1. Register a platform with its sensor array
 2. Create observation sessions (charged at session creation)
 3. Ingest observation batches (1 credit per batch)
@@ -220,6 +222,7 @@ Platform (drone, weather station, wearable, vehicle)
 5. The same consolidation pipeline extracts patterns, builds KG entries
 
 This is where the architecture becomes domain-agnostic. A "platform" can be:
+
 - A smartphone running an AR creature app (Rabble)
 - A GPS tracker on a shipping container
 - A temperature sensor in a cold chain
@@ -261,21 +264,21 @@ Replace "creature" with "shipment" and "flight" with "transit leg" and you have 
 
 The platform runs on credits — a unified currency for all operations:
 
-| Operation | Cost |
-|-----------|------|
-| Agent execution | 1 credit per 1000 tokens (min 1) + 10% gas |
-| Workspace message | 1 credit |
-| Agent hire | 5 credits |
-| Creature mint | 3 credits + 5 for art |
-| Flight record | 3 credits |
-| Swarm creation | 5 credits |
-| Consolidation cycle | 3 credits |
-| Eval run | 2 credits |
-| Marketplace listing | 3 credits |
-| Marketplace match | 1 credit base + listing price |
-| Image generation | 3 credits |
-| Voice synthesis | 2 credits |
-| Observation ingest | 1 credit per batch |
+| Operation           | Cost                                       |
+| ------------------- | ------------------------------------------ |
+| Agent execution     | 1 credit per 1000 tokens (min 1) + 10% gas |
+| Workspace message   | 1 credit                                   |
+| Agent hire          | 5 credits                                  |
+| Creature mint       | 3 credits + 5 for art                      |
+| Flight record       | 3 credits                                  |
+| Swarm creation      | 5 credits                                  |
+| Consolidation cycle | 3 credits                                  |
+| Eval run            | 2 credits                                  |
+| Marketplace listing | 3 credits                                  |
+| Marketplace match   | 1 credit base + listing price              |
+| Image generation    | 3 credits                                  |
+| Voice synthesis     | 2 credits                                  |
+| Observation ingest  | 1 credit per batch                         |
 
 Credits are purchased via Stripe (three tiers: Starter $9.99/100cr, Professional $39.99/500cr, Enterprise $69.99/1000cr with volume discounts).
 
@@ -322,18 +325,18 @@ This runs continuously as agents evolve through consolidation and knowledge grap
 
 Consider a cold chain logistics operation. The mapping from ABW to supply chain is direct:
 
-| ABW Concept | Supply Chain Equivalent |
-|-------------|------------------------|
-| Creature | Shipment / Asset |
-| Flight | Transit leg |
-| Swarm | Consolidation point / Cross-dock event |
-| Device pairing | RFID tag / GPS tracker on container |
-| Observation (SOSA) | Temperature reading, humidity, shock event |
-| H3 spatial grid | Warehouse zones, delivery routes, geofences |
-| Consolidation (dream cycle) | Pattern extraction: "Tuesday shipments from Supplier X have 3x spoilage rate" |
-| Knowledge graph | Supplier relationships, route performance, risk factors |
-| Coherence evaluation | Is the logistics plan internally consistent? Are constraints satisfied? |
-| Embedding marketplace | Logistics intelligence: "Which carriers' behavior profiles match our reliability requirements?" |
+| ABW Concept                 | Supply Chain Equivalent                                                                         |
+| --------------------------- | ----------------------------------------------------------------------------------------------- |
+| Creature                    | Shipment / Asset                                                                                |
+| Flight                      | Transit leg                                                                                     |
+| Swarm                       | Consolidation point / Cross-dock event                                                          |
+| Device pairing              | RFID tag / GPS tracker on container                                                             |
+| Observation (SOSA)          | Temperature reading, humidity, shock event                                                      |
+| H3 spatial grid             | Warehouse zones, delivery routes, geofences                                                     |
+| Consolidation (dream cycle) | Pattern extraction: "Tuesday shipments from Supplier X have 3x spoilage rate"                   |
+| Knowledge graph             | Supplier relationships, route performance, risk factors                                         |
+| Coherence evaluation        | Is the logistics plan internally consistent? Are constraints satisfied?                         |
+| Embedding marketplace       | Logistics intelligence: "Which carriers' behavior profiles match our reliability requirements?" |
 
 ### 9.1 What You Get for Free
 
@@ -363,25 +366,26 @@ The infrastructure doesn't change. You add agent cards and tools.
 
 ## 10. Technical Foundation
 
-| Component | Technology | Why |
-|-----------|-----------|-----|
-| API Server | Axum (Rust) | Zero-cost abstractions, async, memory safety |
-| Database | PostgreSQL (Neon) + pgvector | Relational + vector similarity in one engine |
-| Connection Pool | PgBouncer (transaction mode) | Connection efficiency at scale |
-| LLM Backends | Anthropic, Mistral, Qwen, OpenRouter | Provider independence |
-| Vision/Image | Google Gemini 2.5 Flash | Cost-effective image generation |
-| Voice | Cartesia Sonic | Text-to-speech for agent personas |
-| Embeddings | Voyage-2 (1536d) | High-quality semantic search |
-| Spatial | H3 hexagonal grid | Uniform spatial indexing |
-| Sensor Vocab | W3C SOSA/SSN | Interoperable observation data |
-| Payments | Stripe Checkout + Webhooks | Idempotent credit purchases |
-| File Versioning | Git (per-workspace) | Full history, diff, rollback |
-| Real-time | Tokio broadcast channels + SSE | Multi-subscriber event streams |
-| Deployment | Docker (cargo-chef) on Railway | Fast incremental builds |
+| Component       | Technology                           | Why                                          |
+| --------------- | ------------------------------------ | -------------------------------------------- |
+| API Server      | Axum (Rust)                          | Zero-cost abstractions, async, memory safety |
+| Database        | PostgreSQL (Neon) + pgvector         | Relational + vector similarity in one engine |
+| Connection Pool | PgBouncer (transaction mode)         | Connection efficiency at scale               |
+| LLM Backends    | Anthropic, Mistral, Qwen, OpenRouter | Provider independence                        |
+| Vision/Image    | Google Gemini 2.5 Flash              | Cost-effective image generation              |
+| Voice           | Cartesia Sonic                       | Text-to-speech for agent personas            |
+| Embeddings      | Voyage-2 (1536d)                     | High-quality semantic search                 |
+| Spatial         | H3 hexagonal grid                    | Uniform spatial indexing                     |
+| Sensor Vocab    | W3C SOSA/SSN                         | Interoperable observation data               |
+| Payments        | Stripe Checkout + Webhooks           | Idempotent credit purchases                  |
+| File Versioning | Git (per-workspace)                  | Full history, diff, rollback                 |
+| Real-time       | Tokio broadcast channels + SSE       | Multi-subscriber event streams               |
+| Deployment      | Docker (cargo-chef) on Railway       | Fast incremental builds                      |
 
 ### Rate Limiting
 
 Three-tier sliding window:
+
 - Public: 100 req/min per IP
 - Authenticated: 300 req/min per user
 - LLM endpoints: 10 req/min per user

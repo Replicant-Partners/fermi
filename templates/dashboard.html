@@ -297,6 +297,50 @@
         font-size: 0.7rem;
         color: var(--fg3);
       }
+      .people-tab {
+        background: none;
+        border: none;
+        color: var(--fg3);
+        cursor: pointer;
+        padding: 6px 0;
+        font-family: inherit;
+        font-size: 0.8rem;
+        border-bottom: 2px solid transparent;
+      }
+      .people-tab.active {
+        color: var(--yellow);
+        border-bottom-color: var(--yellow);
+      }
+      .people-tab:hover {
+        color: var(--fg1);
+      }
+      .contact-actions {
+        display: flex;
+        gap: 4px;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+      .contact-actions button {
+        background: none;
+        border: 1px solid var(--bg3);
+        color: var(--fg3);
+        cursor: pointer;
+        padding: 2px 6px;
+        font-size: 0.65rem;
+        font-family: inherit;
+      }
+      .contact-actions button:hover {
+        border-color: var(--red);
+        color: var(--red);
+      }
+      .contact-nickname {
+        font-size: 0.65rem;
+        color: var(--purple);
+        background: var(--bg2);
+        padding: 1px 5px;
+        border-radius: 3px;
+        margin-left: 4px;
+      }
     </style>
   </head>
   <body>
@@ -423,13 +467,46 @@
       </div>
 
       <!-- People -->
-      <div
-        class="section"
-        style="margin-bottom: 24px; display: none"
-        id="people-section"
-      >
-        <div class="section-title">People</div>
-        <div id="people-list"></div>
+      <div class="section" style="margin-bottom: 24px" id="people-section">
+        <div class="section-title">
+          People
+          <span
+            id="people-counts"
+            style="font-size: 0.75em; color: var(--fg3); font-weight: normal"
+          ></span>
+          <button
+            class="btn btn-primary"
+            onclick="openFindPeopleModal()"
+            style="float: right; font-size: 0.75rem; padding: 3px 10px"
+          >
+            Find People
+          </button>
+        </div>
+        <div
+          style="
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--bg2);
+          "
+        >
+          <button
+            class="people-tab active"
+            data-tab="collaborators"
+            onclick="switchPeopleTab('collaborators')"
+          >
+            Collaborators
+          </button>
+          <button
+            class="people-tab"
+            data-tab="contacts"
+            onclick="switchPeopleTab('contacts')"
+          >
+            My Contacts
+          </button>
+        </div>
+        <div id="people-collaborators-panel"></div>
+        <div id="people-contacts-panel" style="display: none"></div>
       </div>
 
       <!-- Collection -->
@@ -455,6 +532,15 @@
     <script src="/static/js/widgets/toast.js"></script>
     <script src="/static/js/api.js"></script>
     <script>
+      function escHtml(s) {
+        const d = document.createElement("div");
+        d.textContent = s || "";
+        return d.innerHTML;
+      }
+      function escAttr(s) {
+        return (s || "").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+      }
+
       // Check for payment return
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get("payment") === "success") {
@@ -814,38 +900,225 @@
           }
         } catch {}
 
-        // Load people (collaborators)
+        // Load people (collaborators + contacts)
+        loadCollaborators();
+        loadContacts();
+      })();
+
+      let _collabCount = 0,
+        _contactCount = 0;
+      function updatePeopleCounts() {
+        const el = document.getElementById("people-counts");
+        if (el)
+          el.textContent = `(${_contactCount} contact${_contactCount !== 1 ? "s" : ""} · ${_collabCount} collaborator${_collabCount !== 1 ? "s" : ""})`;
+      }
+
+      function renderPersonTile(p, meta, extraHtml) {
+        const name = p.display_name || p.user_id;
+        const initial = name.charAt(0).toUpperCase();
+        const avatar = p.avatar_url
+          ? `<img src="${escHtml(p.avatar_url)}" onerror="this.parentElement.textContent='${initial}'">`
+          : initial;
+        return `<div class="person-tile" style="position:relative">
+          <a href="/user/${encodeURIComponent(p.contact_id || p.user_id)}" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;flex:1;min-width:0">
+            <div class="person-avatar">${avatar}</div>
+            <div class="person-info">
+              <div class="person-name">${escHtml(name)}${p.nickname ? `<span class="contact-nickname">${escHtml(p.nickname)}</span>` : ""}</div>
+              <div class="person-meta">${meta}</div>
+            </div>
+          </a>
+          ${extraHtml || ""}
+        </div>`;
+      }
+
+      async function loadCollaborators() {
+        const panel = document.getElementById("people-collaborators-panel");
         try {
           const res = await fetch("/api/users/collaborators");
-          if (res.ok) {
-            const data = await res.json();
-            if (data.collaborators && data.collaborators.length > 0) {
-              const section = document.getElementById("people-section");
-              section.style.display = "";
-              document.getElementById("people-list").innerHTML =
-                '<div class="people-grid">' +
-                data.collaborators
-                  .map((p) => {
-                    const name = p.display_name || p.user_id;
-                    const initial = name.charAt(0).toUpperCase();
-                    const avatar = p.avatar_url
-                      ? `<img src="${escHtml(p.avatar_url)}" onerror="this.parentElement.textContent='${initial}'">`
-                      : initial;
-                    return `
-                    <a href="/user/${encodeURIComponent(p.user_id)}" class="person-tile">
-                      <div class="person-avatar">${avatar}</div>
-                      <div class="person-info">
-                        <div class="person-name">${escHtml(name)}</div>
-                        <div class="person-meta">${p.shared_workspaces} shared workspace${p.shared_workspaces !== 1 ? "s" : ""}</div>
-                      </div>
-                    </a>`;
-                  })
-                  .join("") +
-                "</div>";
-            }
+          if (!res.ok) {
+            panel.innerHTML =
+              '<div style="color:var(--fg4);font-size:0.85em">Could not load</div>';
+            return;
           }
-        } catch {}
-      })();
+          const data = await res.json();
+          const collabs = data.collaborators || [];
+          _collabCount = collabs.length;
+          updatePeopleCounts();
+          if (collabs.length === 0) {
+            panel.innerHTML =
+              '<div style="color:var(--fg4);font-size:0.85em">No collaborators yet. Share a workspace to see people here.</div>';
+          } else {
+            panel.innerHTML =
+              '<div class="people-grid">' +
+              collabs
+                .map((p) =>
+                  renderPersonTile(
+                    p,
+                    `${p.shared_workspaces} shared workspace${p.shared_workspaces !== 1 ? "s" : ""}`,
+                  ),
+                )
+                .join("") +
+              "</div>";
+          }
+        } catch {
+          panel.innerHTML =
+            '<div style="color:var(--red);font-size:0.85em">Error loading collaborators</div>';
+        }
+      }
+
+      async function loadContacts() {
+        const panel = document.getElementById("people-contacts-panel");
+        try {
+          const res = await fetch("/api/contacts");
+          if (!res.ok) {
+            panel.innerHTML =
+              '<div style="color:var(--fg4);font-size:0.85em">Could not load</div>';
+            return;
+          }
+          const data = await res.json();
+          const contacts = data.contacts || [];
+          _contactCount = contacts.length;
+          updatePeopleCounts();
+          if (contacts.length === 0) {
+            panel.innerHTML =
+              '<div style="color:var(--fg4);font-size:0.85em">No contacts yet. Use <strong>Find People</strong> to add contacts.</div>';
+          } else {
+            panel.innerHTML =
+              '<div class="people-grid">' +
+              contacts
+                .map((c) =>
+                  renderPersonTile(
+                    c,
+                    c.bio ? escHtml(c.bio.slice(0, 60)) : "Contact",
+                    `<div class="contact-actions"><button onclick="removeContact('${escAttr(c.id)}')">remove</button></div>`,
+                  ),
+                )
+                .join("") +
+              "</div>";
+          }
+        } catch {
+          panel.innerHTML =
+            '<div style="color:var(--red);font-size:0.85em">Error loading contacts</div>';
+        }
+      }
+
+      function switchPeopleTab(tab) {
+        document
+          .querySelectorAll(".people-tab")
+          .forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+        document.getElementById("people-collaborators-panel").style.display =
+          tab === "collaborators" ? "" : "none";
+        document.getElementById("people-contacts-panel").style.display =
+          tab === "contacts" ? "" : "none";
+      }
+
+      async function removeContact(contactId) {
+        try {
+          const res = await fetch(`/api/contacts/${contactId}`, {
+            method: "DELETE",
+          });
+          if (res.ok) {
+            loadContacts();
+            Toast.show("Contact removed", "success");
+          } else Toast.show(await res.text(), "error");
+        } catch (e) {
+          Toast.show("Error: " + e.message, "error");
+        }
+      }
+
+      // Find People modal
+      function openFindPeopleModal() {
+        document.getElementById("find-people-modal").classList.add("active");
+        document.getElementById("people-search-input").value = "";
+        document.getElementById("people-search-results").innerHTML =
+          "Type at least 2 characters to search";
+        document.getElementById("people-search-input").focus();
+      }
+      function closeFindPeopleModal() {
+        document.getElementById("find-people-modal").classList.remove("active");
+      }
+
+      let _searchTimer = null;
+      function debouncedPeopleSearch() {
+        clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(searchPeople, 300);
+      }
+      async function searchPeople() {
+        const q = document.getElementById("people-search-input").value.trim();
+        const el = document.getElementById("people-search-results");
+        if (q.length < 2) {
+          el.innerHTML = "Type at least 2 characters to search";
+          return;
+        }
+        el.innerHTML = "Searching...";
+        try {
+          const res = await fetch(
+            `/api/users/search?q=${encodeURIComponent(q)}&limit=20`,
+          );
+          if (!res.ok) {
+            el.innerHTML =
+              '<span style="color:var(--red)">Search failed</span>';
+            return;
+          }
+          const data = await res.json();
+          const users = data.users || [];
+          if (users.length === 0) {
+            el.innerHTML = "No users found";
+            return;
+          }
+          el.innerHTML = users
+            .map((u) => {
+              const name = u.display_name || u.user_id;
+              const initial = name.charAt(0).toUpperCase();
+              const avatar = u.avatar_url
+                ? `<img src="${escHtml(u.avatar_url)}" onerror="this.parentElement.textContent='${initial}'">`
+                : initial;
+              const bio = u.bio_snippet
+                ? `<div style="color:var(--fg4);font-size:0.8em">${escHtml(u.bio_snippet)}</div>`
+                : "";
+              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--bg2)">
+              <div class="person-avatar">${avatar}</div>
+              <div style="flex:1;min-width:0">
+                <div style="color:var(--fg1)">${escHtml(name)}</div>
+                ${bio}
+                <div style="font-size:0.75em;color:var(--fg4)">${u.public_agent_count || 0} public agents</div>
+              </div>
+              <div style="display:flex;gap:4px">
+                <button class="btn" style="font-size:0.7rem;padding:3px 8px" onclick="addContact('${escAttr(u.user_id)}')">+ Contact</button>
+                <a href="/user/${encodeURIComponent(u.user_id)}" class="btn" style="font-size:0.7rem;padding:3px 8px;text-decoration:none">View</a>
+              </div>
+            </div>`;
+            })
+            .join("");
+        } catch (e) {
+          el.innerHTML =
+            '<span style="color:var(--red)">Error: ' +
+            escHtml(e.message) +
+            "</span>";
+        }
+      }
+
+      async function addContact(userId) {
+        try {
+          const res = await fetch("/api/contacts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contact_id: userId }),
+          });
+          if (res.ok) {
+            Toast.show("Contact added", "success");
+            loadContacts();
+          } else {
+            const text = await res.text();
+            Toast.show(
+              text.includes("already") ? "Already a contact" : text,
+              "error",
+            );
+          }
+        } catch (e) {
+          Toast.show("Error: " + e.message, "error");
+        }
+      }
 
       function formatNum(n) {
         if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -955,6 +1228,58 @@
           <button class="btn btn-primary" onclick="submitCreateWs()">
             Create
           </button>
+        </div>
+      </div>
+    </div>
+    <!-- Find People Modal -->
+    <div class="modal-overlay" id="find-people-modal">
+      <div
+        class="modal"
+        style="
+          width: 450px;
+          max-width: 90vw;
+          background: var(--bg0);
+          border: 1px solid var(--bg2);
+          padding: 24px;
+        "
+      >
+        <h3 style="color: var(--fg0); margin-bottom: 16px">Find People</h3>
+        <input
+          type="text"
+          id="people-search-input"
+          placeholder="Search by name or email..."
+          oninput="debouncedPeopleSearch()"
+          style="
+            width: 100%;
+            background: var(--bg1);
+            border: 1px solid var(--bg2);
+            color: var(--fg1);
+            padding: 8px 12px;
+            font-family: inherit;
+            font-size: 0.85rem;
+            margin-bottom: 12px;
+          "
+        />
+        <div
+          id="people-search-results"
+          style="
+            max-height: 300px;
+            overflow-y: auto;
+            font-size: 0.85em;
+            color: var(--fg3);
+          "
+        >
+          Type at least 2 characters to search
+        </div>
+        <div
+          style="
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 16px;
+          "
+        >
+          <button class="btn" onclick="closeFindPeopleModal()">Close</button>
         </div>
       </div>
     </div>
