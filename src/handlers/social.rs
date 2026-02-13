@@ -107,21 +107,30 @@ pub async fn add_contact_handler(
     })))
 }
 
-/// DELETE /api/contacts/:contact_id — remove a contact
+/// DELETE /api/contacts/:id — remove a contact by row id or contact_id
 pub async fn remove_contact_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
-    Path(contact_id): Path<String>,
+    Path(id_or_contact): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
 
-    let result = sqlx::query("DELETE FROM contacts WHERE user_id = $1 AND contact_id = $2")
-        .bind(&user_id)
-        .bind(&contact_id)
-        .execute(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Support both row UUID and contact user_id for backwards compatibility
+    let result = if let Ok(row_uuid) = id_or_contact.parse::<Uuid>() {
+        sqlx::query("DELETE FROM contacts WHERE id = $1 AND user_id = $2")
+            .bind(row_uuid)
+            .bind(&user_id)
+            .execute(pool)
+            .await
+    } else {
+        sqlx::query("DELETE FROM contacts WHERE user_id = $1 AND contact_id = $2")
+            .bind(&user_id)
+            .bind(&id_or_contact)
+            .execute(pool)
+            .await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Contact not found".to_string()));
@@ -135,24 +144,32 @@ pub struct UpdateContactRequest {
     pub nickname: Option<String>,
 }
 
-/// PUT /api/contacts/:contact_id — update nickname
+/// PUT /api/contacts/:id — update nickname by row id or contact_id
 pub async fn update_contact_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
-    Path(contact_id): Path<String>,
+    Path(id_or_contact): Path<String>,
     Json(req): Json<UpdateContactRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
 
-    let result =
+    let result = if let Ok(row_uuid) = id_or_contact.parse::<Uuid>() {
+        sqlx::query("UPDATE contacts SET nickname = $1 WHERE id = $2 AND user_id = $3")
+            .bind(&req.nickname)
+            .bind(row_uuid)
+            .bind(&user_id)
+            .execute(pool)
+            .await
+    } else {
         sqlx::query("UPDATE contacts SET nickname = $1 WHERE user_id = $2 AND contact_id = $3")
             .bind(&req.nickname)
             .bind(&user_id)
-            .bind(&contact_id)
+            .bind(&id_or_contact)
             .execute(pool)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Contact not found".to_string()));

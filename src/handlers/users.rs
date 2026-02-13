@@ -135,7 +135,7 @@ pub async fn search_users_handler(
     }
 
     let limit = params.limit.unwrap_or(20).min(50);
-    let pattern = format!("{}%", term);
+    let pattern = format!("%{}%", term);
 
     let rows = sqlx::query(
         "SELECT u.user_id, u.display_name, u.avatar_url, u.bio,
