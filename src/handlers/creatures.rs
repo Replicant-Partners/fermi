@@ -39,7 +39,9 @@ pub async fn list_creatures_handler(
     let mut sql = String::from(
         "SELECT creature_id, owner_id, scientific_name, common_name, species_group,
          gbif_key, specimen_name, variation_notes, asset_path, flight_silhouette_path,
-         total_flights, unique_locations, status, created_at
+         total_flights, unique_locations, status, created_at,
+         (SELECT location_name FROM creature_flights WHERE creature_id = creatures.creature_id
+          ORDER BY started_at DESC LIMIT 1) as last_location_name
          FROM creatures WHERE 1=1",
     );
     let mut bind_idx = 0u32;
@@ -105,6 +107,7 @@ pub async fn list_creatures_handler(
                         "total_flights": row.get::<i32, _>("total_flights"),
                         "unique_locations": row.get::<i32, _>("unique_locations"),
                         "status": row.try_get::<String, _>("status").unwrap_or_else(|_| "active".to_string()),
+                        "last_location_name": row.try_get::<Option<String>, _>("last_location_name").unwrap_or(None),
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                     })
                 })
@@ -1777,23 +1780,25 @@ pub async fn generate_art_handler(
         .unwrap_or_else(|| scientific_name.clone());
 
     let style_instruction = match style {
-        "watercolor" => "Soft watercolor painting style with visible brush strokes and subtle color bleeding.",
-        "botanical" => "Precise botanical illustration on cream parchment. Fine ink linework with hand-tinted washes.",
-        "field-guide" => "Clean field guide illustration. Crisp outlines, accurate proportions, white background, wings spread.",
-        "ukiyo-e" => "Japanese woodblock print (ukiyo-e) style. Bold black outlines, flat color planes, bokashi gradation on wings. Warm washi paper background. Small red hanko seal in corner. Indigo, ochre, grey tones. Multiple views at different scales.",
-        _ => "Detailed naturalist scientific illustration in the style of Maria Sibylla Merian. Rich colors on aged vellum.",
+        "watercolor" => "Loose, flowing watercolor painting. Visible wet-on-wet brush strokes, soft bleeding edges where colors meet. Natural color blending on rough textured watercolor paper. Delicate translucent washes layered for depth. Paper texture visible through thin areas. Warm natural palette.",
+        "botanical" => "Precise botanical field guide plate in the tradition of Redouté. Fine ink line work with subtle color wash. Specimen shown from multiple angles (dorsal, ventral, lateral). Cream parchment paper background. Labeled-feeling composition with careful attention to morphological detail. Muted, scholarly palette.",
+        "field-guide" => "Peterson-style field guide illustration. Clean side profile with wings spread. Key identifying features emphasized with high contrast. Crisp white background. Proportions accurate for species identification. Bold diagnostic markings highlighted. Clear, educational style with no artistic embellishment.",
+        "ukiyo-e" => "Japanese woodblock print (ukiyo-e) in the style of Kitagawa Utamaro's insect studies. Bold black outlines, flat color planes with bokashi gradation. Washi paper texture with subtle fiber. Decorative natural background: cherry blossoms, chrysanthemums, or bamboo. Traditional palette: indigo, ochre, vermillion, grey. Red hanko seal in corner.",
+        _ => "Detailed scientific illustration in the style of Maria Sibylla Merian. Precise anatomical rendering with rich, luminous colors on aged vellum. Fine cross-hatching for texture. Specimen plate layout showing the creature in naturalistic pose. Warm golden undertones from the vellum showing through.",
     };
 
     let group_detail = if species_group == "dragonfly" {
-        "Show wing venation, elongated abdomen, compound eyes. Translucent wings with visible cells."
+        "Emphasize: iridescent wing venation patterns, elongated segmented abdomen, large compound eyes with metallic sheen, translucent wings with pterostigma visible, thorax coloration and markings."
+    } else if species_group == "locust" {
+        "Emphasize: powerful hind legs with tibial spurs, tegmina texture, compound eyes, mandible structure, wing membrane patterns when spread, body segmentation and pronotum shape."
     } else {
-        "Show wing scale patterns, proboscis, antennae. Upper and lower wing surfaces visible."
+        "Emphasize: intricate wing scale patterns and coloration, coiled proboscis, clubbed antennae, body fur texture, eyespot details if present, upper and lower wing surfaces distinct."
     };
 
     let prompt = format!(
-        "Create a beautiful scientific illustration of a {} ({}).\n\
-         Style: {}\nDetails: {}\n\
-         Requirements: single specimen, centered, anatomically accurate, \
+        "Create a high-quality scientific illustration of a {} ({}).\n\
+         Art style: {}\nAnatomical details: {}\n\
+         Composition: single specimen, centered, anatomically accurate, \
          no text/labels/watermarks, square format, dark background (#1A2E20).{}",
         display_name, species_group, style_instruction, group_detail, reference_desc,
     );
@@ -2074,23 +2079,27 @@ async fn generate_creature_image(
         .unwrap_or_else(|| scientific_name.to_string());
 
     let style_instruction = match style {
-        "watercolor" => "Soft watercolor with visible brush strokes.",
-        "botanical" => "Precise botanical illustration on cream parchment.",
-        "field-guide" => "Clean field guide illustration, white background, wings spread.",
-        "ukiyo-e" => "Japanese woodblock print (ukiyo-e). Bold outlines, flat color planes, bokashi gradation. Washi paper background, red hanko seal in corner. Indigo, ochre, grey. Multiple views at different scales.",
-        _ => "Naturalist scientific illustration in the style of Maria Sibylla Merian. Rich colors on aged vellum.",
+        "watercolor" => "Loose, flowing watercolor painting. Visible wet-on-wet brush strokes, soft bleeding edges where colors meet. Natural color blending on rough textured watercolor paper. Delicate translucent washes layered for depth. Paper texture visible through thin areas. Warm natural palette.",
+        "botanical" => "Precise botanical field guide plate in the tradition of Redouté. Fine ink line work with subtle color wash. Specimen shown from multiple angles (dorsal, ventral, lateral). Cream parchment paper background. Labeled-feeling composition with careful attention to morphological detail. Muted, scholarly palette.",
+        "field-guide" => "Peterson-style field guide illustration. Clean side profile with wings spread. Key identifying features emphasized with high contrast. Crisp white background. Proportions accurate for species identification. Bold diagnostic markings highlighted. Clear, educational style with no artistic embellishment.",
+        "ukiyo-e" => "Japanese woodblock print (ukiyo-e) in the style of Kitagawa Utamaro's insect studies. Bold black outlines, flat color planes with bokashi gradation. Washi paper texture with subtle fiber. Decorative natural background: cherry blossoms, chrysanthemums, or bamboo. Traditional palette: indigo, ochre, vermillion, grey. Red hanko seal in corner.",
+        _ => "Detailed scientific illustration in the style of Maria Sibylla Merian. Precise anatomical rendering with rich, luminous colors on aged vellum. Fine cross-hatching for texture. Specimen plate layout showing the creature in naturalistic pose. Warm golden undertones from the vellum showing through.",
     };
 
     let group_detail = if species_group == "dragonfly" {
-        "Wing venation, elongated abdomen, compound eyes, translucent wings."
+        "Emphasize: iridescent wing venation patterns, elongated segmented abdomen, large compound eyes with metallic sheen, translucent wings with pterostigma visible, thorax coloration and markings."
+    } else if species_group == "locust" {
+        "Emphasize: powerful hind legs with tibial spurs, tegmina texture, compound eyes, mandible structure, wing membrane patterns when spread, body segmentation and pronotum shape."
     } else {
-        "Wing scale patterns, proboscis, antennae, upper and lower surfaces."
+        "Emphasize: intricate wing scale patterns and coloration, coiled proboscis, clubbed antennae, body fur texture, eyespot details if present, upper and lower wing surfaces distinct."
     };
 
     let prompt = format!(
-        "Create a scientific illustration of a {} ({}).\n\
-         Style: {}\nDetails: {}\n\
-         Single specimen, centered, anatomically accurate, no text, square, dark background (#1A2E20).{}",
+        "Create a high-quality scientific illustration of a {} ({}).\n\
+         Art style: {}\n\
+         Anatomical details: {}\n\
+         Composition: Single specimen, centered, anatomically accurate. No text or labels. Square format, dark background (#1A2E20). \
+         The style should be STRONGLY distinct from a photograph — this should unmistakably look like the specified art style.{}",
         display_name, species_group, style_instruction, group_detail, reference_desc,
     );
 

@@ -420,6 +420,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/057_rabble_workspaces.sql",
         "migrations/058_creature_presence.sql",
         "migrations/059_agent_wallet_admin.sql",
+        "migrations/060_fix_object_shares_rabble.sql",
     ];
 
     for file in &migration_files {

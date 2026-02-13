@@ -528,7 +528,7 @@ pub async fn invite_to_rabble(
 
     // Check for existing invite (idempotent)
     let existing = sqlx::query(
-        "SELECT share_id FROM object_shares
+        "SELECT id FROM object_shares
          WHERE object_type = 'rabble' AND object_id = $1 AND share_target = $2
          LIMIT 1",
     )
@@ -546,7 +546,7 @@ pub async fn invite_to_rabble(
 
     let share_id = uuid::Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO object_shares (share_id, object_type, object_id, share_type, share_target, permission, granted_by, created_at)
+        "INSERT INTO object_shares (id, object_type, object_id, share_type, share_target, permission, granted_by, created_at)
          VALUES ($1, 'rabble', $2, $3, $4, 'edit', $5, NOW())",
     )
     .bind(share_id)
@@ -608,7 +608,7 @@ pub async fn list_rabble_members(
     }
 
     let shares = sqlx::query(
-        "SELECT share_id, share_type, share_target, permission, created_at
+        "SELECT id, share_type, share_target, permission, created_at
          FROM object_shares
          WHERE object_type = 'rabble' AND object_id = $1
          ORDER BY created_at ASC",
@@ -620,7 +620,7 @@ pub async fn list_rabble_members(
 
     let members: Vec<Value> = shares.iter().map(|r| {
         json!({
-            "share_id": r.try_get::<uuid::Uuid, _>("share_id").ok(),
+            "id": r.try_get::<uuid::Uuid, _>("id").ok(),
             "share_type": r.try_get::<String, _>("share_type").ok(),
             "share_target": r.try_get::<String, _>("share_target").ok(),
             "permission": r.try_get::<String, _>("permission").ok(),
