@@ -384,14 +384,93 @@ pub async fn list_swarms_handler(
                 }
             }
 
+            // Batch-lookup creator display names
+            let creator_ids: Vec<String> = rows
+                .iter()
+                .map(|r| r.get::<String, _>("creator_id"))
+                .collect();
+            let mut creator_names: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            if !creator_ids.is_empty() {
+                let unique_ids: Vec<&String> = creator_ids
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                let placeholders: Vec<String> =
+                    (1..=unique_ids.len()).map(|i| format!("${}", i)).collect();
+                let name_sql = format!(
+                    "SELECT user_id, display_name FROM users WHERE user_id IN ({})",
+                    placeholders.join(", ")
+                );
+                let mut name_query = sqlx::query(&name_sql);
+                for uid in &unique_ids {
+                    name_query = name_query.bind(uid.as_str());
+                }
+                if let Ok(name_rows) = name_query.fetch_all(pool).await {
+                    for r in &name_rows {
+                        if let Ok(Some(name)) = r.try_get::<Option<String>, _>("display_name") {
+                            creator_names.insert(r.get::<String, _>("user_id"), name);
+                        }
+                    }
+                }
+            }
+
+            // Batch-lookup anchor creature images
+            let anchor_ids: Vec<Uuid> = rows
+                .iter()
+                .filter_map(|r| {
+                    r.try_get::<Option<Uuid>, _>("anchor_creature_id")
+                        .ok()
+                        .flatten()
+                })
+                .collect();
+            let mut anchor_images: std::collections::HashMap<Uuid, (String, String)> =
+                std::collections::HashMap::new();
+            if !anchor_ids.is_empty() {
+                let unique_anchors: Vec<&Uuid> = anchor_ids
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                let placeholders: Vec<String> = (1..=unique_anchors.len())
+                    .map(|i| format!("${}", i))
+                    .collect();
+                let img_sql = format!(
+                    "SELECT creature_id, asset_path, COALESCE(specimen_name, common_name, scientific_name) as creature_name FROM creatures WHERE creature_id IN ({})",
+                    placeholders.join(", ")
+                );
+                let mut img_query = sqlx::query(&img_sql);
+                for cid in &unique_anchors {
+                    img_query = img_query.bind(cid);
+                }
+                if let Ok(img_rows) = img_query.fetch_all(pool).await {
+                    for r in &img_rows {
+                        let cid: Uuid = r.get("creature_id");
+                        let path: String = r.get("asset_path");
+                        let name: String =
+                            r.try_get::<String, _>("creature_name").unwrap_or_default();
+                        anchor_images.insert(cid, (path, name));
+                    }
+                }
+            }
+
             let swarms: Vec<serde_json::Value> = rows
                 .iter()
                 .map(|row| {
                     let sid = row.get::<Uuid, _>("swarm_id");
+                    let creator_id = row.get::<String, _>("creator_id");
+                    let creator_display_name = creator_names.get(&creator_id).cloned();
+                    let anchor_cid = row.try_get::<Option<Uuid>, _>("anchor_creature_id").ok().flatten();
+                    let (anchor_image, anchor_name) = anchor_cid
+                        .and_then(|cid| anchor_images.get(&cid).cloned())
+                        .map(|(img, name)| (Some(img), Some(name)))
+                        .unwrap_or((None, None));
                     let (my_cid, my_cname) = my_creatures.get(&sid).map(|(c, n)| (Some(*c), Some(n.clone()))).unwrap_or((None, None));
                     json!({
                         "swarm_id": sid,
-                        "creator_id": row.get::<String, _>("creator_id"),
+                        "creator_id": creator_id,
+                        "creator_display_name": creator_display_name,
                         "h3_cell": row.get::<String, _>("h3_cell"),
                         "center_lat": row.get::<f64, _>("center_lat"),
                         "center_lng": row.get::<f64, _>("center_lng"),
@@ -411,7 +490,9 @@ pub async fn list_swarms_handler(
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                         "my_creature_id": my_cid,
                         "my_creature_name": my_cname,
-                        "anchor_creature_id": row.try_get::<Option<Uuid>, _>("anchor_creature_id").ok().flatten(),
+                        "anchor_creature_id": anchor_cid,
+                        "anchor_creature_image": anchor_image,
+                        "anchor_creature_name": anchor_name,
                         "anchor_transferred_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("anchor_transferred_at").ok().flatten().map(|t| t.to_rfc3339()),
                     })
                 })
