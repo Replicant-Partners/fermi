@@ -877,6 +877,26 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             is_delegation: false,
         },
         BuiltinToolDef {
+            name: "activate_formation",
+            description: "Activate a premium swarm formation algorithm for a rabble. Charges credits based on the algorithm's cost. Returns the formation spec JSON for client-side execution in the SwarmEngine. Idempotent: re-activating the same algorithm in the same session returns the spec without double-charging.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "algorithm_name": {
+                        "type": "string",
+                        "description": "Algorithm name (e.g. 'v_formation', 'echelon', 'encircle', 'patrol', 'search')"
+                    },
+                    "swarm_id": {
+                        "type": "string",
+                        "description": "Rabble/swarm session UUID"
+                    }
+                },
+                "required": ["algorithm_name", "swarm_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
             name: "create_listing",
             description: "List a shopping profile on the embedding marketplace so advertisers can run similarity queries against it. The consumer sets the price per query and can delist at any time. Costs a one-time listing fee.",
             input_schema: json!({
@@ -1039,6 +1059,7 @@ impl ToolRegistry {
             "gbif_species_search" => execute_gbif_species_search(input).await,
             "mint_creature" => execute_mint_creature(input, ctx).await,
             "generate_specimen_art" => execute_generate_specimen_art(input, ctx).await,
+            "activate_formation" => execute_activate_formation(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -1088,6 +1109,131 @@ async fn execute_search_knowledge(
         .collect();
 
     serde_json::to_string_pretty(&formatted).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── activate_formation tool ───────────────────────────────────────
+
+async fn execute_activate_formation(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let algorithm_name = input
+        .get("algorithm_name")
+        .and_then(|v| v.as_str())
+        .ok_or("algorithm_name is required")?;
+    let swarm_id_str = input
+        .get("swarm_id")
+        .and_then(|v| v.as_str())
+        .ok_or("swarm_id is required")?;
+    let swarm_id: uuid::Uuid = swarm_id_str
+        .parse()
+        .map_err(|_| "Invalid swarm_id UUID".to_string())?;
+
+    let db = ctx.db.as_ref().ok_or("Database not available")?;
+    let user_id = ctx
+        .user_id
+        .as_ref()
+        .ok_or("User context required for formation activation")?;
+
+    // Look up algorithm
+    let algorithm = sqlx::query(
+        "SELECT algorithm_id, name, display_name, formation_spec, tier, cost_credits \
+         FROM swarm_algorithms WHERE name = $1",
+    )
+    .bind(algorithm_name)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| format!("DB error: {}", e))?
+    .ok_or_else(|| format!("Algorithm '{}' not found", algorithm_name))?;
+
+    let algorithm_id: uuid::Uuid = algorithm.get("algorithm_id");
+    let display_name: String = algorithm.get("display_name");
+    let formation_spec: serde_json::Value = algorithm.get("formation_spec");
+    let tier: String = algorithm.get("tier");
+    let cost: i32 = algorithm.get("cost_credits");
+
+    // Free algorithms return spec directly
+    if tier == "free" {
+        let result = json!({
+            "algorithm_id": algorithm_id,
+            "name": algorithm_name,
+            "display_name": display_name,
+            "formation_spec": formation_spec,
+            "activated": true,
+            "charged": false,
+        });
+        return serde_json::to_string_pretty(&result)
+            .map_err(|e| format!("Serialization error: {}", e));
+    }
+
+    // Check idempotency
+    let existing = sqlx::query(
+        "SELECT activation_id FROM swarm_activations \
+         WHERE user_id = $1 AND swarm_id = $2 AND algorithm_id = $3",
+    )
+    .bind(user_id)
+    .bind(swarm_id)
+    .bind(algorithm_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| format!("DB error: {}", e))?;
+
+    if existing.is_some() {
+        let result = json!({
+            "algorithm_id": algorithm_id,
+            "name": algorithm_name,
+            "display_name": display_name,
+            "formation_spec": formation_spec,
+            "activated": true,
+            "charged": false,
+            "message": "Already activated for this session",
+        });
+        return serde_json::to_string_pretty(&result)
+            .map_err(|e| format!("Serialization error: {}", e));
+    }
+
+    // Charge credits
+    let wallet = fermi_auth::get_or_create_wallet(db, "user", user_id)
+        .await
+        .map_err(|e| format!("Wallet error: {}", e))?;
+
+    fermi_auth::credit_charge(
+        db,
+        wallet.wallet_id,
+        cost,
+        "formation_activate",
+        &format!("Activate {} formation", display_name),
+        Some(&algorithm_id.to_string()),
+    )
+    .await
+    .map_err(|e| format!("Payment failed: {}", e))?;
+
+    // Insert activation
+    let activation_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO swarm_activations (activation_id, algorithm_id, user_id, swarm_id) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(activation_id)
+    .bind(algorithm_id)
+    .bind(user_id)
+    .bind(swarm_id)
+    .execute(db)
+    .await
+    .map_err(|e| format!("DB error: {}", e))?;
+
+    let result = json!({
+        "algorithm_id": algorithm_id,
+        "activation_id": activation_id,
+        "name": algorithm_name,
+        "display_name": display_name,
+        "formation_spec": formation_spec,
+        "activated": true,
+        "charged": true,
+        "cost_credits": cost,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
 }
 
 // ─── AR Spatial Suite tool implementations ─────────────────────────

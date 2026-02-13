@@ -720,7 +720,7 @@ pub async fn flock_history_handler(
     // Get all flights in this swarm with their path_samples
     let flights = sqlx::query(
         "SELECT cf.creature_id, cf.center_lat, cf.center_lng, cf.path_samples, cf.started_at,
-                c.specimen_name, c.species_group
+                c.specimen_name, c.species_group, c.owner_id
          FROM creature_flights cf
          JOIN creatures c ON c.creature_id = cf.creature_id
          WHERE cf.swarm_id = $1
@@ -755,6 +755,7 @@ pub async fn flock_history_handler(
         let creature_id: Uuid = flight.try_get("creature_id").unwrap_or_default();
         let name: String = flight.try_get("specimen_name").unwrap_or_default();
         let species: String = flight.try_get("species_group").unwrap_or_default();
+        let owner_id: String = flight.try_get("owner_id").unwrap_or_default();
         let origin_lat: f64 = flight.try_get("center_lat").unwrap_or(center_lat);
         let origin_lng: f64 = flight.try_get("center_lng").unwrap_or(center_lng);
         let color = colors[i % colors.len()];
@@ -782,9 +783,11 @@ pub async fn flock_history_handler(
 
         creature_data.push(json!({
             "creature_id": creature_id,
+            "owner_id": owner_id,
             "name": name,
             "species": species,
             "color": color,
+            "image_url": format!("/api/creatures/{}/image", creature_id),
             "points": points,
         }));
     }

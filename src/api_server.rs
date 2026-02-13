@@ -421,6 +421,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/058_creature_presence.sql",
         "migrations/059_agent_wallet_admin.sql",
         "migrations/060_fix_object_shares_rabble.sql",
+        "migrations/061_swarm_algorithms.sql",
     ];
 
     for file in &migration_files {
@@ -1454,6 +1455,23 @@ async fn main() {
         .route(
             "/api/swarm/sessions/:session_id/experience",
             get(handlers::swarm_telemetry::experience_export_handler),
+        )
+        // Swarm algorithm marketplace
+        .route(
+            "/api/swarm-algorithms",
+            get(handlers::swarm_algorithms::list_algorithms_handler),
+        )
+        .route(
+            "/api/swarm-algorithms/activate",
+            post(handlers::swarm_algorithms::activate_algorithm_handler),
+        )
+        .route(
+            "/api/swarm-algorithms/activations/:swarm_id",
+            get(handlers::swarm_algorithms::list_activations_handler),
+        )
+        .route(
+            "/api/swarm-algorithms/:algorithm_id",
+            get(handlers::swarm_algorithms::get_algorithm_handler),
         )
         // Universal SOSA observations
         .route(
