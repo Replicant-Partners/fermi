@@ -1,13 +1,19 @@
 {
-    "name": "rabble",
-    "short_name": "rabble",
+    "name": "Rabble",
+    "short_name": "Rabble",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#3C3C3C",
-    "theme_color": "#3C3C3C",
-    "description": "A new Flutter project.",
+    "background_color": "#0A0A0F",
+    "theme_color": "#FFB224",
+    "description": "Collect creatures. Gather in the wild. Augmented reality insect swarms at real locations.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "categories": ["social", "games", "entertainment"],
+    "permissions": [
+        "geolocation",
+        "camera",
+        "notifications"
+    ],
     "icons": [
         {
             "src": "icons/Icon-192.png",
