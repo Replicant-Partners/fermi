@@ -1243,7 +1243,8 @@ pub async fn flock_history_handler(
     // Get all flights in this swarm with their path_samples
     let flights = sqlx::query(
         "SELECT cf.creature_id, cf.center_lat, cf.center_lng, cf.path_samples, cf.started_at,
-                c.specimen_name, c.species_group, c.owner_id,
+                c.specimen_name, c.scientific_name, c.species_group, c.owner_id,
+                c.asset_path,
                 cf.sub_flock_id, sf.name AS sub_flock_name,
                 c.attraction_score
          FROM creature_flights cf
@@ -1280,8 +1281,10 @@ pub async fn flock_history_handler(
     for (i, flight) in flights.iter().enumerate() {
         let creature_id: Uuid = flight.try_get("creature_id").unwrap_or_default();
         let name: String = flight.try_get("specimen_name").unwrap_or_default();
+        let scientific_name: String = flight.try_get("scientific_name").unwrap_or_default();
         let species: String = flight.try_get("species_group").unwrap_or_default();
         let owner_id: String = flight.try_get("owner_id").unwrap_or_default();
+        let asset_path: String = flight.try_get("asset_path").unwrap_or_default();
         let origin_lat: f64 = flight.try_get("center_lat").unwrap_or(center_lat);
         let origin_lng: f64 = flight.try_get("center_lng").unwrap_or(center_lng);
         let color = colors[i % colors.len()];
@@ -1315,9 +1318,14 @@ pub async fn flock_history_handler(
             "creature_id": creature_id,
             "owner_id": owner_id,
             "name": name,
+            "scientific_name": scientific_name,
             "species": species,
             "color": color,
-            "image_url": format!("/api/creatures/{}/image", creature_id),
+            "image_url": if asset_path.is_empty() {
+                format!("/api/creatures/{}/image", creature_id)
+            } else {
+                asset_path.clone()
+            },
             "points": points,
             "sub_flock_id": sub_flock_id,
             "sub_flock_name": sub_flock_name,
