@@ -39,7 +39,7 @@ pub async fn list_creatures_handler(
     let mut sql = String::from(
         "SELECT creature_id, owner_id, scientific_name, common_name, species_group,
          gbif_key, specimen_name, variation_notes, asset_path, flight_silhouette_path,
-         total_flights, unique_locations, status, animation_status, created_at,
+         total_flights, unique_locations, status, animation_status, visibility, created_at,
          (SELECT location_name FROM creature_flights WHERE creature_id = creatures.creature_id
           ORDER BY started_at DESC LIMIT 1) as last_location_name
          FROM creatures WHERE 1=1",
@@ -108,6 +108,7 @@ pub async fn list_creatures_handler(
                         "unique_locations": row.get::<i32, _>("unique_locations"),
                         "status": row.try_get::<String, _>("status").unwrap_or_else(|_| "active".to_string()),
                         "animation_status": row.try_get::<Option<String>, _>("animation_status").unwrap_or(None),
+                        "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".to_string()),
                         "last_location_name": row.try_get::<Option<String>, _>("last_location_name").unwrap_or(None),
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                     })
@@ -141,7 +142,7 @@ pub async fn get_creature_handler(
          species_group, gbif_key, taxonomy, specimen_name, variation_notes,
          asset_path, flight_silhouette_path, generation_params,
          mint_number, total_flights, total_flight_time_seconds, unique_locations,
-         data_card, sosa_opt_in, animation_status, created_at, updated_at
+         data_card, sosa_opt_in, animation_status, visibility, created_at, updated_at
          FROM creatures WHERE creature_id = $1",
     )
     .bind(id)
@@ -170,6 +171,7 @@ pub async fn get_creature_handler(
                 "data_card": row.get::<serde_json::Value, _>("data_card"),
                 "sosa_opt_in": row.try_get::<bool, _>("sosa_opt_in").unwrap_or(false),
                 "animation_status": row.try_get::<Option<String>, _>("animation_status").unwrap_or(None),
+                "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".to_string()),
                 "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                 "updated_at": row.get::<chrono::DateTime<chrono::Utc>, _>("updated_at").to_rfc3339(),
             });
@@ -571,17 +573,22 @@ pub async fn record_flight_handler(
 
     // Verify creature ownership and presence
     let pool = state.memory_store.pool();
-    let creature = sqlx::query("SELECT owner_id, presence FROM creatures WHERE creature_id = $1")
-        .bind(req.creature_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+    let creature =
+        sqlx::query("SELECT owner_id, presence, visibility FROM creatures WHERE creature_id = $1")
+            .bind(req.creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
 
     let owner: String = creature.get("owner_id");
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
+
+    let creature_visibility: String = creature
+        .try_get("visibility")
+        .unwrap_or_else(|_| "public".to_string());
 
     let presence: String = creature
         .try_get("presence")
@@ -615,8 +622,8 @@ pub async fn record_flight_handler(
     sqlx::query(
         "INSERT INTO creature_flights (flight_id, creature_id, beacon_id, owner_id,
          h3_cell, h3_resolution, center_lat, center_lng, location_name, country_code,
-         flight_pattern, swarm_id, started_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+         flight_pattern, swarm_id, visibility, started_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
     )
     .bind(flight_id)
     .bind(req.creature_id)
@@ -630,6 +637,7 @@ pub async fn record_flight_handler(
     .bind(&req.country_code)
     .bind(pattern)
     .bind(req.swarm_id)
+    .bind(&creature_visibility)
     .bind(now)
     .execute(pool)
     .await
@@ -3471,4 +3479,136 @@ async fn run_wing_segmentation(pool: &sqlx::PgPool, creature_id: Uuid) -> Result
 
     tracing::info!("Wing segmentation complete for creature {}", creature_id);
     Ok(())
+}
+
+// ─── Creature visibility ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct UpdateVisibilityRequest {
+    pub visibility: String,
+}
+
+/// PUT /api/creatures/:creature_id/visibility — set creature visibility
+pub async fn update_creature_visibility_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<UpdateVisibilityRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Validate visibility value
+    let visibility = req.visibility.trim().to_lowercase();
+    if !["public", "contacts", "private"].contains(&visibility.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "visibility must be 'public', 'contacts', or 'private'".to_string(),
+        ));
+    }
+
+    // Verify ownership
+    let creature = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
+        .bind(creature_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    sqlx::query("UPDATE creatures SET visibility = $1, updated_at = NOW() WHERE creature_id = $2")
+        .bind(&visibility)
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "creature_id": creature_id,
+        "visibility": visibility,
+    })))
+}
+
+// ─── Visible flights endpoint ───────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct VisibleFlightsQuery {
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+    pub radius: Option<f64>, // km, unused for now but reserved
+}
+
+/// GET /api/flights/visible — active flights visible to the current user
+/// Returns public flights + contacts-only flights where viewer is a contact.
+pub async fn list_visible_flights_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(q): Query<VisibleFlightsQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Get active flights that the viewer can see:
+    // - public flights (anyone)
+    // - contacts-only flights where the viewer is in the owner's contacts
+    // - the viewer's own flights (always visible to self)
+    // Excludes private flights from others.
+    let rows = sqlx::query(
+        "SELECT f.flight_id, f.creature_id, f.owner_id, f.center_lat, f.center_lng,
+                f.location_name, f.flight_pattern, f.visibility, f.started_at, f.swarm_id,
+                c.scientific_name, c.common_name, c.specimen_name, c.species_group,
+                c.asset_path
+         FROM creature_flights f
+         JOIN creatures c ON c.creature_id = f.creature_id
+         WHERE f.ended_at IS NULL
+           AND (
+             f.owner_id = $1
+             OR f.visibility = 'public'
+             OR (f.visibility = 'contacts'
+                 AND EXISTS (
+                   SELECT 1 FROM contacts
+                   WHERE user_id = f.owner_id AND contact_id = $1
+                 ))
+           )
+         ORDER BY f.started_at DESC
+         LIMIT 100",
+    )
+    .bind(&user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let flights: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row| {
+            let owner_id: String = row.get("owner_id");
+            json!({
+                "flight_id": row.get::<Uuid, _>("flight_id"),
+                "creature_id": row.get::<Uuid, _>("creature_id"),
+                "owner_id": &owner_id,
+                "is_mine": owner_id == user_id,
+                "center_lat": row.get::<f64, _>("center_lat"),
+                "center_lng": row.get::<f64, _>("center_lng"),
+                "location_name": row.try_get::<Option<String>, _>("location_name").unwrap_or(None),
+                "flight_pattern": row.get::<String, _>("flight_pattern"),
+                "visibility": row.get::<String, _>("visibility"),
+                "swarm_id": row.try_get::<Option<Uuid>, _>("swarm_id").unwrap_or(None),
+                "started_at": row.get::<chrono::DateTime<chrono::Utc>, _>("started_at").to_rfc3339(),
+                "scientific_name": row.get::<String, _>("scientific_name"),
+                "common_name": row.try_get::<Option<String>, _>("common_name").unwrap_or(None),
+                "specimen_name": row.try_get::<Option<String>, _>("specimen_name").unwrap_or(None),
+                "species_group": row.get::<String, _>("species_group"),
+                "asset_path": row.get::<String, _>("asset_path"),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "flights": flights,
+        "count": flights.len(),
+    })))
 }

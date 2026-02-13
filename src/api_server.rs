@@ -425,6 +425,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/062_anchor_creature.sql",
         "migrations/063_sub_flocks.sql",
         "migrations/064_creature_animation_layers.sql",
+        "migrations/065_creature_visibility.sql",
     ];
 
     for file in &migration_files {
@@ -1381,6 +1382,16 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/animate",
             post(handlers::creatures::animate_creature_handler),
+        )
+        // Creature visibility (authenticated)
+        .route(
+            "/api/creatures/:creature_id/visibility",
+            put(handlers::creatures::update_creature_visibility_handler),
+        )
+        // Visible flights (authenticated — needs contact lookup)
+        .route(
+            "/api/flights/visible",
+            get(handlers::creatures::list_visible_flights_handler),
         )
         // Device pairing (authenticated)
         .route(
