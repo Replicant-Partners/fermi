@@ -21,8 +21,15 @@ use fermi::gas::{charge_and_distribute, charge_gas, get_workspace_agent_ids};
 
 use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
 
-/// The 4 system agents auto-hired into every rabble workspace.
-const RABBLE_SYSTEM_AGENTS: &[&str] = &["naturalist", "navigator", "swarm_host", "keeper"];
+/// The system agents auto-hired into every rabble workspace.
+const RABBLE_SYSTEM_AGENTS: &[&str] = &[
+    "naturalist",
+    "navigator",
+    "swarm_host",
+    "keeper",
+    "rabble_anchor_manager",
+    "rabble_lifecycle_coordinator",
+];
 
 /// Create a workspace for a rabble (swarm) and hire the 4 system agents.
 ///
@@ -669,6 +676,522 @@ impl Default for FlockParams {
     }
 }
 
+/// POST /api/rabble/:id/transfer-anchor — transfer the anchor to a different creature.
+///
+/// Only the rabble creator can transfer. The new creature must be actively flying at this rabble.
+pub async fn transfer_anchor_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    axum::extract::Path(swarm_id): axum::extract::Path<Uuid>,
+    Json(req): Json<TransferAnchorRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    // Verify swarm exists and caller is creator
+    let swarm = sqlx::query("SELECT creator_id, status FROM swarm_events WHERE swarm_id = $1")
+        .bind(swarm_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Rabble not found".to_string()))?;
+
+    let creator: String = swarm.get("creator_id");
+    if creator != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the rabble creator can transfer the anchor".to_string(),
+        ));
+    }
+
+    let status: String = swarm.get("status");
+    if status != "scheduled" && status != "active" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Rabble is {} — cannot transfer anchor", status),
+        ));
+    }
+
+    // Verify the new anchor creature is actively flying at this swarm
+    let flight = sqlx::query(
+        "SELECT cf.creature_id, c.specimen_name FROM creature_flights cf
+         JOIN creatures c ON c.creature_id = cf.creature_id
+         WHERE cf.creature_id = $1 AND cf.swarm_id = $2 AND cf.ended_at IS NULL",
+    )
+    .bind(req.new_anchor_creature_id)
+    .bind(swarm_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((
+        StatusCode::BAD_REQUEST,
+        "That creature is not actively flying at this rabble".to_string(),
+    ))?;
+
+    let creature_name: String = flight
+        .try_get("specimen_name")
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    // Update the anchor
+    sqlx::query(
+        "UPDATE swarm_events SET anchor_creature_id = $1, anchor_transferred_at = NOW(),
+         metadata = COALESCE(metadata, '{}'::jsonb) - 'anchor_departing'
+         WHERE swarm_id = $2",
+    )
+    .bind(req.new_anchor_creature_id)
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Post system message
+    let _ = super::rabble_chat::insert_system_message(
+        &state,
+        swarm_id,
+        &format!("Anchor transferred to {}!", creature_name),
+    )
+    .await;
+
+    tracing::info!(
+        swarm_id = %swarm_id,
+        new_anchor = %req.new_anchor_creature_id,
+        "Anchor creature transferred"
+    );
+
+    // Dispatch anchor_transferred to compound agents (fire-and-forget)
+    let ws_id: Option<Uuid> =
+        sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
+
+    if let Some(ws_id) = ws_id {
+        let state2 = state.clone();
+        let user_id2 = user_id.clone();
+        let c_name = creature_name.clone();
+        tokio::spawn(async move {
+            let query = format!(
+                "anchor_transferred: Anchor has been transferred to {}. Update beacon placement at new position.",
+                c_name
+            );
+            let _ = dispatch_rabble_action(
+                &state2,
+                ws_id,
+                "rabble_anchor_manager",
+                "anchor_transferred",
+                &query,
+                &user_id2,
+            )
+            .await;
+            let _ = dispatch_rabble_action(
+                &state2,
+                ws_id,
+                "rabble_lifecycle_coordinator",
+                "anchor_transferred",
+                &query,
+                &user_id2,
+            )
+            .await;
+        });
+    }
+
+    Ok(Json(json!({
+        "success": true,
+        "new_anchor_creature_id": req.new_anchor_creature_id,
+        "creature_name": creature_name,
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct TransferAnchorRequest {
+    pub new_anchor_creature_id: Uuid,
+}
+
+/// POST /api/rabble/:id/update-anchor-position — update the rabble's location from the anchor creature's GPS.
+///
+/// Called periodically by the client when the anchor creature is moving.
+pub async fn update_anchor_position_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    axum::extract::Path(swarm_id): axum::extract::Path<Uuid>,
+    Json(req): Json<UpdateAnchorPositionRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    // Verify swarm exists and is active, and caller owns the anchor creature
+    let swarm =
+        sqlx::query("SELECT anchor_creature_id, status FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or((StatusCode::NOT_FOUND, "Rabble not found".to_string()))?;
+
+    let status: String = swarm.get("status");
+    if status != "active" && status != "scheduled" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Rabble is {} — cannot update position", status),
+        ));
+    }
+
+    let anchor_id: Option<Uuid> = swarm
+        .try_get::<Option<Uuid>, _>("anchor_creature_id")
+        .ok()
+        .flatten();
+
+    let anchor_id = anchor_id.ok_or((
+        StatusCode::BAD_REQUEST,
+        "Rabble has no anchor creature".to_string(),
+    ))?;
+
+    // Verify caller owns the anchor creature
+    let owner_check = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
+        .bind(anchor_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            "Anchor creature not found".to_string(),
+        ))?;
+
+    let owner: String = owner_check.get("owner_id");
+    if owner != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the anchor creature's owner can update position".to_string(),
+        ));
+    }
+
+    // Update the swarm's location
+    sqlx::query(
+        "UPDATE swarm_events SET center_lat = $1, center_lng = $2, h3_cell = $3
+         WHERE swarm_id = $4",
+    )
+    .bind(req.lat)
+    .bind(req.lng)
+    .bind(&req.h3_cell)
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Broadcast position update to connected clients
+    let _ = state.rabble_broadcast.send(crate::RabbleEvent {
+        swarm_id,
+        message: json!({
+            "type": "anchor_position_update",
+            "swarm_id": swarm_id,
+            "lat": req.lat,
+            "lng": req.lng,
+            "h3_cell": req.h3_cell,
+        }),
+    });
+
+    Ok(Json(json!({
+        "success": true,
+        "lat": req.lat,
+        "lng": req.lng,
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateAnchorPositionRequest {
+    pub lat: f64,
+    pub lng: f64,
+    pub h3_cell: String,
+}
+
+/// POST /api/swarms/:swarm_id/join-batch — join a rabble with multiple creatures as a sub-flock.
+///
+/// Creates a sub-flock group and joins all specified creatures in one operation.
+/// Gas fee charged once for the group, not per creature.
+pub async fn join_batch_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    axum::extract::Path(swarm_id): axum::extract::Path<Uuid>,
+    Json(req): Json<JoinBatchRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    if req.creature_ids.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No creatures specified".to_string(),
+        ));
+    }
+
+    // Verify swarm exists and is joinable
+    let swarm = sqlx::query(
+        "SELECT status, h3_cell, center_lat, center_lng, creator_id, visibility,
+         funding_mode, invite_pool_remaining, anchor_creature_id
+         FROM swarm_events WHERE swarm_id = $1",
+    )
+    .bind(swarm_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Rabble not found".to_string()))?;
+
+    let status: String = swarm.get("status");
+    if status != "scheduled" && status != "active" {
+        return Err((StatusCode::CONFLICT, format!("Rabble is {}", status)));
+    }
+
+    // Verify all creatures belong to the user and are active
+    for cid in &req.creature_ids {
+        let creature =
+            sqlx::query("SELECT owner_id, presence FROM creatures WHERE creature_id = $1")
+                .bind(cid)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+                .ok_or((StatusCode::NOT_FOUND, format!("Creature {} not found", cid)))?;
+
+        let owner: String = creature.get("owner_id");
+        if owner != user_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!("Creature {} is not yours", cid),
+            ));
+        }
+
+        let presence: String = creature
+            .try_get("presence")
+            .unwrap_or_else(|_| "active".to_string());
+        if presence != "active" {
+            return Err((
+                StatusCode::CONFLICT,
+                format!("Creature {} is {}", cid, presence),
+            ));
+        }
+
+        // Check not already flying at this swarm
+        let existing = sqlx::query(
+            "SELECT 1 FROM creature_flights WHERE creature_id = $1 AND swarm_id = $2 AND ended_at IS NULL",
+        )
+        .bind(cid)
+        .bind(swarm_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if existing.is_some() {
+            return Err((
+                StatusCode::CONFLICT,
+                format!("Creature {} already in this rabble", cid),
+            ));
+        }
+    }
+
+    // Handle funding: charge once for the group
+    let funding_mode: String = swarm.try_get("funding_mode").unwrap_or("hosted".into());
+    let count = req.creature_ids.len() as i32;
+
+    if funding_mode == "hosted" {
+        let remaining: i32 = swarm.try_get("invite_pool_remaining").unwrap_or(0);
+        if remaining < count {
+            return Err((
+                StatusCode::PAYMENT_REQUIRED,
+                "Invite pool insufficient for batch".into(),
+            ));
+        }
+        sqlx::query("UPDATE swarm_events SET invite_pool_remaining = invite_pool_remaining - $1 WHERE swarm_id = $2")
+            .bind(count)
+            .bind(swarm_id)
+            .execute(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    } else {
+        let contribution = req.contribution.unwrap_or(1).max(1);
+        let wallet = fermi_auth::get_or_create_wallet(pool, "user", &user_id)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        charge_gas(
+            pool,
+            wallet.wallet_id,
+            contribution,
+            "swarm_join",
+            &format!("Batch join rabble {} ({} creatures)", swarm_id, count),
+            Some(&swarm_id.to_string()),
+        )
+        .await?;
+    }
+
+    // Create sub-flock if name provided
+    let sub_flock_id = if let Some(ref name) = req.sub_flock_name {
+        let sf_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO swarm_sub_flocks (sub_flock_id, swarm_id, owner_id, name, species_filter)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(sf_id)
+        .bind(swarm_id)
+        .bind(&user_id)
+        .bind(name)
+        .bind(&req.species_filter)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Some(sf_id)
+    } else {
+        None
+    };
+
+    // Get swarm location for flight records
+    let h3_cell: String = swarm.get("h3_cell");
+    let lat: f64 = swarm.get("center_lat");
+    let lng: f64 = swarm.get("center_lng");
+    let anchor_id: Option<Uuid> = swarm
+        .try_get::<Option<Uuid>, _>("anchor_creature_id")
+        .ok()
+        .flatten();
+
+    // Join each creature
+    for cid in &req.creature_ids {
+        let flight_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
+             h3_cell, h3_resolution, center_lat, center_lng,
+             flight_pattern, swarm_id, sub_flock_id, attracted_by_creature_id, started_at)
+             VALUES ($1, $2, $3, $4, 12, $5, $6, 'swarm', $7, $8, $9, NOW())",
+        )
+        .bind(flight_id)
+        .bind(cid)
+        .bind(&user_id)
+        .bind(&h3_cell)
+        .bind(lat)
+        .bind(lng)
+        .bind(swarm_id)
+        .bind(sub_flock_id)
+        .bind(req.attracted_by_creature_id.or(anchor_id))
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    // Increment swarm counters
+    sqlx::query(
+        "UPDATE swarm_events SET participant_count = participant_count + 1,
+         creature_count = creature_count + $1
+         WHERE swarm_id = $2",
+    )
+    .bind(count)
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .ok();
+
+    // Attraction reward: credit the attractor's owner
+    let attractor_id = req.attracted_by_creature_id.or(anchor_id);
+    if let Some(attr_id) = attractor_id {
+        let attr_owner = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
+            .bind(attr_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+        if let Some(row) = attr_owner {
+            let attr_owner_id: String = row.get("owner_id");
+            if attr_owner_id != user_id {
+                // Credit the attractor's owner: 1 credit per creature joined
+                if let Ok(attr_wallet) =
+                    fermi_auth::get_or_create_wallet(pool, "user", &attr_owner_id).await
+                {
+                    let _ = fermi_auth::credit_deposit_typed(
+                        pool,
+                        attr_wallet.wallet_id,
+                        count,
+                        "attraction_reward",
+                        &format!("Attraction: {} creatures joined via your creature", count),
+                    )
+                    .await;
+                }
+                // Increment attraction score
+                let _ = sqlx::query(
+                    "UPDATE creatures SET attraction_score = attraction_score + $1 WHERE creature_id = $2",
+                )
+                .bind(count)
+                .bind(attr_id)
+                .execute(pool)
+                .await;
+            }
+        }
+    }
+
+    // Post system message
+    let _ = super::rabble_chat::insert_system_message(
+        &state,
+        swarm_id,
+        &format!("{} creatures have joined the rabble as a flock!", count),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "swarm_id": swarm_id,
+        "sub_flock_id": sub_flock_id,
+        "creatures_joined": count,
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct JoinBatchRequest {
+    pub creature_ids: Vec<Uuid>,
+    pub sub_flock_name: Option<String>,
+    pub species_filter: Option<String>,
+    pub contribution: Option<i32>,
+    pub attracted_by_creature_id: Option<Uuid>,
+}
+
+/// GET /api/rabble/:id/attraction-leaderboard — which creatures attracted the most participants.
+pub async fn attraction_leaderboard_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    axum::extract::Path(swarm_id): axum::extract::Path<Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let pool = &state.db;
+
+    let rows = sqlx::query(
+        "SELECT cf.attracted_by_creature_id, c.specimen_name, c.species_group, c.owner_id,
+                COUNT(*) as attracted_count
+         FROM creature_flights cf
+         JOIN creatures c ON c.creature_id = cf.attracted_by_creature_id
+         WHERE cf.swarm_id = $1 AND cf.attracted_by_creature_id IS NOT NULL
+         GROUP BY cf.attracted_by_creature_id, c.specimen_name, c.species_group, c.owner_id
+         ORDER BY attracted_count DESC
+         LIMIT 20",
+    )
+    .bind(swarm_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let leaderboard: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "creature_id": r.try_get::<Uuid, _>("attracted_by_creature_id").ok(),
+                "creature_name": r.try_get::<String, _>("specimen_name").ok(),
+                "species_group": r.try_get::<String, _>("species_group").ok(),
+                "owner_id": r.try_get::<String, _>("owner_id").ok(),
+                "attracted_count": r.try_get::<i64, _>("attracted_count").unwrap_or(0),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "swarm_id": swarm_id,
+        "leaderboard": leaderboard,
+    })))
+}
+
 /// GET /api/rabble/:id/flock-history — returns all creature path data normalized to XY for visualization.
 ///
 /// Takes lat/lng path_samples from all creature flights in the swarm, normalizes them
@@ -720,9 +1243,12 @@ pub async fn flock_history_handler(
     // Get all flights in this swarm with their path_samples
     let flights = sqlx::query(
         "SELECT cf.creature_id, cf.center_lat, cf.center_lng, cf.path_samples, cf.started_at,
-                c.specimen_name, c.species_group, c.owner_id
+                c.specimen_name, c.species_group, c.owner_id,
+                cf.sub_flock_id, sf.name AS sub_flock_name,
+                c.attraction_score
          FROM creature_flights cf
          JOIN creatures c ON c.creature_id = cf.creature_id
+         LEFT JOIN swarm_sub_flocks sf ON sf.sub_flock_id = cf.sub_flock_id
          WHERE cf.swarm_id = $1
          ORDER BY cf.started_at ASC",
     )
@@ -781,6 +1307,10 @@ pub async fn flock_history_handler(
             }
         }
 
+        let sub_flock_id: Option<Uuid> = flight.try_get("sub_flock_id").ok();
+        let sub_flock_name: Option<String> = flight.try_get("sub_flock_name").ok().flatten();
+        let attraction_score: i32 = flight.try_get("attraction_score").unwrap_or(0);
+
         creature_data.push(json!({
             "creature_id": creature_id,
             "owner_id": owner_id,
@@ -789,6 +1319,9 @@ pub async fn flock_history_handler(
             "color": color,
             "image_url": format!("/api/creatures/{}/image", creature_id),
             "points": points,
+            "sub_flock_id": sub_flock_id,
+            "sub_flock_name": sub_flock_name,
+            "attraction_score": attraction_score,
         }));
     }
 

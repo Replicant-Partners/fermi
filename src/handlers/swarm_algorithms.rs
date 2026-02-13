@@ -31,6 +31,7 @@ pub struct ActivateRequest {
     pub algorithm_name: Option<String>,
     pub algorithm_id: Option<String>,
     pub swarm_id: String,
+    pub sub_flock_id: Option<String>,
 }
 
 // ─── GET /api/swarm-algorithms ─────────────────────────────────────
@@ -179,7 +180,32 @@ pub async fn activate_algorithm_handler(
     let cost: i32 = algorithm.get("cost_credits");
 
     // Free algorithms don't need activation — return spec directly
+    // But still apply sub-flock override if requested
     if tier == "free" {
+        let mut sub_flock_applied = false;
+        if let Some(ref sf_id_str) = req.sub_flock_id {
+            let sf_id: Uuid = sf_id_str
+                .parse()
+                .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid sub_flock_id".to_string()))?;
+            let updated = sqlx::query(
+                "UPDATE swarm_sub_flocks SET formation_algorithm_id = $1 \
+                 WHERE sub_flock_id = $2 AND swarm_id = $3 AND owner_id = $4",
+            )
+            .bind(algorithm_id)
+            .bind(sf_id)
+            .bind(swarm_id)
+            .bind(&user_id)
+            .execute(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if updated.rows_affected() == 0 {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    "Sub-flock not found or not owned by you".to_string(),
+                ));
+            }
+            sub_flock_applied = true;
+        }
         return Ok(Json(json!({
             "algorithm_id": algorithm_id,
             "name": algo_name,
@@ -188,6 +214,8 @@ pub async fn activate_algorithm_handler(
             "activated": true,
             "charged": false,
             "message": "Free algorithm — no activation required",
+            "sub_flock_id": req.sub_flock_id,
+            "sub_flock_applied": sub_flock_applied,
         })));
     }
 
@@ -249,6 +277,35 @@ pub async fn activate_algorithm_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // If sub_flock_id provided, set this formation as the sub-flock's override
+    let mut sub_flock_applied = false;
+    if let Some(ref sf_id_str) = req.sub_flock_id {
+        let sf_id: Uuid = sf_id_str
+            .parse()
+            .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid sub_flock_id".to_string()))?;
+
+        // Validate sub-flock belongs to this swarm and user owns it
+        let updated = sqlx::query(
+            "UPDATE swarm_sub_flocks SET formation_algorithm_id = $1 \
+             WHERE sub_flock_id = $2 AND swarm_id = $3 AND owner_id = $4",
+        )
+        .bind(algorithm_id)
+        .bind(sf_id)
+        .bind(swarm_id)
+        .bind(&user_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if updated.rows_affected() == 0 {
+            return Err((
+                StatusCode::NOT_FOUND,
+                "Sub-flock not found or not owned by you".to_string(),
+            ));
+        }
+        sub_flock_applied = true;
+    }
+
     Ok(Json(json!({
         "algorithm_id": algorithm_id,
         "activation_id": activation_id,
@@ -258,6 +315,8 @@ pub async fn activate_algorithm_handler(
         "activated": true,
         "charged": true,
         "cost_credits": cost,
+        "sub_flock_id": req.sub_flock_id,
+        "sub_flock_applied": sub_flock_applied,
     })))
 }
 

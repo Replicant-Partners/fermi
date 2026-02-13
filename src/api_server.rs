@@ -422,6 +422,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/059_agent_wallet_admin.sql",
         "migrations/060_fix_object_shares_rabble.sql",
         "migrations/061_swarm_algorithms.sql",
+        "migrations/062_anchor_creature.sql",
+        "migrations/063_sub_flocks.sql",
     ];
 
     for file in &migration_files {
@@ -1428,6 +1430,24 @@ async fn main() {
         .route(
             "/api/rabble/:id/flock-history",
             get(handlers::rabble_workspace::flock_history_handler),
+        )
+        // Anchor creature management
+        .route(
+            "/api/rabble/:id/transfer-anchor",
+            post(handlers::rabble_workspace::transfer_anchor_handler),
+        )
+        .route(
+            "/api/rabble/:id/update-anchor-position",
+            post(handlers::rabble_workspace::update_anchor_position_handler),
+        )
+        // Batch join + attraction
+        .route(
+            "/api/swarms/:swarm_id/join-batch",
+            post(handlers::rabble_workspace::join_batch_handler),
+        )
+        .route(
+            "/api/rabble/:id/attraction-leaderboard",
+            get(handlers::rabble_workspace::attraction_leaderboard_handler),
         )
         // Swarm telemetry
         .route(

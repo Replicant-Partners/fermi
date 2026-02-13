@@ -285,7 +285,8 @@ pub async fn list_swarms_handler(
         "SELECT swarm_id, creator_id, h3_cell, center_lat, center_lng,
          location_name, name, description, species_filter, max_participants,
          starts_at, ends_at, status, participant_count, creature_count,
-         visibility, funding_mode, qr_token, created_at
+         visibility, funding_mode, qr_token, created_at,
+         anchor_creature_id, anchor_transferred_at
          FROM swarm_events WHERE 1=1",
     );
 
@@ -406,6 +407,8 @@ pub async fn list_swarms_handler(
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                         "my_creature_id": my_cid,
                         "my_creature_name": my_cname,
+                        "anchor_creature_id": row.try_get::<Option<Uuid>, _>("anchor_creature_id").ok().flatten(),
+                        "anchor_transferred_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("anchor_transferred_at").ok().flatten().map(|t| t.to_rfc3339()),
                     })
                 })
                 .collect();
@@ -438,7 +441,8 @@ pub async fn get_swarm_handler(
          name, description, species_filter, max_participants,
          starts_at, ends_at, status, participant_count, creature_count,
          metadata, created_at, visibility, funding_mode, invite_pool,
-         invite_pool_remaining, suggested_contribution, total_contributions, qr_token
+         invite_pool_remaining, suggested_contribution, total_contributions, qr_token,
+         anchor_creature_id, anchor_transferred_at
          FROM swarm_events WHERE swarm_id = $1",
     )
     .bind(id)
@@ -474,6 +478,8 @@ pub async fn get_swarm_handler(
                 "suggested_contribution": row.try_get::<i32, _>("suggested_contribution").unwrap_or(1),
                 "total_contributions": row.try_get::<i32, _>("total_contributions").unwrap_or(0),
                 "qr_token": row.try_get::<Option<String>, _>("qr_token").unwrap_or(None),
+                "anchor_creature_id": row.try_get::<Option<Uuid>, _>("anchor_creature_id").ok().flatten(),
+                "anchor_transferred_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("anchor_transferred_at").ok().flatten().map(|t| t.to_rfc3339()),
             });
             (StatusCode::OK, Json(swarm)).into_response()
         }
@@ -927,6 +933,129 @@ pub async fn end_flight_handler(
         }
     }
 
+    // Check if this creature is the anchor for any active rabble
+    {
+        let spawn_db = state.db.clone();
+        let spawn_state = state.clone();
+        let spawn_user_id = principal.user_id();
+        let fid = flight_id;
+        tokio::spawn(async move {
+            // Get the creature_id and swarm_id for this flight
+            let flight_row = sqlx::query(
+                "SELECT creature_id, swarm_id FROM creature_flights WHERE flight_id = $1",
+            )
+            .bind(fid)
+            .fetch_optional(&spawn_db)
+            .await
+            .ok()
+            .flatten();
+
+            let flight_row = match flight_row {
+                Some(r) => r,
+                None => return,
+            };
+
+            let creature_id: Uuid = match flight_row.try_get("creature_id") {
+                Ok(id) => id,
+                Err(_) => return,
+            };
+            let swarm_id: Option<Uuid> = flight_row
+                .try_get::<Option<Uuid>, _>("swarm_id")
+                .ok()
+                .flatten();
+
+            let swarm_id = match swarm_id {
+                Some(id) => id,
+                None => return,
+            };
+
+            // Check if this creature is the anchor for this swarm
+            let anchor_row = sqlx::query(
+                "SELECT anchor_creature_id, creator_id FROM swarm_events
+                 WHERE swarm_id = $1 AND status IN ('scheduled', 'active')",
+            )
+            .bind(swarm_id)
+            .fetch_optional(&spawn_db)
+            .await
+            .ok()
+            .flatten();
+
+            let anchor_row = match anchor_row {
+                Some(r) => r,
+                None => return,
+            };
+
+            let anchor_id: Option<Uuid> = anchor_row
+                .try_get::<Option<Uuid>, _>("anchor_creature_id")
+                .ok()
+                .flatten();
+
+            if anchor_id != Some(creature_id) {
+                return; // Not the anchor creature, no warning needed
+            }
+
+            // Get creature name for the warning message
+            let creature_name: String =
+                sqlx::query("SELECT specimen_name FROM creatures WHERE creature_id = $1")
+                    .bind(creature_id)
+                    .fetch_optional(&spawn_db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.try_get("specimen_name").ok())
+                    .unwrap_or_else(|| "Unknown creature".to_string());
+
+            // Post warning system message
+            let _ = sqlx::query(
+                "INSERT INTO rabble_messages (message_id, swarm_id, sender_id, content, message_type)
+                 VALUES ($1, $2, 'system', $3, 'system')",
+            )
+            .bind(Uuid::new_v4())
+            .bind(swarm_id)
+            .bind(format!(
+                "Anchor creature {} is leaving! The rabble will dissipate unless the anchor is transferred to another creature.",
+                creature_name
+            ))
+            .execute(&spawn_db)
+            .await;
+
+            // Set anchor_departing flag in metadata
+            let _ = sqlx::query(
+                "UPDATE swarm_events SET metadata = COALESCE(metadata, '{}'::jsonb) || '{\"anchor_departing\": true}'::jsonb
+                 WHERE swarm_id = $1",
+            )
+            .bind(swarm_id)
+            .execute(&spawn_db)
+            .await;
+
+            // Dispatch anchor_departing to compound agents
+            let ws_id: Option<Uuid> =
+                sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+                    .bind(swarm_id)
+                    .fetch_optional(&spawn_db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
+
+            if let Some(ws_id) = ws_id {
+                let query = format!(
+                    "anchor_departing: Anchor creature {} is leaving the rabble! List eligible transfer targets.",
+                    creature_name
+                );
+                let _ = rabble_workspace::dispatch_rabble_action(
+                    &spawn_state,
+                    ws_id,
+                    "rabble_anchor_manager",
+                    "anchor_departing",
+                    &query,
+                    &spawn_user_id,
+                )
+                .await;
+            }
+        });
+    }
+
     Ok(Json(json!({
         "flight_id": flight_id,
         "ended_at": now.to_rfc3339(),
@@ -1164,6 +1293,7 @@ pub struct CreateSwarmRequest {
     pub invite_pool: Option<i32>,
     pub suggested_contribution: Option<i32>,
     pub visibility: Option<String>,
+    pub anchor_creature_id: Option<Uuid>,
 }
 
 /// POST /api/swarms — create a swarm event (5 credits)
@@ -1241,9 +1371,9 @@ pub async fn create_swarm_handler(
          name, description, species_filter, max_participants,
          starts_at, ends_at, status, created_at,
          funding_mode, invite_pool, invite_pool_remaining,
-         suggested_contribution, qr_token, visibility)
+         suggested_contribution, qr_token, visibility, anchor_creature_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'scheduled', $15,
-                 $16, $17, $17, $18, $19, $20)",
+                 $16, $17, $17, $18, $19, $20, $21)",
     )
     .bind(swarm_id)
     .bind(&user_id)
@@ -1265,6 +1395,7 @@ pub async fn create_swarm_handler(
     .bind(suggested_contribution)
     .bind(&qr_token)
     .bind(visibility)
+    .bind(req.anchor_creature_id)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1286,6 +1417,7 @@ pub async fn create_swarm_handler(
         "qr_token": qr_token,
         "visibility": visibility,
         "workspace_id": workspace_id,
+        "anchor_creature_id": req.anchor_creature_id,
     })))
 }
 
@@ -1517,6 +1649,31 @@ pub async fn join_swarm_handler(
                 .execute(&state2.db)
                 .await;
             }
+        });
+
+        // Also dispatch lifecycle coordinator (fire-and-forget)
+        let state3 = state.clone();
+        let user_id3 = user_id.clone();
+        let c_name2 = creature_name
+            .clone()
+            .unwrap_or_else(|| "creature".to_string());
+        let s_name2 = species_name
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        tokio::spawn(async move {
+            let query = format!(
+                "participant_joined: {} ({}) has joined the rabble.",
+                c_name2, s_name2
+            );
+            let _ = rabble_workspace::dispatch_rabble_action(
+                &state3,
+                ws_id,
+                "rabble_lifecycle_coordinator",
+                "participant_joined",
+                &query,
+                &user_id3,
+            )
+            .await;
         });
     } else {
         // Fallback: legacy swarm host welcome (no workspace yet)
