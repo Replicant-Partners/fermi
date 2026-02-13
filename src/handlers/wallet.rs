@@ -106,7 +106,7 @@ pub struct TransferRequest {
 }
 
 /// POST /api/wallet/transfer — send credits to another user.
-/// Charges sender (amount + 10% gas), deposits amount to recipient.
+/// Charges sender (amount + 1cr flat + 2.5% gas), deposits amount to recipient.
 pub async fn transfer_credits_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -142,8 +142,8 @@ pub async fn transfer_credits_handler(
         return Err((StatusCode::NOT_FOUND, "Recipient not found".into()));
     }
 
-    // Calculate gas fee (10%)
-    let gas = std::cmp::max(1, (body.amount as f64 * 0.10) as i32);
+    // Calculate gas fee (1cr flat + 2.5%)
+    let gas = 1 + std::cmp::max(0, (body.amount as f64 * 0.025) as i32);
     let total_charge = body.amount + gas;
 
     let note = body.note.as_deref().unwrap_or("Credit transfer");
