@@ -877,6 +877,22 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             is_delegation: false,
         },
         BuiltinToolDef {
+            name: "segment_creature_wings",
+            description: "Segment a butterfly creature's minted image into animation layers (body, left wing, right wing) using Gemini image editing. Stores layers in the database for client-side parametric wing animation. Only works for butterfly species. Costs creature_animate credits.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "creature_id": {
+                        "type": "string",
+                        "description": "UUID of the butterfly creature to segment into animation layers"
+                    }
+                },
+                "required": ["creature_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
             name: "activate_formation",
             description: "Activate a premium swarm formation algorithm for a rabble. Charges credits based on the algorithm's cost. Returns the formation spec JSON for client-side execution in the SwarmEngine. Idempotent: re-activating the same algorithm in the same session returns the spec without double-charging.",
             input_schema: json!({
@@ -1059,6 +1075,7 @@ impl ToolRegistry {
             "gbif_species_search" => execute_gbif_species_search(input).await,
             "mint_creature" => execute_mint_creature(input, ctx).await,
             "generate_specimen_art" => execute_generate_specimen_art(input, ctx).await,
+            "segment_creature_wings" => execute_segment_creature_wings(input, ctx).await,
             "activate_formation" => execute_activate_formation(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
@@ -2249,6 +2266,225 @@ async fn execute_generate_specimen_art(
         "common_name": common_name,
     });
     serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Wing segmentation tool ────────────────────────────────────────
+
+async fn execute_segment_creature_wings(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .map_err(|_| "GEMINI_API_KEY not set — wing segmentation unavailable")?;
+
+    let pool = ctx.memory_store.pool();
+
+    // Parse creature_id
+    let creature_id_str = input
+        .get("creature_id")
+        .and_then(|v| v.as_str())
+        .ok_or("creature_id is required")?;
+    let creature_id = Uuid::parse_str(creature_id_str)
+        .map_err(|_| format!("Invalid creature_id: {}", creature_id_str))?;
+
+    // Look up creature
+    let row =
+        sqlx::query("SELECT species_group, animation_status FROM creatures WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("DB lookup failed: {}", e))?
+            .ok_or_else(|| format!("Creature {} not found", creature_id))?;
+
+    let species_group: String = row.get("species_group");
+    if species_group != "butterfly" {
+        return Err(
+            "Wing segmentation only works for butterflies. Other species coming soon!".to_string(),
+        );
+    }
+
+    let status: Option<String> = row.try_get("animation_status").unwrap_or(None);
+    if status.as_deref() == Some("ready") {
+        return Ok(json!({
+            "status": "already_ready",
+            "creature_id": creature_id,
+            "layers": {
+                "body": format!("/api/creatures/{}/animation/body", creature_id),
+                "left_wing": format!("/api/creatures/{}/animation/left_wing", creature_id),
+                "right_wing": format!("/api/creatures/{}/animation/right_wing", creature_id),
+            }
+        })
+        .to_string());
+    }
+
+    // Charge credits if user_id and gas_fees available
+    if let (Some(ref gas_fees), Some(ref user_id)) = (&ctx.gas_fees, &ctx.user_id) {
+        let wallet = fermi_auth::get_or_create_wallet(pool, "user", user_id)
+            .await
+            .map_err(|e| format!("Wallet error: {}", e))?;
+        crate::gas::charge_gas(
+            pool,
+            wallet.wallet_id,
+            gas_fees.creature_animate,
+            "creature_animate",
+            &format!("Wing segmentation for creature {}", creature_id),
+            Some(&creature_id.to_string()),
+        )
+        .await
+        .map_err(|e| format!("Credit charge failed: {}", e.1))?;
+    }
+
+    // Set status to processing
+    let _ = sqlx::query(
+        "UPDATE creatures SET animation_status = 'processing', updated_at = NOW() WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await;
+
+    // Fetch source image from creature_images
+    let img_row =
+        sqlx::query("SELECT image_bytes, mime_type FROM creature_images WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("DB error fetching image: {}", e))?
+            .ok_or_else(|| "No image found for creature. Generate art first.".to_string())?;
+
+    let image_bytes: Vec<u8> = img_row.get("image_bytes");
+    let source_mime: String = img_row.get("mime_type");
+
+    use base64::Engine;
+    let encoder = base64::engine::general_purpose::STANDARD;
+    let img_base64 = encoder.encode(&image_bytes);
+
+    // Segmentation prompts
+    let layers = [
+        ("left_wing", "Isolate ONLY the left wing (viewer's left) of this butterfly specimen. Remove the body, right wing, antennae, and all other parts completely. Output ONLY the left wing on a fully transparent background (PNG with alpha). Preserve the exact wing shape, coloration, scale patterns, and venation. The wing should be positioned exactly where it appears in the original image."),
+        ("right_wing", "Isolate ONLY the right wing (viewer's right) of this butterfly specimen. Remove the body, left wing, antennae, and all other parts completely. Output ONLY the right wing on a fully transparent background (PNG with alpha). Preserve the exact wing shape, coloration, scale patterns, and venation. The wing should be positioned exactly where it appears in the original image."),
+        ("body", "Isolate ONLY the body (thorax, abdomen, head, antennae, legs) of this butterfly specimen. Remove both wings completely, leaving only the central body structure. Output on a fully transparent background (PNG with alpha). Preserve exact body position, coloration, and detail from the original image."),
+    ];
+
+    let client = reqwest::Client::new();
+    let mut results = Vec::new();
+
+    for (layer_name, prompt) in &layers {
+        let body = json!({
+            "contents": [{
+                "parts": [
+                    { "text": prompt },
+                    {
+                        "inlineData": {
+                            "mimeType": source_mime,
+                            "data": img_base64
+                        }
+                    }
+                ]
+            }],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"]
+            }
+        });
+
+        let response = client
+            .post(GEMINI_IMAGE_URL)
+            .header("x-goog-api-key", &api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Gemini request failed for {}: {}", layer_name, e))?;
+
+        if !response.status().is_success() {
+            let err = response.text().await.unwrap_or_default();
+            let _ = sqlx::query(
+                "UPDATE creatures SET animation_status = 'failed', updated_at = NOW() WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .execute(pool)
+            .await;
+            return Err(format!("Gemini error for {}: {}", layer_name, err));
+        }
+
+        let gemini_resp: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Parse error for {}: {}", layer_name, e))?;
+
+        let inline_data = gemini_resp
+            .pointer("/candidates/0/content/parts")
+            .and_then(|parts| parts.as_array())
+            .and_then(|parts| parts.iter().find_map(|p| p.get("inlineData")))
+            .ok_or_else(|| format!("No image in Gemini response for {}", layer_name))?;
+
+        let mime_type = inline_data
+            .get("mimeType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("image/png");
+        let b64_data = inline_data
+            .get("data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("No image data for {}", layer_name))?;
+
+        let decoded = encoder
+            .decode(b64_data)
+            .map_err(|e| format!("Decode error for {}: {}", layer_name, e))?;
+
+        if decoded.len() < 100 {
+            let _ = sqlx::query(
+                "UPDATE creatures SET animation_status = 'failed', updated_at = NOW() WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .execute(pool)
+            .await;
+            return Err(format!(
+                "Layer {} too small ({} bytes), segmentation likely failed",
+                layer_name,
+                decoded.len()
+            ));
+        }
+
+        // Persist to DB (inline upsert — handlers module not accessible from lib crate)
+        let _ = sqlx::query(
+            "INSERT INTO creature_animation_layers (creature_id, layer_name, image_bytes, mime_type, file_size)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (creature_id, layer_name) DO UPDATE
+             SET image_bytes = $3, mime_type = $4, file_size = $5, updated_at = NOW()",
+        )
+        .bind(creature_id)
+        .bind(*layer_name)
+        .bind(&decoded)
+        .bind(mime_type)
+        .bind(decoded.len() as i32)
+        .execute(pool)
+        .await;
+
+        results.push(json!({
+            "layer": layer_name,
+            "mime_type": mime_type,
+            "file_size_bytes": decoded.len(),
+            "url": format!("/api/creatures/{}/animation/{}", creature_id, layer_name),
+        }));
+
+        // Rate limit between calls
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+
+    // Mark as ready
+    let _ = sqlx::query(
+        "UPDATE creatures SET animation_status = 'ready', updated_at = NOW() WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await;
+
+    Ok(json!({
+        "status": "ready",
+        "creature_id": creature_id,
+        "message": "Wing segmentation complete. Your butterfly is now flight-ready.",
+        "layers": results,
+    })
+    .to_string())
 }
 
 // ─── Marketplace tool implementations ──────────────────────────────

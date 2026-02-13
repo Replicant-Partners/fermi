@@ -39,7 +39,7 @@ pub async fn list_creatures_handler(
     let mut sql = String::from(
         "SELECT creature_id, owner_id, scientific_name, common_name, species_group,
          gbif_key, specimen_name, variation_notes, asset_path, flight_silhouette_path,
-         total_flights, unique_locations, status, created_at,
+         total_flights, unique_locations, status, animation_status, created_at,
          (SELECT location_name FROM creature_flights WHERE creature_id = creatures.creature_id
           ORDER BY started_at DESC LIMIT 1) as last_location_name
          FROM creatures WHERE 1=1",
@@ -107,6 +107,7 @@ pub async fn list_creatures_handler(
                         "total_flights": row.get::<i32, _>("total_flights"),
                         "unique_locations": row.get::<i32, _>("unique_locations"),
                         "status": row.try_get::<String, _>("status").unwrap_or_else(|_| "active".to_string()),
+                        "animation_status": row.try_get::<Option<String>, _>("animation_status").unwrap_or(None),
                         "last_location_name": row.try_get::<Option<String>, _>("last_location_name").unwrap_or(None),
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                     })
@@ -140,7 +141,7 @@ pub async fn get_creature_handler(
          species_group, gbif_key, taxonomy, specimen_name, variation_notes,
          asset_path, flight_silhouette_path, generation_params,
          mint_number, total_flights, total_flight_time_seconds, unique_locations,
-         data_card, sosa_opt_in, created_at, updated_at
+         data_card, sosa_opt_in, animation_status, created_at, updated_at
          FROM creatures WHERE creature_id = $1",
     )
     .bind(id)
@@ -168,6 +169,7 @@ pub async fn get_creature_handler(
                 "unique_locations": row.get::<i32, _>("unique_locations"),
                 "data_card": row.get::<serde_json::Value, _>("data_card"),
                 "sosa_opt_in": row.try_get::<bool, _>("sosa_opt_in").unwrap_or(false),
+                "animation_status": row.try_get::<Option<String>, _>("animation_status").unwrap_or(None),
                 "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                 "updated_at": row.get::<chrono::DateTime<chrono::Utc>, _>("updated_at").to_rfc3339(),
             });
@@ -3137,4 +3139,336 @@ pub async fn transfer_creature_handler(
         "creature_id": creature_id,
         "new_owner": body.recipient_id,
     })))
+}
+
+// ─── Wing Animation (Make It Alive) ────────────────────────────────
+
+/// Helper: persist a single animation layer to the database.
+pub async fn persist_animation_layer(
+    pool: &sqlx::PgPool,
+    creature_id: Uuid,
+    layer_name: &str,
+    bytes: &[u8],
+    mime_type: &str,
+) {
+    let _ = sqlx::query(
+        "INSERT INTO creature_animation_layers (creature_id, layer_name, image_bytes, mime_type, file_size)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (creature_id, layer_name) DO UPDATE
+         SET image_bytes = $3, mime_type = $4, file_size = $5, updated_at = NOW()",
+    )
+    .bind(creature_id)
+    .bind(layer_name)
+    .bind(bytes)
+    .bind(mime_type)
+    .bind(bytes.len() as i32)
+    .execute(pool)
+    .await;
+}
+
+/// GET /api/creatures/:creature_id/animation/:layer_name — serve an animation layer from DB.
+pub async fn creature_animation_layer_handler(
+    State(state): State<AppState>,
+    Path((creature_id, layer_name)): Path<(Uuid, String)>,
+) -> impl IntoResponse {
+    let pool = state.memory_store.pool();
+
+    // Validate layer name
+    if !["body", "left_wing", "right_wing"].contains(&layer_name.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            [
+                (axum::http::header::CONTENT_TYPE, "text/plain".to_string()),
+                (axum::http::header::CACHE_CONTROL, "no-cache".to_string()),
+            ],
+            b"Invalid layer name. Must be: body, left_wing, right_wing".to_vec(),
+        )
+            .into_response();
+    }
+
+    if let Ok(Some(row)) = sqlx::query(
+        "SELECT image_bytes, mime_type FROM creature_animation_layers WHERE creature_id = $1 AND layer_name = $2",
+    )
+    .bind(creature_id)
+    .bind(&layer_name)
+    .fetch_optional(pool)
+    .await
+    {
+        let bytes: Vec<u8> = row.get("image_bytes");
+        let mime: String = row.get("mime_type");
+        return (
+            StatusCode::OK,
+            [
+                (axum::http::header::CONTENT_TYPE, mime),
+                (axum::http::header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+            ],
+            bytes,
+        ).into_response();
+    }
+
+    (
+        StatusCode::NOT_FOUND,
+        [
+            (axum::http::header::CONTENT_TYPE, "text/plain".to_string()),
+            (axum::http::header::CACHE_CONTROL, "no-cache".to_string()),
+        ],
+        b"Animation layer not found".to_vec(),
+    )
+        .into_response()
+}
+
+/// GET /api/creatures/:creature_id/animation-status — check animation readiness.
+pub async fn creature_animation_status_handler(
+    State(state): State<AppState>,
+    Path(creature_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pool = state.memory_store.pool();
+
+    let row =
+        sqlx::query("SELECT animation_status, species_group FROM creatures WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or_else(|| (StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let status: Option<String> = row.try_get("animation_status").unwrap_or(None);
+    let species_group: String = row.get("species_group");
+
+    let mut result = json!({
+        "creature_id": creature_id,
+        "species_group": species_group,
+        "animation_status": status,
+    });
+
+    if status.as_deref() == Some("ready") {
+        result["layers"] = json!({
+            "body": format!("/api/creatures/{}/animation/body", creature_id),
+            "left_wing": format!("/api/creatures/{}/animation/left_wing", creature_id),
+            "right_wing": format!("/api/creatures/{}/animation/right_wing", creature_id),
+        });
+    }
+
+    Ok(Json(result))
+}
+
+/// POST /api/creatures/:creature_id/animate — trigger wing segmentation.
+/// Charges creature_animate credits and spawns background Gemini segmentation.
+pub async fn animate_creature_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // 1. Verify creature exists, is owned, and is a butterfly
+    let row = sqlx::query(
+        "SELECT owner_id, species_group, animation_status FROM creatures WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| (StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner_id: String = row.get("owner_id");
+    if owner_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "You don't own this creature".to_string(),
+        ));
+    }
+
+    let species_group: String = row.get("species_group");
+    if species_group != "butterfly" {
+        return Err((StatusCode::BAD_REQUEST, "Wing animation is currently only available for butterflies. Other species coming soon!".to_string()));
+    }
+
+    let status: Option<String> = row.try_get("animation_status").unwrap_or(None);
+    if status.as_deref() == Some("ready") {
+        return Ok(Json(json!({
+            "status": "ready",
+            "creature_id": creature_id,
+            "message": "This creature already has animation layers.",
+            "layers": {
+                "body": format!("/api/creatures/{}/animation/body", creature_id),
+                "left_wing": format!("/api/creatures/{}/animation/left_wing", creature_id),
+                "right_wing": format!("/api/creatures/{}/animation/right_wing", creature_id),
+            }
+        })));
+    }
+    if status.as_deref() == Some("processing") {
+        return Ok(Json(json!({
+            "status": "processing",
+            "creature_id": creature_id,
+            "message": "Animation is already being generated. Please poll /animation-status."
+        })));
+    }
+
+    // 2. Charge credits
+    let wallet = get_or_create_wallet(pool, "user", &user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {}", e),
+            )
+        })?;
+
+    let gas_fees = &state.gas_fees;
+    charge_gas(
+        pool,
+        wallet.wallet_id,
+        gas_fees.creature_animate,
+        "creature_animate",
+        &format!("Wing animation for creature {}", creature_id),
+        Some(&creature_id.to_string()),
+    )
+    .await?;
+
+    // 3. Set status to processing
+    sqlx::query("UPDATE creatures SET animation_status = 'processing', updated_at = NOW() WHERE creature_id = $1")
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 4. Spawn background task for Gemini segmentation
+    let pool_clone = pool.clone();
+    tokio::spawn(async move {
+        if let Err(e) = run_wing_segmentation(&pool_clone, creature_id).await {
+            tracing::error!("Wing segmentation failed for {}: {}", creature_id, e);
+            let _ = sqlx::query(
+                "UPDATE creatures SET animation_status = 'failed', updated_at = NOW() WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .execute(&pool_clone)
+            .await;
+        }
+    });
+
+    Ok(Json(json!({
+        "status": "processing",
+        "creature_id": creature_id,
+        "message": "Wing segmentation started. Poll /animation-status for progress."
+    })))
+}
+
+/// Background task: segment creature image into 3 layers via Gemini edit_image.
+async fn run_wing_segmentation(pool: &sqlx::PgPool, creature_id: Uuid) -> Result<(), String> {
+    let api_key =
+        std::env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY not set".to_string())?;
+
+    // Fetch source image from creature_images
+    let img_row =
+        sqlx::query("SELECT image_bytes, mime_type FROM creature_images WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("DB error fetching image: {}", e))?
+            .ok_or_else(|| "No image found for creature. Generate art first.".to_string())?;
+
+    let image_bytes: Vec<u8> = img_row.get("image_bytes");
+    let source_mime: String = img_row.get("mime_type");
+
+    use base64::Engine;
+    let encoder = base64::engine::general_purpose::STANDARD;
+    let img_base64 = encoder.encode(&image_bytes);
+
+    // Segmentation prompts for each layer
+    let layers = [
+        ("left_wing", "Isolate ONLY the left wing (viewer's left) of this butterfly specimen. Remove the body, right wing, antennae, and all other parts completely. Output ONLY the left wing on a fully transparent background (PNG with alpha). Preserve the exact wing shape, coloration, scale patterns, and venation. The wing should be positioned exactly where it appears in the original image. Do not add any artistic effects, shadows, or modifications."),
+        ("right_wing", "Isolate ONLY the right wing (viewer's right) of this butterfly specimen. Remove the body, left wing, antennae, and all other parts completely. Output ONLY the right wing on a fully transparent background (PNG with alpha). Preserve the exact wing shape, coloration, scale patterns, and venation. The wing should be positioned exactly where it appears in the original image. Do not add any artistic effects, shadows, or modifications."),
+        ("body", "Isolate ONLY the body (thorax, abdomen, head, antennae, legs) of this butterfly specimen. Remove both wings completely, leaving only the central body structure. Output on a fully transparent background (PNG with alpha). Preserve exact body position, coloration, and detail from the original image. The body should be positioned exactly where it appears in the original."),
+    ];
+
+    let client = reqwest::Client::new();
+    let gemini_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent";
+
+    for (layer_name, prompt) in &layers {
+        tracing::info!("Segmenting {} for creature {}", layer_name, creature_id);
+
+        let body = json!({
+            "contents": [{
+                "parts": [
+                    { "text": prompt },
+                    {
+                        "inlineData": {
+                            "mimeType": source_mime,
+                            "data": img_base64
+                        }
+                    }
+                ]
+            }],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"]
+            }
+        });
+
+        let response = client
+            .post(gemini_url)
+            .header("x-goog-api-key", &api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Gemini request failed for {}: {}", layer_name, e))?;
+
+        if !response.status().is_success() {
+            let err = response.text().await.unwrap_or_default();
+            return Err(format!("Gemini error for {}: {}", layer_name, err));
+        }
+
+        let gemini_resp: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Parse error for {}: {}", layer_name, e))?;
+
+        // Extract image from response
+        let inline_data = gemini_resp
+            .pointer("/candidates/0/content/parts")
+            .and_then(|parts| parts.as_array())
+            .and_then(|parts| parts.iter().find_map(|p| p.get("inlineData")))
+            .ok_or_else(|| format!("No image in Gemini response for {}", layer_name))?;
+
+        let mime_type = inline_data
+            .get("mimeType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("image/png");
+        let b64_data = inline_data
+            .get("data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("No image data for {}", layer_name))?;
+
+        let decoded = encoder
+            .decode(b64_data)
+            .map_err(|e| format!("Decode error for {}: {}", layer_name, e))?;
+
+        // Basic validation: layer should have some data
+        if decoded.len() < 100 {
+            return Err(format!(
+                "Layer {} too small ({} bytes), likely failed",
+                layer_name,
+                decoded.len()
+            ));
+        }
+
+        persist_animation_layer(pool, creature_id, layer_name, &decoded, mime_type).await;
+
+        // Rate limit: 2 second delay between calls
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+
+    // All layers done — mark as ready
+    sqlx::query(
+        "UPDATE creatures SET animation_status = 'ready', updated_at = NOW() WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to update animation_status: {}", e))?;
+
+    tracing::info!("Wing segmentation complete for creature {}", creature_id);
+    Ok(())
 }

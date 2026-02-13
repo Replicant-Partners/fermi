@@ -424,6 +424,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/061_swarm_algorithms.sql",
         "migrations/062_anchor_creature.sql",
         "migrations/063_sub_flocks.sql",
+        "migrations/064_creature_animation_layers.sql",
     ];
 
     for file in &migration_files {
@@ -831,6 +832,14 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/image",
             get(handlers::creatures::creature_image_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/animation/:layer_name",
+            get(handlers::creatures::creature_animation_layer_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/animation-status",
+            get(handlers::creatures::creature_animation_status_handler),
         )
         .route("/api/swarms", get(handlers::creatures::list_swarms_handler))
         .route(
@@ -1367,6 +1376,11 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/transfer",
             post(handlers::creatures::transfer_creature_handler),
+        )
+        // Wing animation (authenticated)
+        .route(
+            "/api/creatures/:creature_id/animate",
+            post(handlers::creatures::animate_creature_handler),
         )
         // Device pairing (authenticated)
         .route(
