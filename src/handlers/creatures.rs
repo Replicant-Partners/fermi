@@ -207,7 +207,7 @@ pub async fn creature_flights_handler(
         "SELECT flight_id, creature_id, beacon_id, owner_id,
          h3_cell, center_lat, center_lng, location_name, country_code,
          flight_pattern, swarm_id, started_at, ended_at, duration_seconds,
-         path_samples, environment
+         path_samples, environment, data_source
          FROM creature_flights
          WHERE creature_id = $1
          ORDER BY started_at DESC
@@ -240,6 +240,7 @@ pub async fn creature_flights_handler(
                         "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
                         "path_samples": row.get::<Option<serde_json::Value>, _>("path_samples"),
                         "environment": row.try_get::<Option<serde_json::Value>, _>("environment").unwrap_or(None),
+                        "data_source": row.try_get::<String, _>("data_source").unwrap_or_else(|_| "synthetic".to_string()),
                     })
                 })
                 .collect();
@@ -702,11 +703,31 @@ pub async fn record_flight_handler(
     let pattern = req.flight_pattern.as_deref().unwrap_or("wander");
     let resolution = req.h3_resolution.unwrap_or(12);
 
+    // Auto-detect data_source: if creature has an active paired device, it's real telemetry
+    let data_source = if req.beacon_id.is_some() {
+        "device"
+    } else {
+        let has_device = sqlx::query(
+            "SELECT 1 FROM creature_devices WHERE creature_id = $1 AND is_active = true LIMIT 1",
+        )
+        .bind(req.creature_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+        if has_device {
+            "device"
+        } else {
+            "synthetic"
+        }
+    };
+
     sqlx::query(
         "INSERT INTO creature_flights (flight_id, creature_id, beacon_id, owner_id,
          h3_cell, h3_resolution, center_lat, center_lng, location_name, country_code,
-         flight_pattern, swarm_id, visibility, started_at, environment)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+         flight_pattern, swarm_id, visibility, started_at, environment, data_source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
     )
     .bind(flight_id)
     .bind(req.creature_id)
@@ -723,6 +744,7 @@ pub async fn record_flight_handler(
     .bind(&creature_visibility)
     .bind(now)
     .bind(&req.environment)
+    .bind(data_source)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1166,6 +1188,7 @@ pub struct PlanFlightRequest {
     pub origin: serde_json::Value,      // { lat, lng, name? }
     pub destination: serde_json::Value, // { lat, lng, name? }
     pub prompt: Option<String>,         // optional creative route description
+    pub swarm_id: Option<Uuid>,         // if planning for a rabble (tiered pricing)
 }
 
 /// POST /api/flights/plan — generate an agentic flight plan via flight_coordinator
@@ -1196,35 +1219,72 @@ pub async fn plan_flight_handler(
     let specimen_name: Option<String> = creature.try_get("specimen_name").unwrap_or(None);
     let scientific_name: Option<String> = creature.try_get("scientific_name").unwrap_or(None);
 
-    // Charge gas
+    // Tiered pricing: solo = 5cr, rabble = 5cr base + 1cr per creature
+    let (total_cost, creature_count) = if let Some(swarm_id) = req.swarm_id {
+        let count: i64 = sqlx::query("SELECT creature_count FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map(|r| r.try_get::<i32, _>("creature_count").unwrap_or(1) as i64)
+            .unwrap_or(1);
+        (
+            state.gas_fees.flight_plan + count.max(1) as i32,
+            count as i32,
+        )
+    } else {
+        (state.gas_fees.flight_plan, 1)
+    };
+
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     charge_gas(
         &state.db,
         wallet.wallet_id,
-        state.gas_fees.flight_plan,
+        total_cost,
         "flight_plan",
-        &format!("Flight plan for creature {}", req.creature_id),
+        &format!(
+            "Flight plan for {} ({} creature{})",
+            req.swarm_id
+                .map(|s| format!("rabble {}", s))
+                .unwrap_or_else(|| format!("creature {}", req.creature_id)),
+            creature_count,
+            if creature_count != 1 { "s" } else { "" },
+        ),
         Some(&req.creature_id.to_string()),
     )
     .await?;
 
-    // Get user's personal workspace for agent dispatch
-    let ws_id = sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
-        .bind(&user_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .and_then(|r| {
-            r.try_get::<Option<Uuid>, _>("personal_workspace_id")
-                .ok()
-                .flatten()
-        })
-        .ok_or((
-            StatusCode::BAD_REQUEST,
-            "No personal workspace — mint a creature first".to_string(),
-        ))?;
+    // Use rabble workspace if swarm_id provided, else personal workspace
+    let ws_id = if let Some(swarm_id) = req.swarm_id {
+        sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten())
+    } else {
+        None
+    };
+
+    let ws_id = match ws_id {
+        Some(id) => id,
+        None => sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
+            .bind(&user_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| {
+                r.try_get::<Option<Uuid>, _>("personal_workspace_id")
+                    .ok()
+                    .flatten()
+            })
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                "No personal workspace — mint a creature first".to_string(),
+            ))?,
+    };
 
     // Build agent query with origin/destination and creature context
     let origin_name = req
@@ -1316,7 +1376,13 @@ pub async fn plan_flight_handler(
 
     Ok(Json(json!({
         "plan": plan,
-        "gas_charged": state.gas_fees.flight_plan,
+        "gas_charged": total_cost,
+        "creature_count": creature_count,
+        "pricing": if req.swarm_id.is_some() {
+            format!("{}cr base + {}cr ({} creatures)", state.gas_fees.flight_plan, creature_count, creature_count)
+        } else {
+            format!("{}cr", state.gas_fees.flight_plan)
+        },
     })))
 }
 
@@ -1427,7 +1493,7 @@ pub async fn export_flight_handler(
     let row = sqlx::query(
         "SELECT f.flight_id, f.creature_id, f.center_lat, f.center_lng, f.location_name,
                 f.flight_pattern, f.started_at, f.ended_at, f.duration_seconds, f.path_samples,
-                f.environment, c.species_group, c.specimen_name
+                f.environment, f.data_source, c.species_group, c.specimen_name
          FROM creature_flights f
          JOIN creatures c ON f.creature_id = c.creature_id
          WHERE f.flight_id = $1 AND (f.owner_id = $2 OR f.visibility = 'public')",
@@ -1457,6 +1523,7 @@ pub async fn export_flight_handler(
         "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
         "path_samples": row.get::<Option<serde_json::Value>, _>("path_samples"),
         "environment": row.try_get::<Option<serde_json::Value>, _>("environment").unwrap_or(None),
+        "data_source": row.try_get::<String, _>("data_source").unwrap_or_else(|_| "synthetic".to_string()),
     });
 
     let body = serde_json::to_string_pretty(&export)
