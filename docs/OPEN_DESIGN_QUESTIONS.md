@@ -251,6 +251,33 @@ Walk-in pricing model:
 
 ---
 
+## 9. Creature-as-Persona Identity Model (2026-02-14)
+
+Creatures are proxy personas / avatars. All communication interfaces go through the creature, not around it. The human identity behind the creature is private by default.
+
+**Chat display rules:**
+- **Owner is your contact**: Creature name + owner display name (because you already know who they are)
+- **Owner is a stranger / hidden profile**: Creature name only — the creature IS the identity
+- **Your own creature**: Creature name (+ "You" indicator)
+
+**Implications:**
+- Rabble chat messages show creature avatar + creature name as primary identity
+- Owner name is secondary/hidden based on contact relationship
+- Tapping a creature in chat → creature detail, NOT owner profile
+- API should respect this: `GET /api/rabble/:id/messages` should only include owner display name if caller is a contact of the owner
+- Creature detail page for non-contacts: shows creature info, species, flight history — but NOT owner profile link
+- Contact relationship is the gate that reveals the human behind the persona
+
+**Why this matters:** Users manage multiple creatures as multiple personas. A researcher might have one creature for professional rabbles and another for casual ones. Breaking the persona by showing the human identity defeats the purpose.
+
+**Implementation touches:**
+- `rabble_chat.rs`: conditionally include owner display_name based on contact check
+- `rabble_chat.dart`: message bubbles show creature name, owner name only if contact
+- Creature detail: remove "Add Owner to Contacts" for strangers → replace with "Add to Contacts" (through the creature, not bypassing it)
+- Explore screen: creature cards show creature identity, not owner
+
+---
+
 ## Priority Order
 
 1. **Phone GPS tethering** — First live telemetry source, proves the data avatar concept
