@@ -2,6 +2,10 @@
 //!
 //! Integer-based credit system with append-only ledger.
 //! Every mutation creates a ledger entry. Balance is denormalized on wallets.
+//!
+//! Balance split: `granted_balance` (non-transferable) + `purchased_balance` (transferable).
+//! Grants (signup, admin) go to granted. Deposits/revenue go to purchased.
+//! Charges spend granted first. Transfers require purchased balance.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,6 +21,8 @@ pub struct Wallet {
     pub owner_type: String,
     pub owner_id: String,
     pub balance: i32,
+    pub granted_balance: i32,
+    pub purchased_balance: i32,
     pub total_deposited: i32,
     pub total_spent: i32,
     pub created_at: DateTime<Utc>,
@@ -35,6 +41,23 @@ pub struct CreditTransaction {
     pub created_at: DateTime<Utc>,
 }
 
+const WALLET_SELECT_COLS: &str =
+    "wallet_id, owner_type, owner_id, balance, granted_balance, purchased_balance, total_deposited, total_spent, created_at";
+
+fn row_to_wallet(row: &sqlx::postgres::PgRow) -> Wallet {
+    Wallet {
+        wallet_id: row.try_get("wallet_id").unwrap(),
+        owner_type: row.try_get("owner_type").unwrap(),
+        owner_id: row.try_get("owner_id").unwrap(),
+        balance: row.try_get("balance").unwrap(),
+        granted_balance: row.try_get("granted_balance").unwrap(),
+        purchased_balance: row.try_get("purchased_balance").unwrap(),
+        total_deposited: row.try_get("total_deposited").unwrap(),
+        total_spent: row.try_get("total_spent").unwrap(),
+        created_at: row.try_get("created_at").unwrap(),
+    }
+}
+
 /// Get or create a wallet for the given owner
 pub async fn get_or_create_wallet(
     pool: &PgPool,
@@ -42,51 +65,37 @@ pub async fn get_or_create_wallet(
     owner_id: &str,
 ) -> Result<Wallet, AuthError> {
     // Try to get existing wallet
-    let existing = sqlx::query(
-        "SELECT wallet_id, owner_type, owner_id, balance, total_deposited, total_spent, created_at
-         FROM wallets WHERE owner_id = $1",
-    )
+    let existing = sqlx::query(&format!(
+        "SELECT {} FROM wallets WHERE owner_id = $1",
+        WALLET_SELECT_COLS
+    ))
     .bind(owner_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| AuthError::Internal(format!("DB error: {}", e)))?;
 
     if let Some(row) = existing {
-        return Ok(Wallet {
-            wallet_id: row.try_get("wallet_id").unwrap(),
-            owner_type: row.try_get("owner_type").unwrap(),
-            owner_id: row.try_get("owner_id").unwrap(),
-            balance: row.try_get("balance").unwrap(),
-            total_deposited: row.try_get("total_deposited").unwrap(),
-            total_spent: row.try_get("total_spent").unwrap(),
-            created_at: row.try_get("created_at").unwrap(),
-        });
+        return Ok(row_to_wallet(&row));
     }
 
     // Create new wallet
-    let row = sqlx::query(
+    let row = sqlx::query(&format!(
         "INSERT INTO wallets (owner_type, owner_id)
          VALUES ($1, $2)
-         RETURNING wallet_id, owner_type, owner_id, balance, total_deposited, total_spent, created_at",
-    )
+         RETURNING {}",
+        WALLET_SELECT_COLS
+    ))
     .bind(owner_type)
     .bind(owner_id)
     .fetch_one(pool)
     .await
     .map_err(|e| AuthError::Internal(format!("Failed to create wallet: {}", e)))?;
 
-    Ok(Wallet {
-        wallet_id: row.try_get("wallet_id").unwrap(),
-        owner_type: row.try_get("owner_type").unwrap(),
-        owner_id: row.try_get("owner_id").unwrap(),
-        balance: row.try_get("balance").unwrap(),
-        total_deposited: row.try_get("total_deposited").unwrap(),
-        total_spent: row.try_get("total_spent").unwrap(),
-        created_at: row.try_get("created_at").unwrap(),
-    })
+    Ok(row_to_wallet(&row))
 }
 
-/// Deposit credits into a wallet (always succeeds)
+/// Deposit credits into a wallet (always succeeds).
+/// Credits go to purchased_balance (transferable — earned/bought money).
 /// IMPORTANT: No BEGIN/COMMIT - PgBouncer transaction mode handles this
 pub async fn deposit(
     pool: &PgPool,
@@ -100,10 +109,11 @@ pub async fn deposit(
         ));
     }
 
-    // Atomic update using RETURNING to get new balance
+    // Atomic update — credits go to purchased_balance
     let wallet_row = sqlx::query(
         "UPDATE wallets
          SET balance = balance + $1,
+             purchased_balance = purchased_balance + $1,
              total_deposited = total_deposited + $1
          WHERE wallet_id = $2
          RETURNING balance",
@@ -136,7 +146,7 @@ pub async fn deposit(
 }
 
 /// Deposit credits with a custom tx_type (for agent_collect_in, execution_royalty, etc.)
-/// Same as deposit() but allows caller to specify the ledger tx_type.
+/// Credits go to purchased_balance (transferable — earned revenue).
 pub async fn deposit_typed(
     pool: &PgPool,
     wallet_id: Uuid,
@@ -153,6 +163,7 @@ pub async fn deposit_typed(
     let wallet_row = sqlx::query(
         "UPDATE wallets
          SET balance = balance + $1,
+             purchased_balance = purchased_balance + $1,
              total_deposited = total_deposited + $1
          WHERE wallet_id = $2
          RETURNING balance",
@@ -184,9 +195,9 @@ pub async fn deposit_typed(
     Ok(row_to_transaction(&ledger_row))
 }
 
-/// Charge credits from a wallet (fails if insufficient balance)
+/// Charge credits from a wallet (fails if insufficient balance).
+/// Spends granted_balance first, then purchased_balance.
 /// IMPORTANT: No BEGIN/COMMIT - PgBouncer transaction mode handles this
-/// Uses conditional UPDATE with check constraint to ensure atomicity
 pub async fn charge(
     pool: &PgPool,
     wallet_id: Uuid,
@@ -201,11 +212,15 @@ pub async fn charge(
         ));
     }
 
-    // Atomic update with balance check - only updates if sufficient balance
+    // Atomic update with balance check — spend granted first, then purchased.
+    // LEAST(granted_balance, $1) takes as much as possible from granted,
+    // remainder ($1 - that amount) comes from purchased.
     let wallet_row = sqlx::query(
         "UPDATE wallets
          SET balance = balance - $1,
-             total_spent = total_spent + $1
+             total_spent = total_spent + $1,
+             granted_balance = granted_balance - LEAST(granted_balance, $1),
+             purchased_balance = purchased_balance - ($1 - LEAST(granted_balance, $1))
          WHERE wallet_id = $2 AND balance >= $1
          RETURNING balance",
     )
@@ -255,7 +270,80 @@ pub async fn charge(
     Ok(row_to_transaction(&ledger_row))
 }
 
-/// Grant free credits (e.g., new user onboarding)
+/// Charge credits from purchased_balance only (fails if insufficient purchased balance).
+/// Used for transfers and workspace funding — granted credits cannot be transferred.
+/// IMPORTANT: No BEGIN/COMMIT - PgBouncer transaction mode handles this
+pub async fn charge_purchased_only(
+    pool: &PgPool,
+    wallet_id: Uuid,
+    amount: i32,
+    tx_type: &str,
+    description: &str,
+    related_id: Option<&str>,
+) -> Result<CreditTransaction, AuthError> {
+    if amount <= 0 {
+        return Err(AuthError::InvalidInput(
+            "Charge amount must be positive".into(),
+        ));
+    }
+
+    // Atomic update — only deducts from purchased_balance
+    let wallet_row = sqlx::query(
+        "UPDATE wallets
+         SET balance = balance - $1,
+             total_spent = total_spent + $1,
+             purchased_balance = purchased_balance - $1
+         WHERE wallet_id = $2 AND purchased_balance >= $1
+         RETURNING balance",
+    )
+    .bind(amount)
+    .bind(wallet_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AuthError::Internal(format!("Wallet update failed: {}", e)))?;
+
+    let new_balance: i32 = match wallet_row {
+        Some(row) => row
+            .try_get("balance")
+            .map_err(|e| AuthError::Internal(format!("Failed to get balance: {}", e)))?,
+        None => {
+            // Check what they actually have
+            let purchased: Option<i32> =
+                sqlx::query_scalar("SELECT purchased_balance FROM wallets WHERE wallet_id = $1")
+                    .bind(wallet_id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| AuthError::Internal(format!("Failed to check balance: {}", e)))?;
+
+            return Err(AuthError::InvalidInput(format!(
+                "Insufficient transferable balance: have {}, need {}. Granted credits cannot be transferred.",
+                purchased.unwrap_or(0),
+                amount
+            )));
+        }
+    };
+
+    // Create ledger entry (negative amount for debit)
+    let ledger_row = sqlx::query(
+        "INSERT INTO credit_ledger (wallet_id, amount, balance_after, tx_type, description, related_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING tx_id, wallet_id, amount, balance_after, tx_type, description, related_id, created_at",
+    )
+    .bind(wallet_id)
+    .bind(-amount)
+    .bind(new_balance)
+    .bind(tx_type)
+    .bind(description)
+    .bind(related_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AuthError::Internal(format!("Ledger insert failed: {}", e)))?;
+
+    Ok(row_to_transaction(&ledger_row))
+}
+
+/// Grant free credits (e.g., new user onboarding).
+/// Credits go to granted_balance (non-transferable).
 /// IMPORTANT: No BEGIN/COMMIT - PgBouncer transaction mode handles this
 pub async fn grant(
     pool: &PgPool,
@@ -269,10 +357,11 @@ pub async fn grant(
         ));
     }
 
-    // Atomic update using RETURNING to get new balance
+    // Atomic update — credits go to granted_balance (non-transferable)
     let wallet_row = sqlx::query(
         "UPDATE wallets
          SET balance = balance + $1,
+             granted_balance = granted_balance + $1,
              total_deposited = total_deposited + $1
          WHERE wallet_id = $2
          RETURNING balance",

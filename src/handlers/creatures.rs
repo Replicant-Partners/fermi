@@ -1609,15 +1609,19 @@ pub async fn join_swarm_handler(
 
     // Handle funding mode
     if funding_mode == "hosted" {
-        let remaining: i32 = swarm.try_get("invite_pool_remaining").unwrap_or(0);
-        if remaining <= 0 {
-            return Err((StatusCode::PAYMENT_REQUIRED, "Invite pool exhausted".into()));
+        // Creator's own creatures don't use invite pool
+        if creator_id != user_id {
+            let remaining: i32 = swarm.try_get("invite_pool_remaining").unwrap_or(0);
+            if remaining <= 0 {
+                return Err((StatusCode::PAYMENT_REQUIRED, "Invite pool exhausted".into()));
+            }
+            sqlx::query("UPDATE swarm_events SET invite_pool_remaining = invite_pool_remaining - 1 WHERE swarm_id = $1")
+                .bind(swarm_id)
+                .execute(pool)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
-        sqlx::query("UPDATE swarm_events SET invite_pool_remaining = invite_pool_remaining - 1 WHERE swarm_id = $1")
-            .bind(swarm_id)
-            .execute(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        // else: creator joins for free, no pool decrement
     } else {
         // Support mode: joiner contributes
         let suggested: i32 = swarm.try_get("suggested_contribution").unwrap_or(1);

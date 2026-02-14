@@ -7,7 +7,9 @@ use axum::{
     Json,
 };
 use fermi::gas::charge_gas;
-use fermi_auth::{credit_charge, get_or_create_wallet, teams, AuthPrincipal};
+use fermi_auth::{
+    credit_charge, credit_charge_purchased_only, get_or_create_wallet, teams, AuthPrincipal,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
@@ -384,12 +386,12 @@ pub async fn fund_workspace_handler(
         ));
     }
 
-    // Charge user's wallet
+    // Charge user's wallet — purchased balance only (funding a workspace = moving credits out)
     let user_wallet = get_or_create_wallet(&state.db, "user", &principal.user_id())
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    credit_charge(
+    credit_charge_purchased_only(
         &state.db,
         user_wallet.wallet_id,
         req.amount,

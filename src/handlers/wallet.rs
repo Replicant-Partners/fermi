@@ -6,7 +6,7 @@ use axum::{
     Json,
 };
 use fermi_auth::{
-    credit_charge, credit_deposit, credit_get_balance, credit_get_transactions,
+    credit_charge_purchased_only, credit_deposit, credit_get_balance, credit_get_transactions,
     get_or_create_wallet, AuthPrincipal,
 };
 use serde::Deserialize;
@@ -33,6 +33,8 @@ pub async fn get_wallet_handler(
     Ok(Json(json!({
         "wallet_id": wallet.wallet_id,
         "balance": wallet.balance,
+        "granted_balance": wallet.granted_balance,
+        "purchased_balance": wallet.purchased_balance,
         "total_deposited": wallet.total_deposited,
         "total_spent": wallet.total_spent,
         "created_at": wallet.created_at,
@@ -158,8 +160,8 @@ pub async fn transfer_credits_handler(
             )
         })?;
 
-    // Charge sender (amount + gas)
-    credit_charge(
+    // Charge sender (amount + gas) — purchased balance only, granted credits cannot be transferred
+    credit_charge_purchased_only(
         &state.db,
         sender_wallet.wallet_id,
         total_charge,
@@ -171,12 +173,7 @@ pub async fn transfer_credits_handler(
         Some(&body.recipient_id),
     )
     .await
-    .map_err(|e| {
-        (
-            StatusCode::PAYMENT_REQUIRED,
-            format!("Insufficient balance: {}", e),
-        )
-    })?;
+    .map_err(|e| (StatusCode::PAYMENT_REQUIRED, format!("{}", e)))?;
 
     // Deposit to recipient
     let recipient_wallet = get_or_create_wallet(&state.db, "user", &body.recipient_id)

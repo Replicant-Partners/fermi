@@ -2,7 +2,7 @@
 
 use super::types::ForkPricing;
 use crate::gas::GasFees;
-use fermi_auth::{credit_charge, credit_grant, get_or_create_wallet};
+use fermi_auth::{credit_charge, credit_deposit_typed, get_or_create_wallet};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -79,17 +79,18 @@ pub async fn fork_agent(
             let author_wallet = get_or_create_wallet(pool, "user", owner_id)
                 .await
                 .map_err(|e| format!("Author wallet error: {}", e))?;
-            credit_grant(
+            credit_deposit_typed(
                 pool,
                 author_wallet.wallet_id,
                 author_royalty,
+                "fork_royalty",
                 &format!(
                     "Fork royalty: {} forked by {}",
                     source.agent_name, forker_id
                 ),
             )
             .await
-            .map_err(|e| format!("Royalty grant error: {}", e))?;
+            .map_err(|e| format!("Royalty deposit error: {}", e))?;
         }
     }
 
