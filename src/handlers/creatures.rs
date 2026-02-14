@@ -684,6 +684,37 @@ pub async fn record_flight_handler(
         ));
     }
 
+    // Enforce: one active flight per creature (no teleportation!)
+    let active_flight = sqlx::query(
+        "SELECT flight_id, location_name, swarm_id FROM creature_flights
+         WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
+    )
+    .bind(req.creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = active_flight {
+        let loc: Option<String> = row.try_get("location_name").unwrap_or(None);
+        let in_swarm: bool = row
+            .try_get::<Option<Uuid>, _>("swarm_id")
+            .ok()
+            .flatten()
+            .is_some();
+        let msg = if in_swarm {
+            format!(
+                "Creature is already in a rabble{}",
+                loc.map(|l| format!(" at {}", l)).unwrap_or_default()
+            )
+        } else {
+            format!(
+                "Creature is already flying{}",
+                loc.map(|l| format!(" at {}", l)).unwrap_or_default()
+            )
+        };
+        return Err((StatusCode::CONFLICT, msg));
+    }
+
     // Charge 3 credits
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
         .await
@@ -2078,6 +2109,30 @@ pub async fn join_swarm_handler(
     let creature_name: Option<String> = creature.try_get("specimen_name").ok();
     let species_name: Option<String> = creature.try_get("species_name").ok();
     let species_group: Option<String> = creature.try_get("species_group").ok();
+
+    // Enforce: one active flight per creature (no being in two places at once)
+    let active_flight = sqlx::query(
+        "SELECT flight_id, swarm_id, location_name FROM creature_flights
+         WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
+    )
+    .bind(req.creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = active_flight {
+        let existing_swarm: Option<Uuid> =
+            row.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+        if existing_swarm == Some(swarm_id) {
+            return Err((StatusCode::CONFLICT, "Already in this rabble".to_string()));
+        }
+        let msg = if existing_swarm.is_some() {
+            "Creature is in another rabble — leave first"
+        } else {
+            "Creature is on a flight — end it first"
+        };
+        return Err((StatusCode::CONFLICT, msg.to_string()));
+    }
 
     // Handle funding mode
     if funding_mode == "hosted" {
