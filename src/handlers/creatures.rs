@@ -294,7 +294,8 @@ pub async fn list_swarms_handler(
          location_name, name, description, species_filter, max_participants,
          starts_at, ends_at, status, participant_count, creature_count,
          visibility, funding_mode, qr_token, created_at,
-         anchor_creature_id, anchor_transferred_at
+         anchor_creature_id, anchor_transferred_at,
+         walk_in_price, walk_in_budget, walk_in_budget_remaining
          FROM swarm_events WHERE 1=1",
     );
 
@@ -529,6 +530,9 @@ pub async fn list_swarms_handler(
                         "anchor_creature_image": anchor_image,
                         "anchor_creature_name": anchor_name,
                         "anchor_transferred_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("anchor_transferred_at").ok().flatten().map(|t| t.to_rfc3339()),
+                        "walk_in_price": row.try_get::<Option<i32>, _>("walk_in_price").unwrap_or(None),
+                        "walk_in_budget": row.try_get::<Option<i32>, _>("walk_in_budget").unwrap_or(None),
+                        "walk_in_budget_remaining": row.try_get::<Option<i32>, _>("walk_in_budget_remaining").unwrap_or(None),
                         "member_images": member_images.get(&sid).cloned().unwrap_or_default(),
                     })
                 })
