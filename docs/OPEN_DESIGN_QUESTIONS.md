@@ -170,14 +170,97 @@ User executes agent:
 
 ---
 
+## 8. Flight & Telemetry Model (Resolved 2026-02-14)
+
+### Creature Lifecycle
+
+Every creature follows: **Mint → Set Down → Fly/Join → Fly → ...** 
+
+- **Set Down (2cr)**: First placement. Gives the creature a location in the world. Configures the perch (walk-in pricing, invite pool, walk-in budget). One-time action.
+- **Fly (1cr)**: Every subsequent move. Always requires a flight plan (destination + optional route description). Creature flies the route, arrives perched at destination. Generates simulated telemetry along the path.
+- **Join**: Enter an existing rabble/perch. Creature moves to that location.
+- **Perched**: Status, not an action. A creature is "perched" whenever it's at a location and not in flight.
+
+### Two Telemetry Sources
+
+All flights produce structurally identical telemetry — timestamped (lat, lng, altitude, metadata) points. The difference is the source:
+
+| Mode | Source | Telemetry | Fly action? |
+|------|--------|-----------|-------------|
+| **Simulated** | Flight plan (user picks destination) | Generated/interpolated along route | Yes — pick destination, creature flies there |
+| **Live (tethered)** | Sensor signal (GPS, radio, tag) | Recorded from device | No — creature tracks automatically, position = sensor position |
+
+**Key rule**: A creature can only exist in one location at a time. Tethered creatures cannot fly simulated routes because they'd be in two places — the sensor location and the flight path. Tethered creatures have no Fly button, only a track log.
+
+### Tethering (Design — not yet built)
+
+A creature can be tethered to a signal source. The tether replaces user-initiated Fly with automatic position tracking.
+
+**Tether sources (in priority order):**
+1. **Phone GPS** — browser Geolocation API or native, simplest first implementation
+2. **Meshtastic LoRa radio** — BLE serial protocol, GNSS position packets
+3. **GPS tracker / smart tag** — BLE beacons, proprietary APIs (Tile, AirTag-like)
+4. **Fixed sensor** — weather station, environmental monitor. Stationary but streams condition data. The "flight" is through conditions, not space.
+
+**Tether data model:**
+- `creature_tethers` table: creature_id, tether_type (phone_gps, meshtastic, gps_tracker, fixed_sensor), device_id, config JSON, active boolean, created_at
+- When tethered: background process (or client push) writes telemetry points to `creature_flights` at interval
+- Creature presence auto-set to "tracking" (new presence state alongside active/sleeping/parked)
+
+**Analytics potential**: Same telemetry format, radically different signal shapes:
+- Phone: human movement — commutes, walks, pauses, daily/weekly rhythms, seasonal patterns
+- Drone: flight corridors, grid surveys, altitude changes, sharp turns
+- Meshtastic: off-grid mesh network coverage mapping, relay paths
+- Simulated: smooth interpolated arcs between waypoints
+- At multiple time scales, the same data reveals different patterns (day = neighborhood, month = city, year = seasons)
+
+The creature is a **data avatar** — it gives identity and narrative to a telemetry stream.
+
+### Agent-in-Flight (Design — not yet built)
+
+Agents can be invited into a flight or rabble workspace, gaining access to:
+1. **Telemetry context** — the creature's current and historical track
+2. **Scoped embedding similarity** — owner's relevant embeddings (not raw vectors, only similarity scores)
+3. **Workspace conversation** — the chat context of the flight/rabble
+
+**Economics:**
+- Per-agent invite fee (hire into flight workspace)
+- Per-agent invocation fee (varies by agent complexity/model)
+- Existing gas pipeline handles both
+
+**Use case example**: Phone-tethered creature + shopping assistant agent + user's shopping preference embeddings → agent discovers deals along your live walking path, nudges contextually.
+
+**Implementation path:**
+1. Flight gets a workspace (like rabbles do on first join) — or reuse existing rabble workspace
+2. "Invite Agent" action on creature detail when placed
+3. Agent picker sheet with cost display and capability summary
+4. Agent invocation passes flight telemetry as context to the agent's system prompt
+5. Start simple: logic puzzle agent on a flight (no location/embedding needed, just proves plumbing)
+6. Layer in: location-aware agent → then embedding-scoped agent
+
+### Two-Pool Perch Economics (Implemented 2026-02-14)
+
+Each perch has two separate spending pools:
+- **Invite pool**: Pre-funded credits for contacts/invitees to join free. Decremented per contact join.
+- **Walk-in budget**: Spending cap for free walk-ins where host pays 1cr per stranger join. Hard reject for strangers when exhausted; soft pass for contacts (they still get in).
+
+Walk-in pricing model:
+- `walk_in_price = NULL`: Private — invite only
+- `walk_in_price = 0`: Free — host pays per walk-in from walk_in_budget  
+- `walk_in_price > 0`: Paid — joiner pays, host gets 90% revenue
+
+---
+
 ## Priority Order
 
-1. **Hire vs Execute** — Conceptual fix, affects UX flow
-2. **Gas on all transactions** — Economic model foundation
-3. **Model support** — Technical prerequisite for diverse agents
-4. **Executor taxonomy** — Needed before agent creation coaching makes sense
-5. **Agentified creation** — HIGH value but depends on 3 & 4
-6. **Workspace substance** — Ongoing design conversation
+1. **Phone GPS tethering** — First live telemetry source, proves the data avatar concept
+2. **Agent-in-flight** — Invite agents into flight/rabble workspaces with telemetry context
+3. **Hire vs Execute** — Conceptual fix, affects UX flow
+4. **Gas on all transactions** — Economic model foundation
+5. **Model support** — Technical prerequisite for diverse agents
+6. **Executor taxonomy** — Needed before agent creation coaching makes sense
+7. **Agentified creation** — HIGH value but depends on 5 & 6
+8. **Workspace substance** — Ongoing design conversation
 
 ---
 
