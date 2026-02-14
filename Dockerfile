@@ -57,6 +57,9 @@ COPY --from=builder /app/target/release/api-server /app/api-server
 COPY templates /app/templates
 COPY static /app/static
 
+# Copy Flutter web build (single source of truth for Rabble SPA)
+COPY rabble-web /app/static/rabble
+
 # Copy agents directory
 COPY agents /app/agents
 

@@ -46,6 +46,9 @@ coverage/
 docs/_build/
 site/
 
+# Flutter web build (served from rabble-web/, copied by Dockerfile)
+static/rabble/
+
 # Fermi-specific
 examples/*.results.json
 *.fpl.results
