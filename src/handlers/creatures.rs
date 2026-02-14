@@ -457,6 +457,37 @@ pub async fn list_swarms_handler(
                 }
             }
 
+            // Batch-lookup member creature images (top 4 per swarm)
+            let mut member_images: std::collections::HashMap<Uuid, Vec<String>> =
+                std::collections::HashMap::new();
+            if !swarm_ids.is_empty() {
+                let placeholders: Vec<String> =
+                    (1..=swarm_ids.len()).map(|i| format!("${}", i)).collect();
+                let mem_sql = format!(
+                    "SELECT cf.swarm_id, c.asset_path
+                     FROM creature_flights cf
+                     JOIN creatures c ON c.creature_id = cf.creature_id
+                     WHERE cf.swarm_id IN ({})
+                       AND cf.ended_at IS NULL
+                     ORDER BY cf.swarm_id, cf.started_at ASC",
+                    placeholders.join(", ")
+                );
+                let mut mem_query = sqlx::query(&mem_sql);
+                for sid in &swarm_ids {
+                    mem_query = mem_query.bind(sid);
+                }
+                if let Ok(mem_rows) = mem_query.fetch_all(pool).await {
+                    for r in &mem_rows {
+                        let sid: Uuid = r.get("swarm_id");
+                        let path: String = r.get("asset_path");
+                        let entry = member_images.entry(sid).or_default();
+                        if entry.len() < 4 {
+                            entry.push(path);
+                        }
+                    }
+                }
+            }
+
             let swarms: Vec<serde_json::Value> = rows
                 .iter()
                 .map(|row| {
@@ -496,6 +527,7 @@ pub async fn list_swarms_handler(
                         "anchor_creature_image": anchor_image,
                         "anchor_creature_name": anchor_name,
                         "anchor_transferred_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("anchor_transferred_at").ok().flatten().map(|t| t.to_rfc3339()),
+                        "member_images": member_images.get(&sid).cloned().unwrap_or_default(),
                     })
                 })
                 .collect();
