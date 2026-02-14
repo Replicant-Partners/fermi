@@ -5,7 +5,7 @@
 //! Actions route through agents, who earn fractional fees and build knowledge.
 
 use axum::{extract::State, http::StatusCode, Json};
-use fermi_auth::{credit_deposit, get_or_create_wallet, teams, AuthPrincipal};
+use fermi_auth::{get_or_create_wallet, teams, AuthPrincipal};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -71,26 +71,9 @@ pub async fn create_rabble_workspace(
 
     let ws_id = team.id;
 
-    // Seed workspace with 50 starter credits
-    let ws_id_str = ws_id.to_string();
-    if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id_str).await {
-        if credit_deposit(
-            &state.db,
-            ws_wallet.wallet_id,
-            50,
-            "Rabble workspace starter credits",
-        )
-        .await
-        .is_ok()
-        {
-            let _ = sqlx::query("UPDATE teams SET workspace_budget = 50 WHERE id = $1")
-                .bind(ws_id)
-                .execute(&state.db)
-                .await;
-        }
-    }
+    // No workspace seed — all costs are pass-through. Users fund explicitly.
 
-    // Auto-hire the 4 system agents
+    // Auto-hire the system agents
     for agent_name in RABBLE_SYSTEM_AGENTS {
         // Look up agent UUID from agents table
         let agent_row =

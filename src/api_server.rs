@@ -1353,9 +1353,14 @@ async fn main() {
             "/api/flights/import",
             post(handlers::creatures::import_flight_handler),
         )
+        // Perch + Fly model (replaces plan_flight)
         .route(
-            "/api/flights/plan",
-            post(handlers::creatures::plan_flight_handler),
+            "/api/creatures/:creature_id/perch",
+            post(handlers::creatures::perch_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/fly",
+            post(handlers::creatures::fly_handler),
         )
         // Creature minting
         .route(

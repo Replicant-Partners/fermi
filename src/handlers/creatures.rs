@@ -2015,6 +2015,436 @@ pub async fn create_swarm_handler(
     })))
 }
 
+// ── Perch + Fly model ──────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PerchRequest {
+    pub h3_cell: String,
+    pub center_lat: f64,
+    pub center_lng: f64,
+    pub location_name: Option<String>,
+    /// NULL = private (contacts/invitees only), 0 = free open, 2+ = paid walk-in
+    pub walk_in_price: Option<i32>,
+    /// Credits to pre-fund for invited/contact joins (default 0)
+    pub invite_pool: Option<i32>,
+    /// Display name for the perch (default: "{creature_name}'s perch")
+    pub name: Option<String>,
+}
+
+/// POST /api/creatures/:creature_id/perch — place creature at a location (2cr + invite pool)
+///
+/// Creates a swarm_events row (no workspace yet — created on first join) and a flight record.
+/// The creature is now discoverable on the map with idle animations.
+pub async fn perch_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<PerchRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Validate creature ownership + presence
+    let creature = sqlx::query(
+        "SELECT owner_id, specimen_name, scientific_name, species_group, presence, visibility
+         FROM creatures WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    let presence: String = creature
+        .try_get("presence")
+        .unwrap_or_else(|_| "active".to_string());
+    if presence != "active" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Creature is {} — wake it first", presence),
+        ));
+    }
+
+    // Enforce: one active flight per creature
+    let active_flight = sqlx::query(
+        "SELECT flight_id, location_name, swarm_id FROM creature_flights
+         WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = active_flight {
+        let loc: Option<String> = row.try_get("location_name").unwrap_or(None);
+        let in_swarm: bool = row
+            .try_get::<Option<Uuid>, _>("swarm_id")
+            .ok()
+            .flatten()
+            .is_some();
+        let msg = if in_swarm {
+            format!(
+                "Creature is already in a rabble{}",
+                loc.map(|l| format!(" at {}", l)).unwrap_or_default()
+            )
+        } else {
+            format!(
+                "Creature is already flying{}",
+                loc.map(|l| format!(" at {}", l)).unwrap_or_default()
+            )
+        };
+        return Err((StatusCode::CONFLICT, msg));
+    }
+
+    let invite_pool = req.invite_pool.unwrap_or(0).max(0);
+    let total_cost = 2 + invite_pool; // 2cr base + invite pool pre-funding
+
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        total_cost,
+        "perch",
+        &format!(
+            "Perch creature {} ({}cr + {}cr pool)",
+            creature_id, 2, invite_pool
+        ),
+        Some(&creature_id.to_string()),
+    )
+    .await?;
+
+    // Derive perch name
+    let creature_name: String = creature.try_get("specimen_name").unwrap_or_else(|_| {
+        creature
+            .try_get("scientific_name")
+            .unwrap_or("creature".into())
+    });
+    let perch_name = req
+        .name
+        .unwrap_or_else(|| format!("{}'s perch", creature_name));
+
+    // Visibility: NULL walk_in_price = private, anything else = public
+    let visibility = if req.walk_in_price.is_none() {
+        "private"
+    } else {
+        "public"
+    };
+
+    let swarm_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    let ends_at = now + chrono::Duration::days(3650); // persistent
+    let qr_token = generate_qr_token();
+
+    // Create swarm_events row — no workspace yet (created on first join)
+    sqlx::query(
+        "INSERT INTO swarm_events (swarm_id, creator_id, h3_cell, h3_resolution,
+         center_lat, center_lng, location_name,
+         name, starts_at, ends_at, status, created_at,
+         funding_mode, invite_pool, invite_pool_remaining,
+         qr_token, visibility, anchor_creature_id, walk_in_price,
+         participant_count, creature_count)
+         VALUES ($1, $2, $3, 12, $4, $5, $6, $7, $8, $9, 'active', $8,
+                 'hosted', $10, $10, $11, $12, $13, $14, 1, 1)",
+    )
+    .bind(swarm_id)
+    .bind(&user_id)
+    .bind(&req.h3_cell)
+    .bind(req.center_lat)
+    .bind(req.center_lng)
+    .bind(&req.location_name)
+    .bind(&perch_name)
+    .bind(now)
+    .bind(ends_at)
+    .bind(invite_pool)
+    .bind(&qr_token)
+    .bind(visibility)
+    .bind(creature_id)
+    .bind(req.walk_in_price)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Create flight record (pattern = 'perch' — grounded with idle animations)
+    let flight_id = Uuid::new_v4();
+    let creature_visibility: String = creature
+        .try_get("visibility")
+        .unwrap_or_else(|_| "public".to_string());
+
+    sqlx::query(
+        "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
+         h3_cell, h3_resolution, center_lat, center_lng, location_name,
+         flight_pattern, swarm_id, visibility, started_at, data_source)
+         VALUES ($1, $2, $3, $4, 12, $5, $6, $7, 'perch', $8, $9, $10, 'synthetic')",
+    )
+    .bind(flight_id)
+    .bind(creature_id)
+    .bind(&user_id)
+    .bind(&req.h3_cell)
+    .bind(req.center_lat)
+    .bind(req.center_lng)
+    .bind(&req.location_name)
+    .bind(swarm_id)
+    .bind(&creature_visibility)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Update creature stats
+    sqlx::query(
+        "UPDATE creatures SET total_flights = total_flights + 1, updated_at = NOW()
+         WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .ok();
+
+    Ok(Json(json!({
+        "swarm_id": swarm_id,
+        "flight_id": flight_id,
+        "creature_id": creature_id,
+        "qr_token": qr_token,
+        "name": perch_name,
+        "walk_in_price": req.walk_in_price,
+        "invite_pool": invite_pool,
+        "visibility": visibility,
+        "total_cost": total_cost,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct FlyRequest {
+    /// Optional destination — omit for free-form wander
+    pub destination: Option<serde_json::Value>, // { lat, lng, name? }
+    /// Optional creative route prompt for agent
+    pub prompt: Option<String>,
+}
+
+/// POST /api/creatures/:creature_id/fly — activate flight dynamics on an active perch (1cr + agent pass-through)
+///
+/// Creature must already be perched (active flight with swarm_id, pattern='perch').
+/// Updates flight_pattern to 'fly' and optionally dispatches flight_coordinator agent.
+pub async fn fly_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<FlyRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Validate creature ownership
+    let creature = sqlx::query(
+        "SELECT owner_id, species_group, specimen_name, scientific_name, presence
+         FROM creatures WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    let presence: String = creature
+        .try_get("presence")
+        .unwrap_or_else(|_| "active".to_string());
+    if presence != "active" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Creature is {} — wake it first", presence),
+        ));
+    }
+
+    // Must have an active perch (flight with swarm_id and ended_at IS NULL)
+    let active_flight = sqlx::query(
+        "SELECT flight_id, swarm_id, flight_pattern, location_name
+         FROM creature_flights
+         WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((
+        StatusCode::CONFLICT,
+        "Creature is not perched — perch first".to_string(),
+    ))?;
+
+    let flight_id: Uuid = active_flight.get("flight_id");
+    let swarm_id: Option<Uuid> = active_flight
+        .try_get::<Option<Uuid>, _>("swarm_id")
+        .ok()
+        .flatten();
+
+    if swarm_id.is_none() {
+        return Err((
+            StatusCode::CONFLICT,
+            "Creature is on a solo flight without a perch — end it first".to_string(),
+        ));
+    }
+    let swarm_id = swarm_id.unwrap();
+
+    // Charge 1cr for fly activation
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        1,
+        "fly",
+        &format!("Fly creature {} from perch", creature_id),
+        Some(&creature_id.to_string()),
+    )
+    .await?;
+
+    // Update flight pattern from 'perch' to 'fly'
+    sqlx::query("UPDATE creature_flights SET flight_pattern = 'fly' WHERE flight_id = $1")
+        .bind(flight_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Store destination in flight metadata if provided
+    if let Some(ref dest) = req.destination {
+        sqlx::query(
+            "UPDATE creature_flights SET environment = COALESCE(environment, '{}'::jsonb) || jsonb_build_object('destination', $1::jsonb)
+             WHERE flight_id = $2",
+        )
+        .bind(dest)
+        .bind(flight_id)
+        .execute(pool)
+        .await
+        .ok();
+    }
+
+    // Determine mode: solo (no other creatures in swarm) or rabble
+    let creature_count: i64 =
+        sqlx::query("SELECT creature_count FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map(|r| r.try_get::<i32, _>("creature_count").unwrap_or(1) as i64)
+            .unwrap_or(1);
+
+    let mode = if creature_count > 1 { "rabble" } else { "solo" };
+
+    // If destination or prompt provided, dispatch flight_coordinator agent (pass-through cost)
+    let mut plan: Option<serde_json::Value> = None;
+    if req.destination.is_some() || req.prompt.is_some() {
+        // Find workspace: swarm's workspace or personal
+        let ws_id = sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
+
+        let ws_id = match ws_id {
+            Some(id) => id,
+            None => sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
+                .bind(&user_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|r| {
+                    r.try_get::<Option<Uuid>, _>("personal_workspace_id")
+                        .ok()
+                        .flatten()
+                })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "No workspace available — mint a creature first".to_string(),
+                ))?,
+        };
+
+        let species: String = creature.get("species_group");
+        let specimen_name: Option<String> = creature.try_get("specimen_name").unwrap_or(None);
+        let scientific_name: Option<String> = creature.try_get("scientific_name").unwrap_or(None);
+        let creature_label =
+            specimen_name.unwrap_or_else(|| scientific_name.unwrap_or_else(|| species.clone()));
+
+        let loc_name: String = active_flight
+            .try_get("location_name")
+            .unwrap_or_else(|_| "current location".to_string());
+
+        let query = if let Some(ref dest) = req.destination {
+            let dest_name = dest
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("destination");
+            if let Some(ref prompt) = req.prompt {
+                format!(
+                    "Plan a flight for {} ({}) from {} to {}. Creative route: {}",
+                    creature_label, species, loc_name, dest_name, prompt,
+                )
+            } else {
+                format!(
+                    "Plan a flight for {} ({}) from {} to {}.",
+                    creature_label, species, loc_name, dest_name,
+                )
+            }
+        } else {
+            format!(
+                "Describe a wandering flight for {} ({}) around {}. {}",
+                creature_label,
+                species,
+                loc_name,
+                req.prompt.as_deref().unwrap_or(""),
+            )
+        };
+
+        match rabble_workspace::dispatch_rabble_action(
+            &state,
+            ws_id,
+            "flight_coordinator",
+            "fly",
+            &query,
+            &user_id,
+        )
+        .await
+        {
+            Ok(result) => {
+                plan = Some(extract_json_from_response(&result).unwrap_or_else(|| {
+                    json!({
+                        "narrative": result,
+                        "creature_id": creature_id,
+                    })
+                }));
+            }
+            Err(e) => {
+                eprintln!("[fly] flight_coordinator dispatch failed: {}", e);
+                // Non-fatal — fly still activates, just no agent plan
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "flight_id": flight_id,
+        "swarm_id": swarm_id,
+        "creature_id": creature_id,
+        "mode": mode,
+        "pattern": "fly",
+        "plan": plan,
+        "gas_charged": 1,
+    })))
+}
+
 #[derive(Deserialize)]
 pub struct JoinSwarmRequest {
     pub creature_id: Uuid,
@@ -2035,7 +2465,8 @@ pub async fn join_swarm_handler(
     // Verify swarm exists and is joinable
     let swarm = sqlx::query(
         "SELECT status, h3_cell, center_lat, center_lng, creator_id, visibility,
-         funding_mode, invite_pool_remaining, suggested_contribution
+         funding_mode, invite_pool_remaining, suggested_contribution,
+         walk_in_price, workspace_id, participant_count
          FROM swarm_events WHERE swarm_id = $1",
     )
     .bind(swarm_id)
@@ -2134,23 +2565,159 @@ pub async fn join_swarm_handler(
         return Err((StatusCode::CONFLICT, msg.to_string()));
     }
 
-    // Handle funding mode
-    if funding_mode == "hosted" {
-        // Creator's own creatures don't use invite pool
-        if creator_id != user_id {
+    // Two-doors access model
+    let walk_in_price: Option<i32> = swarm.try_get("walk_in_price").unwrap_or(None);
+
+    if creator_id != user_id {
+        // Check if joiner is a contact of the host OR has an explicit invite (object_shares)
+        let is_contact_or_invited = sqlx::query(
+            "SELECT 1 FROM contacts WHERE user_id = $1 AND contact_id = $2
+             UNION ALL
+             SELECT 1 FROM object_shares
+             WHERE object_type = 'rabble' AND object_id = $3::text
+             AND (share_target = $2 OR share_target IN
+                  (SELECT team_id::text FROM team_members WHERE user_id = $2))
+             LIMIT 1",
+        )
+        .bind(&creator_id)
+        .bind(&user_id)
+        .bind(swarm_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .is_some();
+
+        if is_contact_or_invited {
+            // Invited door: use invite pool
             let remaining: i32 = swarm.try_get("invite_pool_remaining").unwrap_or(0);
-            if remaining <= 0 {
+            if remaining > 0 {
+                sqlx::query("UPDATE swarm_events SET invite_pool_remaining = invite_pool_remaining - 1 WHERE swarm_id = $1")
+                    .bind(swarm_id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            } else if let Some(price) = walk_in_price {
+                // Pool exhausted but walk-in door exists — charge walk-in price
+                if price > 0 {
+                    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                        .await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                    charge_gas(
+                        &state.db,
+                        wallet.wallet_id,
+                        price,
+                        "walk_in_fee",
+                        &format!("Walk-in fee for rabble {} ({}cr)", swarm_id, price),
+                        Some(&swarm_id.to_string()),
+                    )
+                    .await?;
+
+                    // Revenue to host (90%, platform keeps 10%)
+                    let host_revenue = (price as f64 * 0.9).round() as i32;
+                    if host_revenue > 0 {
+                        if let Ok(host_wallet) =
+                            get_or_create_wallet(&state.db, "user", &creator_id).await
+                        {
+                            let _ = fermi_auth::credit_deposit_typed(
+                                &state.db,
+                                host_wallet.wallet_id,
+                                host_revenue,
+                                "walk_in_revenue",
+                                &format!("Walk-in revenue from rabble {}", swarm_id),
+                            )
+                            .await;
+                        }
+                    }
+                }
+                // price == 0: free walk-in, no charge
+            } else {
+                // walk_in_price is NULL (private) and pool exhausted
                 return Err((StatusCode::PAYMENT_REQUIRED, "Invite pool exhausted".into()));
             }
-            sqlx::query("UPDATE swarm_events SET invite_pool_remaining = invite_pool_remaining - 1 WHERE swarm_id = $1")
-                .bind(swarm_id)
-                .execute(pool)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        } else {
+            // Stranger — walk-in door only
+            match walk_in_price {
+                None => {
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        "Private perch — need an invite to join".into(),
+                    ));
+                }
+                Some(0) => {
+                    // Free open perch — no charge
+                }
+                Some(price) => {
+                    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                        .await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                    charge_gas(
+                        &state.db,
+                        wallet.wallet_id,
+                        price,
+                        "walk_in_fee",
+                        &format!("Walk-in fee for rabble {} ({}cr)", swarm_id, price),
+                        Some(&swarm_id.to_string()),
+                    )
+                    .await?;
+
+                    // Revenue to host (90%, platform keeps 10%)
+                    let host_revenue = (price as f64 * 0.9).round() as i32;
+                    if host_revenue > 0 {
+                        if let Ok(host_wallet) =
+                            get_or_create_wallet(&state.db, "user", &creator_id).await
+                        {
+                            let _ = fermi_auth::credit_deposit_typed(
+                                &state.db,
+                                host_wallet.wallet_id,
+                                host_revenue,
+                                "walk_in_revenue",
+                                &format!("Walk-in revenue from rabble {}", swarm_id),
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
         }
-        // else: creator joins for free, no pool decrement
-    } else {
-        // Support mode: joiner contributes
+    }
+    // else: creator joins own perch for free
+
+    // First non-host join: create workspace + "We have a rabble!!" moment
+    let existing_ws: Option<Uuid> = swarm
+        .try_get::<Option<Uuid>, _>("workspace_id")
+        .ok()
+        .flatten();
+    let participant_count: i32 = swarm.try_get("participant_count").unwrap_or(0);
+    let is_first_join = existing_ws.is_none() && creator_id != user_id;
+
+    if is_first_join {
+        // Create workspace now (deferred from perch time)
+        let swarm_name: String = sqlx::query("SELECT name FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.try_get::<String, _>("name").unwrap_or("rabble".into()))
+            .unwrap_or("rabble".into());
+
+        if let Ok(ws_id) = rabble_workspace::create_rabble_workspace(
+            &state,
+            &creator_id,
+            &swarm_name,
+            Some(swarm_id),
+        )
+        .await
+        {
+            eprintln!(
+                "[perch] First join — created workspace {} for swarm {}",
+                ws_id, swarm_id
+            );
+        }
+    }
+
+    // Legacy support: handle old swarms with funding_mode = 'support' that don't have walk_in_price
+    if walk_in_price.is_none() && funding_mode == "support" && creator_id != user_id {
         let suggested: i32 = swarm.try_get("suggested_contribution").unwrap_or(1);
         let contribution = req.contribution.unwrap_or(suggested).max(1);
 
@@ -2209,9 +2776,15 @@ pub async fn join_swarm_handler(
     .await
     .ok();
 
-    // Post system message + trigger swarm host narrator welcome
+    // Post system message — special message for first join (perch → rabble transition)
     let display_name = creature_name.as_deref().unwrap_or("A creature");
     let species_display = species_name.as_deref().unwrap_or("unknown species");
+
+    if is_first_join {
+        let _ =
+            super::rabble_chat::insert_system_message(&state, swarm_id, "We have a rabble!!").await;
+    }
+
     let _ = super::rabble_chat::insert_system_message(
         &state,
         swarm_id,
@@ -2321,6 +2894,7 @@ pub async fn join_swarm_handler(
         "creature_id": req.creature_id,
         "joined": true,
         "funding_mode": funding_mode,
+        "first_join": is_first_join,
     })))
 }
 
