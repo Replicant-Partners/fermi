@@ -710,9 +710,17 @@ pub async fn admin_list_creatures_handler(
         (
             "SELECT c.creature_id, c.owner_id, c.specimen_name, c.scientific_name,
              c.species_group, c.status, c.flagged, c.flag_reason, c.total_flights,
-             c.created_at, u.display_name as owner_name
-             FROM creatures c LEFT JOIN users u ON u.user_id = c.owner_id
-             WHERE c.specimen_name ILIKE $1 OR c.scientific_name ILIKE $1 OR c.owner_id ILIKE $1
+             c.created_at, c.presence, u.display_name as owner_name,
+             af.flight_pattern as active_flight_pattern, af.swarm_id as active_swarm_id
+             FROM creatures c
+             LEFT JOIN users u ON u.user_id = c.owner_id
+             LEFT JOIN LATERAL (
+               SELECT flight_pattern, swarm_id FROM creature_flights
+               WHERE creature_id = c.creature_id AND ended_at IS NULL
+               ORDER BY started_at DESC LIMIT 1
+             ) af ON true
+             WHERE c.owner_id IS NOT NULL
+               AND (c.specimen_name ILIKE $1 OR c.scientific_name ILIKE $1 OR c.owner_id ILIKE $1)
              ORDER BY c.created_at DESC LIMIT $2 OFFSET $3"
                 .to_string(),
             vec![format!("%{}%", search)],
@@ -721,8 +729,16 @@ pub async fn admin_list_creatures_handler(
         (
             "SELECT c.creature_id, c.owner_id, c.specimen_name, c.scientific_name,
              c.species_group, c.status, c.flagged, c.flag_reason, c.total_flights,
-             c.created_at, u.display_name as owner_name
-             FROM creatures c LEFT JOIN users u ON u.user_id = c.owner_id
+             c.created_at, c.presence, u.display_name as owner_name,
+             af.flight_pattern as active_flight_pattern, af.swarm_id as active_swarm_id
+             FROM creatures c
+             LEFT JOIN users u ON u.user_id = c.owner_id
+             LEFT JOIN LATERAL (
+               SELECT flight_pattern, swarm_id FROM creature_flights
+               WHERE creature_id = c.creature_id AND ended_at IS NULL
+               ORDER BY started_at DESC LIMIT 1
+             ) af ON true
+             WHERE c.owner_id IS NOT NULL
              ORDER BY c.created_at DESC LIMIT $1 OFFSET $2"
                 .to_string(),
             vec![],
@@ -756,6 +772,9 @@ pub async fn admin_list_creatures_handler(
                 "scientific_name": row.get::<String, _>("scientific_name"),
                 "species_group": row.get::<String, _>("species_group"),
                 "status": row.try_get::<String, _>("status").unwrap_or_else(|_| "active".to_string()),
+                "presence": row.try_get::<Option<String>, _>("presence").unwrap_or(None),
+                "active_flight_pattern": row.try_get::<Option<String>, _>("active_flight_pattern").unwrap_or(None),
+                "active_swarm_id": row.try_get::<Option<uuid::Uuid>, _>("active_swarm_id").unwrap_or(None),
                 "flagged": row.try_get::<bool, _>("flagged").unwrap_or(false),
                 "flag_reason": row.get::<Option<String>, _>("flag_reason"),
                 "total_flights": row.get::<i32, _>("total_flights"),
