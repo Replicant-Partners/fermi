@@ -116,7 +116,7 @@ impl RateLimiter {
 
 #[derive(Clone)]
 struct RateLimitConfig {
-    public: RateLimiter, // 100 req/min per IP
+    public: RateLimiter, // 300 req/min per IP
     authed: RateLimiter, // 300 req/min per user
     llm: RateLimiter,    // 10 req/min per user (execute, generate)
 }
@@ -126,7 +126,7 @@ impl RateLimitConfig {
         let public_rpm: u32 = std::env::var("RATE_LIMIT_PUBLIC")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(100);
+            .unwrap_or(300);
         let auth_rpm: u32 = std::env::var("RATE_LIMIT_AUTH")
             .ok()
             .and_then(|s| s.parse().ok())

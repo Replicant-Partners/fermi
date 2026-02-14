@@ -2418,6 +2418,7 @@ mod tests {
             workflow_template: None,
             prompt_template: None,
             requires_secrets: None,
+            auto_collect_pct: 0,
         }
     }
 

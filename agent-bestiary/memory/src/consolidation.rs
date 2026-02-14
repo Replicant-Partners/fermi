@@ -878,6 +878,7 @@ mod tests {
             workflow_template: None,
             prompt_template: None,
             requires_secrets: None,
+            auto_collect_pct: 0,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
