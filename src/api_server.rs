@@ -1856,6 +1856,7 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             description: agent.description.clone().unwrap_or_default(),
             tags: agent.tags.clone(),
             sample_queries: agent.sample_queries.clone(),
+            valence: None,
         },
         system_prompt: agent.system_prompt.clone(),
         dependencies: AgentDependencies::default(),
