@@ -1718,10 +1718,24 @@ pub async fn mint_creature_handler(
     let pool = state.memory_store.pool();
 
     // Validate species_group
-    if req.species_group != "butterfly" && req.species_group != "dragonfly" {
+    let valid_groups = [
+        "butterfly",
+        "dragonfly",
+        "beetle",
+        "bee",
+        "locust",
+        "fly",
+        "bug",
+        "insect",
+    ];
+    if !valid_groups.contains(&req.species_group.as_str()) {
         return Err((
             StatusCode::BAD_REQUEST,
-            "species_group must be 'butterfly' or 'dragonfly'".into(),
+            format!(
+                "Invalid species_group '{}'. Must be one of: {}",
+                req.species_group,
+                valid_groups.join(", ")
+            ),
         ));
     }
 

@@ -2133,10 +2133,14 @@ async fn execute_generate_specimen_art(
         _ => "Detailed naturalist scientific illustration in the style of Maria Sibylla Merian. Rich, accurate colors on aged vellum background. Fine detail on wing patterns and body segments.",
     };
 
-    let group_detail = if species_group == "dragonfly" {
-        "Show detailed wing venation patterns, elongated abdomen segments, and compound eye structure. Wings should be translucent with visible cells."
-    } else {
-        "Show detailed wing scale patterns, proboscis, antennae, and leg segments. Upper and lower wing surfaces visible."
+    let group_detail = match species_group.as_str() {
+        "dragonfly" => "Show detailed wing venation patterns, elongated abdomen segments, and compound eye structure. Wings should be translucent with visible cells.",
+        "beetle" => "Show detailed elytra (wing covers) with surface texture, compound eyes, segmented antennae, and jointed legs. Ventral view option showing wing deployment.",
+        "bee" => "Show fuzzy body texture, compound eyes, pollen baskets on legs, translucent wing venation, and banded abdomen coloring.",
+        "locust" => "Show powerful hind legs, segmented antennae, compound eyes, and folded wing structure. Textured exoskeleton detail.",
+        "fly" => "Show compound eyes, halteres, translucent wing venation, and segmented body. Metallic sheen where appropriate.",
+        "bug" => "Show piercing-sucking mouthparts, shield-shaped body, wing membrane detail, and segmented antennae.",
+        _ => "Show detailed wing scale patterns, proboscis, antennae, and leg segments. Upper and lower wing surfaces visible.",
     };
 
     let prompt = format!(
