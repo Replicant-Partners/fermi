@@ -30696,8 +30696,7 @@ this.a=b},
 Jo:function Jo(a,b,c){var _=this
 _.d=!0
 _.e=null
-_.f=!0
-_.r=!1
+_.r=_.f=!1
 _.w=a
 _.x=b
 _.y=c
@@ -119310,7 +119309,7 @@ return A.a([A.a([3.2413774792388685,-1.5376652402851851,-0.49885366846268053],s)
 $.vO=A.a([95.047,100,108.883],t.n)
 $.b_S=null
 $.aOc=null
-$.bcD=A.a(["Collection","Flights","Profile"],t.s)
+$.bcD=A.a(["Collection","Explore","Profile"],t.s)
 $.aYy=null
 $.arj=null
 $.b8v=A.E(t.S,A.aG("bjh"))
