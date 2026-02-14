@@ -77,7 +77,7 @@ pub async fn create_rabble_workspace(
     for agent_name in RABBLE_SYSTEM_AGENTS {
         // Look up agent UUID from agents table
         let agent_row =
-            sqlx::query("SELECT agent_id FROM agents WHERE agent_name = $1 AND status = 'active'")
+            sqlx::query("SELECT agent_id FROM agents WHERE agent_name = $1 AND status IN ('active', 'published')")
                 .bind(agent_name)
                 .fetch_optional(&state.db)
                 .await;
