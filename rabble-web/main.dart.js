@@ -106801,7 +106801,7 @@ $0(){return this.a.e=!1},
 $S:0}
 A.aQo.prototype={
 $1(a){var s=null,r=A.j("Grant credits to "+this.a,s,s,s,s,s,s,s,s),q=this.b,p=A.fP(!0,B.b8,!1,s,!0,B.o,s,A.hk(),q,s,s,s,s,s,2,B.Qv,B.w,!0,s,!0,s,!1,s,B.b5,s,s,s,B.oS,s,s,s,1,s,s,!1,"\u2022",s,s,s,s,s,!1,s,!1,s,!0,s,B.at,s,s,B.b_,B.aU,s,s,s,s,s,s,s,B.a9,s,B.bK,s,s,s,s)
-return A.oz(A.a([A.dc(!1,B.eX,s,s,B.T,s,s,s,s,new A.aQm(a),s,s),A.f4(!1,B.ab1,B.i,s,B.T,s,s,s,s,new A.aQn(a,q),s,s)],t.p),s,p,r)},
+return A.oz(A.a([A.dc(!1,B.eX,s,s,B.T,s,s,s,s,new A.aQm(a),s,s),A.f4(!1,B.ab0,B.i,s,B.T,s,s,s,s,new A.aQn(a,q),s,s)],t.p),s,p,r)},
 $S:61}
 A.aQm.prototype={
 $0(){A.aS(this.a,!1).bV(null)
@@ -106985,7 +106985,7 @@ $0(){return this.a.e=!1},
 $S:0}
 A.aOh.prototype={
 $1(a){var s=null
-return A.oz(A.a([A.dc(!1,B.ac3,s,s,B.T,s,s,s,s,new A.aOf(a),s,s),A.f4(!1,B.abo,B.i,s,B.T,s,s,s,s,new A.aOg(a),s,s)],t.p),s,B.aaB,B.abT)},
+return A.oz(A.a([A.dc(!1,B.ac4,s,s,B.T,s,s,s,s,new A.aOf(a),s,s),A.f4(!1,B.abp,B.i,s,B.T,s,s,s,s,new A.aOg(a),s,s)],t.p),s,B.aaA,B.abU)},
 $S:61}
 A.aOf.prototype={
 $0(){A.aS(this.a,!1).bV(!1)
@@ -107424,7 +107424,7 @@ n=q.a
 k=A.ak(A.a([n.E5(B.hM,""+m.as+" flights"),B.al,n.E5(B.jV,""+m.at+" locations")],l),B.j,B.f,B.k,p)
 r=A.a([],l)
 if(s&&n.a.r!=null)B.b.K(r,A.a([A.aK(A.j0(B.Pi,A.j("Message @"+m.gdP(),p,B.aa,p,p,p,p,p,p),new A.awQ(n,a,m),A.hA(p,p,p,p,p,p,p,p,p,B.h,p,p,p,p,p,new A.aB(B.h.I(0.4),1,B.y,-1),p,p,p,p)),1),B.al],l))
-if(s)r.push(A.aK(A.j0(B.Pz,B.aaw,new A.awR(n,a,m),A.hA(p,p,p,p,p,p,p,p,p,B.aE,p,p,p,p,p,new A.aB(B.aE.I(0.3),1,B.y,-1),p,p,p,p)),1))
+if(s)r.push(A.aK(A.j0(B.Pz,B.aav,new A.awR(n,a,m),A.hA(p,p,p,p,p,p,p,p,p,B.aE,p,p,p,p,p,new A.aB(B.aE.I(0.3),1,B.y,-1),p,p,p,p)),1))
 return new A.ad(B.at,A.a4(A.a([o,B.a5,k,B.O,A.ak(r,B.j,B.f,B.k,p),B.E],l),B.H,B.f,B.C),p)},
 $S:37}
 A.awQ.prototype={
@@ -107478,10 +107478,10 @@ s=A.U(p,!0,p.$ti.i("B.E"))
 p=r.c
 o=A.a7(p).i("aj<1,c>")
 n=t.p
-o=A.a([B.abz,B.E,A.kW(A.U(new A.aj(p,new A.aF8(r),o),!0,o.i("at.E")),8,8)],n)
+o=A.a([B.abA,B.E,A.kW(A.U(new A.aj(p,new A.aF8(r),o),!0,o.i("at.E")),8,8)],n)
 if(m.length!==0){p=A.a7(m).i("aj<1,c>")
-B.b.K(o,A.a([B.O,B.aaW,B.E,A.kW(A.U(new A.aj(m,new A.aF9(r),p),!0,p.i("at.E")),8,8)],n))}if(s.length!==0){p=A.a7(s).i("aj<1,c>")
-B.b.K(o,A.a([B.O,B.ac2,B.E,A.kW(A.U(new A.aj(s,new A.aFa(r),p),!0,p.i("at.E")),8,8)],n))}o.push(A.b_(q,A.al(a,q,t.w).w.r.d+8,q))
+B.b.K(o,A.a([B.O,B.aaV,B.E,A.kW(A.U(new A.aj(m,new A.aF9(r),p),!0,p.i("at.E")),8,8)],n))}if(s.length!==0){p=A.a7(s).i("aj<1,c>")
+B.b.K(o,A.a([B.O,B.ac3,B.E,A.kW(A.U(new A.aj(s,new A.aFa(r),p),!0,p.i("at.E")),8,8)],n))}o.push(A.b_(q,A.al(a,q,t.w).w.r.d+8,q))
 return new A.ad(B.bd,A.a4(o,B.H,B.f,B.C),q)},
 LX(a,b,c,d,e){var s,r=null,q=c?B.h.I(0.3):B.n.I(0.05),p=A.a9(10),o=A.bK(c?B.h:B.mi,1),n=t.p,m=A.a([],n)
 if(d)m.push(B.a_s)
@@ -107675,7 +107675,7 @@ r=A.j("Start your collection",o,o,o,o,A.t(r).p2.w,o,o,o)
 q=p.c
 q.toString
 q=A.t(q).p2.z
-return A.hE(A.a4(A.a([B.aA,s,B.O,r,B.E,A.j("Pick a species and mint your first creature",o,o,o,o,q==null?o:q.b3(B.ab),o,o,o),B.aA,A.b_(A.wL(B.PB,B.aaF,p.ga1B(),o),o,1/0),B.O],t.p),B.j,B.f,B.k),o,B.w,B.ds,o,o,B.X)},
+return A.hE(A.a4(A.a([B.aA,s,B.O,r,B.E,A.j("Pick a species and mint your first creature",o,o,o,o,q==null?o:q.b3(B.ab),o,o,o),B.aA,A.b_(A.wL(B.PB,B.aaD,p.ga1B(),o),o,1/0),B.O],t.p),B.j,B.f,B.k),o,B.w,B.ds,o,o,B.X)},
 L8(a,b){var s=null,r=this.r
 return A.Q5(s,A.j(a,s,s,s,s,s,s,s,s),s,new A.ayE(this,b),r===b,B.h.I(0.15),s)},
 avW(a){var s=this.c
@@ -108743,18 +108743,18 @@ e=s.cy
 l.push(A.ak(A.a([h,B.bj,i,B.bj,c.NX("Minted",f.nE(e),B.n0)],m),B.j,B.f,B.k,b))
 if(J.bc(c.e)>=2)B.b.K(l,A.a([B.O,c.ah3()],m))
 l.push(B.aX)
-l.push(A.ak(A.a([A.aK(A.j0(B.P8,B.abU,c.gazR(),A.hA(b,b,b,b,b,b,b,b,b,B.dO,b,b,B.fk,b,b,new A.aB(B.dO.I(0.4),1,B.y,-1),b,b,b,b)),1),B.bj,A.aK(A.j0(B.tC,B.Ft,new A.aAz(c,s),A.hA(b,b,b,b,b,b,b,b,b,B.h,b,b,B.fk,b,b,new A.aB(B.h.I(0.4),1,B.y,-1),b,b,b,b)),1)],m),B.j,B.f,B.k,b))
+l.push(A.ak(A.a([A.aK(A.j0(B.P8,B.abV,c.gazR(),A.hA(b,b,b,b,b,b,b,b,b,B.dO,b,b,B.fk,b,b,new A.aB(B.dO.I(0.4),1,B.y,-1),b,b,b,b)),1),B.bj,A.aK(A.j0(B.tC,B.Ft,new A.aAz(c,s),A.hA(b,b,b,b,b,b,b,b,b,B.h,b,b,B.fk,b,b,new A.aB(B.h.I(0.4),1,B.y,-1),b,b,b,b)),1)],m),B.j,B.f,B.k,b))
 l.push(B.O)
 if(p&&j){j=c.at!=null
 i=j?b:c.gaAk()
-i=A.aK(A.b_(A.wL(B.PR,A.j(j?"In flight...":"Fly Solo",b,b,b,b,B.dB,b,b,b),i,A.Df(b,b,B.a6,b,b,b,b,b,b,B.n,b,b,b,b,new A.cd(A.a9(12),B.u),b,b,b,b)),52,b),1)
+i=A.aK(A.b_(A.wL(B.PR,A.j(j?"In flight...":"Fly Solo (3cr)",b,b,b,b,B.dB,b,b,b),i,A.Df(b,b,B.a6,b,b,b,b,b,b,B.n,b,b,b,b,new A.cd(A.a9(12),B.u),b,b,b,b)),52,b),1)
 j=c.at!=null?b:c.gaAn()
-j=A.ak(A.a([i,B.bj,A.aK(A.b_(A.wL(B.PW,B.ac4,j,A.Df(b,b,B.h,b,b,b,b,b,b,B.n,b,b,b,b,new A.cd(A.a9(12),B.u),b,b,b,b)),52,b),1)],m),B.j,B.f,B.k,b)
-i=A.aK(A.b_(A.wL(B.P7,B.aac,new A.aAA(c),A.Df(b,b,B.K,b,b,b,b,b,b,B.n,b,b,b,b,new A.cd(A.a9(12),B.u),b,b,b,b)),52,b),1)
+j=A.ak(A.a([i,B.bj,A.aK(A.b_(A.wL(B.PW,B.aaT,j,A.Df(b,b,B.h,b,b,b,b,b,b,B.n,b,b,b,b,new A.cd(A.a9(12),B.u),b,b,b,b)),52,b),1)],m),B.j,B.f,B.k,b)
+i=A.aK(A.b_(A.wL(B.P7,B.abo,new A.aAA(c),A.Df(b,b,B.K,b,b,b,b,b,b,B.n,b,b,b,b,new A.cd(A.a9(12),B.u),b,b,b,b)),52,b),1)
 h=c.at!=null?b:c.gaAq()
-h=A.ak(A.a([i,B.bj,A.aK(A.b_(A.wL(B.PD,B.aaE,h,A.Df(b,b,B.hy,b,b,b,b,b,b,B.n,b,b,b,b,new A.cd(A.a9(12),B.u),b,b,b,b)),52,b),1)],m),B.j,B.f,B.k,b)
+h=A.ak(A.a([i,B.bj,A.aK(A.b_(A.wL(B.PD,B.aaF,h,A.Df(b,b,B.hy,b,b,b,b,b,b,B.n,b,b,b,b,new A.cd(A.a9(12),B.u),b,b,b,b)),52,b),1)],m),B.j,B.f,B.k,b)
 i=c.at!=null?b:c.gaz7()
-i=A.a([j,B.kY,h,B.kY,A.ak(A.a([A.aK(A.b_(A.j0(B.PI,B.aaP,i,A.hA(b,b,b,b,b,b,b,b,b,B.ab,b,b,B.fk,b,b,new A.aB(B.v.I(0.4),1,B.y,-1),b,b,b,b)),46,b),1),B.bj,A.aK(A.b_(A.j0(B.Q1,B.Fs,c.ganA(),A.hA(b,b,b,b,b,b,b,b,b,B.K,b,b,B.fk,b,b,new A.aB(B.K.I(0.4),1,B.y,-1),b,b,b,b)),46,b),1)],m),B.j,B.f,B.k,b),B.O],m)
+i=A.a([j,B.kY,h,B.kY,A.ak(A.a([A.aK(A.b_(A.j0(B.PI,B.abc,i,A.hA(b,b,b,b,b,b,b,b,b,B.ab,b,b,B.fk,b,b,new A.aB(B.v.I(0.4),1,B.y,-1),b,b,b,b)),46,b),1),B.bj,A.aK(A.b_(A.j0(B.Q1,B.Fs,c.ganA(),A.hA(b,b,b,b,b,b,b,b,b,B.K,b,b,B.fk,b,b,new A.aB(B.K.I(0.4),1,B.y,-1),b,b,b,b)),46,b),1)],m),B.j,B.f,B.k,b),B.O],m)
 if(r==="butterfly"){j=A.a([],m)
 h=c.as
 if(h==="ready"){h=B.K.I(0.08)
@@ -108764,7 +108764,7 @@ j.push(A.Y(b,A.ak(A.a([A.aD(B.jP,B.K,b,18),B.al,A.j("Wings Active",b,b,b,b,A.a5(
 f=A.a9(12)
 d=A.bK(B.h.I(0.3),1)
 j.push(A.Y(b,A.ak(A.a([A.b_(A.b9d(b,B.h,b,b,b,0,b,2,b,b),16,16),B.cu,A.j("Learning to fly...",b,b,b,b,A.a5(b,b,B.h,b,b,b,b,b,b,b,b,14,b,b,B.ae,b,b,!0,b,b,b,b,b,b,b,b),b,b,b)],m),B.j,B.d6,B.k,b),B.i,b,b,new A.a0(h,b,d,f,b,b,B.q),b,b,b,B.fm,b,b,1/0))}else{h=B.h.I(0.5)
-j.push(A.b_(A.j0(B.PP,B.ab4,c.gatD(),A.hA(b,b,b,b,b,b,b,b,b,B.h,b,b,b,b,new A.cd(A.a9(12),B.u),new A.aB(h,1,B.y,-1),b,b,b,b)),44,1/0))}B.b.K(i,j)}else{j=B.v.I(0.05)
+j.push(A.b_(A.j0(B.PP,B.ab3,c.gatD(),A.hA(b,b,b,b,b,b,b,b,b,B.h,b,b,b,b,new A.cd(A.a9(12),B.u),new A.aB(h,1,B.y,-1),b,b,b,b)),44,1/0))}B.b.K(i,j)}else{j=B.v.I(0.05)
 h=A.a9(12)
 B.b.K(i,A.a([A.Y(b,A.ak(A.a([A.aD(B.O3,B.v,b,16),B.al,A.j("Wing animation coming soon",b,b,b,b,A.a5(b,b,B.v,b,b,b,b,b,b,b,b,13,b,b,b,b,b,!0,b,b,b,b,b,b,b,b),b,b,b)],m),B.j,B.d6,B.k,b),B.i,b,b,new A.a0(j,b,b,h,b,b,B.q),b,b,b,B.fm,b,b,1/0)],m))}i.push(B.aA)
 B.b.K(l,i)}l.push(B.O)
@@ -108790,7 +108790,7 @@ g.push(c.tU("Status",k))
 g.push(c.tU("Minted",A.aUd().nE(e)))
 l.push(A.Y(b,A.a4(g,B.j,B.f,B.k),B.i,b,b,new A.a0(B.a7,b,i,j,b,b,B.q),b,b,b,B.dS,b,b,b))
 l.push(B.aA)
-if(!p)B.b.K(l,A.a([A.j("Actions",b,b,b,b,B.db,b,b,b),B.E,A.b_(A.j0(B.tC,B.ac0,new A.aAC(c,s),A.hA(b,b,b,b,b,b,b,b,b,B.h,b,b,B.hF,b,b,new A.aB(B.h.I(0.4),1,B.y,-1),b,b,b,b)),b,1/0),B.E,A.b_(A.j0(B.tw,B.abb,new A.aAD(c,s),A.hA(b,b,b,b,b,b,b,b,b,B.a6,b,b,B.hF,b,b,new A.aB(B.a6.I(0.4),1,B.y,-1),b,b,b,b)),b,1/0),B.aA],m))
+if(!p)B.b.K(l,A.a([A.j("Actions",b,b,b,b,B.db,b,b,b),B.E,A.b_(A.j0(B.tC,B.ac1,new A.aAC(c,s),A.hA(b,b,b,b,b,b,b,b,b,B.h,b,b,B.hF,b,b,new A.aB(B.h.I(0.4),1,B.y,-1),b,b,b,b)),b,1/0),B.E,A.b_(A.j0(B.tw,B.aba,new A.aAD(c,s),A.hA(b,b,b,b,b,b,b,b,b,B.a6,b,b,B.hF,b,b,new A.aB(B.a6.I(0.4),1,B.y,-1),b,b,b,b)),b,1/0),B.aA],m))
 if(p){r=A.j("Visibility",b,b,b,b,B.db,b,b,b)
 k=A.a9(12)
 j=A.bK(B.aV,1)
@@ -108842,7 +108842,7 @@ q=q.ax
 if(q!=null&&q.length>=2)g[p]=g[p]+q.length}}if(!B.b.eP(h,new A.az0()))return B.au
 k=A.a9(10)
 i=t.p
-s=A.a([A.ak(A.a([A.aD(B.Ou,B.h,l,16),B.dA,B.aap],i),B.j,B.f,B.k,l),B.a5,A.ak(A.a([B.a3G,A.aK(A.Hv(h,28,B.h),1)],i),B.j,B.f,B.k,l)],i)
+s=A.a([A.ak(A.a([A.aD(B.Ou,B.h,l,16),B.dA,B.aao],i),B.j,B.f,B.k,l),B.a5,A.ak(A.a([B.a3G,A.aK(A.Hv(h,28,B.h),1)],i),B.j,B.f,B.k,l)],i)
 if(B.b.eP(g,new A.az1()))B.b.K(s,A.a([B.E,A.ak(A.a([B.a3y,A.aK(A.Hv(g,28,B.a6),1)],i),B.j,B.f,B.k,l)],i))
 return A.Y(l,A.a4(s,B.H,B.f,B.k),B.i,l,l,new A.a0(B.a7,l,l,k,l,l,B.q),l,l,l,B.dS,l,l,l)},
 NX(a,b,c){var s=null,r=A.a9(10)
@@ -108860,7 +108860,7 @@ q=t.p
 p=A.a([A.j(s+" - "+a.gaGW(),k,k,k,k,B.fY,k,k,k)],q)
 if(a.ch==="device"){i=B.jd.I(0.15)
 o=A.a9(4)
-B.b.K(p,A.a([B.dA,A.Y(k,B.abA,B.i,k,k,new A.a0(i,k,A.bK(B.jd.I(0.4),0.5),o,k,k,B.q),k,k,k,B.rA,k,k,k)],q))}i=A.ak(p,B.j,B.f,B.k,k)
+B.b.K(p,A.a([B.dA,A.Y(k,B.abB,B.i,k,k,new A.a0(i,k,A.bK(B.jd.I(0.4),0.5),o,k,k,B.q),k,k,k,B.rA,k,k,k)],q))}i=A.ak(p,B.j,B.f,B.k,k)
 p=A.a([A.j(B.d.a2(a.Q.m(0),0,10),k,k,k,k,B.e4,k,k,k)],q)
 o=a.ax
 n=o==null
@@ -108914,7 +108914,7 @@ $0(){return this.a.as="failed"},
 $S:0}
 A.azV.prototype={
 $1(a){var s=null,r=this.a,q=A.fP(!0,B.b8,!0,s,!0,B.o,s,A.hk(),r,s,s,s,s,s,2,B.Qt,B.w,!0,s,!0,s,!1,s,B.b5,s,s,s,s,s,s,s,1,s,s,!1,"\u2022",s,s,s,s,s,!1,s,!1,s,!0,s,B.at,s,s,B.b_,B.aU,s,s,s,s,s,s,s,B.a9,s,B.bK,s,s,s,s)
-return A.oz(A.a([A.dc(!1,B.eX,s,s,B.T,s,s,s,s,new A.azT(a),s,s),A.f4(!1,B.ab8,B.i,s,B.T,s,s,s,s,new A.azU(a,r),s,s)],t.p),s,q,B.abs)},
+return A.oz(A.a([A.dc(!1,B.eX,s,s,B.T,s,s,s,s,new A.azT(a),s,s),A.f4(!1,B.ab7,B.i,s,B.T,s,s,s,s,new A.azU(a,r),s,s)],t.p),s,q,B.abt)},
 $S:61}
 A.azT.prototype={
 $0(){A.aS(this.a,!1).bV(null)
@@ -108930,7 +108930,7 @@ $1(a){return new A.lX(new A.azH(this.a,this.b,this.c),null)},
 $S:102}
 A.azH.prototype={
 $2(a,b){var s=null,r=this.a,q=this.b,p=t.p,o=A.a4(A.a([A.aZE(B.Qy,B.Wp,new A.azE(r,b),r.a,t.N),B.E,A.fP(!0,B.b8,!1,s,!0,B.o,s,A.hk(),q,s,s,s,s,s,2,B.Qw,B.w,!0,s,!0,s,!1,s,B.b5,s,s,s,s,s,s,s,1,s,s,!1,"\u2022",s,s,s,s,s,!1,s,!1,s,!0,s,B.at,s,s,B.b_,B.aU,s,s,s,s,s,s,s,B.a9,s,B.bK,s,s,s,s),B.E,A.fP(!0,B.b8,!1,s,!0,B.o,s,A.hk(),this.c,s,s,s,s,s,2,B.Qz,B.w,!0,s,!0,s,!1,s,B.b5,s,s,s,s,s,s,s,1,s,s,!1,"\u2022",s,s,s,s,s,!1,s,!1,s,!0,s,B.at,s,s,B.b_,B.aU,s,s,s,s,s,s,s,B.a9,s,B.bK,s,s,s,s)],p),B.j,B.f,B.C),n=A.dc(!1,B.eX,s,s,B.T,s,s,s,s,new A.azF(a),s,s)
-return A.oz(A.a([n,A.f4(!1,B.aaI,B.i,s,B.T,s,s,s,s,r.a!=null&&B.d.dH(q.a.a).length!==0?new A.azG(a):s,s,s)],p),s,o,B.Fz)},
+return A.oz(A.a([n,A.f4(!1,B.aaH,B.i,s,B.T,s,s,s,s,r.a!=null&&B.d.dH(q.a.a).length!==0?new A.azG(a):s,s,s)],p),s,o,B.Fz)},
 $S:292}
 A.azE.prototype={
 $1(a){return this.b.$1(new A.azD(this.a,a))},
@@ -108954,7 +108954,7 @@ $2(a,b){var s,r=null,q=t.p,p=A.a([A.j("Transfer "+this.b.d.gdP()+" to a friend. 
 B.b.K(p,J.cS(o.a,new A.azk(o,b),t.l))
 p=A.a4(p,B.H,B.f,B.C)
 s=A.dc(!1,B.eX,r,r,B.T,r,r,r,r,new A.azl(a),r,r)
-return A.oz(A.a([s,A.f4(!1,B.Fs,B.i,r,B.T,r,r,r,r,o.c!=null?new A.azm(a):r,r,r)],q),r,p,B.aaR)},
+return A.oz(A.a([s,A.f4(!1,B.Fs,B.i,r,B.T,r,r,r,r,o.c!=null?new A.azm(a):r,r,r)],q),r,p,B.aaP)},
 $S:292}
 A.azk.prototype={
 $1(a){var s,r=null,q=a.e,p=q==null?a.c:q
@@ -108987,7 +108987,7 @@ $0(){return this.a.at=null},
 $S:0}
 A.aAp.prototype={
 $1(a){var s=null,r=this.a,q=A.fP(!0,B.b8,!1,s,!0,B.o,s,A.hk(),r,s,s,s,s,s,2,B.Qs,B.w,!0,s,!0,s,!1,s,B.b5,s,s,s,s,s,s,s,2,s,s,!1,"\u2022",s,s,s,s,s,!1,s,!1,s,!0,s,B.at,s,s,B.b_,B.aU,s,s,s,s,s,s,s,B.a9,s,B.bK,s,s,s,s)
-return A.oz(A.a([A.dc(!1,B.abH,s,s,B.T,s,s,s,s,new A.aAn(a),s,s),A.dc(!1,B.aa8,s,s,B.T,s,s,s,s,new A.aAo(a,r),s,s)],t.p),B.as,q,B.aaM)},
+return A.oz(A.a([A.dc(!1,B.abI,s,s,B.T,s,s,s,s,new A.aAn(a),s,s),A.dc(!1,B.aa8,s,s,B.T,s,s,s,s,new A.aAo(a,r),s,s)],t.p),B.as,q,B.aaL)},
 $S:61}
 A.aAn.prototype={
 $0(){A.aS(this.a,!1).bV("")
@@ -109015,7 +109015,7 @@ r=this.c
 q=A.fP(!0,B.b8,!0,m,!0,B.o,m,A.hk(),r,m,m,m,m,m,2,A.hw(m,new A.dp(4,A.a9(12),B.lS),m,m,m,m,m,m,!0,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,"e.g. Monarch Migration Watch",m,m,m,m,m,m,m,m,"Rabble Name",!0,m,m,m,m,m,m,m,m,m,m,m,m,m),B.w,!0,m,!0,m,!1,m,B.b5,m,m,m,m,m,m,m,1,m,m,!1,"\u2022",m,m,m,m,m,!1,m,!1,m,!0,m,B.at,m,m,B.b_,B.aU,m,m,m,m,m,m,m,B.a9,m,B.bK,m,m,m,m)
 p=this.a
 o=t.p
-n=A.ak(A.a([B.abq,B.bj,A.Q5(B.K,B.abO,m,new A.azN(p,b),p.a,B.K.I(0.15),B.iz),B.al,A.Q5(B.h,B.aaz,m,new A.azO(p,b),!p.a,B.h.I(0.15),B.iz)],o),B.j,B.f,B.k,m)
+n=A.ak(A.a([B.abr,B.bj,A.Q5(B.K,B.abP,m,new A.azN(p,b),p.a,B.K.I(0.15),B.iz),B.al,A.Q5(B.h,B.aay,m,new A.azO(p,b),!p.a,B.h.I(0.15),B.iz)],o),B.j,B.f,B.k,m)
 r=B.d.dH(r.a.a).length!==0?new A.azP(p,a,r):m
 return new A.ad(new A.X(20,20,20,l.f.d+20),A.a4(A.a([k,B.O,j,B.ap,s,B.O,q,B.a5,n,B.O,A.f4(!1,B.a9Z,B.i,m,B.T,m,m,m,m,r,m,A.eK(B.K,m,m,B.eq,m,m))],o),B.bh,B.f,B.C),m)},
 $S:244}
@@ -109111,10 +109111,10 @@ p=s.length
 if(p!==0)B.b.K(r,A.a([B.aa4,B.ap,A.j(p>300?B.d.a2(s,0,300)+"...":s,n,n,n,n,B.a6a,n,n,n),B.a5],q))
 s=o.w
 p=s.length
-if(p!==0)B.b.K(r,A.a([B.abG,B.ap,A.j(p>200?B.d.a2(s,0,200)+"...":s,n,n,n,n,B.a5s,n,n,n),B.a5],q))
-if(l.gc2(m)&&l.ga7(m).aK("temperature"))B.b.K(r,A.a([B.aaL,B.ap,o.a.alQ(m),B.a5],q))
+if(p!==0)B.b.K(r,A.a([B.abH,B.ap,A.j(p>200?B.d.a2(s,0,200)+"...":s,n,n,n,n,B.a5s,n,n,n),B.a5],q))
+if(l.gc2(m)&&l.ga7(m).aK("temperature"))B.b.K(r,A.a([B.aaK,B.ap,o.a.alQ(m),B.a5],q))
 r.push(B.E)
-r.push(A.ak(A.a([A.aK(A.b0i(!1,B.eX,n,n,B.T,n,n,n,n,new A.aAb(a),n,A.hA(n,n,n,n,n,n,n,n,n,B.v,n,n,B.eq,n,n,new A.aB(B.v.I(0.3),1,B.y,-1),n,n,n,n)),1),B.bj,A.aK(A.wL(B.PS,B.abp,new A.aAc(a),A.Df(n,n,B.a6,n,n,n,n,n,n,B.n,n,n,B.eq,n,new A.cd(A.a9(12),B.u),n,n,n,n)),2)],q),B.j,B.f,B.k,n))
+r.push(A.ak(A.a([A.aK(A.b0i(!1,B.eX,n,n,B.T,n,n,n,n,new A.aAb(a),n,A.hA(n,n,n,n,n,n,n,n,n,B.v,n,n,B.eq,n,n,new A.aB(B.v.I(0.3),1,B.y,-1),n,n,n,n)),1),B.bj,A.aK(A.wL(B.PS,B.abq,new A.aAc(a),A.Df(n,n,B.a6,n,n,n,n,n,n,B.n,n,n,B.eq,n,new A.cd(A.a9(12),B.u),n,n,n,n)),2)],q),B.j,B.f,B.k,n))
 r.push(B.O)
 return A.hE(A.a4(r,B.H,B.f,B.k),b,B.w,B.at,n,n,B.X)},
 $S:206}
@@ -109175,7 +109175,7 @@ A.azY.prototype={
 $1(a){var s,r=null,q=this.b
 q=A.j(q.length!==0?q:"Your creature is already in flight or in a rabble.",r,r,r,r,B.bq,r,r,r)
 s=A.a([A.dc(!1,B.eX,r,r,B.T,r,r,r,r,new A.azW(a),r,r)],t.p)
-if(this.a.a!=null)s.push(A.dc(!1,B.abX,r,r,B.T,r,r,r,r,new A.azX(a),r,r))
+if(this.a.a!=null)s.push(A.dc(!1,B.abY,r,r,B.T,r,r,r,r,new A.azX(a),r,r))
 return A.oz(s,B.as,q,B.aa6)},
 $S:61}
 A.azW.prototype={
@@ -109195,7 +109195,7 @@ return A.Rd(new A.aA8(s.a,s.b,s.c,s.d),!1,0.75,0.9,0.5)},
 $S:129}
 A.aA8.prototype={
 $2(a,b){var s=this,r=null
-return A.hE(A.a4(A.a([A.bd(A.Y(r,r,B.i,r,r,new A.a0(B.v.I(0.3),r,r,A.a9(2),r,r,B.q),r,4,r,r,r,r,40),r,r),B.O,A.j(s.b,r,r,r,r,A.t(a).p2.f,r,r,r),B.ap,A.j(s.c,r,r,r,r,A.t(a).p2.Q,r,r,r),B.O,A.b_K(new A.aA6(s.a),s.d),B.O,A.b_(A.f4(!1,B.ab9,B.i,r,B.T,r,r,r,r,new A.aA7(a),r,A.eK(B.h,r,r,r,r,r)),r,1/0),B.O],t.p),B.H,B.f,B.k),b,B.w,B.at,r,r,B.X)},
+return A.hE(A.a4(A.a([A.bd(A.Y(r,r,B.i,r,r,new A.a0(B.v.I(0.3),r,r,A.a9(2),r,r,B.q),r,4,r,r,r,r,40),r,r),B.O,A.j(s.b,r,r,r,r,A.t(a).p2.f,r,r,r),B.ap,A.j(s.c,r,r,r,r,A.t(a).p2.Q,r,r,r),B.O,A.b_K(new A.aA6(s.a),s.d),B.O,A.b_(A.f4(!1,B.ab8,B.i,r,B.T,r,r,r,r,new A.aA7(a),r,A.eK(B.h,r,r,r,r,r)),r,1/0),B.O],t.p),B.H,B.f,B.k),b,B.w,B.at,r,r,B.X)},
 $S:206}
 A.aA6.prototype={
 $1(a){this.a.a=a},
@@ -109219,7 +109219,7 @@ r=q.a
 B.b.K(p,new A.aj(r,new A.aA1(q,b),A.a7(r).i("aj<1,c>")))
 p.push(B.O)
 r=q.b!=null?new A.aA2(a):s
-p.push(A.f4(!1,B.aae,B.i,s,B.T,s,s,s,s,r,s,A.eK(B.h,s,s,B.eq,s,s)))
+p.push(A.f4(!1,B.aad,B.i,s,B.T,s,s,s,s,r,s,A.eK(B.h,s,s,B.eq,s,s)))
 return new A.ad(B.at,A.a4(p,B.bh,B.f,B.C),s)},
 $S:244}
 A.aA1.prototype={
@@ -109676,12 +109676,12 @@ if(r.d)return B.bu
 if(r.e!=null)return A.bd(A.a4(A.a([A.aD(B.jR,B.I,q,48),B.a5,A.j("Failed to load",q,q,q,q,A.t(a).p2.w,q,q,q),B.E,A.dc(!1,B.iw,q,q,B.T,q,q,q,q,r.gLK(),q,q)],t.p),B.j,B.f,B.C),q,q)
 if(r.r)s=r.ahR()
 else s=r.f?r.ai7():r.ai6()
-return A.dz(B.aK,A.a([s,A.dw(16,new A.RF(B.PV,B.n,B.h,"host_rabble",r.gasm(),B.c5,!0,B.G6,B.aan,q),q,q,q,16,q,q)],t.p),B.o,B.aH,q)},
+return A.dz(B.aK,A.a([s,A.dw(16,new A.RF(B.PV,B.n,B.h,"host_rabble",r.gasm(),B.c5,!0,B.G6,B.aam,q),q,q,q,16,q,q)],t.p),B.o,B.aH,q)},
 ahR(){var s,r,q=this,p=null,o=q.c
 o.toString
 s=A.dx(o,!1,t.e3)
-if(s.a==null)return A.bd(A.a4(A.a([A.aD(B.OL,B.I,p,64),B.O,B.Fx,B.O,A.aUy(!1,B.abZ,p,p,B.T,p,p,p,p,new A.aCY(q,s),p,p),B.E,A.dc(!1,B.p0,p,p,B.T,p,p,p,p,new A.aCZ(q),p,p)],t.p),B.j,B.f,B.C),p,p)
-if(J.cR(q.y))return A.bd(A.a4(A.a([A.aD(B.hN,B.v,p,64),B.O,B.abY,B.O,A.dc(!1,B.p0,p,p,B.T,p,p,p,p,new A.aD_(q),p,p)],t.p),B.j,B.f,B.C),p,p)
+if(s.a==null)return A.bd(A.a4(A.a([A.aD(B.OL,B.I,p,64),B.O,B.Fx,B.O,A.aUy(!1,B.ac_,p,p,B.T,p,p,p,p,new A.aCY(q,s),p,p),B.E,A.dc(!1,B.p0,p,p,B.T,p,p,p,p,new A.aCZ(q),p,p)],t.p),B.j,B.f,B.C),p,p)
+if(J.cR(q.y))return A.bd(A.a4(A.a([A.aD(B.hN,B.v,p,64),B.O,B.abZ,B.O,A.dc(!1,B.p0,p,p,B.T,p,p,p,p,new A.aD_(q),p,p)],t.p),B.j,B.f,B.C),p,p)
 o=q.y
 r=s.a
 return new A.Bw(o,r.a,r.b,new A.aD0(q),p)},
@@ -109842,7 +109842,7 @@ l=m?B.K.I(0.15):B.v.I(0.1)
 k=A.a9(6)
 if(m)n="Active"
 n=A.a([A.Y(j,A.j(n,j,j,j,j,A.a5(j,j,m?B.K:B.v,j,j,j,j,j,j,j,j,10,j,j,B.N,j,j,!0,j,j,j,j,j,j,j,j),j,j,j),B.i,j,j,new A.a0(l,j,j,k,j,j,B.q),j,j,j,B.fn,j,j,j)],p)
-if(i)B.b.K(n,A.a([B.b3,A.Y(j,B.aaS,B.i,j,j,new A.a0(B.a6.I(0.12),j,j,A.a9(6),j,j,B.q),j,j,j,B.fn,j,j,j)],p))
+if(i)B.b.K(n,A.a([B.b3,A.Y(j,B.aaQ,B.i,j,j,new A.a0(B.a6.I(0.12),j,j,A.a9(6),j,j,B.q),j,j,j,B.fn,j,j,j)],p))
 n.push(B.bV)
 if(i)n.push(A.aD(B.OU,B.v,j,13))
 n=A.a([A.ak(n,B.j,B.f,B.k,j),B.e2,A.j(a.w,2,B.aa,j,j,B.l7,j,j,j),B.ap,A.j(h,j,j,j,j,A.a5(j,j,B.v,j,j,j,j,j,j,j,j,11,j,j,j,j,j,!0,j,j,j,j,j,j,j,j),j,j,j)],p)
@@ -109883,7 +109883,7 @@ j=A.a9(6)
 h=A.aD(B.cF,p?B.a6:B.v,f,10)
 g=p?"Flying":"Ended"
 m=A.a([A.Y(f,A.ak(A.a([h,B.fW,A.j(g,f,f,f,f,A.a5(f,f,p?B.a6:B.v,f,f,f,f,f,f,f,f,10,f,f,f,f,f,!0,f,f,f,f,f,f,f,f),f,f,f)],m),B.j,B.f,B.C,f),B.i,f,f,new A.a0(k,f,f,j,f,f,B.q),f,f,f,B.fn,f,f,f),B.bV],m)
-if(p)m.push(A.Y(f,B.abv,B.i,f,f,new A.a0(B.a6,f,f,A.a9(8),f,f,B.q),f,f,f,B.js,f,f,f))
+if(p)m.push(A.Y(f,B.abw,B.i,f,f,new A.a0(B.a6,f,f,A.a9(8),f,f,B.q),f,f,f,B.js,f,f,f))
 i.push(A.ak(m,B.j,B.f,B.k,f))
 l.push(new A.ad(B.jr,A.a4(i,B.H,B.f,B.k),f))
 return A.c6(f,A.Y(f,A.a4(l,B.H,B.f,B.k),B.aD,f,f,new A.a0(B.a7,f,n,e,f,f,B.q),f,f,f,f,f,f,f),B.w,!1,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,new A.aD4(this,a),f,f,f,f,f,f)},
@@ -110024,7 +110024,7 @@ $1(a){return new A.ic(this.a.a.c,this.b,null,null)},
 $S:55}
 A.aDO.prototype={
 $1(a){var s=null,r=A.bd(A.Y(s,s,B.i,s,s,new A.a0(B.v.I(0.3),s,s,A.a9(2),s,s,B.q),s,4,s,s,s,s,40),s,s),q=A.t(a).p2.w
-return new A.ad(B.at,A.a4(A.a([r,B.O,A.j("Nearby what?",s,s,s,s,q==null?s:q.iA(B.N),s,s,s),B.O,A.ec(!1,s,s,s,!0,s,s,!0,!1,A.aD(B.OO,B.a6,s,s),s,s,new A.aDM(a),!1,s,s,s,B.aa2,s,B.aaU,B.tD,s),A.ec(!1,s,s,s,!0,s,s,!0,!1,A.aD(B.hN,B.h,s,s),s,s,new A.aDN(a),!1,s,s,s,B.abF,s,B.abg,B.tD,s),B.a5],t.p),B.j,B.f,B.C),s)},
+return new A.ad(B.at,A.a4(A.a([r,B.O,A.j("Nearby what?",s,s,s,s,q==null?s:q.iA(B.N),s,s,s),B.O,A.ec(!1,s,s,s,!0,s,s,!0,!1,A.aD(B.OO,B.a6,s,s),s,s,new A.aDM(a),!1,s,s,s,B.aa2,s,B.aaS,B.tD,s),A.ec(!1,s,s,s,!0,s,s,!0,!1,A.aD(B.hN,B.h,s,s),s,s,new A.aDN(a),!1,s,s,s,B.abG,s,B.abg,B.tD,s),B.a5],t.p),B.j,B.f,B.C),s)},
 $S:37}
 A.aDM.prototype={
 $0(){A.aS(this.a,!1).bV("device")
@@ -110417,7 +110417,7 @@ o=A.j(n?q.a.w+" is "+p+" away!":""+o+" rabbles nearby!",l,l,l,l,B.a6u,l,l,l)
 m=q.a
 n=n?""+m.ay+" creatures gathering":"Closest: "+m.w+" ("+p+")"
 m=t.p
-return A.c6(l,A.Y(l,A.ak(A.a([B.PE,B.cu,A.aK(A.a4(A.a([o,A.j(n,l,l,l,l,A.a5(l,l,B.n.I(0.85),l,l,l,l,l,l,l,l,11,l,l,l,l,l,!0,l,l,l,l,l,l,l,l),l,l,l)],m),B.H,B.f,B.k),1),A.Y(l,B.aaq,B.i,l,l,new A.a0(B.n.I(0.2),l,l,A.a9(12),l,l,B.q),l,l,l,B.mJ,l,l,l)],m),B.j,B.f,B.k,l),B.i,l,l,new A.a0(l,l,l,l,l,new A.h4(B.hd,B.hc,B.bX,k,l,l),B.q),l,l,l,B.fm,l,l,1/0),B.w,!1,l,l,l,l,l,l,l,l,l,l,l,l,l,l,l,new A.aFP(this),l,l,l,l,l,l)},
+return A.c6(l,A.Y(l,A.ak(A.a([B.PE,B.cu,A.aK(A.a4(A.a([o,A.j(n,l,l,l,l,A.a5(l,l,B.n.I(0.85),l,l,l,l,l,l,l,l,11,l,l,l,l,l,!0,l,l,l,l,l,l,l,l),l,l,l)],m),B.H,B.f,B.k),1),A.Y(l,B.aap,B.i,l,l,new A.a0(B.n.I(0.2),l,l,A.a9(12),l,l,B.q),l,l,l,B.mJ,l,l,l)],m),B.j,B.f,B.k,l),B.i,l,l,new A.a0(l,l,l,l,l,new A.h4(B.hd,B.hc,B.bX,k,l,l),B.q),l,l,l,B.fm,l,l,1/0),B.w,!1,l,l,l,l,l,l,l,l,l,l,l,l,l,l,l,new A.aFP(this),l,l,l,l,l,l)},
 uq(){var s=0,r=A.r(t.H),q,p=2,o,n=this,m,l,k,j,i,h
 var $async$uq=A.n(function(a,b){if(a===1){o=b
 s=p}while(true)switch(s){case 0:i=n.c
@@ -110789,10 +110789,10 @@ break
 case 5:return A.p(null,r)
 case 1:return A.o(p,r)}})
 return A.q($async$qu,r)},
-E(a){var s,r=this,q=null,p=A.k9(q,q,!0,q,q,1,q,q,q,!1,q,!1,q,q,A.d5(q,q,q,B.Pm,q,q,new A.aGK(a),q,q,q,q,q),q,!0,q,q,q,q,q,B.abP,q,q,q,1,q),o=r.aiA(),n=t.p,m=A.aK(A.aVg(A.a([r.aiu(),r.aiv(),r.aiw(),r.aix(),r.aiy(),r.aiz()],n),B.o,r.d,B.w,q,B.zs),1),l=A.a([],n)
-if(r.e>0)l.push(A.dc(!1,B.abt,q,q,B.T,q,q,q,q,r.gax4(),q,q))
+E(a){var s,r=this,q=null,p=A.k9(q,q,!0,q,q,1,q,q,q,!1,q,!1,q,q,A.d5(q,q,q,B.Pm,q,q,new A.aGK(a),q,q,q,q,q),q,!0,q,q,q,q,q,B.abQ,q,q,q,1,q),o=r.aiA(),n=t.p,m=A.aK(A.aVg(A.a([r.aiu(),r.aiv(),r.aiw(),r.aix(),r.aiy(),r.aiz()],n),B.o,r.d,B.w,q,B.zs),1),l=A.a([],n)
+if(r.e>0)l.push(A.dc(!1,B.abu,q,q,B.T,q,q,q,q,r.gax4(),q,q))
 l.push(B.bV)
-if(r.e<5)l.push(A.f4(!1,B.aai,B.i,q,B.T,q,q,q,q,r.aiU()?r.gaup():q,q,q))
+if(r.e<5)l.push(A.f4(!1,B.aah,B.i,q,B.T,q,q,q,q,r.aiU()?r.gaup():q,q,q))
 else if(!r.dx&&r.fr==null){s=A.eK(B.h,q,q,q,q,q)
 l.push(A.f4(!1,A.j(r.ax==="private"&&r.ch.a!==0?"Create & invite ("+r.ch.a+")":"Create rabble (5 credits)",q,q,q,q,q,q,q,q),B.i,q,B.T,q,q,q,q,r.gakc(),q,s))}return A.h9(p,q,A.a4(A.a([o,m,new A.ad(B.at,A.ak(l,B.j,B.f,B.k,q),q)],n),B.j,B.f,B.k),q)},
 aiA(){return new A.ad(B.N_,A.ak(A.SI(6,new A.aGx(this),!0,t.l),B.j,B.f,B.k,null),null)},
@@ -110855,7 +110855,7 @@ o.toString
 o=A.j("No contacts yet",l,l,l,l,A.t(o).p2.z,l,l,l)
 n=m.c
 n.toString
-k.push(A.Y(l,A.a4(A.a([p,B.E,o,B.ap,A.j("Add friends in the People tab first",l,l,l,l,A.t(n).p2.Q,l,l,l),B.E,A.dc(!1,B.abc,l,l,B.T,l,l,l,l,m.gaso(),l,l)],r),B.j,B.f,B.k),B.i,l,l,new A.a0(B.a7,l,l,q,l,l,B.q),l,l,l,B.bd,l,l,l))}else{r=A.a9(12)
+k.push(A.Y(l,A.a4(A.a([p,B.E,o,B.ap,A.j("Add friends in the People tab first",l,l,l,l,A.t(n).p2.Q,l,l,l),B.E,A.dc(!1,B.abb,l,l,B.T,l,l,l,l,m.gaso(),l,l)],r),B.j,B.f,B.k),B.i,l,l,new A.a0(B.a7,l,l,q,l,l,B.q),l,l,l,B.bd,l,l,l))}else{r=A.a9(12)
 q=A.bK(B.h.I(0.2),1)
 k.push(A.Y(l,A.ks(l,new A.aGn(m),J.bc(m.ay),l,B.X,!0),B.i,l,B.Hk,new A.a0(B.a7,l,q,r,l,l,B.q),l,l,l,l,l,l,l))}B.b.K(s,k)}return A.hE(A.a4(s,B.H,B.f,B.k),l,B.w,B.dT,l,l,B.X)},
 Ot(a,b,c,d){var s,r,q,p,o=this,n=null,m=o.ax===d,l=m?B.h.I(0.12):B.D,k=A.a9(12),j=m?B.h:B.h.I(0.2)
@@ -111226,7 +111226,7 @@ if(j!=null)B.b.K(r,A.a([B.O,A.j(j,l,l,l,l,A.a5(l,l,B.I,l,l,l,l,l,l,l,l,l,l,l,l,l
 r.push(B.eU)
 j=m.f!=null&&!m.x?m.gat1():l
 i=A.eK(B.h,l,l,l,new A.cd(A.a9(12),B.u),l)
-r.push(A.b_(A.f4(!1,m.x?B.EP:B.abW,B.i,l,B.T,l,l,l,l,j,l,i),52,1/0))
+r.push(A.b_(A.f4(!1,m.x?B.EP:B.abX,B.i,l,B.T,l,l,l,l,j,l,i),52,1/0))
 return A.hE(A.a4(r,B.H,B.f,B.k),l,B.w,B.at,l,l,B.X)},
 Dy(a,b){var s=null,r=A.aD(a,B.h.I(0.7),s,16),q=this.c
 q.toString
@@ -111593,8 +111593,8 @@ return""+q+"h"}if(B.e.bL(r.a,m)<7){q=B.e.bL(r.a,m)
 return""+q+"d"}q=B.c.ef(B.e.bL(r.a,m)/7)
 return""+q+"w"}catch(p){return""}},
 E(a){var s=this,r=null,q=t.p,p=A.a([],q)
-if(s.f>0)p.push(A.dc(!1,B.aaC,r,r,B.T,r,r,r,r,s.gatK(),r,r))
-p=A.k9(p,r,!0,r,r,1,r,r,r,!1,r,!1,r,r,r,r,!0,r,r,r,r,r,B.abw,r,r,r,1,r)
+if(s.f>0)p.push(A.dc(!1,B.aaB,r,r,B.T,r,r,r,r,s.gatK(),r,r))
+p=A.k9(p,r,!0,r,r,1,r,r,r,!1,r,!1,r,r,r,r,!0,r,r,r,r,r,B.abx,r,r,r,1,r)
 if(s.d)q=B.bu
 else q=J.cR(s.e)?A.bd(A.a4(A.a([A.aD(B.Oe,B.v.I(0.3),r,64),B.a5,A.j("No notifications yet",r,r,r,r,A.a5(r,r,B.v,r,r,r,r,r,r,r,r,14,r,r,r,r,r,!0,r,r,r,r,r,r,r,r),r,r,r)],q),B.j,B.f,B.C),r,r):A.yl(A.ks(r,new A.aJu(s),J.bc(s.e),r,B.X,!1),s.gauu())
 return A.h9(p,r,q,r)}}
@@ -111654,7 +111654,7 @@ s=i.c
 s.toString
 s=A.t(s).p2.z
 r=i.ganD()
-s=A.a4(A.a([B.EU,e,B.eU,d,B.O,A.j("Rabble is about bringing your creatures together with others\u2009\u2014\u2009at real locations, in augmented reality. We call these gatherings\xa0rabbles.",h,h,h,h,s==null?h:s.Gr(B.ab,1.6),B.aY,h,h),B.l_,A.b_(A.f4(!1,B.aax,B.i,h,B.T,h,h,h,h,i.gaun(),h,A.eK(B.h,B.n,h,h,h,h)),50,1/0),B.O,A.dc(!1,A.j("Skip",h,h,h,h,A.a5(h,h,B.v,h,h,h,h,h,h,h,h,13,h,h,h,h,h,!0,h,h,h,h,h,h,h,h),h,h,h),h,h,B.T,h,h,h,h,r,h,h),B.O],f),B.j,B.f,B.k)
+s=A.a4(A.a([B.EU,e,B.eU,d,B.O,A.j("Rabble is about bringing your creatures together with others\u2009\u2014\u2009at real locations, in augmented reality. We call these gatherings\xa0rabbles.",h,h,h,h,s==null?h:s.Gr(B.ab,1.6),B.aY,h,h),B.l_,A.b_(A.f4(!1,B.aaw,B.i,h,B.T,h,h,h,h,i.gaun(),h,A.eK(B.h,B.n,h,h,h,h)),50,1/0),B.O,A.dc(!1,A.j("Skip",h,h,h,h,A.a5(h,h,B.v,h,h,h,h,h,h,h,h,13,h,h,h,h,h,!0,h,h,h,h,h,h,h,h),h,h,h),h,h,B.T,h,h,h,h,r,h,h),B.O],f),B.j,B.f,B.k)
 d=A.bd(A.dy(g,B.h,56),h,h)
 e=i.c
 e.toString
@@ -111976,7 +111976,7 @@ if(J.cR(p.w))n.push(new A.ad(B.rq,A.bd(A.a4(A.a([A.aD(B.n4,B.h.I(0.3),o,48),B.E,
 else{m=t.l
 m=A.U(J.cS(p.w,new A.aKh(p),m),!0,m)
 m.push(B.E)
-m.push(A.bd(A.aVI(B.tt,B.aag,s,A.nN(o,o,o,o,o,o,o,o,o,B.h,o,o,o,o,o,o,o,o,o)),o,o))
+m.push(A.bd(A.aVI(B.tt,B.aaf,s,A.nN(o,o,o,o,o,o,o,o,o,B.h,o,o,o,o,o,o,o,o,o)),o,o))
 B.b.K(n,m)}return A.a4(n,B.H,B.f,B.k)},
 ajV(a){var s,r=null,q=A.fD(B.aV,r,A.j(a.gnv().length!==0?a.gnv()[0].toUpperCase():"?",r,r,r,r,B.l9,r,r,r),18),p=A.j(a.gnv(),r,r,r,r,B.cO,r,r,r)
 if(a.e!=null&&a.c!=null){s=a.c
@@ -112049,7 +112049,7 @@ this.a.c.L(t.q).f.b0(B.kZ)},
 $S:0}
 A.aKO.prototype={
 $1(a){var s=null
-return A.oz(A.a([A.dc(!1,B.eX,s,s,B.T,s,s,s,s,new A.aKM(a),s,s),A.f4(!1,B.lc,B.i,s,B.T,s,s,s,s,new A.aKN(this.a,a),s,A.eK(B.I,s,s,s,s,s))],t.p),s,B.aby,B.lc)},
+return A.oz(A.a([A.dc(!1,B.eX,s,s,B.T,s,s,s,s,new A.aKM(a),s,s),A.f4(!1,B.lc,B.i,s,B.T,s,s,s,s,new A.aKN(this.a,a),s,A.eK(B.I,s,s,s,s,s))],t.p),s,B.abz,B.lc)},
 $S:61}
 A.aKM.prototype={
 $0(){A.aS(this.a,!1).bV(null)
@@ -112520,7 +112520,7 @@ if(m.z){q=m.a.d
 p=m.at
 if(m.ax)s=A.Y(n,B.bu,B.i,n,n,new A.a0(B.ad,n,n,A.a9(8),n,n,B.q),n,n,n,n,n,n,n)
 else if(p.length===0){o=A.a9(8)
-o=A.Y(n,A.bd(A.a4(A.a([A.aD(B.th,B.h.I(0.4),n,28),B.ap,A.j("No flock data",n,n,n,n,A.a5(n,n,B.v,n,n,n,n,n,n,n,n,11,n,n,n,n,n,!0,n,n,n,n,n,n,n,n),n,n,n),B.E,A.aVI(B.Pd,B.aaK,m.gats(),A.nN(n,n,n,n,n,n,n,n,n,B.h,n,n,n,n,n,n,n,n,n))],s),B.j,B.f,B.C),n,n),B.i,n,n,new A.a0(B.ad,n,n,o,n,n,B.q),n,n,n,n,n,n,n)
+o=A.Y(n,A.bd(A.a4(A.a([A.aD(B.th,B.h.I(0.4),n,28),B.ap,A.j("No flock data",n,n,n,n,A.a5(n,n,B.v,n,n,n,n,n,n,n,n,11,n,n,n,n,n,!0,n,n,n,n,n,n,n,n),n,n,n),B.E,A.aVI(B.Pd,B.aaJ,m.gats(),A.nN(n,n,n,n,n,n,n,n,n,B.h,n,n,n,n,n,n,n,n,n))],s),B.j,B.f,B.C),n,n),B.i,n,n,new A.a0(B.ad,n,n,o,n,n,B.q),n,n,n,n,n,n,n)
 s=o}else s=A.li(A.a9(8),A.Y(n,new A.RH(p,!0,n),B.i,B.ad,n,n,n,n,n,B.rB,n,n,n),B.aD)
 r.push(A.vQ(new A.Hz(new A.Tf(q.e,q.f,q.r,p,n),s,B.h.I(0.3),n),n,B.c9,n,B.bG,n,200,n,B.jt,n))}r.push(A.aK(m.aia(),1))
 r.push(m.ai2())
@@ -112643,7 +112643,7 @@ A.aHB.prototype={
 $2(a,b){var s,r=null,q=this.a,p=J.bF(q.a.f,b),o=p.b,n=q.d.n(0,o),m=q.e.n(0,o)
 o=A.fD(B.aV,r,A.j(p.gnv().length!==0?p.gnv()[0].toUpperCase():"?",r,r,r,r,B.oW,r,r,r),r)
 s=A.j(p.gnv(),r,r,r,r,r,r,r,r)
-if(n)q=A.aYB(B.K.I(0.15),B.abS,B.dU,B.aj,B.u)
+if(n)q=A.aYB(B.K.I(0.15),B.abT,B.dU,B.aj,B.u)
 else q=m?B.oF:A.f4(!1,B.Ft,B.i,r,B.T,r,r,r,r,new A.aHA(q,p),r,A.eK(B.h,B.n,B.W,B.hI,r,B.cO))
 return A.ec(!1,r,r,r,!0,r,r,!0,!1,o,r,r,r,!1,r,r,r,r,r,s,q,r)},
 $S:63}
@@ -112888,7 +112888,7 @@ break
 case 6:case 1:return A.p(q,r)
 case 2:return A.o(o,r)}})
 return A.q($async$yS,r)},
-E(a){var s,r=null,q=A.k9(r,r,!0,r,r,1,r,r,r,!1,r,!1,r,r,r,r,!0,r,r,r,r,r,B.abr,r,r,r,1,r)
+E(a){var s,r=null,q=A.k9(r,r,!0,r,r,1,r,r,r,!1,r,!1,r,r,r,r,!0,r,r,r,r,r,B.abs,r,r,r,1,r)
 if(this.e)s=B.bu
 else s=this.d==null?B.Jp:this.aii()
 return A.h9(q,r,s,r)},
@@ -113061,7 +113061,7 @@ break
 case 5:return A.p(null,r)
 case 1:return A.o(p,r)}})
 return A.q($async$Dz,r)},
-E(a){var s,r,q,p,o,n,m,l,k,j=this,i=null,h=A.k9(i,i,!0,i,i,1,i,i,i,!1,i,!1,i,i,i,i,!0,i,i,i,i,i,B.aay,i,i,i,1,i)
+E(a){var s,r,q,p,o,n,m,l,k,j=this,i=null,h=A.k9(i,i,!0,i,i,1,i,i,i,!1,i,!1,i,i,i,i,!0,i,i,i,i,i,B.aax,i,i,i,1,i)
 if(j.r)s=B.bu
 else{s=j.x
 r=j.gaCZ()
@@ -113086,7 +113086,7 @@ s.push(B.E)
 m=j.w
 k=m?i:j.gakI()
 m=m?B.EO:B.Pf
-s.push(A.j0(m,B.abI,k,A.hA(i,i,i,i,i,i,i,i,i,B.K,i,i,i,i,i,new A.aB(B.K.I(0.5),1,B.y,-1),i,i,i,i)))
+s.push(A.j0(m,B.abJ,k,A.hA(i,i,i,i,i,i,i,i,i,B.K,i,i,i,i,i,new A.aB(B.K.I(0.5),1,B.y,-1),i,i,i,i)))
 s.push(B.aA)
 s.push(A.j("Cost Reference",i,i,i,i,B.db,i,i,i))
 s.push(B.E)
@@ -115545,7 +115545,7 @@ if(p.d||!p.e)return B.au
 s=A.a9(12)
 r=A.bK(B.h.I(0.3),1)
 q=t.p
-return A.Y(o,A.ak(A.a([A.aD(B.P_,B.h,o,28),B.bj,A.aK(A.a4(A.a([B.aam,A.j("Add to home screen for the best experience",o,o,o,o,A.a5(o,o,B.v,o,o,o,o,o,o,o,o,12,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),o,o,o)],q),B.H,B.f,B.C),1),A.dc(!1,B.ab7,o,o,B.T,o,o,o,o,p.gakX(),o,o),B.b3,A.f4(!1,B.aa1,B.i,o,B.T,o,o,o,o,new A.aKV(p,a),o,A.eK(B.h,B.n,o,B.hI,o,B.l7))],q),B.j,B.f,B.k,o),B.i,o,o,new A.a0(B.a7,o,r,s,o,o,B.q),o,o,B.MR,B.hH,o,o,o)},
+return A.Y(o,A.ak(A.a([A.aD(B.P_,B.h,o,28),B.bj,A.aK(A.a4(A.a([B.aal,A.j("Add to home screen for the best experience",o,o,o,o,A.a5(o,o,B.v,o,o,o,o,o,o,o,o,12,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),o,o,o)],q),B.H,B.f,B.C),1),A.dc(!1,B.ab6,o,o,B.T,o,o,o,o,p.gakX(),o,o),B.b3,A.f4(!1,B.aa1,B.i,o,B.T,o,o,o,o,new A.aKV(p,a),o,A.eK(B.h,B.n,o,B.hI,o,B.l7))],q),B.j,B.f,B.k,o),B.i,o,o,new A.a0(B.a7,o,r,s,o,o,B.q),o,o,B.MR,B.hH,o,o,o)},
 azI(a){var s=null
 A.mk(s,s,!0,s,new A.aKU(this),a,s,!0,t.z)},
 MK(a,b){var s=null
@@ -115564,7 +115564,7 @@ $0(){this.a.azI(this.b)},
 $S:0}
 A.aKU.prototype={
 $1(a){var s=null,r=this.a,q=t.p,p=A.a4(A.a([r.MK("1","Tap the browser menu (three dots or share icon)"),B.E,r.MK("2",'Select "Add to Home Screen" or "Install App"'),B.E,r.MK("3",'Tap "Add" to confirm'),B.O,A.j("Rabble will appear on your home screen like a native app.",s,s,s,s,A.a5(s,s,B.ab,s,s,s,s,s,s,s,s,13,s,s,s,s,s,!0,s,s,s,s,s,s,s,s),s,s,s)],q),B.H,B.f,B.C)
-return A.oz(A.a([A.f4(!1,B.abV,B.i,s,B.T,s,s,s,s,new A.aKT(r,a),s,s)],q),s,p,B.aat)},
+return A.oz(A.a([A.f4(!1,B.abW,B.i,s,B.T,s,s,s,s,new A.aKT(r,a),s,s)],q),s,p,B.aas)},
 $S:61}
 A.aKT.prototype={
 $0(){A.aS(this.b,!1).bV(null)
@@ -120683,19 +120683,19 @@ B.mj=new A.C(0.5411764705882353,1,1,1,B.l)
 B.a6d=new A.v(!0,B.mj,null,null,null,null,13,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.ac6=new A.a1("No flight data yet",null,B.a6d,null,null,null,null,null,null,null,null)
 B.Jn=new A.f1(B.U,null,null,B.ac6,null)
-B.aaV=new A.a1("No species found",null,null,null,null,null,null,null,null,null,null)
-B.Jo=new A.f1(B.U,null,null,B.aaV,null)
-B.ac_=new A.a1("User not found",null,null,null,null,null,null,null,null,null,null)
-B.Jp=new A.f1(B.U,null,null,B.ac_,null)
+B.aaU=new A.a1("No species found",null,null,null,null,null,null,null,null,null,null)
+B.Jo=new A.f1(B.U,null,null,B.aaU,null)
+B.ac0=new A.a1("User not found",null,null,null,null,null,null,null,null,null,null)
+B.Jp=new A.f1(B.U,null,null,B.ac0,null)
 B.a3w=new A.ca(24,24,B.hm,null)
 B.Jq=new A.f1(B.U,null,null,B.a3w,null)
 B.qg=new A.f1(B.U,null,null,B.hm,null)
 B.Jv=new A.iD(4,0,null,null,null,null,null,null,null,null)
 B.bu=new A.f1(B.U,null,null,B.Jv,null)
-B.aav=new A.a1("Failed to load stats",null,null,null,null,null,null,null,null,null,null)
-B.Jr=new A.f1(B.U,null,null,B.aav,null)
-B.aaJ=new A.a1("Creature not found",null,null,null,null,null,null,null,null,null,null)
-B.Js=new A.f1(B.U,null,null,B.aaJ,null)
+B.aau=new A.a1("Failed to load stats",null,null,null,null,null,null,null,null,null,null)
+B.Jr=new A.f1(B.U,null,null,B.aau,null)
+B.aaI=new A.a1("Creature not found",null,null,null,null,null,null,null,null,null,null)
+B.Js=new A.f1(B.U,null,null,B.aaI,null)
 B.Jt=new A.w5(null,null,null,null,null,null,null,null,null)
 B.Ju=new A.w7(null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.hl=new A.eI(0,B.u)
@@ -121172,10 +121172,10 @@ B.C=new A.SU(0,"min")
 B.bM=new A.av4(1,"down")
 B.N=new A.jt(5,600)
 B.a6v=new A.v(!0,B.n,null,null,null,null,18,B.N,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.aaO=new A.a1("AR Flights",null,B.a6v,null,null,null,null,null,null,null,null)
+B.aaN=new A.a1("AR Flights",null,B.a6v,null,null,null,null,null,null,null,null)
 B.a6X=new A.v(!0,B.ah,null,null,null,null,12,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.abQ=new A.a1("Point camera to see creatures flying nearby",null,B.a6X,null,null,null,null,null,null,null,null)
-B.WP=A.a(s([B.aaO,B.abQ]),t.p)
+B.abR=new A.a1("Point camera to see creatures flying nearby",null,B.a6X,null,null,null,null,null,null,null,null)
+B.WP=A.a(s([B.aaN,B.abR]),t.p)
 B.KU=new A.mw(B.X,B.f,B.C,B.H,null,B.bM,null,0,B.WP,null)
 B.Nd=new A.lo(1,B.fv,B.KU,null)
 B.aeO=new A.a0B(null)
@@ -121651,25 +121651,25 @@ B.SY=A.a(s([B.lQ,B.lR]),A.aM("G<BQ>"))
 B.f3=new A.mb(0,"hour")
 B.iC=new A.mb(1,"minute")
 B.u2=A.a(s([B.f3,B.iC]),A.aM("G<mb>"))
-B.aaG=new A.a1("Active",null,null,null,null,null,null,null,null,null,null)
-B.LT=new A.ei("active",B.aaG,B.bC,null,t.b7)
-B.aak=new A.a1("Archived",null,null,null,null,null,null,null,null,null,null)
-B.LN=new A.ei("archived",B.aak,B.bC,null,t.b7)
-B.aaj=new A.a1("All",null,null,null,null,null,null,null,null,null,null)
-B.LS=new A.ei("all",B.aaj,B.bC,null,t.b7)
+B.aaE=new A.a1("Active",null,null,null,null,null,null,null,null,null,null)
+B.LT=new A.ei("active",B.aaE,B.bC,null,t.b7)
+B.aaj=new A.a1("Archived",null,null,null,null,null,null,null,null,null,null)
+B.LN=new A.ei("archived",B.aaj,B.bC,null,t.b7)
+B.aai=new A.a1("All",null,null,null,null,null,null,null,null,null,null)
+B.LS=new A.ei("all",B.aai,B.bC,null,t.b7)
 B.SZ=A.a(s([B.LT,B.LN,B.LS]),t.FG)
 B.T_=A.a(s(["BC","AD"]),t.s)
 B.k=new A.SU(1,"max")
 B.PO=new A.b2(B.n8,16,B.K,null,null)
 B.al=new A.ca(8,null,null,null)
 B.bq=new A.v(!0,null,null,null,null,null,14,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.aaA=new A.a1("Public",null,B.bq,null,null,null,null,null,null,null,null)
-B.SW=A.a(s([B.PO,B.al,B.aaA]),t.p)
+B.aaz=new A.a1("Public",null,B.bq,null,null,null,null,null,null,null,null)
+B.SW=A.a(s([B.PO,B.al,B.aaz]),t.p)
 B.a1j=new A.ie(B.aZ,B.f,B.k,B.j,null,B.bM,null,0,B.SW,null)
 B.LL=new A.ei("public",B.a1j,B.bC,null,t.b7)
 B.Pj=new A.b2(B.jY,16,B.a6,null,null)
-B.aba=new A.a1("Contacts Only",null,B.bq,null,null,null,null,null,null,null,null)
-B.Tn=A.a(s([B.Pj,B.al,B.aba]),t.p)
+B.ab9=new A.a1("Contacts Only",null,B.bq,null,null,null,null,null,null,null,null)
+B.Tn=A.a(s([B.Pj,B.al,B.ab9]),t.p)
 B.a1h=new A.ie(B.aZ,B.f,B.k,B.j,null,B.bM,null,0,B.Tn,null)
 B.LQ=new A.ei("contacts",B.a1h,B.bC,null,t.b7)
 B.PN=new A.b2(B.jX,16,B.v,null,null)
@@ -121720,8 +121720,8 @@ B.Tb=A.a(s([6,32,58,84,110,136,162]),t.t)
 B.Tc=A.a(s([6,26,54,82,110,138,166]),t.t)
 B.Td=A.a(s([6,30,58,86,114,142,170]),t.t)
 B.Te=A.a(s([B.ud,B.Sw,B.Sx,B.SA,B.SG,B.SM,B.Sy,B.Sz,B.SB,B.SF,B.SH,B.SL,B.SN,B.SC,B.SD,B.SE,B.SI,B.SJ,B.SK,B.SO,B.T0,B.T1,B.T2,B.T3,B.T4,B.T5,B.T6,B.TC,B.TD,B.TE,B.Un,B.Uy,B.UJ,B.UU,B.T8,B.T9,B.Ta,B.Tb,B.Tc,B.Td]),t.Zb)
-B.abR=new A.a1("Remove contact",null,null,null,null,null,null,null,null,null,null)
-B.a0s=new A.el("remove",!0,B.abR,null,t.wI)
+B.abS=new A.a1("Remove contact",null,null,null,null,null,null,null,null,null,null)
+B.a0s=new A.el("remove",!0,B.abS,null,t.wI)
 B.Tk=A.a(s([B.a0s]),t.Do)
 B.u4=A.a(s([0,0,26624,1023,65534,2047,65534,2047]),t.t)
 B.hS=A.a(s([B.ec,B.dh,B.iI,B.iJ,B.lP]),t.QP)
@@ -121996,16 +121996,16 @@ B.Wf=A.a(s([]),t.fm)
 B.Wg=A.a(s([]),t.p)
 B.ug=A.a(s([]),t.ee)
 B.Wb=A.a(s([]),t._m)
-B.aaQ=new A.a1("AirTag",null,null,null,null,null,null,null,null,null,null)
-B.LU=new A.ei("airtag",B.aaQ,B.bC,null,t.b7)
+B.aaO=new A.a1("AirTag",null,null,null,null,null,null,null,null,null,null)
+B.LU=new A.ei("airtag",B.aaO,B.bC,null,t.b7)
 B.abj=new A.a1("SmartTag",null,null,null,null,null,null,null,null,null,null)
 B.LO=new A.ei("smarttag",B.abj,B.bC,null,t.b7)
-B.ab2=new A.a1("Tile",null,null,null,null,null,null,null,null,null,null)
-B.LV=new A.ei("tile",B.ab2,B.bC,null,t.b7)
-B.ab0=new A.a1("GPS Tracker",null,null,null,null,null,null,null,null,null,null)
-B.LP=new A.ei("gps_tracker",B.ab0,B.bC,null,t.b7)
-B.aau=new A.a1("BLE Beacon",null,null,null,null,null,null,null,null,null,null)
-B.LM=new A.ei("ble_beacon",B.aau,B.bC,null,t.b7)
+B.ab1=new A.a1("Tile",null,null,null,null,null,null,null,null,null,null)
+B.LV=new A.ei("tile",B.ab1,B.bC,null,t.b7)
+B.ab_=new A.a1("GPS Tracker",null,null,null,null,null,null,null,null,null,null)
+B.LP=new A.ei("gps_tracker",B.ab_,B.bC,null,t.b7)
+B.aat=new A.a1("BLE Beacon",null,null,null,null,null,null,null,null,null,null)
+B.LM=new A.ei("ble_beacon",B.aat,B.bC,null,t.b7)
 B.Wp=A.a(s([B.LU,B.LO,B.LV,B.LP,B.LM]),t.FG)
 B.GM=new A.PO(2,"outer")
 B.qO=new A.C(0.09803921568627451,0,0,0,B.l)
@@ -123223,8 +123223,8 @@ B.a_p=new A.TF(0,"start")
 B.zH=new A.TF(1,"end")
 B.zI=new A.amq(0,"max")
 B.oZ=new A.v(!0,B.v,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.aaZ=new A.a1("No transactions yet",null,B.oZ,null,null,null,null,null,null,null,null)
-B.a_q=new A.ad(B.rq,B.aaZ,null)
+B.aaY=new A.a1("No transactions yet",null,B.oZ,null,null,null,null,null,null,null,null)
+B.a_q=new A.ad(B.rq,B.aaY,null)
 B.Mw=new A.X(0,0,4,0)
 B.Q2=new A.b2(B.tc,12,B.iZ,null,null)
 B.a_s=new A.ad(B.Mw,B.Q2,null)
@@ -123274,24 +123274,24 @@ B.Fr=new A.a1("Admin",null,null,null,null,null,null,null,null,null,null)
 B.a0n=new A.el("admin",!0,B.Fr,null,t.wI)
 B.Fw=new A.a1("Help & Guide",null,null,null,null,null,null,null,null,null,null)
 B.a0o=new A.el("help",!0,B.Fw,null,t.wI)
-B.aar=new A.a1("View in AR",null,null,null,null,null,null,null,null,null,null)
-B.a0p=new A.el("ar_view",!0,B.aar,null,t.wI)
-B.abN=new A.a1("Send to Location",null,null,null,null,null,null,null,null,null,null)
-B.a0r=new A.el("send_to",!0,B.abN,null,t.wI)
+B.aaq=new A.a1("View in AR",null,null,null,null,null,null,null,null,null,null)
+B.a0p=new A.el("ar_view",!0,B.aaq,null,t.wI)
+B.abO=new A.a1("Send to Location",null,null,null,null,null,null,null,null,null,null)
+B.a0r=new A.el("send_to",!0,B.abO,null,t.wI)
 B.abl=new A.a1("Restore",null,null,null,null,null,null,null,null,null,null)
 B.a0t=new A.el("restore",!0,B.abl,null,t.wI)
 B.lc=new A.a1("Sign Out",null,null,null,null,null,null,null,null,null,null)
 B.a0u=new A.el("signout",!0,B.lc,null,t.wI)
-B.ab5=new A.a1("Set as Profile Avatar",null,null,null,null,null,null,null,null,null,null)
-B.a0v=new A.el("avatar",!0,B.ab5,null,t.wI)
+B.ab4=new A.a1("Set as Profile Avatar",null,null,null,null,null,null,null,null,null,null)
+B.a0v=new A.el("avatar",!0,B.ab4,null,t.wI)
 B.p_=new A.a1("Invite friends",null,null,null,null,null,null,null,null,null,null)
 B.a0w=new A.el("invite",!0,B.p_,null,t.wI)
-B.abD=new A.a1("Archive",null,null,null,null,null,null,null,null,null,null)
-B.a0x=new A.el("archive",!0,B.abD,null,t.wI)
+B.abE=new A.a1("Archive",null,null,null,null,null,null,null,null,null,null)
+B.a0x=new A.el("archive",!0,B.abE,null,t.wI)
 B.ac7=new A.a1("Send Credits",null,null,null,null,null,null,null,null,null,null)
 B.a0y=new A.el("send_credits",!0,B.ac7,null,t.wI)
-B.ab_=new A.a1("Rename",null,null,null,null,null,null,null,null,null,null)
-B.a0z=new A.el("rename",!0,B.ab_,null,t.wI)
+B.aaZ=new A.a1("Rename",null,null,null,null,null,null,null,null,null,null)
+B.a0z=new A.el("rename",!0,B.aaZ,null,t.wI)
 B.Fz=new A.a1("Pair Device",null,null,null,null,null,null,null,null,null,null)
 B.a0B=new A.el("pair_device",!0,B.Fz,null,t.wI)
 B.a0C=new A.y1(null,null,null,null,null,null,null,null,null,null,null,null,null)
@@ -123639,8 +123639,8 @@ B.EO=new A.ca(16,16,B.hm,null)
 B.Jw=new A.iD(2.5,0,null,null,null,B.n,null,null,null,null)
 B.a3x=new A.ca(22,22,B.Jw,null)
 B.oY=new A.v(!0,B.v,null,null,null,null,10,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.aaT=new A.a1("Samples",null,B.oY,null,null,null,null,null,null,null,null)
-B.a3y=new A.ca(50,null,B.aaT,null)
+B.aaR=new A.a1("Samples",null,B.oY,null,null,null,null,null,null,null,null)
+B.a3y=new A.ca(50,null,B.aaR,null)
 B.iR=new A.iD(2,0,null,null,null,B.n,null,null,null,null)
 B.a3A=new A.ca(14,14,B.iR,null)
 B.a3z=new A.ca(18,18,B.iR,null)
@@ -123659,14 +123659,14 @@ B.ap=new A.ca(null,4,null,null)
 B.e2=new A.ca(null,6,null,null)
 B.E=new A.ca(null,8,null,null)
 B.EQ=new A.ca(null,null,null,null)
-B.aaH=new A.a1("Flights",null,B.oY,null,null,null,null,null,null,null,null)
-B.a3G=new A.ca(50,null,B.aaH,null)
+B.aaG=new A.a1("Flights",null,B.oY,null,null,null,null,null,null,null,null)
+B.a3G=new A.ca(50,null,B.aaG,null)
 B.a3H=new A.W_(0,"tapAndSlide")
 B.a3I=new A.W_(2,"slideOnly")
 B.a3J=new A.yL(null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.ip=new A.W1(0,0,0,0,0,0,0,!1,!1,null,0)
-B.abu=new A.a1("No flights yet",null,B.oZ,null,null,null,null,null,null,null,null)
-B.a_v=new A.ad(B.dr,B.abu,null)
+B.abv=new A.a1("No flights yet",null,B.oZ,null,null,null,null,null,null,null,null)
+B.a_v=new A.ad(B.dr,B.abv,null)
 B.a3K=new A.uA(B.a_v,null)
 B.a3L=new A.uA(B.eU,null)
 B.oG=new A.as8(1,"enabled")
@@ -123679,64 +123679,64 @@ B.a3O=new A.lW(3,"hide")
 B.ag3=new A.lW(4,"remove")
 B.ES=new A.lW(5,"timeout")
 B.a3P=new A.yP(null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.abB=new A.a1("Invite link copied! Paste it in your favourite messaging app.",null,null,null,null,null,null,null,null,null,null)
-B.a3Q=new A.d6(B.abB,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.abC=new A.a1("Invite link copied! Paste it in your favourite messaging app.",null,null,null,null,null,null,null,null,null,null)
+B.a3Q=new A.d6(B.abC,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
 B.abd=new A.a1("You need at least one creature to host a rabble.",null,null,null,null,null,null,null,null,null,null)
 B.a3R=new A.d6(B.abd,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
 B.abe=new A.a1("You need at least one creature. Browse Species to mint one!",null,null,null,null,null,null,null,null,null,null)
 B.a3S=new A.d6(B.abe,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.aas=new A.a1("Stripe not configured. Use Dev Top-up for testing.",null,null,null,null,null,null,null,null,null,null)
-B.a3T=new A.d6(B.aas,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.aah=new A.a1("Avatar updated!",null,null,null,null,null,null,null,null,null,null)
-B.a3U=new A.d6(B.aah,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.ab6=new A.a1("Wing animation coming soon for this species!",null,null,null,null,null,null,null,null,null,null)
-B.a3V=new A.d6(B.ab6,B.a6,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.abM=new A.a1("Ready to fly! Your butterfly has learned to flap.",null,null,null,null,null,null,null,null,null,null)
-B.a3W=new A.d6(B.abM,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.aaf=new A.a1("Add contacts first from the People tab",null,null,null,null,null,null,null,null,null,null)
-B.a3X=new A.d6(B.aaf,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.abK=new A.a1("Link copied!",null,null,null,null,null,null,null,null,null,null)
-B.a3Y=new A.d6(B.abK,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.abL=new A.a1("End current flight first",null,null,null,null,null,null,null,null,null,null)
-B.a3Z=new A.d6(B.abL,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aar=new A.a1("Stripe not configured. Use Dev Top-up for testing.",null,null,null,null,null,null,null,null,null,null)
+B.a3T=new A.d6(B.aar,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aag=new A.a1("Avatar updated!",null,null,null,null,null,null,null,null,null,null)
+B.a3U=new A.d6(B.aag,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.ab5=new A.a1("Wing animation coming soon for this species!",null,null,null,null,null,null,null,null,null,null)
+B.a3V=new A.d6(B.ab5,B.a6,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.abN=new A.a1("Ready to fly! Your butterfly has learned to flap.",null,null,null,null,null,null,null,null,null,null)
+B.a3W=new A.d6(B.abN,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aae=new A.a1("Add contacts first from the People tab",null,null,null,null,null,null,null,null,null,null)
+B.a3X=new A.d6(B.aae,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.abL=new A.a1("Link copied!",null,null,null,null,null,null,null,null,null,null)
+B.a3Y=new A.d6(B.abL,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.abM=new A.a1("End current flight first",null,null,null,null,null,null,null,null,null,null)
+B.a3Z=new A.d6(B.abM,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
 B.abf=new A.a1("Learning to fly failed. Please try again.",null,null,null,null,null,null,null,null,null,null)
 B.a4_=new A.d6(B.abf,B.I,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.aaD=new A.a1("Location permission required",null,null,null,null,null,null,null,null,null,null)
-B.a40=new A.d6(B.aaD,B.I,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aaC=new A.a1("Location permission required",null,null,null,null,null,null,null,null,null,null)
+B.a40=new A.d6(B.aaC,B.I,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
 B.Fx=new A.a1("Location required for AR view",null,null,null,null,null,null,null,null,null,null)
 B.a41=new A.d6(B.Fx,B.I,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.ac1=new A.a1("500 credits added!",null,null,null,null,null,null,null,null,null,null)
-B.a42=new A.d6(B.ac1,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.abE=new A.a1("Contact added",null,null,null,null,null,null,null,null,null,null)
-B.a43=new A.d6(B.abE,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.ac2=new A.a1("500 credits added!",null,null,null,null,null,null,null,null,null,null)
+B.a42=new A.d6(B.ac2,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.abF=new A.a1("Contact added",null,null,null,null,null,null,null,null,null,null)
+B.a43=new A.d6(B.abF,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
 B.a3B=new A.ca(16,16,B.iR,null)
-B.aaX=new A.a1("Planning flight...",null,null,null,null,null,null,null,null,null,null)
-B.VO=A.a(s([B.a3B,B.bj,B.aaX]),t.p)
+B.aaW=new A.a1("Planning flight...",null,null,null,null,null,null,null,null,null,null)
+B.VO=A.a(s([B.a3B,B.bj,B.aaW]),t.p)
 B.a1g=new A.ie(B.aZ,B.f,B.k,B.j,null,B.bM,null,0,B.VO,null)
 B.M9=new A.aZ(3e7)
 B.a44=new A.d6(B.a1g,B.hy,null,null,null,null,null,null,null,null,null,null,null,B.M9,null,null,null,B.o,null)
-B.abC=new A.a1("You don't have any active rabbles. Host one first!",null,null,null,null,null,null,null,null,null,null)
-B.a45=new A.d6(B.abC,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.abJ=new A.a1("Flight ended. Try again!",null,null,null,null,null,null,null,null,null,null)
-B.a46=new A.d6(B.abJ,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.abx=new A.a1("No creatures in this rabble yet",null,null,null,null,null,null,null,null,null,null)
-B.a47=new A.d6(B.abx,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.abD=new A.a1("You don't have any active rabbles. Host one first!",null,null,null,null,null,null,null,null,null,null)
+B.a45=new A.d6(B.abD,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.abK=new A.a1("Flight ended. Try again!",null,null,null,null,null,null,null,null,null,null)
+B.a46=new A.d6(B.abK,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aby=new A.a1("No creatures in this rabble yet",null,null,null,null,null,null,null,null,null,null)
+B.a47=new A.d6(B.aby,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
 B.abh=new A.a1("Device paired!",null,null,null,null,null,null,null,null,null,null)
 B.a48=new A.d6(B.abh,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.aaN=new A.a1("Invite sent!",null,null,null,null,null,null,null,null,null,null)
-B.a49=new A.d6(B.aaN,B.K,null,null,null,null,null,null,null,null,null,null,null,B.d_,null,null,null,B.o,null)
-B.aao=new A.a1("Profile updated",null,null,null,null,null,null,null,null,null,null)
-B.a4a=new A.d6(B.aao,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.aaY=new A.a1("No active rabbles found. Try hosting one!",null,null,null,null,null,null,null,null,null,null)
-B.a4b=new A.d6(B.aaY,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aaM=new A.a1("Invite sent!",null,null,null,null,null,null,null,null,null,null)
+B.a49=new A.d6(B.aaM,B.K,null,null,null,null,null,null,null,null,null,null,null,B.d_,null,null,null,B.o,null)
+B.aan=new A.a1("Profile updated",null,null,null,null,null,null,null,null,null,null)
+B.a4a=new A.d6(B.aan,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aaX=new A.a1("No active rabbles found. Try hosting one!",null,null,null,null,null,null,null,null,null,null)
+B.a4b=new A.d6(B.aaX,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
 B.ac5=new A.a1("Only the organizer can change formations",null,null,null,null,null,null,null,null,null,null)
 B.a4c=new A.d6(B.ac5,null,null,null,null,null,null,null,null,null,null,null,null,B.hC,null,null,null,B.o,null)
-B.aad=new A.a1("Added to contacts!",null,null,null,null,null,null,null,null,null,null)
-B.a4d=new A.d6(B.aad,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.ab3=new A.a1("Invite link copied!",null,null,null,null,null,null,null,null,null,null)
-B.kZ=new A.d6(B.ab3,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
-B.aal=new A.a1("You need at least one creature first.",null,null,null,null,null,null,null,null,null,null)
-B.a4e=new A.d6(B.aal,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aac=new A.a1("Added to contacts!",null,null,null,null,null,null,null,null,null,null)
+B.a4d=new A.d6(B.aac,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.ab2=new A.a1("Invite link copied!",null,null,null,null,null,null,null,null,null,null)
+B.kZ=new A.d6(B.ab2,B.K,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
+B.aak=new A.a1("You need at least one creature first.",null,null,null,null,null,null,null,null,null,null)
+B.a4e=new A.d6(B.aak,B.h,null,null,null,null,null,null,null,null,null,null,null,B.P,null,null,null,B.o,null)
 B.ET=new A.Hu(0,"permissive")
 B.a4f=new A.Hu(1,"normal")
 B.a4g=new A.Hu(2,"forced")
@@ -124176,86 +124176,86 @@ B.aa8=new A.a1("Plan!",null,null,null,null,null,null,null,null,null,null)
 B.aa9=new A.a1("Cancel",null,B.cO,null,null,null,null,null,null,null,null)
 B.aaa=new A.a1("Deposit",null,B.cP,null,null,null,null,null,null,null,null)
 B.aab=new A.a1("Mint creature (3cr)",null,B.eW,null,null,null,null,null,null,null,null)
-B.aac=new A.a1("Host Rabble",null,B.dB,null,null,null,null,null,null,null,null)
-B.aae=new A.a1("Send Invite",null,null,null,null,null,null,null,null,null,null)
-B.aag=new A.a1("Invite friends to Rabble",null,null,null,null,null,null,null,null,null,null)
+B.aad=new A.a1("Send Invite",null,null,null,null,null,null,null,null,null,null)
+B.aaf=new A.a1("Invite friends to Rabble",null,null,null,null,null,null,null,null,null,null)
 B.Fs=new A.a1("Gift",null,null,null,null,null,null,null,null,null,null)
-B.aai=new A.a1("Next",null,null,null,null,null,null,null,null,null,null)
-B.aam=new A.a1("Install Rabble",null,B.l9,null,null,null,null,null,null,null,null)
-B.aan=new A.a1("Host Rabble (5cr)",null,null,null,null,null,null,null,null,null,null)
+B.aah=new A.a1("Next",null,null,null,null,null,null,null,null,null,null)
+B.aal=new A.a1("Install Rabble",null,B.l9,null,null,null,null,null,null,null,null)
+B.aam=new A.a1("Host Rabble (5cr)",null,null,null,null,null,null,null,null,null,null)
 B.a9k=new A.v(!0,B.ab,null,null,null,null,12,B.N,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.aap=new A.a1("Activity (30 days)",null,B.a9k,null,null,null,null,null,null,null,null)
+B.aao=new A.a1("Activity (30 days)",null,B.a9k,null,null,null,null,null,null,null,null)
 B.a6w=new A.v(!0,B.n,null,null,null,null,12,B.N,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.aaq=new A.a1("View",null,B.a6w,null,null,null,null,null,null,null,null)
-B.aat=new A.a1("Install Rabble",null,null,null,null,null,null,null,null,null,null)
-B.aaw=new A.a1("View Profile",null,null,null,null,null,null,null,null,null,null)
-B.aax=new A.a1("Let's go",null,B.eW,null,null,null,null,null,null,null,null)
-B.aay=new A.a1("Wallet",null,null,null,null,null,null,null,null,null,null)
-B.aaz=new A.a1("Private",null,null,null,null,null,null,null,null,null,null)
-B.aaC=new A.a1("Mark all read",null,B.cP,null,null,null,null,null,null,null,null)
-B.aaB=new A.a1("This will cancel the rabble event.",null,null,null,null,null,null,null,null,null,null)
-B.aaE=new A.a1("Plan Flight",null,B.dB,null,null,null,null,null,null,null,null)
-B.aaF=new A.a1("Browse Species",null,null,null,null,null,null,null,null,null,null)
-B.aaI=new A.a1("Pair",null,null,null,null,null,null,null,null,null,null)
+B.aap=new A.a1("View",null,B.a6w,null,null,null,null,null,null,null,null)
+B.aas=new A.a1("Install Rabble",null,null,null,null,null,null,null,null,null,null)
+B.aav=new A.a1("View Profile",null,null,null,null,null,null,null,null,null,null)
+B.aaw=new A.a1("Let's go",null,B.eW,null,null,null,null,null,null,null,null)
+B.aax=new A.a1("Wallet",null,null,null,null,null,null,null,null,null,null)
+B.aay=new A.a1("Private",null,null,null,null,null,null,null,null,null,null)
+B.aaB=new A.a1("Mark all read",null,B.cP,null,null,null,null,null,null,null,null)
+B.aaA=new A.a1("This will cancel the rabble event.",null,null,null,null,null,null,null,null,null,null)
+B.aaD=new A.a1("Browse Species",null,null,null,null,null,null,null,null,null,null)
+B.aaF=new A.a1("Plan (5cr)",null,B.dB,null,null,null,null,null,null,null,null)
+B.aaH=new A.a1("Pair",null,null,null,null,null,null,null,null,null,null)
 B.Ft=new A.a1("Invite",null,null,null,null,null,null,null,null,null,null)
-B.aaK=new A.a1("Load",null,B.l6,null,null,null,null,null,null,null,null)
-B.aaL=new A.a1("CONDITIONS",null,B.lb,null,null,null,null,null,null,null,null)
-B.aaM=new A.a1("Describe the route (optional)",null,null,null,null,null,null,null,null,null,null)
-B.aaP=new A.a1("Quick Send",null,null,null,null,null,null,null,null,null,null)
-B.aaR=new A.a1("Gift Creature",null,null,null,null,null,null,null,null,null,null)
+B.aaJ=new A.a1("Load",null,B.l6,null,null,null,null,null,null,null,null)
+B.aaK=new A.a1("CONDITIONS",null,B.lb,null,null,null,null,null,null,null,null)
+B.aaL=new A.a1("Describe the route (optional)",null,null,null,null,null,null,null,null,null,null)
+B.aaP=new A.a1("Gift Creature",null,null,null,null,null,null,null,null,null,null)
 B.a8A=new A.v(!0,B.a6,null,null,null,null,10,B.N,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.aaS=new A.a1("Joined",null,B.a8A,null,null,null,null,null,null,null,null)
-B.aaU=new A.a1("Near my location",null,null,null,null,null,null,null,null,null,null)
+B.aaQ=new A.a1("Joined",null,B.a8A,null,null,null,null,null,null,null,null)
+B.aaS=new A.a1("Near my location",null,null,null,null,null,null,null,null,null,null)
+B.aaT=new A.a1("Join (2cr)",null,B.dB,null,null,null,null,null,null,null,null)
 B.Fu=new A.a1("Copy invite link",null,null,null,null,null,null,null,null,null,null)
 B.Fm=new A.v(!0,B.h,null,null,null,null,14,B.N,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.aaW=new A.a1("Premium Formations",null,B.Fm,null,null,null,null,null,null,null,null)
-B.ab1=new A.a1("Grant",null,null,null,null,null,null,null,null,null,null)
-B.ab4=new A.a1("Teach to Fly (5cr)",null,B.oW,null,null,null,null,null,null,null,null)
+B.aaV=new A.a1("Premium Formations",null,B.Fm,null,null,null,null,null,null,null,null)
+B.ab0=new A.a1("Grant",null,null,null,null,null,null,null,null,null,null)
+B.ab3=new A.a1("Teach to Fly (5cr)",null,B.oW,null,null,null,null,null,null,null,null)
 B.iw=new A.a1("Retry",null,null,null,null,null,null,null,null,null,null)
-B.ab7=new A.a1("Later",null,B.cP,null,null,null,null,null,null,null,null)
-B.ab8=new A.a1("Save",null,null,null,null,null,null,null,null,null,null)
-B.ab9=new A.a1("Confirm location",null,null,null,null,null,null,null,null,null,null)
-B.abb=new A.a1("Add Owner to Contacts",null,null,null,null,null,null,null,null,null,null)
-B.abc=new A.a1("Refresh",null,null,null,null,null,null,null,null,null,null)
+B.ab6=new A.a1("Later",null,B.cP,null,null,null,null,null,null,null,null)
+B.ab7=new A.a1("Save",null,null,null,null,null,null,null,null,null,null)
+B.ab8=new A.a1("Confirm location",null,null,null,null,null,null,null,null,null,null)
+B.aba=new A.a1("Add Owner to Contacts",null,null,null,null,null,null,null,null,null,null)
+B.abb=new A.a1("Refresh",null,null,null,null,null,null,null,null,null,null)
+B.abc=new A.a1("Send (free)",null,null,null,null,null,null,null,null,null,null)
 B.abg=new A.a1("Near my creature",null,null,null,null,null,null,null,null,null,null)
 B.abi=new A.a1("Send",null,B.cP,null,null,null,null,null,null,null,null)
 B.abk=new A.a1("Ongoing (no end date)",null,null,null,null,null,null,null,null,null,null)
 B.abm=new A.a1("Mint creature",null,null,null,null,null,null,null,null,null,null)
 B.abn=new A.a1("TERRAIN",null,B.lb,null,null,null,null,null,null,null,null)
-B.abo=new A.a1("Cancel it",null,null,null,null,null,null,null,null,null,null)
-B.abp=new A.a1("Start Flight",null,null,null,null,null,null,null,null,null,null)
-B.abq=new A.a1("Visibility:",null,B.cO,null,null,null,null,null,null,null,null)
-B.abr=new A.a1("Profile",null,null,null,null,null,null,null,null,null,null)
-B.abs=new A.a1("Rename Creature",null,null,null,null,null,null,null,null,null,null)
-B.abt=new A.a1("Back",null,null,null,null,null,null,null,null,null,null)
+B.abo=new A.a1("Host (5cr)",null,B.dB,null,null,null,null,null,null,null,null)
+B.abp=new A.a1("Cancel it",null,null,null,null,null,null,null,null,null,null)
+B.abq=new A.a1("Start Flight",null,null,null,null,null,null,null,null,null,null)
+B.abr=new A.a1("Visibility:",null,B.cO,null,null,null,null,null,null,null,null)
+B.abs=new A.a1("Profile",null,null,null,null,null,null,null,null,null,null)
+B.abt=new A.a1("Rename Creature",null,null,null,null,null,null,null,null,null,null)
+B.abu=new A.a1("Back",null,null,null,null,null,null,null,null,null,null)
 B.a6x=new A.v(!0,B.n,null,null,null,null,9,B.N,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.abv=new A.a1("Fly Together",null,B.a6x,null,null,null,null,null,null,null,null)
-B.abw=new A.a1("Notifications",null,null,null,null,null,null,null,null,null,null)
-B.aby=new A.a1("Are you sure you want to sign out?",null,null,null,null,null,null,null,null,null,null)
+B.abw=new A.a1("Fly Together",null,B.a6x,null,null,null,null,null,null,null,null)
+B.abx=new A.a1("Notifications",null,null,null,null,null,null,null,null,null,null)
+B.abz=new A.a1("Are you sure you want to sign out?",null,null,null,null,null,null,null,null,null,null)
 B.a7h=new A.v(!0,B.ah,null,null,null,null,14,B.N,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.abz=new A.a1("Formations",null,B.a7h,null,null,null,null,null,null,null,null)
+B.abA=new A.a1("Formations",null,B.a7h,null,null,null,null,null,null,null,null)
 B.a7O=new A.v(!0,B.jd,null,null,null,null,8,B.aG,null,0.5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.abA=new A.a1("DEVICE",null,B.a7O,null,null,null,null,null,null,null,null)
+B.abB=new A.a1("DEVICE",null,B.a7O,null,null,null,null,null,null,null,null)
 B.eX=new A.a1("Cancel",null,null,null,null,null,null,null,null,null,null)
-B.abF=new A.a1("Pick a creature as reference",null,B.cP,null,null,null,null,null,null,null,null)
-B.abG=new A.a1("SPECIES BEHAVIOR",null,B.lb,null,null,null,null,null,null,null,null)
-B.abH=new A.a1("Skip",null,null,null,null,null,null,null,null,null,null)
-B.abI=new A.a1("Dev Top-up (500 free credits)",null,null,null,null,null,null,null,null,null,null)
+B.abG=new A.a1("Pick a creature as reference",null,B.cP,null,null,null,null,null,null,null,null)
+B.abH=new A.a1("SPECIES BEHAVIOR",null,B.lb,null,null,null,null,null,null,null,null)
+B.abI=new A.a1("Skip",null,null,null,null,null,null,null,null,null,null)
+B.abJ=new A.a1("Dev Top-up (500 free credits)",null,null,null,null,null,null,null,null,null,null)
 B.p0=new A.a1("Back to Map",null,null,null,null,null,null,null,null,null,null)
-B.abO=new A.a1("Public",null,null,null,null,null,null,null,null,null,null)
-B.abP=new A.a1("Host a rabble",null,null,null,null,null,null,null,null,null,null)
-B.abS=new A.a1("Invited",null,B.l6,null,null,null,null,null,null,null,null)
-B.abT=new A.a1("Cancel Swarm?",null,null,null,null,null,null,null,null,null,null)
-B.abU=new A.a1("Share",null,null,null,null,null,null,null,null,null,null)
-B.abV=new A.a1("Got it",null,null,null,null,null,null,null,null,null,null)
-B.abW=new A.a1("Join rabble (2cr)",null,B.eW,null,null,null,null,null,null,null,null)
-B.abX=new A.a1("End Current Flight",null,B.Fo,null,null,null,null,null,null,null,null)
-B.abY=new A.a1("No creatures flying nearby",null,null,null,null,null,null,null,null,null,null)
-B.abZ=new A.a1("Enable Location",null,null,null,null,null,null,null,null,null,null)
-B.ac0=new A.a1("Invite to Rabble",null,null,null,null,null,null,null,null,null,null)
-B.ac2=new A.a1("Team Actions",null,B.Fm,null,null,null,null,null,null,null,null)
-B.ac3=new A.a1("No",null,null,null,null,null,null,null,null,null,null)
-B.ac4=new A.a1("Join Rabble",null,B.dB,null,null,null,null,null,null,null,null)
+B.abP=new A.a1("Public",null,null,null,null,null,null,null,null,null,null)
+B.abQ=new A.a1("Host a rabble",null,null,null,null,null,null,null,null,null,null)
+B.abT=new A.a1("Invited",null,B.l6,null,null,null,null,null,null,null,null)
+B.abU=new A.a1("Cancel Swarm?",null,null,null,null,null,null,null,null,null,null)
+B.abV=new A.a1("Share",null,null,null,null,null,null,null,null,null,null)
+B.abW=new A.a1("Got it",null,null,null,null,null,null,null,null,null,null)
+B.abX=new A.a1("Join rabble (2cr)",null,B.eW,null,null,null,null,null,null,null,null)
+B.abY=new A.a1("End Current Flight",null,B.Fo,null,null,null,null,null,null,null,null)
+B.abZ=new A.a1("No creatures flying nearby",null,null,null,null,null,null,null,null,null,null)
+B.ac_=new A.a1("Enable Location",null,null,null,null,null,null,null,null,null,null)
+B.ac1=new A.a1("Invite to Rabble",null,null,null,null,null,null,null,null,null,null)
+B.ac3=new A.a1("Team Actions",null,B.Fm,null,null,null,null,null,null,null,null)
+B.ac4=new A.a1("No",null,null,null,null,null,null,null,null,null,null)
 B.ac8=new A.a1("Go Back",null,null,null,null,null,null,null,null,null,null)
 B.ag5=new A.atY(0,"system")
 B.a_6=new A.f(0.05,0)
