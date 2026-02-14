@@ -2202,7 +2202,7 @@ pub async fn perch_handler(
     let ends_at = now + chrono::Duration::days(3650); // persistent
     let qr_token = generate_qr_token();
 
-    // Create swarm_events row — no workspace yet (created on first join)
+    // Create swarm_events row
     sqlx::query(
         "INSERT INTO swarm_events (swarm_id, creator_id, h3_cell, h3_resolution,
          center_lat, center_lng, location_name,
@@ -2233,6 +2233,14 @@ pub async fn perch_handler(
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Create workspace immediately so solo flights have agents for flight plans
+    if let Ok(ws_id) =
+        rabble_workspace::create_rabble_workspace(&state, &user_id, &perch_name, Some(swarm_id))
+            .await
+    {
+        eprintln!("[perch] Created workspace {} for swarm {}", ws_id, swarm_id);
+    }
 
     // Create flight record (pattern = 'perch' — grounded with idle animations)
     let flight_id = Uuid::new_v4();
@@ -5072,6 +5080,17 @@ pub async fn untether_handler(
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "No active tether".into()));
     }
+
+    // End any tracking flights created during tether
+    sqlx::query(
+        "UPDATE creature_flights SET ended_at = NOW(),
+         duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+         WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device'",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .ok();
 
     // Set presence back to active
     sqlx::query("UPDATE creatures SET presence = 'active', presence_changed_at = NOW() WHERE creature_id = $1")
