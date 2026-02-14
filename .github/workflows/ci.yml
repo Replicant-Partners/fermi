@@ -101,6 +101,29 @@ jobs:
       # without creating agents first, violating FK constraints added in migration 010.
       # Re-enable after updating tests to create agents before episodes.
 
+  agent-card-lint:
+    name: Agent Card Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      - name: Pin dependency versions
+        run: |
+          cargo update time --precise 0.3.36
+          cargo update home --precise 0.5.9
+      - name: Run agent card conformance tests
+        run: cargo test --lib -p fermi agent_card::tests -- --nocapture
+
   migration-lint:
     name: Migration Lint
     runs-on: ubuntu-latest

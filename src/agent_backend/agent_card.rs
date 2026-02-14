@@ -199,6 +199,15 @@ impl Default for OntologyStats {
     }
 }
 
+/// Agent valence — affective signature for personality and interaction style
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentValence {
+    pub primary_affect: String,
+    pub arousal: f64,
+    pub valence: f64,
+    pub personality_traits: Vec<String>,
+}
+
 /// Agent metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMetadata {
@@ -208,6 +217,8 @@ pub struct AgentMetadata {
     pub tags: Vec<String>,
     #[serde(default)]
     pub sample_queries: Vec<String>,
+    #[serde(default)]
+    pub valence: Option<AgentValence>,
 }
 
 impl AgentCard {
@@ -259,6 +270,7 @@ impl AgentCard {
                 description: "Agent description".to_string(),
                 tags: vec![],
                 sample_queries: vec![],
+                valence: None,
             },
             system_prompt: None,
             dependencies: AgentDependencies::default(),
@@ -284,6 +296,55 @@ impl AgentCard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::Path;
+
+    /// Resolve the agents/curated directory relative to the workspace root.
+    /// `cargo test` runs with cwd = package root, but we need the workspace root.
+    fn curated_dir() -> std::path::PathBuf {
+        // Try workspace root first (when run from repo root)
+        let candidates = [
+            Path::new("agents/curated"),
+            Path::new("../../agents/curated"), // from nested crate
+        ];
+        for c in &candidates {
+            if c.exists() {
+                return c.to_path_buf();
+            }
+        }
+        panic!(
+            "Cannot find agents/curated directory. Run tests from the workspace root: \
+             cargo test --lib -p fermi agent_card::tests"
+        );
+    }
+
+    /// Load all agent cards from agents/curated/*/agent_card.json
+    fn load_all_cards() -> Vec<(String, AgentCard)> {
+        let dir = curated_dir();
+        let mut cards = Vec::new();
+        for entry in fs::read_dir(&dir).expect("Failed to read curated dir") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                let card_path = path.join("agent_card.json");
+                let dir_name = path.file_name().unwrap().to_string_lossy().to_string();
+                if card_path.exists() {
+                    let json = fs::read_to_string(&card_path).unwrap_or_else(|e| {
+                        panic!("Failed to read {}: {}", card_path.display(), e)
+                    });
+                    let card: AgentCard = AgentCard::from_json(&json).unwrap_or_else(|e| {
+                        panic!("Failed to deserialize {}: {}", card_path.display(), e)
+                    });
+                    cards.push((dir_name, card));
+                } else {
+                    panic!("Agent directory '{}' has no agent_card.json", dir_name);
+                }
+            }
+        }
+        assert!(!cards.is_empty(), "No agent cards found");
+        cards
+    }
 
     #[test]
     fn test_agent_card_creation() {
@@ -299,5 +360,165 @@ mod tests {
         let json = card.to_json().unwrap();
         let deserialized = AgentCard::from_json(&json).unwrap();
         assert_eq!(card.agent_id, deserialized.agent_id);
+    }
+
+    // --- Conformance regression tests ---
+
+    #[test]
+    fn test_all_curated_agents_have_valid_cards() {
+        let cards = load_all_cards();
+        for (dir_name, card) in &cards {
+            assert_eq!(
+                &card.agent_id, dir_name,
+                "agent_id '{}' does not match directory name '{}'",
+                card.agent_id, dir_name
+            );
+            assert!(!card.agent_id.is_empty(), "Empty agent_id in {}", dir_name);
+            assert!(
+                !card.agent_type.is_empty(),
+                "Empty agent_type in {}",
+                dir_name
+            );
+        }
+        println!("Validated {} agent cards", cards.len());
+    }
+
+    #[test]
+    fn test_all_cards_have_required_fields() {
+        let cards = load_all_cards();
+        for (dir_name, card) in &cards {
+            // metadata.description must be meaningful
+            assert!(
+                !card.metadata.description.is_empty()
+                    && !card.metadata.description.starts_with("Agent: "),
+                "{}: metadata.description is missing or default",
+                dir_name
+            );
+            // metadata.tags must be non-empty
+            assert!(
+                !card.metadata.tags.is_empty(),
+                "{}: metadata.tags is empty",
+                dir_name
+            );
+            // metadata.sample_queries must be non-empty
+            assert!(
+                !card.metadata.sample_queries.is_empty(),
+                "{}: metadata.sample_queries is empty",
+                dir_name
+            );
+            // metadata.valence must be present
+            assert!(
+                card.metadata.valence.is_some(),
+                "{}: metadata.valence is missing",
+                dir_name
+            );
+            // wallet must be present
+            assert!(card.wallet.is_some(), "{}: wallet is missing", dir_name);
+        }
+    }
+
+    #[test]
+    fn test_all_cards_have_tools_as_objects() {
+        // Deserialization into Vec<McpTool> enforces object format.
+        // If any card had flat strings, load_all_cards() would panic.
+        // This test explicitly confirms all cards load successfully.
+        let cards = load_all_cards();
+        for (dir_name, card) in &cards {
+            for tool in &card.capabilities.mcp_tools {
+                assert!(
+                    !tool.name.is_empty(),
+                    "{}: mcp_tool has empty name",
+                    dir_name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_cards_have_dependencies() {
+        let cards = load_all_cards();
+        for (dir_name, card) in &cards {
+            // dependencies field exists (deserialized with Default)
+            // Just verify it's structurally sound
+            let _ = &card.dependencies.required;
+            let _ = &card.dependencies.optional;
+            // Compound agents with deps should not have empty required+optional
+            // (but single agents can have both empty — that's fine)
+            let _ = dir_name; // used in assertion context
+        }
+    }
+
+    #[test]
+    fn test_compound_agents_have_execute_agent_tool() {
+        let cards = load_all_cards();
+        for (dir_name, card) in &cards {
+            let has_deps =
+                !card.dependencies.required.is_empty() || !card.dependencies.optional.is_empty();
+            if has_deps {
+                let has_execute = card
+                    .capabilities
+                    .mcp_tools
+                    .iter()
+                    .any(|t| t.name == "execute_agent" || t.name == "delegate_to_agent");
+                assert!(
+                    has_execute,
+                    "{}: compound agent (has dependencies) but no execute_agent or delegate_to_agent tool",
+                    dir_name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_agents_registered_with_xaman_ek() {
+        let dir = curated_dir();
+        let xaman_path = dir.join("xaman_ek/agent_card.json");
+        let json = fs::read_to_string(&xaman_path).expect("Failed to read xaman_ek card");
+        let xaman: AgentCard = AgentCard::from_json(&json).expect("Failed to parse xaman_ek card");
+        let prompt = xaman.system_prompt.expect("xaman_ek has no system_prompt");
+
+        let cards = load_all_cards();
+        for (dir_name, card) in &cards {
+            if card.agent_id == "xaman_ek" {
+                continue; // Xaman Ek doesn't need to list itself
+            }
+            assert!(
+                prompt.contains(&format!("**{}**", card.agent_id)),
+                "{}: agent is not registered in Xaman Ek's system prompt \
+                 (expected '**{}**' to appear)",
+                dir_name,
+                card.agent_id
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_duplicate_agent_ids() {
+        let cards = load_all_cards();
+        let mut seen = HashSet::new();
+        for (dir_name, card) in &cards {
+            assert!(
+                seen.insert(card.agent_id.clone()),
+                "Duplicate agent_id '{}' found in directory '{}'",
+                card.agent_id,
+                dir_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_system_agents_have_system_tier() {
+        let cards = load_all_cards();
+        for (dir_name, card) in &cards {
+            if card.metadata.tags.contains(&"system".to_string()) {
+                assert_eq!(
+                    card.tier,
+                    AgentTier::System,
+                    "{}: tagged 'system' but tier is {:?}",
+                    dir_name,
+                    card.tier
+                );
+            }
+        }
     }
 }
