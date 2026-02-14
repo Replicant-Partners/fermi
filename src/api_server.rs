@@ -426,6 +426,10 @@ async fn run_migrations(db: &PgPool) {
         "migrations/063_sub_flocks.sql",
         "migrations/064_creature_animation_layers.sql",
         "migrations/065_creature_visibility.sql",
+        "migrations/066_wallet_balance_split.sql",
+        "migrations/067_flight_environment.sql",
+        "migrations/068_flight_data_source.sql",
+        "migrations/069_one_active_flight.sql",
     ];
 
     for file in &migration_files {
