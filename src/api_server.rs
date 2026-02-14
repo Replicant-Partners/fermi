@@ -436,6 +436,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/073_walk_in_budget.sql",
         "migrations/074_creature_tethers.sql",
         "migrations/075_fix_tx_type_constraint.sql",
+        "migrations/076_drop_tx_type_constraint.sql",
     ];
 
     for file in &migration_files {
