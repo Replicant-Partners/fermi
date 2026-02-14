@@ -207,7 +207,7 @@ pub async fn creature_flights_handler(
         "SELECT flight_id, creature_id, beacon_id, owner_id,
          h3_cell, center_lat, center_lng, location_name, country_code,
          flight_pattern, swarm_id, started_at, ended_at, duration_seconds,
-         path_samples
+         path_samples, environment
          FROM creature_flights
          WHERE creature_id = $1
          ORDER BY started_at DESC
@@ -239,6 +239,7 @@ pub async fn creature_flights_handler(
                         "ended_at": row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("ended_at").map(|t| t.to_rfc3339()),
                         "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
                         "path_samples": row.get::<Option<serde_json::Value>, _>("path_samples"),
+                        "environment": row.try_get::<Option<serde_json::Value>, _>("environment").unwrap_or(None),
                     })
                 })
                 .collect();
@@ -642,6 +643,7 @@ pub struct RecordFlightRequest {
     pub flight_pattern: Option<String>,
     pub beacon_id: Option<Uuid>,
     pub swarm_id: Option<Uuid>,
+    pub environment: Option<serde_json::Value>,
 }
 
 /// POST /api/flights — record a creature flight (3 credits)
@@ -703,8 +705,8 @@ pub async fn record_flight_handler(
     sqlx::query(
         "INSERT INTO creature_flights (flight_id, creature_id, beacon_id, owner_id,
          h3_cell, h3_resolution, center_lat, center_lng, location_name, country_code,
-         flight_pattern, swarm_id, visibility, started_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+         flight_pattern, swarm_id, visibility, started_at, environment)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
     )
     .bind(flight_id)
     .bind(req.creature_id)
@@ -720,6 +722,7 @@ pub async fn record_flight_handler(
     .bind(req.swarm_id)
     .bind(&creature_visibility)
     .bind(now)
+    .bind(&req.environment)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1155,6 +1158,214 @@ pub async fn end_flight_handler(
     })))
 }
 
+// ─── Flight planning (agentic) ──────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PlanFlightRequest {
+    pub creature_id: Uuid,
+    pub origin: serde_json::Value,      // { lat, lng, name? }
+    pub destination: serde_json::Value, // { lat, lng, name? }
+    pub prompt: Option<String>,         // optional creative route description
+}
+
+/// POST /api/flights/plan — generate an agentic flight plan via flight_coordinator
+pub async fn plan_flight_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<PlanFlightRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify creature ownership
+    let creature = sqlx::query(
+        "SELECT owner_id, species_group, specimen_name, scientific_name FROM creatures WHERE creature_id = $1",
+    )
+    .bind(req.creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    let species: String = creature.get("species_group");
+    let specimen_name: Option<String> = creature.try_get("specimen_name").unwrap_or(None);
+    let scientific_name: Option<String> = creature.try_get("scientific_name").unwrap_or(None);
+
+    // Charge gas
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        state.gas_fees.flight_plan,
+        "flight_plan",
+        &format!("Flight plan for creature {}", req.creature_id),
+        Some(&req.creature_id.to_string()),
+    )
+    .await?;
+
+    // Get user's personal workspace for agent dispatch
+    let ws_id = sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
+        .bind(&user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .and_then(|r| {
+            r.try_get::<Option<Uuid>, _>("personal_workspace_id")
+                .ok()
+                .flatten()
+        })
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "No personal workspace — mint a creature first".to_string(),
+        ))?;
+
+    // Build agent query with origin/destination and creature context
+    let origin_name = req
+        .origin
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("origin");
+    let dest_name = req
+        .destination
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("destination");
+    let origin_lat = req
+        .origin
+        .get("lat")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let origin_lng = req
+        .origin
+        .get("lng")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let dest_lat = req
+        .destination
+        .get("lat")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let dest_lng = req
+        .destination
+        .get("lng")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+
+    let creature_label =
+        specimen_name.unwrap_or_else(|| scientific_name.unwrap_or_else(|| species.clone()));
+
+    let query =
+        if let Some(ref prompt) = req.prompt {
+            format!(
+            "Plan a flight for {} (species: {}) from {} ({},{}) to {} ({},{}). Creative route: {}",
+            creature_label, species, origin_name, origin_lat, origin_lng,
+            dest_name, dest_lat, dest_lng, prompt,
+        )
+        } else {
+            format!(
+                "Plan a flight for {} (species: {}) from {} ({},{}) to {} ({},{}).",
+                creature_label,
+                species,
+                origin_name,
+                origin_lat,
+                origin_lng,
+                dest_name,
+                dest_lat,
+                dest_lng,
+            )
+        };
+
+    // Dispatch to flight_coordinator compound agent
+    let agent_result = rabble_workspace::dispatch_rabble_action(
+        &state,
+        ws_id,
+        "flight_coordinator",
+        "flight_plan",
+        &query,
+        &user_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Agent dispatch failed: {}", e),
+        )
+    })?;
+
+    // Try to extract structured JSON from agent response
+    let plan: serde_json::Value = extract_json_from_response(&agent_result).unwrap_or_else(|| {
+        // Fallback: return the raw text as narrative with minimal structure
+        json!({
+            "version": 1,
+            "creature_id": req.creature_id,
+            "species": species,
+            "origin": req.origin,
+            "destination": req.destination,
+            "narrative": agent_result,
+            "waypoints": [],
+            "segments": [],
+        })
+    });
+
+    Ok(Json(json!({
+        "plan": plan,
+        "gas_charged": state.gas_fees.flight_plan,
+    })))
+}
+
+/// Try to extract a JSON object from an agent response that may contain markdown fences
+fn extract_json_from_response(text: &str) -> Option<serde_json::Value> {
+    // Try direct parse first
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
+        if val.is_object() {
+            return Some(val);
+        }
+    }
+    // Try extracting from ```json ... ``` fences
+    if let Some(start) = text.find("```json") {
+        let after = &text[start + 7..];
+        if let Some(end) = after.find("```") {
+            let json_str = after[..end].trim();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                if val.is_object() {
+                    return Some(val);
+                }
+            }
+        }
+    }
+    // Try extracting from ``` ... ``` fences
+    if let Some(start) = text.find("```\n") {
+        let after = &text[start + 4..];
+        if let Some(end) = after.find("```") {
+            let json_str = after[..end].trim();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                if val.is_object() {
+                    return Some(val);
+                }
+            }
+        }
+    }
+    // Try finding first { ... last }
+    let first_brace = text.find('{')?;
+    let last_brace = text.rfind('}')?;
+    if last_brace > first_brace {
+        let json_str = &text[first_brace..=last_brace];
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if val.is_object() {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
 // ─── Flight telemetry ───────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -1216,7 +1427,7 @@ pub async fn export_flight_handler(
     let row = sqlx::query(
         "SELECT f.flight_id, f.creature_id, f.center_lat, f.center_lng, f.location_name,
                 f.flight_pattern, f.started_at, f.ended_at, f.duration_seconds, f.path_samples,
-                c.species_group, c.specimen_name
+                f.environment, c.species_group, c.specimen_name
          FROM creature_flights f
          JOIN creatures c ON f.creature_id = c.creature_id
          WHERE f.flight_id = $1 AND (f.owner_id = $2 OR f.visibility = 'public')",
@@ -1245,6 +1456,7 @@ pub async fn export_flight_handler(
         "ended_at": row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("ended_at").map(|t| t.to_rfc3339()),
         "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
         "path_samples": row.get::<Option<serde_json::Value>, _>("path_samples"),
+        "environment": row.try_get::<Option<serde_json::Value>, _>("environment").unwrap_or(None),
     });
 
     let body = serde_json::to_string_pretty(&export)

@@ -1347,6 +1347,10 @@ async fn main() {
             "/api/flights/import",
             post(handlers::creatures::import_flight_handler),
         )
+        .route(
+            "/api/flights/plan",
+            post(handlers::creatures::plan_flight_handler),
+        )
         // Creature minting
         .route(
             "/api/creatures/mint",

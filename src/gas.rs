@@ -39,6 +39,7 @@ pub struct GasFees {
     pub observation_ingest: i32,
     pub formation_activate: i32,
     pub creature_animate: i32,
+    pub flight_plan: i32,
     /// Platform infrastructure read fee — charged when users read agent-produced data
     /// (visualization, history, projections). Agents don't get paid (they already learned).
     pub platform_read: i32,
@@ -83,6 +84,7 @@ impl GasFees {
             observation_ingest: env_or("GAS_OBSERVATION_INGEST", 1),
             formation_activate: env_or("GAS_FORMATION_ACTIVATE", 3),
             creature_animate: env_or("GAS_CREATURE_ANIMATE", 10),
+            flight_plan: env_or("GAS_FLIGHT_PLAN", 5),
             platform_read: env_or("GAS_PLATFORM_READ", 1),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
@@ -134,6 +136,7 @@ impl Default for GasFees {
             observation_ingest: 1,
             formation_activate: 3,
             creature_animate: 10,
+            flight_plan: 5,
             platform_read: 1,
             crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
