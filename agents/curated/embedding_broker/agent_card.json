@@ -83,8 +83,28 @@
       "How does the marketplace work? What data am I sharing?",
       "What's a good price for my profile? I have 30 shopping episodes",
       "Show me my marketplace stats — how many queries and credits earned"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "commerce",
+      "arousal": 0.4,
+      "valence": 0.65,
+      "personality_traits": [
+        "transactional",
+        "fair",
+        "advisory"
+      ]
+    }
   },
-  "accepts": ["shopping-profile", "pricing-strategy"],
-  "produces": ["marketplace-listing", "match-results"]
+  "accepts": [
+    "shopping-profile",
+    "pricing-strategy"
+  ],
+  "produces": [
+    "marketplace-listing",
+    "match-results"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

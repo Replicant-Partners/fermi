@@ -26,13 +26,19 @@
                   "index": {
                     "type": "object",
                     "properties": {
-                      "byteStart": { "type": "integer" },
-                      "byteEnd": { "type": "integer" }
+                      "byteStart": {
+                        "type": "integer"
+                      },
+                      "byteEnd": {
+                        "type": "integer"
+                      }
                     }
                   },
                   "features": {
                     "type": "array",
-                    "items": { "type": "object" }
+                    "items": {
+                      "type": "object"
+                    }
                   }
                 }
               }
@@ -45,17 +51,25 @@
               "type": "object",
               "description": "Reply reference with root and parent AT URIs + CIDs",
               "properties": {
-                "root": { "type": "object" },
-                "parent": { "type": "object" }
+                "root": {
+                  "type": "object"
+                },
+                "parent": {
+                  "type": "object"
+                }
               }
             },
             "langs": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "BCP-47 language tags (e.g. ['en-US'])"
             }
           },
-          "required": ["text"]
+          "required": [
+            "text"
+          ]
         }
       },
       {
@@ -73,7 +87,10 @@
               "description": "Alt text description for accessibility"
             }
           },
-          "required": ["image_url", "alt_text"]
+          "required": [
+            "image_url",
+            "alt_text"
+          ]
         }
       },
       {
@@ -87,7 +104,9 @@
               "description": "Bluesky handle (e.g. 'alice.bsky.social')"
             }
           },
-          "required": ["handle"]
+          "required": [
+            "handle"
+          ]
         }
       },
       {
@@ -101,7 +120,9 @@
               "description": "AT URI of the post (at://did:plc:.../app.bsky.feed.post/...)"
             }
           },
-          "required": ["uri"]
+          "required": [
+            "uri"
+          ]
         }
       },
       {
@@ -116,15 +137,25 @@
               "items": {
                 "type": "object",
                 "properties": {
-                  "text": { "type": "string" },
-                  "embed": { "type": "object" },
-                  "facets": { "type": "array" }
+                  "text": {
+                    "type": "string"
+                  },
+                  "embed": {
+                    "type": "object"
+                  },
+                  "facets": {
+                    "type": "array"
+                  }
                 },
-                "required": ["text"]
+                "required": [
+                  "text"
+                ]
               }
             }
           },
-          "required": ["posts"]
+          "required": [
+            "posts"
+          ]
         }
       },
       {
@@ -138,7 +169,9 @@
               "description": "URL to fetch OG metadata from"
             }
           },
-          "required": ["url"]
+          "required": [
+            "url"
+          ]
         }
       },
       {
@@ -211,10 +244,29 @@
       "Quote-post this skeet with our commentary on the announcement",
       "Draft 3 post options for announcing our open-source release",
       "Post this image with alt text describing the architecture diagram"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "connection",
+      "arousal": 0.5,
+      "valence": 0.7,
+      "personality_traits": [
+        "concise",
+        "social",
+        "reliable"
+      ]
+    }
   },
-  "accepts": ["content", "image"],
-  "produces": ["published-post"],
+  "accepts": [
+    "content",
+    "image"
+  ],
+  "produces": [
+    "published-post"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
   "prompt_template": "Post to Bluesky: {{your post content}}",
   "requires_secrets": [
     {

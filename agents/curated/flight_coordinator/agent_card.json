@@ -35,6 +35,36 @@
     "temperature": 0.6,
     "provider": "anthropic"
   },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "ABW"
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-14T00:00:00Z",
+    "evolution_commits": 0
+  },
   "metadata": {
     "tags": [
       "rabble",
@@ -60,30 +90,22 @@
       ]
     },
     "creator": "system",
-    "created_at": "2026-02-14T00:00:00Z"
+    "created_at": "2026-02-14T00:00:00Z",
+    "created": "2026-02-14",
+    "author": "Fermi Team",
+    "description": "Compound flight planning agent. Generates waypoints with environment simulation, delegates to navigator for habitat narrative and naturalist for species behavior. Produces complete flight plans with terrain, weather, and segments."
   },
-  "performance": {
-    "forecasts_contributed": 0,
-    "avg_brier_impact": 0.0,
-    "avg_confidence": 0.0,
-    "accuracy_rate": 0.0
-  },
-  "usage": {
-    "total_executions": 0,
-    "successful_executions": 0,
-    "failed_executions": 0,
-    "total_tokens_used": 0,
-    "total_cost_usd": 0.0,
-    "avg_execution_time_ms": 0,
-    "last_30_days": {
-      "executions": 0,
-      "tokens": 0,
-      "cost_usd": 0.0
-    }
-  },
-  "wallet": {
-    "public_address": "",
-    "balance": 0.0,
-    "currency": "ABW"
+  "accepts": [
+    "query"
+  ],
+  "produces": [
+    "response"
+  ],
+  "dependencies": {
+    "required": [
+      "navigator",
+      "naturalist"
+    ],
+    "optional": []
   }
 }

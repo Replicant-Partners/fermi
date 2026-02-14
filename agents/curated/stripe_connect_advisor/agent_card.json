@@ -69,10 +69,30 @@
       "How should I implement webhook handlers for payment events in Rust/Axum?",
       "Compare prepaid credit pools vs post-paid metered billing for an agent marketplace",
       "Show me the API flow for: external app calls agent, caller gets billed, owner gets paid minus platform fee"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "expertise",
+      "arousal": 0.4,
+      "valence": 0.65,
+      "personality_traits": [
+        "technical",
+        "advisory",
+        "methodical"
+      ]
+    }
   },
-  "accepts": ["query", "connect-context"],
-  "produces": ["connect-analysis", "recommendations"],
+  "accepts": [
+    "query",
+    "connect-context"
+  ],
+  "produces": [
+    "connect-analysis",
+    "recommendations"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
   "requires_secrets": [
     {
       "name": "stripe_api_key",

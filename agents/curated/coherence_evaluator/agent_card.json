@@ -17,7 +17,9 @@
               "description": "The input query or parameters"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -31,7 +33,9 @@
               "description": "The input query or parameters"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     ],
@@ -42,7 +46,8 @@
       "principle-evaluation"
     ],
     "model": "deterministic",
-    "temperature": 0.0
+    "temperature": 0.0,
+    "provider": "anthropic"
   },
   "performance": {
     "forecasts_contributed": 0,
@@ -62,6 +67,12 @@
       "tokens": 0,
       "cost_usd": 0.0
     }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "ABW",
+    "budget": 100.0
   },
   "ontology_stats": {
     "entities": 0,
@@ -85,8 +96,28 @@
       "Evaluate the coherence of claims about AI replacing software engineers",
       "Check logical consistency of arguments for cryptocurrency regulation",
       "Assess whether recent climate policy proposals are internally consistent"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "objectivity",
+      "arousal": 0.3,
+      "valence": 0.6,
+      "personality_traits": [
+        "rigorous",
+        "impartial",
+        "systematic"
+      ]
+    }
   },
-  "accepts": ["content", "evaluation-criteria"],
-  "produces": ["coherence-scores", "principle-scores"]
+  "accepts": [
+    "content",
+    "evaluation-criteria"
+  ],
+  "produces": [
+    "coherence-scores",
+    "principle-scores"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

@@ -7,13 +7,56 @@
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [],
-    "skills": ["sensor-analysis", "temporal-pattern-detection", "anomaly-detection", "cross-domain-correlation"],
+    "skills": [
+      "sensor-analysis",
+      "temporal-pattern-detection",
+      "anomaly-detection",
+      "cross-domain-correlation"
+    ],
     "model": "claude-sonnet-4-5-20250929",
     "temperature": 0.3,
     "provider": "anthropic"
   },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "ABW",
+    "budget": 100.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-14T00:00:00Z",
+    "evolution_commits": 0
+  },
   "metadata": {
-    "tags": ["sensor", "sosa", "ssn", "telemetry", "iot", "research"],
+    "tags": [
+      "sensor",
+      "sosa",
+      "ssn",
+      "telemetry",
+      "iot",
+      "research"
+    ],
     "sample_queries": [
       "Analyze these greenhouse observations: soil moisture dropping from 0.8 to 0.3 over 6 hours while temperature rose from 20C to 35C",
       "Compare sensor coverage across 3 weather stations: which properties are missing?",
@@ -21,12 +64,34 @@
       "Cross-reference drone energy depletion with wind speed observations from the nearby weather station"
     ],
     "valence": {
-      "primary_affect": "analytical",
-      "arousal": 0.3,
+      "primary_affect": "vigilance",
+      "arousal": 0.4,
       "valence": 0.6,
-      "personality_traits": ["precise", "methodical", "domain-agnostic", "pattern-seeking"]
-    }
+      "personality_traits": [
+        "meticulous",
+        "pattern-seeking",
+        "cross-domain"
+      ]
+    },
+    "created": "2026-02-14",
+    "author": "Fermi Team",
+    "description": "Sensor data analyst for temporal pattern detection and anomaly identification. Cross-correlates multi-domain observations to surface hidden patterns."
   },
-  "accepts": ["sosa_observations", "sensor_metadata", "platform_description", "temporal_query"],
-  "produces": ["observation_analysis", "temporal_patterns", "anomaly_report", "actuation_recommendations", "cross_domain_insights"]
+  "accepts": [
+    "sosa_observations",
+    "sensor_metadata",
+    "platform_description",
+    "temporal_query"
+  ],
+  "produces": [
+    "observation_analysis",
+    "temporal_patterns",
+    "anomaly_report",
+    "actuation_recommendations",
+    "cross_domain_insights"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

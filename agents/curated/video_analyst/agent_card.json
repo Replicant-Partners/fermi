@@ -52,13 +52,39 @@
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Analyzes video transcripts from Reduct.video and creates highlight reels. Pulls transcripts, identifies meaningful clips via AI analysis, and assembles them into curated reels with title cards.",
-    "tags": ["creative", "video", "transcript", "reduct", "highlight-reel"],
+    "tags": [
+      "creative",
+      "video",
+      "transcript",
+      "reduct",
+      "highlight-reel"
+    ],
     "sample_queries": [
       "Create a highlight reel of the most insightful moments from this project",
       "Find all mentions of product strategy in the recordings and compile a reel",
       "Pull the key takeaways from each recording and create a summary reel with title cards"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "focus",
+      "arousal": 0.5,
+      "valence": 0.65,
+      "personality_traits": [
+        "observant",
+        "editorial",
+        "concise"
+      ]
+    }
   },
-  "accepts": ["video-url", "query"],
-  "produces": ["video-analysis", "timestamps"]
+  "accepts": [
+    "video-url",
+    "query"
+  ],
+  "produces": [
+    "video-analysis",
+    "timestamps"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

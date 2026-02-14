@@ -102,21 +102,54 @@
       "family": "Resolveridae",
       "genus": "Naturalis",
       "species": "species_resolver"
+    },
+    "valence": {
+      "primary_affect": "precision",
+      "arousal": 0.4,
+      "valence": 0.7,
+      "personality_traits": [
+        "taxonomic",
+        "authoritative",
+        "concise"
+      ]
     }
   },
-  "accepts": ["species-name", "common-name", "taxonomic-group", "gbif-key"],
-  "produces": ["species-card", "taxonomy", "visual-description", "reference-images"],
+  "accepts": [
+    "species-name",
+    "common-name",
+    "taxonomic-group",
+    "gbif-key"
+  ],
+  "produces": [
+    "species-card",
+    "taxonomy",
+    "visual-description",
+    "reference-images"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": [
+      "specimen_minter"
+    ]
+  },
   "prompt_template": "Look up {{species name or common name}} — give me the full species card with taxonomy, visual description, and habitat for minting",
   "valence": {
     "default_valence": 0.6,
-    "emotional_range": [0.3, 0.8],
+    "emotional_range": [
+      0.3,
+      0.8
+    ],
     "valence_triggers": {
-      "positive": ["species found", "rich taxonomy", "beautiful specimen"],
-      "negative": ["species not found", "ambiguous name", "no GBIF data"]
+      "positive": [
+        "species found",
+        "rich taxonomy",
+        "beautiful specimen"
+      ],
+      "negative": [
+        "species not found",
+        "ambiguous name",
+        "no GBIF data"
+      ]
     }
-  },
-  "dependencies": {
-    "required": [],
-    "optional": ["specimen_minter"]
   }
 }

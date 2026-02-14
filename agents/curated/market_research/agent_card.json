@@ -17,7 +17,9 @@
               "description": "The input query or parameters"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -31,7 +33,9 @@
               "description": "The input query or parameters"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -45,7 +49,9 @@
               "description": "The input query or parameters"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     ],
@@ -55,7 +61,8 @@
       "trend-forecasting"
     ],
     "model": "claude-3-haiku-20240307",
-    "temperature": 0.3
+    "temperature": 0.3,
+    "provider": "anthropic"
   },
   "performance": {
     "forecasts_contributed": 0,
@@ -92,14 +99,38 @@
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Researches market trends, competitive dynamics, and market sizing for forecasts",
-    "tags": ["market", "research", "competitive-analysis"],
+    "tags": [
+      "market",
+      "research",
+      "competitive-analysis"
+    ],
     "sample_queries": [
       "What are the key growth drivers for the electric vehicle market in 2026?",
       "Analyze the competitive landscape of cloud computing providers",
       "What is the total addressable market for AI agent platforms?"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "curiosity",
+      "arousal": 0.5,
+      "valence": 0.65,
+      "personality_traits": [
+        "thorough",
+        "competitive",
+        "data-oriented"
+      ]
+    }
   },
-  "accepts": ["query", "industry"],
-  "produces": ["market-analysis", "trends"],
+  "accepts": [
+    "query",
+    "industry"
+  ],
+  "produces": [
+    "market-analysis",
+    "trends"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
   "prompt_template": "Research {{topic or company}} in the {{industry or region}} market"
 }

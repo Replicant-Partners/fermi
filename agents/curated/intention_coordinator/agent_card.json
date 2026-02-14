@@ -13,7 +13,9 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "agent_id": { "type": "string" },
+            "agent_id": {
+              "type": "string"
+            },
             "action_type": {
               "type": "string",
               "enum": [
@@ -25,12 +27,25 @@
                 "idle"
               ]
             },
-            "tool": { "type": "string" },
-            "description": { "type": "string" },
-            "expected_output": { "type": "string" },
-            "ttl_seconds": { "type": "integer", "default": 300 }
+            "tool": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "expected_output": {
+              "type": "string"
+            },
+            "ttl_seconds": {
+              "type": "integer",
+              "default": 300
+            }
           },
-          "required": ["agent_id", "action_type", "description"]
+          "required": [
+            "agent_id",
+            "action_type",
+            "description"
+          ]
         }
       },
       {
@@ -56,13 +71,22 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "agent_id": { "type": "string" },
+            "agent_id": {
+              "type": "string"
+            },
             "status": {
               "type": "string",
-              "enum": ["completed", "cancelled", "superseded"]
+              "enum": [
+                "completed",
+                "cancelled",
+                "superseded"
+              ]
             }
           },
-          "required": ["agent_id", "status"]
+          "required": [
+            "agent_id",
+            "status"
+          ]
         }
       },
       {
@@ -71,10 +95,17 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "agent_a": { "type": "string" },
-            "agent_b": { "type": "string" }
+            "agent_a": {
+              "type": "string"
+            },
+            "agent_b": {
+              "type": "string"
+            }
           },
-          "required": ["agent_a", "agent_b"]
+          "required": [
+            "agent_a",
+            "agent_b"
+          ]
         }
       },
       {
@@ -85,14 +116,32 @@
           "properties": {
             "relation_type": {
               "type": "string",
-              "enum": ["IntentionAligns", "IntentionConflicts"]
+              "enum": [
+                "IntentionAligns",
+                "IntentionConflicts"
+              ]
             },
-            "agent_a": { "type": "string" },
-            "agent_b": { "type": "string" },
-            "strength": { "type": "number", "minimum": 0, "maximum": 1 },
-            "justification": { "type": "string" }
+            "agent_a": {
+              "type": "string"
+            },
+            "agent_b": {
+              "type": "string"
+            },
+            "strength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "justification": {
+              "type": "string"
+            }
           },
-          "required": ["relation_type", "agent_a", "agent_b", "strength"]
+          "required": [
+            "relation_type",
+            "agent_a",
+            "agent_b",
+            "strength"
+          ]
         }
       },
       {
@@ -119,12 +168,6 @@
     "model": "claude-haiku-4-5-20251001",
     "temperature": 0.1,
     "provider": "anthropic"
-  },
-  "flags": {
-    "system_exclusive": true,
-    "auto_grant_on_hire": true,
-    "no_fork": true,
-    "coordination_layer": "prospective"
   },
   "performance": {
     "forecasts_contributed": 0,
@@ -181,12 +224,34 @@
         "venue": "NeurIPS 2025 Workshop",
         "url": "https://arxiv.org/abs/2508.02912"
       }
-    ]
+    ],
+    "valence": {
+      "primary_affect": "foresight",
+      "arousal": 0.4,
+      "valence": 0.65,
+      "personality_traits": [
+        "anticipatory",
+        "conflict-aware",
+        "diplomatic"
+      ]
+    }
   },
+  "accepts": [
+    "workspace-state",
+    "agent-intentions"
+  ],
+  "produces": [
+    "conflict-report",
+    "coordination-signal"
+  ],
   "dependencies": {
     "required": [],
     "optional": []
   },
-  "accepts": ["workspace-state", "agent-intentions"],
-  "produces": ["conflict-report", "coordination-signal"]
+  "flags": {
+    "system_exclusive": true,
+    "auto_grant_on_hire": true,
+    "no_fork": true,
+    "coordination_layer": "prospective"
+  }
 }

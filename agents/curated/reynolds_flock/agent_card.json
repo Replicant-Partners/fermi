@@ -7,13 +7,54 @@
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [],
-    "skills": ["reynolds-flocking", "swarm-coordination", "formation-movement"],
+    "skills": [
+      "reynolds-flocking",
+      "swarm-coordination",
+      "formation-movement"
+    ],
     "model": "claude-haiku-4-5-20251001",
     "temperature": 0.3,
     "provider": "anthropic"
   },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "ABW",
+    "budget": 500.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-14T00:00:00Z",
+    "evolution_commits": 0
+  },
   "metadata": {
-    "tags": ["rabble", "flocking", "reynolds", "coordination", "system"],
+    "tags": [
+      "rabble",
+      "flocking",
+      "reynolds",
+      "coordination",
+      "system"
+    ],
     "sample_queries": [
       "Compute flocking update for 5 creatures in a rabble near Hyde Park",
       "3 butterflies at these positions, apply Reynolds rules with tight cohesion",
@@ -23,9 +64,28 @@
       "primary_affect": "precision",
       "arousal": 0.5,
       "valence": 0.7,
-      "personality_traits": ["methodical", "spatial", "narrative"]
-    }
+      "personality_traits": [
+        "methodical",
+        "spatial",
+        "narrative"
+      ]
+    },
+    "created": "2026-02-14",
+    "author": "Fermi Team",
+    "description": "Reynolds flocking coordinator. Computes separation/alignment/cohesion updates for creature positions in a swarm. Deterministic math with vivid naturalistic narration."
   },
-  "accepts": ["creature_positions", "flocking_params", "swarm_state"],
-  "produces": ["updated_positions", "flock_metrics", "movement_narration"]
+  "accepts": [
+    "creature_positions",
+    "flocking_params",
+    "swarm_state"
+  ],
+  "produces": [
+    "updated_positions",
+    "flock_metrics",
+    "movement_narration"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

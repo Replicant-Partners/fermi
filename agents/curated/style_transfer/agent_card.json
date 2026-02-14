@@ -7,7 +7,11 @@
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [],
-    "skills": ["style-transfer", "image-editing", "artistic-transformation"],
+    "skills": [
+      "style-transfer",
+      "image-editing",
+      "artistic-transformation"
+    ],
     "model": "claude-haiku-4-5-20251001",
     "temperature": 0.4,
     "provider": "anthropic"
@@ -47,13 +51,37 @@
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Transforms images while preserving the original artist's style using Nano Banana image editing. Takes a reference image and a prompt, produces a style-consistent transformation.",
-    "tags": ["creative", "image", "style-transfer", "art"],
+    "tags": [
+      "creative",
+      "image",
+      "style-transfer",
+      "art"
+    ],
     "sample_queries": [
       "Transform this landscape painting into a night scene while keeping the impressionist brushwork",
       "Create a winter version of this artwork preserving the artist's color palette",
       "Apply this reference painting's style to generate a portrait of a cat"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "artistry",
+      "arousal": 0.6,
+      "valence": 0.8,
+      "personality_traits": [
+        "aesthetic",
+        "transformative",
+        "faithful"
+      ]
+    }
   },
-  "accepts": ["image", "style-reference"],
-  "produces": ["image"]
+  "accepts": [
+    "image",
+    "style-reference"
+  ],
+  "produces": [
+    "image"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

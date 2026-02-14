@@ -98,15 +98,37 @@
       "Show me my shopping profile — what are my current brand preferences?",
       "List my profile on the marketplace at 5 credits per query",
       "I want to upgrade my home office setup — standing desk, monitor, keyboard"
+    ],
+    "valence": {
+      "primary_affect": "helpfulness",
+      "arousal": 0.5,
+      "valence": 0.75,
+      "personality_traits": [
+        "resourceful",
+        "patient",
+        "comparative"
+      ]
+    }
+  },
+  "accepts": [
+    "query",
+    "shopping-brief",
+    "budget"
+  ],
+  "produces": [
+    "product-comparison",
+    "shopping-profile",
+    "marketplace-listing"
+  ],
+  "dependencies": {
+    "required": [
+      "preference_modeler",
+      "deal_finder"
+    ],
+    "optional": [
+      "embedding_broker"
     ]
   },
-  "dependencies": {
-    "required": ["preference_modeler", "deal_finder"],
-    "optional": ["embedding_broker"]
-  },
-  "accepts": ["query", "shopping-brief", "budget"],
-  "produces": ["product-comparison", "shopping-profile", "marketplace-listing"],
-  "prompt_template": "I'm looking for {{product or service}} with a budget of {{budget}}. My preferences: {{any specific requirements or brand preferences}}",
   "workflow_template": {
     "description": "4-stage shopping intelligence pipeline",
     "mermaid": "sequenceDiagram\n    participant User\n    participant shopping_assistant\n    participant deal_finder\n    participant preference_modeler\n    participant embedding_broker\n    User->>shopping_assistant: Shopping query\n    Note over shopping_assistant: Intake\n    shopping_assistant->>deal_finder: Research request\n    deal_finder-->>shopping_assistant: Product comparison\n    Note over shopping_assistant: Learn\n    shopping_assistant->>preference_modeler: Update preferences\n    preference_modeler-->>shopping_assistant: Updated profile\n    Note over shopping_assistant: Marketplace\n    shopping_assistant->>embedding_broker: List/manage\n    embedding_broker-->>shopping_assistant: Listing status\n    shopping_assistant-->>User: Results + recommendations",
@@ -114,31 +136,54 @@
       {
         "name": "Intake",
         "agent": "shopping_assistant",
-        "accepts": ["query", "shopping-brief", "budget"],
-        "produces": ["structured-request"],
+        "accepts": [
+          "query",
+          "shopping-brief",
+          "budget"
+        ],
+        "produces": [
+          "structured-request"
+        ],
         "description": "Capture and structure the shopping request"
       },
       {
         "name": "Research",
         "agent": "deal_finder",
-        "accepts": ["structured-request", "product-category"],
-        "produces": ["product-comparison", "deal-report"],
+        "accepts": [
+          "structured-request",
+          "product-category"
+        ],
+        "produces": [
+          "product-comparison",
+          "deal-report"
+        ],
         "description": "Product intelligence via deal_finder"
       },
       {
         "name": "Learn",
         "agent": "preference_modeler",
-        "accepts": ["shopping-history", "interaction-signals"],
-        "produces": ["shopping-profile", "preference-scores"],
+        "accepts": [
+          "shopping-history",
+          "interaction-signals"
+        ],
+        "produces": [
+          "shopping-profile",
+          "preference-scores"
+        ],
         "description": "Extract preferences, recompute embeddings"
       },
       {
         "name": "Marketplace",
         "agent": "embedding_broker",
-        "accepts": ["shopping-profile"],
-        "produces": ["marketplace-listing"],
+        "accepts": [
+          "shopping-profile"
+        ],
+        "produces": [
+          "marketplace-listing"
+        ],
         "description": "Monetize preference data on marketplace"
       }
     ]
-  }
+  },
+  "prompt_template": "I'm looking for {{product or service}} with a budget of {{budget}}. My preferences: {{any specific requirements or brand preferences}}"
 }

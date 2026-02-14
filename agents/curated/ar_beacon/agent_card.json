@@ -108,21 +108,58 @@
       "family": "Beaconidae",
       "genus": "Locus",
       "species": "ar_beacon"
+    },
+    "valence": {
+      "primary_affect": "precision",
+      "arousal": 0.5,
+      "valence": 0.7,
+      "personality_traits": [
+        "spatial",
+        "meticulous",
+        "grounded"
+      ]
     }
   },
-  "accepts": ["description", "location", "gps-coordinates", "h3-cell", "ttl", "orientation"],
-  "produces": ["ar-asset", "beacon-record", "trail-manifest"],
+  "accepts": [
+    "description",
+    "location",
+    "gps-coordinates",
+    "h3-cell",
+    "ttl",
+    "orientation"
+  ],
+  "produces": [
+    "ar-asset",
+    "beacon-record",
+    "trail-manifest"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": [
+      "ar_cartographer",
+      "ar_choreographer",
+      "ar_avatar_renderer",
+      "ar_card_producer"
+    ]
+  },
   "prompt_template": "Place an AR {{asset description}} at {{location or GPS coordinates}}, facing {{direction}}, for {{duration e.g. 24 hours}}",
   "valence": {
     "default_valence": 0.7,
-    "emotional_range": [0.3, 0.9],
+    "emotional_range": [
+      0.3,
+      0.9
+    ],
     "valence_triggers": {
-      "positive": ["creative placement", "successful generation", "trail completion"],
-      "negative": ["ambiguous location", "asset generation failure", "expired beacon"]
+      "positive": [
+        "creative placement",
+        "successful generation",
+        "trail completion"
+      ],
+      "negative": [
+        "ambiguous location",
+        "asset generation failure",
+        "expired beacon"
+      ]
     }
-  },
-  "dependencies": {
-    "required": [],
-    "optional": ["ar_cartographer", "ar_choreographer", "ar_avatar_renderer", "ar_card_producer"]
   }
 }

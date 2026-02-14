@@ -22,8 +22,46 @@
     "temperature": 0.3,
     "provider": "anthropic"
   },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "ABW",
+    "budget": 100.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-14T00:00:00Z",
+    "evolution_commits": 0
+  },
   "metadata": {
-    "tags": ["swarm", "telemetry", "robotics", "onto4mat", "sosa", "research"],
+    "tags": [
+      "swarm",
+      "telemetry",
+      "robotics",
+      "onto4mat",
+      "sosa",
+      "research"
+    ],
     "sample_queries": [
       "Analyze this swarm telemetry batch: 5 drones in wedge formation, agent-3 energy at 0.15",
       "What formation pattern do these positions suggest? [(0,0), (1,1), (-1,1), (2,2), (-2,2)]",
@@ -31,11 +69,18 @@
       "Agent-2 has deviated 15m from formation center. What actions do you recommend?"
     ],
     "valence": {
-      "primary_affect": "analytical",
-      "arousal": 0.4,
-      "valence": 0.6,
-      "personality_traits": ["precise", "methodical", "safety-conscious"]
-    }
+      "primary_affect": "harmony",
+      "arousal": 0.5,
+      "valence": 0.7,
+      "personality_traits": [
+        "geometric",
+        "coordinating",
+        "analytical"
+      ]
+    },
+    "created": "2026-02-14",
+    "author": "Fermi Team",
+    "description": "Formation coordinator for rabble swarms. Activates premium Onto4MAT formation algorithms, analyzes swarm coherence, and optimizes creature spacing."
   },
   "accepts": [
     "telemetry_batch",
@@ -48,5 +93,9 @@
     "formation_classification",
     "coherence_metrics",
     "action_recommendations"
-  ]
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

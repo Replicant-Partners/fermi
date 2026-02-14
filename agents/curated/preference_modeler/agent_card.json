@@ -82,8 +82,28 @@
       "What are my current brand preferences based on recent shopping?",
       "Analyze my last 10 shopping conversations and extract preference signals",
       "Recompute my composite embedding — I've been shopping for kitchen gear lately"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "attentiveness",
+      "arousal": 0.4,
+      "valence": 0.7,
+      "personality_traits": [
+        "perceptive",
+        "analytical",
+        "adaptive"
+      ]
+    }
   },
-  "accepts": ["shopping-history", "interaction-signals"],
-  "produces": ["shopping-profile", "preference-scores"]
+  "accepts": [
+    "shopping-history",
+    "interaction-signals"
+  ],
+  "produces": [
+    "shopping-profile",
+    "preference-scores"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

@@ -65,8 +65,29 @@
       "Best wireless noise-cancelling headphones for working from home, $200-400 range",
       "Standing desk comparison: motorized, 60 inch, under $800",
       "Top rated mechanical keyboards for programming — Cherry MX Brown or similar"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "resourcefulness",
+      "arousal": 0.5,
+      "valence": 0.7,
+      "personality_traits": [
+        "analytical",
+        "thorough",
+        "frugal"
+      ]
+    }
   },
-  "accepts": ["query", "product-category", "budget"],
-  "produces": ["product-comparison", "deal-report"]
+  "accepts": [
+    "query",
+    "product-category",
+    "budget"
+  ],
+  "produces": [
+    "product-comparison",
+    "deal-report"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  }
 }

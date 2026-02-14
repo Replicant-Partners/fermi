@@ -27,12 +27,20 @@
             },
             "media_type": {
               "type": "string",
-              "enum": ["IMAGE", "VIDEO", "CAROUSEL", "REELS", "STORIES"],
+              "enum": [
+                "IMAGE",
+                "VIDEO",
+                "CAROUSEL",
+                "REELS",
+                "STORIES"
+              ],
               "description": "Type of media to create"
             },
             "children": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Array of child container IDs (for CAROUSEL type only)"
             },
             "publish_time": {
@@ -48,15 +56,23 @@
               "items": {
                 "type": "object",
                 "properties": {
-                  "username": { "type": "string" },
-                  "x": { "type": "number" },
-                  "y": { "type": "number" }
+                  "username": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
                 }
               },
               "description": "Tagged users with position coordinates (0.0-1.0)"
             }
           },
-          "required": ["media_type"]
+          "required": [
+            "media_type"
+          ]
         }
       },
       {
@@ -70,7 +86,9 @@
               "description": "The container ID returned by create_media_container"
             }
           },
-          "required": ["container_id"]
+          "required": [
+            "container_id"
+          ]
         }
       },
       {
@@ -84,7 +102,9 @@
               "description": "The container ID to publish"
             }
           },
-          "required": ["container_id"]
+          "required": [
+            "container_id"
+          ]
         }
       },
       {
@@ -99,11 +119,15 @@
             },
             "metrics": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Metrics to retrieve. Options: impressions, reach, likes, comments, saved, shares, plays, total_interactions"
             }
           },
-          "required": ["media_id"]
+          "required": [
+            "media_id"
+          ]
         }
       },
       {
@@ -197,10 +221,31 @@
       "Draft 3 caption options for this landscape photo with relevant hashtags",
       "How did my last 5 posts perform? Show me engagement metrics",
       "Schedule a reel for next Tuesday at 6pm EST with this video"
-    ]
+    ],
+    "valence": {
+      "primary_affect": "expression",
+      "arousal": 0.6,
+      "valence": 0.75,
+      "personality_traits": [
+        "visual",
+        "social",
+        "brand-aware"
+      ]
+    }
   },
-  "accepts": ["image", "caption", "hashtags"],
-  "produces": ["published-post", "media-id"],
+  "accepts": [
+    "image",
+    "caption",
+    "hashtags"
+  ],
+  "produces": [
+    "published-post",
+    "media-id"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
   "prompt_template": "Publish to Instagram — image: {{image description or URL}}, caption: {{caption text}}, hashtags: {{hashtags}}",
   "requires_secrets": [
     {

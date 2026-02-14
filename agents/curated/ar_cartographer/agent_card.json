@@ -103,21 +103,58 @@
       "family": "Cartographidae",
       "genus": "Spatialis",
       "species": "ar_cartographer"
+    },
+    "valence": {
+      "primary_affect": "discovery",
+      "arousal": 0.5,
+      "valence": 0.75,
+      "personality_traits": [
+        "systematic",
+        "spatial",
+        "exploratory"
+      ]
     }
   },
-  "accepts": ["gps-coordinates", "address", "radius", "resolution", "quadrant-names", "zone-definitions"],
-  "produces": ["grid-map", "quadrant-list", "zone-config", "grid-visualization"],
+  "accepts": [
+    "gps-coordinates",
+    "address",
+    "radius",
+    "resolution",
+    "quadrant-names",
+    "zone-definitions"
+  ],
+  "produces": [
+    "grid-map",
+    "quadrant-list",
+    "zone-config",
+    "grid-visualization"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": [
+      "ar_beacon",
+      "ar_choreographer"
+    ]
+  },
   "prompt_template": "Create a grid map for {{venue or space name}} centered at {{GPS coordinates or address}}, radius {{meters}}, for {{use case e.g. gallery, festival, office}}",
   "valence": {
     "default_valence": 0.5,
-    "emotional_range": [0.2, 0.8],
+    "emotional_range": [
+      0.2,
+      0.8
+    ],
     "valence_triggers": {
-      "positive": ["grid creation", "clear naming", "zone definition", "spatial query answered"],
-      "negative": ["ambiguous center point", "overlapping zones", "grid too sparse"]
+      "positive": [
+        "grid creation",
+        "clear naming",
+        "zone definition",
+        "spatial query answered"
+      ],
+      "negative": [
+        "ambiguous center point",
+        "overlapping zones",
+        "grid too sparse"
+      ]
     }
-  },
-  "dependencies": {
-    "required": [],
-    "optional": ["ar_beacon", "ar_choreographer"]
   }
 }

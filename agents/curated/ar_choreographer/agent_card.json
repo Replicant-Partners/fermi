@@ -105,22 +105,40 @@
       "family": "Choreographidae",
       "genus": "Motus",
       "species": "ar_choreographer"
+    },
+    "valence": {
+      "primary_affect": "flow",
+      "arousal": 0.7,
+      "valence": 0.85,
+      "personality_traits": [
+        "rhythmic",
+        "spatial",
+        "expressive"
+      ]
     }
   },
-  "accepts": ["beacon-id", "quadrant-name", "action", "motion-description", "keyframes", "trigger"],
-  "produces": ["choreography-record", "keyframe-sequence", "group-formation", "motion-preview"],
-  "prompt_template": "Animate {{beacon or asset name}} at {{quadrant or location}} — motion: {{describe the movement e.g. bounce, orbit, drift to gallery-north over 5 minutes}}",
-  "valence": {
-    "default_valence": 0.8,
-    "emotional_range": [0.4, 1.0],
-    "valence_triggers": {
-      "positive": ["smooth choreography", "multi-asset sync", "creative motion design"],
-      "negative": ["beacon not found", "conflicting choreographies", "excessive keyframes"]
-    }
-  },
+  "accepts": [
+    "beacon-id",
+    "quadrant-name",
+    "action",
+    "motion-description",
+    "keyframes",
+    "trigger"
+  ],
+  "produces": [
+    "choreography-record",
+    "keyframe-sequence",
+    "group-formation",
+    "motion-preview"
+  ],
   "dependencies": {
-    "required": ["ar_beacon"],
-    "optional": ["ar_cartographer", "ar_avatar_renderer"]
+    "required": [
+      "ar_beacon"
+    ],
+    "optional": [
+      "ar_cartographer",
+      "ar_avatar_renderer"
+    ]
   },
   "workflow_template": {
     "description": "AR choreography pipeline: from natural language to spatial animation",
@@ -129,24 +147,58 @@
       {
         "name": "Intake",
         "agent": "ar_choreographer",
-        "accepts": ["motion-description", "beacon-id"],
-        "produces": ["structured-motion-spec"],
+        "accepts": [
+          "motion-description",
+          "beacon-id"
+        ],
+        "produces": [
+          "structured-motion-spec"
+        ],
         "description": "Parse natural language into motion parameters"
       },
       {
         "name": "Resolution",
         "agent": "ar_cartographer",
-        "accepts": ["quadrant-names"],
-        "produces": ["h3-cells"],
+        "accepts": [
+          "quadrant-names"
+        ],
+        "produces": [
+          "h3-cells"
+        ],
         "description": "Resolve named quadrants to H3 cells for macro paths"
       },
       {
         "name": "Compilation",
         "agent": "ar_choreographer",
-        "accepts": ["structured-motion-spec", "h3-cells"],
-        "produces": ["choreography-record"],
+        "accepts": [
+          "structured-motion-spec",
+          "h3-cells"
+        ],
+        "produces": [
+          "choreography-record"
+        ],
         "description": "Generate keyframes, set triggers, write choreography"
       }
     ]
+  },
+  "prompt_template": "Animate {{beacon or asset name}} at {{quadrant or location}} — motion: {{describe the movement e.g. bounce, orbit, drift to gallery-north over 5 minutes}}",
+  "valence": {
+    "default_valence": 0.8,
+    "emotional_range": [
+      0.4,
+      1.0
+    ],
+    "valence_triggers": {
+      "positive": [
+        "smooth choreography",
+        "multi-asset sync",
+        "creative motion design"
+      ],
+      "negative": [
+        "beacon not found",
+        "conflicting choreographies",
+        "excessive keyframes"
+      ]
+    }
   }
 }

@@ -106,21 +106,56 @@
       "family": "Minteridae",
       "genus": "Specimen",
       "species": "specimen_minter"
+    },
+    "valence": {
+      "primary_affect": "creation",
+      "arousal": 0.7,
+      "valence": 0.9,
+      "personality_traits": [
+        "artistic",
+        "taxonomic",
+        "celebratory"
+      ]
     }
   },
-  "accepts": ["species-card", "species-name", "variation-preferences", "name"],
-  "produces": ["specimen-image", "flight-silhouette", "data-card", "creature-record"],
+  "accepts": [
+    "species-card",
+    "species-name",
+    "variation-preferences",
+    "name"
+  ],
+  "produces": [
+    "specimen-image",
+    "flight-silhouette",
+    "data-card",
+    "creature-record"
+  ],
+  "dependencies": {
+    "required": [
+      "species_resolver"
+    ],
+    "optional": [
+      "ar_beacon",
+      "ar_choreographer"
+    ]
+  },
   "prompt_template": "Mint a {{species common name}} — variation: {{any preferences, or 'surprise me'}}",
   "valence": {
     "default_valence": 0.8,
-    "emotional_range": [0.5, 1.0],
+    "emotional_range": [
+      0.5,
+      1.0
+    ],
     "valence_triggers": {
-      "positive": ["successful mint", "beautiful specimen", "unique variation"],
-      "negative": ["image generation failure", "species data missing"]
+      "positive": [
+        "successful mint",
+        "beautiful specimen",
+        "unique variation"
+      ],
+      "negative": [
+        "image generation failure",
+        "species data missing"
+      ]
     }
-  },
-  "dependencies": {
-    "required": ["species_resolver"],
-    "optional": ["ar_beacon", "ar_choreographer"]
   }
 }
