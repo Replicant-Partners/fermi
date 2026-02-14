@@ -39,7 +39,7 @@ pub async fn list_creatures_handler(
     let mut sql = String::from(
         "SELECT creature_id, owner_id, scientific_name, common_name, species_group,
          gbif_key, specimen_name, variation_notes, asset_path, flight_silhouette_path,
-         total_flights, unique_locations, status, animation_status, visibility, created_at,
+         total_flights, unique_locations, status, animation_status, visibility, presence, created_at,
          (SELECT location_name FROM creature_flights WHERE creature_id = creatures.creature_id
           ORDER BY started_at DESC LIMIT 1) as last_location_name
          FROM creatures WHERE 1=1",
@@ -109,6 +109,7 @@ pub async fn list_creatures_handler(
                         "status": row.try_get::<String, _>("status").unwrap_or_else(|_| "active".to_string()),
                         "animation_status": row.try_get::<Option<String>, _>("animation_status").unwrap_or(None),
                         "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".to_string()),
+                        "presence": row.try_get::<String, _>("presence").unwrap_or_else(|_| "active".to_string()),
                         "last_location_name": row.try_get::<Option<String>, _>("last_location_name").unwrap_or(None),
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                     })
@@ -142,7 +143,7 @@ pub async fn get_creature_handler(
          species_group, gbif_key, taxonomy, specimen_name, variation_notes,
          asset_path, flight_silhouette_path, generation_params,
          mint_number, total_flights, total_flight_time_seconds, unique_locations,
-         data_card, sosa_opt_in, animation_status, visibility, created_at, updated_at
+         data_card, sosa_opt_in, animation_status, visibility, presence, created_at, updated_at
          FROM creatures WHERE creature_id = $1",
     )
     .bind(id)
@@ -172,6 +173,7 @@ pub async fn get_creature_handler(
                 "sosa_opt_in": row.try_get::<bool, _>("sosa_opt_in").unwrap_or(false),
                 "animation_status": row.try_get::<Option<String>, _>("animation_status").unwrap_or(None),
                 "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".to_string()),
+                "presence": row.try_get::<String, _>("presence").unwrap_or_else(|_| "active".to_string()),
                 "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                 "updated_at": row.get::<chrono::DateTime<chrono::Utc>, _>("updated_at").to_rfc3339(),
             });
@@ -4935,6 +4937,16 @@ pub async fn tether_handler(
     let owner: String = creature.get("owner_id");
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    let presence: String = creature
+        .try_get("presence")
+        .unwrap_or_else(|_| "active".to_string());
+    if presence == "sleeping" || presence == "parked" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Creature is {} — wake it first", presence),
+        ));
     }
 
     // Check not already tethered
