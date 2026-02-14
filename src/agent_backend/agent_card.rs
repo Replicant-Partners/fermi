@@ -507,6 +507,86 @@ mod tests {
     }
 
     #[test]
+    fn test_all_migrations_registered() {
+        // Every .sql file in migrations/ must be listed in run_migrations() in api_server.rs
+        // This prevents the exact bug where migration files exist but aren't run on startup,
+        // causing 500 errors when handlers reference columns that don't exist yet.
+
+        // Intentionally unregistered migrations (deferred features not yet wired up)
+        let allowlist: HashSet<&str> = [
+            "048_fermi_notebooks.sql", // Deferred: notebook system
+            "049_akp_foundation.sql",  // Deferred: AKP protocol
+        ]
+        .into_iter()
+        .collect();
+
+        // Resolve migrations directory
+        let candidates = [Path::new("migrations"), Path::new("../../migrations")];
+        let migrations_dir = candidates
+            .iter()
+            .find(|c| c.exists())
+            .expect("Cannot find migrations/ directory");
+
+        // Resolve api_server.rs
+        let server_candidates = [
+            Path::new("src/api_server.rs"),
+            Path::new("../../src/api_server.rs"),
+        ];
+        let server_path = server_candidates
+            .iter()
+            .find(|c| c.exists())
+            .expect("Cannot find src/api_server.rs");
+
+        let server_source = fs::read_to_string(server_path).expect("Failed to read api_server.rs");
+
+        // Collect all .sql files (excluding rollbacks)
+        let mut missing = Vec::new();
+        for entry in fs::read_dir(migrations_dir).expect("Failed to read migrations dir") {
+            let entry = entry.unwrap();
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if !filename.ends_with(".sql") {
+                continue;
+            }
+            if filename.starts_with("rollback") {
+                continue;
+            }
+            if allowlist.contains(filename.as_str()) {
+                continue;
+            }
+            let expected = format!("migrations/{}", filename);
+            if !server_source.contains(&expected) {
+                missing.push(filename);
+            }
+        }
+
+        missing.sort();
+        assert!(
+            missing.is_empty(),
+            "Migration files exist on disk but are NOT registered in run_migrations():\n  {}\n\
+             Either add them to run_migrations() in api_server.rs, or add to the allowlist \
+             in this test if intentionally deferred.",
+            missing.join("\n  ")
+        );
+        println!(
+            "All {} migration files are registered (+ {} in allowlist)",
+            fs::read_dir(migrations_dir)
+                .unwrap()
+                .filter(|e| {
+                    let f = e
+                        .as_ref()
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .to_string();
+                    f.ends_with(".sql") && !f.starts_with("rollback")
+                })
+                .count()
+                - allowlist.len(),
+            allowlist.len()
+        );
+    }
+
+    #[test]
     fn test_system_agents_have_system_tier() {
         let cards = load_all_cards();
         for (dir_name, card) in &cards {
