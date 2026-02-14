@@ -434,6 +434,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/071_add_flight_plan_tx_type.sql",
         "migrations/072_perch_model.sql",
         "migrations/073_walk_in_budget.sql",
+        "migrations/074_creature_tethers.sql",
     ];
 
     for file in &migration_files {
@@ -1363,6 +1364,19 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/fly",
             post(handlers::creatures::fly_handler),
+        )
+        // Tethering — link creature to live GPS/sensor
+        .route(
+            "/api/creatures/:creature_id/tether",
+            post(handlers::creatures::tether_handler).delete(handlers::creatures::untether_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/telemetry",
+            post(handlers::creatures::push_telemetry_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/track",
+            get(handlers::creatures::get_track_handler),
         )
         // Creature minting
         .route(
