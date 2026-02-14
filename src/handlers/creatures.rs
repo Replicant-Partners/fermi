@@ -4999,11 +4999,12 @@ pub async fn tether_handler(
         return Err((StatusCode::CONFLICT, "Creature is already tethered".into()));
     }
 
-    // End any active flights (can't be in simulated flight while tethered)
+    // End non-perch active flights (fly, solo). Keep perch flight alive so
+    // creature retains its location after untether. Perch = "creature is here."
     sqlx::query(
         "UPDATE creature_flights SET ended_at = NOW(),
          duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-         WHERE creature_id = $1 AND ended_at IS NULL",
+         WHERE creature_id = $1 AND ended_at IS NULL AND flight_pattern != 'perch'",
     )
     .bind(creature_id)
     .execute(pool)
