@@ -83,6 +83,9 @@ jobs:
 
           echo "All migrations complete"
 
+      - name: Check all binaries compile
+        run: cargo check --bins --workspace
+
       - name: Run unit tests (non-DB crates)
         run: cargo test --lib --workspace --exclude agent-bestiary-memory
 
