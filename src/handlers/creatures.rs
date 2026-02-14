@@ -2059,6 +2059,8 @@ pub struct PerchRequest {
     pub walk_in_price: Option<i32>,
     /// Credits to pre-fund for invited/contact joins (default 0)
     pub invite_pool: Option<i32>,
+    /// Spending cap for free walk-ins (walk_in_price=0). Host pays per join. (default 0)
+    pub walk_in_budget: Option<i32>,
     /// Display name for the perch (default: "{creature_name}'s perch")
     pub name: Option<String>,
 }
@@ -2134,7 +2136,17 @@ pub async fn perch_handler(
     }
 
     let invite_pool = req.invite_pool.unwrap_or(0).max(0);
-    let total_cost = 2 + invite_pool; // 2cr base + invite pool pre-funding
+    let walk_in_budget = req.walk_in_budget.unwrap_or(0).max(0);
+
+    // Validate: free walk-in (price=0) requires a budget cap
+    if req.walk_in_price == Some(0) && walk_in_budget == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Free walk-in requires a spending cap (walk_in_budget > 0)".to_string(),
+        ));
+    }
+
+    let total_cost = 2 + invite_pool + walk_in_budget; // 2cr base + pools
 
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
         .await
@@ -2145,8 +2157,8 @@ pub async fn perch_handler(
         total_cost,
         "perch",
         &format!(
-            "Perch creature {} ({}cr + {}cr pool)",
-            creature_id, 2, invite_pool
+            "Perch creature {} ({}cr + {}cr invite + {}cr walk-in)",
+            creature_id, 2, invite_pool, walk_in_budget
         ),
         Some(&creature_id.to_string()),
     )
@@ -2181,9 +2193,11 @@ pub async fn perch_handler(
          name, starts_at, ends_at, status, created_at,
          funding_mode, invite_pool, invite_pool_remaining,
          qr_token, visibility, anchor_creature_id, walk_in_price,
+         walk_in_budget, walk_in_budget_remaining,
          participant_count, creature_count)
          VALUES ($1, $2, $3, 12, $4, $5, $6, $7, $8, $9, 'active', $8,
-                 'hosted', $10, $10, $11, $12, $13, $14, 1, 1)",
+                 'hosted', $10, $10, $11, $12, $13, $14,
+                 $15, $15, 1, 1)",
     )
     .bind(swarm_id)
     .bind(&user_id)
@@ -2199,6 +2213,7 @@ pub async fn perch_handler(
     .bind(visibility)
     .bind(creature_id)
     .bind(req.walk_in_price)
+    .bind(walk_in_budget)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -2247,6 +2262,7 @@ pub async fn perch_handler(
         "name": perch_name,
         "walk_in_price": req.walk_in_price,
         "invite_pool": invite_pool,
+        "walk_in_budget": walk_in_budget,
         "visibility": visibility,
         "total_cost": total_cost,
     })))
@@ -2498,7 +2514,7 @@ pub async fn join_swarm_handler(
     let swarm = sqlx::query(
         "SELECT status, h3_cell, center_lat, center_lng, creator_id, visibility,
          funding_mode, invite_pool_remaining, suggested_contribution,
-         walk_in_price, workspace_id, participant_count
+         walk_in_price, walk_in_budget_remaining, workspace_id, participant_count
          FROM swarm_events WHERE swarm_id = $1",
     )
     .bind(swarm_id)
@@ -2661,7 +2677,34 @@ pub async fn join_swarm_handler(
                         }
                     }
                 }
-                // price == 0: free walk-in, no charge
+                // price == 0: free walk-in — host pays from walk_in_budget
+                if price == 0 {
+                    let budget_left: i32 = swarm.try_get("walk_in_budget_remaining").unwrap_or(0);
+                    if budget_left > 0 {
+                        let host_wallet_for_free =
+                            get_or_create_wallet(&state.db, "user", &creator_id)
+                                .await
+                                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                        charge_gas(
+                            &state.db,
+                            host_wallet_for_free.wallet_id,
+                            1,
+                            "walk_in_fee",
+                            &format!(
+                                "Free walk-in fee (host-paid, invite overflow) for rabble {}",
+                                swarm_id
+                            ),
+                            Some(&swarm_id.to_string()),
+                        )
+                        .await?;
+                        sqlx::query("UPDATE swarm_events SET walk_in_budget_remaining = walk_in_budget_remaining - 1 WHERE swarm_id = $1 AND walk_in_budget_remaining > 0")
+                            .bind(swarm_id)
+                            .execute(pool)
+                            .await
+                            .ok();
+                    }
+                    // If budget exhausted, contact still gets in free (invite pool already exhausted is a soft limit for contacts)
+                }
             } else {
                 // walk_in_price is NULL (private) and pool exhausted
                 return Err((StatusCode::PAYMENT_REQUIRED, "Invite pool exhausted".into()));
@@ -2676,7 +2719,33 @@ pub async fn join_swarm_handler(
                     ));
                 }
                 Some(0) => {
-                    // Free open perch — no charge
+                    // Free walk-in — host pays from walk_in_budget
+                    let budget_left: i32 = swarm.try_get("walk_in_budget_remaining").unwrap_or(0);
+                    if budget_left <= 0 {
+                        return Err((
+                            StatusCode::PAYMENT_REQUIRED,
+                            "Host's walk-in budget is exhausted".into(),
+                        ));
+                    }
+                    // Charge host 1cr per free walk-in
+                    let host_wallet = get_or_create_wallet(&state.db, "user", &creator_id)
+                        .await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                    charge_gas(
+                        &state.db,
+                        host_wallet.wallet_id,
+                        1,
+                        "walk_in_fee",
+                        &format!("Free walk-in fee (host-paid) for rabble {}", swarm_id),
+                        Some(&swarm_id.to_string()),
+                    )
+                    .await?;
+                    // Decrement budget
+                    sqlx::query("UPDATE swarm_events SET walk_in_budget_remaining = walk_in_budget_remaining - 1 WHERE swarm_id = $1 AND walk_in_budget_remaining > 0")
+                        .bind(swarm_id)
+                        .execute(pool)
+                        .await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
                 }
                 Some(price) => {
                     let wallet = get_or_create_wallet(&state.db, "user", &user_id)

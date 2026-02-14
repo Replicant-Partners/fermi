@@ -433,6 +433,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/070_cleanup_stale_flights.sql",
         "migrations/071_add_flight_plan_tx_type.sql",
         "migrations/072_perch_model.sql",
+        "migrations/073_walk_in_budget.sql",
     ];
 
     for file in &migration_files {
