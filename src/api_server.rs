@@ -1335,6 +1335,18 @@ async fn main() {
             "/api/flights/:flight_id/end",
             put(handlers::creatures::end_flight_handler),
         )
+        .route(
+            "/api/flights/:flight_id/telemetry",
+            post(handlers::creatures::append_telemetry_handler),
+        )
+        .route(
+            "/api/flights/:flight_id/export",
+            get(handlers::creatures::export_flight_handler),
+        )
+        .route(
+            "/api/flights/import",
+            post(handlers::creatures::import_flight_handler),
+        )
         // Creature minting
         .route(
             "/api/creatures/mint",

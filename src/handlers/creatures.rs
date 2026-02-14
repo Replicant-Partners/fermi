@@ -1155,6 +1155,199 @@ pub async fn end_flight_handler(
     })))
 }
 
+// ─── Flight telemetry ───────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct AppendTelemetryRequest {
+    pub samples: Vec<serde_json::Value>,
+}
+
+/// POST /api/flights/:flight_id/telemetry — append path samples to an active flight
+pub async fn append_telemetry_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(flight_id): Path<Uuid>,
+    Json(req): Json<AppendTelemetryRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.samples.is_empty() {
+        return Ok(Json(json!({ "appended": 0 })));
+    }
+    if req.samples.len() > 100 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Maximum 100 samples per request".to_string(),
+        ));
+    }
+
+    let pool = state.memory_store.pool();
+    let samples_json = serde_json::Value::Array(req.samples.clone());
+
+    let result = sqlx::query(
+        "UPDATE creature_flights
+         SET path_samples = COALESCE(path_samples, '[]'::jsonb) || $1::jsonb
+         WHERE flight_id = $2 AND owner_id = $3 AND ended_at IS NULL",
+    )
+    .bind(&samples_json)
+    .bind(flight_id)
+    .bind(principal.user_id())
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Flight not found, already ended, or not owned by you".to_string(),
+        ));
+    }
+
+    Ok(Json(json!({ "appended": req.samples.len() })))
+}
+
+/// GET /api/flights/:flight_id/export — export a flight as downloadable JSON
+pub async fn export_flight_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(flight_id): Path<Uuid>,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    let pool = state.memory_store.pool();
+    let user_id = principal.user_id();
+
+    let row = sqlx::query(
+        "SELECT f.flight_id, f.creature_id, f.center_lat, f.center_lng, f.location_name,
+                f.flight_pattern, f.started_at, f.ended_at, f.duration_seconds, f.path_samples,
+                c.species_group, c.specimen_name
+         FROM creature_flights f
+         JOIN creatures c ON f.creature_id = c.creature_id
+         WHERE f.flight_id = $1 AND (f.owner_id = $2 OR f.visibility = 'public')",
+    )
+    .bind(flight_id)
+    .bind(&user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let row = row.ok_or((StatusCode::NOT_FOUND, "Flight not found".to_string()))?;
+
+    let export = json!({
+        "version": 1,
+        "flight_id": row.get::<Uuid, _>("flight_id").to_string(),
+        "creature_id": row.get::<Uuid, _>("creature_id").to_string(),
+        "species": row.get::<String, _>("species_group"),
+        "specimen_name": row.get::<Option<String>, _>("specimen_name"),
+        "location": {
+            "lat": row.get::<f64, _>("center_lat"),
+            "lng": row.get::<f64, _>("center_lng"),
+            "name": row.get::<Option<String>, _>("location_name"),
+        },
+        "flight_pattern": row.get::<String, _>("flight_pattern"),
+        "started_at": row.get::<chrono::DateTime<chrono::Utc>, _>("started_at").to_rfc3339(),
+        "ended_at": row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("ended_at").map(|t| t.to_rfc3339()),
+        "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
+        "path_samples": row.get::<Option<serde_json::Value>, _>("path_samples"),
+    });
+
+    let body = serde_json::to_string_pretty(&export)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let filename = format!("flight-{}.json", flight_id);
+    Ok(axum::response::Response::builder()
+        .header("Content-Type", "application/json")
+        .header(
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", filename),
+        )
+        .body(axum::body::Body::from(body))
+        .unwrap())
+}
+
+#[derive(Deserialize)]
+pub struct ImportFlightRequest {
+    pub creature_id: Uuid,
+    pub location: Option<serde_json::Value>,
+    pub flight_pattern: Option<String>,
+    pub duration_seconds: Option<i32>,
+    pub path_samples: serde_json::Value,
+}
+
+/// POST /api/flights/import — import a recorded flight (replay)
+pub async fn import_flight_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<ImportFlightRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pool = state.memory_store.pool();
+    let user_id = principal.user_id();
+
+    // Verify creature belongs to caller
+    let creature =
+        sqlx::query("SELECT creature_id FROM creatures WHERE creature_id = $1 AND owner_id = $2")
+            .bind(req.creature_id)
+            .bind(&user_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if creature.is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Creature not found or not owned by you".to_string(),
+        ));
+    }
+
+    let flight_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+
+    let lat = req
+        .location
+        .as_ref()
+        .and_then(|l| l.get("lat"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let lng = req
+        .location
+        .as_ref()
+        .and_then(|l| l.get("lng"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let loc_name = req
+        .location
+        .as_ref()
+        .and_then(|l| l.get("name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let pattern = req.flight_pattern.as_deref().unwrap_or("replay");
+
+    sqlx::query(
+        "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
+         center_lat, center_lng, location_name,
+         flight_pattern, started_at, ended_at, duration_seconds, path_samples)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+    )
+    .bind(flight_id)
+    .bind(req.creature_id)
+    .bind(&user_id)
+    .bind(lat)
+    .bind(lng)
+    .bind(&loc_name)
+    .bind(pattern)
+    .bind(now)
+    .bind(now) // ended_at = now (it's a completed replay)
+    .bind(req.duration_seconds)
+    .bind(&req.path_samples)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "flight_id": flight_id,
+        "creature_id": req.creature_id,
+        "flight_pattern": pattern,
+        "imported_at": now.to_rfc3339(),
+    })))
+}
+
 // ─── Creature minting ──────────────────────────────────────────────
 
 #[derive(Deserialize)]
