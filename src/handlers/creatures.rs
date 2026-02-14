@@ -2414,8 +2414,7 @@ pub async fn fly_handler(
 
     let mode = if creature_count > 1 { "rabble" } else { "solo" };
 
-    // If destination or prompt provided, dispatch flight_coordinator agent (pass-through cost)
-    let mut plan: Option<serde_json::Value> = None;
+    // If destination or prompt provided, dispatch flight_coordinator agent (async, non-blocking)
     if req.destination.is_some() || req.prompt.is_some() {
         // Find workspace: swarm's workspace or personal
         let ws_id = sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
@@ -2481,29 +2480,45 @@ pub async fn fly_handler(
             )
         };
 
-        match rabble_workspace::dispatch_rabble_action(
-            &state,
-            ws_id,
-            "flight_coordinator",
-            "fly",
-            &query,
-            &user_id,
-        )
-        .await
-        {
-            Ok(result) => {
-                plan = Some(extract_json_from_response(&result).unwrap_or_else(|| {
-                    json!({
-                        "narrative": result,
-                        "creature_id": creature_id,
-                    })
-                }));
+        // Dispatch flight_coordinator async — don't block the HTTP response.
+        // Flight plan arrives as a workspace message (same pattern as dream_narrator).
+        let spawn_state = state.clone();
+        let spawn_user = user_id.clone();
+        let spawn_creature = creature_id;
+        let spawn_flight = flight_id;
+        tokio::spawn(async move {
+            match rabble_workspace::dispatch_rabble_action(
+                &spawn_state,
+                ws_id,
+                "flight_coordinator",
+                "fly",
+                &query,
+                &spawn_user,
+            )
+            .await
+            {
+                Ok(result) => {
+                    // Store flight plan reference on the flight record
+                    let _ = sqlx::query(
+                        "UPDATE creature_flights SET metadata = jsonb_set(
+                            COALESCE(metadata, '{}'::jsonb), '{flight_plan}', $1::jsonb
+                        ) WHERE flight_id = $2",
+                    )
+                    .bind(serde_json::to_string(&result).unwrap_or_default())
+                    .bind(spawn_flight)
+                    .execute(spawn_state.memory_store.pool())
+                    .await
+                    .ok();
+                    eprintln!(
+                        "[fly] flight_coordinator completed for creature {}",
+                        spawn_creature
+                    );
+                }
+                Err(e) => {
+                    eprintln!("[fly] flight_coordinator dispatch failed: {}", e);
+                }
             }
-            Err(e) => {
-                eprintln!("[fly] flight_coordinator dispatch failed: {}", e);
-                // Non-fatal — fly still activates, just no agent plan
-            }
-        }
+        });
     }
 
     Ok(Json(json!({
@@ -2512,7 +2527,7 @@ pub async fn fly_handler(
         "creature_id": creature_id,
         "mode": mode,
         "pattern": "fly",
-        "plan": plan,
+        "plan": "generating",
         "gas_charged": 1,
     })))
 }

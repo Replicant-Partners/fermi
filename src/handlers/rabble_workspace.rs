@@ -29,6 +29,7 @@ const RABBLE_SYSTEM_AGENTS: &[&str] = &[
     "keeper",
     "rabble_anchor_manager",
     "rabble_lifecycle_coordinator",
+    "flight_coordinator",
 ];
 
 /// Create a workspace for a rabble (swarm) and hire the 4 system agents.
