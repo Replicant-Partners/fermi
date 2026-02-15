@@ -43,6 +43,11 @@ impl MemoryStore {
         Ok(Self { pool })
     }
 
+    /// Create a MemoryStore from an existing pool (shared pool pattern)
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     /// Get a reference to the connection pool
     pub fn pool(&self) -> &PgPool {
         &self.pool
