@@ -3089,6 +3089,27 @@ pub async fn enemy_sensor_handler(
                     })
                 });
 
+            // Record in creature log
+            let threat_level = parsed
+                .get("threat_level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let _ = record_transition(
+                pool,
+                creature_id,
+                "active",
+                None,
+                "enemy_scan",
+                "enemy_sensor",
+                0.0,
+                0.0,
+                "",
+                None,
+                None,
+                &json!({ "threat_level": threat_level, "cost": gas.enemy_sensor_check }),
+            )
+            .await;
+
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "species_group": species_group,
@@ -3175,6 +3196,22 @@ pub async fn enemy_sensor_handler(
 
             let parsed: serde_json::Value =
                 serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
+
+            let _ = record_transition(
+                pool,
+                creature_id,
+                "active",
+                None,
+                "enemy_strategy",
+                "enemy_sensor",
+                0.0,
+                0.0,
+                "",
+                None,
+                None,
+                &json!({ "cost": gas.enemy_sensor_check }),
+            )
+            .await;
 
             Ok(Json(json!({
                 "creature_id": creature_id,
@@ -3420,6 +3457,22 @@ pub async fn genome_profiler_handler(
                 .await;
             }
 
+            let _ = record_transition(
+                pool,
+                creature_id,
+                "active",
+                None,
+                "genome_profile",
+                "genome_profiler",
+                0.0,
+                0.0,
+                "",
+                None,
+                None,
+                &json!({ "cost": gas.genome_profiler_check }),
+            )
+            .await;
+
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.genome_profiler_check,
@@ -3597,6 +3650,27 @@ pub async fn prey_locator_handler(
             let parsed: serde_json::Value = serde_json::from_str(&result)
                 .unwrap_or_else(|_| json!({ "prey_targets": [], "hunting_summary": result }));
 
+            let target_count = parsed
+                .get("prey_targets")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let _ = record_transition(
+                pool,
+                creature_id,
+                "active",
+                None,
+                "prey_scan",
+                "prey_locator",
+                0.0,
+                0.0,
+                "",
+                None,
+                None,
+                &json!({ "targets_found": target_count, "cost": gas.prey_locator_scan }),
+            )
+            .await;
+
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.prey_locator_scan,
@@ -3697,6 +3771,12 @@ pub async fn prey_locator_handler(
                 |_| json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
             );
 
+            let _ = record_transition(
+                pool, creature_id, "active", None, "prey_stalk", "prey_locator",
+                0.0, 0.0, "", None, None,
+                &json!({ "target_creature_id": target_id.to_string(), "cost": gas.prey_locator_stalk }),
+            ).await;
+
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "target_creature_id": target_id,
@@ -3782,6 +3862,22 @@ pub async fn prey_locator_handler(
 
             let parsed: serde_json::Value =
                 serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
+
+            let _ = record_transition(
+                pool,
+                creature_id,
+                "active",
+                None,
+                "prey_strategy",
+                "prey_locator",
+                0.0,
+                0.0,
+                "",
+                None,
+                None,
+                &json!({ "cost": gas.prey_locator_scan }),
+            )
+            .await;
 
             Ok(Json(json!({
                 "creature_id": creature_id,
