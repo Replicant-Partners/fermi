@@ -1419,22 +1419,31 @@ async fn execute_scan_nearby_creatures(
     let pool = ctx.memory_store.pool();
 
     // 1. Look up target creature's current state + species info
+    //    LEFT JOIN creature_state — creature may not have a state row yet (pre-flight)
+    //    Fallback: use latest creature_flights for location
     let target = sqlx::query(
         "SELECT c.creature_id, c.scientific_name, c.common_name, c.species_group,
-                c.taxonomy, cs.h3_cell, cs.location_lat, cs.location_lng,
+                c.taxonomy,
+                COALESCE(cs.h3_cell, cf.h3_cell) AS h3_cell,
+                COALESCE(cs.location_lat, cf.center_lat) AS location_lat,
+                COALESCE(cs.location_lng, cf.center_lng) AS location_lng,
                 cs.rabble_id, cs.state
          FROM creatures c
-         JOIN creature_state cs ON cs.creature_id = c.creature_id
+         LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
+         LEFT JOIN LATERAL (
+             SELECT h3_cell, center_lat, center_lng FROM creature_flights
+             WHERE creature_id = c.creature_id ORDER BY started_at DESC LIMIT 1
+         ) cf ON true
          WHERE c.creature_id = $1",
     )
     .bind(creature_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| format!("DB error: {}", e))?
-    .ok_or("Creature not found or has no state")?;
+    .ok_or("Creature not found")?;
 
     let h3_cell: Option<String> = target.try_get("h3_cell").ok().flatten();
-    let h3_cell = h3_cell.ok_or("Creature has no H3 location — record a flight first")?;
+    let h3_cell = h3_cell.ok_or("Creature has no location — perch or fly first")?;
 
     let taxonomy: Option<serde_json::Value> = target.try_get("taxonomy").ok().flatten();
     let order = taxonomy
