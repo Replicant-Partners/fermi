@@ -2901,7 +2901,8 @@ pub async fn get_track_handler(
 
 #[derive(Deserialize)]
 pub struct EnemySensorRequest {
-    pub action: String, // "enable" | "disable" | "check"
+    pub action: String,         // "enable" | "disable" | "check" | "strategy"
+    pub prompt: Option<String>, // custom prompt for "strategy" action
 }
 
 /// POST /api/creatures/:creature_id/enemy-sensor
@@ -3095,10 +3096,96 @@ pub async fn enemy_sensor_handler(
                 "assessment": parsed,
             })))
         }
+        "strategy" => {
+            // Follow-up query using enemy_sensor agent with custom prompt (1cr)
+            let modules: Vec<String> = sqlx::query(
+                "SELECT active_modules FROM creature_conditions WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| {
+                r.try_get::<Option<Vec<String>>, _>("active_modules")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default();
+            if !modules.contains(&"enemy_sensor".to_string()) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Enemy sensor not enabled".to_string(),
+                ));
+            }
+
+            let custom_prompt = req
+                .prompt
+                .unwrap_or_else(|| "Analyze defensive strategies".to_string());
+            let scientific_name: String = creature
+                .try_get("scientific_name")
+                .unwrap_or_else(|_| "Unknown".to_string());
+            let taxonomy_val: Option<serde_json::Value> =
+                creature.try_get("taxonomy").ok().flatten();
+            let common_name: Option<String> = creature
+                .try_get::<Option<String>, _>("common_name")
+                .unwrap_or(None);
+            let order = taxonomy_val
+                .as_ref()
+                .and_then(|t| t.get("order"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let label = common_name.unwrap_or_else(|| scientific_name.clone());
+
+            let query = format!(
+                "DEFENSE STRATEGY for {} ({}, order {}): {}. \
+                 Use scan_nearby_creatures with creature_id \"{}\" for spatial context.",
+                label, scientific_name, order, custom_prompt, creature_id,
+            );
+
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.enemy_sensor_check,
+                "enemy_sensor_strategy",
+                &format!("Enemy sensor strategy for creature {}", creature_id),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            let workspace_id = find_creature_workspace(pool, creature_id).await?;
+
+            let result = rabble_workspace::dispatch_rabble_action(
+                &state,
+                workspace_id,
+                "enemy_sensor",
+                "defense_strategy",
+                &query,
+                &user_id,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Strategy failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value =
+                serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "cost": gas.enemy_sensor_check,
+                "strategy": parsed,
+            })))
+        }
         other => Err((
             StatusCode::BAD_REQUEST,
             format!(
-                "Unknown action '{}' — use 'enable', 'disable', or 'check'",
+                "Unknown action '{}' — use 'enable', 'disable', 'check', or 'strategy'",
                 other
             ),
         )),
