@@ -44,9 +44,7 @@ pub async fn record_flight_handler(
     // Verify creature ownership and presence
     let pool = state.memory_store.pool();
     let creature = sqlx::query(
-        "SELECT c.owner_id,
-                COALESCE(cc.presence, 'active') AS presence,
-                COALESCE(cc.visibility, 'public') AS visibility
+        "SELECT c.owner_id, COALESCE(cc.visibility, 'public') AS visibility
          FROM creatures c
          LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
          WHERE c.creature_id = $1",
@@ -66,17 +64,7 @@ pub async fn record_flight_handler(
         .try_get("visibility")
         .unwrap_or_else(|_| "public".to_string());
 
-    let presence: String = creature
-        .try_get("presence")
-        .unwrap_or_else(|_| "active".to_string());
-    if presence != "active" {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("Creature is {} — wake it first", presence),
-        ));
-    }
-
-    // Enforce: one active flight per creature (no teleportation!)
+    // Auto-end any existing flight — creature can always change state
     let active_flight = sqlx::query(
         "SELECT flight_id, location_name, swarm_id FROM creature_flights
          WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
@@ -1091,10 +1079,9 @@ pub async fn perch_handler(
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
 
-    // Validate creature ownership + presence
+    // Validate creature ownership
     let creature = sqlx::query(
         "SELECT c.owner_id, c.specimen_name, c.scientific_name, c.species_group,
-                COALESCE(cc.presence, 'active') AS presence,
                 COALESCE(cc.visibility, 'public') AS visibility
          FROM creatures c
          LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
@@ -1111,19 +1098,9 @@ pub async fn perch_handler(
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
 
-    let presence: String = creature
-        .try_get("presence")
-        .unwrap_or_else(|_| "active".to_string());
-    if presence != "active" {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("Creature is {} — wake it first", presence),
-        ));
-    }
-
-    // Enforce: one active flight per creature
+    // Auto-end any existing flight — creature can always change state
     let active_flight = sqlx::query(
-        "SELECT flight_id, location_name, swarm_id FROM creature_flights
+        "SELECT flight_id, swarm_id FROM creature_flights
          WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
     )
     .bind(creature_id)
@@ -1132,24 +1109,29 @@ pub async fn perch_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if let Some(row) = active_flight {
-        let loc: Option<String> = row.try_get("location_name").unwrap_or(None);
-        let in_swarm: bool = row
-            .try_get::<Option<Uuid>, _>("swarm_id")
-            .ok()
-            .flatten()
-            .is_some();
-        let msg = if in_swarm {
-            format!(
-                "Creature is already in a rabble{}",
-                loc.map(|l| format!(" at {}", l)).unwrap_or_default()
+        let old_fid: Uuid = row.get("flight_id");
+        let old_sid: Option<Uuid> = row.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+
+        sqlx::query(
+            "UPDATE creature_flights SET ended_at = NOW(),
+             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+             WHERE flight_id = $1",
+        )
+        .bind(old_fid)
+        .execute(pool)
+        .await
+        .ok();
+
+        if let Some(sid) = old_sid {
+            sqlx::query(
+                "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
+                 WHERE swarm_id = $1",
             )
-        } else {
-            format!(
-                "Creature is already flying{}",
-                loc.map(|l| format!(" at {}", l)).unwrap_or_default()
-            )
-        };
-        return Err((StatusCode::CONFLICT, msg));
+            .bind(sid)
+            .execute(pool)
+            .await
+            .ok();
+        }
     }
 
     let invite_pool = req.invite_pool.unwrap_or(0).max(0);
@@ -1338,11 +1320,8 @@ pub async fn fly_handler(
 
     // Validate creature ownership
     let creature = sqlx::query(
-        "SELECT c.owner_id, c.species_group, c.specimen_name, c.scientific_name,
-                COALESCE(cc.presence, 'active') AS presence
-         FROM creatures c
-         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
-         WHERE c.creature_id = $1",
+        "SELECT owner_id, species_group, specimen_name, scientific_name
+         FROM creatures WHERE creature_id = $1",
     )
     .bind(creature_id)
     .fetch_optional(pool)
@@ -1353,16 +1332,6 @@ pub async fn fly_handler(
     let owner: String = creature.get("owner_id");
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
-    }
-
-    let presence: String = creature
-        .try_get("presence")
-        .unwrap_or_else(|_| "active".to_string());
-    if presence != "active" {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("Creature is {} — wake it first", presence),
-        ));
     }
 
     // Check for active flight — auto-end if needed, creature can always change state
@@ -1693,13 +1662,10 @@ pub async fn join_swarm_handler(
 
     let funding_mode: String = swarm.try_get("funding_mode").unwrap_or("hosted".into());
 
-    // Verify creature ownership and presence
+    // Verify creature ownership
     let creature = sqlx::query(
-        "SELECT c.owner_id, c.specimen_name, c.scientific_name AS species_name, c.species_group,
-                COALESCE(cc.presence, 'active') AS presence
-         FROM creatures c
-         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
-         WHERE c.creature_id = $1",
+        "SELECT owner_id, specimen_name, scientific_name AS species_name, species_group
+         FROM creatures WHERE creature_id = $1",
     )
     .bind(req.creature_id)
     .fetch_optional(pool)
@@ -1712,23 +1678,13 @@ pub async fn join_swarm_handler(
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
 
-    let presence: String = creature
-        .try_get("presence")
-        .unwrap_or_else(|_| "active".to_string());
-    if presence != "active" {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("Creature is {} — wake it first", presence),
-        ));
-    }
-
     let creature_name: Option<String> = creature.try_get("specimen_name").ok();
     let species_name: Option<String> = creature.try_get("species_name").ok();
     let species_group: Option<String> = creature.try_get("species_group").ok();
 
-    // Enforce: one active flight per creature (no being in two places at once)
+    // Auto-end any existing flight — creature can always change state
     let active_flight = sqlx::query(
-        "SELECT flight_id, swarm_id, location_name FROM creature_flights
+        "SELECT flight_id, swarm_id FROM creature_flights
          WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
     )
     .bind(req.creature_id)
@@ -1737,17 +1693,38 @@ pub async fn join_swarm_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if let Some(row) = active_flight {
-        let existing_swarm: Option<Uuid> =
-            row.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
-        if existing_swarm == Some(swarm_id) {
-            return Err((StatusCode::CONFLICT, "Already in this rabble".to_string()));
+        let old_fid: Uuid = row.get("flight_id");
+        let old_sid: Option<Uuid> = row.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+
+        // Already in this rabble — idempotent, just return success
+        if old_sid == Some(swarm_id) {
+            return Ok(Json(json!({
+                "message": "Already in this rabble",
+                "swarm_id": swarm_id,
+                "creature_id": req.creature_id,
+            })));
         }
-        let msg = if existing_swarm.is_some() {
-            "Creature is in another rabble — leave first"
-        } else {
-            "Creature is on a flight — end it first"
-        };
-        return Err((StatusCode::CONFLICT, msg.to_string()));
+
+        sqlx::query(
+            "UPDATE creature_flights SET ended_at = NOW(),
+             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+             WHERE flight_id = $1",
+        )
+        .bind(old_fid)
+        .execute(pool)
+        .await
+        .ok();
+
+        if let Some(sid) = old_sid {
+            sqlx::query(
+                "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
+                 WHERE swarm_id = $1",
+            )
+            .bind(sid)
+            .execute(pool)
+            .await
+            .ok();
+        }
     }
 
     // Two-doors access model
@@ -2302,32 +2279,17 @@ pub async fn tether_handler(
     let pool = state.memory_store.pool();
 
     // Verify ownership
-    let creature = sqlx::query(
-        "SELECT c.owner_id, c.specimen_name,
-                COALESCE(cc.presence, 'active') AS presence
-         FROM creatures c
-         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
-         WHERE c.creature_id = $1",
-    )
-    .bind(creature_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+    let creature =
+        sqlx::query("SELECT owner_id, specimen_name FROM creatures WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
 
     let owner: String = creature.get("owner_id");
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
-    }
-
-    let presence: String = creature
-        .try_get("presence")
-        .unwrap_or_else(|_| "active".to_string());
-    if presence == "sleeping" || presence == "parked" {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("Creature is {} — wake it first", presence),
-        ));
     }
 
     // Check not already tethered

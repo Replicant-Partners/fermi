@@ -930,33 +930,18 @@ pub async fn join_batch_handler(
 
     // Verify all creatures belong to the user and are active
     for cid in &req.creature_ids {
-        let creature = sqlx::query(
-            "SELECT c.owner_id, COALESCE(cc.presence, 'active') AS presence
-             FROM creatures c
-             LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
-             WHERE c.creature_id = $1",
-        )
-        .bind(cid)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, format!("Creature {} not found", cid)))?;
+        let creature = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
+            .bind(cid)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or((StatusCode::NOT_FOUND, format!("Creature {} not found", cid)))?;
 
         let owner: String = creature.get("owner_id");
         if owner != user_id {
             return Err((
                 StatusCode::FORBIDDEN,
                 format!("Creature {} is not yours", cid),
-            ));
-        }
-
-        let presence: String = creature
-            .try_get("presence")
-            .unwrap_or_else(|_| "active".to_string());
-        if presence != "active" {
-            return Err((
-                StatusCode::CONFLICT,
-                format!("Creature {} is {}", cid, presence),
             ));
         }
 

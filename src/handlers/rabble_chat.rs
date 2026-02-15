@@ -94,28 +94,6 @@ pub async fn post_rabble_message(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Check creature presence if they have one in this rabble
-    if let Some(ref row) = has_creature {
-        let cid = row.try_get::<uuid::Uuid, _>("creature_id").ok();
-        if let Some(creature_uuid) = cid {
-            let presence: String =
-                sqlx::query("SELECT COALESCE(cc.presence, 'active') AS presence FROM creature_conditions cc WHERE cc.creature_id = $1")
-                    .bind(creature_uuid)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|r| r.try_get("presence").ok())
-                    .unwrap_or_else(|| "active".to_string());
-            if presence != "active" {
-                return Err((
-                    StatusCode::CONFLICT,
-                    format!("Your creature is {} — wake it first", presence),
-                ));
-            }
-        }
-    }
-
     // Use the creature from the flight, or the one specified in the request
     let (creature_id, creature_name, species_name, species_group) = if let Some(row) = &has_creature
     {
