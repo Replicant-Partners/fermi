@@ -1283,12 +1283,29 @@ pub async fn perch_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Create workspace immediately so solo flights have agents for flight plans
-    if let Ok(ws_id) =
-        rabble_workspace::create_rabble_workspace(&state, &user_id, &perch_name, Some(swarm_id))
-            .await
+    // Create workspace in background — don't block the HTTP response
     {
-        eprintln!("[perch] Created workspace {} for swarm {}", ws_id, swarm_id);
+        let state_ws = state.clone();
+        let user_ws = user_id.clone();
+        let name_ws = perch_name.clone();
+        tokio::spawn(async move {
+            match rabble_workspace::create_rabble_workspace(
+                &state_ws,
+                &user_ws,
+                &name_ws,
+                Some(swarm_id),
+            )
+            .await
+            {
+                Ok(ws_id) => {
+                    eprintln!("[perch] Created workspace {} for swarm {}", ws_id, swarm_id)
+                }
+                Err((_status, msg)) => eprintln!(
+                    "[perch] Workspace creation failed for swarm {}: {}",
+                    swarm_id, msg
+                ),
+            }
+        });
     }
 
     // Create flight record (pattern = 'perch' — grounded with idle animations)
