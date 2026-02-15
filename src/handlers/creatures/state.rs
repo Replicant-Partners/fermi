@@ -1404,17 +1404,38 @@ pub async fn perch_handler(
         "total_cost": total_cost,
     });
 
-    // Defer stats + versioned state to background — don't block HTTP response
+    // Record versioned state inline (must see swarm_events row on same connection)
+    if let Err(e) = record_transition(
+        pool,
+        creature_id,
+        "perch_solo",
+        None,
+        "perch",
+        &user_id,
+        req.center_lat,
+        req.center_lng,
+        &h3_cell,
+        Some(swarm_id),
+        None,
+        &json!({
+            "flight_id": flight_id,
+            "swarm_id": swarm_id,
+            "perch_name": perch_name,
+            "walk_in_price": req.walk_in_price,
+        }),
+    )
+    .await
+    {
+        eprintln!(
+            "[perch] record_transition failed for creature {}: {}",
+            creature_id, e
+        );
+    }
+
+    // Defer non-critical stats to background
     {
         let pool_bg = state.db.clone();
-        let uid = user_id.clone();
-        let h3 = h3_cell.clone();
-        let lat = req.center_lat;
-        let lng = req.center_lng;
-        let pname = perch_name.clone();
-        let wip = req.walk_in_price;
         tokio::spawn(async move {
-            // Update creature stats
             sqlx::query(
                 "UPDATE creatures SET total_flights = total_flights + 1, updated_at = NOW()
                  WHERE creature_id = $1",
@@ -1423,28 +1444,6 @@ pub async fn perch_handler(
             .execute(&pool_bg)
             .await
             .ok();
-
-            // Dual-write: record perch transition (new versioned model)
-            let _ = record_transition(
-                &pool_bg,
-                creature_id,
-                "perch_solo",
-                None,
-                "perch",
-                &uid,
-                lat,
-                lng,
-                &h3,
-                Some(swarm_id),
-                None,
-                &json!({
-                    "flight_id": flight_id,
-                    "swarm_id": swarm_id,
-                    "perch_name": pname,
-                    "walk_in_price": wip,
-                }),
-            )
-            .await;
         });
     }
 
