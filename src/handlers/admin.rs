@@ -710,10 +710,12 @@ pub async fn admin_list_creatures_handler(
         (
             "SELECT c.creature_id, c.owner_id, c.specimen_name, c.scientific_name,
              c.species_group, c.status, c.flagged, c.flag_reason, c.total_flights,
-             c.created_at, c.presence, u.display_name as owner_name,
+             c.created_at, COALESCE(cc.presence, 'active') AS presence,
+             u.display_name as owner_name,
              af.flight_pattern as active_flight_pattern, af.swarm_id as active_swarm_id
              FROM creatures c
              LEFT JOIN users u ON u.user_id = c.owner_id
+             LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
              LEFT JOIN LATERAL (
                SELECT flight_pattern, swarm_id FROM creature_flights
                WHERE creature_id = c.creature_id AND ended_at IS NULL
@@ -729,10 +731,12 @@ pub async fn admin_list_creatures_handler(
         (
             "SELECT c.creature_id, c.owner_id, c.specimen_name, c.scientific_name,
              c.species_group, c.status, c.flagged, c.flag_reason, c.total_flights,
-             c.created_at, c.presence, u.display_name as owner_name,
+             c.created_at, COALESCE(cc.presence, 'active') AS presence,
+             u.display_name as owner_name,
              af.flight_pattern as active_flight_pattern, af.swarm_id as active_swarm_id
              FROM creatures c
              LEFT JOIN users u ON u.user_id = c.owner_id
+             LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
              LEFT JOIN LATERAL (
                SELECT flight_pattern, swarm_id FROM creature_flights
                WHERE creature_id = c.creature_id AND ended_at IS NULL

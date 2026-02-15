@@ -11,7 +11,6 @@ pub mod auth;
 pub mod beacons;
 pub mod billing;
 pub mod consolidation;
-pub mod creature_state;
 pub mod creatures;
 pub mod eval;
 pub mod execution;

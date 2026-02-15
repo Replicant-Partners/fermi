@@ -99,7 +99,7 @@ pub async fn post_rabble_message(
         let cid = row.try_get::<uuid::Uuid, _>("creature_id").ok();
         if let Some(creature_uuid) = cid {
             let presence: String =
-                sqlx::query("SELECT presence FROM creatures WHERE creature_id = $1")
+                sqlx::query("SELECT COALESCE(cc.presence, 'active') AS presence FROM creature_conditions cc WHERE cc.creature_id = $1")
                     .bind(creature_uuid)
                     .fetch_optional(&state.db)
                     .await
