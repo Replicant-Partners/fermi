@@ -79,30 +79,31 @@ pub async fn post_rabble_message(
         return Err((StatusCode::CONFLICT, format!("Rabble is {}", status)));
     }
 
-    // Verify sender has a creature in this rabble (via creature_flights, current or past)
-    let has_creature = sqlx::query(
-        "SELECT cf.creature_id, c.specimen_name, c.scientific_name AS species_name, c.species_group
-         FROM creature_flights cf
-         JOIN creatures c ON c.creature_id = cf.creature_id
-         WHERE cf.swarm_id = $1 AND c.owner_id = $2
-         ORDER BY cf.started_at DESC
-         LIMIT 1",
-    )
-    .bind(swarm_id)
-    .bind(&user_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Use the creature from the flight, or the one specified in the request
-    let (creature_id, creature_name, species_name, species_group) = if let Some(row) = &has_creature
+    // Resolve which creature is speaking.
+    // If client specifies creature_id, use that (validated); else auto-detect from flights.
+    let (creature_id, creature_name, species_name, species_group) = if let Some(cid) =
+        body.creature_id
     {
+        // Client specified a creature — verify ownership + membership in this rabble
+        let row = sqlx::query(
+            "SELECT c.specimen_name, c.scientific_name AS species_name, c.species_group
+             FROM creature_flights cf
+             JOIN creatures c ON c.creature_id = cf.creature_id
+             WHERE cf.swarm_id = $1 AND cf.creature_id = $2 AND c.owner_id = $3
+             LIMIT 1",
+        )
+        .bind(swarm_id)
+        .bind(cid)
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((
+            StatusCode::FORBIDDEN,
+            "That creature is not yours or not in this rabble".into(),
+        ))?;
         (
-            Some(
-                row.try_get::<uuid::Uuid, _>("creature_id")
-                    .ok()
-                    .unwrap_or_default(),
-            ),
+            Some(cid),
             row.try_get::<Option<String>, _>("specimen_name")
                 .ok()
                 .flatten(),
@@ -114,22 +115,56 @@ pub async fn post_rabble_message(
                 .flatten(),
         )
     } else {
-        // Allow swarm creator to chat without a creature in flight
-        let is_creator =
-            sqlx::query("SELECT 1 FROM swarm_events WHERE swarm_id = $1 AND creator_id = $2")
-                .bind(swarm_id)
-                .bind(&user_id)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        // Auto-detect: most recently joined creature in this rabble
+        let has_creature = sqlx::query(
+            "SELECT cf.creature_id, c.specimen_name, c.scientific_name AS species_name, c.species_group
+             FROM creature_flights cf
+             JOIN creatures c ON c.creature_id = cf.creature_id
+             WHERE cf.swarm_id = $1 AND c.owner_id = $2
+             ORDER BY cf.started_at DESC
+             LIMIT 1",
+        )
+        .bind(swarm_id)
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        if is_creator.is_none() {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "You have no creature in this rabble".into(),
-            ));
+        if let Some(row) = &has_creature {
+            (
+                Some(
+                    row.try_get::<uuid::Uuid, _>("creature_id")
+                        .ok()
+                        .unwrap_or_default(),
+                ),
+                row.try_get::<Option<String>, _>("specimen_name")
+                    .ok()
+                    .flatten(),
+                row.try_get::<Option<String>, _>("species_name")
+                    .ok()
+                    .flatten(),
+                row.try_get::<Option<String>, _>("species_group")
+                    .ok()
+                    .flatten(),
+            )
+        } else {
+            // Allow swarm creator to chat without a creature in flight
+            let is_creator =
+                sqlx::query("SELECT 1 FROM swarm_events WHERE swarm_id = $1 AND creator_id = $2")
+                    .bind(swarm_id)
+                    .bind(&user_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            if is_creator.is_none() {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "You have no creature in this rabble".into(),
+                ));
+            }
+            (None, None, None, None)
         }
-        (None, None, None, None)
     };
 
     // Fetch sender display name
