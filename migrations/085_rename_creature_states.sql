@@ -46,7 +46,7 @@ DO $$ BEGIN
 
   -- Add new CHECK constraints with updated state names
   ALTER TABLE creature_state ADD CONSTRAINT creature_state_state_check
-    CHECK (state IN ('perched', 'hosting', 'in_rabble', 'fly'));
+    CHECK (state IN ('perched', 'hosting', 'in_rabble', 'fly', 'expedition'));
   ALTER TABLE creature_versions ADD CONSTRAINT creature_versions_state_check
-    CHECK (state IN ('perched', 'hosting', 'in_rabble', 'fly'));
+    CHECK (state IN ('perched', 'hosting', 'in_rabble', 'fly', 'expedition'));
 END $$;

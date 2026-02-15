@@ -451,6 +451,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/082_rabble_radius.sql",
         "migrations/083_genome_profile_cache.sql",
         "migrations/084_drop_creature_state_rabble_fk.sql",
+        "migrations/085_rename_creature_states.sql",
+        "migrations/086_creature_flights_metadata.sql",
     ];
 
     for file in &migration_files {
