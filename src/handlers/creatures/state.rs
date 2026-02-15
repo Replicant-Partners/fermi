@@ -921,41 +921,59 @@ pub async fn plan_flight_handler(
             )
         };
 
-    // Dispatch to flight_coordinator compound agent
-    let agent_result = rabble_workspace::dispatch_rabble_action(
-        &state,
-        ws_id,
-        "flight_coordinator",
-        "flight_plan",
-        &query,
-        &user_id,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Agent dispatch failed: {}", e),
+    // Fire-and-forget: spawn flight plan agent dispatch, return immediately
+    let spawn_state = state.clone();
+    let spawn_user = user_id.clone();
+    let creature_id = req.creature_id;
+    let species_clone = species.clone();
+    let origin_clone = req.origin.clone();
+    let dest_clone = req.destination.clone();
+    tokio::spawn(async move {
+        let pool_bg = spawn_state.memory_store.pool();
+        match rabble_workspace::dispatch_rabble_action(
+            &spawn_state,
+            ws_id,
+            "flight_coordinator",
+            "flight_plan",
+            &query,
+            &spawn_user,
         )
-    })?;
-
-    // Try to extract structured JSON from agent response
-    let plan: serde_json::Value =
-        super::extract_json_from_response(&agent_result).unwrap_or_else(|| {
-            // Fallback: return the raw text as narrative with minimal structure
-            json!({
-                "version": 1,
-                "creature_id": req.creature_id,
-                "species": species,
-                "origin": req.origin,
-                "destination": req.destination,
-                "narrative": agent_result,
-                "waypoints": [],
-                "segments": [],
-            })
-        });
+        .await
+        {
+            Ok(agent_result) => {
+                let plan: serde_json::Value = super::extract_json_from_response(&agent_result)
+                    .unwrap_or_else(|| {
+                        json!({
+                            "version": 1, "creature_id": creature_id,
+                            "species": species_clone, "origin": origin_clone,
+                            "destination": dest_clone, "narrative": agent_result,
+                            "waypoints": [], "segments": [],
+                        })
+                    });
+                let _ = record_transition(
+                    pool_bg,
+                    creature_id,
+                    "active",
+                    None,
+                    "flight_plan",
+                    "flight_coordinator",
+                    0.0,
+                    0.0,
+                    "",
+                    None,
+                    None,
+                    &json!({ "plan": plan }),
+                )
+                .await;
+                eprintln!("[flight_plan] completed for creature {}", creature_id);
+            }
+            Err(e) => eprintln!("[flight_plan] failed for creature {}: {}", creature_id, e),
+        }
+    });
 
     Ok(Json(json!({
-        "plan": plan,
+        "status": "processing",
+        "message": "Flight plan dispatched — check creature log for results",
         "gas_charged": total_cost,
         "creature_count": creature_count,
         "pricing": if req.swarm_id.is_some() {
@@ -1399,10 +1417,9 @@ pub async fn host_rabble_handler(
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
 
-    // Check for active flight
-    let active_flight = sqlx::query(
-        "SELECT flight_id, h3_cell, center_lat, center_lng, location_name, swarm_id, flight_pattern
-         FROM creature_flights
+    // End any existing flight — creature moves on, no state gating
+    let existing_flight = sqlx::query(
+        "SELECT flight_id, swarm_id FROM creature_flights
          WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
     )
     .bind(creature_id)
@@ -1410,101 +1427,60 @@ pub async fn host_rabble_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Already in a rabble? 409
-    if let Some(ref af) = active_flight {
-        let existing_swarm: Option<Uuid> = af.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
-        if existing_swarm.is_some() {
-            return Err((
-                StatusCode::CONFLICT,
-                "Creature is already in a rabble".to_string(),
-            ));
+    if let Some(ef) = existing_flight {
+        let old_fid: Uuid = ef.get("flight_id");
+        let old_sid: Option<Uuid> = ef.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+        sqlx::query(
+            "UPDATE creature_flights SET ended_at = NOW(),
+             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+             WHERE flight_id = $1",
+        )
+        .bind(old_fid)
+        .execute(pool)
+        .await
+        .ok();
+        if let Some(sid) = old_sid {
+            sqlx::query(
+                "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
+                 WHERE swarm_id = $1",
+            )
+            .bind(sid)
+            .execute(pool)
+            .await
+            .ok();
         }
     }
 
-    // Resolve location + flight_id — three cases:
-    let (flight_id, h3_cell, center_lat, center_lng, location_name) =
-        if let Some(af) = active_flight {
-            let fid: Uuid = af.get("flight_id");
-            let pattern: String = af.try_get("flight_pattern").unwrap_or_default();
-
-            // If flying (not perched), end the fly and convert to perch
-            if pattern != "perch" {
-                sqlx::query(
-                    "UPDATE creature_flights SET flight_pattern = 'perch',
-                 ended_at = NULL, duration_seconds = NULL
-                 WHERE flight_id = $1",
-                )
-                .bind(fid)
-                .execute(pool)
-                .await
-                .ok();
-            }
-
-            (
-                fid,
-                af.get::<String, _>("h3_cell"),
-                af.get::<f64, _>("center_lat"),
-                af.get::<f64, _>("center_lng"),
-                af.try_get::<Option<String>, _>("location_name")
-                    .ok()
-                    .flatten(),
-            )
+    // Location from request (client always sends it)
+    let center_lat = req.center_lat.unwrap_or(0.0);
+    let center_lng = req.center_lng.unwrap_or(0.0);
+    let location_name = req.location_name.clone();
+    let h3_cell = {
+        let cell = req.h3_cell.clone().unwrap_or_default();
+        if cell.is_empty() {
+            compute_h3_cell(center_lat, center_lng)
         } else {
-            // No active flight — need location from request
-            let lat = req.center_lat.ok_or((
-                StatusCode::BAD_REQUEST,
-                "No active flight — provide center_lat/center_lng to host here".to_string(),
-            ))?;
-            let lng = req.center_lng.ok_or((
-                StatusCode::BAD_REQUEST,
-                "No active flight — provide center_lat/center_lng to host here".to_string(),
-            ))?;
-            let cell = req.h3_cell.clone().unwrap_or_default();
-            let cell = if cell.is_empty() {
-                compute_h3_cell(lat, lng)
-            } else {
-                cell
-            };
+            cell
+        }
+    };
 
-            // Auto-create perch flight
-            let fid = Uuid::new_v4();
-            sqlx::query(
-                "INSERT INTO creature_flights (flight_id, creature_id, owner_id, h3_cell,
-             center_lat, center_lng, location_name, flight_pattern, started_at, data_source)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'perch', NOW(), 'app')",
-            )
-            .bind(fid)
-            .bind(creature_id)
-            .bind(&user_id)
-            .bind(&cell)
-            .bind(lat)
-            .bind(lng)
-            .bind(&req.location_name)
-            .execute(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-            // Record perch transition
-            let prev = get_current_state(pool, creature_id).await;
-            let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
-            let _ = record_transition(
-                pool,
-                creature_id,
-                "perched",
-                prev_state,
-                "perch",
-                &user_id,
-                lat,
-                lng,
-                &cell,
-                None,
-                None,
-                &json!({"flight_id": fid, "auto_perch": true}),
-            )
-            .await;
-
-            (fid, cell, lat, lng, req.location_name.clone())
-        };
+    // Create perch flight at this location
+    let flight_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO creature_flights (flight_id, creature_id, owner_id, h3_cell,
+         center_lat, center_lng, location_name, flight_pattern, started_at, data_source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'perch', NOW(), 'app')",
+    )
+    .bind(flight_id)
+    .bind(creature_id)
+    .bind(&user_id)
+    .bind(&h3_cell)
+    .bind(center_lat)
+    .bind(center_lng)
+    .bind(&location_name)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let invite_pool = req.invite_pool.unwrap_or(0).max(0);
     let walk_in_budget = req.walk_in_budget.unwrap_or(0).max(0);
@@ -3370,59 +3346,54 @@ pub async fn enemy_sensor_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            // Dispatch to enemy_sensor agent
-            let assessment = rabble_workspace::dispatch_rabble_action(
-                &state,
-                workspace_id,
-                "enemy_sensor",
-                "threat_scan",
-                &query,
-                &user_id,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Enemy sensor scan failed: {}", e),
+            // Fire-and-forget: spawn agent dispatch, return immediately
+            let spawn_state = state.clone();
+            let spawn_user = user_id.clone();
+            let check_cost = gas.enemy_sensor_check;
+            tokio::spawn(async move {
+                let pool_bg = spawn_state.memory_store.pool();
+                match rabble_workspace::dispatch_rabble_action(
+                    &spawn_state,
+                    workspace_id,
+                    "enemy_sensor",
+                    "threat_scan",
+                    &query,
+                    &spawn_user,
                 )
-            })?;
-
-            // Try to parse agent response as JSON for structured output
-            let parsed: serde_json::Value =
-                serde_json::from_str(&assessment).unwrap_or_else(|_| {
-                    json!({
-                        "threat_level": "unknown",
-                        "summary": assessment,
-                        "threats": [],
-                    })
-                });
-
-            // Record in creature log
-            let threat_level = parsed
-                .get("threat_level")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let _ = record_transition(
-                pool,
-                creature_id,
-                "active",
-                None,
-                "enemy_scan",
-                "enemy_sensor",
-                0.0,
-                0.0,
-                "",
-                None,
-                None,
-                &json!({ "threat_level": threat_level, "cost": gas.enemy_sensor_check }),
-            )
-            .await;
+                .await
+                {
+                    Ok(assessment) => {
+                        let parsed: serde_json::Value =
+                            serde_json::from_str(&assessment).unwrap_or_else(|_| {
+                                json!({ "threat_level": "unknown", "summary": assessment, "threats": [] })
+                            });
+                        let threat_level = parsed
+                            .get("threat_level")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        let _ = record_transition(
+                            pool_bg, creature_id, "active", None,
+                            "enemy_scan", "enemy_sensor", 0.0, 0.0, "", None, None,
+                            &json!({ "threat_level": threat_level, "cost": check_cost, "result": parsed }),
+                        ).await;
+                        eprintln!(
+                            "[enemy_sensor] check completed for creature {}",
+                            creature_id
+                        );
+                    }
+                    Err(e) => eprintln!(
+                        "[enemy_sensor] check failed for creature {}: {}",
+                        creature_id, e
+                    ),
+                }
+            });
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "species_group": species_group,
                 "cost": gas.enemy_sensor_check,
-                "assessment": parsed,
+                "status": "processing",
+                "message": "Enemy sensor scan dispatched — check creature log for results",
             })))
         }
         "strategy" => {
@@ -3486,45 +3457,56 @@ pub async fn enemy_sensor_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let result = rabble_workspace::dispatch_rabble_action(
-                &state,
-                workspace_id,
-                "enemy_sensor",
-                "defense_strategy",
-                &query,
-                &user_id,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Strategy failed: {}", e),
+            let spawn_state = state.clone();
+            let spawn_user = user_id.clone();
+            let strategy_cost = gas.enemy_sensor_check;
+            tokio::spawn(async move {
+                let pool_bg = spawn_state.memory_store.pool();
+                match rabble_workspace::dispatch_rabble_action(
+                    &spawn_state,
+                    workspace_id,
+                    "enemy_sensor",
+                    "defense_strategy",
+                    &query,
+                    &spawn_user,
                 )
-            })?;
-
-            let parsed: serde_json::Value =
-                serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
-
-            let _ = record_transition(
-                pool,
-                creature_id,
-                "active",
-                None,
-                "enemy_strategy",
-                "enemy_sensor",
-                0.0,
-                0.0,
-                "",
-                None,
-                None,
-                &json!({ "cost": gas.enemy_sensor_check }),
-            )
-            .await;
+                .await
+                {
+                    Ok(result) => {
+                        let parsed: serde_json::Value = serde_json::from_str(&result)
+                            .unwrap_or_else(|_| json!({ "strategy": result }));
+                        let _ = record_transition(
+                            pool_bg,
+                            creature_id,
+                            "active",
+                            None,
+                            "enemy_strategy",
+                            "enemy_sensor",
+                            0.0,
+                            0.0,
+                            "",
+                            None,
+                            None,
+                            &json!({ "cost": strategy_cost, "result": parsed }),
+                        )
+                        .await;
+                        eprintln!(
+                            "[enemy_sensor] strategy completed for creature {}",
+                            creature_id
+                        );
+                    }
+                    Err(e) => eprintln!(
+                        "[enemy_sensor] strategy failed for creature {}: {}",
+                        creature_id, e
+                    ),
+                }
+            });
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.enemy_sensor_check,
-                "strategy": parsed,
+                "status": "processing",
+                "message": "Defense strategy dispatched — check creature log for results",
             })))
         }
         other => Err((
@@ -3699,77 +3681,78 @@ pub async fn genome_profiler_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let profile = rabble_workspace::dispatch_rabble_action(
-                &state,
-                workspace_id,
-                "genome_profiler",
-                "phylogenetic_profile",
-                &query,
-                &user_id,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Genome profiler failed: {}", e),
+            // Fire-and-forget: spawn agent dispatch, return immediately
+            let spawn_state = state.clone();
+            let spawn_user = user_id.clone();
+            let profile_cost = gas.genome_profiler_check;
+            tokio::spawn(async move {
+                let pool_bg = spawn_state.memory_store.pool();
+                match rabble_workspace::dispatch_rabble_action(
+                    &spawn_state,
+                    workspace_id,
+                    "genome_profiler",
+                    "phylogenetic_profile",
+                    &query,
+                    &spawn_user,
                 )
-            })?;
-
-            let parsed: serde_json::Value = serde_json::from_str(&profile).unwrap_or_else(|_| {
-                json!({
-                    "summary": profile,
-                    "taxonomy": {},
-                    "genome": {},
-                    "phylogeny": {},
-                })
+                .await
+                {
+                    Ok(profile) => {
+                        let parsed: serde_json::Value = serde_json::from_str(&profile).unwrap_or_else(|_| {
+                            json!({ "summary": profile, "taxonomy": {}, "genome": {}, "phylogeny": {} })
+                        });
+                        // Cache the profile
+                        let summary_str =
+                            parsed.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                        let has_content = !summary_str.is_empty()
+                            || parsed
+                                .get("taxonomy")
+                                .and_then(|v| v.as_object())
+                                .map(|m| !m.is_empty())
+                                .unwrap_or(false)
+                            || parsed
+                                .get("genome")
+                                .and_then(|v| v.as_object())
+                                .map(|m| !m.is_empty())
+                                .unwrap_or(false);
+                        if has_content {
+                            let _ = sqlx::query(
+                                "UPDATE creature_conditions SET genome_profile = $1 WHERE creature_id = $2",
+                            ).bind(&parsed).bind(creature_id).execute(pool_bg).await;
+                        }
+                        let _ = record_transition(
+                            pool_bg,
+                            creature_id,
+                            "active",
+                            None,
+                            "genome_profile",
+                            "genome_profiler",
+                            0.0,
+                            0.0,
+                            "",
+                            None,
+                            None,
+                            &json!({ "cost": profile_cost, "result": parsed }),
+                        )
+                        .await;
+                        eprintln!(
+                            "[genome_profiler] check completed for creature {}",
+                            creature_id
+                        );
+                    }
+                    Err(e) => eprintln!(
+                        "[genome_profiler] check failed for creature {}: {}",
+                        creature_id, e
+                    ),
+                }
             });
-
-            // Cache the profile — subsequent reads are free
-            // Don't cache empty/failed profiles
-            let summary_str = parsed.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-            let has_content = !summary_str.is_empty()
-                || parsed
-                    .get("taxonomy")
-                    .and_then(|v| v.as_object())
-                    .map(|m| !m.is_empty())
-                    .unwrap_or(false)
-                || parsed
-                    .get("genome")
-                    .and_then(|v| v.as_object())
-                    .map(|m| !m.is_empty())
-                    .unwrap_or(false);
-
-            if has_content {
-                let _ = sqlx::query(
-                    "UPDATE creature_conditions SET genome_profile = $1 WHERE creature_id = $2",
-                )
-                .bind(&parsed)
-                .bind(creature_id)
-                .execute(pool)
-                .await;
-            }
-
-            let _ = record_transition(
-                pool,
-                creature_id,
-                "active",
-                None,
-                "genome_profile",
-                "genome_profiler",
-                0.0,
-                0.0,
-                "",
-                None,
-                None,
-                &json!({ "cost": gas.genome_profiler_check }),
-            )
-            .await;
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.genome_profiler_check,
                 "cached": false,
-                "profile": parsed,
+                "status": "processing",
+                "message": "Genome profile dispatched — check creature log for results",
             })))
         }
         other => Err((
@@ -3923,50 +3906,50 @@ pub async fn prey_locator_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let result = rabble_workspace::dispatch_rabble_action(
-                &state,
-                workspace_id,
-                "prey_locator",
-                "prey_scan",
-                &query,
-                &user_id,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Prey scan failed: {}", e),
+            let spawn_state = state.clone();
+            let spawn_user = user_id.clone();
+            let scan_cost = gas.prey_locator_scan;
+            tokio::spawn(async move {
+                let pool_bg = spawn_state.memory_store.pool();
+                match rabble_workspace::dispatch_rabble_action(
+                    &spawn_state,
+                    workspace_id,
+                    "prey_locator",
+                    "prey_scan",
+                    &query,
+                    &spawn_user,
                 )
-            })?;
-
-            let parsed: serde_json::Value = serde_json::from_str(&result)
-                .unwrap_or_else(|_| json!({ "prey_targets": [], "hunting_summary": result }));
-
-            let target_count = parsed
-                .get("prey_targets")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            let _ = record_transition(
-                pool,
-                creature_id,
-                "active",
-                None,
-                "prey_scan",
-                "prey_locator",
-                0.0,
-                0.0,
-                "",
-                None,
-                None,
-                &json!({ "targets_found": target_count, "cost": gas.prey_locator_scan }),
-            )
-            .await;
+                .await
+                {
+                    Ok(result) => {
+                        let parsed: serde_json::Value = serde_json::from_str(&result)
+                            .unwrap_or_else(
+                                |_| json!({ "prey_targets": [], "hunting_summary": result }),
+                            );
+                        let target_count = parsed
+                            .get("prey_targets")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        let _ = record_transition(
+                            pool_bg, creature_id, "active", None,
+                            "prey_scan", "prey_locator", 0.0, 0.0, "", None, None,
+                            &json!({ "targets_found": target_count, "cost": scan_cost, "result": parsed }),
+                        ).await;
+                        eprintln!("[prey_locator] scan completed for creature {}", creature_id);
+                    }
+                    Err(e) => eprintln!(
+                        "[prey_locator] scan failed for creature {}: {}",
+                        creature_id, e
+                    ),
+                }
+            });
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.prey_locator_scan,
-                "scan": parsed,
+                "status": "processing",
+                "message": "Prey scan dispatched — check creature log for results",
             })))
         }
         "stalk" => {
@@ -4043,37 +4026,48 @@ pub async fn prey_locator_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let plan = rabble_workspace::dispatch_rabble_action(
-                &state,
-                workspace_id,
-                "prey_locator",
-                "stalk_plan",
-                &query,
-                &user_id,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Stalk plan failed: {}", e),
+            let spawn_state = state.clone();
+            let spawn_user = user_id.clone();
+            let stalk_cost = gas.prey_locator_stalk;
+            tokio::spawn(async move {
+                let pool_bg = spawn_state.memory_store.pool();
+                match rabble_workspace::dispatch_rabble_action(
+                    &spawn_state,
+                    workspace_id,
+                    "prey_locator",
+                    "stalk_plan",
+                    &query,
+                    &spawn_user,
                 )
-            })?;
-
-            let parsed: serde_json::Value = serde_json::from_str(&plan).unwrap_or_else(
-                |_| json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
-            );
-
-            let _ = record_transition(
-                pool, creature_id, "active", None, "prey_stalk", "prey_locator",
-                0.0, 0.0, "", None, None,
-                &json!({ "target_creature_id": target_id.to_string(), "cost": gas.prey_locator_stalk }),
-            ).await;
+                .await
+                {
+                    Ok(plan) => {
+                        let parsed: serde_json::Value = serde_json::from_str(&plan).unwrap_or_else(
+                            |_| json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
+                        );
+                        let _ = record_transition(
+                            pool_bg, creature_id, "active", None, "prey_stalk", "prey_locator",
+                            0.0, 0.0, "", None, None,
+                            &json!({ "target_creature_id": target_id.to_string(), "cost": stalk_cost, "result": parsed }),
+                        ).await;
+                        eprintln!(
+                            "[prey_locator] stalk completed for creature {}",
+                            creature_id
+                        );
+                    }
+                    Err(e) => eprintln!(
+                        "[prey_locator] stalk failed for creature {}: {}",
+                        creature_id, e
+                    ),
+                }
+            });
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "target_creature_id": target_id,
                 "cost": gas.prey_locator_stalk,
-                "stalk": parsed,
+                "status": "processing",
+                "message": "Stalk plan dispatched — check creature log for results",
             })))
         }
         "strategy" => {
@@ -4136,45 +4130,56 @@ pub async fn prey_locator_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let result = rabble_workspace::dispatch_rabble_action(
-                &state,
-                workspace_id,
-                "prey_locator",
-                "prey_strategy",
-                &query,
-                &user_id,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Strategy failed: {}", e),
+            let spawn_state = state.clone();
+            let spawn_user = user_id.clone();
+            let strategy_cost = gas.prey_locator_scan;
+            tokio::spawn(async move {
+                let pool_bg = spawn_state.memory_store.pool();
+                match rabble_workspace::dispatch_rabble_action(
+                    &spawn_state,
+                    workspace_id,
+                    "prey_locator",
+                    "prey_strategy",
+                    &query,
+                    &spawn_user,
                 )
-            })?;
-
-            let parsed: serde_json::Value =
-                serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
-
-            let _ = record_transition(
-                pool,
-                creature_id,
-                "active",
-                None,
-                "prey_strategy",
-                "prey_locator",
-                0.0,
-                0.0,
-                "",
-                None,
-                None,
-                &json!({ "cost": gas.prey_locator_scan }),
-            )
-            .await;
+                .await
+                {
+                    Ok(result) => {
+                        let parsed: serde_json::Value = serde_json::from_str(&result)
+                            .unwrap_or_else(|_| json!({ "strategy": result }));
+                        let _ = record_transition(
+                            pool_bg,
+                            creature_id,
+                            "active",
+                            None,
+                            "prey_strategy",
+                            "prey_locator",
+                            0.0,
+                            0.0,
+                            "",
+                            None,
+                            None,
+                            &json!({ "cost": strategy_cost, "result": parsed }),
+                        )
+                        .await;
+                        eprintln!(
+                            "[prey_locator] strategy completed for creature {}",
+                            creature_id
+                        );
+                    }
+                    Err(e) => eprintln!(
+                        "[prey_locator] strategy failed for creature {}: {}",
+                        creature_id, e
+                    ),
+                }
+            });
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.prey_locator_scan,
-                "strategy": parsed,
+                "status": "processing",
+                "message": "Prey strategy dispatched — check creature log for results",
             })))
         }
         other => Err((
@@ -4695,72 +4700,73 @@ pub async fn creature_dream_handler(
         specimen_name, scientific_name, msg_count,
     );
 
-    let dream_result = rabble_workspace::dispatch_rabble_action(
-        &state,
-        workspace_id,
-        "dream_narrator",
-        "dream",
-        &dream_query,
-        &user_id,
-    )
-    .await;
-
-    // 7. Record dream transition in creature_versions (for leveling)
-    let current_state = get_current_state(pool, creature_id).await;
-    let state_name = current_state
-        .as_ref()
-        .map(|(s, _)| s.as_str())
-        .unwrap_or("perched");
-
-    let dream_narrative = dream_result
-        .as_deref()
-        .unwrap_or("Dream faded before it could be captured...");
-
-    let dream_metadata = json!({
-        "dream_narrative": dream_narrative,
-        "messages_consolidated": msg_count,
-        "trigger": "user_action",
+    // Fire-and-forget: spawn dream agent dispatch, return immediately
+    let spawn_state = state.clone();
+    let spawn_user = user_id.clone();
+    tokio::spawn(async move {
+        let pool_bg = spawn_state.memory_store.pool();
+        match rabble_workspace::dispatch_rabble_action(
+            &spawn_state,
+            workspace_id,
+            "dream_narrator",
+            "dream",
+            &dream_query,
+            &spawn_user,
+        )
+        .await
+        {
+            Ok(narrative) => {
+                let current_state = get_current_state(pool_bg, creature_id).await;
+                let sn = current_state
+                    .as_ref()
+                    .map(|(s, _)| s.as_str())
+                    .unwrap_or("perched");
+                let dream_metadata = json!({
+                    "dream_narrative": &narrative,
+                    "messages_consolidated": msg_count,
+                    "trigger": "user_action",
+                });
+                let loc = sqlx::query(
+                    "SELECT location_lat, location_lng, h3_cell, rabble_id
+                     FROM creature_state WHERE creature_id = $1",
+                )
+                .bind(creature_id)
+                .fetch_optional(pool_bg)
+                .await
+                .ok()
+                .flatten();
+                let (lat, lng, h3, rabble_id) = loc
+                    .map(|r| {
+                        (
+                            r.try_get::<f64, _>("location_lat").unwrap_or(0.0),
+                            r.try_get::<f64, _>("location_lng").unwrap_or(0.0),
+                            r.try_get::<String, _>("h3_cell").unwrap_or_default(),
+                            r.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten(),
+                        )
+                    })
+                    .unwrap_or((0.0, 0.0, String::new(), None));
+                let _ = record_transition(
+                    pool_bg,
+                    creature_id,
+                    sn,
+                    Some(sn),
+                    "dream",
+                    &spawn_user,
+                    lat,
+                    lng,
+                    &h3,
+                    rabble_id,
+                    Some(workspace_id),
+                    &dream_metadata,
+                )
+                .await;
+                eprintln!("[dream] completed for creature {}", creature_id);
+            }
+            Err(e) => eprintln!("[dream] failed for creature {}: {}", creature_id, e),
+        }
     });
 
-    // Get current location from creature_state for the version record
-    let loc = sqlx::query(
-        "SELECT location_lat, location_lng, h3_cell, rabble_id
-         FROM creature_state WHERE creature_id = $1",
-    )
-    .bind(creature_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-
-    let (lat, lng, h3, rabble_id) = loc
-        .map(|r| {
-            (
-                r.try_get::<f64, _>("location_lat").unwrap_or(0.0),
-                r.try_get::<f64, _>("location_lng").unwrap_or(0.0),
-                r.try_get::<String, _>("h3_cell").unwrap_or_default(),
-                r.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten(),
-            )
-        })
-        .unwrap_or((0.0, 0.0, String::new(), None));
-
-    let _ = record_transition(
-        pool,
-        creature_id,
-        state_name,       // stays in same state
-        Some(state_name), // previous = same
-        "dream",
-        &user_id,
-        lat,
-        lng,
-        &h3,
-        rabble_id,
-        Some(workspace_id),
-        &dream_metadata,
-    )
-    .await;
-
-    // 8. Return dream narrative + updated level
+    // Return immediately — dream runs in background
     let dream_cycles: i64 = sqlx::query(
         "SELECT COUNT(*) FROM creature_versions
          WHERE creature_id = $1 AND transition_type = 'dream'",
@@ -4773,10 +4779,10 @@ pub async fn creature_dream_handler(
 
     Ok(Json(json!({
         "creature_id": creature_id,
-        "status": "dreamed",
+        "status": "dreaming",
         "cost": dream_cost,
         "dream_bonus": is_dream_bonus,
-        "dream_narrative": dream_narrative,
         "dream_cycles": dream_cycles,
+        "message": "Dream dispatched — narrative will appear in creature log",
     })))
 }
