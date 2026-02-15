@@ -1345,47 +1345,12 @@ pub async fn perch_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     eprintln!(
-        "[perch] step 4: flight+stats done {:?}",
+        "[perch] step 4: flight created {:?} — returning response NOW",
         perch_start.elapsed()
     );
 
-    // Update creature stats
-    sqlx::query(
-        "UPDATE creatures SET total_flights = total_flights + 1, updated_at = NOW()
-         WHERE creature_id = $1",
-    )
-    .bind(creature_id)
-    .execute(pool)
-    .await
-    .ok();
-
-    // ── Dual-write: record perch transition (new versioned model) ──
-    let _ = record_transition(
-        pool,
-        creature_id,
-        "perch_solo",
-        None, // initial placement — no previous state
-        "perch",
-        &user_id,
-        req.center_lat,
-        req.center_lng,
-        &req.h3_cell,
-        Some(swarm_id),
-        None, // workspace_id filled when workspace is created
-        &json!({
-            "flight_id": flight_id,
-            "swarm_id": swarm_id,
-            "perch_name": perch_name,
-            "walk_in_price": req.walk_in_price,
-        }),
-    )
-    .await;
-
-    eprintln!(
-        "[perch] step 5: returning response {:?}",
-        perch_start.elapsed()
-    );
-    Ok(Json(json!({
+    // Build response immediately — defer all non-critical work
+    let response = json!({
         "swarm_id": swarm_id,
         "flight_id": flight_id,
         "creature_id": creature_id,
@@ -1396,7 +1361,53 @@ pub async fn perch_handler(
         "walk_in_budget": walk_in_budget,
         "visibility": visibility,
         "total_cost": total_cost,
-    })))
+    });
+
+    // Defer stats + versioned state to background — don't block HTTP response
+    {
+        let pool_bg = state.db.clone();
+        let uid = user_id.clone();
+        let h3 = req.h3_cell.clone();
+        let lat = req.center_lat;
+        let lng = req.center_lng;
+        let pname = perch_name.clone();
+        let wip = req.walk_in_price;
+        tokio::spawn(async move {
+            // Update creature stats
+            sqlx::query(
+                "UPDATE creatures SET total_flights = total_flights + 1, updated_at = NOW()
+                 WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .execute(&pool_bg)
+            .await
+            .ok();
+
+            // Dual-write: record perch transition (new versioned model)
+            let _ = record_transition(
+                &pool_bg,
+                creature_id,
+                "perch_solo",
+                None,
+                "perch",
+                &uid,
+                lat,
+                lng,
+                &h3,
+                Some(swarm_id),
+                None,
+                &json!({
+                    "flight_id": flight_id,
+                    "swarm_id": swarm_id,
+                    "perch_name": pname,
+                    "walk_in_price": wip,
+                }),
+            )
+            .await;
+        });
+    }
+
+    Ok(Json(response))
 }
 
 #[derive(Deserialize)]
@@ -1537,45 +1548,48 @@ pub async fn fly_handler(
         flight_id
     };
 
-    // ── Dual-write: record fly transition (new versioned model) ──
+    // Defer dual-write + destination metadata to background
     {
-        // Get current state to record previous_state
-        let prev = get_current_state(pool, creature_id).await;
-        let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
-        let _ = record_transition(
-            pool,
-            creature_id,
-            "fly",
-            prev_state,
-            "fly",
-            &user_id,
-            0.0, // in transit — no fixed location
-            0.0,
-            "",
-            None, // leaving rabble
-            None,
-            &json!({
-                "flight_id": flight_id,
-                "from_swarm_id": swarm_id,
-                "destination": req.destination,
-            }),
-        )
-        .await;
-    }
+        let pool_bg = state.db.clone();
+        let uid_bg = user_id.clone();
+        let dest_bg = req.destination.clone();
+        tokio::spawn(async move {
+            // Record fly transition (new versioned model)
+            let prev = get_current_state(&pool_bg, creature_id).await;
+            let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
+            let _ = record_transition(
+                &pool_bg,
+                creature_id,
+                "fly",
+                prev_state,
+                "fly",
+                &uid_bg,
+                0.0,
+                0.0,
+                "",
+                None,
+                None,
+                &json!({
+                    "flight_id": flight_id,
+                    "from_swarm_id": swarm_id,
+                    "destination": dest_bg,
+                }),
+            )
+            .await;
 
-    eprintln!("[fly] transition recorded in {:?}", fly_start.elapsed());
-
-    // Store destination in flight metadata if provided
-    if let Some(ref dest) = req.destination {
-        sqlx::query(
-            "UPDATE creature_flights SET environment = COALESCE(environment, '{}'::jsonb) || jsonb_build_object('destination', $1::jsonb)
-             WHERE flight_id = $2",
-        )
-        .bind(dest)
-        .bind(flight_id)
-        .execute(pool)
-        .await
-        .ok();
+            // Store destination in flight metadata if provided
+            if let Some(ref dest) = dest_bg {
+                sqlx::query(
+                    "UPDATE creature_flights SET environment = COALESCE(environment, '{}'::jsonb) || jsonb_build_object('destination', $1::jsonb)
+                     WHERE flight_id = $2",
+                )
+                .bind(dest)
+                .bind(flight_id)
+                .execute(&pool_bg)
+                .await
+                .ok();
+            }
+        });
     }
 
     // Determine mode: solo (no other creatures in swarm) or rabble
