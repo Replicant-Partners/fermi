@@ -134,3 +134,118 @@ This design uses everything already built:
 
 No new infrastructure needed — just wiring existing systems together with
 creature-scoped queries and a level computation.
+
+## Implementation Status (Feb 15)
+
+**Shipped:**
+- `GET /api/creatures/:id/level` — weighted score computation (7 metrics)
+- `POST /api/creatures/:id/dream` — dream_narrator dispatch, 5cr, 1hr cooldown
+- Dream transitions recorded in `creature_versions` (transition_type = 'dream')
+- CognitivePill on creature hero image (brain icon, tap for full metrics sheet)
+- Emergent specialization labels (Explorer/Social/Scholar/Dreamer/Sentinel)
+- Cognitive growth bars visualization
+- Dream chip in creature actions (world + tethered states)
+- Gameplay docs: `docs/gameplay/CREATURE_MIND.md`
+
+**Implemented level weights:**
+```
+messages * 0.5 + versions * 1.0 + locations * 0.3 +
+dreams * 5.0 + flights * 0.2 + rabbles * 2.0 + modules * 1.0
+```
+
+## Emergent Specialization (design)
+
+Specialization is derived, not assigned. The creature's behavior profile
+determines its tag:
+
+| Tag | Signal | Threshold |
+|-----|--------|-----------|
+| Explorer | `unique_locations * 3.0 + flights * 0.5` | Highest signal |
+| Social | `rabbles_joined * 5.0` | Highest signal |
+| Scholar | `message_count * 0.8` | Highest signal |
+| Dreamer | `dream_cycles * 8.0` | Highest signal |
+| Sentinel | `active_modules.len() * 4.0` | Highest signal |
+| Nascent | (none above 1.0) | Default |
+
+### Future: Deep Specialization
+
+When KG queries are creature-scoped (not yet — KG is agent-scoped today):
+
+- **Coastal Explorer** — creature has location entities clustered near coastlines
+- **Predator Specialist** — KG has dense predator-prey fact network
+- **Social Hub** — high rabble count + many unique co-member creatures
+- **Lucid Dreamer** — dream narratives with high coherence delta (measurable improvement)
+
+This requires:
+1. Creature-scoped KG views (filter workspace KG by creature_id in metadata)
+2. Coherence delta tracking (before/after dream comparison)
+3. Location entity classification (requires reverse geocoding or habitat lookup)
+
+## Dream Scheduling (design — not yet implemented)
+
+### User Flow
+
+1. Creature detail → Brain icon → Cognitive sheet → "Dream Scheduling" card
+2. Opens dream budget configuration:
+   - **Budget**: 10-100cr allocated for automatic dreams
+   - **Frequency**: every 4hr / 8hr / 12hr / 24hr
+   - **Until**: budget depleted / level target reached / manual stop
+3. Backend creates a `dream_schedule` record
+4. Background worker checks schedules, fires dreams for eligible creatures
+
+### Data Model
+
+```sql
+CREATE TABLE creature_dream_schedules (
+    schedule_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    creature_id UUID NOT NULL REFERENCES creatures(creature_id),
+    owner_id TEXT NOT NULL,
+    budget_credits INTEGER NOT NULL,
+    credits_used INTEGER NOT NULL DEFAULT 0,
+    interval_hours INTEGER NOT NULL DEFAULT 24,
+    target_level INTEGER,          -- stop when reached (NULL = run until budget)
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'paused', 'depleted', 'completed')),
+    last_dream_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### Background Worker
+
+```rust
+// In api_server.rs startup, after existing background tasks:
+tokio::spawn(dream_scheduler_loop(state.clone()));
+
+async fn dream_scheduler_loop(state: AppState) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(300)).await; // check every 5min
+        // SELECT * FROM creature_dream_schedules
+        // WHERE status = 'active'
+        //   AND credits_used < budget_credits
+        //   AND (last_dream_at IS NULL OR last_dream_at < NOW() - interval_hours * INTERVAL '1 hour')
+        // For each: fire creature_dream_handler logic, update credits_used + last_dream_at
+    }
+}
+```
+
+### Economics
+
+- Same 5cr per dream cycle (uses `gas.creature_dream`)
+- Budget is pre-allocated from wallet (like dream_topup for agents)
+- If wallet balance drops below next dream cost, schedule pauses
+- Owner notified via existing notification system when budget depleted or level target hit
+
+## Creature Knowledge Transfer (future)
+
+When two creatures share a rabble, their workspaces overlap — they receive
+the same messages. But knowledge transfer goes further:
+
+- Creatures in the same rabble for > 1hr could share KG edges
+- A high-level creature in a rabble "teaches" lower-level members
+- Cross-pollination: Explorer shares location knowledge with a Scholar
+- Transfer costs credits (the source creature's owner gets paid)
+
+This creates a secondary economy: creature rental for knowledge transfer.
+A Level 10 Explorer is worth renting because it accelerates other creatures'
+leveling in the Explorer dimension.
