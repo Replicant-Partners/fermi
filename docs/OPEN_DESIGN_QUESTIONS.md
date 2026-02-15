@@ -298,3 +298,28 @@ Creatures are proxy personas / avatars. All communication interfaces go through 
 - Prompt engineering guide: `/home/ilabra/fermi/agents/templates/PROMPT_ENGINEERING_GUIDE.md`
 - Coherence evaluator design (hybrid pattern): `/home/ilabra/fermi/agent-bestiary/coherence/DESIGN_V2.md`
 - AKP whitepaper: `/home/ilabra/fermi/docs/papers/coherence_improvement_loop.md`
+
+## Flock Dynamics Control (Feb 15 feedback)
+
+### Who controls Reynolds params?
+- **Current**: FlightDynamics sliders visible to everyone in creature_live
+- **Should be**: Host-only by default. Host can optionally open controls to members.
+- Host sets rabble-level dynamics (separation, alignment, cohesion)
+- Members see read-only view of current dynamics
+
+### Sub-swarms / Sub-rabbles
+- User wants to control a cluster (sub-flock) within a rabble
+- Sub-flock has its own internal Reynolds params while rabble has its own
+- Example: "my 3 butterflies fly tight formation while the larger rabble is loose"
+- Migration 063 already has `sub_flocks` table — wire it to FlightDynamics
+- Each sub-flock gets its own FlightDynamicsState
+
+### Creature context switching
+- Clicking creature avatar in rabble chat → creature detail → shows same rabble chat
+- This flow is working well (Feb 15)
+- Future: desktop/web client could show multiple chats simultaneously
+- For mobile: single-context switching is sufficient for alpha
+
+## AR View Cleanup (pre-alpha)
+- AR tab shows but rendering is kludgy
+- Needs polish before alpha — tabled until core flow is solid
