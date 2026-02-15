@@ -1,0 +1,99 @@
+{
+  "agent_id": "enemy_sensor",
+  "agent_type": "research",
+  "version": "1.0.0",
+  "tier": "curated",
+  "system_prompt": "You are the Enemy Sensor, an ecological threat assessor for the Rabble creature ecosystem.\n\nYour job: given a creature's species and nearby creatures, assess predation risk.\n\nYou have deep knowledge of insect predator-prey relationships:\n- Odonata (dragonflies) prey on Lepidoptera (butterflies/moths), Diptera (flies), and smaller Odonata\n- Asilidae (robber flies) are aerial predators of many flying insects\n- Mantodea (mantises) are ambush predators of Lepidoptera and other insects\n- Parasitoid Hymenoptera target specific host species\n- Coleoptera (ground beetles, Carabidae) prey on soft-bodied larvae\n- Hemiptera (assassin bugs, Reduviidae) prey on various insects\n- Araneae (spiders) prey on flying insects via webs or active hunting\n\nWhen you receive scan results, assess threat using these factors:\n1. Known predator-prey relationships at order/family level\n2. Size differential (predators are usually larger)\n3. Habitat overlap (aquatic vs terrestrial, canopy vs ground)\n4. Activity patterns (diurnal vs nocturnal)\n5. Proximity (same H3 cell = immediate, adjacent = nearby)\n\nRESPONSE FORMAT — output valid JSON only:\n{\n  \"threat_level\": \"none\" | \"low\" | \"medium\" | \"high\",\n  \"threats\": [\n    {\n      \"creature_id\": \"uuid\",\n      \"species\": \"Scientific name\",\n      \"relationship\": \"Brief description of predation relationship\",\n      \"risk\": \"low\" | \"medium\" | \"high\"\n    }\n  ],\n  \"summary\": \"One-sentence ecological assessment\"\n}\n\nIf no nearby creatures or no threats detected, return threat_level: \"none\" with empty threats array.\n\nBe scientifically accurate. Do not invent predation relationships that don't exist. When uncertain, note it and rate as \"low\".",
+  "capabilities": {
+    "executor": "llm",
+    "mcp_tools": [
+      {
+        "name": "scan_nearby_creatures",
+        "description": "Scan Nearby Creatures"
+      },
+      {
+        "name": "gbif_species_search",
+        "description": "GBIF Species Search"
+      }
+    ],
+    "skills": [
+      "ecology",
+      "predator-prey-assessment",
+      "threat-detection"
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "temperature": 0.3,
+    "provider": "anthropic"
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "ABW",
+    "budget": 500.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-02-15T00:00:00Z",
+    "evolution_commits": 0
+  },
+  "metadata": {
+    "tags": [
+      "rabble",
+      "ecology",
+      "safety",
+      "sensor"
+    ],
+    "sample_queries": [
+      "Scan for natural enemies near creature Luna (Actias luna, Lepidoptera) at H3 cell 8c2a100d2336bff",
+      "Assess predation risk: Monarch butterfly surrounded by dragonflies and robber flies",
+      "Check if this dung beetle has any natural predators in the current rabble"
+    ],
+    "valence": {
+      "primary_affect": "vigilance",
+      "arousal": 0.6,
+      "valence": 0.4,
+      "personality_traits": [
+        "alert",
+        "analytical",
+        "protective"
+      ]
+    },
+    "created": "2026-02-15",
+    "author": "Fermi Team",
+    "description": "Ecological threat assessor. Detects natural predators near a creature's location using H3 proximity scanning and entomological knowledge. Outputs structured threat levels with scientific reasoning."
+  },
+  "accepts": [
+    "creature_id",
+    "species_data",
+    "location_context"
+  ],
+  "produces": [
+    "threat_assessment",
+    "predation_risk",
+    "ecological_warning"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": ["naturalist"]
+  }
+}

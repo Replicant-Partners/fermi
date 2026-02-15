@@ -31,6 +31,7 @@
 ///   - gbif_species_search: search GBIF for insect species data
 ///   - mint_creature: store a minted creature specimen (workspace-only)
 ///   - generate_specimen_art: generate unique naturalist illustration for a creature via Gemini
+///   - scan_nearby_creatures: H3 proximity scan for enemy_sensor agent threat assessment
 use crate::agent_backend::agent_card::AgentCard;
 use crate::agent_backend::executor::{AgentExecutor, ExecutionContext};
 use crate::agent_backend::llm_executor::ClaudeTool;
@@ -946,6 +947,28 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: true,
             is_delegation: false,
         },
+        // ─── Enemy Sensor ───
+        BuiltinToolDef {
+            name: "scan_nearby_creatures",
+            description: "Find creatures near a given creature using H3 hexagonal proximity. Returns the target creature's species info and all nearby creatures with taxonomy data. Used by the enemy_sensor agent to assess predation risk.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "creature_id": {
+                        "type": "string",
+                        "description": "UUID of the creature to scan around"
+                    },
+                    "radius_rings": {
+                        "type": "integer",
+                        "description": "H3 grid ring radius (default: 1, i.e. 7 cells at res 12)",
+                        "default": 1
+                    }
+                },
+                "required": ["creature_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
     ]
 }
 
@@ -1077,6 +1100,7 @@ impl ToolRegistry {
             "generate_specimen_art" => execute_generate_specimen_art(input, ctx).await,
             "segment_creature_wings" => execute_segment_creature_wings(input, ctx).await,
             "activate_formation" => execute_activate_formation(input, ctx).await,
+            "scan_nearby_creatures" => execute_scan_nearby_creatures(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -1248,6 +1272,149 @@ async fn execute_activate_formation(
         "activated": true,
         "charged": true,
         "cost_credits": cost,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Enemy Sensor tool implementation ──────────────────────────────
+
+async fn execute_scan_nearby_creatures(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    use h3o::CellIndex;
+
+    let creature_id_str = input
+        .get("creature_id")
+        .and_then(|v| v.as_str())
+        .ok_or("creature_id is required")?;
+    let creature_id: Uuid = creature_id_str
+        .parse()
+        .map_err(|_| "Invalid creature_id UUID".to_string())?;
+    let radius = input
+        .get("radius_rings")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as u32;
+
+    let pool = ctx.memory_store.pool();
+
+    // 1. Look up target creature's current state + species info
+    let target = sqlx::query(
+        "SELECT c.creature_id, c.scientific_name, c.common_name, c.species_group,
+                c.taxonomy, cs.h3_cell, cs.location_lat, cs.location_lng,
+                cs.rabble_id, cs.state
+         FROM creatures c
+         JOIN creature_state cs ON cs.creature_id = c.creature_id
+         WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("DB error: {}", e))?
+    .ok_or("Creature not found or has no state")?;
+
+    let h3_cell: Option<String> = target.try_get("h3_cell").ok().flatten();
+    let h3_cell = h3_cell.ok_or("Creature has no H3 location — record a flight first")?;
+
+    let taxonomy: Option<serde_json::Value> = target.try_get("taxonomy").ok().flatten();
+    let order = taxonomy
+        .as_ref()
+        .and_then(|t| t.get("order"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+    let family = taxonomy
+        .as_ref()
+        .and_then(|t| t.get("family"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    let target_info = json!({
+        "creature_id": creature_id,
+        "scientific_name": target.try_get::<Option<String>, _>("scientific_name").unwrap_or(None),
+        "common_name": target.try_get::<Option<String>, _>("common_name").unwrap_or(None),
+        "species_group": target.try_get::<Option<String>, _>("species_group").unwrap_or(None),
+        "order": order,
+        "family": family,
+        "h3_cell": &h3_cell,
+        "lat": target.try_get::<Option<f64>, _>("location_lat").unwrap_or(None),
+        "lng": target.try_get::<Option<f64>, _>("location_lng").unwrap_or(None),
+        "rabble_id": target.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten(),
+    });
+
+    // 2. Compute H3 grid disk
+    let center_cell: CellIndex = h3_cell
+        .parse()
+        .map_err(|e| format!("Invalid H3 cell '{}': {}", h3_cell, e))?;
+    let disk: Vec<CellIndex> = center_cell.grid_disk::<Vec<_>>(radius);
+    let cell_strings: Vec<String> = disk.iter().map(|c| c.to_string()).collect();
+
+    // 3. Query nearby creatures (excluding target, excluding private)
+    let placeholders: Vec<String> = (1..=cell_strings.len())
+        .map(|i| format!("${}", i))
+        .collect();
+    let in_clause = placeholders.join(", ");
+
+    let sql = format!(
+        "SELECT c.creature_id, c.scientific_name, c.common_name, c.species_group,
+                c.taxonomy, cs.h3_cell, cs.rabble_id,
+                COALESCE(cc.visibility, 'public') AS visibility
+         FROM creature_state cs
+         JOIN creatures c ON c.creature_id = cs.creature_id
+         LEFT JOIN creature_conditions cc ON cc.creature_id = cs.creature_id
+         WHERE cs.h3_cell IN ({})
+           AND cs.creature_id != ${}
+           AND COALESCE(cc.visibility, 'public') != 'private'
+         LIMIT 50",
+        in_clause,
+        cell_strings.len() + 1
+    );
+
+    let mut query = sqlx::query(&sql);
+    for cs in &cell_strings {
+        query = query.bind(cs);
+    }
+    query = query.bind(creature_id);
+
+    let rows = query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let target_rabble: Option<Uuid> = target
+        .try_get::<Option<Uuid>, _>("rabble_id")
+        .ok()
+        .flatten();
+
+    let nearby: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            let tax: Option<serde_json::Value> = r.try_get("taxonomy").ok().flatten();
+            let nearby_rabble: Option<Uuid> =
+                r.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten();
+            let in_same_rabble = match (&target_rabble, &nearby_rabble) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            };
+            json!({
+                "creature_id": r.get::<Uuid, _>("creature_id"),
+                "scientific_name": r.try_get::<Option<String>, _>("scientific_name").unwrap_or(None),
+                "common_name": r.try_get::<Option<String>, _>("common_name").unwrap_or(None),
+                "species_group": r.try_get::<Option<String>, _>("species_group").unwrap_or(None),
+                "order": tax.as_ref().and_then(|t| t.get("order")).and_then(|v| v.as_str()).unwrap_or("Unknown"),
+                "family": tax.as_ref().and_then(|t| t.get("family")).and_then(|v| v.as_str()).unwrap_or("Unknown"),
+                "h3_cell": r.try_get::<Option<String>, _>("h3_cell").unwrap_or(None),
+                "in_same_rabble": in_same_rabble,
+            })
+        })
+        .collect();
+
+    let result = json!({
+        "target": target_info,
+        "nearby_count": nearby.len(),
+        "nearby": nearby,
+        "radius_rings": radius,
+        "cells_searched": cell_strings.len(),
     });
 
     serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))

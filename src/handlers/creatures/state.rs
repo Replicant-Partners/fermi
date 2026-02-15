@@ -230,6 +230,69 @@ pub async fn record_flight_handler(
         });
     }
 
+    // Fire enemy sensor check if module is active (fire-and-forget, 1cr)
+    {
+        let modules: Vec<String> =
+            sqlx::query("SELECT active_modules FROM creature_conditions WHERE creature_id = $1")
+                .bind(req.creature_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|r| {
+                    r.try_get::<Option<Vec<String>>, _>("active_modules")
+                        .ok()
+                        .flatten()
+                })
+                .unwrap_or_default();
+
+        if modules.contains(&"enemy_sensor".to_string()) {
+            if let Some(ws_id) = dispatch_ws_id {
+                let state3 = state.clone();
+                let user_id3 = user_id.clone();
+                let cid = req.creature_id;
+                let gas = state.gas_fees.clone();
+                tokio::spawn(async move {
+                    // Charge 1cr check fee
+                    if let Ok(wallet) = get_or_create_wallet(&state3.db, "user", &user_id3).await {
+                        if charge_gas(
+                            &state3.db,
+                            wallet.wallet_id,
+                            gas.enemy_sensor_check,
+                            "enemy_sensor_check",
+                            &format!("Auto enemy sensor scan for creature {}", cid),
+                            Some(&cid.to_string()),
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            let query = format!(
+                                "Auto-scan for natural enemies near creature {}. \
+                                 Use scan_nearby_creatures with creature_id \"{}\".",
+                                cid, cid
+                            );
+                            match rabble_workspace::dispatch_rabble_action(
+                                &state3,
+                                ws_id,
+                                "enemy_sensor",
+                                "threat_scan",
+                                &query,
+                                &user_id3,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    eprintln!("[rabble] Enemy sensor scanned creature {}", cid)
+                                }
+                                Err(e) => eprintln!("[rabble] Enemy sensor dispatch failed: {}", e),
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+
     Ok(Json(json!({
         "flight_id": flight_id,
         "creature_id": req.creature_id,
@@ -2635,6 +2698,199 @@ pub async fn get_track_handler(
         "count": points.len(),
         "tether": tether_info,
     })))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Enemy Sensor — enable / disable / check
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct EnemySensorRequest {
+    pub action: String, // "enable" | "disable" | "check"
+}
+
+/// POST /api/creatures/:creature_id/enemy-sensor
+pub async fn enemy_sensor_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<EnemySensorRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+    let gas = &state.gas_fees;
+
+    // Verify ownership
+    let creature = sqlx::query(
+        "SELECT c.owner_id, c.scientific_name, c.common_name, c.species_group, c.workspace_id,
+                c.taxonomy
+         FROM creatures c WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    match req.action.as_str() {
+        "enable" => {
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.enemy_sensor_enable,
+                "enemy_sensor_enable",
+                &format!("Enable enemy sensor for creature {}", creature_id),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            toggle_module(pool, creature_id, "enemy_sensor", true).await;
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "enemy_sensor": "enabled",
+                "cost": gas.enemy_sensor_enable,
+            })))
+        }
+        "disable" => {
+            toggle_module(pool, creature_id, "enemy_sensor", false).await;
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "enemy_sensor": "disabled",
+            })))
+        }
+        "check" => {
+            // Verify module is enabled
+            let modules: Vec<String> = sqlx::query(
+                "SELECT active_modules FROM creature_conditions WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| {
+                r.try_get::<Option<Vec<String>>, _>("active_modules")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default();
+
+            if !modules.contains(&"enemy_sensor".to_string()) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Enemy sensor not enabled — enable it first (5cr)".to_string(),
+                ));
+            }
+
+            // Charge check fee
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.enemy_sensor_check,
+                "enemy_sensor_check",
+                &format!("Enemy sensor scan for creature {}", creature_id),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            // Build query for the agent
+            let scientific_name: String = creature
+                .try_get("scientific_name")
+                .unwrap_or_else(|_| "Unknown".to_string());
+            let species_group: String = creature
+                .try_get("species_group")
+                .unwrap_or_else(|_| "insect".to_string());
+            let taxonomy: Option<serde_json::Value> = creature.try_get("taxonomy").ok().flatten();
+            let order = taxonomy
+                .as_ref()
+                .and_then(|t| t.get("order"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+
+            let query = format!(
+                "Scan for natural enemies near creature {} ({}, order {}). \
+                 Use scan_nearby_creatures with creature_id \"{}\" to find who is nearby, \
+                 then assess predation risk.",
+                creature
+                    .try_get::<Option<String>, _>("common_name")
+                    .unwrap_or(None)
+                    .unwrap_or_else(|| scientific_name.clone()),
+                scientific_name,
+                order,
+                creature_id,
+            );
+
+            // Get workspace_id — try creature_state first, fall back to creatures table
+            let workspace_id: Uuid = sqlx::query(
+                "SELECT COALESCE(cs.workspace_id, c.workspace_id) AS ws_id
+                 FROM creatures c
+                 LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
+                 WHERE c.creature_id = $1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| r.try_get::<Option<Uuid>, _>("ws_id").ok().flatten())
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                "Creature has no workspace — mint first".to_string(),
+            ))?;
+
+            // Dispatch to enemy_sensor agent
+            let assessment = rabble_workspace::dispatch_rabble_action(
+                &state,
+                workspace_id,
+                "enemy_sensor",
+                "threat_scan",
+                &query,
+                &user_id,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Enemy sensor scan failed: {}", e),
+                )
+            })?;
+
+            // Try to parse agent response as JSON for structured output
+            let parsed: serde_json::Value =
+                serde_json::from_str(&assessment).unwrap_or_else(|_| {
+                    json!({
+                        "threat_level": "unknown",
+                        "summary": assessment,
+                        "threats": [],
+                    })
+                });
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "species_group": species_group,
+                "cost": gas.enemy_sensor_check,
+                "assessment": parsed,
+            })))
+        }
+        other => Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Unknown action '{}' — use 'enable', 'disable', or 'check'",
+                other
+            ),
+        )),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

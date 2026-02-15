@@ -1381,6 +1381,11 @@ async fn main() {
             "/api/creatures/:creature_id/tether",
             post(handlers::creatures::tether_handler).delete(handlers::creatures::untether_handler),
         )
+        // Enemy sensor — enable/disable/check natural predators
+        .route(
+            "/api/creatures/:creature_id/enemy-sensor",
+            post(handlers::creatures::enemy_sensor_handler),
+        )
         .route(
             "/api/creatures/:creature_id/telemetry",
             post(handlers::creatures::push_telemetry_handler),
