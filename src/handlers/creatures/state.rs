@@ -2517,16 +2517,73 @@ pub async fn untether_handler(
         return Err((StatusCode::NOT_FOUND, "No active tether".into()));
     }
 
-    // End any tracking flights created during tether
-    sqlx::query(
-        "UPDATE creature_flights SET ended_at = NOW(),
-         duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-         WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device'",
+    // End tracking flights — but if the creature is in a rabble, keep it there.
+    // Find the tether flight first to check if it's attached to a swarm.
+    let tether_flight = sqlx::query(
+        "SELECT flight_id, swarm_id, center_lat, center_lng, h3_cell
+         FROM creature_flights
+         WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device' LIMIT 1",
     )
     .bind(creature_id)
-    .execute(pool)
+    .fetch_optional(pool)
     .await
-    .ok();
+    .ok()
+    .flatten();
+
+    let stayed_in_rabble = if let Some(ref tf) = tether_flight {
+        let swarm_id: Option<Uuid> = tf.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+        let tf_id: Uuid = tf.get("flight_id");
+
+        // End the tether flight
+        sqlx::query(
+            "UPDATE creature_flights SET ended_at = NOW(),
+             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+             WHERE flight_id = $1",
+        )
+        .bind(tf_id)
+        .execute(pool)
+        .await
+        .ok();
+
+        // If it was in a rabble, create a new static swarm flight at current position.
+        // The rabble freezes at the last anchor location.
+        if let Some(sid) = swarm_id {
+            let lat: f64 = tf.try_get("center_lat").unwrap_or(0.0);
+            let lng: f64 = tf.try_get("center_lng").unwrap_or(0.0);
+            let h3: String = tf.try_get("h3_cell").unwrap_or_else(|_| String::new());
+            sqlx::query(
+                "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
+                 h3_cell, h3_resolution, center_lat, center_lng,
+                 flight_pattern, swarm_id, started_at)
+                 VALUES ($1, $2, $3, $4, 12, $5, $6, 'swarm', $7, NOW())",
+            )
+            .bind(Uuid::new_v4())
+            .bind(creature_id)
+            .bind(&user_id)
+            .bind(&h3)
+            .bind(lat)
+            .bind(lng)
+            .bind(sid)
+            .execute(pool)
+            .await
+            .ok();
+            true
+        } else {
+            false
+        }
+    } else {
+        // No tether flight found — end any other device flights
+        sqlx::query(
+            "UPDATE creature_flights SET ended_at = NOW(),
+             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+             WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device'",
+        )
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .ok();
+        false
+    };
 
     // Set presence back to active
     sqlx::query("UPDATE creature_conditions SET presence = 'active', updated_at = NOW() WHERE creature_id = $1")
@@ -2538,6 +2595,7 @@ pub async fn untether_handler(
     Ok(Json(json!({
         "creature_id": creature_id,
         "status": "untethered",
+        "stayed_in_rabble": stayed_in_rabble,
     })))
 }
 
