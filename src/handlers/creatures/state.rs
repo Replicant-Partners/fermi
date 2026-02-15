@@ -1594,89 +1594,84 @@ pub async fn fly_handler(
         });
     }
 
-    // Determine mode: solo (no other creatures in swarm) or rabble
-    let creature_count: i64 =
-        sqlx::query("SELECT creature_count FROM swarm_events WHERE swarm_id = $1")
-            .bind(swarm_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .map(|r| r.try_get::<i32, _>("creature_count").unwrap_or(1) as i64)
-            .unwrap_or(1);
+    // Return immediately — defer workspace lookup + flight_coordinator to background
+    let has_plan_request = req.destination.is_some() || req.prompt.is_some();
 
-    let mode = if creature_count > 1 { "rabble" } else { "solo" };
-
-    // If destination or prompt provided, dispatch flight_coordinator agent (async, non-blocking)
-    if req.destination.is_some() || req.prompt.is_some() {
-        // Find workspace: swarm's workspace or personal
-        let ws_id = sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
-            .bind(swarm_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
-
-        let ws_id = match ws_id {
-            Some(id) => id,
-            None => sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
-                .bind(&user_id)
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|r| {
-                    r.try_get::<Option<Uuid>, _>("personal_workspace_id")
-                        .ok()
-                        .flatten()
-                })
-                .ok_or((
-                    StatusCode::BAD_REQUEST,
-                    "No workspace available — mint a creature first".to_string(),
-                ))?,
-        };
-
+    if has_plan_request {
+        let spawn_state = state.clone();
+        let spawn_user = user_id.clone();
+        let spawn_creature = creature_id;
+        let spawn_flight = flight_id;
         let species: String = creature.get("species_group");
         let specimen_name: Option<String> = creature.try_get("specimen_name").unwrap_or(None);
         let scientific_name: Option<String> = creature.try_get("scientific_name").unwrap_or(None);
         let creature_label =
             specimen_name.unwrap_or_else(|| scientific_name.unwrap_or_else(|| species.clone()));
-
         let loc_name = prev_location_name.clone();
+        let dest_clone = req.destination.clone();
+        let prompt_clone = req.prompt.clone();
 
-        let query = if let Some(ref dest) = req.destination {
-            let dest_name = dest
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("destination");
-            if let Some(ref prompt) = req.prompt {
-                format!(
-                    "Plan a flight for {} ({}) from {} to {}. Creative route: {}",
-                    creature_label, species, loc_name, dest_name, prompt,
-                )
+        tokio::spawn(async move {
+            let pool_bg = &spawn_state.db;
+
+            // Find workspace
+            let ws_id = sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+                .bind(swarm_id)
+                .fetch_optional(pool_bg)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
+
+            let ws_id = match ws_id {
+                Some(id) => id,
+                None => {
+                    match sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
+                        .bind(&spawn_user)
+                        .fetch_optional(pool_bg)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|r| {
+                            r.try_get::<Option<Uuid>, _>("personal_workspace_id")
+                                .ok()
+                                .flatten()
+                        }) {
+                        Some(id) => id,
+                        None => {
+                            eprintln!("[fly] No workspace for flight_coordinator dispatch");
+                            return;
+                        }
+                    }
+                }
+            };
+
+            let query = if let Some(ref dest) = dest_clone {
+                let dest_name = dest
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("destination");
+                if let Some(ref prompt) = prompt_clone {
+                    format!(
+                        "Plan a flight for {} ({}) from {} to {}. Creative route: {}",
+                        creature_label, species, loc_name, dest_name, prompt
+                    )
+                } else {
+                    format!(
+                        "Plan a flight for {} ({}) from {} to {}.",
+                        creature_label, species, loc_name, dest_name
+                    )
+                }
             } else {
                 format!(
-                    "Plan a flight for {} ({}) from {} to {}.",
-                    creature_label, species, loc_name, dest_name,
+                    "Describe a wandering flight for {} ({}) around {}. {}",
+                    creature_label,
+                    species,
+                    loc_name,
+                    prompt_clone.as_deref().unwrap_or("")
                 )
-            }
-        } else {
-            format!(
-                "Describe a wandering flight for {} ({}) around {}. {}",
-                creature_label,
-                species,
-                loc_name,
-                req.prompt.as_deref().unwrap_or(""),
-            )
-        };
+            };
 
-        // Dispatch flight_coordinator async — don't block the HTTP response.
-        // Flight plan arrives as a workspace message (same pattern as dream_narrator).
-        let spawn_state = state.clone();
-        let spawn_user = user_id.clone();
-        let spawn_creature = creature_id;
-        let spawn_flight = flight_id;
-        tokio::spawn(async move {
             match rabble_workspace::dispatch_rabble_action(
                 &spawn_state,
                 ws_id,
@@ -1688,7 +1683,6 @@ pub async fn fly_handler(
             .await
             {
                 Ok(result) => {
-                    // Store flight plan reference on the flight record
                     let _ = sqlx::query(
                         "UPDATE creature_flights SET metadata = jsonb_set(
                             COALESCE(metadata, '{}'::jsonb), '{flight_plan}', $1::jsonb
@@ -1696,7 +1690,7 @@ pub async fn fly_handler(
                     )
                     .bind(serde_json::to_string(&result).unwrap_or_default())
                     .bind(spawn_flight)
-                    .execute(spawn_state.memory_store.pool())
+                    .execute(pool_bg)
                     .await
                     .ok();
                     eprintln!(
@@ -1704,22 +1698,17 @@ pub async fn fly_handler(
                         spawn_creature
                     );
                 }
-                Err(e) => {
-                    eprintln!("[fly] flight_coordinator dispatch failed: {}", e);
-                }
+                Err(e) => eprintln!("[fly] flight_coordinator dispatch failed: {}", e),
             }
         });
     }
-
-    eprintln!("[fly] returning response in {:?}", fly_start.elapsed());
 
     Ok(Json(json!({
         "flight_id": flight_id,
         "swarm_id": swarm_id,
         "creature_id": creature_id,
-        "mode": mode,
         "pattern": "fly",
-        "plan": "generating",
+        "plan": if has_plan_request { "generating" } else { "none" },
         "gas_charged": 1,
     })))
 }
