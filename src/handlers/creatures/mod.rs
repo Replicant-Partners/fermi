@@ -26,11 +26,11 @@ pub use state::{
     append_telemetry_handler, end_flight_handler, enemy_sensor_handler, export_flight_handler,
     fly_handler, genome_profiler_handler, get_track_handler, import_flight_handler,
     join_by_qr_token_handler, join_swarm_handler, perch_handler, plan_flight_handler,
-    push_telemetry_handler, record_flight_handler, tether_handler, untether_handler,
-    update_creature_presence_handler, AppendTelemetryRequest, EndFlightRequest, EnemySensorRequest,
-    FlyRequest, GenomeProfilerRequest, ImportFlightRequest, JoinSwarmRequest, PerchRequest,
-    PlanFlightRequest, PushTelemetryRequest, RecordFlightRequest, TelemetryPoint, TetherRequest,
-    TrackQuery, UpdatePresenceRequest,
+    prey_locator_handler, push_telemetry_handler, record_flight_handler, tether_handler,
+    untether_handler, update_creature_presence_handler, AppendTelemetryRequest, EndFlightRequest,
+    EnemySensorRequest, FlyRequest, GenomeProfilerRequest, ImportFlightRequest, JoinSwarmRequest,
+    PerchRequest, PlanFlightRequest, PreyLocatorRequest, PushTelemetryRequest, RecordFlightRequest,
+    TelemetryPoint, TetherRequest, TrackQuery, UpdatePresenceRequest,
 };
 
 // ─── Re-exports: identity ──────────────────────────────────────────

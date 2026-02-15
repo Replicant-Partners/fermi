@@ -1391,6 +1391,11 @@ async fn main() {
             "/api/creatures/:creature_id/genome-profiler",
             post(handlers::creatures::genome_profiler_handler),
         )
+        // Prey locator — premium hunting: scan + stalk with flight plan
+        .route(
+            "/api/creatures/:creature_id/prey-locator",
+            post(handlers::creatures::prey_locator_handler),
+        )
         .route(
             "/api/creatures/:creature_id/telemetry",
             post(handlers::creatures::push_telemetry_handler),

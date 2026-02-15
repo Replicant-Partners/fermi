@@ -3264,6 +3264,305 @@ pub async fn genome_profiler_handler(
     }
 }
 
+// ── Prey Locator (premium hunting) ──────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PreyLocatorRequest {
+    pub action: String,                   // "enable", "disable", "scan", "stalk"
+    pub target_creature_id: Option<Uuid>, // required for "stalk"
+}
+
+/// POST /api/creatures/:creature_id/prey-locator
+///
+/// Premium tactical hunting: scan for prey (2cr), then stalk with flight plan (5cr).
+/// One-time unlock: 5cr.
+pub async fn prey_locator_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<PreyLocatorRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+    let gas = &state.gas_fees;
+
+    let creature = sqlx::query(
+        "SELECT c.owner_id, c.scientific_name, c.common_name, c.species_group, c.taxonomy
+         FROM creatures c WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    match req.action.as_str() {
+        "enable" => {
+            let already_paid: bool = sqlx::query(
+                "SELECT 1 FROM credit_ledger WHERE tx_type = 'prey_locator_enable' AND related_id = $1 LIMIT 1",
+            )
+            .bind(creature_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .map(|r| r.is_some())
+            .unwrap_or(false);
+
+            let cost = if already_paid {
+                0
+            } else {
+                let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                charge_gas(
+                    &state.db,
+                    wallet.wallet_id,
+                    gas.prey_locator_enable,
+                    "prey_locator_enable",
+                    &format!("Unlock prey locator for creature {}", creature_id),
+                    Some(&creature_id.to_string()),
+                )
+                .await?;
+                gas.prey_locator_enable
+            };
+
+            toggle_module(pool, creature_id, "prey_locator", true).await;
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "prey_locator": "enabled",
+                "cost": cost,
+            })))
+        }
+        "disable" => {
+            toggle_module(pool, creature_id, "prey_locator", false).await;
+            Ok(Json(
+                json!({ "creature_id": creature_id, "prey_locator": "disabled" }),
+            ))
+        }
+        "scan" => {
+            // Verify module is enabled
+            let modules: Vec<String> = sqlx::query(
+                "SELECT active_modules FROM creature_conditions WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| {
+                r.try_get::<Option<Vec<String>>, _>("active_modules")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default();
+
+            if !modules.contains(&"prey_locator".to_string()) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Prey locator not enabled".to_string(),
+                ));
+            }
+
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.prey_locator_scan,
+                "prey_locator_scan",
+                &format!("Prey scan for creature {}", creature_id),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            let scientific_name: String = creature
+                .try_get("scientific_name")
+                .unwrap_or_else(|_| "Unknown".to_string());
+            let taxonomy: Option<serde_json::Value> = creature.try_get("taxonomy").ok().flatten();
+            let order = taxonomy
+                .as_ref()
+                .and_then(|t| t.get("order"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let common_name: Option<String> = creature
+                .try_get::<Option<String>, _>("common_name")
+                .unwrap_or(None);
+            let label = common_name.unwrap_or_else(|| scientific_name.clone());
+
+            let query = format!(
+                "SCAN MODE: Identify viable prey near {} ({}, order {}). \
+                 Use scan_nearby_creatures with creature_id \"{}\" to find who is nearby, \
+                 then assess which creatures this predator could hunt. \
+                 Rank by vulnerability and accessibility.",
+                label, scientific_name, order, creature_id,
+            );
+
+            let workspace_id = find_creature_workspace(pool, creature_id).await?;
+
+            let result = rabble_workspace::dispatch_rabble_action(
+                &state,
+                workspace_id,
+                "prey_locator",
+                "prey_scan",
+                &query,
+                &user_id,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Prey scan failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&result)
+                .unwrap_or_else(|_| json!({ "prey_targets": [], "hunting_summary": result }));
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "cost": gas.prey_locator_scan,
+                "scan": parsed,
+            })))
+        }
+        "stalk" => {
+            let target_id = req.target_creature_id.ok_or((
+                StatusCode::BAD_REQUEST,
+                "target_creature_id required for stalk".to_string(),
+            ))?;
+
+            // Verify module enabled
+            let modules: Vec<String> = sqlx::query(
+                "SELECT active_modules FROM creature_conditions WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| {
+                r.try_get::<Option<Vec<String>>, _>("active_modules")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default();
+
+            if !modules.contains(&"prey_locator".to_string()) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Prey locator not enabled".to_string(),
+                ));
+            }
+
+            // Look up target creature
+            let target = sqlx::query(
+                "SELECT c.scientific_name, c.common_name, cs.location_lat, cs.location_lng, cs.h3_cell
+                 FROM creatures c LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
+                 WHERE c.creature_id = $1",
+            )
+            .bind(target_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or((StatusCode::NOT_FOUND, "Target creature not found".to_string()))?;
+
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.prey_locator_stalk,
+                "prey_locator_stalk",
+                &format!(
+                    "Stalk flight plan for creature {} → {}",
+                    creature_id, target_id
+                ),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            let scientific_name: String = creature
+                .try_get("scientific_name")
+                .unwrap_or_else(|_| "Unknown".to_string());
+            let target_name: String = target
+                .try_get("scientific_name")
+                .unwrap_or_else(|_| "Unknown".to_string());
+            let target_lat: f64 = target.try_get("location_lat").unwrap_or(0.0);
+            let target_lng: f64 = target.try_get("location_lng").unwrap_or(0.0);
+
+            let query = format!(
+                "STALK MODE: Generate a tactical intercept flight plan for {} to hunt {} \
+                 at position ({}, {}). Plan approach vectors, ambush positions, \
+                 and waypoints. Consider prey escape behaviors and optimal intercept strategy.",
+                scientific_name, target_name, target_lat, target_lng,
+            );
+
+            let workspace_id = find_creature_workspace(pool, creature_id).await?;
+
+            let plan = rabble_workspace::dispatch_rabble_action(
+                &state,
+                workspace_id,
+                "prey_locator",
+                "stalk_plan",
+                &query,
+                &user_id,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Stalk plan failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&plan).unwrap_or_else(
+                |_| json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
+            );
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "target_creature_id": target_id,
+                "cost": gas.prey_locator_stalk,
+                "stalk": parsed,
+            })))
+        }
+        other => Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Unknown action '{}' — use 'enable', 'disable', 'scan', or 'stalk'",
+                other
+            ),
+        )),
+    }
+}
+
+/// Helper: find workspace for a creature via its active flight's swarm
+async fn find_creature_workspace(
+    pool: &PgPool,
+    creature_id: Uuid,
+) -> Result<Uuid, (StatusCode, String)> {
+    sqlx::query(
+        "SELECT se.workspace_id
+         FROM creature_flights cf
+         JOIN swarm_events se ON se.swarm_id = cf.swarm_id
+         WHERE cf.creature_id = $1 AND cf.ended_at IS NULL AND se.workspace_id IS NOT NULL
+         LIMIT 1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten())
+    .ok_or((
+        StatusCode::BAD_REQUEST,
+        "Creature has no workspace — perch first".to_string(),
+    ))
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Creature versioned state — dual-write helpers
 // (previously in handlers/creature_state.rs)
