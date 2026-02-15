@@ -1086,8 +1086,12 @@ pub async fn perch_handler(
 
     // Validate creature ownership + presence
     let creature = sqlx::query(
-        "SELECT owner_id, specimen_name, scientific_name, species_group, presence, visibility
-         FROM creatures WHERE creature_id = $1",
+        "SELECT c.owner_id, c.specimen_name, c.scientific_name, c.species_group,
+                COALESCE(cc.presence, 'active') AS presence,
+                COALESCE(cc.visibility, 'public') AS visibility
+         FROM creatures c
+         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
+         WHERE c.creature_id = $1",
     )
     .bind(creature_id)
     .fetch_optional(pool)
@@ -1327,8 +1331,11 @@ pub async fn fly_handler(
 
     // Validate creature ownership
     let creature = sqlx::query(
-        "SELECT owner_id, species_group, specimen_name, scientific_name, presence
-         FROM creatures WHERE creature_id = $1",
+        "SELECT c.owner_id, c.species_group, c.specimen_name, c.scientific_name,
+                COALESCE(cc.presence, 'active') AS presence
+         FROM creatures c
+         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
+         WHERE c.creature_id = $1",
     )
     .bind(creature_id)
     .fetch_optional(pool)
