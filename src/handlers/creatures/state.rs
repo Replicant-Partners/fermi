@@ -1542,16 +1542,30 @@ pub async fn fly_handler(
 
     let swarm_id = swarm_id.unwrap_or(Uuid::nil());
 
-    // Charge 1cr for fly activation
+    // Tiered fly pricing: hop (no prompt) = 1cr, expedition (with prompt) = 5cr
+    let is_expedition = req.prompt.is_some();
+    let fly_cost = if is_expedition {
+        state.gas_fees.flight_plan
+    } else {
+        1
+    };
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     charge_gas(
         &state.db,
         wallet.wallet_id,
-        1,
-        "fly",
-        &format!("Fly creature {} from perch", creature_id),
+        fly_cost,
+        if is_expedition { "expedition" } else { "fly" },
+        &format!(
+            "{} creature {} from perch",
+            if is_expedition {
+                "Expedition for"
+            } else {
+                "Hop"
+            },
+            creature_id
+        ),
         Some(&creature_id.to_string()),
     )
     .await?;
@@ -1739,9 +1753,9 @@ pub async fn fly_handler(
         "flight_id": flight_id,
         "swarm_id": swarm_id,
         "creature_id": creature_id,
-        "pattern": "fly",
+        "pattern": if is_expedition { "expedition" } else { "fly" },
         "plan": if has_plan_request { "generating" } else { "none" },
-        "gas_charged": 1,
+        "gas_charged": fly_cost,
     })))
 }
 
@@ -4331,19 +4345,41 @@ pub async fn creature_dream_handler(
         ));
     }
 
-    // 5. Charge gas
+    // 5. Daily dream bonus: first dream each day is free (wellness reward)
+    let dreams_today: i64 = sqlx::query(
+        "SELECT COUNT(*) FROM creature_versions cv
+         JOIN creatures c ON c.creature_id = cv.creature_id
+         WHERE c.owner_id = $1 AND cv.transition_type = 'dream'
+         AND cv.recorded_at > NOW() - INTERVAL '24 hours'",
+    )
+    .bind(&user_id)
+    .fetch_one(pool)
+    .await
+    .map(|r| r.get::<i64, _>(0))
+    .unwrap_or(0);
+
+    let is_dream_bonus = dreams_today == 0;
+    let dream_cost = if is_dream_bonus {
+        0
+    } else {
+        gas.creature_dream
+    };
+
     let wallet = fermi_auth::get_or_create_wallet(pool, "user", &user_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    charge_gas(
-        pool,
-        wallet.wallet_id,
-        gas.creature_dream,
-        "gas_fee",
-        &format!("Dream cycle for {}", specimen_name),
-        Some(&creature_id.to_string()),
-    )
-    .await?;
+
+    if dream_cost > 0 {
+        charge_gas(
+            pool,
+            wallet.wallet_id,
+            dream_cost,
+            "gas_fee",
+            &format!("Dream cycle for {}", specimen_name),
+            Some(&creature_id.to_string()),
+        )
+        .await?;
+    }
 
     // 6. Dispatch dream_narrator agent via workspace to generate the dream
     let dream_query = format!(
@@ -4435,7 +4471,8 @@ pub async fn creature_dream_handler(
     Ok(Json(json!({
         "creature_id": creature_id,
         "status": "dreamed",
-        "cost": gas.creature_dream,
+        "cost": dream_cost,
+        "dream_bonus": is_dream_bonus,
         "dream_narrative": dream_narrative,
         "dream_cycles": dream_cycles,
     })))

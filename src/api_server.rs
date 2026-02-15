@@ -248,22 +248,28 @@ pub(crate) struct CreditTier {
 
 pub(crate) const CREDIT_TIERS: &[CreditTier] = &[
     CreditTier {
-        credits: 100,
+        credits: 250,
         price_cents: 500,
         label: "Starter",
         discount_pct: 0,
     },
     CreditTier {
-        credits: 500,
-        price_cents: 2000,
-        label: "Builder",
+        credits: 750,
+        price_cents: 1200,
+        label: "Explorer",
         discount_pct: 20,
     },
     CreditTier {
-        credits: 1000,
-        price_cents: 3500,
-        label: "Pro",
-        discount_pct: 30,
+        credits: 2000,
+        price_cents: 2500,
+        label: "Keeper",
+        discount_pct: 38,
+    },
+    CreditTier {
+        credits: 5000,
+        price_cents: 5000,
+        label: "Breeder",
+        discount_pct: 50,
     },
 ];
 
