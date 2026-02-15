@@ -1127,6 +1127,8 @@ pub struct PerchRequest {
     pub walk_in_budget: Option<i32>,
     /// Display name for the perch (default: "{creature_name}'s perch")
     pub name: Option<String>,
+    /// Operational radius in meters (default 100). Defines bounded area for flock dynamics.
+    pub radius_meters: Option<i32>,
 }
 
 /// POST /api/creatures/:creature_id/perch — place creature at a location (2cr + invite pool)
@@ -1256,10 +1258,10 @@ pub async fn perch_handler(
          funding_mode, invite_pool, invite_pool_remaining,
          qr_token, visibility, anchor_creature_id, walk_in_price,
          walk_in_budget, walk_in_budget_remaining,
-         participant_count, creature_count)
+         radius_meters, participant_count, creature_count)
          VALUES ($1, $2, $3, 12, $4, $5, $6, $7, $8, $9, 'active', $8,
                  'hosted', $10, $10, $11, $12, $13, $14,
-                 $15, $15, 1, 1)",
+                 $15, $15, $16, 1, 1)",
     )
     .bind(swarm_id)
     .bind(&user_id)
@@ -1276,6 +1278,7 @@ pub async fn perch_handler(
     .bind(creature_id)
     .bind(req.walk_in_price)
     .bind(walk_in_budget)
+    .bind(req.radius_meters.unwrap_or(100).max(10).min(10000))
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

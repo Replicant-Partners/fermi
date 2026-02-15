@@ -11,11 +11,10 @@ use serde_json::json;
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::AppState;
 use crate::handlers::rabble_workspace;
+use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
-
 
 // ─── Swarm endpoints (public read) ─────────────────────────────────
 
@@ -26,7 +25,6 @@ pub struct SwarmQuery {
     pub species_filter: Option<String>,
     pub limit: Option<i64>,
 }
-
 
 /// GET /api/swarms — browse upcoming/active swarm events.
 /// Visibility rules: public always shown; shared/private shown only to creator or invited users.
@@ -44,7 +42,8 @@ pub async fn list_swarms_handler(
          starts_at, ends_at, status, participant_count, creature_count,
          visibility, funding_mode, qr_token, created_at,
          anchor_creature_id, anchor_transferred_at,
-         walk_in_price, walk_in_budget, walk_in_budget_remaining
+         walk_in_price, walk_in_budget, walk_in_budget_remaining,
+         radius_meters
          FROM swarm_events WHERE 1=1",
     );
 
@@ -282,6 +281,7 @@ pub async fn list_swarms_handler(
                         "walk_in_price": row.try_get::<Option<i32>, _>("walk_in_price").unwrap_or(None),
                         "walk_in_budget": row.try_get::<Option<i32>, _>("walk_in_budget").unwrap_or(None),
                         "walk_in_budget_remaining": row.try_get::<Option<i32>, _>("walk_in_budget_remaining").unwrap_or(None),
+                        "radius_meters": row.try_get::<i32, _>("radius_meters").unwrap_or(100),
                         "member_images": member_images.get(&sid).cloned().unwrap_or_default(),
                     })
                 })
@@ -303,7 +303,6 @@ pub async fn list_swarms_handler(
     }
 }
 
-
 /// GET /api/swarms/:id — single swarm with details
 pub async fn get_swarm_handler(
     State(state): State<AppState>,
@@ -317,7 +316,7 @@ pub async fn get_swarm_handler(
          starts_at, ends_at, status, participant_count, creature_count,
          metadata, created_at, visibility, funding_mode, invite_pool,
          invite_pool_remaining, suggested_contribution, total_contributions, qr_token,
-         anchor_creature_id, anchor_transferred_at
+         anchor_creature_id, anchor_transferred_at, radius_meters
          FROM swarm_events WHERE swarm_id = $1",
     )
     .bind(id)
@@ -355,6 +354,7 @@ pub async fn get_swarm_handler(
                 "qr_token": row.try_get::<Option<String>, _>("qr_token").unwrap_or(None),
                 "anchor_creature_id": row.try_get::<Option<Uuid>, _>("anchor_creature_id").ok().flatten(),
                 "anchor_transferred_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("anchor_transferred_at").ok().flatten().map(|t| t.to_rfc3339()),
+                "radius_meters": row.try_get::<i32, _>("radius_meters").unwrap_or(100),
             });
             (StatusCode::OK, Json(swarm)).into_response()
         }
@@ -373,7 +373,6 @@ pub async fn get_swarm_handler(
         }
     }
 }
-
 
 #[derive(Deserialize)]
 pub struct CreateSwarmRequest {
@@ -395,7 +394,6 @@ pub struct CreateSwarmRequest {
     pub visibility: Option<String>,
     pub anchor_creature_id: Option<Uuid>,
 }
-
 
 /// POST /api/swarms — create a swarm event (5 credits)
 pub async fn create_swarm_handler(
@@ -521,4 +519,3 @@ pub async fn create_swarm_handler(
         "anchor_creature_id": req.anchor_creature_id,
     })))
 }
-
