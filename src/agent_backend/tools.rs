@@ -969,6 +969,27 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: false,
             is_delegation: false,
         },
+        // ─── Genome Profiler ───
+        BuiltinToolDef {
+            name: "gbif_taxonomy_tree",
+            description: "Fetch the full taxonomic hierarchy for a species from GBIF. Returns kingdom through species with keys, plus sibling taxa at each rank for phylogenetic context.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "gbif_key": {
+                        "type": "integer",
+                        "description": "GBIF species/taxon key"
+                    },
+                    "scientific_name": {
+                        "type": "string",
+                        "description": "Scientific name to look up (used if gbif_key not provided)"
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
     ]
 }
 
@@ -1101,6 +1122,7 @@ impl ToolRegistry {
             "segment_creature_wings" => execute_segment_creature_wings(input, ctx).await,
             "activate_formation" => execute_activate_formation(input, ctx).await,
             "scan_nearby_creatures" => execute_scan_nearby_creatures(input, ctx).await,
+            "gbif_taxonomy_tree" => execute_gbif_taxonomy_tree(input).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -1150,6 +1172,103 @@ async fn execute_search_knowledge(
         .collect();
 
     serde_json::to_string_pretty(&formatted).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── GBIF Taxonomy Tree ────────────────────────────────────────────
+
+async fn execute_gbif_taxonomy_tree(input: &serde_json::Value) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let ua = "AgentBestiaryWorld/1.0 (rabble.world)";
+
+    // Resolve GBIF key — either directly provided or via name search
+    let gbif_key: i64 = if let Some(key) = input.get("gbif_key").and_then(|v| v.as_i64()) {
+        key
+    } else if let Some(name) = input.get("scientific_name").and_then(|v| v.as_str()) {
+        let resp = client
+            .get("https://api.gbif.org/v1/species/match")
+            .query(&[("name", name), ("kingdom", "Animalia")])
+            .header("User-Agent", ua)
+            .send()
+            .await
+            .map_err(|e| format!("GBIF match failed: {}", e))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Parse error: {}", e))?;
+        body.get("usageKey")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| format!("No GBIF match for '{}'", name))?
+    } else {
+        return Err("Either 'gbif_key' or 'scientific_name' is required".to_string());
+    };
+
+    // Fetch the species record (includes full taxonomy)
+    let species_url = format!("https://api.gbif.org/v1/species/{}", gbif_key);
+    let species_resp = client
+        .get(&species_url)
+        .header("User-Agent", ua)
+        .send()
+        .await
+        .map_err(|e| format!("GBIF species fetch failed: {}", e))?;
+    let species: serde_json::Value = species_resp
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    // Fetch parent chain (full classification)
+    let parents_url = format!("https://api.gbif.org/v1/species/{}/parents", gbif_key);
+    let parents_resp = client
+        .get(&parents_url)
+        .header("User-Agent", ua)
+        .send()
+        .await
+        .map_err(|e| format!("GBIF parents fetch failed: {}", e))?;
+    let parents: serde_json::Value = parents_resp
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    // Fetch siblings at family level (for phylogenetic context)
+    let family_key = species.get("familyKey").and_then(|v| v.as_i64());
+    let siblings = if let Some(fk) = family_key {
+        let sibs_url = format!("https://api.gbif.org/v1/species/{}/children?limit=10", fk);
+        let sibs_resp = client
+            .get(&sibs_url)
+            .header("User-Agent", ua)
+            .send()
+            .await
+            .ok();
+        if let Some(r) = sibs_resp {
+            r.json::<serde_json::Value>().await.ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Fetch siblings at order level (other families in same order)
+    let order_key = species.get("orderKey").and_then(|v| v.as_i64());
+    let order_children = if let Some(ok) = order_key {
+        let url = format!("https://api.gbif.org/v1/species/{}/children?limit=20", ok);
+        let resp = client.get(&url).header("User-Agent", ua).send().await.ok();
+        if let Some(r) = resp {
+            r.json::<serde_json::Value>().await.ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let result = json!({
+        "species": species,
+        "parents": parents,
+        "family_siblings": siblings.unwrap_or(json!({"results": []})),
+        "order_families": order_children.unwrap_or(json!({"results": []})),
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
 }
 
 // ─── activate_formation tool ───────────────────────────────────────

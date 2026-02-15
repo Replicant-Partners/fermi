@@ -3051,6 +3051,189 @@ pub async fn enemy_sensor_handler(
     }
 }
 
+// ── Genome Profiler ────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct GenomeProfilerRequest {
+    pub action: String, // "enable", "disable", "check"
+}
+
+/// POST /api/creatures/:creature_id/genome-profiler
+pub async fn genome_profiler_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<GenomeProfilerRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+    let gas = &state.gas_fees;
+
+    let creature = sqlx::query(
+        "SELECT c.owner_id, c.scientific_name, c.common_name, c.species_group,
+                c.taxonomy, c.gbif_key
+         FROM creatures c WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    match req.action.as_str() {
+        "enable" => {
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.genome_profiler_enable,
+                "genome_profiler_enable",
+                &format!("Enable genome profiler for creature {}", creature_id),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            toggle_module(pool, creature_id, "genome_profiler", true).await;
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "genome_profiler": "enabled",
+                "cost": gas.genome_profiler_enable,
+            })))
+        }
+        "disable" => {
+            toggle_module(pool, creature_id, "genome_profiler", false).await;
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "genome_profiler": "disabled",
+            })))
+        }
+        "check" => {
+            let modules: Vec<String> = sqlx::query(
+                "SELECT active_modules FROM creature_conditions WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| {
+                r.try_get::<Option<Vec<String>>, _>("active_modules")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default();
+
+            if !modules.contains(&"genome_profiler".to_string()) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Genome profiler not enabled — enable it first (5cr)".to_string(),
+                ));
+            }
+
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.genome_profiler_check,
+                "genome_profiler_check",
+                &format!("Genome profile for creature {}", creature_id),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            let scientific_name: String = creature
+                .try_get("scientific_name")
+                .unwrap_or_else(|_| "Unknown".to_string());
+            let gbif_key: Option<i64> = creature.try_get("gbif_key").ok().flatten();
+            let taxonomy: Option<serde_json::Value> = creature.try_get("taxonomy").ok().flatten();
+            let order = taxonomy
+                .as_ref()
+                .and_then(|t| t.get("order"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+
+            let query = format!(
+                "Build a phylogenetic profile for {} (order {}). \
+                 Use gbif_taxonomy_tree with {} to get the full taxonomy hierarchy, \
+                 then analyze its genomic context and evolutionary relationships.",
+                scientific_name,
+                order,
+                if let Some(key) = gbif_key {
+                    format!("gbif_key {}", key)
+                } else {
+                    format!("scientific_name \"{}\"", scientific_name)
+                },
+            );
+
+            // Get workspace from swarm
+            let workspace_id: Uuid = sqlx::query(
+                "SELECT se.workspace_id
+                 FROM creature_flights cf
+                 JOIN swarm_events se ON se.swarm_id = cf.swarm_id
+                 WHERE cf.creature_id = $1 AND cf.ended_at IS NULL AND se.workspace_id IS NOT NULL
+                 LIMIT 1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten())
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                "Creature has no workspace yet — perch first".to_string(),
+            ))?;
+
+            let profile = rabble_workspace::dispatch_rabble_action(
+                &state,
+                workspace_id,
+                "genome_profiler",
+                "phylogenetic_profile",
+                &query,
+                &user_id,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Genome profiler failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&profile).unwrap_or_else(|_| {
+                json!({
+                    "summary": profile,
+                    "taxonomy": {},
+                    "genome": {},
+                    "phylogeny": {},
+                })
+            });
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "cost": gas.genome_profiler_check,
+                "profile": parsed,
+            })))
+        }
+        other => Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Unknown action '{}' — use 'enable', 'disable', or 'check'",
+                other
+            ),
+        )),
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Creature versioned state — dual-write helpers
 // (previously in handlers/creature_state.rs)

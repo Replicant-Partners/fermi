@@ -42,6 +42,8 @@ pub struct GasFees {
     pub flight_plan: i32,
     pub enemy_sensor_enable: i32,
     pub enemy_sensor_check: i32,
+    pub genome_profiler_enable: i32,
+    pub genome_profiler_check: i32,
     /// Platform infrastructure read fee — charged when users read agent-produced data
     /// (visualization, history, projections). Agents don't get paid (they already learned).
     pub platform_read: i32,
@@ -89,6 +91,8 @@ impl GasFees {
             flight_plan: env_or("GAS_FLIGHT_PLAN", 5),
             enemy_sensor_enable: env_or("GAS_ENEMY_SENSOR_ENABLE", 5),
             enemy_sensor_check: env_or("GAS_ENEMY_SENSOR_CHECK", 1),
+            genome_profiler_enable: env_or("GAS_GENOME_PROFILER_ENABLE", 5),
+            genome_profiler_check: env_or("GAS_GENOME_PROFILER_CHECK", 2),
             platform_read: env_or("GAS_PLATFORM_READ", 1),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
@@ -143,6 +147,8 @@ impl Default for GasFees {
             flight_plan: 5,
             enemy_sensor_enable: 5,
             enemy_sensor_check: 1,
+            genome_profiler_enable: 5,
+            genome_profiler_check: 2,
             platform_read: 1,
             crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }

@@ -1386,6 +1386,11 @@ async fn main() {
             "/api/creatures/:creature_id/enemy-sensor",
             post(handlers::creatures::enemy_sensor_handler),
         )
+        // Genome profiler — enable/disable/check phylogenetic context
+        .route(
+            "/api/creatures/:creature_id/genome-profiler",
+            post(handlers::creatures::genome_profiler_handler),
+        )
         .route(
             "/api/creatures/:creature_id/telemetry",
             post(handlers::creatures::push_telemetry_handler),
