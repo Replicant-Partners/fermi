@@ -177,6 +177,37 @@ pub async fn record_flight_handler(
     .await
     .ok(); // best-effort
 
+    // Record state transition to "fly" so creature_state is populated
+    // This is critical for scan_nearby_creatures and prey_locator to find creature location
+    {
+        let pool_bg = state.db.clone();
+        let uid_bg = user_id.clone();
+        let cid = req.creature_id;
+        let lat = req.center_lat;
+        let lng = req.center_lng;
+        let h3 = req.h3_cell.clone();
+        let sid = req.swarm_id;
+        let fid = flight_id;
+        tokio::spawn(async move {
+            let new_state = if sid.is_some() { "perch_rabble" } else { "fly" };
+            let _ = record_transition(
+                &pool_bg,
+                cid,
+                new_state,
+                Some("perch_solo"),
+                "launch",
+                &uid_bg,
+                lat,
+                lng,
+                &h3,
+                sid,
+                None,
+                &json!({ "flight_id": fid }),
+            )
+            .await;
+        });
+    }
+
     // Dispatch navigator agent for flight narration (non-blocking)
     // Use the swarm's workspace if flying to a swarm, else personal workspace
     let dispatch_ws_id = if let Some(sid) = req.swarm_id {

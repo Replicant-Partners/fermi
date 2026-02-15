@@ -1478,6 +1478,7 @@ async fn execute_scan_nearby_creatures(
     let cell_strings: Vec<String> = disk.iter().map(|c| c.to_string()).collect();
 
     // 3. Query nearby creatures (excluding target, excluding private)
+    //    Use LATERAL fallback to creature_flights for creatures without creature_state
     let placeholders: Vec<String> = (1..=cell_strings.len())
         .map(|i| format!("${}", i))
         .collect();
@@ -1485,13 +1486,19 @@ async fn execute_scan_nearby_creatures(
 
     let sql = format!(
         "SELECT c.creature_id, c.scientific_name, c.common_name, c.species_group,
-                c.taxonomy, cs.h3_cell, cs.rabble_id,
+                c.taxonomy,
+                COALESCE(cs.h3_cell, cf.h3_cell) AS h3_cell,
+                cs.rabble_id,
                 COALESCE(cc.visibility, 'public') AS visibility
-         FROM creature_state cs
-         JOIN creatures c ON c.creature_id = cs.creature_id
-         LEFT JOIN creature_conditions cc ON cc.creature_id = cs.creature_id
-         WHERE cs.h3_cell IN ({})
-           AND cs.creature_id != ${}
+         FROM creatures c
+         LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
+         LEFT JOIN LATERAL (
+             SELECT h3_cell FROM creature_flights
+             WHERE creature_id = c.creature_id ORDER BY started_at DESC LIMIT 1
+         ) cf ON cs.h3_cell IS NULL
+         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
+         WHERE COALESCE(cs.h3_cell, cf.h3_cell) IN ({})
+           AND c.creature_id != ${}
            AND COALESCE(cc.visibility, 'public') != 'private'
          LIMIT 50",
         in_clause,
