@@ -12,6 +12,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::super::AppState;
+use super::creature_state;
 use super::rabble_workspace;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
@@ -927,6 +928,52 @@ pub async fn end_flight_handler(
         ));
     }
 
+    // ── Dual-write: record land transition (new versioned model) ──
+    {
+        let flight_info = sqlx::query(
+            "SELECT creature_id, center_lat, center_lng, h3_cell, swarm_id
+             FROM creature_flights WHERE flight_id = $1",
+        )
+        .bind(flight_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(fi) = flight_info {
+            let cid: Uuid = fi.get("creature_id");
+            let lat: f64 = fi.get("center_lat");
+            let lng: f64 = fi.get("center_lng");
+            let h3: String = fi.get("h3_cell");
+            let sid: Option<Uuid> = fi.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+            let new_state = if sid.is_some() {
+                "perch_rabble"
+            } else {
+                "perch_solo"
+            };
+            let transition = if sid.is_some() { "join" } else { "land" };
+
+            let _ = creature_state::record_transition(
+                pool,
+                cid,
+                new_state,
+                Some("fly"),
+                transition,
+                &principal.user_id(),
+                lat,
+                lng,
+                &h3,
+                sid,
+                None,
+                &json!({
+                    "flight_id": flight_id,
+                    "duration_seconds": req.duration_seconds,
+                }),
+            )
+            .await;
+        }
+    }
+
     // Bridge to SOSA: convert path_samples into universal observations (fire-and-forget).
     // Only fires if creature.sosa_opt_in = true (AKP consent model).
     if let Some(ref samples) = req.path_samples {
@@ -1830,6 +1877,9 @@ pub async fn mint_creature_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // ── Dual-write: init creature_conditions (new versioned model) ──
+    creature_state::init_conditions(pool, creature_id, "public", false).await;
+
     // Spawn async art generation if requested
     let art_generating = if generate_art {
         let pool_clone = pool.clone();
@@ -2282,6 +2332,28 @@ pub async fn perch_handler(
     .await
     .ok();
 
+    // ── Dual-write: record perch transition (new versioned model) ──
+    let _ = creature_state::record_transition(
+        pool,
+        creature_id,
+        "perch_solo",
+        None, // initial placement — no previous state
+        "perch",
+        &user_id,
+        req.center_lat,
+        req.center_lng,
+        &req.h3_cell,
+        Some(swarm_id),
+        None, // workspace_id filled when workspace is created
+        &json!({
+            "flight_id": flight_id,
+            "swarm_id": swarm_id,
+            "perch_name": perch_name,
+            "walk_in_price": req.walk_in_price,
+        }),
+    )
+    .await;
+
     Ok(Json(json!({
         "swarm_id": swarm_id,
         "flight_id": flight_id,
@@ -2392,6 +2464,32 @@ pub async fn fly_handler(
         .execute(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // ── Dual-write: record fly transition (new versioned model) ──
+    {
+        // Get current state to record previous_state
+        let prev = creature_state::get_current_state(pool, creature_id).await;
+        let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
+        let _ = creature_state::record_transition(
+            pool,
+            creature_id,
+            "fly",
+            prev_state,
+            "fly",
+            &user_id,
+            0.0, // in transit — no fixed location
+            0.0,
+            "",
+            None, // leaving rabble
+            None,
+            &json!({
+                "flight_id": flight_id,
+                "from_swarm_id": swarm_id,
+                "destination": req.destination,
+            }),
+        )
+        .await;
+    }
 
     // Store destination in flight metadata if provided
     if let Some(ref dest) = req.destination {
@@ -2919,6 +3017,31 @@ pub async fn join_swarm_handler(
     .execute(pool)
     .await
     .ok();
+
+    // ── Dual-write: record join transition (new versioned model) ──
+    {
+        let prev = creature_state::get_current_state(pool, req.creature_id).await;
+        let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
+        let _ = creature_state::record_transition(
+            pool,
+            req.creature_id,
+            "perch_rabble",
+            prev_state,
+            "join",
+            &user_id,
+            lat,
+            lng,
+            &h3_cell,
+            Some(swarm_id),
+            existing_ws,
+            &json!({
+                "flight_id": flight_id,
+                "swarm_id": swarm_id,
+                "first_join": is_first_join,
+            }),
+        )
+        .await;
+    }
 
     // Post system message — special message for first join (perch → rabble transition)
     let display_name = creature_name.as_deref().unwrap_or("A creature");
