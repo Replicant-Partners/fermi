@@ -30,6 +30,9 @@ const RABBLE_SYSTEM_AGENTS: &[&str] = &[
     "rabble_anchor_manager",
     "rabble_lifecycle_coordinator",
     "flight_coordinator",
+    "enemy_sensor",
+    "genome_profiler",
+    "prey_locator",
 ];
 
 /// Create a workspace for a rabble (swarm) and hire the 4 system agents.
