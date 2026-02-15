@@ -58,6 +58,9 @@ pub async fn list_swarms_handler(
         sql.push_str(" AND status IN ('scheduled', 'active')");
     }
 
+    // Perches with 0 creatures are stale — the creature left
+    sql.push_str(" AND creature_count > 0");
+
     if let Some(ref h3) = q.h3_cell {
         bind_idx += 1;
         sql.push_str(&format!(" AND h3_cell = ${}", bind_idx));
