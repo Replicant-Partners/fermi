@@ -844,6 +844,10 @@ async fn main() {
             get(handlers::creatures::creature_flights_handler),
         )
         .route(
+            "/api/creatures/:creature_id/versions",
+            get(handlers::creatures::creature_versions_handler),
+        )
+        .route(
             "/api/creatures/:creature_id/image",
             get(handlers::creatures::creature_image_handler),
         )

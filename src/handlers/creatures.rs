@@ -140,12 +140,20 @@ pub async fn get_creature_handler(
 ) -> impl IntoResponse {
     let pool = state.memory_store.pool();
     match sqlx::query(
-        "SELECT creature_id, owner_id, workspace_id, scientific_name, common_name,
-         species_group, gbif_key, taxonomy, specimen_name, variation_notes,
-         asset_path, flight_silhouette_path, generation_params,
-         mint_number, total_flights, total_flight_time_seconds, unique_locations,
-         data_card, sosa_opt_in, animation_status, visibility, presence, created_at, updated_at
-         FROM creatures WHERE creature_id = $1",
+        "SELECT c.creature_id, c.owner_id, c.workspace_id, c.scientific_name, c.common_name,
+         c.species_group, c.gbif_key, c.taxonomy, c.specimen_name, c.variation_notes,
+         c.asset_path, c.flight_silhouette_path, c.generation_params,
+         c.mint_number, c.total_flights, c.total_flight_time_seconds, c.unique_locations,
+         c.data_card, c.sosa_opt_in, c.animation_status, c.visibility, c.presence,
+         c.created_at, c.updated_at,
+         cs.state AS creature_state, cs.location_lat, cs.location_lng, cs.h3_cell AS state_h3,
+         cs.rabble_id, cs.version_id AS current_version_id,
+         cc.walk_in_price AS conditions_walk_in_price,
+         cc.active_modules
+         FROM creatures c
+         LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
+         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
+         WHERE c.creature_id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -175,6 +183,15 @@ pub async fn get_creature_handler(
                 "animation_status": row.try_get::<Option<String>, _>("animation_status").unwrap_or(None),
                 "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".to_string()),
                 "presence": row.try_get::<String, _>("presence").unwrap_or_else(|_| "active".to_string()),
+                // Versioned state (Phase 2)
+                "creature_state": row.try_get::<Option<String>, _>("creature_state").unwrap_or(None),
+                "location_lat": row.try_get::<Option<f64>, _>("location_lat").unwrap_or(None),
+                "location_lng": row.try_get::<Option<f64>, _>("location_lng").unwrap_or(None),
+                "state_h3": row.try_get::<Option<String>, _>("state_h3").unwrap_or(None),
+                "rabble_id": row.try_get::<Option<Uuid>, _>("rabble_id").unwrap_or(None),
+                "current_version_id": row.try_get::<Option<Uuid>, _>("current_version_id").unwrap_or(None),
+                "conditions_walk_in_price": row.try_get::<Option<i32>, _>("conditions_walk_in_price").unwrap_or(None),
+                "active_modules": row.try_get::<Option<Vec<String>>, _>("active_modules").unwrap_or(None),
                 "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                 "updated_at": row.get::<chrono::DateTime<chrono::Utc>, _>("updated_at").to_rfc3339(),
             });
@@ -197,6 +214,69 @@ pub async fn get_creature_handler(
 }
 
 /// GET /api/creatures/:id/flights — flight history for a creature
+/// GET /api/creatures/:creature_id/versions — version history (state transitions)
+pub async fn creature_versions_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<PaginationQuery>,
+) -> impl IntoResponse {
+    let pool = state.memory_store.pool();
+    let limit = q.limit.unwrap_or(50).min(200);
+    let offset = q.offset.unwrap_or(0);
+
+    match sqlx::query(
+        "SELECT version_id, creature_id, version_number, state, previous_state,
+         location_lat, location_lng, h3_cell, rabble_id,
+         transition_type, triggered_by, episode_ids, workspace_id,
+         valid_from, recorded_at, metadata
+         FROM creature_versions
+         WHERE creature_id = $1
+         ORDER BY version_number DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => {
+            let versions: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|row| {
+                    json!({
+                        "version_id": row.get::<Uuid, _>("version_id"),
+                        "creature_id": row.get::<Uuid, _>("creature_id"),
+                        "version_number": row.get::<i32, _>("version_number"),
+                        "state": row.get::<String, _>("state"),
+                        "previous_state": row.try_get::<Option<String>, _>("previous_state").unwrap_or(None),
+                        "location_lat": row.try_get::<Option<f64>, _>("location_lat").unwrap_or(None),
+                        "location_lng": row.try_get::<Option<f64>, _>("location_lng").unwrap_or(None),
+                        "h3_cell": row.try_get::<Option<String>, _>("h3_cell").unwrap_or(None),
+                        "rabble_id": row.try_get::<Option<Uuid>, _>("rabble_id").unwrap_or(None),
+                        "transition_type": row.get::<String, _>("transition_type"),
+                        "triggered_by": row.get::<String, _>("triggered_by"),
+                        "episode_ids": row.try_get::<Option<Vec<Uuid>>, _>("episode_ids").unwrap_or(None),
+                        "workspace_id": row.try_get::<Option<Uuid>, _>("workspace_id").unwrap_or(None),
+                        "valid_from": row.get::<chrono::DateTime<chrono::Utc>, _>("valid_from").to_rfc3339(),
+                        "recorded_at": row.get::<chrono::DateTime<chrono::Utc>, _>("recorded_at").to_rfc3339(),
+                        "metadata": row.get::<serde_json::Value, _>("metadata"),
+                    })
+                })
+                .collect();
+            (StatusCode::OK, Json(json!({ "versions": versions }))).into_response()
+        }
+        Err(e) => {
+            eprintln!("Failed to get creature versions: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Failed to get creature versions"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 pub async fn creature_flights_handler(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
