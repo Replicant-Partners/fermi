@@ -1401,7 +1401,10 @@ pub async fn fly_handler(
     let fly_start = std::time::Instant::now();
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
-    eprintln!("[fly] start for creature {}", creature_id);
+    eprintln!(
+        "[fly] handler entered for creature {} user {}",
+        creature_id, user_id
+    );
 
     // Validate creature ownership
     let creature = sqlx::query(
