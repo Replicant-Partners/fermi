@@ -1185,6 +1185,11 @@ pub struct HostRabbleRequest {
     pub walk_in_budget: Option<i32>,
     /// Operational radius in meters (default 100). Defines bounded area for flock dynamics.
     pub radius_meters: Option<i32>,
+    /// Location — used when creature has no active flight (auto-perch + host)
+    pub h3_cell: Option<String>,
+    pub center_lat: Option<f64>,
+    pub center_lng: Option<f64>,
+    pub location_name: Option<String>,
 }
 
 /// POST /api/creatures/:creature_id/perch — place creature at a location (2cr)
@@ -1361,9 +1366,11 @@ pub async fn perch_handler(
     Ok(Json(response))
 }
 
-/// POST /api/creatures/:creature_id/host — create a rabble at creature's current location (3cr + pools)
+/// POST /api/creatures/:creature_id/host — create a rabble at creature's location (3cr + pools)
 ///
-/// Creature must be perched (has active flight). Separates rabble hosting from location placement.
+/// Works from any state: perched, flying, or unplaced (with location in request).
+/// If creature is flying, ends the flight and perches at current location.
+/// If creature has no flight, auto-creates a perch from request location.
 pub async fn host_rabble_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -1373,7 +1380,7 @@ pub async fn host_rabble_handler(
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
 
-    // Validate creature ownership + get current flight location
+    // Validate creature ownership
     let creature = sqlx::query(
         "SELECT c.owner_id, c.specimen_name, c.scientific_name, c.species_group,
                 COALESCE(cc.visibility, 'public') AS visibility
@@ -1392,41 +1399,112 @@ pub async fn host_rabble_handler(
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
 
-    // Must have an active flight (perched somewhere)
+    // Check for active flight
     let active_flight = sqlx::query(
-        "SELECT flight_id, h3_cell, center_lat, center_lng, location_name, swarm_id
+        "SELECT flight_id, h3_cell, center_lat, center_lng, location_name, swarm_id, flight_pattern
          FROM creature_flights
          WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
     )
     .bind(creature_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((
-        StatusCode::BAD_REQUEST,
-        "Creature must be perched first".to_string(),
-    ))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let flight_id: Uuid = active_flight.get("flight_id");
-    let existing_swarm: Option<Uuid> = active_flight
-        .try_get::<Option<Uuid>, _>("swarm_id")
-        .ok()
-        .flatten();
-
-    if existing_swarm.is_some() {
-        return Err((
-            StatusCode::CONFLICT,
-            "Creature is already in a rabble".to_string(),
-        ));
+    // Already in a rabble? 409
+    if let Some(ref af) = active_flight {
+        let existing_swarm: Option<Uuid> = af.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+        if existing_swarm.is_some() {
+            return Err((
+                StatusCode::CONFLICT,
+                "Creature is already in a rabble".to_string(),
+            ));
+        }
     }
 
-    let h3_cell: String = active_flight.get("h3_cell");
-    let center_lat: f64 = active_flight.get("center_lat");
-    let center_lng: f64 = active_flight.get("center_lng");
-    let location_name: Option<String> = active_flight
-        .try_get::<Option<String>, _>("location_name")
-        .ok()
-        .flatten();
+    // Resolve location + flight_id — three cases:
+    let (flight_id, h3_cell, center_lat, center_lng, location_name) =
+        if let Some(af) = active_flight {
+            let fid: Uuid = af.get("flight_id");
+            let pattern: String = af.try_get("flight_pattern").unwrap_or_default();
+
+            // If flying (not perched), end the fly and convert to perch
+            if pattern != "perch" {
+                sqlx::query(
+                    "UPDATE creature_flights SET flight_pattern = 'perch',
+                 ended_at = NULL, duration_seconds = NULL
+                 WHERE flight_id = $1",
+                )
+                .bind(fid)
+                .execute(pool)
+                .await
+                .ok();
+            }
+
+            (
+                fid,
+                af.get::<String, _>("h3_cell"),
+                af.get::<f64, _>("center_lat"),
+                af.get::<f64, _>("center_lng"),
+                af.try_get::<Option<String>, _>("location_name")
+                    .ok()
+                    .flatten(),
+            )
+        } else {
+            // No active flight — need location from request
+            let lat = req.center_lat.ok_or((
+                StatusCode::BAD_REQUEST,
+                "No active flight — provide center_lat/center_lng to host here".to_string(),
+            ))?;
+            let lng = req.center_lng.ok_or((
+                StatusCode::BAD_REQUEST,
+                "No active flight — provide center_lat/center_lng to host here".to_string(),
+            ))?;
+            let cell = req.h3_cell.clone().unwrap_or_default();
+            let cell = if cell.is_empty() {
+                compute_h3_cell(lat, lng)
+            } else {
+                cell
+            };
+
+            // Auto-create perch flight
+            let fid = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO creature_flights (flight_id, creature_id, owner_id, h3_cell,
+             center_lat, center_lng, location_name, flight_pattern, started_at, data_source)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'perch', NOW(), 'app')",
+            )
+            .bind(fid)
+            .bind(creature_id)
+            .bind(&user_id)
+            .bind(&cell)
+            .bind(lat)
+            .bind(lng)
+            .bind(&req.location_name)
+            .execute(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Record perch transition
+            let prev = get_current_state(pool, creature_id).await;
+            let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
+            let _ = record_transition(
+                pool,
+                creature_id,
+                "perched",
+                prev_state,
+                "perch",
+                &user_id,
+                lat,
+                lng,
+                &cell,
+                None,
+                None,
+                &json!({"flight_id": fid, "auto_perch": true}),
+            )
+            .await;
+
+            (fid, cell, lat, lng, req.location_name.clone())
+        };
 
     let invite_pool = req.invite_pool.unwrap_or(0).max(0);
     let walk_in_budget = req.walk_in_budget.unwrap_or(0).max(0);
@@ -1707,24 +1785,27 @@ pub async fn fly_handler(
     .await?;
 
     // Start or update the flight
+    let pattern = if is_expedition { "expedition" } else { "fly" };
     let flight_id = if flight_id.is_nil() {
         // No active flight — create a new fly flight
         let new_fid = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO creature_flights (flight_id, creature_id, owner_id, h3_cell, center_lat, center_lng,
              flight_pattern, started_at, data_source)
-             VALUES ($1, $2, $3, '', 0, 0, 'fly', NOW(), 'app')",
+             VALUES ($1, $2, $3, '', 0, 0, $4, NOW(), 'app')",
         )
         .bind(new_fid)
         .bind(creature_id)
         .bind(&user_id)
+        .bind(pattern)
         .execute(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         new_fid
     } else {
-        // Active perch flight — update pattern to 'fly'
-        sqlx::query("UPDATE creature_flights SET flight_pattern = 'fly' WHERE flight_id = $1")
+        // Active perch flight — update pattern
+        sqlx::query("UPDATE creature_flights SET flight_pattern = $1 WHERE flight_id = $2")
+            .bind(pattern)
             .bind(flight_id)
             .execute(pool)
             .await
@@ -1737,6 +1818,7 @@ pub async fn fly_handler(
         let pool_bg = state.db.clone();
         let uid_bg = user_id.clone();
         let dest_bg = req.destination.clone();
+        let transition_type = if is_expedition { "expedition" } else { "fly" };
         tokio::spawn(async move {
             // Record fly transition (new versioned model)
             let prev = get_current_state(&pool_bg, creature_id).await;
@@ -1744,7 +1826,7 @@ pub async fn fly_handler(
             let _ = record_transition(
                 &pool_bg,
                 creature_id,
-                "fly",
+                transition_type,
                 prev_state,
                 "fly",
                 &uid_bg,
@@ -1757,6 +1839,8 @@ pub async fn fly_handler(
                     "flight_id": flight_id,
                     "from_swarm_id": swarm_id,
                     "destination": dest_bg,
+                    "is_expedition": is_expedition,
+                    "cost": fly_cost,
                 }),
             )
             .await;
@@ -1865,6 +1949,7 @@ pub async fn fly_handler(
             .await
             {
                 Ok(result) => {
+                    // Store raw plan in metadata
                     let _ = sqlx::query(
                         "UPDATE creature_flights SET metadata = jsonb_set(
                             COALESCE(metadata, '{}'::jsonb), '{flight_plan}', $1::jsonb
@@ -1875,6 +1960,96 @@ pub async fn fly_handler(
                     .execute(pool_bg)
                     .await
                     .ok();
+
+                    // Parse flight plan JSON and populate path_samples + environment
+                    // The agent returns JSON with "waypoints" array
+                    let plan_text = result
+                        .trim()
+                        .trim_start_matches("```json")
+                        .trim_end_matches("```")
+                        .trim();
+                    if let Ok(plan) = serde_json::from_str::<serde_json::Value>(plan_text) {
+                        if let Some(waypoints) = plan.get("waypoints").and_then(|w| w.as_array()) {
+                            // path_samples: [{lat, lng, heading, speed, t}, ...]
+                            let path_samples: Vec<serde_json::Value> = waypoints.iter().map(|wp| {
+                                json!({
+                                    "lat": wp.get("lat").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                    "lng": wp.get("lng").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                    "heading": wp.get("heading").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                    "t": wp.get("t_offset_s").and_then(|v| v.as_f64()).unwrap_or(0.0) * 1000.0,
+                                })
+                            }).collect();
+
+                            // environment: [{wind_speed, wind_direction, temperature, terrain_type, elevation, t_offset_s}, ...]
+                            let environment: Vec<serde_json::Value> = waypoints.iter().map(|wp| {
+                                json!({
+                                    "wind_speed": wp.get("wind_speed").and_then(|v| v.as_f64()),
+                                    "wind_direction": wp.get("wind_direction").and_then(|v| v.as_f64()),
+                                    "temperature": wp.get("temperature").and_then(|v| v.as_f64()),
+                                    "terrain_type": wp.get("terrain_type").and_then(|v| v.as_str()),
+                                    "elevation": wp.get("elevation").and_then(|v| v.as_f64()),
+                                    "t_offset_s": wp.get("t_offset_s").and_then(|v| v.as_f64()),
+                                })
+                            }).collect();
+
+                            // Also extract destination coords for flight endpoint
+                            let last_wp = waypoints.last();
+                            let dest_lat = last_wp
+                                .and_then(|w| w.get("lat"))
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+                            let dest_lng = last_wp
+                                .and_then(|w| w.get("lng"))
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+
+                            // Store narrative + species_notes in metadata
+                            let narrative =
+                                plan.get("narrative").and_then(|v| v.as_str()).unwrap_or("");
+                            let species_notes = plan
+                                .get("species_notes")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let total_distance_km =
+                                plan.get("total_distance_km").and_then(|v| v.as_f64());
+
+                            let _ = sqlx::query(
+                                "UPDATE creature_flights SET
+                                    path_samples = $1::jsonb,
+                                    environment = $2::jsonb,
+                                    metadata = COALESCE(metadata, '{}'::jsonb)
+                                        || jsonb_build_object(
+                                            'narrative', $3::text,
+                                            'species_notes', $4::text,
+                                            'total_distance_km', $5::float8,
+                                            'segments', $6::jsonb,
+                                            'dest_lat', $7::float8,
+                                            'dest_lng', $8::float8
+                                        )
+                                WHERE flight_id = $9",
+                            )
+                            .bind(serde_json::to_string(&path_samples).unwrap_or_default())
+                            .bind(serde_json::to_string(&environment).unwrap_or_default())
+                            .bind(narrative)
+                            .bind(species_notes)
+                            .bind(total_distance_km)
+                            .bind(serde_json::to_string(&plan.get("segments")).unwrap_or_default())
+                            .bind(dest_lat)
+                            .bind(dest_lng)
+                            .bind(spawn_flight)
+                            .execute(pool_bg)
+                            .await
+                            .ok();
+
+                            eprintln!(
+                                "[fly] flight plan populated: {} waypoints, dest ({}, {})",
+                                path_samples.len(),
+                                dest_lat,
+                                dest_lng
+                            );
+                        }
+                    }
+
                     eprintln!(
                         "[fly] flight_coordinator completed for creature {}",
                         spawn_creature
@@ -3193,24 +3368,7 @@ pub async fn enemy_sensor_handler(
                 creature_id,
             );
 
-            // Get workspace_id — look up via swarm (workspace is created per-rabble)
-            let workspace_id: Uuid = sqlx::query(
-                "SELECT se.workspace_id
-                 FROM creature_flights cf
-                 JOIN swarm_events se ON se.swarm_id = cf.swarm_id
-                 WHERE cf.creature_id = $1 AND cf.ended_at IS NULL AND se.workspace_id IS NOT NULL
-                 LIMIT 1",
-            )
-            .bind(creature_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten())
-            .ok_or((
-                StatusCode::BAD_REQUEST,
-                "Creature has no workspace — perch first, then wait a moment for workspace setup"
-                    .to_string(),
-            ))?;
+            let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
             // Dispatch to enemy_sensor agent
             let assessment = rabble_workspace::dispatch_rabble_action(
@@ -3539,23 +3697,7 @@ pub async fn genome_profiler_handler(
                 },
             );
 
-            // Get workspace from swarm
-            let workspace_id: Uuid = sqlx::query(
-                "SELECT se.workspace_id
-                 FROM creature_flights cf
-                 JOIN swarm_events se ON se.swarm_id = cf.swarm_id
-                 WHERE cf.creature_id = $1 AND cf.ended_at IS NULL AND se.workspace_id IS NOT NULL
-                 LIMIT 1",
-            )
-            .bind(creature_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten())
-            .ok_or((
-                StatusCode::BAD_REQUEST,
-                "Creature has no workspace yet — perch first".to_string(),
-            ))?;
+            let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
             let profile = rabble_workspace::dispatch_rabble_action(
                 &state,
@@ -4050,7 +4192,8 @@ async fn find_creature_workspace(
     pool: &PgPool,
     creature_id: Uuid,
 ) -> Result<Uuid, (StatusCode, String)> {
-    sqlx::query(
+    // Try swarm workspace first
+    let ws = sqlx::query(
         "SELECT se.workspace_id
          FROM creature_flights cf
          JOIN swarm_events se ON se.swarm_id = cf.swarm_id
@@ -4061,11 +4204,35 @@ async fn find_creature_workspace(
     .fetch_optional(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten())
-    .ok_or((
-        StatusCode::BAD_REQUEST,
-        "Creature has no workspace — perch first".to_string(),
-    ))
+    .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
+
+    if let Some(ws_id) = ws {
+        return Ok(ws_id);
+    }
+
+    // Fall back to owner's personal workspace
+    let owner_id: String = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
+        .bind(creature_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?
+        .get("owner_id");
+
+    sqlx::query("SELECT personal_workspace_id FROM users WHERE user_id = $1")
+        .bind(&owner_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .and_then(|r| {
+            r.try_get::<Option<Uuid>, _>("personal_workspace_id")
+                .ok()
+                .flatten()
+        })
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "No workspace available — try again after placing your creature".to_string(),
+        ))
 }
 
 // ═══════════════════════════════════════════════════════════════════

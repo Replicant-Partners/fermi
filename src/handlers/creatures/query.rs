@@ -297,7 +297,7 @@ pub async fn creature_flights_handler(
         "SELECT flight_id, creature_id, beacon_id, owner_id,
          h3_cell, center_lat, center_lng, location_name, country_code,
          flight_pattern, swarm_id, started_at, ended_at, duration_seconds,
-         path_samples, environment, data_source
+         path_samples, environment, metadata, data_source
          FROM creature_flights
          WHERE creature_id = $1
          ORDER BY started_at DESC
@@ -330,6 +330,7 @@ pub async fn creature_flights_handler(
                         "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
                         "path_samples": row.get::<Option<serde_json::Value>, _>("path_samples"),
                         "environment": row.try_get::<Option<serde_json::Value>, _>("environment").unwrap_or(None),
+                        "metadata": row.try_get::<Option<serde_json::Value>, _>("metadata").unwrap_or(None),
                         "data_source": row.try_get::<String, _>("data_source").unwrap_or_else(|_| "synthetic".to_string()),
                     })
                 })
