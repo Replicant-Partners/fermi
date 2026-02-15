@@ -91,7 +91,34 @@ pub async fn get_or_create_wallet(
     .await
     .map_err(|e| AuthError::Internal(format!("Failed to create wallet: {}", e)))?;
 
-    Ok(row_to_wallet(&row))
+    let wallet = row_to_wallet(&row);
+
+    // Auto-grant onboarding credits for new user wallets
+    if owner_type == "user" {
+        let onboarding_amount = std::env::var("ONBOARDING_GRANT")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok())
+            .unwrap_or(100);
+        let _ = grant(
+            pool,
+            wallet.wallet_id,
+            onboarding_amount,
+            "Welcome onboarding grant",
+        )
+        .await;
+        // Re-fetch to reflect updated balance
+        let refreshed = sqlx::query(&format!(
+            "SELECT {} FROM wallets WHERE wallet_id = $1",
+            WALLET_SELECT_COLS
+        ))
+        .bind(wallet.wallet_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AuthError::Internal(format!("DB error: {}", e)))?;
+        return Ok(row_to_wallet(&refreshed));
+    }
+
+    Ok(wallet)
 }
 
 /// Deposit credits into a wallet (always succeeds).

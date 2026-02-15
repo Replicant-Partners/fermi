@@ -7,9 +7,9 @@ use axum::{
     Json,
 };
 use fermi_auth::{
-    api_keys, build_github_auth_url, build_google_auth_url, create_session_token, credit_grant,
-    generate_state, get_or_create_wallet, github_exchange_code, github_fetch_user_info,
-    google_exchange_code, google_fetch_user_info, sync_user, AuthPrincipal,
+    api_keys, build_github_auth_url, build_google_auth_url, create_session_token, generate_state,
+    get_or_create_wallet, github_exchange_code, github_fetch_user_info, google_exchange_code,
+    google_fetch_user_info, sync_user, AuthPrincipal,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -142,13 +142,8 @@ pub async fn auth_callback_inner(
     // Sync user to database
     let user = sync_user(&state.db, &user_info).await.map_err(map_err)?;
 
-    // Ensure wallet exists; grant onboarding credits if new
-    if let Ok(wallet) = get_or_create_wallet(&state.db, "user", &user.user_id).await {
-        if wallet.total_deposited == 0 && wallet.balance == 0 {
-            let _ =
-                credit_grant(&state.db, wallet.wallet_id, 100, "Welcome onboarding grant").await;
-        }
-    }
+    // Ensure wallet exists (onboarding grant is auto-applied inside get_or_create_wallet)
+    let _ = get_or_create_wallet(&state.db, "user", &user.user_id).await;
 
     // Create session JWT
     let token = create_session_token(&user, &state.jwt_secret).map_err(map_err)?;
@@ -374,20 +369,8 @@ pub async fn siwe_verify_handler(
         }
     };
 
-    // Grant onboarding credits to new users
-    if is_new {
-        if let Ok(wallet) = get_or_create_wallet(&state.db, "user", &user.user_id).await {
-            if wallet.total_deposited == 0 && wallet.balance == 0 {
-                let _ = credit_grant(
-                    &state.db,
-                    wallet.wallet_id,
-                    100,
-                    "Welcome onboarding grant (SIWE)",
-                )
-                .await;
-            }
-        }
-    }
+    // Ensure wallet exists (onboarding grant is auto-applied inside get_or_create_wallet)
+    let _ = get_or_create_wallet(&state.db, "user", &user.user_id).await;
 
     // Issue JWT and set cookie
     let token = create_session_token(&user, &state.jwt_secret)
