@@ -3177,19 +3177,23 @@ pub async fn genome_profiler_handler(
             })))
         }
         "check" => {
-            let modules: Vec<String> = sqlx::query(
-                "SELECT active_modules FROM creature_conditions WHERE creature_id = $1",
+            // Check module is enabled + look for cached profile in one query
+            let cond_row = sqlx::query(
+                "SELECT active_modules, genome_profile FROM creature_conditions WHERE creature_id = $1",
             )
             .bind(creature_id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .and_then(|r| {
-                r.try_get::<Option<Vec<String>>, _>("active_modules")
-                    .ok()
-                    .flatten()
-            })
-            .unwrap_or_default();
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            let modules: Vec<String> = cond_row
+                .as_ref()
+                .and_then(|r| {
+                    r.try_get::<Option<Vec<String>>, _>("active_modules")
+                        .ok()
+                        .flatten()
+                })
+                .unwrap_or_default();
 
             if !modules.contains(&"genome_profiler".to_string()) {
                 return Err((
@@ -3198,6 +3202,23 @@ pub async fn genome_profiler_handler(
                 ));
             }
 
+            // Return cached profile for free if it exists
+            let cached: Option<serde_json::Value> = cond_row.as_ref().and_then(|r| {
+                r.try_get::<Option<serde_json::Value>, _>("genome_profile")
+                    .ok()
+                    .flatten()
+            });
+
+            if let Some(profile) = cached {
+                return Ok(Json(json!({
+                    "creature_id": creature_id,
+                    "cost": 0,
+                    "cached": true,
+                    "profile": profile,
+                })));
+            }
+
+            // First time — charge and generate
             let wallet = get_or_create_wallet(&state.db, "user", &user_id)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -3278,9 +3299,19 @@ pub async fn genome_profiler_handler(
                 })
             });
 
+            // Cache the profile — subsequent reads are free
+            let _ = sqlx::query(
+                "UPDATE creature_conditions SET genome_profile = $1 WHERE creature_id = $2",
+            )
+            .bind(&parsed)
+            .bind(creature_id)
+            .execute(pool)
+            .await;
+
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.genome_profiler_check,
+                "cached": false,
                 "profile": parsed,
             })))
         }

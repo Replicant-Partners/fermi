@@ -443,6 +443,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/080_drop_redundant_creature_columns.sql",
         "migrations/081_fix_visibility_contacts.sql",
         "migrations/082_rabble_radius.sql",
+        "migrations/083_genome_profile_cache.sql",
     ];
 
     for file in &migration_files {
