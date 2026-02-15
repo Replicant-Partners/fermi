@@ -1378,6 +1378,10 @@ async fn main() {
             post(handlers::creatures::perch_handler),
         )
         .route(
+            "/api/creatures/:creature_id/host",
+            post(handlers::creatures::host_rabble_handler),
+        )
+        .route(
             "/api/creatures/:creature_id/fly",
             post(handlers::creatures::fly_handler),
         )

@@ -206,12 +206,12 @@ pub async fn record_flight_handler(
         let sid = req.swarm_id;
         let fid = flight_id;
         tokio::spawn(async move {
-            let new_state = if sid.is_some() { "perch_rabble" } else { "fly" };
+            let new_state = if sid.is_some() { "in_rabble" } else { "fly" };
             let _ = record_transition(
                 &pool_bg,
                 cid,
                 new_state,
-                Some("perch_solo"),
+                Some("perched"),
                 "launch",
                 &uid_bg,
                 lat,
@@ -410,9 +410,9 @@ pub async fn end_flight_handler(
                 let h3: String = fi.get("h3_cell");
                 let sid: Option<Uuid> = fi.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
                 let new_state = if sid.is_some() {
-                    "perch_rabble"
+                    "in_rabble"
                 } else {
-                    "perch_solo"
+                    "perched"
                 };
                 let transition = if sid.is_some() { "join" } else { "land" };
 
@@ -1169,22 +1169,28 @@ pub struct PerchRequest {
     pub center_lat: f64,
     pub center_lng: f64,
     pub location_name: Option<String>,
+    /// Display name for the perch (default: "{creature_name}'s perch")
+    pub name: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct HostRabbleRequest {
+    /// Display name for the rabble (default: "{creature_name}'s rabble")
+    pub name: Option<String>,
     /// NULL = private (contacts/invitees only), 0 = free open, 2+ = paid walk-in
     pub walk_in_price: Option<i32>,
     /// Credits to pre-fund for invited/contact joins (default 0)
     pub invite_pool: Option<i32>,
     /// Spending cap for free walk-ins (walk_in_price=0). Host pays per join. (default 0)
     pub walk_in_budget: Option<i32>,
-    /// Display name for the perch (default: "{creature_name}'s perch")
-    pub name: Option<String>,
     /// Operational radius in meters (default 100). Defines bounded area for flock dynamics.
     pub radius_meters: Option<i32>,
 }
 
-/// POST /api/creatures/:creature_id/perch — place creature at a location (2cr + invite pool)
+/// POST /api/creatures/:creature_id/perch — place creature at a location (2cr)
 ///
-/// Creates a swarm_events row (no workspace yet — created on first join) and a flight record.
-/// The creature is now discoverable on the map with idle animations.
+/// Location-only placement. Creates a flight record but NO rabble/swarm.
+/// Use POST /api/creatures/:creature_id/host to create a rabble at the perch location.
 pub async fn perch_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -1212,6 +1218,7 @@ pub async fn perch_handler(
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
+
     // Auto-end any existing flight — creature can always change state
     let active_flight = sqlx::query(
         "SELECT flight_id, swarm_id FROM creature_flights
@@ -1248,36 +1255,19 @@ pub async fn perch_handler(
         }
     }
 
-    let invite_pool = req.invite_pool.unwrap_or(0).max(0);
-    let walk_in_budget = req.walk_in_budget.unwrap_or(0).max(0);
-
-    // Validate: free walk-in (price=0) requires a budget cap
-    if req.walk_in_price == Some(0) && walk_in_budget == 0 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Free walk-in requires a spending cap (walk_in_budget > 0)".to_string(),
-        ));
-    }
-
-    let total_cost = 2 + invite_pool + walk_in_budget; // 2cr base + pools
-
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     charge_gas(
         &state.db,
         wallet.wallet_id,
-        total_cost,
+        2,
         "perch",
-        &format!(
-            "Perch creature {} ({}cr + {}cr invite + {}cr walk-in)",
-            creature_id, 2, invite_pool, walk_in_budget
-        ),
+        &format!("Perch creature {} (2cr)", creature_id),
         Some(&creature_id.to_string()),
     )
     .await?;
 
-    // Derive perch name
     let creature_name: String = creature.try_get("specimen_name").unwrap_or_else(|_| {
         creature
             .try_get("scientific_name")
@@ -1287,13 +1277,6 @@ pub async fn perch_handler(
         .name
         .unwrap_or_else(|| format!("{}'s perch", creature_name));
 
-    // Visibility: NULL walk_in_price = private, anything else = public
-    let visibility = if req.walk_in_price.is_none() {
-        "private"
-    } else {
-        "public"
-    };
-
     // Compute h3_cell server-side if client sent empty string
     let h3_cell = if req.h3_cell.is_empty() {
         compute_h3_cell(req.center_lat, req.center_lng)
@@ -1301,80 +1284,18 @@ pub async fn perch_handler(
         req.h3_cell.clone()
     };
 
-    let swarm_id = Uuid::new_v4();
     let now = chrono::Utc::now();
-    let ends_at = now + chrono::Duration::days(3650); // persistent
-    let qr_token = super::generate_qr_token();
-
-    // Create swarm_events row
-    sqlx::query(
-        "INSERT INTO swarm_events (swarm_id, creator_id, h3_cell, h3_resolution,
-         center_lat, center_lng, location_name,
-         name, starts_at, ends_at, status, created_at,
-         funding_mode, invite_pool, invite_pool_remaining,
-         qr_token, visibility, anchor_creature_id, walk_in_price,
-         walk_in_budget, walk_in_budget_remaining,
-         radius_meters, participant_count, creature_count)
-         VALUES ($1, $2, $3, 12, $4, $5, $6, $7, $8, $9, 'active', $8,
-                 'hosted', $10, $10, $11, $12, $13, $14,
-                 $15, $15, $16, 1, 1)",
-    )
-    .bind(swarm_id)
-    .bind(&user_id)
-    .bind(&h3_cell)
-    .bind(req.center_lat)
-    .bind(req.center_lng)
-    .bind(&req.location_name)
-    .bind(&perch_name)
-    .bind(now)
-    .bind(ends_at)
-    .bind(invite_pool)
-    .bind(&qr_token)
-    .bind(visibility)
-    .bind(creature_id)
-    .bind(req.walk_in_price)
-    .bind(walk_in_budget)
-    .bind(req.radius_meters.unwrap_or(100).max(10).min(10000))
-    .execute(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Create workspace in background — don't block the HTTP response
-    {
-        let state_ws = state.clone();
-        let user_ws = user_id.clone();
-        let name_ws = perch_name.clone();
-        tokio::spawn(async move {
-            match rabble_workspace::create_rabble_workspace(
-                &state_ws,
-                &user_ws,
-                &name_ws,
-                Some(swarm_id),
-            )
-            .await
-            {
-                Ok(ws_id) => {
-                    eprintln!("[perch] Created workspace {} for swarm {}", ws_id, swarm_id)
-                }
-                Err((_status, msg)) => eprintln!(
-                    "[perch] Workspace creation failed for swarm {}: {}",
-                    swarm_id, msg
-                ),
-            }
-        });
-    }
-
-    // Create flight record (pattern = 'perch' — grounded with idle animations)
     let flight_id = Uuid::new_v4();
     let creature_visibility: String = creature
         .try_get("visibility")
         .unwrap_or_else(|_| "public".to_string());
 
+    // Create flight record — no swarm_id (perch is location-only)
     sqlx::query(
         "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
          h3_cell, h3_resolution, center_lat, center_lng, location_name,
-         flight_pattern, swarm_id, visibility, started_at, data_source)
-         VALUES ($1, $2, $3, $4, 12, $5, $6, $7, 'perch', $8, $9, $10, 'synthetic')",
+         flight_pattern, visibility, started_at, data_source)
+         VALUES ($1, $2, $3, $4, 12, $5, $6, $7, 'perch', $8, $9, 'synthetic')",
     )
     .bind(flight_id)
     .bind(creature_id)
@@ -1383,45 +1304,35 @@ pub async fn perch_handler(
     .bind(req.center_lat)
     .bind(req.center_lng)
     .bind(&req.location_name)
-    .bind(swarm_id)
     .bind(&creature_visibility)
     .bind(now)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Build response immediately — defer all non-critical work
     let response = json!({
-        "swarm_id": swarm_id,
         "flight_id": flight_id,
         "creature_id": creature_id,
-        "qr_token": qr_token,
         "name": perch_name,
-        "walk_in_price": req.walk_in_price,
-        "invite_pool": invite_pool,
-        "walk_in_budget": walk_in_budget,
-        "visibility": visibility,
-        "total_cost": total_cost,
+        "total_cost": 2,
     });
 
-    // Record versioned state inline (must see swarm_events row on same connection)
+    // Record versioned state — perched (location only, no rabble)
     if let Err(e) = record_transition(
         pool,
         creature_id,
-        "perch_solo",
+        "perched",
         None,
         "perch",
         &user_id,
         req.center_lat,
         req.center_lng,
         &h3_cell,
-        Some(swarm_id),
+        None,
         None,
         &json!({
             "flight_id": flight_id,
-            "swarm_id": swarm_id,
             "perch_name": perch_name,
-            "walk_in_price": req.walk_in_price,
         }),
     )
     .await
@@ -1445,6 +1356,232 @@ pub async fn perch_handler(
             .await
             .ok();
         });
+    }
+
+    Ok(Json(response))
+}
+
+/// POST /api/creatures/:creature_id/host — create a rabble at creature's current location (3cr + pools)
+///
+/// Creature must be perched (has active flight). Separates rabble hosting from location placement.
+pub async fn host_rabble_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(req): Json<HostRabbleRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Validate creature ownership + get current flight location
+    let creature = sqlx::query(
+        "SELECT c.owner_id, c.specimen_name, c.scientific_name, c.species_group,
+                COALESCE(cc.visibility, 'public') AS visibility
+         FROM creatures c
+         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
+         WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    // Must have an active flight (perched somewhere)
+    let active_flight = sqlx::query(
+        "SELECT flight_id, h3_cell, center_lat, center_lng, location_name, swarm_id
+         FROM creature_flights
+         WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((
+        StatusCode::BAD_REQUEST,
+        "Creature must be perched first".to_string(),
+    ))?;
+
+    let flight_id: Uuid = active_flight.get("flight_id");
+    let existing_swarm: Option<Uuid> = active_flight
+        .try_get::<Option<Uuid>, _>("swarm_id")
+        .ok()
+        .flatten();
+
+    if existing_swarm.is_some() {
+        return Err((
+            StatusCode::CONFLICT,
+            "Creature is already in a rabble".to_string(),
+        ));
+    }
+
+    let h3_cell: String = active_flight.get("h3_cell");
+    let center_lat: f64 = active_flight.get("center_lat");
+    let center_lng: f64 = active_flight.get("center_lng");
+    let location_name: Option<String> = active_flight
+        .try_get::<Option<String>, _>("location_name")
+        .ok()
+        .flatten();
+
+    let invite_pool = req.invite_pool.unwrap_or(0).max(0);
+    let walk_in_budget = req.walk_in_budget.unwrap_or(0).max(0);
+
+    // Validate: free walk-in (price=0) requires a budget cap
+    if req.walk_in_price == Some(0) && walk_in_budget == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Free walk-in requires a spending cap (walk_in_budget > 0)".to_string(),
+        ));
+    }
+
+    let total_cost = state.gas_fees.host_rabble + invite_pool + walk_in_budget;
+
+    let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        total_cost,
+        "host_rabble",
+        &format!(
+            "Host rabble for creature {} ({}cr + {}cr invite + {}cr walk-in)",
+            creature_id, state.gas_fees.host_rabble, invite_pool, walk_in_budget
+        ),
+        Some(&creature_id.to_string()),
+    )
+    .await?;
+
+    let creature_name: String = creature.try_get("specimen_name").unwrap_or_else(|_| {
+        creature
+            .try_get("scientific_name")
+            .unwrap_or("creature".into())
+    });
+    let rabble_name = req
+        .name
+        .unwrap_or_else(|| format!("{}'s rabble", creature_name));
+
+    let visibility = if req.walk_in_price.is_none() {
+        "private"
+    } else {
+        "public"
+    };
+
+    let swarm_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    let ends_at = now + chrono::Duration::days(3650);
+    let qr_token = super::generate_qr_token();
+
+    // Create swarm_events row
+    sqlx::query(
+        "INSERT INTO swarm_events (swarm_id, creator_id, h3_cell, h3_resolution,
+         center_lat, center_lng, location_name,
+         name, starts_at, ends_at, status, created_at,
+         funding_mode, invite_pool, invite_pool_remaining,
+         qr_token, visibility, anchor_creature_id, walk_in_price,
+         walk_in_budget, walk_in_budget_remaining,
+         radius_meters, participant_count, creature_count)
+         VALUES ($1, $2, $3, 12, $4, $5, $6, $7, $8, $9, 'active', $8,
+                 'hosted', $10, $10, $11, $12, $13, $14,
+                 $15, $15, $16, 1, 1)",
+    )
+    .bind(swarm_id)
+    .bind(&user_id)
+    .bind(&h3_cell)
+    .bind(center_lat)
+    .bind(center_lng)
+    .bind(&location_name)
+    .bind(&rabble_name)
+    .bind(now)
+    .bind(ends_at)
+    .bind(invite_pool)
+    .bind(&qr_token)
+    .bind(visibility)
+    .bind(creature_id)
+    .bind(req.walk_in_price)
+    .bind(walk_in_budget)
+    .bind(req.radius_meters.unwrap_or(100).max(10).min(10000))
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Link creature's current flight to the new swarm
+    sqlx::query("UPDATE creature_flights SET swarm_id = $1 WHERE flight_id = $2")
+        .bind(swarm_id)
+        .bind(flight_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Create workspace in background
+    {
+        let state_ws = state.clone();
+        let user_ws = user_id.clone();
+        let name_ws = rabble_name.clone();
+        tokio::spawn(async move {
+            match rabble_workspace::create_rabble_workspace(
+                &state_ws,
+                &user_ws,
+                &name_ws,
+                Some(swarm_id),
+            )
+            .await
+            {
+                Ok(ws_id) => {
+                    eprintln!("[host] Created workspace {} for swarm {}", ws_id, swarm_id)
+                }
+                Err((_status, msg)) => eprintln!(
+                    "[host] Workspace creation failed for swarm {}: {}",
+                    swarm_id, msg
+                ),
+            }
+        });
+    }
+
+    let response = json!({
+        "swarm_id": swarm_id,
+        "flight_id": flight_id,
+        "creature_id": creature_id,
+        "qr_token": qr_token,
+        "name": rabble_name,
+        "walk_in_price": req.walk_in_price,
+        "invite_pool": invite_pool,
+        "walk_in_budget": walk_in_budget,
+        "visibility": visibility,
+        "total_cost": total_cost,
+    });
+
+    // Record versioned state — hosting
+    if let Err(e) = record_transition(
+        pool,
+        creature_id,
+        "hosting",
+        Some("perched"),
+        "host",
+        &user_id,
+        center_lat,
+        center_lng,
+        &h3_cell,
+        Some(swarm_id),
+        None,
+        &json!({
+            "flight_id": flight_id,
+            "swarm_id": swarm_id,
+            "rabble_name": rabble_name,
+            "walk_in_price": req.walk_in_price,
+        }),
+    )
+    .await
+    {
+        eprintln!(
+            "[host] record_transition failed for creature {}: {}",
+            creature_id, e
+        );
     }
 
     Ok(Json(response))
@@ -2220,7 +2357,7 @@ pub async fn join_swarm_handler(
             let prev = get_current_state(pool_bg, cid_bg).await;
             let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
             let _ = record_transition(
-                pool_bg, cid_bg, "perch_rabble", prev_state, "join", &uid_bg,
+                pool_bg, cid_bg, "in_rabble", prev_state, "join", &uid_bg,
                 lat, lng, &h3_bg, Some(swarm_id), existing_ws,
                 &json!({ "flight_id": flight_id, "swarm_id": swarm_id, "first_join": is_first_join }),
             )
@@ -4406,7 +4543,7 @@ pub async fn creature_dream_handler(
     let state_name = current_state
         .as_ref()
         .map(|(s, _)| s.as_str())
-        .unwrap_or("perch_solo");
+        .unwrap_or("perched");
 
     let dream_narrative = dream_result
         .as_deref()
