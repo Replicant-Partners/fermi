@@ -339,50 +339,52 @@ pub async fn end_flight_handler(
         ));
     }
 
-    // ── Dual-write: record land transition (new versioned model) ──
+    // Defer versioned state recording to background
     {
-        let flight_info = sqlx::query(
-            "SELECT creature_id, center_lat, center_lng, h3_cell, swarm_id
-             FROM creature_flights WHERE flight_id = $1",
-        )
-        .bind(flight_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
-
-        if let Some(fi) = flight_info {
-            let cid: Uuid = fi.get("creature_id");
-            let lat: f64 = fi.get("center_lat");
-            let lng: f64 = fi.get("center_lng");
-            let h3: String = fi.get("h3_cell");
-            let sid: Option<Uuid> = fi.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
-            let new_state = if sid.is_some() {
-                "perch_rabble"
-            } else {
-                "perch_solo"
-            };
-            let transition = if sid.is_some() { "join" } else { "land" };
-
-            let _ = record_transition(
-                pool,
-                cid,
-                new_state,
-                Some("fly"),
-                transition,
-                &principal.user_id(),
-                lat,
-                lng,
-                &h3,
-                sid,
-                None,
-                &json!({
-                    "flight_id": flight_id,
-                    "duration_seconds": req.duration_seconds,
-                }),
+        let pool_bg = state.db.clone();
+        let uid_bg = principal.user_id();
+        let dur = req.duration_seconds;
+        tokio::spawn(async move {
+            let flight_info = sqlx::query(
+                "SELECT creature_id, center_lat, center_lng, h3_cell, swarm_id
+                 FROM creature_flights WHERE flight_id = $1",
             )
-            .await;
-        }
+            .bind(flight_id)
+            .fetch_optional(&pool_bg)
+            .await
+            .ok()
+            .flatten();
+
+            if let Some(fi) = flight_info {
+                let cid: Uuid = fi.get("creature_id");
+                let lat: f64 = fi.get("center_lat");
+                let lng: f64 = fi.get("center_lng");
+                let h3: String = fi.get("h3_cell");
+                let sid: Option<Uuid> = fi.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+                let new_state = if sid.is_some() {
+                    "perch_rabble"
+                } else {
+                    "perch_solo"
+                };
+                let transition = if sid.is_some() { "join" } else { "land" };
+
+                let _ = record_transition(
+                    &pool_bg,
+                    cid,
+                    new_state,
+                    Some("fly"),
+                    transition,
+                    &uid_bg,
+                    lat,
+                    lng,
+                    &h3,
+                    sid,
+                    None,
+                    &json!({ "flight_id": flight_id, "duration_seconds": dur }),
+                )
+                .await;
+            }
+        });
     }
 
     // Bridge to SOSA: convert path_samples into universal observations (fire-and-forget).
@@ -2168,144 +2170,116 @@ pub async fn join_swarm_handler(
     .await
     .ok();
 
-    // ── Dual-write: record join transition (new versioned model) ──
+    // Defer versioned state + system messages + agent welcomes to background
     {
-        let prev = get_current_state(pool, req.creature_id).await;
-        let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
-        let _ = record_transition(
-            pool,
-            req.creature_id,
-            "perch_rabble",
-            prev_state,
-            "join",
-            &user_id,
-            lat,
-            lng,
-            &h3_cell,
-            Some(swarm_id),
-            existing_ws,
-            &json!({
-                "flight_id": flight_id,
-                "swarm_id": swarm_id,
-                "first_join": is_first_join,
-            }),
-        )
-        .await;
-    }
-
-    // Post system message — special message for first join (perch → rabble transition)
-    let display_name = creature_name.as_deref().unwrap_or("A creature");
-    let species_display = species_name.as_deref().unwrap_or("unknown species");
-
-    if is_first_join {
-        let _ = crate::handlers::rabble_chat::insert_system_message(
-            &state,
-            swarm_id,
-            "We have a rabble!!",
-        )
-        .await;
-    }
-
-    let _ = crate::handlers::rabble_chat::insert_system_message(
-        &state,
-        swarm_id,
-        &format!(
-            "{} ({}) has joined the rabble!",
-            display_name, species_display
-        ),
-    )
-    .await;
-
-    // Route through workspace agents (swarm_host welcome + keeper log)
-    let swarm_ws_id: Option<Uuid> =
-        sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
-            .bind(swarm_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
-
-    if let Some(ws_id) = swarm_ws_id {
-        // Dispatch swarm_host welcome via workspace
-        let state2 = state.clone();
-        let user_id2 = user_id.clone();
-        let c_name = creature_name
-            .clone()
-            .unwrap_or_else(|| "creature".to_string());
-        let s_name = species_name
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        let s_group = species_group
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
+        let state_bg = state.clone();
+        let uid_bg = user_id.clone();
+        let cid_bg = req.creature_id;
+        let h3_bg = h3_cell.clone();
+        let c_name_bg = creature_name.clone();
+        let s_name_bg = species_name.clone();
+        let s_group_bg = species_group.clone();
         tokio::spawn(async move {
-            let query = format!(
-                "Welcome {} ({}, {}) to the rabble! Share a fun taxonomic fact.",
-                c_name, s_name, s_group
-            );
-            if let Ok(welcome) = rabble_workspace::dispatch_rabble_action(
-                &state2,
-                ws_id,
-                "swarm_host",
-                "swarm_join",
-                &query,
-                &user_id2,
+            let pool_bg = &state_bg.db;
+
+            // Record join transition (versioned model)
+            let prev = get_current_state(pool_bg, cid_bg).await;
+            let prev_state = prev.as_ref().map(|(s, _)| s.as_str());
+            let _ = record_transition(
+                pool_bg, cid_bg, "perch_rabble", prev_state, "join", &uid_bg,
+                lat, lng, &h3_bg, Some(swarm_id), existing_ws,
+                &json!({ "flight_id": flight_id, "swarm_id": swarm_id, "first_join": is_first_join }),
             )
-            .await
-            {
-                // Insert welcome as narrator message in rabble chat
-                let _ = sqlx::query(
-                    "INSERT INTO rabble_messages (message_id, swarm_id, sender_id, creature_id, creature_name, content, message_type)
-                     VALUES ($1, $2, 'system', NULL, 'Swarm Host', $3, 'narrator')"
+            .await;
+
+            // System messages
+            let display_name = c_name_bg.as_deref().unwrap_or("A creature");
+            let species_display = s_name_bg.as_deref().unwrap_or("unknown species");
+
+            if is_first_join {
+                let _ = crate::handlers::rabble_chat::insert_system_message(
+                    &state_bg,
+                    swarm_id,
+                    "We have a rabble!!",
                 )
-                .bind(Uuid::new_v4())
-                .bind(swarm_id)
-                .bind(&welcome)
-                .execute(&state2.db)
                 .await;
             }
-        });
-
-        // Also dispatch lifecycle coordinator (fire-and-forget)
-        let state3 = state.clone();
-        let user_id3 = user_id.clone();
-        let c_name2 = creature_name
-            .clone()
-            .unwrap_or_else(|| "creature".to_string());
-        let s_name2 = species_name
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        tokio::spawn(async move {
-            let query = format!(
-                "participant_joined: {} ({}) has joined the rabble.",
-                c_name2, s_name2
-            );
-            let _ = rabble_workspace::dispatch_rabble_action(
-                &state3,
-                ws_id,
-                "rabble_lifecycle_coordinator",
-                "participant_joined",
-                &query,
-                &user_id3,
-            )
-            .await;
-        });
-    } else {
-        // Fallback: legacy swarm host welcome (no workspace yet)
-        let state_clone = state.clone();
-        let creature_name_c = creature_name.clone();
-        let species_name_c = species_name.clone();
-        let species_group_c = species_group.clone();
-        tokio::spawn(async move {
-            super::trigger_swarm_host_welcome(
-                &state_clone,
+            let _ = crate::handlers::rabble_chat::insert_system_message(
+                &state_bg,
                 swarm_id,
-                creature_name_c.as_deref().unwrap_or("creature"),
-                species_name_c.as_deref().unwrap_or("unknown"),
-                species_group_c.as_deref().unwrap_or("unknown"),
+                &format!(
+                    "{} ({}) has joined the rabble!",
+                    display_name, species_display
+                ),
             )
             .await;
+
+            // Route through workspace agents
+            let swarm_ws_id: Option<Uuid> =
+                sqlx::query("SELECT workspace_id FROM swarm_events WHERE swarm_id = $1")
+                    .bind(swarm_id)
+                    .fetch_optional(pool_bg)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten());
+
+            if let Some(ws_id) = swarm_ws_id {
+                let c_name = c_name_bg.unwrap_or_else(|| "creature".to_string());
+                let s_name = s_name_bg.unwrap_or_else(|| "unknown".to_string());
+                let s_group = s_group_bg.unwrap_or_else(|| "unknown".to_string());
+
+                // Dispatch swarm_host welcome
+                let query = format!(
+                    "Welcome {} ({}, {}) to the rabble! Share a fun taxonomic fact.",
+                    c_name, s_name, s_group
+                );
+                if let Ok(welcome) = rabble_workspace::dispatch_rabble_action(
+                    &state_bg,
+                    ws_id,
+                    "swarm_host",
+                    "swarm_join",
+                    &query,
+                    &uid_bg,
+                )
+                .await
+                {
+                    let _ = sqlx::query(
+                        "INSERT INTO rabble_messages (message_id, swarm_id, sender_id, creature_id, creature_name, content, message_type)
+                         VALUES ($1, $2, 'system', NULL, 'Swarm Host', $3, 'narrator')"
+                    )
+                    .bind(Uuid::new_v4())
+                    .bind(swarm_id)
+                    .bind(&welcome)
+                    .execute(pool_bg)
+                    .await;
+                }
+
+                // Lifecycle coordinator
+                let query2 = format!(
+                    "participant_joined: {} ({}) has joined the rabble.",
+                    c_name, s_name
+                );
+                let _ = rabble_workspace::dispatch_rabble_action(
+                    &state_bg,
+                    ws_id,
+                    "rabble_lifecycle_coordinator",
+                    "participant_joined",
+                    &query2,
+                    &uid_bg,
+                )
+                .await;
+            } else {
+                // Legacy fallback
+                super::trigger_swarm_host_welcome(
+                    &state_bg,
+                    swarm_id,
+                    c_name_bg.as_deref().unwrap_or("creature"),
+                    s_name_bg.as_deref().unwrap_or("unknown"),
+                    s_group_bg.as_deref().unwrap_or("unknown"),
+                )
+                .await;
+            }
         });
     }
 
