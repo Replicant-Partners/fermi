@@ -1152,13 +1152,17 @@ pub async fn update_creature_visibility_handler(
     let pool = state.memory_store.pool();
 
     // Validate visibility value
-    let visibility = req.visibility.trim().to_lowercase();
-    if !["public", "contacts", "private"].contains(&visibility.as_str()) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "visibility must be 'public', 'contacts', or 'private'".to_string(),
-        ));
-    }
+    let visibility = match req.visibility.trim().to_lowercase().as_str() {
+        "public" => "public".to_string(),
+        "contacts" | "contacts_only" => "contacts".to_string(),
+        "private" => "private".to_string(),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "visibility must be 'public', 'contacts', or 'private'".to_string(),
+            ))
+        }
+    };
 
     // Verify ownership
     let creature = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")

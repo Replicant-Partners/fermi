@@ -86,25 +86,32 @@ pub async fn record_flight_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Auto-end any existing flight — creature can always change state
     if let Some(row) = active_flight {
-        let loc: Option<String> = row.try_get("location_name").unwrap_or(None);
-        let in_swarm: bool = row
-            .try_get::<Option<Uuid>, _>("swarm_id")
-            .ok()
-            .flatten()
-            .is_some();
-        let msg = if in_swarm {
-            format!(
-                "Creature is already in a rabble{}",
-                loc.map(|l| format!(" at {}", l)).unwrap_or_default()
+        let old_fid: Uuid = row.get("flight_id");
+        let old_sid: Option<Uuid> = row.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+
+        sqlx::query(
+            "UPDATE creature_flights SET ended_at = NOW(),
+             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+             WHERE flight_id = $1",
+        )
+        .bind(old_fid)
+        .execute(pool)
+        .await
+        .ok();
+
+        // Decrement swarm creature count if leaving a rabble
+        if let Some(sid) = old_sid {
+            sqlx::query(
+                "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
+                 WHERE swarm_id = $1",
             )
-        } else {
-            format!(
-                "Creature is already flying{}",
-                loc.map(|l| format!(" at {}", l)).unwrap_or_default()
-            )
-        };
-        return Err((StatusCode::CONFLICT, msg));
+            .bind(sid)
+            .execute(pool)
+            .await
+            .ok();
+        }
     }
 
     // Charge 3 credits
@@ -1358,7 +1365,7 @@ pub async fn fly_handler(
         ));
     }
 
-    // Must have an active perch (flight with swarm_id and ended_at IS NULL)
+    // Check for active flight — auto-end if needed, creature can always change state
     let active_flight = sqlx::query(
         "SELECT flight_id, swarm_id, flight_pattern, location_name
          FROM creature_flights
@@ -1367,25 +1374,50 @@ pub async fn fly_handler(
     .bind(creature_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((
-        StatusCode::CONFLICT,
-        "Creature is not perched — perch first".to_string(),
-    ))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let flight_id: Uuid = active_flight.get("flight_id");
-    let swarm_id: Option<Uuid> = active_flight
-        .try_get::<Option<Uuid>, _>("swarm_id")
-        .ok()
-        .flatten();
+    let prev_location_name: String = active_flight
+        .as_ref()
+        .and_then(|r| r.try_get("location_name").ok())
+        .unwrap_or_else(|| "current location".to_string());
 
-    if swarm_id.is_none() {
-        return Err((
-            StatusCode::CONFLICT,
-            "Creature is on a solo flight without a perch — end it first".to_string(),
-        ));
-    }
-    let swarm_id = swarm_id.unwrap();
+    let (flight_id, swarm_id) = if let Some(af) = active_flight {
+        let fid: Uuid = af.get("flight_id");
+        let sid: Option<Uuid> = af.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+        let pattern: String = af.try_get("flight_pattern").unwrap_or_default();
+
+        if pattern != "perch" {
+            // Already in non-perch flight — auto-end it so creature can start fresh
+            sqlx::query(
+                "UPDATE creature_flights SET ended_at = NOW(),
+                 duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+                 WHERE flight_id = $1",
+            )
+            .bind(fid)
+            .execute(pool)
+            .await
+            .ok();
+
+            // Decrement swarm creature count if leaving a rabble
+            if let Some(sid) = sid {
+                sqlx::query(
+                    "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
+                     WHERE swarm_id = $1",
+                )
+                .bind(sid)
+                .execute(pool)
+                .await
+                .ok();
+            }
+        }
+
+        (fid, sid)
+    } else {
+        // No active flight — that's fine, we'll create one
+        (Uuid::nil(), None)
+    };
+
+    let swarm_id = swarm_id.unwrap_or(Uuid::nil());
 
     // Charge 1cr for fly activation
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
@@ -1401,12 +1433,31 @@ pub async fn fly_handler(
     )
     .await?;
 
-    // Update flight pattern from 'perch' to 'fly'
-    sqlx::query("UPDATE creature_flights SET flight_pattern = 'fly' WHERE flight_id = $1")
-        .bind(flight_id)
+    // Start or update the flight
+    let flight_id = if flight_id.is_nil() {
+        // No active flight — create a new fly flight
+        let new_fid = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO creature_flights (flight_id, creature_id, owner_id, h3_cell, center_lat, center_lng,
+             flight_pattern, started_at, data_source)
+             VALUES ($1, $2, $3, '', 0, 0, 'fly', NOW(), 'app')",
+        )
+        .bind(new_fid)
+        .bind(creature_id)
+        .bind(&user_id)
         .execute(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        new_fid
+    } else {
+        // Active perch flight — update pattern to 'fly'
+        sqlx::query("UPDATE creature_flights SET flight_pattern = 'fly' WHERE flight_id = $1")
+            .bind(flight_id)
+            .execute(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        flight_id
+    };
 
     // ── Dual-write: record fly transition (new versioned model) ──
     {
@@ -1495,9 +1546,7 @@ pub async fn fly_handler(
         let creature_label =
             specimen_name.unwrap_or_else(|| scientific_name.unwrap_or_else(|| species.clone()));
 
-        let loc_name: String = active_flight
-            .try_get("location_name")
-            .unwrap_or_else(|_| "current location".to_string());
+        let loc_name = prev_location_name.clone();
 
         let query = if let Some(ref dest) = req.destination {
             let dest_name = dest
