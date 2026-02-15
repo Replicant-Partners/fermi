@@ -1745,9 +1745,9 @@ pub async fn join_swarm_handler(
     let species_name: Option<String> = creature.try_get("species_name").ok();
     let species_group: Option<String> = creature.try_get("species_group").ok();
 
-    // Auto-end any existing flight — creature can always change state
+    // Check existing flight — tether flights are preserved, others are ended
     let active_flight = sqlx::query(
-        "SELECT flight_id, swarm_id FROM creature_flights
+        "SELECT flight_id, swarm_id, data_source FROM creature_flights
          WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
     )
     .bind(req.creature_id)
@@ -1755,9 +1755,14 @@ pub async fn join_swarm_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    let mut tether_preserved = false;
+
     if let Some(row) = active_flight {
         let old_fid: Uuid = row.get("flight_id");
         let old_sid: Option<Uuid> = row.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+        let data_source: String = row
+            .try_get("data_source")
+            .unwrap_or_else(|_| "synthetic".into());
 
         // Already in this rabble — idempotent, just return success
         if old_sid == Some(swarm_id) {
@@ -1768,25 +1773,50 @@ pub async fn join_swarm_handler(
             })));
         }
 
-        sqlx::query(
-            "UPDATE creature_flights SET ended_at = NOW(),
-             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-             WHERE flight_id = $1",
-        )
-        .bind(old_fid)
-        .execute(pool)
-        .await
-        .ok();
+        if data_source == "device" {
+            // Tether flight: preserve it, just attach to the rabble.
+            // The creature stays tethered AND joins the swarm.
+            sqlx::query("UPDATE creature_flights SET swarm_id = $1 WHERE flight_id = $2")
+                .bind(swarm_id)
+                .bind(old_fid)
+                .execute(pool)
+                .await
+                .ok();
+            tether_preserved = true;
 
-        if let Some(sid) = old_sid {
+            // Decrement old swarm if it was in a different one
+            if let Some(sid) = old_sid {
+                sqlx::query(
+                    "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
+                     WHERE swarm_id = $1",
+                )
+                .bind(sid)
+                .execute(pool)
+                .await
+                .ok();
+            }
+        } else {
+            // Non-tether flight: end it as before
             sqlx::query(
-                "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
-                 WHERE swarm_id = $1",
+                "UPDATE creature_flights SET ended_at = NOW(),
+                 duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+                 WHERE flight_id = $1",
             )
-            .bind(sid)
+            .bind(old_fid)
             .execute(pool)
             .await
             .ok();
+
+            if let Some(sid) = old_sid {
+                sqlx::query(
+                    "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
+                     WHERE swarm_id = $1",
+                )
+                .bind(sid)
+                .execute(pool)
+                .await
+                .ok();
+            }
         }
     }
 
@@ -2028,28 +2058,40 @@ pub async fn join_swarm_handler(
             .ok();
     }
 
-    // Record the flight at the swarm location
-    let flight_id = Uuid::new_v4();
+    // Record the flight at the swarm location (skip if tether was preserved)
     let h3_cell: String = swarm.get("h3_cell");
     let lat: f64 = swarm.get("center_lat");
     let lng: f64 = swarm.get("center_lng");
-
-    sqlx::query(
-        "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
-         h3_cell, h3_resolution, center_lat, center_lng,
-         flight_pattern, swarm_id, started_at)
-         VALUES ($1, $2, $3, $4, 12, $5, $6, 'swarm', $7, NOW())",
-    )
-    .bind(flight_id)
-    .bind(req.creature_id)
-    .bind(&user_id)
-    .bind(&h3_cell)
-    .bind(lat)
-    .bind(lng)
-    .bind(swarm_id)
-    .execute(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let flight_id = if tether_preserved {
+        // Tether flight already has swarm_id set — reuse its flight_id
+        sqlx::query("SELECT flight_id FROM creature_flights WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device' LIMIT 1")
+            .bind(req.creature_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.get::<Uuid, _>("flight_id"))
+            .unwrap_or_else(Uuid::new_v4)
+    } else {
+        let fid = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
+             h3_cell, h3_resolution, center_lat, center_lng,
+             flight_pattern, swarm_id, started_at)
+             VALUES ($1, $2, $3, $4, 12, $5, $6, 'swarm', $7, NOW())",
+        )
+        .bind(fid)
+        .bind(req.creature_id)
+        .bind(&user_id)
+        .bind(&h3_cell)
+        .bind(lat)
+        .bind(lng)
+        .bind(swarm_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        fid
+    };
 
     // Increment swarm counters
     sqlx::query(
@@ -2210,6 +2252,7 @@ pub async fn join_swarm_handler(
         "joined": true,
         "funding_mode": funding_mode,
         "first_join": is_first_join,
+        "tether_preserved": tether_preserved,
     })))
 }
 
@@ -2618,6 +2661,33 @@ pub async fn push_telemetry_handler(
             .execute(pool)
             .await
             .ok();
+        }
+
+        // Anchor propagation: if this creature is a rabble's anchor, move the rabble
+        let h3 = h3o::LatLng::new(last.lat, last.lng)
+            .ok()
+            .map(|ll| ll.to_cell(h3o::Resolution::Twelve).to_string())
+            .unwrap_or_default();
+
+        let updated = sqlx::query(
+            "UPDATE swarm_events SET center_lat = $1, center_lng = $2, h3_cell = $3
+             WHERE anchor_creature_id = $4 AND status IN ('scheduled', 'active')",
+        )
+        .bind(last.lat)
+        .bind(last.lng)
+        .bind(&h3)
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .ok()
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+
+        if updated > 0 {
+            eprintln!(
+                "[tether] Anchor creature {} moved rabble to ({}, {})",
+                creature_id, last.lat, last.lng
+            );
         }
     }
 
