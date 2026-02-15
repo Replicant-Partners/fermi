@@ -1143,13 +1143,8 @@ pub async fn perch_handler(
     Path(creature_id): Path<Uuid>,
     Json(req): Json<PerchRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let perch_start = std::time::Instant::now();
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
-    eprintln!(
-        "[perch] handler entered for creature {} user {}",
-        creature_id, user_id
-    );
 
     // Validate creature ownership
     let creature = sqlx::query(
@@ -1169,8 +1164,6 @@ pub async fn perch_handler(
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
-    eprintln!("[perch] step 1: ownership ok {:?}", perch_start.elapsed());
-
     // Auto-end any existing flight — creature can always change state
     let active_flight = sqlx::query(
         "SELECT flight_id, swarm_id FROM creature_flights
@@ -1235,7 +1228,6 @@ pub async fn perch_handler(
         Some(&creature_id.to_string()),
     )
     .await?;
-    eprintln!("[perch] step 2: gas charged {:?}", perch_start.elapsed());
 
     // Derive perch name
     let creature_name: String = creature.try_get("specimen_name").unwrap_or_else(|_| {
@@ -1290,11 +1282,7 @@ pub async fn perch_handler(
     .bind(req.radius_meters.unwrap_or(100).max(10).min(10000))
     .execute(pool)
     .await
-    .map_err(|e| {
-        eprintln!("[perch] FAILED at swarm_events INSERT: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-    })?;
-    eprintln!("[perch] step 3: swarm created {:?}", perch_start.elapsed());
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Create workspace in background — don't block the HTTP response
     {
@@ -1346,10 +1334,6 @@ pub async fn perch_handler(
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    eprintln!(
-        "[perch] step 4: flight created {:?} — returning response NOW",
-        perch_start.elapsed()
-    );
 
     // Build response immediately — defer all non-critical work
     let response = json!({
@@ -1430,13 +1414,8 @@ pub async fn fly_handler(
     Path(creature_id): Path<Uuid>,
     Json(req): Json<FlyRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let fly_start = std::time::Instant::now();
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
-    eprintln!(
-        "[fly] handler entered for creature {} user {}",
-        creature_id, user_id
-    );
 
     // Validate creature ownership
     let creature = sqlx::query(
@@ -1521,8 +1500,6 @@ pub async fn fly_handler(
         Some(&creature_id.to_string()),
     )
     .await?;
-
-    eprintln!("[fly] charged gas in {:?}", fly_start.elapsed());
 
     // Start or update the flight
     let flight_id = if flight_id.is_nil() {
