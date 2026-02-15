@@ -149,6 +149,7 @@ pub async fn get_creature_handler(
          c.created_at, c.updated_at,
          cs.state AS creature_state, cs.location_lat, cs.location_lng, cs.h3_cell AS state_h3,
          cs.rabble_id, cs.version_id AS current_version_id,
+         sw.name AS rabble_name,
          COALESCE(cc.visibility, 'public') AS visibility,
          COALESCE(cc.sosa_opt_in, false) AS sosa_opt_in,
          COALESCE(cc.presence, 'active') AS presence,
@@ -157,6 +158,7 @@ pub async fn get_creature_handler(
          FROM creatures c
          LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
          LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
+         LEFT JOIN swarm_events sw ON sw.swarm_id = cs.rabble_id
          WHERE c.creature_id = $1",
     )
     .bind(id)
@@ -193,6 +195,7 @@ pub async fn get_creature_handler(
                 "location_lng": row.try_get::<Option<f64>, _>("location_lng").unwrap_or(None),
                 "state_h3": row.try_get::<Option<String>, _>("state_h3").unwrap_or(None),
                 "rabble_id": row.try_get::<Option<Uuid>, _>("rabble_id").unwrap_or(None),
+                "rabble_name": row.try_get::<Option<String>, _>("rabble_name").unwrap_or(None),
                 "current_version_id": row.try_get::<Option<Uuid>, _>("current_version_id").unwrap_or(None),
                 "conditions_walk_in_price": row.try_get::<Option<i32>, _>("conditions_walk_in_price").unwrap_or(None),
                 "active_modules": row.try_get::<Option<Vec<String>>, _>("active_modules").unwrap_or(None),

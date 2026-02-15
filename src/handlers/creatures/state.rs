@@ -1677,7 +1677,7 @@ pub async fn join_swarm_handler(
 
     // Verify swarm exists and is joinable
     let swarm = sqlx::query(
-        "SELECT status, h3_cell, center_lat, center_lng, creator_id, visibility,
+        "SELECT status, name, h3_cell, center_lat, center_lng, creator_id, visibility,
          funding_mode, invite_pool_remaining, suggested_contribution,
          walk_in_price, walk_in_budget_remaining, workspace_id, participant_count
          FROM swarm_events WHERE swarm_id = $1",
@@ -1969,29 +1969,37 @@ pub async fn join_swarm_handler(
     let is_first_join = existing_ws.is_none() && creator_id != user_id;
 
     if is_first_join {
-        // Create workspace now (deferred from perch time)
-        let swarm_name: String = sqlx::query("SELECT name FROM swarm_events WHERE swarm_id = $1")
-            .bind(swarm_id)
-            .fetch_optional(pool)
+        // Create workspace in background — don't block the join response.
+        // Agent dispatches below re-query workspace_id; if not yet ready,
+        // they fall back to trigger_swarm_host_welcome (fire-and-forget).
+        let state_ws = state.clone();
+        let creator_ws = creator_id.clone();
+        let swarm_name: String = swarm
+            .try_get::<String, _>("name")
+            .unwrap_or_else(|_| "rabble".into());
+        tokio::spawn(async move {
+            match rabble_workspace::create_rabble_workspace(
+                &state_ws,
+                &creator_ws,
+                &swarm_name,
+                Some(swarm_id),
+            )
             .await
-            .ok()
-            .flatten()
-            .map(|r| r.try_get::<String, _>("name").unwrap_or("rabble".into()))
-            .unwrap_or("rabble".into());
-
-        if let Ok(ws_id) = rabble_workspace::create_rabble_workspace(
-            &state,
-            &creator_id,
-            &swarm_name,
-            Some(swarm_id),
-        )
-        .await
-        {
-            eprintln!(
-                "[perch] First join — created workspace {} for swarm {}",
-                ws_id, swarm_id
-            );
-        }
+            {
+                Ok(ws_id) => {
+                    eprintln!(
+                        "[perch] First join — created workspace {} for swarm {}",
+                        ws_id, swarm_id
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[perch] Failed to create workspace for swarm {}: {:?}",
+                        swarm_id, e
+                    );
+                }
+            }
+        });
     }
 
     // Legacy support: handle old swarms with funding_mode = 'support' that don't have walk_in_price
