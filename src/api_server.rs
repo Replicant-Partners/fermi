@@ -442,6 +442,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/079_conditions_presence.sql",
         "migrations/080_drop_redundant_creature_columns.sql",
         "migrations/081_fix_visibility_contacts.sql",
+        "migrations/082_rabble_radius.sql",
     ];
 
     for file in &migration_files {
