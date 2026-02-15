@@ -1649,10 +1649,10 @@ pub struct FlyRequest {
     pub prompt: Option<String>,
 }
 
-/// POST /api/creatures/:creature_id/fly — activate flight dynamics on an active perch (1cr + agent pass-through)
+/// POST /api/creatures/:creature_id/fly — start a flight (1cr hop, 5cr expedition)
 ///
-/// Creature must already be perched (active flight with swarm_id, pattern='perch').
-/// Updates flight_pattern to 'fly' and optionally dispatches flight_coordinator agent.
+/// Works from any state: perched, hosting, in rabble, flying, or unplaced.
+/// Auto-ends any existing flight. No state gating — creature can always fly.
 pub async fn fly_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
