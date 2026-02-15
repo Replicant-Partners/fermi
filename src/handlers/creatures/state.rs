@@ -2897,7 +2897,7 @@ pub async fn enemy_sensor_handler(
         "enable" => {
             // One-time unlock fee — check ledger for prior purchase
             let already_paid: bool = sqlx::query(
-                "SELECT 1 FROM wallet_transactions WHERE tx_type = 'enemy_sensor_enable' AND related_id = $1 LIMIT 1",
+                "SELECT 1 FROM credit_ledger WHERE tx_type = 'enemy_sensor_enable' AND related_id = $1 LIMIT 1",
             )
             .bind(creature_id.to_string())
             .fetch_optional(pool)
@@ -3104,7 +3104,7 @@ pub async fn genome_profiler_handler(
         "enable" => {
             // One-time unlock fee — check ledger for prior purchase
             let already_paid: bool = sqlx::query(
-                "SELECT 1 FROM wallet_transactions WHERE tx_type = 'genome_profiler_enable' AND related_id = $1 LIMIT 1",
+                "SELECT 1 FROM credit_ledger WHERE tx_type = 'genome_profiler_enable' AND related_id = $1 LIMIT 1",
             )
             .bind(creature_id.to_string())
             .fetch_optional(pool)
