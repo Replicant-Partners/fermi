@@ -3312,8 +3312,16 @@ pub async fn genome_profiler_handler(
             // Don't cache empty/failed profiles
             let summary_str = parsed.get("summary").and_then(|v| v.as_str()).unwrap_or("");
             let has_content = !summary_str.is_empty()
-                || parsed.get("taxonomy").and_then(|v| v.as_object()).map(|m| !m.is_empty()).unwrap_or(false)
-                || parsed.get("genome").and_then(|v| v.as_object()).map(|m| !m.is_empty()).unwrap_or(false);
+                || parsed
+                    .get("taxonomy")
+                    .and_then(|v| v.as_object())
+                    .map(|m| !m.is_empty())
+                    .unwrap_or(false)
+                || parsed
+                    .get("genome")
+                    .and_then(|v| v.as_object())
+                    .map(|m| !m.is_empty())
+                    .unwrap_or(false);
 
             if has_content {
                 let _ = sqlx::query(
@@ -3890,4 +3898,362 @@ pub(crate) async fn get_current_state(
                 r.try_get::<Option<Uuid>, _>("version_id").unwrap_or(None),
             )
         })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Creature Level Computation + Dream
+// ═══════════════════════════════════════════════════════════════════
+
+/// GET /api/creatures/:creature_id/level — compute creature level from KG + embeddings + coherence.
+pub async fn creature_level_handler(
+    State(state): State<AppState>,
+    Path(creature_id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let pool = &state.db;
+
+    // Verify creature exists
+    let creature = sqlx::query(
+        "SELECT c.creature_id, c.owner_id, c.specimen_name, c.scientific_name,
+                u.personal_workspace_id
+         FROM creatures c
+         JOIN users u ON u.user_id = c.owner_id
+         WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let workspace_id: Option<Uuid> = creature
+        .try_get::<Option<Uuid>, _>("personal_workspace_id")
+        .ok()
+        .flatten();
+
+    // Count workspace messages (proxy for embedding_count)
+    let message_count: i64 = if let Some(ws_id) = workspace_id {
+        sqlx::query("SELECT COUNT(*) FROM workspace_messages WHERE workspace_id = $1")
+            .bind(ws_id)
+            .fetch_one(pool)
+            .await
+            .map(|r| r.get::<i64, _>(0))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Count unique flight locations
+    let unique_locations: i64 = sqlx::query(
+        "SELECT COUNT(DISTINCT h3_cell) FROM creature_flights
+         WHERE creature_id = $1 AND h3_cell IS NOT NULL AND h3_cell != ''",
+    )
+    .bind(creature_id)
+    .fetch_one(pool)
+    .await
+    .map(|r| r.get::<i64, _>(0))
+    .unwrap_or(0);
+
+    // Count state transitions (agent_interactions proxy)
+    let version_count: i64 =
+        sqlx::query("SELECT COUNT(*) FROM creature_versions WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_one(pool)
+            .await
+            .map(|r| r.get::<i64, _>(0))
+            .unwrap_or(0);
+
+    // Count total flights
+    let flight_count: i64 =
+        sqlx::query("SELECT COUNT(*) FROM creature_flights WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_one(pool)
+            .await
+            .map(|r| r.get::<i64, _>(0))
+            .unwrap_or(0);
+
+    // Count rabbles joined (distinct swarm_ids)
+    let rabbles_joined: i64 = sqlx::query(
+        "SELECT COUNT(DISTINCT swarm_id) FROM creature_flights
+         WHERE creature_id = $1 AND swarm_id IS NOT NULL",
+    )
+    .bind(creature_id)
+    .fetch_one(pool)
+    .await
+    .map(|r| r.get::<i64, _>(0))
+    .unwrap_or(0);
+
+    // Count active modules (sensors enabled)
+    let active_modules: Vec<String> =
+        sqlx::query("SELECT active_modules FROM creature_conditions WHERE creature_id = $1")
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<Vec<String>, _>("active_modules").ok())
+            .unwrap_or_default();
+
+    // Count dream cycles (creature_versions with transition_type = 'dream')
+    let dream_cycles: i64 = sqlx::query(
+        "SELECT COUNT(*) FROM creature_versions
+         WHERE creature_id = $1 AND transition_type = 'dream'",
+    )
+    .bind(creature_id)
+    .fetch_one(pool)
+    .await
+    .map(|r| r.get::<i64, _>(0))
+    .unwrap_or(0);
+
+    // Total credits spent on this creature (from credit_ledger via related_id)
+    let credits_spent: i64 = sqlx::query(
+        "SELECT COALESCE(SUM(ABS(amount)), 0) FROM credit_ledger
+         WHERE related_id = $1 AND amount < 0",
+    )
+    .bind(creature_id.to_string())
+    .fetch_one(pool)
+    .await
+    .map(|r| r.get::<i64, _>(0))
+    .unwrap_or(0);
+
+    // Level formula: floor(log2(1 + weighted_score))
+    let weighted_score: f64 = message_count as f64 * 0.5
+        + version_count as f64 * 1.0
+        + unique_locations as f64 * 0.3
+        + dream_cycles as f64 * 5.0
+        + flight_count as f64 * 0.2
+        + rabbles_joined as f64 * 2.0
+        + active_modules.len() as f64 * 1.0;
+
+    let level = (1.0 + weighted_score).log2().floor() as i32;
+
+    Ok(Json(json!({
+        "creature_id": creature_id,
+        "level": level,
+        "weighted_score": weighted_score,
+        "metrics": {
+            "message_count": message_count,
+            "unique_locations": unique_locations,
+            "version_count": version_count,
+            "flight_count": flight_count,
+            "rabbles_joined": rabbles_joined,
+            "dream_cycles": dream_cycles,
+            "active_modules": active_modules,
+            "credits_spent": credits_spent,
+        },
+        "weights": {
+            "messages": 0.5,
+            "versions": 1.0,
+            "locations": 0.3,
+            "dreams": 5.0,
+            "flights": 0.2,
+            "rabbles": 2.0,
+            "modules": 1.0,
+        },
+    })))
+}
+
+// ─── Dream request ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreatureDreamRequest {
+    // empty for now — future: dream_type, focus_topic, etc.
+}
+
+/// POST /api/creatures/:creature_id/dream — trigger ADM consolidation cycle.
+///
+/// Chains: coherence evaluation → consolidation → dream narrator.
+/// Records a "dream" transition in creature_versions for leveling.
+pub async fn creature_dream_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+    Json(_req): Json<CreatureDreamRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+    let gas = &state.gas_fees;
+
+    // 1. Verify ownership
+    let creature = sqlx::query(
+        "SELECT c.owner_id, c.specimen_name, c.scientific_name, c.species_group,
+                u.personal_workspace_id
+         FROM creatures c
+         JOIN users u ON u.user_id = c.owner_id
+         WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    let owner: String = creature.get("owner_id");
+    if owner != user_id {
+        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
+    }
+
+    let specimen_name: String = creature.try_get("specimen_name").unwrap_or_default();
+    let scientific_name: String = creature.try_get("scientific_name").unwrap_or_default();
+
+    // 2. Get creature's workspace (personal menagerie)
+    let workspace_id: Uuid = creature
+        .try_get::<Option<Uuid>, _>("personal_workspace_id")
+        .ok()
+        .flatten()
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "Creature has no workspace — nothing to dream about".to_string(),
+        ))?;
+
+    // 3. Check minimum dream interval (1 hour)
+    let last_dream = sqlx::query(
+        "SELECT recorded_at FROM creature_versions
+         WHERE creature_id = $1 AND transition_type = 'dream'
+         ORDER BY recorded_at DESC LIMIT 1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = last_dream {
+        let last_at: chrono::DateTime<chrono::Utc> = row.get("recorded_at");
+        let elapsed = chrono::Utc::now() - last_at;
+        if elapsed < chrono::Duration::hours(1) {
+            let mins_left = 60 - elapsed.num_minutes();
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                format!(
+                    "Too soon to dream again — wait {} more minute{}",
+                    mins_left,
+                    if mins_left == 1 { "" } else { "s" }
+                ),
+            ));
+        }
+    }
+
+    // 4. Check workspace has messages (something to dream about)
+    let msg_count: i64 =
+        sqlx::query("SELECT COUNT(*) FROM workspace_messages WHERE workspace_id = $1")
+            .bind(workspace_id)
+            .fetch_one(pool)
+            .await
+            .map(|r| r.get::<i64, _>(0))
+            .unwrap_or(0);
+
+    if msg_count == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Nothing to dream about — interact with your creature first".to_string(),
+        ));
+    }
+
+    // 5. Charge gas
+    let wallet = fermi_auth::get_or_create_wallet(pool, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    charge_gas(
+        pool,
+        wallet.wallet_id,
+        gas.creature_dream,
+        "gas_fee",
+        &format!("Dream cycle for {}", specimen_name),
+        Some(&creature_id.to_string()),
+    )
+    .await?;
+
+    // 6. Dispatch dream_narrator agent via workspace to generate the dream
+    let dream_query = format!(
+        "Dream cycle for creature {} ({}). \
+         Consolidate recent interactions, observations, and flights into a coherent dream narrative. \
+         Reflect on what this creature has learned, encountered, and experienced. \
+         Synthesize patterns and insights from its {} workspace messages. \
+         Output a vivid, evocative dream narrative (2-3 paragraphs) that captures \
+         the creature's growing understanding of its world.",
+        specimen_name, scientific_name, msg_count,
+    );
+
+    let dream_result = rabble_workspace::dispatch_rabble_action(
+        &state,
+        workspace_id,
+        "dream_narrator",
+        "dream",
+        &dream_query,
+        &user_id,
+    )
+    .await;
+
+    // 7. Record dream transition in creature_versions (for leveling)
+    let current_state = get_current_state(pool, creature_id).await;
+    let state_name = current_state
+        .as_ref()
+        .map(|(s, _)| s.as_str())
+        .unwrap_or("perch_solo");
+
+    let dream_narrative = dream_result
+        .as_deref()
+        .unwrap_or("Dream faded before it could be captured...");
+
+    let dream_metadata = json!({
+        "dream_narrative": dream_narrative,
+        "messages_consolidated": msg_count,
+        "trigger": "user_action",
+    });
+
+    // Get current location from creature_state for the version record
+    let loc = sqlx::query(
+        "SELECT location_lat, location_lng, h3_cell, rabble_id
+         FROM creature_state WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    let (lat, lng, h3, rabble_id) = loc
+        .map(|r| {
+            (
+                r.try_get::<f64, _>("location_lat").unwrap_or(0.0),
+                r.try_get::<f64, _>("location_lng").unwrap_or(0.0),
+                r.try_get::<String, _>("h3_cell").unwrap_or_default(),
+                r.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten(),
+            )
+        })
+        .unwrap_or((0.0, 0.0, String::new(), None));
+
+    let _ = record_transition(
+        pool,
+        creature_id,
+        state_name,       // stays in same state
+        Some(state_name), // previous = same
+        "dream",
+        &user_id,
+        lat,
+        lng,
+        &h3,
+        rabble_id,
+        Some(workspace_id),
+        &dream_metadata,
+    )
+    .await;
+
+    // 8. Return dream narrative + updated level
+    let dream_cycles: i64 = sqlx::query(
+        "SELECT COUNT(*) FROM creature_versions
+         WHERE creature_id = $1 AND transition_type = 'dream'",
+    )
+    .bind(creature_id)
+    .fetch_one(pool)
+    .await
+    .map(|r| r.get::<i64, _>(0))
+    .unwrap_or(0);
+
+    Ok(Json(json!({
+        "creature_id": creature_id,
+        "status": "dreamed",
+        "cost": gas.creature_dream,
+        "dream_narrative": dream_narrative,
+        "dream_cycles": dream_cycles,
+    })))
 }

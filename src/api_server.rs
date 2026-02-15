@@ -1450,6 +1450,15 @@ async fn main() {
             "/api/creatures/:creature_id/animate",
             post(handlers::creatures::animate_creature_handler),
         )
+        // Creature level + dream (authenticated)
+        .route(
+            "/api/creatures/:creature_id/level",
+            get(handlers::creatures::creature_level_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/dream",
+            post(handlers::creatures::creature_dream_handler),
+        )
         // Creature visibility (authenticated)
         .route(
             "/api/creatures/:creature_id/visibility",

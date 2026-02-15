@@ -47,6 +47,7 @@ pub struct GasFees {
     pub prey_locator_enable: i32,
     pub prey_locator_scan: i32,
     pub prey_locator_stalk: i32,
+    pub creature_dream: i32,
     /// Platform infrastructure read fee — charged when users read agent-produced data
     /// (visualization, history, projections). Agents don't get paid (they already learned).
     pub platform_read: i32,
@@ -99,6 +100,7 @@ impl GasFees {
             prey_locator_enable: env_or("GAS_PREY_LOCATOR_ENABLE", 5),
             prey_locator_scan: env_or("GAS_PREY_LOCATOR_SCAN", 2),
             prey_locator_stalk: env_or("GAS_PREY_LOCATOR_STALK", 5),
+            creature_dream: env_or("GAS_CREATURE_DREAM", 5),
             platform_read: env_or("GAS_PLATFORM_READ", 1),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
@@ -158,6 +160,7 @@ impl Default for GasFees {
             prey_locator_enable: 5,
             prey_locator_scan: 2,
             prey_locator_stalk: 5,
+            creature_dream: 5,
             platform_read: 1,
             crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
