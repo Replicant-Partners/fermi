@@ -1398,8 +1398,10 @@ pub async fn fly_handler(
     Path(creature_id): Path<Uuid>,
     Json(req): Json<FlyRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let fly_start = std::time::Instant::now();
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
+    eprintln!("[fly] start for creature {}", creature_id);
 
     // Validate creature ownership
     let creature = sqlx::query(
@@ -1485,6 +1487,8 @@ pub async fn fly_handler(
     )
     .await?;
 
+    eprintln!("[fly] charged gas in {:?}", fly_start.elapsed());
+
     // Start or update the flight
     let flight_id = if flight_id.is_nil() {
         // No active flight — create a new fly flight
@@ -1536,6 +1540,8 @@ pub async fn fly_handler(
         )
         .await;
     }
+
+    eprintln!("[fly] transition recorded in {:?}", fly_start.elapsed());
 
     // Store destination in flight metadata if provided
     if let Some(ref dest) = req.destination {
@@ -1666,6 +1672,8 @@ pub async fn fly_handler(
             }
         });
     }
+
+    eprintln!("[fly] returning response in {:?}", fly_start.elapsed());
 
     Ok(Json(json!({
         "flight_id": flight_id,
