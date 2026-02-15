@@ -16,6 +16,16 @@ use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
+/// Compute H3 cell index from lat/lng at resolution 12.
+/// Returns the hex string or empty string on error.
+fn compute_h3_cell(lat: f64, lng: f64) -> String {
+    use h3o::{LatLng, Resolution};
+    match LatLng::new(lat, lng) {
+        Ok(ll) => ll.to_cell(Resolution::Twelve).to_string(),
+        Err(_) => String::new(),
+    }
+}
+
 // ─── Write endpoints (authenticated) ───────────────────────────────
 
 #[derive(Deserialize)]
@@ -121,6 +131,13 @@ pub async fn record_flight_handler(
     let pattern = req.flight_pattern.as_deref().unwrap_or("wander");
     let resolution = req.h3_resolution.unwrap_or(12);
 
+    // Compute h3_cell server-side if client sent empty string
+    let h3_cell = if req.h3_cell.is_empty() {
+        compute_h3_cell(req.center_lat, req.center_lng)
+    } else {
+        req.h3_cell.clone()
+    };
+
     // Auto-detect data_source: if creature has an active paired device, it's real telemetry
     let data_source = if req.beacon_id.is_some() {
         "device"
@@ -151,7 +168,7 @@ pub async fn record_flight_handler(
     .bind(req.creature_id)
     .bind(req.beacon_id)
     .bind(&user_id)
-    .bind(&req.h3_cell)
+    .bind(&h3_cell)
     .bind(resolution)
     .bind(req.center_lat)
     .bind(req.center_lng)
@@ -185,7 +202,7 @@ pub async fn record_flight_handler(
         let cid = req.creature_id;
         let lat = req.center_lat;
         let lng = req.center_lng;
-        let h3 = req.h3_cell.clone();
+        let h3 = h3_cell.clone();
         let sid = req.swarm_id;
         let fid = flight_id;
         tokio::spawn(async move {
@@ -327,7 +344,7 @@ pub async fn record_flight_handler(
     Ok(Json(json!({
         "flight_id": flight_id,
         "creature_id": req.creature_id,
-        "h3_cell": req.h3_cell,
+        "h3_cell": h3_cell,
         "location_name": req.location_name,
         "started_at": now.to_rfc3339(),
     })))
@@ -1277,6 +1294,13 @@ pub async fn perch_handler(
         "public"
     };
 
+    // Compute h3_cell server-side if client sent empty string
+    let h3_cell = if req.h3_cell.is_empty() {
+        compute_h3_cell(req.center_lat, req.center_lng)
+    } else {
+        req.h3_cell.clone()
+    };
+
     let swarm_id = Uuid::new_v4();
     let now = chrono::Utc::now();
     let ends_at = now + chrono::Duration::days(3650); // persistent
@@ -1297,7 +1321,7 @@ pub async fn perch_handler(
     )
     .bind(swarm_id)
     .bind(&user_id)
-    .bind(&req.h3_cell)
+    .bind(&h3_cell)
     .bind(req.center_lat)
     .bind(req.center_lng)
     .bind(&req.location_name)
@@ -1355,7 +1379,7 @@ pub async fn perch_handler(
     .bind(flight_id)
     .bind(creature_id)
     .bind(&user_id)
-    .bind(&req.h3_cell)
+    .bind(&h3_cell)
     .bind(req.center_lat)
     .bind(req.center_lng)
     .bind(&req.location_name)
@@ -1384,7 +1408,7 @@ pub async fn perch_handler(
     {
         let pool_bg = state.db.clone();
         let uid = user_id.clone();
-        let h3 = req.h3_cell.clone();
+        let h3 = h3_cell.clone();
         let lat = req.center_lat;
         let lng = req.center_lng;
         let pname = perch_name.clone();

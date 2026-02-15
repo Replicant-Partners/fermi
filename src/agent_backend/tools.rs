@@ -1424,7 +1424,7 @@ async fn execute_scan_nearby_creatures(
     let target = sqlx::query(
         "SELECT c.creature_id, c.scientific_name, c.common_name, c.species_group,
                 c.taxonomy,
-                COALESCE(cs.h3_cell, cf.h3_cell) AS h3_cell,
+                COALESCE(NULLIF(cs.h3_cell, ''), NULLIF(cf.h3_cell, '')) AS h3_cell,
                 COALESCE(cs.location_lat, cf.center_lat) AS location_lat,
                 COALESCE(cs.location_lng, cf.center_lng) AS location_lng,
                 cs.rabble_id, cs.state
@@ -1442,8 +1442,26 @@ async fn execute_scan_nearby_creatures(
     .map_err(|e| format!("DB error: {}", e))?
     .ok_or("Creature not found")?;
 
-    let h3_cell: Option<String> = target.try_get("h3_cell").ok().flatten();
-    let h3_cell = h3_cell.ok_or("Creature has no location — perch or fly first")?;
+    let h3_cell: Option<String> = target.try_get("h3_cell").ok().flatten()
+        .filter(|s: &String| !s.is_empty());
+
+    // Fallback: compute h3_cell from lat/lng if missing
+    let h3_cell = match h3_cell {
+        Some(c) => c,
+        None => {
+            let lat: Option<f64> = target.try_get("location_lat").ok().flatten();
+            let lng: Option<f64> = target.try_get("location_lng").ok().flatten();
+            match (lat, lng) {
+                (Some(lat), Some(lng)) if lat != 0.0 || lng != 0.0 => {
+                    use h3o::{LatLng, Resolution};
+                    LatLng::new(lat, lng)
+                        .map(|ll| ll.to_cell(Resolution::Twelve).to_string())
+                        .map_err(|_| "Creature has no valid location".to_string())?
+                }
+                _ => return Err("Creature has no location — perch or fly first".to_string()),
+            }
+        }
+    };
 
     let taxonomy: Option<serde_json::Value> = target.try_get("taxonomy").ok().flatten();
     let order = taxonomy
@@ -1487,7 +1505,7 @@ async fn execute_scan_nearby_creatures(
     let sql = format!(
         "SELECT c.creature_id, c.scientific_name, c.common_name, c.species_group,
                 c.taxonomy,
-                COALESCE(cs.h3_cell, cf.h3_cell) AS h3_cell,
+                COALESCE(NULLIF(cs.h3_cell, ''), NULLIF(cf.h3_cell, '')) AS h3_cell,
                 cs.rabble_id,
                 COALESCE(cc.visibility, 'public') AS visibility
          FROM creatures c
@@ -1497,7 +1515,7 @@ async fn execute_scan_nearby_creatures(
              WHERE creature_id = c.creature_id ORDER BY started_at DESC LIMIT 1
          ) cf ON cs.h3_cell IS NULL
          LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
-         WHERE COALESCE(cs.h3_cell, cf.h3_cell) IN ({})
+         WHERE COALESCE(NULLIF(cs.h3_cell, ''), NULLIF(cf.h3_cell, '')) IN ({})
            AND c.creature_id != ${}
            AND COALESCE(cc.visibility, 'public') != 'private'
          LIMIT 50",
