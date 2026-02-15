@@ -3283,8 +3283,9 @@ pub async fn genome_profiler_handler(
 
 #[derive(Deserialize)]
 pub struct PreyLocatorRequest {
-    pub action: String,                   // "enable", "disable", "scan", "stalk"
+    pub action: String, // "enable", "disable", "scan", "stalk", "strategy"
     pub target_creature_id: Option<Uuid>, // required for "stalk"
+    pub prompt: Option<String>, // custom prompt for "strategy" action
 }
 
 /// POST /api/creatures/:creature_id/prey-locator
@@ -3545,10 +3546,95 @@ pub async fn prey_locator_handler(
                 "stalk": parsed,
             })))
         }
+        "strategy" => {
+            let modules: Vec<String> = sqlx::query(
+                "SELECT active_modules FROM creature_conditions WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| {
+                r.try_get::<Option<Vec<String>>, _>("active_modules")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default();
+            if !modules.contains(&"prey_locator".to_string()) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Prey locator not enabled".to_string(),
+                ));
+            }
+
+            let custom_prompt = req
+                .prompt
+                .unwrap_or_else(|| "Analyze hunting opportunities".to_string());
+            let scientific_name: String = creature
+                .try_get("scientific_name")
+                .unwrap_or_else(|_| "Unknown".to_string());
+            let taxonomy_val: Option<serde_json::Value> =
+                creature.try_get("taxonomy").ok().flatten();
+            let common_name: Option<String> = creature
+                .try_get::<Option<String>, _>("common_name")
+                .unwrap_or(None);
+            let order = taxonomy_val
+                .as_ref()
+                .and_then(|t| t.get("order"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let label = common_name.unwrap_or_else(|| scientific_name.clone());
+
+            let query = format!(
+                "STRATEGY MODE for {} ({}, order {}): {}. \
+                 Use scan_nearby_creatures with creature_id \"{}\" for spatial context.",
+                label, scientific_name, order, custom_prompt, creature_id,
+            );
+
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.prey_locator_scan,
+                "prey_locator_strategy",
+                &format!("Prey strategy for creature {}", creature_id),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            let workspace_id = find_creature_workspace(pool, creature_id).await?;
+
+            let result = rabble_workspace::dispatch_rabble_action(
+                &state,
+                workspace_id,
+                "prey_locator",
+                "prey_strategy",
+                &query,
+                &user_id,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Strategy failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value =
+                serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "cost": gas.prey_locator_scan,
+                "strategy": parsed,
+            })))
+        }
         other => Err((
             StatusCode::BAD_REQUEST,
             format!(
-                "Unknown action '{}' — use 'enable', 'disable', 'scan', or 'stalk'",
+                "Unknown action '{}' — use 'enable', 'disable', 'scan', 'stalk', or 'strategy'",
                 other
             ),
         )),
