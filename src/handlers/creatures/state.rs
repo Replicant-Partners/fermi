@@ -3309,13 +3309,21 @@ pub async fn genome_profiler_handler(
             });
 
             // Cache the profile — subsequent reads are free
-            let _ = sqlx::query(
-                "UPDATE creature_conditions SET genome_profile = $1 WHERE creature_id = $2",
-            )
-            .bind(&parsed)
-            .bind(creature_id)
-            .execute(pool)
-            .await;
+            // Don't cache empty/failed profiles
+            let summary_str = parsed.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            let has_content = !summary_str.is_empty()
+                || parsed.get("taxonomy").and_then(|v| v.as_object()).map(|m| !m.is_empty()).unwrap_or(false)
+                || parsed.get("genome").and_then(|v| v.as_object()).map(|m| !m.is_empty()).unwrap_or(false);
+
+            if has_content {
+                let _ = sqlx::query(
+                    "UPDATE creature_conditions SET genome_profile = $1 WHERE creature_id = $2",
+                )
+                .bind(&parsed)
+                .bind(creature_id)
+                .execute(pool)
+                .await;
+            }
 
             Ok(Json(json!({
                 "creature_id": creature_id,
