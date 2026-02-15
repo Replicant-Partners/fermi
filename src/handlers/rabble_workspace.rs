@@ -33,6 +33,7 @@ const RABBLE_SYSTEM_AGENTS: &[&str] = &[
     "enemy_sensor",
     "genome_profiler",
     "prey_locator",
+    "reynolds_flock",
 ];
 
 /// Create a workspace for a rabble (swarm) and hire the 4 system agents.
