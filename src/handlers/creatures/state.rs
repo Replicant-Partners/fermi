@@ -2988,21 +2988,23 @@ pub async fn enemy_sensor_handler(
                 creature_id,
             );
 
-            // Get workspace_id — try creature_state first, fall back to creatures table
+            // Get workspace_id — look up via swarm (workspace is created per-rabble)
             let workspace_id: Uuid = sqlx::query(
-                "SELECT COALESCE(cs.workspace_id, c.workspace_id) AS ws_id
-                 FROM creatures c
-                 LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
-                 WHERE c.creature_id = $1",
+                "SELECT se.workspace_id
+                 FROM creature_flights cf
+                 JOIN swarm_events se ON se.swarm_id = cf.swarm_id
+                 WHERE cf.creature_id = $1 AND cf.ended_at IS NULL AND se.workspace_id IS NOT NULL
+                 LIMIT 1",
             )
             .bind(creature_id)
             .fetch_optional(pool)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .and_then(|r| r.try_get::<Option<Uuid>, _>("ws_id").ok().flatten())
+            .and_then(|r| r.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten())
             .ok_or((
                 StatusCode::BAD_REQUEST,
-                "Creature has no workspace — mint first".to_string(),
+                "Creature has no workspace — perch first, then wait a moment for workspace setup"
+                    .to_string(),
             ))?;
 
             // Dispatch to enemy_sensor agent
