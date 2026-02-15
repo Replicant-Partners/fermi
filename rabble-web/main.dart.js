@@ -104149,8 +104149,8 @@ l=r.d?""+r.w+" points recorded":"Tethered \u2014 open this screen to track"
 k=t.p
 l=A.a([n,B.bC,A.aZ(A.ac(A.a([m,A.i(l,i,i,i,i,A.M(i,i,B.r,i,i,i,i,i,i,i,i,11,i,i,i,i,i,!0,i,i,i,i,i,i,i,i),i,i)],k),B.K,B.e,B.l),1)],k)
 if(r.d)l.push(A.V(i,i,B.i,i,i,new A.Z(B.y,i,i,i,i,i,B.ar),i,8,i,i,i,i,8))
-return A.ac(A.a([s,B.G,A.V(i,A.aa(l,B.j,B.e,B.l),B.i,i,i,new A.Z(q,i,o,p,i,i,B.q),i,i,i,B.bT,i,i,i),B.ey,A.aa(A.a([A.aZ(j.tk(B.F,B.Nr,"Untether",new A.a9P(j,a)),1),B.cb,A.aZ(j.tk(B.pT,B.bU,"Join",new A.a9Q(j,a)),1)],k),B.j,B.e,B.l),B.ey,A.aa(A.a([A.aZ(j.YN(B.y,B.mh,"Gift",new A.a9R(j,a)),1),B.cb,B.M6],k),B.j,B.e,B.l)],k),B.K,B.e,B.l)}s=t.p
-return A.ac(A.a([A.i("ACTIONS",i,i,i,i,A.M(i,i,B.r,i,i,i,i,i,i,i,i,11,i,i,B.v,i,i,!0,i,0.8,i,i,i,i,i,i),i,i),B.G,A.aa(A.a([A.aZ(j.tk(B.IK,B.c7,"Fly (1cr)",new A.a9S(j,a)),1),B.cb,A.aZ(j.tk(B.pT,B.bU,"Join",new A.a9T(j,a)),1)],s),B.j,B.e,B.l),B.ey,A.aa(A.a([A.aZ(j.tk(B.Z,B.jj,"Tether (1cr)",new A.a9U(j,a)),1),B.cb,A.aZ(j.YN(B.y,B.mh,"Gift",new A.a9V(j,a)),1)],s),B.j,B.e,B.l)],s),B.K,B.e,B.l)},
+return A.ac(A.a([s,B.G,A.V(i,A.aa(l,B.j,B.e,B.l),B.i,i,i,new A.Z(q,i,o,p,i,i,B.q),i,i,i,B.bT,i,i,i),B.ey,A.aa(A.a([A.aZ(j.tk(B.F,B.Nr,"Untether",new A.a9P(j,a)),1),B.cb,A.aZ(j.tk(B.pT,B.bU,"Join",new A.a9Q(j,a)),1)],k),B.j,B.e,B.l),B.ey,A.aa(A.a([A.aZ(j.YN(B.y,B.mh,"Gift (1cr+2.5%)",new A.a9R(j,a)),1),B.cb,B.M6],k),B.j,B.e,B.l)],k),B.K,B.e,B.l)}s=t.p
+return A.ac(A.a([A.i("ACTIONS",i,i,i,i,A.M(i,i,B.r,i,i,i,i,i,i,i,i,11,i,i,B.v,i,i,!0,i,0.8,i,i,i,i,i,i),i,i),B.G,A.aa(A.a([A.aZ(j.tk(B.IK,B.c7,"Fly (1cr)",new A.a9S(j,a)),1),B.cb,A.aZ(j.tk(B.pT,B.bU,"Join (free-2cr)",new A.a9T(j,a)),1)],s),B.j,B.e,B.l),B.ey,A.aa(A.a([A.aZ(j.tk(B.Z,B.jj,"Tether (1cr)",new A.a9U(j,a)),1),B.cb,A.aZ(j.YN(B.y,B.mh,"Gift",new A.a9V(j,a)),1)],s),B.j,B.e,B.l)],s),B.K,B.e,B.l)},
 arI(a){var s=null
 return A.ac(A.a([A.i("ACTIONS",s,s,s,s,A.M(s,s,B.r,s,s,s,s,s,s,s,s,11,s,s,B.v,s,s,!0,s,0.8,s,s,s,s,s,s),s,s),B.G,A.b5(A.kt(B.Ov,B.a9R,new A.a9l(this),A.jv(s,s,s,s,s,s,s,s,s,B.h,s,s,B.e4,s,s,new A.aH(B.h.G(0.4),1,B.C,-1),s,s,s,s)),s,1/0),B.G,A.b5(A.kt(B.rG,B.a93,new A.a9m(this,a),A.jv(s,s,s,s,s,s,s,s,s,B.Z,s,s,B.e4,s,s,new A.aH(B.Z.G(0.4),1,B.C,-1),s,s,s,s)),s,1/0)],t.p),B.K,B.e,B.l)},
 tk(a,b,c,d){var s=null
@@ -104773,7 +104773,7 @@ g=g==null?c:g.p(g,b)
 h.push(A.aTf(B.y,d.gayw(),g===!0))}i.push(A.aa(h,B.j,B.e,B.l))
 h=d.a.d.fy
 h=h==null?c:h.p(h,b)
-if(h!==!0)i.push(new A.an(B.LP,A.i("5cr to enable \u2014 scans for natural predators nearby",c,c,c,c,A.M(c,c,B.r,c,c,c,c,c,c,c,c,11,B.bA,c,c,c,c,!0,c,c,c,c,c,c,c,c),c,c),c))
+if(h!==!0)i.push(new A.an(B.LP,A.i("5cr to enable, then 1cr per scan \u2014 detects natural predators nearby",c,c,c,c,A.M(c,c,B.r,c,c,c,c,c,c,c,c,11,B.bA,c,c,c,c,!0,c,c,c,c,c,c,c,c),c,c),c))
 i.push(B.G)
 h=A.M(c,c,B.a4,c,c,c,c,c,c,c,c,13,c,c,c,c,c,!0,c,c,c,c,c,c,c,c)
 i.push(A.aX8(A.iD(c,new A.dJ(4,A.a7(10),B.w),c,B.qr,c,c,c,c,!0,c,c,c,c,c,c,B.ak,!0,c,c,c,c,c,c,c,c,c,c,c,c,c,c,c,c,c,c,c,!0,c,h,"Visibility",!0,c,c,c,c,c,c,c,c,c,c,c,c,c),B.Vg,d.gahv(),a.cx,t.N))
