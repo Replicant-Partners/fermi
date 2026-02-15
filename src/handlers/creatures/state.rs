@@ -2895,25 +2895,40 @@ pub async fn enemy_sensor_handler(
 
     match req.action.as_str() {
         "enable" => {
-            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            charge_gas(
-                &state.db,
-                wallet.wallet_id,
-                gas.enemy_sensor_enable,
-                "enemy_sensor_enable",
-                &format!("Enable enemy sensor for creature {}", creature_id),
-                Some(&creature_id.to_string()),
+            // One-time unlock fee — check ledger for prior purchase
+            let already_paid: bool = sqlx::query(
+                "SELECT 1 FROM wallet_transactions WHERE tx_type = 'enemy_sensor_enable' AND related_id = $1 LIMIT 1",
             )
-            .await?;
+            .bind(creature_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .map(|r| r.is_some())
+            .unwrap_or(false);
+
+            let cost = if already_paid {
+                0
+            } else {
+                let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                charge_gas(
+                    &state.db,
+                    wallet.wallet_id,
+                    gas.enemy_sensor_enable,
+                    "enemy_sensor_enable",
+                    &format!("Unlock enemy sensor for creature {}", creature_id),
+                    Some(&creature_id.to_string()),
+                )
+                .await?;
+                gas.enemy_sensor_enable
+            };
 
             toggle_module(pool, creature_id, "enemy_sensor", true).await;
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "enemy_sensor": "enabled",
-                "cost": gas.enemy_sensor_enable,
+                "cost": cost,
             })))
         }
         "disable" => {
@@ -3087,25 +3102,40 @@ pub async fn genome_profiler_handler(
 
     match req.action.as_str() {
         "enable" => {
-            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            charge_gas(
-                &state.db,
-                wallet.wallet_id,
-                gas.genome_profiler_enable,
-                "genome_profiler_enable",
-                &format!("Enable genome profiler for creature {}", creature_id),
-                Some(&creature_id.to_string()),
+            // One-time unlock fee — check ledger for prior purchase
+            let already_paid: bool = sqlx::query(
+                "SELECT 1 FROM wallet_transactions WHERE tx_type = 'genome_profiler_enable' AND related_id = $1 LIMIT 1",
             )
-            .await?;
+            .bind(creature_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .map(|r| r.is_some())
+            .unwrap_or(false);
+
+            let cost = if already_paid {
+                0
+            } else {
+                let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                charge_gas(
+                    &state.db,
+                    wallet.wallet_id,
+                    gas.genome_profiler_enable,
+                    "genome_profiler_enable",
+                    &format!("Unlock genome profiler for creature {}", creature_id),
+                    Some(&creature_id.to_string()),
+                )
+                .await?;
+                gas.genome_profiler_enable
+            };
 
             toggle_module(pool, creature_id, "genome_profiler", true).await;
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "genome_profiler": "enabled",
-                "cost": gas.genome_profiler_enable,
+                "cost": cost,
             })))
         }
         "disable" => {
