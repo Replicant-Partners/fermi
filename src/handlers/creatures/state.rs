@@ -1340,30 +1340,40 @@ pub async fn perch_handler(
         "total_cost": 2,
     });
 
-    // Record versioned state — perched (location only, no rabble)
-    if let Err(e) = record_transition(
-        pool,
-        creature_id,
-        "perched",
-        None,
-        "perch",
-        &user_id,
-        req.center_lat,
-        req.center_lng,
-        &h3_cell,
-        None,
-        None,
-        &json!({
-            "flight_id": flight_id,
-            "perch_name": perch_name,
-        }),
-    )
-    .await
+    // Record versioned state in background — not critical for response
     {
-        eprintln!(
-            "[perch] record_transition failed for creature {}: {}",
-            creature_id, e
-        );
+        let pool_bg = state.memory_store.pool().clone();
+        let user_bg = user_id.clone();
+        let h3_bg = h3_cell.clone();
+        let lat = req.center_lat;
+        let lng = req.center_lng;
+        let name_bg = perch_name.clone();
+        tokio::spawn(async move {
+            if let Err(e) = record_transition(
+                &pool_bg,
+                creature_id,
+                "perched",
+                None,
+                "perch",
+                &user_bg,
+                lat,
+                lng,
+                &h3_bg,
+                None,
+                None,
+                &json!({
+                    "flight_id": flight_id,
+                    "perch_name": name_bg,
+                }),
+            )
+            .await
+            {
+                eprintln!(
+                    "[perch] record_transition failed for creature {}: {}",
+                    creature_id, e
+                );
+            }
+        });
     }
 
     // Defer non-critical stats to background
@@ -1610,32 +1620,41 @@ pub async fn host_rabble_handler(
         "total_cost": total_cost,
     });
 
-    // Record versioned state — hosting
-    if let Err(e) = record_transition(
-        pool,
-        creature_id,
-        "hosting",
-        Some("perched"),
-        "host",
-        &user_id,
-        center_lat,
-        center_lng,
-        &h3_cell,
-        Some(swarm_id),
-        None,
-        &json!({
-            "flight_id": flight_id,
-            "swarm_id": swarm_id,
-            "rabble_name": rabble_name,
-            "walk_in_price": req.walk_in_price,
-        }),
-    )
-    .await
+    // Record versioned state in background — not critical for response
     {
-        eprintln!(
-            "[host] record_transition failed for creature {}: {}",
-            creature_id, e
-        );
+        let pool_bg = state.memory_store.pool().clone();
+        let user_bg = user_id.clone();
+        let h3_bg = h3_cell.clone();
+        let name_bg = rabble_name.clone();
+        let walk_in_bg = req.walk_in_price;
+        tokio::spawn(async move {
+            if let Err(e) = record_transition(
+                &pool_bg,
+                creature_id,
+                "hosting",
+                Some("perched"),
+                "host",
+                &user_bg,
+                center_lat,
+                center_lng,
+                &h3_bg,
+                Some(swarm_id),
+                None,
+                &json!({
+                    "flight_id": flight_id,
+                    "swarm_id": swarm_id,
+                    "rabble_name": name_bg,
+                    "walk_in_price": walk_in_bg,
+                }),
+            )
+            .await
+            {
+                eprintln!(
+                    "[host] record_transition failed for creature {}: {}",
+                    creature_id, e
+                );
+            }
+        });
     }
 
     Ok(Json(response))
