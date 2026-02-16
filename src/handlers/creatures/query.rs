@@ -709,13 +709,14 @@ pub async fn feed_handler(
                 se.location_name AS rabble_location, se.creator_id AS rabble_creator_id
          FROM creature_versions cv
          JOIN creatures c ON c.creature_id = cv.creature_id
+         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
          LEFT JOIN users u ON u.user_id = c.owner_id
          LEFT JOIN swarm_events se ON se.swarm_id = cv.rabble_id
          WHERE cv.valid_from > NOW() - INTERVAL '14 days'
            AND (
              c.owner_id = $1
-             OR COALESCE(c.visibility, 'public') = 'public'
-             OR (COALESCE(c.visibility, 'public') = 'contacts'
+             OR COALESCE(cc.visibility, 'public') = 'public'
+             OR (COALESCE(cc.visibility, 'public') = 'contacts'
                  AND EXISTS (SELECT 1 FROM contacts WHERE user_id = c.owner_id AND contact_id = $1))
            )",
     );
