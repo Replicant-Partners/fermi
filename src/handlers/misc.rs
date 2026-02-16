@@ -1,6 +1,10 @@
-//! Miscellaneous handlers — waitlist, health, debug.
+//! Miscellaneous handlers — waitlist, health, debug, geocoding proxy.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -105,4 +109,58 @@ pub async fn debug_startup(State(state): State<AppState>) -> Json<Value> {
         "db_agent_count": db_agent_count,
         "db_non_test_agents": db_non_test,
     }))
+}
+
+// ─── Geocoding Proxy ────────────────────────────────────────────────
+// Nominatim blocks cross-origin requests from browsers.
+// This proxies the search so Flutter web can geocode via our API.
+
+#[derive(Deserialize)]
+pub struct GeoSearchQuery {
+    pub q: String,
+}
+
+pub async fn geocode_search_handler(
+    Query(params): Query<GeoSearchQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let q = params.q.trim();
+    if q.len() < 2 {
+        return Ok(Json(json!([])));
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://nominatim.openstreetmap.org/search")
+        .query(&[
+            ("q", q),
+            ("format", "json"),
+            ("limit", "5"),
+            ("addressdetails", "1"),
+        ])
+        .header("User-Agent", "rabble/1.0 (agent-bestiary.world)")
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Nominatim request failed: {}", e),
+            )
+        })?;
+
+    if !resp.status().is_success() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("Nominatim returned {}", resp.status()),
+        ));
+    }
+
+    let body: Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Bad Nominatim response: {}", e),
+        )
+    })?;
+
+    Ok(Json(body))
 }

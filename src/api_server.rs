@@ -661,6 +661,7 @@ async fn main() {
         )
         .route("/api/health", get(handlers::misc::health))
         .route("/api/debug/startup", get(handlers::misc::debug_startup))
+        .route("/api/geocode", get(handlers::misc::geocode_search_handler))
         // Per-agent MCP endpoints
         .route(
             "/mcp/agents/:agent_id",

@@ -113502,10 +113502,11 @@ s=p}while(true)switch(s){case 0:if(B.d.dV(a).length<3){m.A(new A.aHv(m))
 s=1
 break}m.A(new A.aHw(m))
 p=4
+l=null
 h=t.N
-l=A.aX("https://nominatim.openstreetmap.org/search",0,null).ho(A.ag(["q",a,"format","json","limit","5","addressdetails","1"],h,t.z))
+l=A.aX("/api/geocode",0,null).ho(A.ag(["q",a],h,t.z))
 s=7
-return A.k(A.bjH(l,A.ag(["User-Agent","rabble/1.0 (rabble.world)","Accept","application/json"],h,h)),$async$Ei)
+return A.k(A.bjH(l,A.ag(["Accept","application/json"],h,h)),$async$Ei)
 case 7:k=c
 if(k.b===200){h=k
 j=B.C.bE(A.bO(A.bN(h.e)).b0(h.w),null)
