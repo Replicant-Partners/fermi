@@ -153,6 +153,42 @@ pub async fn resolve_qr_token_handler(
     .map(|r| r.try_get("cnt").unwrap_or(0))
     .unwrap_or(0);
 
+    // Fetch creatures currently at this rabble (for portal projection)
+    let creature_rows = sqlx::query(
+        "SELECT c.creature_id, c.specimen_name, c.common_name, c.scientific_name,
+                c.species_group, c.asset_path, c.animation_status,
+                f.center_lat, f.center_lng, f.owner_id,
+                u.display_name AS owner_name
+         FROM creature_flights f
+         JOIN creatures c ON c.creature_id = f.creature_id
+         LEFT JOIN users u ON u.user_id = f.owner_id
+         WHERE f.swarm_id = $1 AND f.ended_at IS NULL
+         ORDER BY f.started_at ASC
+         LIMIT 20",
+    )
+    .bind(swarm_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let creatures: Vec<serde_json::Value> = creature_rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "creature_id": r.try_get::<uuid::Uuid, _>("creature_id").ok(),
+                "specimen_name": r.try_get::<Option<String>, _>("specimen_name").ok().flatten(),
+                "common_name": r.try_get::<Option<String>, _>("common_name").ok().flatten(),
+                "scientific_name": r.try_get::<String, _>("scientific_name").ok(),
+                "species_group": r.try_get::<String, _>("species_group").ok(),
+                "asset_path": r.try_get::<String, _>("asset_path").ok(),
+                "animation_status": r.try_get::<Option<String>, _>("animation_status").ok().flatten(),
+                "owner_name": r.try_get::<Option<String>, _>("owner_name").ok().flatten(),
+                "lat": r.try_get::<f64, _>("center_lat").ok(),
+                "lng": r.try_get::<f64, _>("center_lng").ok(),
+            })
+        })
+        .collect();
+
     Ok(axum::Json(serde_json::json!({
         "swarm_id": swarm_id,
         "name": row.try_get::<Option<String>, _>("name").ok().flatten(),
@@ -167,6 +203,7 @@ pub async fn resolve_qr_token_handler(
         "invite_pool_remaining": row.try_get::<i32, _>("invite_pool_remaining").ok(),
         "total_contributions": row.try_get::<i32, _>("total_contributions").ok(),
         "creature_count": creature_count,
+        "creatures": creatures,
     })))
 }
 
