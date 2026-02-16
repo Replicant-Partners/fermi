@@ -284,6 +284,57 @@ pub async fn creature_versions_handler(
     }
 }
 
+/// GET /api/creatures/:creature_id/versions/latest?transition_type=enemy_scan&after=<ISO8601>
+/// Poll endpoint: returns the most recent version matching the given transition_type
+/// created after the specified timestamp. Used by pills to poll for fire-and-forget results.
+pub async fn creature_version_poll_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<VersionPollQuery>,
+) -> impl IntoResponse {
+    let pool = state.memory_store.pool();
+
+    let row = sqlx::query(
+        "SELECT version_id, version_number, state, transition_type, triggered_by,
+                recorded_at, metadata
+         FROM creature_versions
+         WHERE creature_id = $1 AND transition_type = $2 AND recorded_at > $3
+         ORDER BY recorded_at DESC LIMIT 1",
+    )
+    .bind(id)
+    .bind(&q.transition_type)
+    .bind(q.after)
+    .fetch_optional(pool)
+    .await;
+
+    match row {
+        Ok(Some(r)) => (
+            StatusCode::OK,
+            Json(json!({
+                "found": true,
+                "version_id": r.get::<Uuid, _>("version_id"),
+                "version_number": r.get::<i32, _>("version_number"),
+                "state": r.get::<String, _>("state"),
+                "transition_type": r.get::<String, _>("transition_type"),
+                "triggered_by": r.get::<String, _>("triggered_by"),
+                "recorded_at": r.get::<chrono::DateTime<chrono::Utc>, _>("recorded_at").to_rfc3339(),
+                "metadata": r.get::<serde_json::Value, _>("metadata"),
+            })),
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::OK,
+            Json(json!({ "found": false })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
 pub async fn creature_flights_handler(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -350,6 +401,12 @@ pub async fn creature_flights_handler(
                 .into_response()
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct VersionPollQuery {
+    pub transition_type: String,
+    pub after: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Deserialize)]

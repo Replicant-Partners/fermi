@@ -3365,54 +3365,60 @@ pub async fn enemy_sensor_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            // Fire-and-forget: spawn agent dispatch, return immediately
-            let spawn_state = state.clone();
-            let spawn_user = user_id.clone();
-            let check_cost = gas.enemy_sensor_check;
-            tokio::spawn(async move {
-                let pool_bg = spawn_state.memory_store.pool();
-                match rabble_workspace::dispatch_rabble_action(
-                    &spawn_state,
+            // Synchronous dispatch with timeout to prevent Railway 502
+            let assessment = tokio::time::timeout(
+                std::time::Duration::from_secs(25),
+                rabble_workspace::dispatch_rabble_action(
+                    &state,
                     workspace_id,
                     "enemy_sensor",
                     "threat_scan",
                     &query,
-                    &spawn_user,
+                    &user_id,
+                ),
+            )
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Scan timed out — try again".to_string(),
                 )
-                .await
-                {
-                    Ok(assessment) => {
-                        let parsed: serde_json::Value =
-                            serde_json::from_str(&assessment).unwrap_or_else(|_| {
-                                json!({ "threat_level": "unknown", "summary": assessment, "threats": [] })
-                            });
-                        let threat_level = parsed
-                            .get("threat_level")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        let _ = record_transition(
-                            pool_bg, creature_id, "active", None,
-                            "enemy_scan", "enemy_sensor", 0.0, 0.0, "", None, None,
-                            &json!({ "threat_level": threat_level, "cost": check_cost, "result": parsed }),
-                        ).await;
-                        eprintln!(
-                            "[enemy_sensor] check completed for creature {}",
-                            creature_id
-                        );
-                    }
-                    Err(e) => eprintln!(
-                        "[enemy_sensor] check failed for creature {}: {}",
-                        creature_id, e
-                    ),
-                }
-            });
+            })?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Scan failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&assessment).unwrap_or_else(
+                |_| json!({ "threat_level": "unknown", "summary": assessment, "threats": [] }),
+            );
+
+            // Record in creature log (background)
+            let threat_level = parsed
+                .get("threat_level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let check_cost = gas.enemy_sensor_check;
+            {
+                let pool_bg = state.memory_store.pool().clone();
+                let parsed_bg = parsed.clone();
+                tokio::spawn(async move {
+                    let _ = record_transition(
+                        &pool_bg, creature_id, "active", None,
+                        "enemy_scan", "enemy_sensor", 0.0, 0.0, "", None, None,
+                        &json!({ "threat_level": threat_level, "cost": check_cost, "result": parsed_bg }),
+                    ).await;
+                });
+            }
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "species_group": species_group,
                 "cost": gas.enemy_sensor_check,
-                "status": "processing",
-                "message": "Enemy sensor scan dispatched — check creature log for results",
+                "assessment": parsed,
             })))
         }
         "strategy" => {
@@ -3476,56 +3482,62 @@ pub async fn enemy_sensor_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let spawn_state = state.clone();
-            let spawn_user = user_id.clone();
-            let strategy_cost = gas.enemy_sensor_check;
-            tokio::spawn(async move {
-                let pool_bg = spawn_state.memory_store.pool();
-                match rabble_workspace::dispatch_rabble_action(
-                    &spawn_state,
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(25),
+                rabble_workspace::dispatch_rabble_action(
+                    &state,
                     workspace_id,
                     "enemy_sensor",
                     "defense_strategy",
                     &query,
-                    &spawn_user,
+                    &user_id,
+                ),
+            )
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Strategy timed out — try again".to_string(),
                 )
-                .await
-                {
-                    Ok(result) => {
-                        let parsed: serde_json::Value = serde_json::from_str(&result)
-                            .unwrap_or_else(|_| json!({ "strategy": result }));
-                        let _ = record_transition(
-                            pool_bg,
-                            creature_id,
-                            "active",
-                            None,
-                            "enemy_strategy",
-                            "enemy_sensor",
-                            0.0,
-                            0.0,
-                            "",
-                            None,
-                            None,
-                            &json!({ "cost": strategy_cost, "result": parsed }),
-                        )
-                        .await;
-                        eprintln!(
-                            "[enemy_sensor] strategy completed for creature {}",
-                            creature_id
-                        );
-                    }
-                    Err(e) => eprintln!(
-                        "[enemy_sensor] strategy failed for creature {}: {}",
-                        creature_id, e
-                    ),
-                }
-            });
+            })?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Strategy failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value =
+                serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
+
+            // Record in background
+            let strategy_cost = gas.enemy_sensor_check;
+            {
+                let pool_bg = state.memory_store.pool().clone();
+                let parsed_bg = parsed.clone();
+                tokio::spawn(async move {
+                    let _ = record_transition(
+                        &pool_bg,
+                        creature_id,
+                        "active",
+                        None,
+                        "enemy_strategy",
+                        "enemy_sensor",
+                        0.0,
+                        0.0,
+                        "",
+                        None,
+                        None,
+                        &json!({ "cost": strategy_cost, "result": parsed_bg }),
+                    )
+                    .await;
+                });
+            }
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.enemy_sensor_check,
-                "status": "processing",
-                "message": "Defense strategy dispatched — check creature log for results",
+                "strategy": parsed,
             })))
         }
         other => Err((
@@ -3700,78 +3712,86 @@ pub async fn genome_profiler_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            // Fire-and-forget: spawn agent dispatch, return immediately
-            let spawn_state = state.clone();
-            let spawn_user = user_id.clone();
-            let profile_cost = gas.genome_profiler_check;
-            tokio::spawn(async move {
-                let pool_bg = spawn_state.memory_store.pool();
-                match rabble_workspace::dispatch_rabble_action(
-                    &spawn_state,
+            // Synchronous dispatch with timeout
+            let profile = tokio::time::timeout(
+                std::time::Duration::from_secs(25),
+                rabble_workspace::dispatch_rabble_action(
+                    &state,
                     workspace_id,
                     "genome_profiler",
                     "phylogenetic_profile",
                     &query,
-                    &spawn_user,
+                    &user_id,
+                ),
+            )
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Profile timed out — try again".to_string(),
                 )
-                .await
-                {
-                    Ok(profile) => {
-                        let parsed: serde_json::Value = serde_json::from_str(&profile).unwrap_or_else(|_| {
-                            json!({ "summary": profile, "taxonomy": {}, "genome": {}, "phylogeny": {} })
-                        });
-                        // Cache the profile
-                        let summary_str =
-                            parsed.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-                        let has_content = !summary_str.is_empty()
-                            || parsed
-                                .get("taxonomy")
-                                .and_then(|v| v.as_object())
-                                .map(|m| !m.is_empty())
-                                .unwrap_or(false)
-                            || parsed
-                                .get("genome")
-                                .and_then(|v| v.as_object())
-                                .map(|m| !m.is_empty())
-                                .unwrap_or(false);
-                        if has_content {
-                            let _ = sqlx::query(
-                                "UPDATE creature_conditions SET genome_profile = $1 WHERE creature_id = $2",
-                            ).bind(&parsed).bind(creature_id).execute(pool_bg).await;
-                        }
-                        let _ = record_transition(
-                            pool_bg,
-                            creature_id,
-                            "active",
-                            None,
-                            "genome_profile",
-                            "genome_profiler",
-                            0.0,
-                            0.0,
-                            "",
-                            None,
-                            None,
-                            &json!({ "cost": profile_cost, "result": parsed }),
-                        )
-                        .await;
-                        eprintln!(
-                            "[genome_profiler] check completed for creature {}",
-                            creature_id
-                        );
+            })?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Profile failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&profile).unwrap_or_else(
+                |_| json!({ "summary": profile, "taxonomy": {}, "genome": {}, "phylogeny": {} }),
+            );
+
+            // Cache + record in background
+            let profile_cost = gas.genome_profiler_check;
+            {
+                let pool_bg = state.memory_store.pool().clone();
+                let parsed_bg = parsed.clone();
+                tokio::spawn(async move {
+                    // Cache the profile
+                    let summary_str = parsed_bg
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let has_content = !summary_str.is_empty()
+                        || parsed_bg
+                            .get("taxonomy")
+                            .and_then(|v| v.as_object())
+                            .map(|m| !m.is_empty())
+                            .unwrap_or(false)
+                        || parsed_bg
+                            .get("genome")
+                            .and_then(|v| v.as_object())
+                            .map(|m| !m.is_empty())
+                            .unwrap_or(false);
+                    if has_content {
+                        let _ = sqlx::query(
+                            "UPDATE creature_conditions SET genome_profile = $1 WHERE creature_id = $2",
+                        ).bind(&parsed_bg).bind(creature_id).execute(&pool_bg).await;
                     }
-                    Err(e) => eprintln!(
-                        "[genome_profiler] check failed for creature {}: {}",
-                        creature_id, e
-                    ),
-                }
-            });
+                    let _ = record_transition(
+                        &pool_bg,
+                        creature_id,
+                        "active",
+                        None,
+                        "genome_profile",
+                        "genome_profiler",
+                        0.0,
+                        0.0,
+                        "",
+                        None,
+                        None,
+                        &json!({ "cost": profile_cost, "result": parsed_bg }),
+                    )
+                    .await;
+                });
+            }
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.genome_profiler_check,
                 "cached": false,
-                "status": "processing",
-                "message": "Genome profile dispatched — check creature log for results",
+                "profile": parsed,
             })))
         }
         other => Err((
@@ -3925,50 +3945,58 @@ pub async fn prey_locator_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let spawn_state = state.clone();
-            let spawn_user = user_id.clone();
-            let scan_cost = gas.prey_locator_scan;
-            tokio::spawn(async move {
-                let pool_bg = spawn_state.memory_store.pool();
-                match rabble_workspace::dispatch_rabble_action(
-                    &spawn_state,
+            // Synchronous dispatch with timeout
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(25),
+                rabble_workspace::dispatch_rabble_action(
+                    &state,
                     workspace_id,
                     "prey_locator",
                     "prey_scan",
                     &query,
-                    &spawn_user,
+                    &user_id,
+                ),
+            )
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Scan timed out — try again".to_string(),
                 )
-                .await
-                {
-                    Ok(result) => {
-                        let parsed: serde_json::Value = serde_json::from_str(&result)
-                            .unwrap_or_else(
-                                |_| json!({ "prey_targets": [], "hunting_summary": result }),
-                            );
-                        let target_count = parsed
-                            .get("prey_targets")
-                            .and_then(|v| v.as_array())
-                            .map(|a| a.len())
-                            .unwrap_or(0);
-                        let _ = record_transition(
-                            pool_bg, creature_id, "active", None,
-                            "prey_scan", "prey_locator", 0.0, 0.0, "", None, None,
-                            &json!({ "targets_found": target_count, "cost": scan_cost, "result": parsed }),
-                        ).await;
-                        eprintln!("[prey_locator] scan completed for creature {}", creature_id);
-                    }
-                    Err(e) => eprintln!(
-                        "[prey_locator] scan failed for creature {}: {}",
-                        creature_id, e
-                    ),
-                }
-            });
+            })?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Scan failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&result)
+                .unwrap_or_else(|_| json!({ "prey_targets": [], "hunting_summary": result }));
+
+            // Record in background
+            let scan_cost = gas.prey_locator_scan;
+            {
+                let pool_bg = state.memory_store.pool().clone();
+                let parsed_bg = parsed.clone();
+                let target_count = parsed
+                    .get("prey_targets")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                tokio::spawn(async move {
+                    let _ = record_transition(
+                        &pool_bg, creature_id, "active", None,
+                        "prey_scan", "prey_locator", 0.0, 0.0, "", None, None,
+                        &json!({ "targets_found": target_count, "cost": scan_cost, "result": parsed_bg }),
+                    ).await;
+                });
+            }
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.prey_locator_scan,
-                "status": "processing",
-                "message": "Prey scan dispatched — check creature log for results",
+                "scan": parsed,
             })))
         }
         "stalk" => {
@@ -4045,48 +4073,55 @@ pub async fn prey_locator_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let spawn_state = state.clone();
-            let spawn_user = user_id.clone();
-            let stalk_cost = gas.prey_locator_stalk;
-            tokio::spawn(async move {
-                let pool_bg = spawn_state.memory_store.pool();
-                match rabble_workspace::dispatch_rabble_action(
-                    &spawn_state,
+            // Synchronous dispatch with timeout
+            let plan = tokio::time::timeout(
+                std::time::Duration::from_secs(25),
+                rabble_workspace::dispatch_rabble_action(
+                    &state,
                     workspace_id,
                     "prey_locator",
                     "stalk_plan",
                     &query,
-                    &spawn_user,
+                    &user_id,
+                ),
+            )
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Stalk timed out — try again".to_string(),
                 )
-                .await
-                {
-                    Ok(plan) => {
-                        let parsed: serde_json::Value = serde_json::from_str(&plan).unwrap_or_else(
-                            |_| json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
-                        );
-                        let _ = record_transition(
-                            pool_bg, creature_id, "active", None, "prey_stalk", "prey_locator",
-                            0.0, 0.0, "", None, None,
-                            &json!({ "target_creature_id": target_id.to_string(), "cost": stalk_cost, "result": parsed }),
-                        ).await;
-                        eprintln!(
-                            "[prey_locator] stalk completed for creature {}",
-                            creature_id
-                        );
-                    }
-                    Err(e) => eprintln!(
-                        "[prey_locator] stalk failed for creature {}: {}",
-                        creature_id, e
-                    ),
-                }
-            });
+            })?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Stalk failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&plan).unwrap_or_else(
+                |_| json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
+            );
+
+            // Record in background
+            let stalk_cost = gas.prey_locator_stalk;
+            {
+                let pool_bg = state.memory_store.pool().clone();
+                let parsed_bg = parsed.clone();
+                tokio::spawn(async move {
+                    let _ = record_transition(
+                        &pool_bg, creature_id, "active", None, "prey_stalk", "prey_locator",
+                        0.0, 0.0, "", None, None,
+                        &json!({ "target_creature_id": target_id.to_string(), "cost": stalk_cost, "result": parsed_bg }),
+                    ).await;
+                });
+            }
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "target_creature_id": target_id,
                 "cost": gas.prey_locator_stalk,
-                "status": "processing",
-                "message": "Stalk plan dispatched — check creature log for results",
+                "stalk": parsed,
             })))
         }
         "strategy" => {
@@ -4149,56 +4184,63 @@ pub async fn prey_locator_handler(
 
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
-            let spawn_state = state.clone();
-            let spawn_user = user_id.clone();
-            let strategy_cost = gas.prey_locator_scan;
-            tokio::spawn(async move {
-                let pool_bg = spawn_state.memory_store.pool();
-                match rabble_workspace::dispatch_rabble_action(
-                    &spawn_state,
+            // Synchronous dispatch with timeout
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(25),
+                rabble_workspace::dispatch_rabble_action(
+                    &state,
                     workspace_id,
                     "prey_locator",
                     "prey_strategy",
                     &query,
-                    &spawn_user,
+                    &user_id,
+                ),
+            )
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Strategy timed out — try again".to_string(),
                 )
-                .await
-                {
-                    Ok(result) => {
-                        let parsed: serde_json::Value = serde_json::from_str(&result)
-                            .unwrap_or_else(|_| json!({ "strategy": result }));
-                        let _ = record_transition(
-                            pool_bg,
-                            creature_id,
-                            "active",
-                            None,
-                            "prey_strategy",
-                            "prey_locator",
-                            0.0,
-                            0.0,
-                            "",
-                            None,
-                            None,
-                            &json!({ "cost": strategy_cost, "result": parsed }),
-                        )
-                        .await;
-                        eprintln!(
-                            "[prey_locator] strategy completed for creature {}",
-                            creature_id
-                        );
-                    }
-                    Err(e) => eprintln!(
-                        "[prey_locator] strategy failed for creature {}: {}",
-                        creature_id, e
-                    ),
-                }
-            });
+            })?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Strategy failed: {}", e),
+                )
+            })?;
+
+            let parsed: serde_json::Value =
+                serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
+
+            // Record in background
+            let strategy_cost = gas.prey_locator_scan;
+            {
+                let pool_bg = state.memory_store.pool().clone();
+                let parsed_bg = parsed.clone();
+                tokio::spawn(async move {
+                    let _ = record_transition(
+                        &pool_bg,
+                        creature_id,
+                        "active",
+                        None,
+                        "prey_strategy",
+                        "prey_locator",
+                        0.0,
+                        0.0,
+                        "",
+                        None,
+                        None,
+                        &json!({ "cost": strategy_cost, "result": parsed_bg }),
+                    )
+                    .await;
+                });
+            }
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "cost": gas.prey_locator_scan,
-                "status": "processing",
-                "message": "Prey strategy dispatched — check creature log for results",
+                "strategy": parsed,
             })))
         }
         other => Err((
