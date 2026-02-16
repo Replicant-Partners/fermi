@@ -49,9 +49,14 @@ pub async fn list_creatures_handler(
            + c.unique_locations * 0.3
            + COALESCE((SELECT COUNT(DISTINCT swarm_id) FROM creature_flights WHERE creature_id = c.creature_id AND swarm_id IS NOT NULL), 0) * 2.0
            + COALESCE(array_length(cc.active_modules, 1), 0) * 1.0
-         ))::int AS cognition_level
+         ))::int AS cognition_level,
+         cs.state AS creature_state,
+         cs.rabble_id,
+         sw.name AS rabble_name
          FROM creatures c
          LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
+         LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
+         LEFT JOIN swarm_events sw ON sw.swarm_id = cs.rabble_id
          WHERE 1=1",
     );
     let mut bind_idx = 0u32;
@@ -122,6 +127,9 @@ pub async fn list_creatures_handler(
                         "presence": row.try_get::<String, _>("presence").unwrap_or_else(|_| "active".to_string()),
                         "last_location_name": row.try_get::<Option<String>, _>("last_location_name").unwrap_or(None),
                         "cognition_level": row.try_get::<Option<i32>, _>("cognition_level").unwrap_or(Some(0)),
+                        "creature_state": row.try_get::<Option<String>, _>("creature_state").unwrap_or(None),
+                        "rabble_id": row.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten(),
+                        "rabble_name": row.try_get::<Option<String>, _>("rabble_name").unwrap_or(None),
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                     })
                 })
