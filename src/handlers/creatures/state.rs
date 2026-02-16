@@ -4302,6 +4302,60 @@ async fn find_creature_workspace(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Creature favourites (star/follow)
+// ═══════════════════════════════════════════════════════════════════
+
+/// POST /api/creatures/:creature_id/favourite — star a creature
+pub async fn favourite_creature_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify creature exists
+    sqlx::query("SELECT 1 FROM creatures WHERE creature_id = $1")
+        .bind(creature_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
+
+    sqlx::query(
+        "INSERT INTO creature_favourites (user_id, creature_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(&user_id)
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "creature_id": creature_id, "starred": true })))
+}
+
+/// DELETE /api/creatures/:creature_id/favourite — unstar a creature
+pub async fn unfavourite_creature_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    sqlx::query("DELETE FROM creature_favourites WHERE user_id = $1 AND creature_id = $2")
+        .bind(&user_id)
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(
+        json!({ "creature_id": creature_id, "starred": false }),
+    ))
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Creature versioned state — dual-write helpers
 // (previously in handlers/creature_state.rs)
 // ═══════════════════════════════════════════════════════════════════

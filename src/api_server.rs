@@ -4,7 +4,7 @@ use axum::{
     http::{header, HeaderValue, StatusCode},
     middleware,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use fermi::agent_backend::{
@@ -1429,6 +1429,18 @@ async fn main() {
             "/api/swarms/:swarm_id/join",
             post(handlers::creatures::join_swarm_handler),
         )
+        .route(
+            "/api/swarms/:swarm_id",
+            patch(handlers::creatures::update_swarm_handler),
+        )
+        // Activity feed
+        .route("/api/feed", get(handlers::creatures::feed_handler))
+        // Creature favourites
+        .route(
+            "/api/creatures/:creature_id/favourite",
+            post(handlers::creatures::favourite_creature_handler)
+                .delete(handlers::creatures::unfavourite_creature_handler),
+        )
         // Rabble.world art generation
         .route(
             "/api/creatures/:creature_id/generate-art",
@@ -1653,6 +1665,7 @@ async fn main() {
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PUT,
+            axum::http::Method::PATCH,
             axum::http::Method::DELETE,
             axum::http::Method::OPTIONS,
         ])

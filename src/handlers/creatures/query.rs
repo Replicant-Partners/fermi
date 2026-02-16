@@ -665,3 +665,221 @@ pub async fn list_visible_flights_handler(
         "count": flights.len(),
     })))
 }
+
+// ─── Activity Feed ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct FeedQuery {
+    pub filter: Option<String>,  // "all" | "nearby" | "friends" | "starred"
+    pub h3_cell: Option<String>, // for nearby filter
+    pub limit: Option<i64>,      // default 50, max 200
+    pub before: Option<String>,  // cursor: ISO timestamp for pagination
+}
+
+/// GET /api/feed — community activity feed from creature_versions
+pub async fn feed_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(q): Query<FeedQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+    let limit = q.limit.unwrap_or(50).min(200);
+    let filter = q.filter.as_deref().unwrap_or("all");
+
+    // Parse cursor
+    let before: Option<chrono::DateTime<chrono::Utc>> = q.before.as_ref().and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+    });
+
+    // Build dynamic SQL based on filter
+    // Base query: creature_versions JOIN creatures + users + swarm_events
+    // Visibility: own creatures always, public, contacts-only if viewer is contact
+    let mut sql = String::from(
+        "SELECT cv.version_id, cv.creature_id, cv.version_number,
+                cv.state, cv.previous_state, cv.transition_type,
+                cv.location_lat, cv.location_lng, cv.h3_cell,
+                cv.rabble_id, cv.metadata, cv.valid_from,
+                c.specimen_name, c.common_name, c.scientific_name,
+                c.species_group, c.asset_path, c.owner_id,
+                u.display_name AS owner_name,
+                se.name AS rabble_name, se.creature_count, se.walk_in_price,
+                se.location_name AS rabble_location, se.creator_id AS rabble_creator_id
+         FROM creature_versions cv
+         JOIN creatures c ON c.creature_id = cv.creature_id
+         LEFT JOIN users u ON u.user_id = c.owner_id
+         LEFT JOIN swarm_events se ON se.swarm_id = cv.rabble_id
+         WHERE cv.valid_from > NOW() - INTERVAL '14 days'
+           AND (
+             c.owner_id = $1
+             OR COALESCE(c.visibility, 'public') = 'public'
+             OR (COALESCE(c.visibility, 'public') = 'contacts'
+                 AND EXISTS (SELECT 1 FROM contacts WHERE user_id = c.owner_id AND contact_id = $1))
+           )",
+    );
+
+    let mut bind_idx = 1u32; // $1 = user_id
+
+    // Cursor pagination
+    bind_idx += 1; // $2 = before timestamp
+    sql.push_str(&format!(
+        " AND (${bind_idx}::timestamptz IS NULL OR cv.valid_from < ${bind_idx})"
+    ));
+
+    // Filter-specific clauses
+    match filter {
+        "nearby" => {
+            if let Some(ref h3) = q.h3_cell {
+                bind_idx += 1;
+                sql.push_str(&format!(" AND cv.h3_cell = ${bind_idx}"));
+                // We'll bind h3 later
+                let _ = h3; // used in bind section
+            }
+        }
+        "friends" => {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM contacts WHERE user_id = $1 AND contact_id = c.owner_id)",
+            );
+        }
+        "starred" => {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM creature_favourites WHERE user_id = $1 AND creature_id = cv.creature_id)",
+            );
+        }
+        _ => {} // "all" — no extra filter
+    }
+
+    sql.push_str(&format!(
+        " ORDER BY cv.valid_from DESC LIMIT {}",
+        limit + 1 // fetch one extra to detect has_more
+    ));
+
+    // Bind parameters dynamically
+    let mut query = sqlx::query(&sql).bind(&user_id).bind(before);
+    if filter == "nearby" {
+        if let Some(ref h3) = q.h3_cell {
+            query = query.bind(h3);
+        }
+    }
+
+    let rows = query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let has_more = rows.len() as i64 > limit;
+    let rows_to_use = if has_more {
+        &rows[..limit as usize]
+    } else {
+        &rows
+    };
+
+    // Batch-lookup starred creatures for this user
+    let creature_ids: Vec<Uuid> = rows_to_use
+        .iter()
+        .map(|r| r.get::<Uuid, _>("creature_id"))
+        .collect();
+    let mut starred: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    if !creature_ids.is_empty() {
+        let unique_ids: Vec<Uuid> = creature_ids
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let placeholders: Vec<String> = (1..=unique_ids.len())
+            .map(|i| format!("${}", i + 1))
+            .collect();
+        let star_sql = format!(
+            "SELECT creature_id FROM creature_favourites WHERE user_id = $1 AND creature_id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut star_query = sqlx::query(&star_sql).bind(&user_id);
+        for cid in &unique_ids {
+            star_query = star_query.bind(cid);
+        }
+        if let Ok(star_rows) = star_query.fetch_all(pool).await {
+            for r in &star_rows {
+                starred.insert(r.get::<Uuid, _>("creature_id"));
+            }
+        }
+    }
+
+    let events: Vec<serde_json::Value> = rows_to_use
+        .iter()
+        .map(|row| {
+            let creature_id: Uuid = row.get("creature_id");
+            let owner_id: String = row.get("owner_id");
+            let is_mine = owner_id == user_id;
+            let rabble_creator: Option<String> = row
+                .try_get::<Option<String>, _>("rabble_creator_id")
+                .ok()
+                .flatten();
+            let is_rabble_creator = rabble_creator
+                .as_ref()
+                .map(|rc| rc == &user_id)
+                .unwrap_or(false);
+            let creature_count: Option<i32> = row
+                .try_get::<Option<i32>, _>("creature_count")
+                .ok()
+                .flatten();
+            let rabble_id: Option<Uuid> = row
+                .try_get::<Option<Uuid>, _>("rabble_id")
+                .ok()
+                .flatten();
+            let can_join = rabble_id.is_some()
+                && !is_mine
+                && creature_count.unwrap_or(0) > 0;
+            let creature_name = row
+                .try_get::<Option<String>, _>("specimen_name")
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    row.try_get::<Option<String>, _>("common_name")
+                        .ok()
+                        .flatten()
+                })
+                .unwrap_or_else(|| row.get::<String, _>("scientific_name"));
+            let location = row
+                .try_get::<Option<String>, _>("rabble_location")
+                .ok()
+                .flatten();
+
+            json!({
+                "version_id": row.get::<Uuid, _>("version_id"),
+                "creature_id": creature_id,
+                "creature_name": creature_name,
+                "scientific_name": row.get::<String, _>("scientific_name"),
+                "species_group": row.get::<String, _>("species_group"),
+                "asset_path": row.get::<String, _>("asset_path"),
+                "owner_id": owner_id,
+                "owner_name": row.try_get::<Option<String>, _>("owner_name").ok().flatten(),
+                "is_mine": is_mine,
+                "is_rabble_creator": is_rabble_creator,
+                "transition_type": row.get::<String, _>("transition_type"),
+                "state": row.get::<String, _>("state"),
+                "previous_state": row.try_get::<Option<String>, _>("previous_state").ok().flatten(),
+                "location_name": location,
+                "location_lat": row.try_get::<Option<f64>, _>("location_lat").ok().flatten().unwrap_or(0.0),
+                "location_lng": row.try_get::<Option<f64>, _>("location_lng").ok().flatten().unwrap_or(0.0),
+                "h3_cell": row.try_get::<Option<String>, _>("h3_cell").ok().flatten(),
+                "rabble_id": rabble_id,
+                "rabble_name": row.try_get::<Option<String>, _>("rabble_name").ok().flatten(),
+                "rabble_creature_count": creature_count,
+                "walk_in_price": row.try_get::<Option<i32>, _>("walk_in_price").ok().flatten(),
+                "can_join": can_join,
+                "is_starred": starred.contains(&creature_id),
+                "timestamp": row.get::<chrono::DateTime<chrono::Utc>, _>("valid_from").to_rfc3339(),
+                "metadata": row.try_get::<serde_json::Value, _>("metadata").unwrap_or_else(|_| json!({})),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "events": events,
+        "count": events.len(),
+        "has_more": has_more,
+    })))
+}

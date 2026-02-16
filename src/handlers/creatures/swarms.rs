@@ -522,3 +522,134 @@ pub async fn create_swarm_handler(
         "anchor_creature_id": req.anchor_creature_id,
     })))
 }
+
+// ─── Update swarm (rabble editing) ─────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct UpdateSwarmRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub walk_in_price: Option<i32>,
+    pub visibility: Option<String>,
+    pub radius_meters: Option<i32>,
+}
+
+/// PATCH /api/swarms/:swarm_id — update swarm settings (creator only, no gas)
+pub async fn update_swarm_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(swarm_id): Path<Uuid>,
+    Json(req): Json<UpdateSwarmRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify creator
+    let creator: String = sqlx::query("SELECT creator_id FROM swarm_events WHERE swarm_id = $1")
+        .bind(swarm_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Swarm not found".to_string()))?
+        .get("creator_id");
+
+    if creator != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the creator can edit this rabble".to_string(),
+        ));
+    }
+
+    // Validate visibility if provided
+    if let Some(ref vis) = req.visibility {
+        if vis != "public" && vis != "shared" && vis != "private" {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "visibility must be 'public', 'shared', or 'private'".into(),
+            ));
+        }
+    }
+
+    // Build dynamic UPDATE
+    let mut set_clauses: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
+    let mut int_binds: Vec<(usize, i32)> = Vec::new();
+    let mut bind_idx = 1u32; // $1 = swarm_id
+
+    if let Some(ref name) = req.name {
+        bind_idx += 1;
+        set_clauses.push(format!("name = ${bind_idx}"));
+        binds.push(name.clone());
+    }
+    if let Some(ref desc) = req.description {
+        bind_idx += 1;
+        set_clauses.push(format!("description = ${bind_idx}"));
+        binds.push(desc.clone());
+    }
+    if let Some(ref vis) = req.visibility {
+        bind_idx += 1;
+        set_clauses.push(format!("visibility = ${bind_idx}"));
+        binds.push(vis.clone());
+    }
+    if let Some(price) = req.walk_in_price {
+        bind_idx += 1;
+        set_clauses.push(format!("walk_in_price = ${bind_idx}"));
+        int_binds.push((bind_idx as usize, price));
+    }
+    if let Some(radius) = req.radius_meters {
+        bind_idx += 1;
+        set_clauses.push(format!("radius_meters = ${bind_idx}"));
+        int_binds.push((bind_idx as usize, radius));
+    }
+
+    if set_clauses.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "No fields to update".to_string()));
+    }
+
+    let update_sql = format!(
+        "UPDATE swarm_events SET {} WHERE swarm_id = $1 RETURNING swarm_id, name, description, visibility, walk_in_price, radius_meters",
+        set_clauses.join(", ")
+    );
+
+    // We need a single approach for mixed types — use serde_json::Value as intermediary
+    // Build with raw query and manual bind
+    let mut query = sqlx::query(&update_sql).bind(swarm_id);
+
+    // Track which bind indices are ints vs strings
+    let mut current_idx = 2u32;
+    if req.name.is_some() {
+        query = query.bind(req.name.as_ref().unwrap().as_str());
+        current_idx += 1;
+    }
+    if req.description.is_some() {
+        query = query.bind(req.description.as_ref().unwrap().as_str());
+        current_idx += 1;
+    }
+    if req.visibility.is_some() {
+        query = query.bind(req.visibility.as_ref().unwrap().as_str());
+        current_idx += 1;
+    }
+    if let Some(price) = req.walk_in_price {
+        query = query.bind(price);
+        current_idx += 1;
+    }
+    if let Some(radius) = req.radius_meters {
+        query = query.bind(radius);
+        current_idx += 1;
+    }
+    let _ = current_idx; // suppress unused warning
+
+    let row = query
+        .fetch_one(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "swarm_id": row.get::<Uuid, _>("swarm_id"),
+        "name": row.get::<String, _>("name"),
+        "description": row.try_get::<Option<String>, _>("description").ok().flatten(),
+        "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
+        "walk_in_price": row.try_get::<Option<i32>, _>("walk_in_price").ok().flatten(),
+        "radius_meters": row.try_get::<i32, _>("radius_meters").unwrap_or(100),
+    })))
+}

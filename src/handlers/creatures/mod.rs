@@ -16,23 +16,23 @@ mod swarms;
 // ─── Re-exports: query ─────────────────────────────────────────────
 pub use query::{
     creature_animation_layer_handler, creature_animation_status_handler, creature_flights_handler,
-    creature_image_handler, creature_versions_handler, get_creature_handler,
-    list_creatures_handler, list_visible_flights_handler, CreatureQuery, PaginationQuery,
-    VisibleFlightsQuery,
+    creature_image_handler, creature_versions_handler, feed_handler, get_creature_handler,
+    list_creatures_handler, list_visible_flights_handler, CreatureQuery, FeedQuery,
+    PaginationQuery, VisibleFlightsQuery,
 };
 
 // ─── Re-exports: state ─────────────────────────────────────────────
 pub use state::{
     append_telemetry_handler, creature_dream_handler, creature_level_handler, end_flight_handler,
-    enemy_sensor_handler, export_flight_handler, fly_handler, genome_profiler_handler,
-    get_track_handler, host_rabble_handler, import_flight_handler, join_by_qr_token_handler,
-    join_swarm_handler, perch_handler, plan_flight_handler, prey_locator_handler,
-    push_telemetry_handler, record_flight_handler, tether_handler, untether_handler,
-    update_creature_presence_handler, AppendTelemetryRequest, CreatureDreamRequest,
-    EndFlightRequest, EnemySensorRequest, FlyRequest, GenomeProfilerRequest, HostRabbleRequest,
-    ImportFlightRequest, JoinSwarmRequest, PerchRequest, PlanFlightRequest, PreyLocatorRequest,
-    PushTelemetryRequest, RecordFlightRequest, TelemetryPoint, TetherRequest, TrackQuery,
-    UpdatePresenceRequest,
+    enemy_sensor_handler, export_flight_handler, favourite_creature_handler, fly_handler,
+    genome_profiler_handler, get_track_handler, host_rabble_handler, import_flight_handler,
+    join_by_qr_token_handler, join_swarm_handler, perch_handler, plan_flight_handler,
+    prey_locator_handler, push_telemetry_handler, record_flight_handler, tether_handler,
+    unfavourite_creature_handler, untether_handler, update_creature_presence_handler,
+    AppendTelemetryRequest, CreatureDreamRequest, EndFlightRequest, EnemySensorRequest, FlyRequest,
+    GenomeProfilerRequest, HostRabbleRequest, ImportFlightRequest, JoinSwarmRequest, PerchRequest,
+    PlanFlightRequest, PreyLocatorRequest, PushTelemetryRequest, RecordFlightRequest,
+    TelemetryPoint, TetherRequest, TrackQuery, UpdatePresenceRequest,
 };
 
 // ─── Re-exports: identity ──────────────────────────────────────────
@@ -47,7 +47,8 @@ pub use identity::{
 
 // ─── Re-exports: swarms ────────────────────────────────────────────
 pub use swarms::{
-    create_swarm_handler, get_swarm_handler, list_swarms_handler, CreateSwarmRequest, SwarmQuery,
+    create_swarm_handler, get_swarm_handler, list_swarms_handler, update_swarm_handler,
+    CreateSwarmRequest, SwarmQuery, UpdateSwarmRequest,
 };
 
 // ─── Re-exports: collections ───────────────────────────────────────
