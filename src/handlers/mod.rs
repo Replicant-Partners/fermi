@@ -36,3 +36,4 @@ pub mod users;
 pub mod wallet;
 pub mod wizard;
 pub mod workspace;
+pub mod dashboard;

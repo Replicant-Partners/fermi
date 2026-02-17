@@ -1436,6 +1436,11 @@ async fn main() {
         // Activity feed
         .route("/api/feed", get(handlers::creatures::feed_handler))
         // Creature favourites
+        // Dashboard endpoints
+        .route("/api/dashboard/my-rabbles", get(handlers::dashboard::my_rabbles_handler))
+        .route("/api/dashboard/nearby", get(handlers::dashboard::nearby_rabbles_handler))
+        .route("/api/dashboard/creatures", get(handlers::dashboard::creatures_handler))
+        .route("/api/dashboard/boundary-violations", get(handlers::dashboard::boundary_violations_handler))
         .route(
             "/api/creatures/:creature_id/favourite",
             post(handlers::creatures::favourite_creature_handler)
