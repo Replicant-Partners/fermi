@@ -453,6 +453,10 @@ async fn run_migrations(db: &PgPool) {
         "migrations/084_drop_creature_state_rabble_fk.sql",
         "migrations/085_rename_creature_states.sql",
         "migrations/086_creature_flights_metadata.sql",
+        "migrations/087_creature_favourites.sql",
+        "migrations/088_backfill_creature_versions.sql",
+        "migrations/089_dashboard_spatial_queries.sql",
+        "migrations/090_social_layer.sql",
     ];
 
     for file in &migration_files {
@@ -1437,10 +1441,22 @@ async fn main() {
         .route("/api/feed", get(handlers::creatures::feed_handler))
         // Creature favourites
         // Dashboard endpoints
-        .route("/api/dashboard/my-rabbles", get(handlers::dashboard::my_rabbles_handler))
-        .route("/api/dashboard/nearby", get(handlers::dashboard::nearby_rabbles_handler))
-        .route("/api/dashboard/creatures", get(handlers::dashboard::creatures_handler))
-        .route("/api/dashboard/boundary-violations", get(handlers::dashboard::boundary_violations_handler))
+        .route(
+            "/api/dashboard/my-rabbles",
+            get(handlers::dashboard::my_rabbles_handler),
+        )
+        .route(
+            "/api/dashboard/nearby",
+            get(handlers::dashboard::nearby_rabbles_handler),
+        )
+        .route(
+            "/api/dashboard/creatures",
+            get(handlers::dashboard::creatures_handler),
+        )
+        .route(
+            "/api/dashboard/boundary-violations",
+            get(handlers::dashboard::boundary_violations_handler),
+        )
         .route(
             "/api/creatures/:creature_id/favourite",
             post(handlers::creatures::favourite_creature_handler)
@@ -1525,6 +1541,71 @@ async fn main() {
             "/api/contacts/:contact_id",
             put(handlers::social::update_contact_handler)
                 .delete(handlers::social::remove_contact_handler),
+        )
+        // Creature friendships (creature-to-creature, symmetric)
+        .route(
+            "/api/creature-friendships",
+            post(handlers::social::send_friendship_request_handler),
+        )
+        .route(
+            "/api/creature-friendships/pending",
+            get(handlers::social::pending_friendships_handler),
+        )
+        .route(
+            "/api/creature-friendships/:id/accept",
+            post(handlers::social::accept_friendship_handler),
+        )
+        .route(
+            "/api/creature-friendships/:id/decline",
+            post(handlers::social::decline_friendship_handler),
+        )
+        .route(
+            "/api/creature-friendships/:id",
+            delete(handlers::social::remove_friendship_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/friends",
+            get(handlers::social::list_creature_friends_handler),
+        )
+        // Creature invites ("come fly with me" — creature-to-creature)
+        .route(
+            "/api/creature-invites",
+            post(handlers::social::send_creature_invite_handler),
+        )
+        .route(
+            "/api/creature-invites/pending",
+            get(handlers::social::list_pending_creature_invites_handler),
+        )
+        .route(
+            "/api/creature-invites/:id/accept",
+            post(handlers::social::accept_creature_invite_handler),
+        )
+        .route(
+            "/api/creature-invites/:id/decline",
+            post(handlers::social::decline_creature_invite_handler),
+        )
+        // Rabble recap ("you met these creatures")
+        .route(
+            "/api/rabble/:id/recap/:creature_id",
+            get(handlers::social::rabble_recap_handler),
+        )
+        .route(
+            "/api/rabble/:id/co-presence",
+            post(handlers::social::record_co_presence_handler),
+        )
+        // Social visibility
+        .route(
+            "/api/users/social-visibility",
+            put(handlers::social::update_social_visibility_handler),
+        )
+        // Activity feed (SSE + paginated)
+        .route(
+            "/api/feed/events",
+            get(handlers::social::activity_feed_handler),
+        )
+        .route(
+            "/api/feed/stream",
+            get(handlers::social::activity_feed_stream_handler),
         )
         // Rabble chat (authenticated)
         .route(
