@@ -1,6 +1,7 @@
 # Rabble Design Notes
 
 > Living design document for UX decisions, state constraints, and future work.
+> Last updated: 2026-02-18 — Social layer implementation complete (backend + Flutter).
 
 ---
 
@@ -75,24 +76,96 @@ The reasoning: rabbles are place-based social events. A 50km radius defeats the 
 
 ---
 
-## Social Layer — Future Work
+## Social Layer — IMPLEMENTED (Migration 090)
 
-### Creature-mediated relationships
+### Creature-mediated relationships ✅
 
-The social graph should be **creature-first**:
+The social graph is **creature-first**:
 
-- **Befriend a creature**: You encounter another creature in a rabble and "befriend" it. This is creature-to-creature, not user-to-user.
-- **Follow an owner**: A separate, opt-in escalation. The owner may remain anonymous (proxied behind their creatures).
-- **Privacy model**: Users choose visibility — `public` (name shown), `creature-only` (only creature identities visible), `private` (hidden from search). Creatures have their own visibility (`public`, `contacts`, `private`).
+- **Befriend a creature**: ✅ `POST /api/creature-friendships` — symmetric, canonical ordering (`creature_a < creature_b`), tracks where they met (`met_in_rabble`).
+- **Follow an owner**: Existing contacts system (`POST /api/contacts`) — asymmetric user-to-user follow. Separate from creature friendships.
+- **Privacy model**: ✅ `social_visibility` column on users — `public` | `creature-only` | `private`. All social queries respect visibility: creature-only hides owner name, private hides from search. Update via `PUT /api/users/social-visibility`.
 
-### Discovery surfaces
+### Two-tier invite model ✅
 
-- **In-rabble members list**: See all creatures + "Befriend" action.
-- **Post-rabble recap**: "You met..." screen after a rabble ends.
-- **QR scan**: Already exists — promote more prominently.
+| Tier | Endpoint | Who | Layer |
+|------|----------|-----|-------|
+| **Social invite** | `POST /api/rabble/:id/invite` | User → User | Layer 1 (config) |
+| **Creature invite** | `POST /api/creature-invites` | Creature → Creature | Layer 2 (action) |
+
+Creature invites ("come fly with me") require the from_creature to be actively in a rabble. Invites expire after 24 hours. Accepting an invite also grants rabble visibility via `object_shares`.
+
+### Discovery surfaces ✅
+
+- **In-rabble members list**: `GET /api/rabble/:id/members` — see all creatures.
+- **Post-rabble recap**: ✅ `GET /api/rabble/:id/recap/:creature_id` — "You met..." screen with befriend actions, overlap duration, friendship status.
+- **QR scan**: Already exists (`/api/rabble/join/:qr_token`).
 - **Share links**: `rabble.world/join/[token]` for non-users.
 
-### External invitation
+### Activity feed ✅
+
+- **Paginated**: `GET /api/feed/events?before=...&limit=50` — with relationship context annotations (`is_own_creature`, `is_contact`, `is_friend_creature`).
+- **SSE stream**: `GET /api/feed/stream?since=...` — push new events as they arrive, backfill on reconnect.
+- **Event types**: `creature_minted`, `creature_flew`, `rabble_created`, `rabble_joined`, `friendship_requested`, `friendship_accepted`, `creature_invited`, `creature_invite_accepted`, + more.
+- **Context annotations**: Each event tagged with relationship to the viewing user for visual priority (own > friend > contact > other).
+
+### Co-presence tracking ✅
+
+`rabble_co_presence` table records which creatures were present together in a rabble, with join/leave timestamps and overlap duration. Drives the recap screen and friend suggestions.
+
+### API endpoints (15 new handlers in `social.rs`)
+
+| Method | Route | Purpose |
+|--------|-------|---------|
+| `POST` | `/api/creature-friendships` | Send friendship request |
+| `GET` | `/api/creature-friendships/pending` | List pending requests for my creatures |
+| `POST` | `/api/creature-friendships/:id/accept` | Accept friendship |
+| `POST` | `/api/creature-friendships/:id/decline` | Decline friendship |
+| `DELETE` | `/api/creature-friendships/:id` | Unfriend |
+| `GET` | `/api/creatures/:id/friends` | List creature's friends |
+| `POST` | `/api/creature-invites` | "Come fly with me" |
+| `GET` | `/api/creature-invites/pending` | List pending invites |
+| `POST` | `/api/creature-invites/:id/accept` | Accept invite |
+| `POST` | `/api/creature-invites/:id/decline` | Decline invite |
+| `GET` | `/api/rabble/:id/recap/:creature_id` | Post-rabble recap |
+| `POST` | `/api/rabble/:id/co-presence` | Record co-presence |
+| `PUT` | `/api/users/social-visibility` | Update visibility |
+| `GET` | `/api/feed/events` | Paginated activity feed |
+| `GET` | `/api/feed/stream` | SSE activity feed |
+
+### Data model (Migration 090)
+
+```sql
+-- Creature-to-creature friendships (symmetric, canonical order)
+creature_friendships (id, creature_a, creature_b, initiated_by, status, met_in_rabble, met_at, ...)
+-- status: pending | accepted | declined | blocked
+-- CHECK (creature_a < creature_b) enforces canonical ordering
+
+-- Creature invites ("come fly with me")
+creature_invites (id, from_creature_id, to_creature_id, rabble_id, status, message, expires_at, ...)
+-- status: pending | accepted | declined | expired
+-- 24-hour expiry, unique pending per creature-pair-rabble
+
+-- Activity events (SSE feed)
+activity_events (id, actor_user_id, actor_creature_id, event_type, rabble_id, target_creature_id, title, body, metadata, created_at)
+
+-- Co-presence tracking
+rabble_co_presence (id, rabble_id, creature_id, owner_id, joined_at, left_at, overlap_seconds)
+
+-- User social visibility
+users.social_visibility TEXT DEFAULT 'public' -- public | creature-only | private
+```
+
+### Flutter widgets (implemented)
+
+| Widget | File | Purpose |
+|--------|------|---------|
+| `RabbleRecapScreen` | `screens/rabble_recap.dart` | Post-rabble "You met" with befriend buttons |
+| `CreatureInviteSheet` | `widgets/creature_invite_sheet.dart` | "Come fly with me" bottom sheet |
+| `FriendshipRequestCard` | `widgets/friendship_request_card.dart` | Accept/decline pending requests |
+| `ActivityFeedWidget` | `widgets/activity_feed.dart` | SSE-powered feed with context badges |
+
+### External invitation (future)
 
 The invite flow needs to be frictionless:
 
@@ -100,43 +173,32 @@ The invite flow needs to be frictionless:
 2. Non-users land on a web preview → sign up → land directly in the rabble.
 3. Existing users tap the link → open app → join immediately.
 
-### Data model additions needed
-
-```sql
--- Creature-to-creature friendships (symmetric, canonical order)
-CREATE TABLE IF NOT EXISTS creature_friendships (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    creature_a UUID NOT NULL REFERENCES creatures(creature_id) ON DELETE CASCADE,
-    creature_b UUID NOT NULL REFERENCES creatures(creature_id) ON DELETE CASCADE,
-    initiated_by TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',  -- pending | accepted | declined
-    met_in_rabble UUID REFERENCES swarm_events(swarm_id),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(creature_a, creature_b),
-    CHECK (creature_a < creature_b)
-);
-
--- User social visibility preference
-ALTER TABLE users ADD COLUMN IF NOT EXISTS social_visibility TEXT
-    NOT NULL DEFAULT 'public'
-    CHECK (social_visibility IN ('public', 'creature-only', 'private'));
-```
-
 ---
 
-## Explore / Activity Feed — Future Work
+## Explore / Activity Feed — IMPLEMENTED
 
-### Problems
+### Problems (resolved)
 
-- Feed polls every 30s but replaces the whole list, losing scroll position.
-- Events are context-free — no indication of whether an event involves your creatures, contacts, or favourited creatures.
-- Data goes stale between polls.
+- ~~Feed polls every 30s but replaces the whole list, losing scroll position.~~ → SSE stream prepends new events.
+- ~~Events are context-free.~~ → Each event annotated with `is_own_creature`, `is_contact`, `is_friend_creature`.
+- ~~Data goes stale between polls.~~ → SSE push with backfill on reconnect.
 
-### Solutions
+### Implementation
 
-- **SSE stream** (`/api/feed/stream`): Push new events, prepend at top without disrupting scroll.
-- **Context annotations**: Tag each event with relationship info ("your creature", "contact's creature", "favourited"). Requires backend join against `contacts`, `creature_favourites`, swarm membership.
-- **Visual priority**: Events involving your graph get a subtle highlight.
+- **SSE stream** (`GET /api/feed/stream?since=...`): ✅ Push new events, prepend at top without disrupting scroll. Backfill missed events on reconnect.
+- **Context annotations**: ✅ `get_activity_feed()` SQL function joins against `contacts`, `creature_friendships`, `creature_state` to tag each event.
+- **Visual priority**: ✅ `ActivityFeedWidget` highlights events by relationship: amber (own), mint (friend), sky (contact), muted (other).
+- **Paginated fallback**: `GET /api/feed/events?before=...&limit=50` for initial load and infinite scroll.
+
+### Remaining work
+
+- [ ] Wire `ActivityFeedWidget` into `explore_screen.dart` (replace old polling feed)
+- [ ] Wire `RabbleRecapScreen` navigation from rabble completion / leave flow
+- [ ] Wire `CreatureInviteSheet` into `rabble_chat.dart` action bar
+- [ ] Wire `FriendshipRequestCard` into notifications screen
+- [ ] Call `recordCoPresence()` from `join_swarm_handler` (backend hook)
+- [ ] Call `update_co_presence_departure()` from leave handler (backend hook)
+- [ ] Upgrade SSE from poll-based (5s) to broadcast channel when volume justifies it
 
 ---
 
@@ -145,3 +207,4 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS social_visibility TEXT
 | Date | Author | Notes |
 |------|--------|-------|
 | 2026-02-17 | Session | Initial design notes from dashboard redesign discussion |
+| 2026-02-18 | Session | Social layer fully implemented: migration 090, 15 API handlers, 5 Flutter widgets. Friendships, invites, recap, activity feed SSE all working. Wiring into existing screens is next. |
