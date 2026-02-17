@@ -31753,7 +31753,7 @@ _.x=c
 _.y=d
 _.z=e
 _.at=_.as=_.Q=null
-_.ax=5
+_.ax=0.5
 _.ay=!1
 _.ch="gps"
 _.cx=_.CW=null
@@ -109237,7 +109237,7 @@ r.push(A.e(""+o.x.length+" found",n,n,n,n,B.FQ,n,n))
 r=A.a3(r,B.j,B.e,B.k)
 q=A.e(o.ax0(),n,n,n,n,B.bX,n,n)
 p=A.aug(n,B.f,n,n,n,n,n,n,n,n,B.ag,n,n,n,B.f.D(0.1),n,n,n,n,n,n,n,B.f,n,n,n,3,n,n,n,n,n)
-B.b.F(s,A.a([r,B.aa,A.a3(A.a([q,A.aO(A.aXX(A.HV(n,99,n,50,0.5,new A.aDH(o),o.ax),p),1)],m),B.j,B.e,B.k)],m))}return A.Q(n,A.ac(s,B.I,B.e,B.k),B.h,n,n,new A.S(B.ad,n,new A.cV(B.y,B.y,new A.aH(B.ag,1,B.E,-1),B.y),n,n,n,B.p),n,n,n,B.rw,n,n,n)},
+B.b.F(s,A.a([r,B.aa,A.a3(A.a([q,A.aO(A.aXX(A.HV(n,39,n,2,0.05,new A.aDH(o),o.ax),p),1)],m),B.j,B.e,B.k)],m))}return A.Q(n,A.ac(s,B.I,B.e,B.k),B.h,n,n,new A.S(B.ad,n,new A.cV(B.y,B.y,new A.aH(B.ag,1,B.E,-1),B.y),n,n,n,B.p),n,n,n,B.rw,n,n,n)},
 ax0(){var s=this.ax
 if(s<1)return"Radius: "+B.c.av(s*1000)+"m"
 if(s===B.c.Bt(s))return"Radius: "+B.c.av(this.ax)+"km"
