@@ -341,6 +341,27 @@ pub async fn record_flight_handler(
         }
     }
 
+    // Emit activity event (fire-and-forget)
+    {
+        let _pool_ae = state.memory_store.pool().clone();
+        let _uid_ae = user_id.clone();
+        let _cid_ae = req.creature_id;
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &_pool_ae,
+                &_uid_ae,
+                Some(_cid_ae),
+                "creature_flew",
+                None,
+                None,
+                &format!("Creature took flight"),
+                None,
+                None,
+            )
+            .await;
+        });
+    }
+
     Ok(Json(json!({
         "flight_id": flight_id,
         "creature_id": req.creature_id,
@@ -751,6 +772,27 @@ pub async fn end_flight_handler(
         });
     }
 
+    // Emit activity event (fire-and-forget)
+    {
+        let _pool_ae = state.memory_store.pool().clone();
+        let _uid_ae = principal.user_id();
+        let _fid_ae = flight_id;
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &_pool_ae,
+                &_uid_ae,
+                None,
+                "creature_landed",
+                None,
+                None,
+                "Creature landed",
+                None,
+                None,
+            )
+            .await;
+        });
+    }
+
     Ok(Json(json!({
         "flight_id": flight_id,
         "ended_at": now.to_rfc3339(),
@@ -796,6 +838,7 @@ pub async fn plan_flight_handler(
 
     let species: String = creature.get("species_group");
     let specimen_name: Option<String> = creature.try_get("specimen_name").unwrap_or(None);
+    let specimen_name_for_activity = specimen_name.clone();
     let scientific_name: Option<String> = creature.try_get("scientific_name").unwrap_or(None);
 
     // Tiered pricing: solo = 5cr, rabble = 5cr base + 1cr per creature
@@ -897,8 +940,9 @@ pub async fn plan_flight_handler(
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
 
-    let creature_label =
-        specimen_name.unwrap_or_else(|| scientific_name.unwrap_or_else(|| species.clone()));
+    let creature_label = specimen_name
+        .clone()
+        .unwrap_or_else(|| scientific_name.unwrap_or_else(|| species.clone()));
 
     let query =
         if let Some(ref prompt) = req.prompt {
@@ -970,6 +1014,29 @@ pub async fn plan_flight_handler(
             Err(e) => eprintln!("[flight_plan] failed for creature {}: {}", creature_id, e),
         }
     });
+
+    // Emit activity event (fire-and-forget)
+    {
+        let _pool_ae = state.memory_store.pool().clone();
+        let _uid_ae = user_id.clone();
+        let _cid_ae = req.creature_id;
+        let _specimen_ae = specimen_name.clone().unwrap_or_else(|| "Creature".into());
+        let _swarm_ae = req.swarm_id;
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &_pool_ae,
+                &_uid_ae,
+                Some(_cid_ae),
+                "flight_planned",
+                _swarm_ae,
+                None,
+                &format!("Flight plan dispatched for {}", _specimen_ae),
+                None,
+                None,
+            )
+            .await;
+        });
+    }
 
     Ok(Json(json!({
         "status": "processing",
@@ -1391,6 +1458,27 @@ pub async fn perch_handler(
         });
     }
 
+    // Emit activity event (fire-and-forget)
+    {
+        let _pool_ae = state.memory_store.pool().clone();
+        let _uid_ae = user_id.clone();
+        let _name_ae = perch_name.clone();
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &_pool_ae,
+                &_uid_ae,
+                Some(creature_id),
+                "creature_perched",
+                None,
+                None,
+                &format!("{} perched at a new location", _name_ae),
+                None,
+                None,
+            )
+            .await;
+        });
+    }
+
     Ok(Json(response))
 }
 
@@ -1728,6 +1816,9 @@ pub async fn fly_handler(
     if owner != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
     }
+
+    let specimen_name: Option<String> = creature.try_get("specimen_name").unwrap_or(None);
+    let specimen_name_for_activity = specimen_name.clone();
 
     // Check for active flight — auto-end if needed, creature can always change state
     let active_flight = sqlx::query(
@@ -2084,6 +2175,44 @@ pub async fn fly_handler(
                 }
                 Err(e) => eprintln!("[fly] flight_coordinator dispatch failed: {}", e),
             }
+        });
+    }
+
+    // Emit activity event (fire-and-forget)
+    {
+        let _pool_ae = state.memory_store.pool().clone();
+        let _uid_ae = user_id.clone();
+        let _specimen_ae = specimen_name_for_activity
+            .clone()
+            .unwrap_or_else(|| "Creature".into());
+        // Convert Uuid to Option<Uuid> - nil UUID means no swarm
+        let _swarm_ae = if swarm_id == Uuid::nil() {
+            None
+        } else {
+            Some(swarm_id)
+        };
+        let _is_exp = is_expedition;
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &_pool_ae,
+                &_uid_ae,
+                Some(creature_id),
+                "creature_flew",
+                _swarm_ae,
+                None,
+                &format!(
+                    "{} {}",
+                    _specimen_ae,
+                    if _is_exp {
+                        "launched an expedition"
+                    } else {
+                        "took flight"
+                    }
+                ),
+                None,
+                None,
+            )
+            .await;
         });
     }
 

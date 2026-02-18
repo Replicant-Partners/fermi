@@ -81,10 +81,8 @@ pub async fn get_public_profile_handler(
     let rabble_stats = sqlx::query(
         "SELECT
             (SELECT COUNT(*) FROM creatures WHERE owner_id = $1 AND status = 'active') as creature_count,
-            (SELECT COUNT(*) FROM flights WHERE owner_id = $1) as flight_count,
-            (SELECT COUNT(DISTINCT s.swarm_id) FROM swarm_participants sp
-             JOIN swarm_events s ON s.swarm_id = sp.swarm_id
-             WHERE sp.user_id = $1) as rabble_count",
+            (SELECT COUNT(*) FROM creature_flights WHERE owner_id = $1) as flight_count,
+            (SELECT COUNT(DISTINCT swarm_id) FROM creature_flights WHERE owner_id = $1 AND swarm_id IS NOT NULL) as rabble_count",
     )
     .bind(&user_id)
     .fetch_one(&state.db)

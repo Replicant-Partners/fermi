@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS fermi_notebooks (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     title TEXT NOT NULL,
     description TEXT,
-    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'shared', 'public')),
     team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
     org_id TEXT, -- Future-proofing for organization-level sharing
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS fermi_portfolios (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     title TEXT NOT NULL,
     description TEXT,
-    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'shared', 'public')),
     team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
     org_id TEXT,
@@ -43,7 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_portfolios_team ON fermi_portfolios(team_id) WHER
 CREATE TABLE IF NOT EXISTS fermi_forecasts (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     notebook_id TEXT NOT NULL REFERENCES fermi_notebooks(id) ON DELETE CASCADE,
-    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     question_text TEXT NOT NULL,
     predicted_probability REAL NOT NULL CHECK (predicted_probability >= 0 AND predicted_probability <= 1),
     confidence_interval_low REAL CHECK (confidence_interval_low >= 0 AND confidence_interval_low <= 1),
