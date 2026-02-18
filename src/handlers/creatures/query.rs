@@ -167,15 +167,44 @@ pub async fn get_creature_handler(
          cs.state AS creature_state, cs.location_lat, cs.location_lng, cs.h3_cell AS state_h3,
          cs.rabble_id, cs.version_id AS current_version_id,
          sw.name AS rabble_name,
+         sw.creator_id AS rabble_creator_id,
          COALESCE(cc.visibility, 'public') AS visibility,
          COALESCE(cc.sosa_opt_in, false) AS sosa_opt_in,
          COALESCE(cc.presence, 'active') AS presence,
          cc.walk_in_price AS conditions_walk_in_price,
-         cc.active_modules
+         cc.active_modules,
+         -- Social context: friendship count
+         (SELECT COUNT(*) FROM creature_friendships cf
+          WHERE cf.status = 'accepted'
+            AND (cf.creature_a = c.creature_id OR cf.creature_b = c.creature_id)
+         ) AS friend_count,
+         -- Social context: pending inbound friendship requests
+         (SELECT COUNT(*) FROM creature_friendships cf
+          WHERE cf.status = 'pending'
+            AND cf.initiated_by != c.creature_id
+            AND (cf.creature_a = c.creature_id OR cf.creature_b = c.creature_id)
+         ) AS pending_friend_requests,
+         -- Is this creature the anchor of a rabble it's in?
+         (CASE WHEN sw.anchor_creature_id = c.creature_id THEN true ELSE false END) AS is_anchor,
+         -- Active flight info (tether status, data source)
+         cf_active.flight_id AS active_flight_id,
+         cf_active.data_source AS active_flight_data_source,
+         cf_active.started_at AS active_flight_started_at,
+         cf_active.location_name AS active_flight_location,
+         -- Owner display name (for viewing other users' creatures)
+         u_owner.display_name AS owner_display_name,
+         u_owner.social_visibility AS owner_social_visibility
          FROM creatures c
          LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
          LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
          LEFT JOIN swarm_events sw ON sw.swarm_id = cs.rabble_id
+         LEFT JOIN LATERAL (
+             SELECT flight_id, data_source, started_at, location_name
+             FROM creature_flights
+             WHERE creature_id = c.creature_id AND ended_at IS NULL
+             ORDER BY started_at DESC LIMIT 1
+         ) cf_active ON true
+         LEFT JOIN users u_owner ON u_owner.user_id = c.owner_id
          WHERE c.creature_id = $1",
     )
     .bind(id)
@@ -183,9 +212,49 @@ pub async fn get_creature_handler(
     .await
     {
         Ok(Some(row)) => {
+            let creature_id_val = row.get::<Uuid, _>("creature_id");
+            let owner_id_val = row.get::<String, _>("owner_id");
+            let rabble_id_val: Option<Uuid> =
+                row.try_get::<Option<Uuid>, _>("rabble_id").unwrap_or(None);
+            let rabble_creator: Option<String> = row
+                .try_get::<Option<String>, _>("rabble_creator_id")
+                .unwrap_or(None);
+            let is_anchor: bool = row.try_get::<bool, _>("is_anchor").unwrap_or(false);
+            let data_source: Option<String> = row
+                .try_get::<Option<String>, _>("active_flight_data_source")
+                .unwrap_or(None);
+
+            // Derive the creature's role in its current rabble
+            let rabble_role = if rabble_id_val.is_some() {
+                if rabble_creator.as_ref() == Some(&owner_id_val) {
+                    Some("host")
+                } else if is_anchor {
+                    Some("anchor")
+                } else {
+                    Some("participant")
+                }
+            } else {
+                None
+            };
+
+            // Derive tether status from active flight data source
+            let is_tethered = data_source.as_deref() == Some("device");
+
+            // Owner visibility respects social_visibility setting
+            let owner_vis: String = row
+                .try_get::<String, _>("owner_social_visibility")
+                .unwrap_or_else(|_| "public".to_string());
+            let owner_display = match owner_vis.as_str() {
+                "public" => row
+                    .try_get::<Option<String>, _>("owner_display_name")
+                    .unwrap_or(None),
+                _ => None, // creature-only or private: hide owner name
+            };
+
             let creature = json!({
-                "creature_id": row.get::<Uuid, _>("creature_id"),
-                "owner_id": row.get::<String, _>("owner_id"),
+                "creature_id": creature_id_val,
+                "owner_id": owner_id_val,
+                "owner_display_name": owner_display,
                 "workspace_id": row.get::<Option<Uuid>, _>("workspace_id"),
                 "scientific_name": row.get::<String, _>("scientific_name"),
                 "common_name": row.get::<Option<String>, _>("common_name"),
@@ -211,13 +280,29 @@ pub async fn get_creature_handler(
                 "location_lat": row.try_get::<Option<f64>, _>("location_lat").unwrap_or(None),
                 "location_lng": row.try_get::<Option<f64>, _>("location_lng").unwrap_or(None),
                 "state_h3": row.try_get::<Option<String>, _>("state_h3").unwrap_or(None),
-                "rabble_id": row.try_get::<Option<Uuid>, _>("rabble_id").unwrap_or(None),
+                "rabble_id": rabble_id_val,
                 "rabble_name": row.try_get::<Option<String>, _>("rabble_name").unwrap_or(None),
                 "current_version_id": row.try_get::<Option<Uuid>, _>("current_version_id").unwrap_or(None),
                 "conditions_walk_in_price": row.try_get::<Option<i32>, _>("conditions_walk_in_price").unwrap_or(None),
                 "active_modules": row.try_get::<Option<Vec<String>>, _>("active_modules").unwrap_or(None),
                 "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                 "updated_at": row.get::<chrono::DateTime<chrono::Utc>, _>("updated_at").to_rfc3339(),
+                // ─── Social context (new) ───────────────────────────
+                "social": {
+                    "friend_count": row.try_get::<i64, _>("friend_count").unwrap_or(0),
+                    "pending_friend_requests": row.try_get::<i64, _>("pending_friend_requests").unwrap_or(0),
+                    "rabble_role": rabble_role,      // "host" | "anchor" | "participant" | null
+                    "is_tethered": is_tethered,
+                    "is_anchor": is_anchor,
+                },
+                // ─── Active flight info (new) ───────────────────────
+                "active_flight": {
+                    "flight_id": row.try_get::<Option<Uuid>, _>("active_flight_id").unwrap_or(None),
+                    "data_source": data_source,       // "device" = tethered, "synthetic" = manual
+                    "started_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("active_flight_started_at")
+                        .unwrap_or(None).map(|t| t.to_rfc3339()),
+                    "location_name": row.try_get::<Option<String>, _>("active_flight_location").unwrap_or(None),
+                },
             });
             (StatusCode::OK, Json(creature)).into_response()
         }

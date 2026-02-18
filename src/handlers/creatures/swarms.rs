@@ -1,4 +1,4 @@
-//! Swarm (rabble) handlers — create, list, get.
+//! Swarm (rabble) handlers — create, list, get, my-rabbles.
 
 use axum::{
     extract::{Path, Query, State},
@@ -15,6 +15,214 @@ use crate::handlers::rabble_workspace;
 use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
+
+// ─── My Rabbles (hosted vs participating, with creature placement) ──
+
+/// GET /api/my/rabbles — lists all rabbles the caller hosts or participates in,
+/// split into `hosting` and `participating` sections. Each entry includes which
+/// of the user's creatures are currently in that rabble.
+///
+/// Addresses UX requirements:
+///   - Distinction of rabbles I host vs rabbles I'm a member of
+///   - Understanding which creatures I have in which rabbles
+///   - Latest activity ordering
+pub async fn my_rabbles_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // 1. Rabbles I host (I am the creator)
+    let hosted_rows = sqlx::query(
+        "SELECT s.swarm_id, s.name, s.description, s.status, s.location_name,
+                s.center_lat, s.center_lng, s.h3_cell,
+                s.creature_count, s.participant_count, s.visibility,
+                s.funding_mode, s.walk_in_price, s.walk_in_budget_remaining,
+                s.invite_pool_remaining, s.radius_meters,
+                s.starts_at, s.ends_at, s.created_at,
+                s.anchor_creature_id,
+                ac.specimen_name AS anchor_creature_name,
+                ac.asset_path AS anchor_creature_image,
+                -- Latest activity timestamp for ordering
+                GREATEST(s.created_at, COALESCE(
+                    (SELECT MAX(ae.created_at) FROM activity_events ae WHERE ae.rabble_id = s.swarm_id),
+                    s.created_at
+                )) AS last_activity_at
+         FROM swarm_events s
+         LEFT JOIN creatures ac ON ac.creature_id = s.anchor_creature_id
+         WHERE s.creator_id = $1
+           AND s.status IN ('scheduled', 'active', 'completed')
+         ORDER BY last_activity_at DESC",
+    )
+    .bind(&user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let hosted_ids: Vec<Uuid> = hosted_rows
+        .iter()
+        .map(|r| r.get::<Uuid, _>("swarm_id"))
+        .collect();
+
+    // 2. Rabbles I participate in (my creature is flying there, but I'm NOT the creator)
+    let participating_rows = sqlx::query(
+        "SELECT DISTINCT ON (s.swarm_id)
+                s.swarm_id, s.name, s.description, s.status, s.location_name,
+                s.center_lat, s.center_lng, s.h3_cell,
+                s.creature_count, s.participant_count, s.visibility,
+                s.creator_id, s.radius_meters,
+                s.starts_at, s.ends_at, s.created_at,
+                s.anchor_creature_id,
+                ac.specimen_name AS anchor_creature_name,
+                ac.asset_path AS anchor_creature_image,
+                u_creator.display_name AS host_display_name,
+                GREATEST(s.created_at, COALESCE(
+                    (SELECT MAX(ae.created_at) FROM activity_events ae WHERE ae.rabble_id = s.swarm_id),
+                    s.created_at
+                )) AS last_activity_at
+         FROM creature_flights cf
+         JOIN creatures c ON c.creature_id = cf.creature_id AND c.owner_id = $1
+         JOIN swarm_events s ON s.swarm_id = cf.swarm_id
+         LEFT JOIN creatures ac ON ac.creature_id = s.anchor_creature_id
+         LEFT JOIN users u_creator ON u_creator.user_id = s.creator_id
+         WHERE cf.ended_at IS NULL
+           AND s.creator_id != $1
+           AND s.status IN ('scheduled', 'active')
+         ORDER BY s.swarm_id, cf.started_at DESC",
+    )
+    .bind(&user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 3. For all rabbles (hosted + participating), find which of MY creatures are in each
+    let all_swarm_ids: Vec<Uuid> = hosted_ids
+        .iter()
+        .copied()
+        .chain(
+            participating_rows
+                .iter()
+                .map(|r| r.get::<Uuid, _>("swarm_id")),
+        )
+        .collect();
+
+    let mut my_creatures_in_rabbles: std::collections::HashMap<Uuid, Vec<serde_json::Value>> =
+        std::collections::HashMap::new();
+
+    if !all_swarm_ids.is_empty() {
+        let placeholders: Vec<String> = (1..=all_swarm_ids.len())
+            .map(|i| format!("${}", i + 1))
+            .collect();
+        let creature_sql = format!(
+            "SELECT cf.swarm_id, c.creature_id, c.specimen_name, c.species_group,
+                    c.asset_path, cf.data_source,
+                    cs.state AS creature_state
+             FROM creature_flights cf
+             JOIN creatures c ON c.creature_id = cf.creature_id
+             LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
+             WHERE c.owner_id = $1
+               AND cf.swarm_id IN ({})
+               AND cf.ended_at IS NULL
+             ORDER BY cf.started_at DESC",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&creature_sql).bind(&user_id);
+        for sid in &all_swarm_ids {
+            q = q.bind(sid);
+        }
+        if let Ok(rows) = q.fetch_all(pool).await {
+            for r in &rows {
+                let sid: Uuid = r.get("swarm_id");
+                let entry = my_creatures_in_rabbles.entry(sid).or_default();
+                entry.push(json!({
+                    "creature_id": r.get::<Uuid, _>("creature_id"),
+                    "specimen_name": r.try_get::<Option<String>, _>("specimen_name").unwrap_or(None),
+                    "species_group": r.try_get::<Option<String>, _>("species_group").unwrap_or(None),
+                    "asset_path": r.try_get::<Option<String>, _>("asset_path").unwrap_or(None),
+                    "data_source": r.try_get::<String, _>("data_source").unwrap_or_else(|_| "synthetic".into()),
+                    "creature_state": r.try_get::<Option<String>, _>("creature_state").unwrap_or(None),
+                }));
+            }
+        }
+    }
+
+    // 4. Build hosted response
+    let hosting: Vec<serde_json::Value> = hosted_rows
+        .iter()
+        .map(|row| {
+            let sid = row.get::<Uuid, _>("swarm_id");
+            json!({
+                "swarm_id": sid,
+                "name": row.get::<String, _>("name"),
+                "description": row.try_get::<Option<String>, _>("description").unwrap_or(None),
+                "status": row.get::<String, _>("status"),
+                "location_name": row.try_get::<Option<String>, _>("location_name").unwrap_or(None),
+                "center_lat": row.get::<f64, _>("center_lat"),
+                "center_lng": row.get::<f64, _>("center_lng"),
+                "creature_count": row.get::<i32, _>("creature_count"),
+                "participant_count": row.get::<i32, _>("participant_count"),
+                "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
+                "funding_mode": row.try_get::<String, _>("funding_mode").unwrap_or_else(|_| "hosted".into()),
+                "walk_in_price": row.try_get::<Option<i32>, _>("walk_in_price").unwrap_or(None),
+                "walk_in_budget_remaining": row.try_get::<Option<i32>, _>("walk_in_budget_remaining").unwrap_or(None),
+                "invite_pool_remaining": row.try_get::<Option<i32>, _>("invite_pool_remaining").unwrap_or(None),
+                "radius_meters": row.try_get::<i32, _>("radius_meters").unwrap_or(100),
+                "anchor_creature_id": row.try_get::<Option<Uuid>, _>("anchor_creature_id").ok().flatten(),
+                "anchor_creature_name": row.try_get::<Option<String>, _>("anchor_creature_name").unwrap_or(None),
+                "anchor_creature_image": row.try_get::<Option<String>, _>("anchor_creature_image").unwrap_or(None),
+                "starts_at": row.get::<chrono::DateTime<chrono::Utc>, _>("starts_at").to_rfc3339(),
+                "ends_at": row.get::<chrono::DateTime<chrono::Utc>, _>("ends_at").to_rfc3339(),
+                "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+                "last_activity_at": row.try_get::<chrono::DateTime<chrono::Utc>, _>("last_activity_at")
+                    .map(|t| t.to_rfc3339()).ok(),
+                "my_creatures": my_creatures_in_rabbles.get(&sid).cloned().unwrap_or_default(),
+                "role": "host",
+            })
+        })
+        .collect();
+
+    // 5. Build participating response
+    let participating: Vec<serde_json::Value> = participating_rows
+        .iter()
+        .map(|row| {
+            let sid = row.get::<Uuid, _>("swarm_id");
+            json!({
+                "swarm_id": sid,
+                "name": row.get::<String, _>("name"),
+                "description": row.try_get::<Option<String>, _>("description").unwrap_or(None),
+                "status": row.get::<String, _>("status"),
+                "location_name": row.try_get::<Option<String>, _>("location_name").unwrap_or(None),
+                "center_lat": row.get::<f64, _>("center_lat"),
+                "center_lng": row.get::<f64, _>("center_lng"),
+                "creature_count": row.get::<i32, _>("creature_count"),
+                "participant_count": row.get::<i32, _>("participant_count"),
+                "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
+                "host_id": row.get::<String, _>("creator_id"),
+                "host_display_name": row.try_get::<Option<String>, _>("host_display_name").unwrap_or(None),
+                "radius_meters": row.try_get::<i32, _>("radius_meters").unwrap_or(100),
+                "anchor_creature_id": row.try_get::<Option<Uuid>, _>("anchor_creature_id").ok().flatten(),
+                "anchor_creature_name": row.try_get::<Option<String>, _>("anchor_creature_name").unwrap_or(None),
+                "anchor_creature_image": row.try_get::<Option<String>, _>("anchor_creature_image").unwrap_or(None),
+                "starts_at": row.get::<chrono::DateTime<chrono::Utc>, _>("starts_at").to_rfc3339(),
+                "ends_at": row.get::<chrono::DateTime<chrono::Utc>, _>("ends_at").to_rfc3339(),
+                "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+                "last_activity_at": row.try_get::<chrono::DateTime<chrono::Utc>, _>("last_activity_at")
+                    .map(|t| t.to_rfc3339()).ok(),
+                "my_creatures": my_creatures_in_rabbles.get(&sid).cloned().unwrap_or_default(),
+                "role": "participant",
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "hosting": hosting,
+        "hosting_count": hosting.len(),
+        "participating": participating,
+        "participating_count": participating.len(),
+        "total": hosting.len() + participating.len(),
+    })))
+}
 
 // ─── Swarm endpoints (public read) ─────────────────────────────────
 

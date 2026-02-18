@@ -201,7 +201,7 @@ pub async fn transfer_credits_handler(
 
     // Create notification for recipient
     let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, notification_type, title, body, created_at)
+        "INSERT INTO notifications (id, user_id, type, title, message, created_at)
          VALUES ($1, $2, 'credit_transfer', $3, $4, NOW())",
     )
     .bind(uuid::Uuid::new_v4())

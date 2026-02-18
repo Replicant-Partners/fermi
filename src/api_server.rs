@@ -457,6 +457,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/088_backfill_creature_versions.sql",
         "migrations/089_dashboard_spatial_queries.sql",
         "migrations/090_social_layer.sql",
+        "migrations/091_swarm_participants.sql",
+        "migrations/092_fix_social_layer.sql",
     ];
 
     for file in &migration_files {
@@ -1424,6 +1426,10 @@ async fn main() {
         .route(
             "/api/creatures/mint",
             post(handlers::creatures::mint_creature_handler),
+        )
+        .route(
+            "/api/my/rabbles",
+            get(handlers::creatures::my_rabbles_handler),
         )
         .route(
             "/api/swarms/create",

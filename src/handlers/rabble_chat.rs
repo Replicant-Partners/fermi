@@ -595,7 +595,7 @@ pub async fn invite_to_rabble(
     // Create notification for invitee (only for user invites)
     if share_type == "user" {
         let _ = sqlx::query(
-            "INSERT INTO notifications (id, user_id, notification_type, title, body, created_at)
+            "INSERT INTO notifications (id, user_id, type, title, message, created_at)
              VALUES ($1, $2, 'rabble_invite', $3, $4, NOW())",
         )
         .bind(uuid::Uuid::new_v4())

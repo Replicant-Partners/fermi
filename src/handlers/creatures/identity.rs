@@ -893,7 +893,7 @@ pub async fn transfer_creature_handler(
 
     // Notify recipient
     let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, notification_type, title, body, created_at)
+        "INSERT INTO notifications (id, user_id, type, title, message, created_at)
          VALUES ($1, $2, 'creature_gift', $3, $4, NOW())",
     )
     .bind(Uuid::new_v4())

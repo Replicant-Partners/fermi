@@ -341,7 +341,7 @@ pub async fn send_friendship_request_handler(
 
     // Create notification for target creature's owner
     let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, notification_type, title, body, created_at)
+        "INSERT INTO notifications (id, user_id, type, title, message, created_at)
          VALUES ($1, $2, 'friendship_request', $3, $4, NOW())",
     )
     .bind(Uuid::new_v4())
@@ -453,7 +453,7 @@ pub async fn accept_friendship_handler(
         &owner_b
     };
     let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, notification_type, title, body, created_at)
+        "INSERT INTO notifications (id, user_id, type, title, message, created_at)
          VALUES ($1, $2, 'friendship_accepted', $3, $4, NOW())",
     )
     .bind(Uuid::new_v4())
@@ -789,7 +789,7 @@ pub async fn send_creature_invite_handler(
 
     // Notify target creature's owner
     let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, notification_type, title, body, created_at)
+        "INSERT INTO notifications (id, user_id, type, title, message, created_at)
          VALUES ($1, $2, 'creature_invite', $3, $4, NOW())",
     )
     .bind(Uuid::new_v4())
