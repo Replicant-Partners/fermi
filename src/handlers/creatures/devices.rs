@@ -14,7 +14,6 @@ use uuid::Uuid;
 use crate::AppState;
 use fermi_auth::AuthPrincipal;
 
-
 // ─── Device pairing handlers ──────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -23,7 +22,6 @@ pub struct PairDeviceRequest {
     pub device_identifier: String,
     pub device_name: Option<String>,
 }
-
 
 /// GET /api/creatures/:id/devices — list paired devices
 pub async fn list_devices_handler(
@@ -66,7 +64,6 @@ pub async fn list_devices_handler(
 
     Ok(Json(json!({ "devices": devices })))
 }
-
 
 /// POST /api/creatures/:id/devices — pair a device
 pub async fn pair_device_handler(
@@ -117,13 +114,11 @@ pub async fn pair_device_handler(
     })))
 }
 
-
 #[derive(Deserialize)]
 pub struct UpdateDeviceRequest {
     pub device_name: Option<String>,
     pub is_active: Option<bool>,
 }
-
 
 /// PUT /api/devices/:device_id — update device name/active
 pub async fn update_device_handler(
@@ -183,7 +178,6 @@ pub async fn update_device_handler(
     Ok(Json(json!({ "updated": true })))
 }
 
-
 /// DELETE /api/devices/:device_id — unpair device
 pub async fn unpair_device_handler(
     State(state): State<AppState>,
@@ -207,13 +201,11 @@ pub async fn unpair_device_handler(
     Ok(Json(json!({ "unpaired": true })))
 }
 
-
 #[derive(Deserialize)]
 pub struct ReportLocationRequest {
     pub lat: f64,
     pub lng: f64,
 }
-
 
 /// POST /api/devices/:device_id/location — report device location
 pub async fn report_device_location_handler(
@@ -248,4 +240,3 @@ pub async fn report_device_location_handler(
         "synced": true,
     })))
 }
-

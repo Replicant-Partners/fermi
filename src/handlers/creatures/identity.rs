@@ -906,6 +906,29 @@ pub async fn transfer_creature_handler(
     .execute(&state.db)
     .await;
 
+    // Emit activity event (fire-and-forget)
+    {
+        let _pool_ae = state.memory_store.pool().clone();
+        let _uid_ae = owner_id.clone();
+        let _cid_ae = cid;
+        let _creature_name_ae = creature_name.clone();
+        let _recipient_ae = body.recipient_id.clone();
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &_pool_ae,
+                &_uid_ae,
+                Some(_cid_ae),
+                "creature_gifted",
+                None,
+                None,
+                &format!("{} was gifted to a new owner", _creature_name_ae),
+                None,
+                None,
+            )
+            .await;
+        });
+    }
+
     Ok(Json(json!({
         "status": "transferred",
         "creature_id": creature_id,

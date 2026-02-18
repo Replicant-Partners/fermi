@@ -8,7 +8,7 @@ use axum::{
 use fermi_auth::AuthPrincipal;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{Row, PgPool};
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -43,33 +43,34 @@ pub async fn my_rabbles_handler(
     let user_id = principal.user_id();
     let pool = state.db.clone();
 
-    let rows = sqlx::query(
-        "SELECT * FROM get_my_rabbles_with_status($1, 50)"
-    )
-    .bind(&user_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows = sqlx::query("SELECT * FROM get_my_rabbles_with_status($1, 50)")
+        .bind(&user_id)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let rabbles: Vec<Value> = rows.iter().map(|row| {
-        json!({
-            "swarm_id": row.get::<Uuid, _>("swarm_id"),
-            "name": row.get::<String, _>("name"),
-            "location_name": row.get::<Option<String>, _>("location_name"),
-            "center_lat": row.get::<f64, _>("center_lat"),
-            "center_lng": row.get::<f64, _>("center_lng"),
-            "radius_meters": row.get::<i32, _>("radius_meters"),
-            "creature_count": row.get::<i32, _>("creature_count"),
-            "participant_count": row.get::<i32, _>("participant_count"),
-            "starts_at": row.get::<chrono::DateTime<chrono::Utc>, _>("starts_at").to_rfc3339(),
-            "ends_at": row.get::<chrono::DateTime<chrono::Utc>, _>("ends_at").to_rfc3339(),
-            "status": row.get::<String, _>("status"),
-            "anchor_creature_id": row.get::<Option<Uuid>, _>("anchor_creature_id"),
-            "anchor_creature_name": row.get::<Option<String>, _>("anchor_creature_name"),
-            "anchor_creature_image": row.get::<Option<String>, _>("anchor_creature_image"),
-            "my_creatures": row.get::<Option<Value>, _>("my_creatures"),
+    let rabbles: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "swarm_id": row.get::<Uuid, _>("swarm_id"),
+                "name": row.get::<String, _>("name"),
+                "location_name": row.get::<Option<String>, _>("location_name"),
+                "center_lat": row.get::<f64, _>("center_lat"),
+                "center_lng": row.get::<f64, _>("center_lng"),
+                "radius_meters": row.get::<i32, _>("radius_meters"),
+                "creature_count": row.get::<i32, _>("creature_count"),
+                "participant_count": row.get::<i32, _>("participant_count"),
+                "starts_at": row.get::<chrono::DateTime<chrono::Utc>, _>("starts_at").to_rfc3339(),
+                "ends_at": row.get::<chrono::DateTime<chrono::Utc>, _>("ends_at").to_rfc3339(),
+                "status": row.get::<String, _>("status"),
+                "anchor_creature_id": row.get::<Option<Uuid>, _>("anchor_creature_id"),
+                "anchor_creature_name": row.get::<Option<String>, _>("anchor_creature_name"),
+                "anchor_creature_image": row.get::<Option<String>, _>("anchor_creature_image"),
+                "my_creatures": row.get::<Option<Value>, _>("my_creatures"),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(json!({ "rabbles": rabbles })))
 }
@@ -86,44 +87,45 @@ pub async fn nearby_rabbles_handler(
 
     let lat = q.lat.ok_or((
         StatusCode::BAD_REQUEST,
-        "Missing 'lat' parameter".to_string()
+        "Missing 'lat' parameter".to_string(),
     ))?;
     let lng = q.lng.ok_or((
         StatusCode::BAD_REQUEST,
-        "Missing 'lng' parameter".to_string()
+        "Missing 'lng' parameter".to_string(),
     ))?;
     let radius = q.radius.unwrap_or(1000);
 
-    let rows = sqlx::query(
-        "SELECT * FROM get_nearby_rabbles($1, $2, $3, 50)"
-    )
-    .bind(lat)
-    .bind(lng)
-    .bind(radius)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows = sqlx::query("SELECT * FROM get_nearby_rabbles($1, $2, $3, 50)")
+        .bind(lat)
+        .bind(lng)
+        .bind(radius)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let rabbles: Vec<Value> = rows.iter().map(|row| {
-        json!({
-            "swarm_id": row.get::<Uuid, _>("swarm_id"),
-            "name": row.get::<String, _>("name"),
-            "location_name": row.get::<Option<String>, _>("location_name"),
-            "center_lat": row.get::<f64, _>("center_lat"),
-            "center_lng": row.get::<f64, _>("center_lng"),
-            "radius_meters": row.get::<i32, _>("radius_meters"),
-            "creature_count": row.get::<i32, _>("creature_count"),
-            "participant_count": row.get::<i32, _>("participant_count"),
-            "starts_at": row.get::<chrono::DateTime<chrono::Utc>, _>("starts_at").to_rfc3339(),
-            "ends_at": row.get::<chrono::DateTime<chrono::Utc>, _>("ends_at").to_rfc3339(),
-            "status": row.get::<String, _>("status"),
-            "anchor_creature_id": row.get::<Option<Uuid>, _>("anchor_creature_id"),
-            "anchor_creature_name": row.get::<Option<String>, _>("anchor_creature_name"),
-            "anchor_creature_image": row.get::<Option<String>, _>("anchor_creature_image"),
-            "distance_meters": row.get::<f64, _>("distance_meters"),
-            "user_in_area": row.get::<bool, _>("user_in_area"),
+    let rabbles: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "swarm_id": row.get::<Uuid, _>("swarm_id"),
+                "name": row.get::<String, _>("name"),
+                "location_name": row.get::<Option<String>, _>("location_name"),
+                "center_lat": row.get::<f64, _>("center_lat"),
+                "center_lng": row.get::<f64, _>("center_lng"),
+                "radius_meters": row.get::<i32, _>("radius_meters"),
+                "creature_count": row.get::<i32, _>("creature_count"),
+                "participant_count": row.get::<i32, _>("participant_count"),
+                "starts_at": row.get::<chrono::DateTime<chrono::Utc>, _>("starts_at").to_rfc3339(),
+                "ends_at": row.get::<chrono::DateTime<chrono::Utc>, _>("ends_at").to_rfc3339(),
+                "status": row.get::<String, _>("status"),
+                "anchor_creature_id": row.get::<Option<Uuid>, _>("anchor_creature_id"),
+                "anchor_creature_name": row.get::<Option<String>, _>("anchor_creature_name"),
+                "anchor_creature_image": row.get::<Option<String>, _>("anchor_creature_image"),
+                "distance_meters": row.get::<f64, _>("distance_meters"),
+                "user_in_area": row.get::<bool, _>("user_in_area"),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(json!({ "rabbles": rabbles })))
 }
@@ -141,15 +143,13 @@ pub async fn creatures_handler(
     let status = q.status.unwrap_or_else(|| "active".to_string());
     let limit = q.limit.unwrap_or(200);
 
-    let rows = sqlx::query(
-        "SELECT * FROM get_creatures_with_deployment($1, $2, $3)"
-    )
-    .bind(&user_id)
-    .bind(&status)
-    .bind(limit)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows = sqlx::query("SELECT * FROM get_creatures_with_deployment($1, $2, $3)")
+        .bind(&user_id)
+        .bind(&status)
+        .bind(limit)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let creatures: Vec<Value> = rows.iter().map(|row| {
         json!({
@@ -182,24 +182,25 @@ pub async fn boundary_violations_handler(
     let user_id = principal.user_id();
     let pool = state.db.clone();
 
-    let rows = sqlx::query(
-        "SELECT * FROM check_boundary_violations($1)"
-    )
-    .bind(&user_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows = sqlx::query("SELECT * FROM check_boundary_violations($1)")
+        .bind(&user_id)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let violations: Vec<Value> = rows.iter().map(|row| {
-        json!({
-            "creature_id": row.get::<Uuid, _>("creature_id"),
-            "specimen_name": row.get::<Option<String>, _>("specimen_name"),
-            "rabble_id": row.get::<Uuid, _>("rabble_id"),
-            "rabble_name": row.get::<String, _>("rabble_name"),
-            "distance_meters": row.get::<f64, _>("distance_meters"),
-            "rabble_radius": row.get::<i32, _>("rabble_radius"),
+    let violations: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "creature_id": row.get::<Uuid, _>("creature_id"),
+                "specimen_name": row.get::<Option<String>, _>("specimen_name"),
+                "rabble_id": row.get::<Uuid, _>("rabble_id"),
+                "rabble_name": row.get::<String, _>("rabble_name"),
+                "distance_meters": row.get::<f64, _>("distance_meters"),
+                "rabble_radius": row.get::<i32, _>("rabble_radius"),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(json!({ "violations": violations })))
 }

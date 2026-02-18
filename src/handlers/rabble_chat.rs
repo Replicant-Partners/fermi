@@ -493,6 +493,27 @@ pub async fn insert_narrator_message(
         message: msg_json,
     });
 
+    // Emit activity event for narrator messages (fire-and-forget)
+    {
+        let _pool_ae = state.db.clone();
+        let _swarm_ae = swarm_id;
+        let _content_ae = content.to_string();
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &_pool_ae,
+                "system",
+                None,
+                "chat_message",
+                Some(_swarm_ae),
+                None,
+                &_content_ae,
+                None,
+                None,
+            )
+            .await;
+        });
+    }
+
     Ok(())
 }
 

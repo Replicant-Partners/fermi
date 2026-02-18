@@ -1442,7 +1442,10 @@ async fn execute_scan_nearby_creatures(
     .map_err(|e| format!("DB error: {}", e))?
     .ok_or("Creature not found")?;
 
-    let h3_cell: Option<String> = target.try_get("h3_cell").ok().flatten()
+    let h3_cell: Option<String> = target
+        .try_get("h3_cell")
+        .ok()
+        .flatten()
         .filter(|s: &String| !s.is_empty());
 
     // Fallback: compute h3_cell from lat/lng if missing

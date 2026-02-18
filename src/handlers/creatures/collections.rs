@@ -14,7 +14,6 @@ use uuid::Uuid;
 use crate::AppState;
 use fermi_auth::AuthPrincipal;
 
-
 // ─── Collections (authenticated) ───────────────────────────────────
 
 /// GET /api/collections — user's creature collections
@@ -59,14 +58,12 @@ pub async fn list_collections_handler(
     }
 }
 
-
 #[derive(Deserialize)]
 pub struct CreateCollectionRequest {
     pub name: String,
     pub description: Option<String>,
     pub creature_ids: Option<Vec<Uuid>>,
 }
-
 
 /// POST /api/collections — create a collection
 pub async fn create_collection_handler(
@@ -101,14 +98,12 @@ pub async fn create_collection_handler(
     })))
 }
 
-
 #[derive(Deserialize)]
 pub struct UpdateCollectionRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub creature_ids: Option<Vec<Uuid>>,
 }
-
 
 /// PUT /api/collections/:collection_id — update a collection
 pub async fn update_collection_handler(
@@ -181,4 +176,3 @@ pub async fn update_collection_handler(
         "updated": true,
     })))
 }
-
