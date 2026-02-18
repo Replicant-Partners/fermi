@@ -457,6 +457,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/088_backfill_creature_versions.sql",
         "migrations/089_dashboard_spatial_queries.sql",
         "migrations/090_social_layer.sql",
+        "migrations/093_users_user_id_unique.sql",
         "migrations/091_swarm_participants.sql",
         "migrations/092_fix_social_layer.sql",
     ];
