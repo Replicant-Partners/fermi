@@ -33,7 +33,7 @@ pub async fn list_swarms_handler(
     caller: Option<axum::extract::Extension<AuthPrincipal>>,
     Query(q): Query<SwarmQuery>,
 ) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(20).min(50);
+    let limit = q.limit.unwrap_or(20).min(200);
     let caller_id = caller.map(|c| c.0.user_id());
 
     let mut sql = String::from(
@@ -58,8 +58,8 @@ pub async fn list_swarms_handler(
         sql.push_str(" AND status IN ('scheduled', 'active')");
     }
 
-    // Perches with 0 creatures are stale — the creature left
-    sql.push_str(" AND creature_count > 0");
+    // Show rabbles even with 0 creatures — they may be newly created or between joins
+    // sql.push_str(" AND creature_count > 0"); // Removed: was hiding valid rabbles from search
 
     if let Some(ref h3) = q.h3_cell {
         bind_idx += 1;

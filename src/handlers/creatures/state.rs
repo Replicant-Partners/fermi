@@ -1657,6 +1657,38 @@ pub async fn host_rabble_handler(
         });
     }
 
+    // Record co-presence for post-rabble recap (host is first creature present)
+    {
+        let pool_cp = state.memory_store.pool().clone();
+        let uid_cp = user_id.clone();
+        tokio::spawn(async move {
+            crate::handlers::social::record_co_presence(&pool_cp, swarm_id, creature_id, &uid_cp)
+                .await;
+        });
+    }
+
+    // Emit activity event (lightweight, fire-and-forget)
+    {
+        let pool_ae = state.memory_store.pool().clone();
+        let uid_ae = user_id.clone();
+        let rabble_name_ae: String = rabble_name.clone();
+        let c_name_ae: String = creature_name.clone();
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &pool_ae,
+                &uid_ae,
+                Some(creature_id),
+                "rabble_created",
+                Some(swarm_id),
+                None,
+                &format!("{} created rabble {}", c_name_ae, rabble_name_ae),
+                None,
+                None,
+            )
+            .await;
+        });
+    }
+
     Ok(Json(response))
 }
 
@@ -2621,6 +2653,39 @@ pub async fn join_swarm_handler(
                 )
                 .await;
             }
+        });
+    }
+
+    // Record co-presence for post-rabble recap ("You met these creatures")
+    {
+        let pool_cp = state.memory_store.pool().clone();
+        let uid_cp = user_id.clone();
+        let cid_cp = req.creature_id;
+        tokio::spawn(async move {
+            crate::handlers::social::record_co_presence(&pool_cp, swarm_id, cid_cp, &uid_cp).await;
+        });
+    }
+
+    // Emit activity event (lightweight, fire-and-forget)
+    {
+        let pool_ae = state.memory_store.pool().clone();
+        let uid_ae = user_id.clone();
+        let cid_ae = req.creature_id;
+        let swarm_name: String = swarm.try_get("name").unwrap_or_else(|_| "Rabble".into());
+        let c_name_ae = creature_name.clone().unwrap_or_else(|| "Creature".into());
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &pool_ae,
+                &uid_ae,
+                Some(cid_ae),
+                "rabble_joined",
+                Some(swarm_id),
+                None,
+                &format!("{} joined {}", c_name_ae, swarm_name),
+                None,
+                None,
+            )
+            .await;
         });
     }
 

@@ -227,6 +227,31 @@ pub async fn mint_creature_handler(
         });
     }
 
+    // Emit activity event (lightweight, fire-and-forget)
+    {
+        let pool_ae = state.memory_store.pool().clone();
+        let uid_ae = user_id.clone();
+        let specimen_ae = specimen_name.clone();
+        let species_ae = req.species_group.clone();
+        tokio::spawn(async move {
+            crate::handlers::social::emit_activity_event(
+                &pool_ae,
+                &uid_ae,
+                Some(creature_id),
+                "creature_minted",
+                None,
+                None,
+                &format!(
+                    "{} minted a new {} creature: {}",
+                    uid_ae, species_ae, specimen_ae
+                ),
+                None,
+                None,
+            )
+            .await;
+        });
+    }
+
     Ok(Json(json!({
         "creature_id": creature_id,
         "owner_id": user_id,
