@@ -16,6 +16,7 @@ use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
+use super::helpers::verify_creature_ownership;
 
 #[derive(Deserialize)]
 pub struct UpdatePresenceRequest {
@@ -40,21 +41,7 @@ pub async fn update_creature_presence_handler(
         ));
     }
 
-    let creature = sqlx::query(
-        "SELECT owner_id, specimen_name, personal_workspace_id FROM creatures c
-         JOIN users u ON u.user_id = c.owner_id
-         WHERE c.creature_id = $1",
-    )
-    .bind(creature_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
-
-    let owner: String = creature.get("owner_id");
-    if owner != user_id {
-        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
-    }
+    let creature = verify_creature_ownership(pool, creature_id, &user_id).await?;
 
     let specimen_name: String = creature.try_get("specimen_name").unwrap_or_default();
     let personal_ws: Option<Uuid> = creature
@@ -143,18 +130,7 @@ pub async fn tether_handler(
     let pool = state.memory_store.pool();
 
     // Verify ownership
-    let creature =
-        sqlx::query("SELECT owner_id, specimen_name FROM creatures WHERE creature_id = $1")
-            .bind(creature_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
-
-    let owner: String = creature.get("owner_id");
-    if owner != user_id {
-        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
-    }
+    let _creature = verify_creature_ownership(pool, creature_id, &user_id).await?;
 
     // Check not already tethered
     let existing = sqlx::query(
@@ -255,17 +231,7 @@ pub async fn untether_handler(
     let pool = state.memory_store.pool();
 
     // Verify ownership
-    let owner: String = sqlx::query("SELECT owner_id FROM creatures WHERE creature_id = $1")
-        .bind(creature_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?
-        .get("owner_id");
-
-    if owner != user_id {
-        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
-    }
+    let _creature = verify_creature_ownership(pool, creature_id, &user_id).await?;
 
     let result = sqlx::query(
         "UPDATE creature_tethers SET active = false, deactivated_at = NOW()

@@ -15,8 +15,9 @@ use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
-use super::helpers::{compute_h3_cell, get_current_state, record_transition};
-
+use super::helpers::{
+    compute_h3_cell, get_current_state, record_transition, verify_creature_ownership,
+};
 
 #[derive(Deserialize)]
 pub struct RecordFlightRequest {
@@ -43,22 +44,7 @@ pub async fn record_flight_handler(
 
     // Verify creature ownership and presence
     let pool = state.memory_store.pool();
-    let creature = sqlx::query(
-        "SELECT c.owner_id, COALESCE(cc.visibility, 'public') AS visibility
-         FROM creatures c
-         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
-         WHERE c.creature_id = $1",
-    )
-    .bind(req.creature_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
-
-    let owner: String = creature.get("owner_id");
-    if owner != user_id {
-        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
-    }
+    let creature = verify_creature_ownership(pool, req.creature_id, &user_id).await?;
 
     let creature_visibility: String = creature
         .try_get("visibility")
@@ -851,19 +837,7 @@ pub async fn plan_flight_handler(
     let pool = state.memory_store.pool();
 
     // Verify creature ownership
-    let creature = sqlx::query(
-        "SELECT owner_id, species_group, specimen_name, scientific_name FROM creatures WHERE creature_id = $1",
-    )
-    .bind(req.creature_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
-
-    let owner: String = creature.get("owner_id");
-    if owner != user_id {
-        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
-    }
+    let creature = verify_creature_ownership(pool, req.creature_id, &user_id).await?;
 
     let species: String = creature.get("species_group");
     let specimen_name: Option<String> = creature.try_get("specimen_name").unwrap_or(None);
@@ -1299,20 +1273,7 @@ pub async fn fly_handler(
     let pool = state.memory_store.pool();
 
     // Validate creature ownership
-    let creature = sqlx::query(
-        "SELECT owner_id, species_group, specimen_name, scientific_name
-         FROM creatures WHERE creature_id = $1",
-    )
-    .bind(creature_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((StatusCode::NOT_FOUND, "Creature not found".to_string()))?;
-
-    let owner: String = creature.get("owner_id");
-    if owner != user_id {
-        return Err((StatusCode::FORBIDDEN, "Not your creature".to_string()));
-    }
+    let creature = verify_creature_ownership(pool, creature_id, &user_id).await?;
 
     let specimen_name: Option<String> = creature.try_get("specimen_name").unwrap_or(None);
     let specimen_name_for_activity = specimen_name.clone();
@@ -1734,4 +1695,3 @@ pub async fn fly_handler(
         "gas_charged": fly_cost,
     })))
 }
-
