@@ -151,7 +151,7 @@ pub async fn mint_creature_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // ── Dual-write: init creature_conditions (new versioned model) ──
-    super::state::init_conditions(pool, creature_id, "public", false).await;
+    super::helpers::init_conditions(pool, creature_id, "public", false).await;
 
     // Spawn async art generation if requested
     let art_generating = if generate_art {

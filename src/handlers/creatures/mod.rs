@@ -3,15 +3,16 @@
 //! Re-exports every public handler so `handlers::creatures::foo_handler` works
 //! unchanged in api_server.rs route registrations.
 
+pub(crate) mod helpers;
+mod agent_modules;
 mod collections;
 mod devices;
+mod flights;
 mod identity;
 mod query;
 mod state;
 mod swarms;
-
-// ─── Shared imports used by submodules ──────────────────────────────
-// (submodules import what they need directly; this mod just re-exports handlers)
+mod tethering;
 
 // ─── Re-exports: query ─────────────────────────────────────────────
 pub use query::{
@@ -21,18 +22,32 @@ pub use query::{
     PaginationQuery, VisibleFlightsQuery,
 };
 
-// ─── Re-exports: state ─────────────────────────────────────────────
+// ─── Re-exports: flights ───────────────────────────────────────────
+pub use flights::{
+    append_telemetry_handler, end_flight_handler, export_flight_handler, fly_handler,
+    import_flight_handler, plan_flight_handler, record_flight_handler, AppendTelemetryRequest,
+    EndFlightRequest, FlyRequest, ImportFlightRequest, PlanFlightRequest, RecordFlightRequest,
+};
+
+// ─── Re-exports: state (location + rabble) ─────────────────────────
 pub use state::{
-    append_telemetry_handler, creature_dream_handler, creature_level_handler, end_flight_handler,
-    enemy_sensor_handler, export_flight_handler, favourite_creature_handler, fly_handler,
-    genome_profiler_handler, get_track_handler, host_rabble_handler, import_flight_handler,
-    join_by_qr_token_handler, join_swarm_handler, perch_handler, plan_flight_handler,
-    prey_locator_handler, push_telemetry_handler, record_flight_handler, tether_handler,
-    unfavourite_creature_handler, untether_handler, update_creature_presence_handler,
-    AppendTelemetryRequest, CreatureDreamRequest, EndFlightRequest, EnemySensorRequest, FlyRequest,
-    GenomeProfilerRequest, HostRabbleRequest, ImportFlightRequest, JoinSwarmRequest, PerchRequest,
-    PlanFlightRequest, PreyLocatorRequest, PushTelemetryRequest, RecordFlightRequest,
-    TelemetryPoint, TetherRequest, TrackQuery, UpdatePresenceRequest,
+    favourite_creature_handler, host_rabble_handler, join_by_qr_token_handler,
+    join_swarm_handler, perch_handler, unfavourite_creature_handler, HostRabbleRequest,
+    JoinSwarmRequest, PerchRequest,
+};
+
+// ─── Re-exports: tethering ─────────────────────────────────────────
+pub use tethering::{
+    get_track_handler, push_telemetry_handler, tether_handler, untether_handler,
+    update_creature_presence_handler, PushTelemetryRequest, TelemetryPoint, TetherRequest,
+    TrackQuery, UpdatePresenceRequest,
+};
+
+// ─── Re-exports: agent_modules ─────────────────────────────────────
+pub use agent_modules::{
+    creature_dream_handler, creature_level_handler, enemy_sensor_handler,
+    genome_profiler_handler, prey_locator_handler, CreatureDreamRequest, EnemySensorRequest,
+    GenomeProfilerRequest, PreyLocatorRequest,
 };
 
 // ─── Re-exports: identity ──────────────────────────────────────────
@@ -87,7 +102,7 @@ pub(crate) fn extract_json_from_response(text: &str) -> Option<serde_json::Value
             return Some(val);
         }
     }
-    // Try extracting from ```json ... ``` fences
+    // Try extracting from json fences
     if let Some(start) = text.find("```json") {
         let after = &text[start + 7..];
         if let Some(end) = after.find("```") {
@@ -99,7 +114,7 @@ pub(crate) fn extract_json_from_response(text: &str) -> Option<serde_json::Value
             }
         }
     }
-    // Try extracting from ``` ... ``` fences
+    // Try extracting from bare fences
     if let Some(start) = text.find("```\n") {
         let after = &text[start + 4..];
         if let Some(end) = after.find("```") {
@@ -124,8 +139,6 @@ pub(crate) fn extract_json_from_response(text: &str) -> Option<serde_json::Value
     }
     None
 }
-
-/// Shared image generation logic used by both single and batch endpoints.
 pub(crate) async fn generate_creature_image(
     pool: &sqlx::PgPool,
     creature_id: uuid::Uuid,
