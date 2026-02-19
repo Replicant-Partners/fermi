@@ -1467,3 +1467,267 @@ pub(crate) async fn update_co_presence_departure(
     .execute(pool)
     .await;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RABBLE FOLLOWS (Decision D3 — active notifications, not passive bookmarks)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct FollowRabbleRequest {
+    pub notify_on_join: Option<bool>,
+    pub notify_on_start: Option<bool>,
+    pub notify_on_end: Option<bool>,
+}
+
+/// POST /api/rabbles/:swarm_id/follow — follow a rabble for notifications.
+pub async fn follow_rabble_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(swarm_id): Path<Uuid>,
+    Json(req): Json<FollowRabbleRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify rabble exists
+    sqlx::query("SELECT 1 FROM swarm_events WHERE swarm_id = $1")
+        .bind(swarm_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Rabble not found".to_string()))?;
+
+    let notify_join = req.notify_on_join.unwrap_or(true);
+    let notify_start = req.notify_on_start.unwrap_or(true);
+    let notify_end = req.notify_on_end.unwrap_or(true);
+
+    let row = sqlx::query(
+        "INSERT INTO rabble_follows (user_id, swarm_id, notify_on_join, notify_on_start, notify_on_end)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id, swarm_id) DO UPDATE SET
+             notify_on_join = $3, notify_on_start = $4, notify_on_end = $5
+         RETURNING id, created_at",
+    )
+    .bind(&user_id)
+    .bind(swarm_id)
+    .bind(notify_join)
+    .bind(notify_start)
+    .bind(notify_end)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let follow_id: Uuid = row.get("id");
+    let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
+
+    // Emit activity event
+    emit_activity_event(
+        pool,
+        &user_id,
+        None,
+        "rabble_followed",
+        Some(swarm_id),
+        None,
+        "Started following a rabble",
+        None,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({
+        "follow_id": follow_id,
+        "swarm_id": swarm_id,
+        "notify_on_join": notify_join,
+        "notify_on_start": notify_start,
+        "notify_on_end": notify_end,
+        "created_at": created_at.to_rfc3339(),
+    })))
+}
+
+/// DELETE /api/rabbles/:swarm_id/follow — unfollow a rabble.
+pub async fn unfollow_rabble_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(swarm_id): Path<Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    let result = sqlx::query("DELETE FROM rabble_follows WHERE user_id = $1 AND swarm_id = $2")
+        .bind(&user_id)
+        .bind(swarm_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Not following this rabble".to_string(),
+        ));
+    }
+
+    Ok(Json(json!({
+        "unfollowed": true,
+        "swarm_id": swarm_id,
+    })))
+}
+
+/// PUT /api/rabbles/:swarm_id/follow — update follow notification preferences.
+pub async fn update_follow_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(swarm_id): Path<Uuid>,
+    Json(req): Json<FollowRabbleRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Build dynamic update — only set fields that were provided
+    let mut sets = Vec::new();
+    let mut bind_idx = 3u32; // $1 = user_id, $2 = swarm_id
+
+    if req.notify_on_join.is_some() {
+        sets.push(format!("notify_on_join = ${}", bind_idx));
+        bind_idx += 1;
+    }
+    if req.notify_on_start.is_some() {
+        sets.push(format!("notify_on_start = ${}", bind_idx));
+        bind_idx += 1;
+    }
+    if req.notify_on_end.is_some() {
+        sets.push(format!("notify_on_end = ${}", bind_idx));
+    }
+
+    if sets.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "No fields to update".to_string()));
+    }
+
+    let sql = format!(
+        "UPDATE rabble_follows SET {} WHERE user_id = $1 AND swarm_id = $2 \
+         RETURNING id, notify_on_join, notify_on_start, notify_on_end",
+        sets.join(", ")
+    );
+
+    let mut query = sqlx::query(&sql).bind(&user_id).bind(swarm_id);
+
+    if let Some(v) = req.notify_on_join {
+        query = query.bind(v);
+    }
+    if let Some(v) = req.notify_on_start {
+        query = query.bind(v);
+    }
+    if let Some(v) = req.notify_on_end {
+        query = query.bind(v);
+    }
+
+    let row = query
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            "Not following this rabble".to_string(),
+        ))?;
+
+    Ok(Json(json!({
+        "follow_id": row.get::<Uuid, _>("id"),
+        "swarm_id": swarm_id,
+        "notify_on_join": row.get::<bool, _>("notify_on_join"),
+        "notify_on_start": row.get::<bool, _>("notify_on_start"),
+        "notify_on_end": row.get::<bool, _>("notify_on_end"),
+    })))
+}
+
+/// GET /api/my/following — list rabbles the user follows with details.
+pub async fn list_following_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    let rows = sqlx::query("SELECT * FROM get_followed_rabbles($1, 100)")
+        .bind(&user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let following: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "follow_id": row.get::<Uuid, _>("follow_id"),
+                "swarm_id": row.get::<Uuid, _>("swarm_id"),
+                "name": row.get::<String, _>("name"),
+                "location_name": row.get::<Option<String>, _>("location_name"),
+                "center_lat": row.get::<f64, _>("center_lat"),
+                "center_lng": row.get::<f64, _>("center_lng"),
+                "radius_meters": row.get::<i32, _>("radius_meters"),
+                "creature_count": row.get::<i32, _>("creature_count"),
+                "participant_count": row.get::<i32, _>("participant_count"),
+                "starts_at": row.get::<chrono::DateTime<chrono::Utc>, _>("starts_at").to_rfc3339(),
+                "ends_at": row.get::<chrono::DateTime<chrono::Utc>, _>("ends_at").to_rfc3339(),
+                "status": row.get::<String, _>("status"),
+                "anchor_creature_id": row.get::<Option<Uuid>, _>("anchor_creature_id"),
+                "anchor_creature_name": row.get::<Option<String>, _>("anchor_creature_name"),
+                "anchor_creature_image": row.get::<Option<String>, _>("anchor_creature_image"),
+                "notify_on_join": row.get::<bool, _>("notify_on_join"),
+                "notify_on_start": row.get::<bool, _>("notify_on_start"),
+                "notify_on_end": row.get::<bool, _>("notify_on_end"),
+                "followed_at": row.get::<chrono::DateTime<chrono::Utc>, _>("followed_at").to_rfc3339(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "following": following })))
+}
+
+/// Notify all followers of a rabble about an event.
+///
+/// Call this from mutation handlers (join_swarm, swarm status changes, etc.)
+/// when an event that followers care about occurs.
+///
+/// `event_type`: "join", "start", or "end"
+pub(crate) async fn notify_rabble_followers(
+    pool: &sqlx::PgPool,
+    swarm_id: Uuid,
+    event_type: &str,
+    title: &str,
+    message: Option<&str>,
+    exclude_user: Option<&str>,
+) {
+    let rows = match sqlx::query("SELECT * FROM get_rabble_followers($1, $2)")
+        .bind(swarm_id)
+        .bind(event_type)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("[rabble_follows] Failed to fetch followers: {}", e);
+            return;
+        }
+    };
+
+    for row in &rows {
+        let follower_id: String = row.get("user_id");
+
+        // Don't notify the user who caused the event
+        if exclude_user == Some(follower_id.as_str()) {
+            continue;
+        }
+
+        let _ = sqlx::query(
+            "INSERT INTO notifications (id, user_id, type, title, message, created_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())",
+        )
+        .bind(Uuid::new_v4())
+        .bind(&follower_id)
+        .bind(format!("rabble_{}", event_type))
+        .bind(title)
+        .bind(message)
+        .execute(pool)
+        .await;
+    }
+}

@@ -3,7 +3,8 @@ use axum::{
     http::{header, HeaderValue, StatusCode},
     middleware,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::{delete, get, patch, post, put}, Router,
+    routing::{delete, get, patch, post, put},
+    Router,
 };
 use fermi::agent_backend::{
     agent_card::{
@@ -17,8 +18,7 @@ use fermi::agent_backend::{
 };
 use fermi::ast;
 use fermi_auth::{
-    auth_middleware, optional_auth_middleware,
-    AuthPrincipal, AuthState, OAuthConfig,
+    auth_middleware, optional_auth_middleware, AuthPrincipal, AuthState, OAuthConfig,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -33,7 +33,8 @@ use fermi::gas::GasFees;
 use tokio::sync::broadcast;
 
 use agent_bestiary_memory::{
-    Agent, AnthropicEmbeddings, EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
+    Agent, AnthropicEmbeddings, EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore,
+    MockEmbeddings,
 };
 use agent_bestiary_ontology::{GitConfig, WorkspaceGitManager};
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine};
@@ -1601,6 +1602,17 @@ async fn main() {
         .route(
             "/api/rabble/:id/co-presence",
             post(handlers::social::record_co_presence_handler),
+        )
+        // Rabble follows (Decision D3 — active notifications)
+        .route(
+            "/api/rabbles/:id/follow",
+            post(handlers::social::follow_rabble_handler)
+                .put(handlers::social::update_follow_handler)
+                .delete(handlers::social::unfollow_rabble_handler),
+        )
+        .route(
+            "/api/my/following",
+            get(handlers::social::list_following_handler),
         )
         // Social visibility
         .route(

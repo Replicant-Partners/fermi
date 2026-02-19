@@ -1106,6 +1106,17 @@ pub async fn join_swarm_handler(
                 None,
             )
             .await;
+
+            // Notify rabble followers (Decision D3)
+            crate::handlers::social::notify_rabble_followers(
+                &pool_ae,
+                swarm_id,
+                "join",
+                &format!("{} joined {}", c_name_ae, swarm_name),
+                Some(&format!("A new creature has joined the rabble")),
+                Some(uid_ae.as_str()),
+            )
+            .await;
         });
     }
 
