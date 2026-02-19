@@ -362,6 +362,19 @@ pub async fn record_flight_handler(
         });
     }
 
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        req.creature_id,
+        "flight_started",
+        json!({
+            "flight_id": flight_id,
+            "h3_cell": h3_cell,
+            "location_name": req.location_name,
+            "started_at": now.to_rfc3339(),
+        }),
+    );
+
     Ok(Json(json!({
         "flight_id": flight_id,
         "creature_id": req.creature_id,
@@ -407,6 +420,19 @@ pub async fn end_flight_handler(
             "Flight not found or already ended".to_string(),
         ));
     }
+
+    // Fetch creature_id for this flight (needed for SSE broadcast + background work)
+    let creature_id: Uuid =
+        sqlx::query_scalar("SELECT creature_id FROM creature_flights WHERE flight_id = $1")
+            .bind(flight_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to resolve creature: {}", e),
+                )
+            })?;
 
     // Defer versioned state recording to background
     {
@@ -792,6 +818,18 @@ pub async fn end_flight_handler(
             .await;
         });
     }
+
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        creature_id,
+        "flight_ended",
+        json!({
+            "flight_id": flight_id,
+            "ended_at": now.to_rfc3339(),
+            "duration_seconds": req.duration_seconds,
+        }),
+    );
 
     Ok(Json(json!({
         "flight_id": flight_id,
@@ -1478,6 +1516,18 @@ pub async fn perch_handler(
             .await;
         });
     }
+
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        creature_id,
+        "state_changed",
+        json!({
+            "state": "perched",
+            "creature_id": creature_id,
+            "location_name": perch_name,
+        }),
+    );
 
     Ok(Json(response))
 }
@@ -2216,6 +2266,18 @@ pub async fn fly_handler(
         });
     }
 
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        creature_id,
+        "flight_started",
+        json!({
+            "flight_id": flight_id,
+            "swarm_id": swarm_id,
+            "pattern": if is_expedition { "expedition" } else { "fly" },
+        }),
+    );
+
     Ok(Json(json!({
         "flight_id": flight_id,
         "swarm_id": swarm_id,
@@ -2818,6 +2880,19 @@ pub async fn join_swarm_handler(
         });
     }
 
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        req.creature_id,
+        "entered_rabble",
+        json!({
+            "swarm_id": swarm_id,
+            "flight_id": flight_id,
+            "funding_mode": funding_mode,
+            "first_join": is_first_join,
+        }),
+    );
+
     Ok(Json(json!({
         "swarm_id": swarm_id,
         "flight_id": flight_id,
@@ -2937,6 +3012,18 @@ pub async fn update_creature_presence_handler(
         });
     }
 
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        creature_id,
+        "presence_changed",
+        json!({
+            "creature_id": creature_id,
+            "presence": req.presence,
+            "specimen_name": specimen_name,
+        }),
+    );
+
     Ok(Json(json!({
         "creature_id": creature_id,
         "presence": req.presence,
@@ -3045,6 +3132,19 @@ pub async fn tether_handler(
         .execute(pool)
         .await
         .ok();
+
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        creature_id,
+        "state_changed",
+        json!({
+            "state": "tethered",
+            "tether_id": tether_id,
+            "tether_type": tether_type,
+            "device_label": req.device_label,
+        }),
+    );
 
     Ok(Json(json!({
         "tether_id": tether_id,
@@ -3164,6 +3264,18 @@ pub async fn untether_handler(
         .execute(pool)
         .await
         .ok();
+
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        creature_id,
+        "state_changed",
+        json!({
+            "state": "untethered",
+            "creature_id": creature_id,
+            "stayed_in_rabble": stayed_in_rabble,
+        }),
+    );
 
     Ok(Json(json!({
         "creature_id": creature_id,
@@ -3320,6 +3432,23 @@ pub async fn push_telemetry_handler(
                 creature_id, last.lat, last.lng
             );
         }
+    }
+
+    // Broadcast creature SSE event — send latest position to subscribers
+    if let Some(last) = req.points.last() {
+        crate::handlers::streams::emit_creature_event(
+            &state,
+            creature_id,
+            "location_update",
+            json!({
+                "lat": last.lat,
+                "lng": last.lng,
+                "altitude": last.altitude,
+                "speed": last.speed,
+                "heading": last.heading,
+                "points_count": inserted,
+            }),
+        );
     }
 
     Ok(Json(json!({

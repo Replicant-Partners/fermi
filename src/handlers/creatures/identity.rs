@@ -929,6 +929,18 @@ pub async fn transfer_creature_handler(
         });
     }
 
+    // Broadcast creature SSE event
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        cid,
+        "transferred",
+        json!({
+            "creature_id": cid,
+            "new_owner": body.recipient_id,
+            "creature_name": creature_name,
+        }),
+    );
+
     Ok(Json(json!({
         "status": "transferred",
         "creature_id": creature_id,

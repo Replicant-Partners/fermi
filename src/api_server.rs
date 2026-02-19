@@ -286,6 +286,14 @@ pub(crate) struct RabbleEvent {
     pub message: serde_json::Value,
 }
 
+/// Creature lifecycle event — broadcast to per-creature SSE subscribers.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CreatureEvent {
+    pub creature_id: uuid::Uuid,
+    pub event_type: String,
+    pub payload: serde_json::Value,
+}
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: PgPool,
@@ -303,6 +311,7 @@ pub(crate) struct AppState {
     pub(crate) rate_limits: RateLimitConfig,
     pub(crate) ws_broadcast: broadcast::Sender<WorkspaceEvent>,
     pub(crate) rabble_broadcast: broadcast::Sender<RabbleEvent>,
+    pub(crate) creature_broadcast: broadcast::Sender<CreatureEvent>,
     pub(crate) secret_encryptor: Option<Arc<fermi_auth::SecretEncryptor>>,
 }
 
@@ -632,6 +641,7 @@ async fn main() {
         rate_limits: RateLimitConfig::from_env(),
         ws_broadcast: broadcast::channel::<WorkspaceEvent>(256).0,
         rabble_broadcast: broadcast::channel::<RabbleEvent>(256).0,
+        creature_broadcast: broadcast::channel::<CreatureEvent>(512).0,
         secret_encryptor: fermi_auth::SecretEncryptor::from_env().ok().map(Arc::new),
     };
 
@@ -1381,6 +1391,11 @@ async fn main() {
         .route(
             "/api/flights/import",
             post(handlers::creatures::import_flight_handler),
+        )
+        // Creature SSE stream (real-time push of lifecycle events)
+        .route(
+            "/api/creatures/:creature_id/stream",
+            get(handlers::streams::creature_stream_handler),
         )
         // Perch + Fly model (replaces plan_flight)
         .route(

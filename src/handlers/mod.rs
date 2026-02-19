@@ -30,6 +30,7 @@ pub mod qr_codes;
 pub mod rabble_chat;
 pub mod rabble_workspace;
 pub mod social;
+pub mod streams;
 pub mod swarm_algorithms;
 pub mod swarm_telemetry;
 pub mod teams;

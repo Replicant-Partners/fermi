@@ -463,6 +463,28 @@ pub async fn accept_friendship_handler(
     .execute(pool)
     .await;
 
+    // Broadcast creature SSE events — both creatures get notified
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        creature_a,
+        "friend_accepted",
+        json!({
+            "friendship_id": friendship_id,
+            "friend_creature_id": creature_b,
+            "friend_name": name_b,
+        }),
+    );
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        creature_b,
+        "friend_accepted",
+        json!({
+            "friendship_id": friendship_id,
+            "friend_creature_id": creature_a,
+            "friend_name": name_a,
+        }),
+    );
+
     Ok(Json(json!({
         "status": "accepted",
         "friendship_id": friendship_id,
