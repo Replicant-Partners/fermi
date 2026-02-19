@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use std::sync::Arc;
 
-use agent_bestiary_memory::{Agent, EvalRun, EvalTestCase, MemoryStore};
+use agent_bestiary_memory::{Agent, EvalRun, EvalTestCase};
 use fermi::agent_backend::AgentStatus;
 
 use fermi::agent_backend::executor::AgentExecutor;

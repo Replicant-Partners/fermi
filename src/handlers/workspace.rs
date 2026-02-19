@@ -8,7 +8,7 @@ use axum::{
 };
 use fermi::gas::charge_gas;
 use fermi_auth::{
-    credit_charge, credit_charge_purchased_only, get_or_create_wallet, teams, AuthPrincipal,
+    credit_charge_purchased_only, get_or_create_wallet, teams, AuthPrincipal,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -16,7 +16,7 @@ use sqlx::{PgPool, Row};
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use agent_bestiary_memory::{Agent, CoherenceEvaluation, MemoryStore, WorkspaceMessage};
+use agent_bestiary_memory::{Agent, CoherenceEvaluation, WorkspaceMessage};
 use agent_bestiary_ontology::WorkspaceGitManager;
 use coherence_core::types::{ConversationId, Message as CoherenceMessage, ParticipantId};
 use coherence_engine::SettlingEngine;

@@ -18,65 +18,56 @@ mod tethering;
 pub use query::{
     creature_animation_layer_handler, creature_animation_status_handler, creature_flights_handler,
     creature_image_handler, creature_versions_handler, feed_handler, get_creature_handler,
-    list_creatures_handler, list_visible_flights_handler, CreatureQuery, FeedQuery,
-    PaginationQuery, VisibleFlightsQuery,
+    list_creatures_handler, list_visible_flights_handler,
 };
 
 // ─── Re-exports: flights ───────────────────────────────────────────
 pub use flights::{
     append_telemetry_handler, end_flight_handler, export_flight_handler, fly_handler,
-    import_flight_handler, plan_flight_handler, record_flight_handler, AppendTelemetryRequest,
-    EndFlightRequest, FlyRequest, ImportFlightRequest, PlanFlightRequest, RecordFlightRequest,
+    import_flight_handler, record_flight_handler,
 };
 
 // ─── Re-exports: state (location + rabble) ─────────────────────────
 pub use state::{
     favourite_creature_handler, host_rabble_handler, join_by_qr_token_handler,
-    join_swarm_handler, perch_handler, unfavourite_creature_handler, HostRabbleRequest,
-    JoinSwarmRequest, PerchRequest,
+    join_swarm_handler, perch_handler, unfavourite_creature_handler,
 };
 
 // ─── Re-exports: tethering ─────────────────────────────────────────
 pub use tethering::{
     get_track_handler, push_telemetry_handler, tether_handler, untether_handler,
-    update_creature_presence_handler, PushTelemetryRequest, TelemetryPoint, TetherRequest,
-    TrackQuery, UpdatePresenceRequest,
+    update_creature_presence_handler,
 };
 
 // ─── Re-exports: agent_modules ─────────────────────────────────────
 pub use agent_modules::{
     creature_dream_handler, creature_level_handler, enemy_sensor_handler,
-    genome_profiler_handler, prey_locator_handler, CreatureDreamRequest, EnemySensorRequest,
-    GenomeProfilerRequest, PreyLocatorRequest,
+    genome_profiler_handler, prey_locator_handler,
 };
 
 // ─── Re-exports: identity ──────────────────────────────────────────
 pub use identity::{
     animate_creature_handler, generate_art_batch_handler, generate_art_handler,
-    mint_creature_handler, persist_animation_layer, persist_creature_image, sosa_opt_in_handler,
+    mint_creature_handler, sosa_opt_in_handler,
     transfer_creature_handler, update_creature_handler, update_creature_status_handler,
-    update_creature_visibility_handler, BatchArtRequest, GenerateArtRequest, MintCreatureRequest,
-    SosaOptInRequest, TransferCreatureRequest, UpdateCreatureRequest, UpdateCreatureStatusRequest,
-    UpdateVisibilityRequest,
+    update_creature_visibility_handler,
 };
 
 // ─── Re-exports: swarms ────────────────────────────────────────────
 pub use swarms::{
     create_swarm_handler, get_swarm_handler, list_swarms_handler, my_rabbles_handler,
-    update_swarm_handler, CreateSwarmRequest, SwarmQuery, UpdateSwarmRequest,
+    update_swarm_handler,
 };
 
 // ─── Re-exports: collections ───────────────────────────────────────
 pub use collections::{
     create_collection_handler, list_collections_handler, update_collection_handler,
-    CreateCollectionRequest, UpdateCollectionRequest,
 };
 
 // ─── Re-exports: devices ───────────────────────────────────────────
 pub use devices::{
     list_devices_handler, pair_device_handler, report_device_location_handler,
-    unpair_device_handler, update_device_handler, PairDeviceRequest, ReportLocationRequest,
-    UpdateDeviceRequest,
+    unpair_device_handler, update_device_handler,
 };
 
 // ─── Shared helpers (used across submodules) ────────────────────────
@@ -95,6 +86,7 @@ pub(crate) fn generate_qr_token() -> String {
 }
 
 /// Try to extract a JSON object from an agent response that may contain markdown fences
+#[allow(dead_code)]
 pub(crate) fn extract_json_from_response(text: &str) -> Option<serde_json::Value> {
     // Try direct parse first
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {

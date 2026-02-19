@@ -5,7 +5,6 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use fermi_auth::AuthPrincipal;
 use serde_json::{json, Value};
 use sqlx::Row;
 

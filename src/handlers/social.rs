@@ -1450,6 +1450,7 @@ pub(crate) async fn record_co_presence(
 }
 
 /// Helper: update co-presence left_at when a creature leaves a rabble.
+#[allow(dead_code)]
 pub(crate) async fn update_co_presence_departure(
     pool: &sqlx::PgPool,
     rabble_id: Uuid,

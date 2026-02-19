@@ -2,7 +2,6 @@
 //! state transitions, H3 computation, and condition management.
 
 use axum::http::StatusCode;
-use serde_json::json;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -25,6 +24,7 @@ pub(crate) fn compute_h3_cell(lat: f64, lng: f64) -> String {
 // ═══════════════════════════════════════════════════════════════════
 
 /// Verify that the given user owns the creature. Returns the full creature row on success.
+#[allow(dead_code)]
 pub(crate) async fn verify_creature_ownership(
     pool: &PgPool,
     creature_id: Uuid,
@@ -60,6 +60,7 @@ pub(crate) async fn verify_creature_ownership(
 
 /// Auto-end any active flight for a creature. Returns the old flight info if one was ended.
 /// Used before perch, fly, record_flight, etc. to ensure clean state transitions.
+#[allow(dead_code)]
 pub(crate) async fn auto_end_active_flight(
     pool: &PgPool,
     creature_id: Uuid,
@@ -112,6 +113,7 @@ pub(crate) async fn auto_end_active_flight(
 }
 
 /// Info about a flight that was auto-ended.
+#[allow(dead_code)]
 pub(crate) struct EndedFlightInfo {
     pub flight_id: Uuid,
     pub swarm_id: Option<Uuid>,
@@ -278,6 +280,7 @@ pub(crate) async fn init_conditions(
 }
 
 /// Update a specific condition.
+#[allow(dead_code)]
 pub(crate) async fn update_condition_visibility(
     pool: &PgPool,
     creature_id: Uuid,

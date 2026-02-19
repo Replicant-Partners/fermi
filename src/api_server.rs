@@ -1,35 +1,27 @@
-use axum::body::Bytes;
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::State,
     http::{header, HeaderValue, StatusCode},
     middleware,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::{delete, get, patch, post, put},
-    Json, Router,
+    routing::{delete, get, patch, post, put}, Router,
 };
 use fermi::agent_backend::{
     agent_card::{
         AgentCapabilities, AgentCard, AgentDependencies, AgentMetadata as CardMetadata,
         AgentPerformance, AgentTier, AgentUsage, OntologyStats, UsageWindow,
     },
-    executor::{AgentExecutor, AgentOutput, AgentStatus, ExecutionContext},
+    executor::{AgentExecutor, AgentOutput, AgentStatus},
     llm_executor::LLMExecutor,
     multi_model_executor::MultiModelExecutor,
     registry::AgentRegistry,
-    tool_executor::ToolAwareExecutor,
-    tools::{ToolContext, ToolRegistry},
 };
 use fermi::ast;
 use fermi_auth::{
-    api_keys, auth_middleware, build_github_auth_url, build_google_auth_url, create_session_token,
-    credit_charge, credit_deposit, credit_get_balance, credit_get_transactions, credit_grant,
-    generate_state, get_or_create_wallet, github_exchange_code, github_fetch_user_info,
-    google_exchange_code, google_fetch_user_info, optional_auth_middleware, sync_user, teams,
-    AuthPrincipal, AuthState, CreditTransaction, MemberType, OAuthConfig, ObjectType, Permission,
-    ShareType, TeamRole, Wallet,
+    auth_middleware, optional_auth_middleware,
+    AuthPrincipal, AuthState, OAuthConfig,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -37,20 +29,14 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
-use fermi::gas::{charge_gas, check_low_balance, GasFees};
+use fermi::gas::GasFees;
 use tokio::sync::broadcast;
 
 use agent_bestiary_memory::{
-    Agent, AgentUpdate, AnthropicEmbeddings, CoherenceEvaluation, ConsolidationLock,
-    ConsolidationWorker, EmbeddingGenerator, Episode, EvalRun, EvalTestCase, ExecutionStatus,
-    LLMProviderConfig, LLMProviderFactory, MemoryStore, MockEmbeddings, ProviderType,
-    WorkspaceMessage,
+    Agent, AnthropicEmbeddings, EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
 };
 use agent_bestiary_ontology::{GitConfig, WorkspaceGitManager};
-use agent_bestiary_projector::{ProjectionCache, ProjectionEngine, ProjectionMethod};
-use coherence_core::types::{ConversationId, Message as CoherenceMessage, ParticipantId};
-use coherence_engine::SettlingEngine;
-use coherence_observer::ConversationObserver;
+use agent_bestiary_projector::{ProjectionCache, ProjectionEngine};
 
 // ─── Rate Limiter ──────────────────────────────────────────────────
 
@@ -175,6 +161,7 @@ async fn rate_limit_middleware(
 }
 
 /// Rate limit middleware for LLM endpoints (stricter, per-user)
+#[allow(dead_code)]
 async fn llm_rate_limit_middleware(
     State(state): State<AppState>,
     req: axum::extract::Request,

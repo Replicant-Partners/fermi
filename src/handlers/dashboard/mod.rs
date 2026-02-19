@@ -6,9 +6,9 @@ use axum::{
     Json,
 };
 use fermi_auth::AuthPrincipal;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::AppState;

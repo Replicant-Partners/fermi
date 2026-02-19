@@ -11,7 +11,7 @@ pub fn generate_histogram(
     let range = results.max - results.min;
     let bin_width = range / bin_count as f64;
 
-    let mut bins = vec![0; bin_count];
+    let bins = vec![0; bin_count];
 
     // We don't have individual samples, so approximate from percentiles
     // For prototype, create a simple bar chart showing key percentiles

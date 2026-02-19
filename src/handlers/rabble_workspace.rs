@@ -7,7 +7,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 use fermi_auth::{get_or_create_wallet, teams, AuthPrincipal};
 use serde_json::{json, Value};
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use std::sync::Arc;
 use uuid::Uuid;
 

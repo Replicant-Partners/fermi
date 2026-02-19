@@ -1,7 +1,7 @@
 //! Billing and Stripe handlers.
 
 use axum::{body::Bytes, extract::State, http::StatusCode, Json};
-use fermi_auth::{credit_deposit, credit_grant, get_or_create_wallet, AuthPrincipal};
+use fermi_auth::{credit_grant, get_or_create_wallet, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;

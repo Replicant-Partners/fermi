@@ -423,7 +423,7 @@ pub async fn execute_notebook_handler(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid cells: {}", e)))?;
 
     // Parse FPL
-    let mut lexer = Lexer::new(&fpl_source);
+    let lexer = Lexer::new(&fpl_source);
     let tokens = lexer.tokenize().map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -431,7 +431,7 @@ pub async fn execute_notebook_handler(
         )
     })?;
 
-    let mut parser = Parser::new(tokens);
+    let parser = Parser::new(tokens);
     let program = parser
         .parse()
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Parse failed: {}", e)))?;

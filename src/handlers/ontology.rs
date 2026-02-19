@@ -5,11 +5,9 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use fermi_auth::AuthPrincipal;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
-use std::sync::Arc;
 
 use agent_bestiary_projector::ProjectionMethod;
 

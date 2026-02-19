@@ -10,7 +10,6 @@ use fermi::gas::{charge_gas, check_low_balance};
 use fermi_auth::{credit_charge, get_or_create_wallet, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::Row;
 use std::sync::Arc;
 
 use agent_bestiary_memory::EmbeddingGenerator;

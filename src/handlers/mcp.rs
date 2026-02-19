@@ -7,11 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
-use fermi::agent_backend::executor::AgentExecutor;
-use fermi::agent_backend::tool_executor::ToolAwareExecutor;
-use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 

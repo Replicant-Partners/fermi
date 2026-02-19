@@ -1,14 +1,13 @@
 //! Flight lifecycle handlers — record, end, plan, fly, export, import, append telemetry.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::handlers::rabble_workspace;
@@ -16,7 +15,7 @@ use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
-use super::helpers::{auto_end_active_flight, compute_h3_cell, find_creature_workspace, get_current_state, record_transition};
+use super::helpers::{compute_h3_cell, get_current_state, record_transition};
 
 
 #[derive(Deserialize)]
@@ -842,6 +841,7 @@ pub struct PlanFlightRequest {
 }
 
 /// POST /api/flights/plan — generate an agentic flight plan via flight_coordinator
+#[allow(dead_code)]
 pub async fn plan_flight_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,

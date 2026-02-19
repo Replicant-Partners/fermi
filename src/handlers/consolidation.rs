@@ -13,14 +13,14 @@ use sqlx::Row;
 use std::sync::Arc;
 
 use agent_bestiary_memory::{
-    ConsolidationLock, ConsolidationWorker, EmbeddingGenerator, LLMProviderConfig,
+    ConsolidationLock, ConsolidationWorker, LLMProviderConfig,
     LLMProviderFactory, ProviderType,
 };
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
-use crate::{resolve_agent, resolve_agent_card, AppState};
+use crate::{resolve_agent, AppState};
 // ─── Dreaming budget ───────────────────────────────────────────────
 
 pub async fn get_dreaming_budget(

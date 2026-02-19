@@ -389,6 +389,7 @@ pub async fn creature_versions_handler(
 /// GET /api/creatures/:creature_id/versions/latest?transition_type=enemy_scan&after=<ISO8601>
 /// Poll endpoint: returns the most recent version matching the given transition_type
 /// created after the specified timestamp. Used by pills to poll for fire-and-forget results.
+#[allow(dead_code)]
 pub async fn creature_version_poll_handler(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

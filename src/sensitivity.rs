@@ -407,6 +407,7 @@ fn compute_bootstrap_se(
 ///
 /// This is a simplified version for the first iteration.
 /// Full implementation would run conditional simulations.
+#[allow(dead_code)]
 fn estimate_variance_contribution(
     program: &Program,
     driver_name: &str,

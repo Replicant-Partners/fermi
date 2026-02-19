@@ -7,6 +7,7 @@ use axum::{
 
 // ─── Fallback (404) ────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub async fn fallback_404() -> (StatusCode, Html<String>) {
     let html = std::fs::read_to_string("templates/404.html")
         .unwrap_or_else(|_| "<h1>404 — Not Found</h1>".to_string());
