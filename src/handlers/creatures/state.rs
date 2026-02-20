@@ -485,40 +485,33 @@ pub async fn host_rabble_handler(
     });
 
     // Record versioned state in background — not critical for response
+    // Synchronous: creature_state must be "hosting" before the response returns,
+    // so the client re-fetch sees the updated state immediately.
+    if let Err(e) = record_transition(
+        pool,
+        creature_id,
+        "hosting",
+        Some("perched"),
+        "host",
+        &user_id,
+        center_lat,
+        center_lng,
+        &h3_cell,
+        Some(swarm_id),
+        None,
+        &json!({
+            "flight_id": flight_id,
+            "swarm_id": swarm_id,
+            "rabble_name": rabble_name,
+            "walk_in_price": req.walk_in_price,
+        }),
+    )
+    .await
     {
-        let pool_bg = state.memory_store.pool().clone();
-        let user_bg = user_id.clone();
-        let h3_bg = h3_cell.clone();
-        let name_bg = rabble_name.clone();
-        let walk_in_bg = req.walk_in_price;
-        tokio::spawn(async move {
-            if let Err(e) = record_transition(
-                &pool_bg,
-                creature_id,
-                "hosting",
-                Some("perched"),
-                "host",
-                &user_bg,
-                center_lat,
-                center_lng,
-                &h3_bg,
-                Some(swarm_id),
-                None,
-                &json!({
-                    "flight_id": flight_id,
-                    "swarm_id": swarm_id,
-                    "rabble_name": name_bg,
-                    "walk_in_price": walk_in_bg,
-                }),
-            )
-            .await
-            {
-                eprintln!(
-                    "[host] record_transition failed for creature {}: {}",
-                    creature_id, e
-                );
-            }
-        });
+        eprintln!(
+            "[host] record_transition failed for creature {}: {}",
+            creature_id, e
+        );
     }
 
     // Record co-presence for post-rabble recap (host is first creature present)
