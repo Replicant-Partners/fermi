@@ -534,6 +534,78 @@ is set once on build. Subsequent taps don't move the map.
 
 ---
 
+### F21. One Host Per Rabble — Enforce + Show Prominently
+
+**What was said:**
+> "There can only be one host per rabble — that needs fixing."
+> "On the rabble chat and rabble cards that rabble host needs to be obvious."
+
+**Analysis:**
+
+Two issues here:
+
+**21a. Enforcement:**
+The backend currently allows multiple creatures from the same user to join a rabble, and the "host" concept is derived from `creator_id` on the `swarm_events` table. But there's no enforced constraint that says "only one creature can be the anchor/host creature." The `anchor_creature_id` field exists but:
+- It's set during `host_rabble_handler` (the creature that creates the rabble)
+- It can be transferred via `transfer_anchor_handler`
+- But nothing prevents the same user from adding multiple creatures, making it unclear which one is "the host creature"
+
+**Fix (backend):**
+- The host is the USER who created the rabble (`creator_id`). Their anchor creature (`anchor_creature_id`) is the host creature.
+- Clarify that "host" = the creator user, "anchor" = the specific creature anchoring the rabble
+- Ensure the anchor creature is always shown first in member lists
+
+**21b. Prominence on UI:**
+On rabble cards and rabble chat, the host should be immediately obvious:
+- Rabble card: "Hosted by @username" with the anchor creature avatar
+- Rabble chat app bar: host name/avatar visible
+- Member list: host creature first with a crown/star badge
+
+**Fix (Flutter):**
+- `RabblesScreen` cards: already show host name for "joined" rabbles — also show for hosting rabbles ("You're hosting with Luna ⚓")
+- `RabbleChatScreen` app bar: add host name + anchor creature mini avatar
+- Member list: sort host creature first, add 👑 badge
+
+**Files to change:**
+- `rabble/lib/screens/rabbles_screen.dart` — host creature prominence on cards
+- `rabble/lib/screens/rabble_chat.dart` — host info in app bar
+- `rabble/lib/widgets/creature_link.dart` — optional crown/host badge via `trailing`
+
+---
+
+### F22. Rabble Description
+
+**What was said:**
+> "It would be nice to have a rabble description."
+
+**Analysis:**
+
+The backend already supports `description` on `swarm_events`:
+- `CreateSwarmRequest` has `description: Option<String>`
+- `UpdateSwarmRequest` has `description: Option<String>`
+- The field is stored and returned in API responses
+- The `SwarmEvent` Flutter model already has `description` field
+
+But the Flutter UI never shows or lets you set it:
+- `host_rabble_handler` doesn't prompt for description
+- Rabble cards don't show description
+- Rabble chat doesn't show description
+- There's no way to edit it after creation
+
+**Fix (Flutter):**
+- Host rabble flow: add optional description field to the host dialog
+- Rabble cards: show description below name (truncated, 2 lines max)
+- Rabble chat: show description in an info section below the app bar
+- Edit rabble sheet (F8): include description field
+
+**Files to change:**
+- `rabble/lib/screens/rabbles_screen.dart` — show description on cards
+- `rabble/lib/screens/rabble_chat.dart` — show description below app bar
+- `rabble/lib/screens/creature/creature_screen.dart` — if hosting, show description in rabble hub section
+- `rabble/lib/widgets/creature_picker.dart` or host flow — add description input when creating rabble
+
+---
+
 ### F14. Remove Environment Feed View — Redundant with Journals
 
 **What was said:**
@@ -865,13 +937,15 @@ profile page looks jarring and broken.
 3. **F1** — Creature card simplification (remove legacy Live/Log tabs, promote map, single scroll, keep Chat/Peek)
 4. **F13 + F14 + F20** — Environment tab = map only, map is default, "My Location" zooms to GPS
 5. **F15** — Journals restructure: Activity | Friends | My Creatures | Flights (rename All Bugs, add friends filter, remove redundant Reports)
-6. **F16 + F17** — WhatsApp-style chat layout + creature handle colours (mine = mint, others = amber)
+6. **F16 + F17** — WhatsApp-style chat layout + creature handle colours (mine = mint, others = amber) ✅ DONE
 7. **F2** — Force-refresh creature state + deduplicate presences
 8. **F3** — Click-through to rabble (tappable row, keep Chat/Peek)
 9. **F8** — Rabble card enhancements (sort by activity, host creature, quick actions)
 10. **F9b** — Creature context when entering rabble ("You're here as Luna")
-11. **F10** — Profile page dark theming
+11. **F10** — Profile page dark theming ✅ DONE
 12. **F12** — Map visual distinction (larger rabble markers with names, creature state rings)
+13. **F21** — Host prominence (one host per rabble, crown badge, host in app bar)
+14. **F22** — Rabble description (show on cards + chat, editable in settings)
 
 ### Should (same sprint if time)
 13. **F5 + F9a** — Remove ALL polling (explore map + feed), rely on SSE everywhere
@@ -904,8 +978,8 @@ profile page looks jarring and broken.
 | `rabble/lib/screens/creature/creature_live.dart` | F1 (absorbed into main screen) |
 | `rabble/lib/screens/creature/creature_history.dart` | F7 (becomes expandable journal content) |
 | `rabble/lib/screens/collection_screen.dart` | F2 |
-| `rabble/lib/screens/rabbles_screen.dart` | F8 |
-| `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b, F18, F19 (AR toggle, host-only Reynolds, extract invite + creature picker, creature context banner) |
+| `rabble/lib/screens/rabbles_screen.dart` | F8, F21, F22 |
+| `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b, F18, F19, F21, F22 (AR toggle, host-only Reynolds, extract invite + creature picker, creature context banner, host prominence, description) |
 | `rabble/lib/widgets/ar_panel.dart` | F6, F19 (new — inline AR camera panel for split view) |
 | `rabble/lib/widgets/flight_dynamics.dart` | F18 (gated to host-only, no code changes — just caller gating) |
 | `rabble/lib/screens/explore_screen.dart` | F5, F9a, F12, F13, F14, F20 (map-only, remove feed view, visual distinction, MapController + GPS zoom) |
