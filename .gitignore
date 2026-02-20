@@ -62,3 +62,4 @@ tree-sitter-fpl/build/
 # Vercel
 .vercel
 Screenshot_20260213-024023.png
+.env*.local

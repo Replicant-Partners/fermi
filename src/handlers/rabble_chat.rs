@@ -618,52 +618,71 @@ pub async fn invite_to_rabble(
 }
 
 /// GET /api/rabble/:id/members — list rabble members (creator only).
+/// GET /api/rabble/:id/members — list actual creatures currently in this rabble.
+///
+/// Any authenticated user can view members (needed for creature tray, chat context,
+/// member list). Returns creatures with active flights in this swarm, not object_shares.
 pub async fn list_rabble_members(
     State(state): State<AppState>,
-    principal: fermi_auth::AuthPrincipal,
+    _principal: fermi_auth::AuthPrincipal,
     Path(swarm_id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let caller = principal.user_id();
+    // Verify rabble exists
+    let swarm =
+        sqlx::query("SELECT creator_id, anchor_creature_id FROM swarm_events WHERE swarm_id = $1")
+            .bind(swarm_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or((StatusCode::NOT_FOUND, "Rabble not found".into()))?;
 
-    // Verify caller is creator
-    let row = sqlx::query("SELECT creator_id FROM swarm_events WHERE swarm_id = $1")
-        .bind(swarm_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "Rabble not found".into()))?;
+    let creator_id: String = swarm.get("creator_id");
+    let anchor_creature_id: Option<uuid::Uuid> = swarm
+        .try_get::<Option<uuid::Uuid>, _>("anchor_creature_id")
+        .unwrap_or(None);
 
-    let creator_id: String = row.get("creator_id");
-    if creator_id != caller {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only the rabble creator can view members".into(),
-        ));
-    }
-
-    let shares = sqlx::query(
-        "SELECT id, share_type, share_target, permission, created_at
-         FROM object_shares
-         WHERE object_type = 'rabble' AND object_id = $1
-         ORDER BY created_at ASC",
+    // Get all creatures with active flights in this rabble
+    let rows = sqlx::query(
+        "SELECT c.creature_id, c.specimen_name, c.scientific_name,
+                c.species_group, c.asset_path, c.owner_id,
+                cf.data_source, cf.started_at,
+                u.display_name AS owner_display_name
+         FROM creature_flights cf
+         JOIN creatures c ON c.creature_id = cf.creature_id
+         LEFT JOIN users u ON u.user_id = c.owner_id
+         WHERE cf.swarm_id = $1 AND cf.ended_at IS NULL
+         ORDER BY cf.started_at ASC",
     )
-    .bind(swarm_id.to_string())
+    .bind(swarm_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let members: Vec<Value> = shares.iter().map(|r| {
-        json!({
-            "id": r.try_get::<uuid::Uuid, _>("id").ok(),
-            "share_type": r.try_get::<String, _>("share_type").ok(),
-            "share_target": r.try_get::<String, _>("share_target").ok(),
-            "permission": r.try_get::<String, _>("permission").ok(),
-            "invited_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|t| t.to_rfc3339()),
+    let members: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let cid: uuid::Uuid = r.get("creature_id");
+            let is_anchor = anchor_creature_id == Some(cid);
+            json!({
+                "creature_id": cid,
+                "creature_name": r.try_get::<Option<String>, _>("specimen_name").unwrap_or(None),
+                "specimen_name": r.try_get::<Option<String>, _>("specimen_name").unwrap_or(None),
+                "scientific_name": r.try_get::<Option<String>, _>("scientific_name").unwrap_or(None),
+                "species_group": r.try_get::<Option<String>, _>("species_group").unwrap_or(None),
+                "asset_path": r.try_get::<Option<String>, _>("asset_path").unwrap_or(None),
+                "creature_image": r.try_get::<Option<String>, _>("asset_path").unwrap_or(None),
+                "owner_id": r.get::<String, _>("owner_id"),
+                "owner_display_name": r.try_get::<Option<String>, _>("owner_display_name").unwrap_or(None),
+                "data_source": r.try_get::<String, _>("data_source").unwrap_or_else(|_| "synthetic".into()),
+                "is_anchor": is_anchor,
+                "joined_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("started_at").ok().map(|t| t.to_rfc3339()),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(json!({
         "creator_id": creator_id,
+        "anchor_creature_id": anchor_creature_id,
         "members": members,
         "count": members.len(),
     })))
