@@ -138,7 +138,7 @@ pub async fn search_users_handler(
     // Search across multiple fields: display_name, email, user_id, github_username,
     // google_id, AND creature specimen_names (so you can find someone by their creature)
     let rows = sqlx::query(
-        "SELECT DISTINCT u.user_id, u.display_name, u.avatar_url, u.bio,
+        "SELECT u.user_id, u.display_name, u.avatar_url, u.bio,
                 u.github_username, u.email,
                 (SELECT COUNT(*) FROM agents a WHERE a.user_id = u.user_id AND a.visibility = 'public') as public_agent_count,
                 (SELECT COUNT(*) FROM creatures c WHERE c.owner_id = u.user_id AND c.status = 'active') as creature_count,
@@ -153,11 +153,13 @@ pub async fn search_users_handler(
             OR u.github_username ILIKE $1
             OR u.google_id ILIKE $1
             OR c2.specimen_name ILIKE $1
+         GROUP BY u.user_id, u.display_name, u.avatar_url, u.bio,
+                  u.github_username, u.email
          ORDER BY
-            CASE WHEN u.display_name ILIKE $1 THEN 0
-                 WHEN u.github_username ILIKE $1 THEN 1
-                 WHEN c2.specimen_name ILIKE $1 THEN 2
-                 ELSE 3 END,
+            MIN(CASE WHEN u.display_name ILIKE $1 THEN 0
+                     WHEN u.github_username ILIKE $1 THEN 1
+                     WHEN c2.specimen_name ILIKE $1 THEN 2
+                     ELSE 3 END),
             u.display_name
          LIMIT $2",
     )
