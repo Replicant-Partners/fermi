@@ -16,6 +16,8 @@ use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
+use super::helpers::compute_h3_cell;
+
 // ─── My Rabbles (hosted vs participating, with creature placement) ──
 
 /// GET /api/my/rabbles — lists all rabbles the caller hosts or participates in,
@@ -740,6 +742,9 @@ pub struct UpdateSwarmRequest {
     pub walk_in_price: Option<i32>,
     pub visibility: Option<String>,
     pub radius_meters: Option<i32>,
+    pub center_lat: Option<f64>,
+    pub center_lng: Option<f64>,
+    pub location_name: Option<String>,
 }
 
 /// PATCH /api/swarms/:swarm_id — update swarm settings (creator only, no gas)
@@ -810,12 +815,35 @@ pub async fn update_swarm_handler(
         int_binds.push((bind_idx as usize, radius));
     }
 
+    // Location move fields
+    let is_move = req.center_lat.is_some() && req.center_lng.is_some();
+    let h3_cell = if is_move {
+        let lat = req.center_lat.unwrap();
+        let lng = req.center_lng.unwrap();
+        let h3 = compute_h3_cell(lat, lng);
+        bind_idx += 1;
+        set_clauses.push(format!("center_lat = ${bind_idx}"));
+        bind_idx += 1;
+        set_clauses.push(format!("center_lng = ${bind_idx}"));
+        bind_idx += 1;
+        set_clauses.push(format!("h3_cell = ${bind_idx}"));
+        if req.location_name.is_some() {
+            bind_idx += 1;
+            set_clauses.push(format!("location_name = ${bind_idx}"));
+        }
+        Some(h3)
+    } else {
+        None
+    };
+
     if set_clauses.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "No fields to update".to_string()));
     }
 
     let update_sql = format!(
-        "UPDATE swarm_events SET {} WHERE swarm_id = $1 RETURNING swarm_id, name, description, visibility, walk_in_price, radius_meters",
+        "UPDATE swarm_events SET {} WHERE swarm_id = $1 \
+         RETURNING swarm_id, name, description, visibility, walk_in_price, radius_meters, \
+                  center_lat, center_lng, h3_cell, location_name",
         set_clauses.join(", ")
     );
 
@@ -845,12 +873,62 @@ pub async fn update_swarm_handler(
         query = query.bind(radius);
         current_idx += 1;
     }
+    if is_move {
+        query = query.bind(req.center_lat.unwrap());
+        current_idx += 1;
+        query = query.bind(req.center_lng.unwrap());
+        current_idx += 1;
+        query = query.bind(h3_cell.as_deref().unwrap_or(""));
+        current_idx += 1;
+        if let Some(ref loc) = req.location_name {
+            query = query.bind(loc.as_str());
+            current_idx += 1;
+        }
+    }
     let _ = current_idx; // suppress unused warning
 
     let row = query
         .fetch_one(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let returned_lat: f64 = row.try_get("center_lat").unwrap_or(0.0);
+    let returned_lng: f64 = row.try_get("center_lng").unwrap_or(0.0);
+    let returned_loc: Option<String> = row.try_get("location_name").ok();
+
+    // Broadcast rabble_moved event if location changed
+    if is_move {
+        let _ = state.rabble_broadcast.send(crate::RabbleEvent {
+            swarm_id,
+            message: json!({
+                "type": "rabble_moved",
+                "swarm_id": swarm_id,
+                "center_lat": returned_lat,
+                "center_lng": returned_lng,
+                "location_name": returned_loc,
+                "h3_cell": row.try_get::<String, _>("h3_cell").unwrap_or_default(),
+            }),
+        });
+
+        // Notify followers about the move
+        let pool_bg = state.memory_store.pool().clone();
+        let swarm_name: String = row.try_get("name").unwrap_or_else(|_| "Rabble".into());
+        let loc_display = returned_loc
+            .clone()
+            .unwrap_or_else(|| format!("{:.4}, {:.4}", returned_lat, returned_lng));
+        let uid = user_id.clone();
+        tokio::spawn(async move {
+            crate::handlers::social::notify_rabble_followers(
+                &pool_bg,
+                swarm_id,
+                "start", // reuse "start" notification type for moves
+                &format!("{} moved to {}", swarm_name, loc_display),
+                Some("The rabble has a new location"),
+                Some(uid.as_str()),
+            )
+            .await;
+        });
+    }
 
     Ok(Json(json!({
         "swarm_id": row.get::<Uuid, _>("swarm_id"),
@@ -859,5 +937,9 @@ pub async fn update_swarm_handler(
         "visibility": row.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
         "walk_in_price": row.try_get::<Option<i32>, _>("walk_in_price").ok().flatten(),
         "radius_meters": row.try_get::<i32, _>("radius_meters").unwrap_or(100),
+        "center_lat": returned_lat,
+        "center_lng": returned_lng,
+        "location_name": returned_loc,
+        "moved": is_move,
     })))
 }
