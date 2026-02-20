@@ -408,7 +408,142 @@ For joined rabbles:
 
 ---
 
-### F11. Friendship 500 Errors with Legacy Users — 🔴 SOFT LAUNCH BLOCKER
+### F14. Remove Environment Feed View — Redundant with Journals
+
+**What was said:**
+> "Actually the activity screen in environment is redundant given journal pages —
+> which look interesting."
+
+**Analysis:**
+
+The Environment tab currently has two modes:
+- **Feed view** (default) — chronological activity feed, identical to Journals → Activity tab
+- **Map view** — spatial map with creature pins, rabble circles, viewpoint toggle
+
+The feed view is a straight duplicate of what Journals already does. It adds
+cognitive load ("where do I find my activity? Two places?") and the feed has no
+spatial relevance — it's just a list of events that happens to live in the
+Environment tab for historical reasons.
+
+**Fix:**
+- **Remove the feed view entirely** from ExploreScreen
+- Environment tab opens DIRECTLY to the map (combines with F13)
+- Remove the list toggle button from map controls
+- The feed/activity content lives exclusively in Journals → Activity tab
+- Keep the map controls: refresh, layer toggles, viewpoint toggle, AR FAB
+
+**Files to change:**
+- `rabble/lib/screens/explore_screen.dart` — remove `_buildFeedView()`, remove
+  `_mapMode` toggle entirely, remove `_filter`, remove `_loadMore`, remove
+  `_scrollController` scroll listener. The screen IS the map.
+
+---
+
+### F15. All Bugs Semantics + Friend Activity in Journals
+
+**What was said:**
+> "What are the semantics of 'All Bugs' tab — that's all my bugs or all bugs I
+> have visibility to?"
+> "The environment list view is the only place I can see friends' activity —
+> that feels strange. That should be in journals, filtered for friends or for mine."
+
+**Analysis:**
+
+**All Bugs tab semantics:**
+Currently "All Bugs" shows the user's OWN creatures grouped by creature, with
+their recent events. The name is ambiguous — it could mean:
+- A) All MY creatures (current behaviour)
+- B) All creatures I can see (mine + friends + public)
+
+**Decision needed:** Is this a "my menagerie journal" or a "world view"?
+
+**Recommendation:** Rename to **"My Creatures"** and keep it as the per-creature
+grouped view of YOUR activity. This is the creature-centric journal.
+
+**Friend activity:**
+Currently the only place to see friend/contact activity is the Environment feed
+(which we're removing in F14). This needs to move to Journals.
+
+**Fix — Journals tab restructure:**
+
+```
+┌────────────┬────────────┬──────────────┬──────────────┐
+│  Activity  │  Friends   │ My Creatures │   Flights    │
+└────────────┴────────────┴──────────────┴──────────────┘
+```
+
+- **Activity** — YOUR events (creature flew, joined rabble, etc.) + SSE live
+- **Friends** — events from contacts/friends' creatures (filtered from the same
+  `/api/feed/events` endpoint which already includes `is_contact` / `is_friend_creature` flags)
+- **My Creatures** — (renamed from "All Bugs") grouped-by-creature view
+- **Flights** — flight history (keep as is)
+- **Reports tab removed** — completed rabble recaps move into the Flights tab
+  as a "Recaps" section, or into My Creatures as per-creature recaps
+
+**Files to change:**
+- `rabble/lib/screens/journals_screen.dart` — rename "All Bugs" → "My Creatures",
+  add "Friends" tab filtered on `is_contact || is_friend_creature`, remove
+  Reports tab (merge into Flights or My Creatures)
+
+---
+
+### F16. WhatsApp-Style Chat Layout
+
+**What was said:**
+> "In the chats I think I would like it to be that messages from my creatures are
+> on one side and messages from others on the other side — WhatsApp-style chat layout."
+
+**Analysis:**
+
+Currently all messages in the rabble chat are left-aligned in a flat list. There's
+no visual distinction between "my messages" and "their messages". This makes it
+hard to follow conversations.
+
+**Fix:**
+- My creature's messages: **right-aligned**, darker background (`RabbleTheme.bg3`)
+- Other creatures' messages: **left-aligned**, standard background (`RabbleTheme.bg2`)
+- System/narrator messages: **centred**, subtle background
+- Add avatar + creature name above each message bubble (or on first message in a group)
+- Group consecutive messages from the same creature (no repeated avatar)
+
+The `ChatPanel` widget already has `activeCreatureId` — it knows which creature
+is "me". It also receives `sender_id` and `creature_id` per message. The data
+is there, just needs layout changes.
+
+**Files to change:**
+- `rabble/lib/widgets/chat_panel.dart` — switch from flat list to
+  `Align(alignment: isMe ? Alignment.centerRight : Alignment.centerLeft)` per
+  message bubble. Add bubble shape styling.
+
+---
+
+### F17. Creature Handle Colors — Differentiate Mine from Others
+
+**What was said:**
+> "My creatures should have a different color handle — currently all are yellow.
+> Consider the green we use as a contrast color."
+
+**Analysis:**
+
+In the rabble chat, creature names (handles) above messages are all rendered in
+`RabbleTheme.amber` regardless of ownership. This makes it impossible to quickly
+scan and see "which messages are mine?"
+
+**Fix:**
+- **My creature handles**: `RabbleTheme.mint` (the green accent — already used
+  for active/positive states throughout the app)
+- **Other creature handles**: `RabbleTheme.amber` (keep current)
+- **System/narrator handles**: `RabbleTheme.violet`
+
+This pairs with F16 — left/right alignment + colour coding makes the chat
+immediately scannable.
+
+**Files to change:**
+- `rabble/lib/widgets/chat_panel.dart` — colour creature name based on
+  `message.senderId == currentUserId` or `message.creatureId == activeCreatureId`
+
+---
+
 
 **What was said:**
 > "There are users in the system that I am trying to add as friends and I cannot —
@@ -602,25 +737,27 @@ profile page looks jarring and broken.
 
 ### Must (before user testing round 2)
 3. **F1** — Creature card simplification (remove legacy Live/Log tabs, promote map, single scroll, keep Chat/Peek)
-4. **F13** — Map as default view for Environment tab (one-line fix)
-5. **F2** — Force-refresh creature state + deduplicate presences
-6. **F3** — Click-through to rabble (tappable row, keep Chat/Peek)
-7. **F8** — Rabble card enhancements (sort by activity, host creature, quick actions)
-8. **F9b** — Creature context when entering rabble ("You're here as Luna")
-9. **F10** — Profile page dark theming
-10. **F12** — Map visual distinction (larger rabble markers with names, creature state rings)
+4. **F13 + F14** — Environment tab = map only (remove feed view entirely, map is default and only view)
+5. **F15** — Journals restructure: Activity | Friends | My Creatures | Flights (rename All Bugs, add friends filter, remove redundant Reports)
+6. **F16 + F17** — WhatsApp-style chat layout + creature handle colours (mine = mint, others = amber)
+7. **F2** — Force-refresh creature state + deduplicate presences
+8. **F3** — Click-through to rabble (tappable row, keep Chat/Peek)
+9. **F8** — Rabble card enhancements (sort by activity, host creature, quick actions)
+10. **F9b** — Creature context when entering rabble ("You're here as Luna")
+11. **F10** — Profile page dark theming
+12. **F12** — Map visual distinction (larger rabble markers with names, creature state rings)
 
 ### Should (same sprint if time)
-11. **F5 + F9a** — Remove ALL polling (explore map + feed), rely on SSE everywhere
-12. **F7** — Merge Log tab into expandable Journal section (part of F1)
+13. **F5 + F9a** — Remove ALL polling (explore map + feed), rely on SSE everywhere
+14. **F7** — Merge Log tab into expandable Journal section (part of F1)
 
 ### Discuss (design decision needed)
-13. **F6** — AR viewer as spatial view in rabble chat (needs owner decision on option A/B/C/D)
+15. **F6** — AR viewer as spatial view in rabble chat (needs owner decision on option A/B/C/D)
 
 ### ✅ Positive feedback (keep/protect these)
 - "Through the bug's eyes" viewpoint toggle — loved
 - "Join from map" flow — great UX
-- Activity screen in environment — good
+- Journals tabs — look interesting
 - Rabble page structure — fine
 - Map view overall — looking good
 
@@ -640,8 +777,10 @@ profile page looks jarring and broken.
 | `rabble/lib/screens/collection_screen.dart` | F2 |
 | `rabble/lib/screens/rabbles_screen.dart` | F8 |
 | `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b (extract invite + creature picker, add creature context banner) |
-| `rabble/lib/screens/explore_screen.dart` | F5, F9a, F12, F13 (remove polling, wire SSE, map default, visual distinction) |
+| `rabble/lib/screens/explore_screen.dart` | F5, F9a, F12, F13, F14 (map-only, remove feed view entirely, visual distinction) |
+| `rabble/lib/screens/journals_screen.dart` | F15 (restructure tabs: Activity, Friends, My Creatures, Flights) |
 | `rabble/lib/screens/profile_screen.dart` | F10 (dark theme) |
+| `rabble/lib/widgets/chat_panel.dart` | F16, F17 (WhatsApp layout, creature handle colours: mine=mint, others=amber) |
 | `rabble/lib/widgets/flock_viz.dart` | F2 |
 | `rabble/lib/widgets/send_friendship_sheet.dart` | F4 (new file) |
 | `rabble/lib/widgets/invite_sheet.dart` | F8 (extracted from rabble_chat.dart) |
