@@ -120,7 +120,7 @@ pub async fn post_rabble_message(
             "SELECT cf.creature_id, c.specimen_name, c.scientific_name AS species_name, c.species_group
              FROM creature_flights cf
              JOIN creatures c ON c.creature_id = cf.creature_id
-             WHERE cf.swarm_id = $1 AND c.owner_id = $2
+             WHERE cf.swarm_id = $1 AND c.owner_id = $2 AND cf.ended_at IS NULL
              ORDER BY cf.started_at DESC
              LIMIT 1",
         )
