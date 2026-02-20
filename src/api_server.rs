@@ -1468,6 +1468,21 @@ async fn main() {
             get(handlers::dashboard::boundary_violations_handler),
         )
         .route(
+            "/api/dashboard/nearby-creatures",
+            get(handlers::dashboard::nearby_creatures_handler),
+        )
+        // Saved locations (favourite places, drop pins)
+        .route(
+            "/api/locations",
+            get(handlers::dashboard::list_locations_handler)
+                .post(handlers::dashboard::save_location_handler),
+        )
+        .route(
+            "/api/locations/:id",
+            patch(handlers::dashboard::update_location_handler)
+                .delete(handlers::dashboard::delete_location_handler),
+        )
+        .route(
             "/api/creatures/:creature_id/favourite",
             post(handlers::creatures::favourite_creature_handler)
                 .delete(handlers::creatures::unfavourite_creature_handler),
