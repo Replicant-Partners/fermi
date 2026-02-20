@@ -83,15 +83,30 @@ pub async fn add_contact_handler(
         return Err((StatusCode::BAD_REQUEST, "Cannot add yourself".to_string()));
     }
 
-    // Check contact exists as a user
-    let exists = sqlx::query("SELECT 1 FROM users WHERE user_id = $1")
+    // Check contact exists as a user — graceful handling for legacy users
+    let exists = sqlx::query("SELECT user_id FROM users WHERE user_id = $1")
         .bind(&req.contact_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            eprintln!(
+                "[contacts] DB error checking user {}: {}",
+                req.contact_id, e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to look up user: {}", e),
+            )
+        })?;
 
     if exists.is_none() {
-        return Err((StatusCode::NOT_FOUND, "User not found".to_string()));
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!(
+                "User '{}' not found. They may need to sign in first.",
+                req.contact_id
+            ),
+        ));
     }
 
     let id = Uuid::new_v4();
@@ -223,12 +238,15 @@ pub async fn send_friendship_request_handler(
 
     // Verify caller owns the from_creature
     let from_creature = sqlx::query(
-        "SELECT owner_id, specimen_name, species_group FROM creatures WHERE creature_id = $1",
+        "SELECT owner_id, specimen_name, scientific_name, species_group FROM creatures WHERE creature_id = $1",
     )
     .bind(req.from_creature_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| {
+        eprintln!("[friendship] DB error fetching from_creature {}: {}", req.from_creature_id, e);
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?
     .ok_or((StatusCode::NOT_FOUND, "From creature not found".into()))?;
 
     let owner: String = from_creature.get("owner_id");
@@ -237,13 +255,20 @@ pub async fn send_friendship_request_handler(
     }
 
     // Verify target creature exists
-    let to_creature =
-        sqlx::query("SELECT owner_id, specimen_name FROM creatures WHERE creature_id = $1")
-            .bind(req.to_creature_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .ok_or((StatusCode::NOT_FOUND, "Target creature not found".into()))?;
+    let to_creature = sqlx::query(
+        "SELECT owner_id, specimen_name, scientific_name FROM creatures WHERE creature_id = $1",
+    )
+    .bind(req.to_creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        eprintln!(
+            "[friendship] DB error fetching to_creature {}: {}",
+            req.to_creature_id, e
+        );
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?
+    .ok_or((StatusCode::NOT_FOUND, "Target creature not found".into()))?;
 
     let to_owner: String = to_creature.get("owner_id");
 
@@ -323,9 +348,29 @@ pub async fn send_friendship_request_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Write activity event
-    let from_name: String = from_creature.get("specimen_name");
-    let to_name: String = to_creature.get("specimen_name");
+    // Write activity event — specimen_name can be NULL, fall back to scientific_name
+    let from_name: String = from_creature
+        .try_get::<Option<String>, _>("specimen_name")
+        .ok()
+        .flatten()
+        .or_else(|| {
+            from_creature
+                .try_get::<Option<String>, _>("scientific_name")
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_else(|| "Creature".to_string());
+    let to_name: String = to_creature
+        .try_get::<Option<String>, _>("specimen_name")
+        .ok()
+        .flatten()
+        .or_else(|| {
+            to_creature
+                .try_get::<Option<String>, _>("scientific_name")
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_else(|| "Creature".to_string());
     emit_activity_event(
         pool,
         &user_id,
@@ -339,8 +384,8 @@ pub async fn send_friendship_request_handler(
     )
     .await;
 
-    // Create notification for target creature's owner
-    let _ = sqlx::query(
+    // Create notification for target creature's owner (fire-and-forget, never 500)
+    if let Err(e) = sqlx::query(
         "INSERT INTO notifications (id, user_id, type, title, message, created_at)
          VALUES ($1, $2, 'friendship_request', $3, $4, NOW())",
     )
@@ -352,7 +397,13 @@ pub async fn send_friendship_request_handler(
         from_name, to_name
     ))
     .execute(pool)
-    .await;
+    .await
+    {
+        eprintln!(
+            "[friendship] Failed to create notification for {}: {}",
+            to_owner, e
+        );
+    }
 
     Ok(Json(json!({
         "status": "requested",
@@ -431,8 +482,16 @@ pub async fn accept_friendship_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Emit activity event
-    let name_a: String = row.get("name_a");
-    let name_b: String = row.get("name_b");
+    let name_a: String = row
+        .try_get::<Option<String>, _>("name_a")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "Creature".to_string());
+    let name_b: String = row
+        .try_get::<Option<String>, _>("name_b")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "Creature".to_string());
     emit_activity_event(
         pool,
         &user_id,
@@ -446,13 +505,13 @@ pub async fn accept_friendship_handler(
     )
     .await;
 
-    // Notify the initiator's owner
+    // Notify the initiator's owner (fire-and-forget, never 500)
     let initiator_owner = if initiated_by == creature_a {
         &owner_a
     } else {
         &owner_b
     };
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO notifications (id, user_id, type, title, message, created_at)
          VALUES ($1, $2, 'friendship_accepted', $3, $4, NOW())",
     )
@@ -461,7 +520,10 @@ pub async fn accept_friendship_handler(
     .bind(format!("{} and {} are now friends!", name_a, name_b))
     .bind("Your friendship request was accepted")
     .execute(pool)
-    .await;
+    .await
+    {
+        eprintln!("[friendship] Failed to notify {}: {}", initiator_owner, e);
+    }
 
     // Broadcast creature SSE events — both creatures get notified
     crate::handlers::streams::emit_creature_event(
