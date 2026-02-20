@@ -606,6 +606,206 @@ But the Flutter UI never shows or lets you set it:
 
 ---
 
+### F23. Duplicate Journal Card on Creature Detail
+
+**What was said:**
+> (Screenshot shows two Journal sections — one hub section and one expandable at the bottom)
+
+**Analysis:**
+
+The creature detail screen now has TWO journal-like sections:
+1. The `_HubSection` Journal card (from Phase 1 hub additions) — shows flights + locations
+2. The expandable Journal with `CreatureHistory` (from F7 sprint fix) — also shows flights + locations
+
+These are redundant. The F7 expandable journal was meant to REPLACE the hub section, but both survived.
+
+**Fix:**
+- Remove the first Journal `_HubSection` (the static one with just stats)
+- Keep only the F7 expandable Journal that shows stats collapsed and CreatureHistory expanded
+- The expandable version already has flights + locations count + expand arrow
+
+**Files to change:**
+- `rabble/lib/screens/creature/creature_screen.dart` — remove the original `_HubSection` Journal block (the one between Friends and Config sections)
+
+---
+
+### F24. Configuration Card Should Be Above Rabble Card
+
+**What was said:**
+> "The configuration card should be above the rabble card and at the top of the creature."
+
+**Analysis:**
+
+Current creature detail order:
+1. Hero image
+2. Name + species + level
+3. Presence chips
+4. Rabble section
+5. Friends section
+6. Journal section (duplicate)
+7. Config (collapsible)
+8. Actions (Social/Movement/Economy pills)
+9. Journal (expandable — duplicate)
+
+The Config section is buried. The user wants it near the top — it contains the creature's settings that you'd check/change before doing anything else.
+
+**Proposed new order:**
+1. Hero image
+2. Name + species + level
+3. Presence chips
+4. **Config** (collapsible, near top)
+5. Rabble section (if in one)
+6. Friends section
+7. Actions (in card UI)
+8. Journal (expandable)
+
+**Files to change:**
+- `rabble/lib/screens/creature/creature_screen.dart` — move `CreatureConfig` widget above the Rabble `_HubSection`
+
+---
+
+### F25. Movement Pills Should Be in Card UI
+
+**What was said:**
+> "The movement pills should be in similar card UI."
+
+**Analysis:**
+
+Currently the action buttons (Social: Join, Movement: Hop/Expedition/Tether, Economy: Gift/List) are rendered as loose pill buttons with section labels. They look like a different design language than the hub sections (Rabble, Friends, Journal) which use `_HubSection` cards.
+
+**Fix:**
+- Wrap the actions in `_HubSection` style cards:
+  - "Movement" section: Hop, Expedition, Tether
+  - "Social" section: Join/Find Rabble (see F26)
+  - "Economy" section: Gift, List
+- Or: wrap the entire `CreatureActions` widget in a single `_HubSection` card with title "Actions"
+
+**Files to change:**
+- `rabble/lib/screens/creature/creature_actions.dart` — wrap in card-style container
+- Or: `rabble/lib/screens/creature/creature_screen.dart` — wrap `CreatureActions` in `_HubSection`
+
+---
+
+### F26. "Join" Should Be "Find a Rabble" + End Rabble Semantics
+
+**What was said:**
+> "The join rabble should be more like 'find a rabble to join'. If you are hosting
+> the rabble and you join a different rabble you effectively finish yours — we will
+> need explicit end rabble/transfer ownership of rabble semantics."
+
+**Analysis:**
+
+Two issues:
+
+**26a. Label change:**
+The "Join (free-2cr)" button implies you know which rabble to join. Better: "Find a Rabble" which opens the map or nearby rabbles list, allowing discovery.
+
+**26b. Hosting conflict semantics:**
+If you're hosting rabble A and join rabble B with your anchor creature, rabble A is effectively abandoned. The system should:
+1. Warn: "Your creature Luna is anchoring 'Party time's rabble'. Moving Luna to another rabble will end your current rabble."
+2. Offer: "End rabble" or "Transfer anchor to [other creature]" before proceeding
+3. Or: prevent the anchor creature from leaving (force transfer first)
+
+**Backend consideration:**
+The `join_swarm_handler` already auto-ends active flights. But it doesn't check if the creature is an anchor. Need to add a check:
+- If `creature_id == swarm.anchor_creature_id` for any active swarm → block join or force transfer.
+
+**Files to change:**
+- `rabble/lib/screens/creature/creature_actions.dart` — rename "Join" → "Find a Rabble", link to explore map
+- `fermi/src/handlers/creatures/state.rs` — in `join_swarm_handler`, check if creature is anchor of another rabble, warn/block
+- New: `rabble/lib/widgets/end_rabble_sheet.dart` — confirmation sheet for ending/transferring rabble
+
+---
+
+### F27. Rabble Cards Need Mine vs External Creature Counts
+
+**What was said:**
+> "I would like to know how many creatures I have there that are mine as well
+> (e.g. 5 creatures are mine, n are external)."
+
+**Analysis:**
+
+Rabble cards currently show total creature count ("5 creatures") but don't distinguish
+between the user's own creatures and others. The `my_creatures` array is available
+from the `my/rabbles` endpoint — just need to render the split.
+
+**Fix:**
+- Instead of "🐛 5 creatures", show: "🐛 5 creatures (2 mine, 3 others)" or
+  "🐛 2 mine · 3 others"
+- Use the `my_creatures` array length for "mine" count
+- Subtract from total `creature_count` for "others"
+
+**Files to change:**
+- `rabble/lib/screens/rabbles_screen.dart` — update creature count display in `_MyRabbleCard`
+
+---
+
+### F28. Creature Tray Icon/Switch Lost in Rabble Chat
+
+**What was said:**
+> "I've lost in the rabble chat the creature icon switch when I switch creatures to chat."
+> (Screenshot shows "Join with a creature" prompt but no creature tray with switchable avatars)
+
+**Analysis:**
+
+The creature tray at the top of the rabble chat shows the user's creatures in this rabble
+as tappable avatars. When the user has no creatures in the rabble, it shows "Join with a creature".
+
+The issue from the screenshot: the user IS in the rabble (messages show "hermanito" sending)
+but the tray shows "Join with a creature" and "0 members". This suggests:
+1. The `_loadMyCreatures` call failed silently, or
+2. The creature-to-rabble matching logic (`c.rabbleId == widget.swarm.swarmId`) doesn't match
+   because the creature's `rabbleId` field isn't populated in the list endpoint
+3. The SSE creature context banner correctly shows "You're peeking" because it falls through
+   to the empty-creatures path
+
+**Fix:**
+- Add error logging to `_loadMyCreatures` in rabble_chat.dart
+- Cross-check: does the creature list endpoint return `rabble_id` for creatures in swarms?
+- If not, use the `my/rabbles` endpoint's `my_creatures` array to determine which creatures
+  are in this specific rabble
+- Alternative: when entering rabble chat from a creature's Chat button, pass the creature ID
+  so the tray pre-selects it
+
+**Files to change:**
+- `rabble/lib/screens/rabble_chat.dart` — add error logging to `_loadMyCreatures`,
+  consider alternative creature-matching strategy
+- `rabble/lib/screens/creature/creature_screen.dart` — pass creature ID when navigating to rabble chat
+
+---
+
+### F29. User Search Cannot Find Known Users — 🔴 BLOCKER
+
+**What was said:**
+> "I still can't find users through the add users UI in my profile system that I know
+> are in the system. This is preventing sharing and socialization and testing of these
+> features. Please unblock."
+
+**Analysis:**
+
+The `GET /api/users/search?q=term` endpoint searches by `display_name ILIKE` and `email ILIKE` only.
+Many users may have:
+- No `display_name` set (NULL) — they'd be invisible to search
+- A `user_id` format like `google-oauth2|123456` that nobody would search for
+- A GitHub username that's their known identity but isn't searched
+
+**Fix (APPLIED):**
+Backend search expanded to match: `display_name`, `email`, `user_id`, `github_username`,
+`google_id`, AND `creature specimen_name` (so you can find someone by their creature's name).
+
+Also: if no `display_name`, show github_username or email prefix as the display name.
+And: return `creature_count` and `creature_names` in search results.
+
+Flutter: error feedback added (was silently swallowing search failures).
+
+**Files changed:**
+- `fermi/src/handlers/users.rs` — expanded search query
+- `rabble/lib/screens/profile_screen.dart` — error feedback on search
+
+**Status: FIX APPLIED — needs deploy to verify.**
+
+---
+
 ### F14. Remove Environment Feed View — Redundant with Journals
 
 **What was said:**
@@ -930,39 +1130,51 @@ profile page looks jarring and broken.
 ## Updated Priority Order for Sprint
 
 ### 🔴 SOFT LAUNCH BLOCKERS
-1. **F11** — Fix friendship 500 errors (legacy users, defensive error handling, notification failure isolation)
-2. **F4** — Add befriend button + send friendship flow in creature detail
+1. **F11** — Fix friendship 500 errors ✅ DONE
+2. **F4** — Add befriend button + send friendship flow ✅ DONE
+3. **F29** — User search cannot find known users ✅ FIX APPLIED (needs deploy)
 
-### Must (before user testing round 2)
-3. **F1** — Creature card simplification (remove legacy Live/Log tabs, promote map, single scroll, keep Chat/Peek)
-4. **F13 + F14 + F20** — Environment tab = map only, map is default, "My Location" zooms to GPS
-5. **F15** — Journals restructure: Activity | Friends | My Creatures | Flights (rename All Bugs, add friends filter, remove redundant Reports)
-6. **F16 + F17** — WhatsApp-style chat layout + creature handle colours (mine = mint, others = amber) ✅ DONE
-7. **F2** — Force-refresh creature state + deduplicate presences
-8. **F3** — Click-through to rabble (tappable row, keep Chat/Peek)
-9. **F8** — Rabble card enhancements (sort by activity, host creature, quick actions)
-10. **F9b** — Creature context when entering rabble ("You're here as Luna")
-11. **F10** — Profile page dark theming ✅ DONE
-12. **F12** — Map visual distinction (larger rabble markers with names, creature state rings)
-13. **F21** — Host prominence (one host per rabble, crown badge, host in app bar)
-14. **F22** — Rabble description (show on cards + chat, editable in settings)
+### Must (before user testing round 3)
+4. **F23** — Remove duplicate Journal card on creature detail
+5. **F24** — Move Config above Rabble card on creature detail
+6. **F25** — Movement pills in card UI style
+7. **F27** — Rabble cards: mine vs external creature counts
+8. **F28** — Fix creature tray in rabble chat (creatures not loading)
+9. **F26** — "Join" → "Find a Rabble" + end rabble semantics + anchor guard
 
-### Should (same sprint if time)
-13. **F5 + F9a** — Remove ALL polling (explore map + feed), rely on SSE everywhere
-14. **F7** — Merge Log tab into expandable Journal section (part of F1)
+### Completed this sprint
+10. **F1** — Creature card rewrite (single scroll, no tabs) ✅ DONE
+11. **F2** — Force-refresh + shimmer ✅ DONE
+12. **F5** — Remove polling ✅ DONE
+13. **F7** — Expandable journal ✅ DONE
+14. **F8** — Rabble card enhancements (sort, quick actions) ✅ DONE
+15. **F9b** — "You're here as Luna" banner ✅ DONE
+16. **F10** — Profile dark theming ✅ DONE
+17. **F12** — Map visual distinction ✅ DONE
+18. **F13 + F14 + F20** — Map-only explore, GPS zoom ✅ DONE
+19. **F15** — Journals restructure ✅ DONE
+20. **F16 + F17** — WhatsApp chat + handle colours ✅ DONE
+21. **F21** — Host prominence ✅ DONE
+22. **F22** — Rabble description ✅ DONE
 
-### Discuss (design decisions captured, ready to implement)
-15. **F6** — AR viewer as split panel toggle — Option D confirmed (see F6 + F18 + F19 below)
+### Should (next sprint)
+23. **F3** — Full tappable rabble row (Chat/Peek work, row tap deferred)
+24. **F6 + F18 + F19** — AR panel toggle, Reynolds host-only, ArPanel widget
 
 ### Design Notes (for future sprint)
-- **Reports** are a type of rich activity event (flight recap, rabble summary) with a rich payload, not a separate tab. Design the payload shape and delivery mechanism in a design session. Reports stay as a concept — they're deferred features that sit behind expandable journal entries.
+- **Reports** are a type of rich activity event (flight recap, rabble summary) with a rich payload, not a separate tab. Design the payload shape and delivery mechanism in a design session.
+- **F26 backend** — Anchor creature guard: prevent anchor from leaving hosted rabble without transfer/end. Needs explicit "End Rabble" and "Transfer Anchor" flows.
 
 ### ✅ Positive feedback (keep/protect these)
 - "Through the bug's eyes" viewpoint toggle — loved
 - "Join from map" flow — great UX
 - Journals tabs — look interesting
-- Rabble page structure — fine
+- Rabble page structure + cards — great
 - Map view overall — looking good
+- Split panel (map + flock animation) — great, especially with real-time tracks
+- WhatsApp-style chat layout — clean
+- Host prominence on cards — clear
+- Creature context banner ("You're here as Luna") — helpful
 
 ---
 
@@ -974,17 +1186,21 @@ profile page looks jarring and broken.
 | `fermi/src/handlers/social.rs` | F11 (defensive error handling, notification isolation) |
 | `fermi/scripts/fix_legacy_users.sql` | F11 (new — backfill legacy users) |
 | **FLUTTER** | |
-| `rabble/lib/screens/creature/creature_screen.dart` | F1, F2, F3, F4, F7 |
-| `rabble/lib/screens/creature/creature_live.dart` | F1 (absorbed into main screen) |
-| `rabble/lib/screens/creature/creature_history.dart` | F7 (becomes expandable journal content) |
-| `rabble/lib/screens/collection_screen.dart` | F2 |
-| `rabble/lib/screens/rabbles_screen.dart` | F8, F21, F22 |
-| `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b, F18, F19, F21, F22 (AR toggle, host-only Reynolds, extract invite + creature picker, creature context banner, host prominence, description) |
+| `rabble/lib/screens/creature/creature_screen.dart` | F1✅, F2✅, F3, F4✅, F7✅, F23, F24, F25 |
+| `rabble/lib/screens/creature/creature_actions.dart` | F25 (card UI), F26 (rename Join → Find a Rabble) |
+| `rabble/lib/screens/creature/creature_live.dart` | F1✅ (absorbed into main screen) |
+| `rabble/lib/screens/creature/creature_history.dart` | F7✅ (becomes expandable journal content) |
+| `rabble/lib/screens/collection_screen.dart` | F2✅ |
+| `rabble/lib/screens/rabbles_screen.dart` | F8✅, F21✅, F22✅, F27 |
+| `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b✅, F18, F19, F28 |
+| `rabble/lib/screens/profile_screen.dart` | F10✅, F29✅ |
 | `rabble/lib/widgets/ar_panel.dart` | F6, F19 (new — inline AR camera panel for split view) |
 | `rabble/lib/widgets/flight_dynamics.dart` | F18 (gated to host-only, no code changes — just caller gating) |
-| `rabble/lib/screens/explore_screen.dart` | F5, F9a, F12, F13, F14, F20 (map-only, remove feed view, visual distinction, MapController + GPS zoom) |
-| `rabble/lib/screens/journals_screen.dart` | F15 (restructure tabs: Activity, Friends, My Creatures, Flights) |
-| `rabble/lib/screens/profile_screen.dart` | F10 (dark theme) |
+| `rabble/lib/screens/explore_screen.dart` | F5✅, F9a✅, F12✅, F13✅, F14✅, F20✅ |
+| `rabble/lib/screens/journals_screen.dart` | F15✅ |
+| `fermi/src/handlers/users.rs` | F29✅ (expanded search fields) |
+| `fermi/src/handlers/creatures/state.rs` | F26 (anchor creature guard in join_swarm) |
+| `rabble/lib/widgets/end_rabble_sheet.dart` | F26 (new — end rabble / transfer anchor confirmation) |
 | `rabble/lib/widgets/chat_panel.dart` | F16, F17 (WhatsApp layout, creature handle colours: mine=mint, others=amber) |
 | `rabble/lib/widgets/flock_viz.dart` | F2 |
 | `rabble/lib/widgets/send_friendship_sheet.dart` | F4 (new file) |
