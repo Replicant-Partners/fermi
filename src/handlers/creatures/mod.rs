@@ -55,8 +55,8 @@ pub use identity::{
 
 // ─── Re-exports: swarms ────────────────────────────────────────────
 pub use swarms::{
-    create_swarm_handler, get_swarm_handler, list_swarms_handler, my_rabbles_handler,
-    update_swarm_handler,
+    create_swarm_handler, end_rabble_handler, get_swarm_handler, list_swarms_handler,
+    my_rabbles_handler, update_swarm_handler,
 };
 
 // ─── Re-exports: collections ───────────────────────────────────────

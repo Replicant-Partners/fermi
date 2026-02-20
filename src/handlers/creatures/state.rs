@@ -266,6 +266,31 @@ pub async fn host_rabble_handler(
     // Validate creature ownership
     let creature = verify_creature_ownership(pool, creature_id, &user_id).await?;
 
+    // One creature = one host. Block if this creature already anchors an active rabble.
+    let already_anchoring = sqlx::query(
+        "SELECT swarm_id, name FROM swarm_events
+         WHERE anchor_creature_id = $1 AND status IN ('active', 'scheduled')
+         LIMIT 1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = already_anchoring {
+        let existing_name: String = row.try_get("name").unwrap_or_else(|_| "a rabble".into());
+        let creature_name: String = creature
+            .try_get("specimen_name")
+            .unwrap_or_else(|_| "This creature".into());
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "{} is already hosting \"{}\". End or transfer that rabble first.",
+                creature_name, existing_name
+            ),
+        ));
+    }
+
     // End any existing flight — creature moves on, no state gating
     let existing_flight = sqlx::query(
         "SELECT flight_id, swarm_id FROM creature_flights
@@ -603,6 +628,31 @@ pub async fn join_swarm_handler(
     let creature_name: Option<String> = creature.try_get("specimen_name").ok();
     let species_name: Option<String> = creature.try_get("scientific_name").ok();
     let species_group: Option<String> = creature.try_get("species_group").ok();
+
+    // F26: Anchor creature guard — block if this creature is anchoring another active rabble
+    let anchored_swarm = sqlx::query(
+        "SELECT swarm_id, name FROM swarm_events
+         WHERE anchor_creature_id = $1 AND status IN ('active', 'scheduled')
+         AND swarm_id != $2
+         LIMIT 1",
+    )
+    .bind(req.creature_id)
+    .bind(swarm_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = anchored_swarm {
+        let anchored_name: String = row.try_get("name").unwrap_or_else(|_| "a rabble".into());
+        let display = creature_name.as_deref().unwrap_or("Your creature");
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "{} is anchoring \"{}\". End or transfer that rabble before moving this creature.",
+                display, anchored_name
+            ),
+        ));
+    }
 
     // Check existing flight — tether flights are preserved, others are ended
     let active_flight = sqlx::query(

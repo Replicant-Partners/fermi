@@ -52,7 +52,9 @@ pub async fn list_creatures_handler(
          ))::int AS cognition_level,
          cs.state AS creature_state,
          cs.rabble_id,
-         sw.name AS rabble_name
+         sw.name AS rabble_name,
+         -- Anchor = host. One creature per rabble is the host; user manages by proxy.
+         (CASE WHEN sw.anchor_creature_id = c.creature_id THEN true ELSE false END) AS is_anchor
          FROM creatures c
          LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
          LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
@@ -108,6 +110,14 @@ pub async fn list_creatures_handler(
             let creatures: Vec<serde_json::Value> = rows
                 .iter()
                 .map(|row| {
+                    let is_anchor = row.try_get::<bool, _>("is_anchor").unwrap_or(false);
+                    let rabble_id: Option<Uuid> = row.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten();
+                    // Anchor creature = host. User is proxy only.
+                    let rabble_role = if rabble_id.is_some() {
+                        if is_anchor { Some("host") } else { Some("participant") }
+                    } else {
+                        None
+                    };
                     json!({
                         "creature_id": row.get::<Uuid, _>("creature_id"),
                         "owner_id": row.get::<String, _>("owner_id"),
@@ -128,8 +138,10 @@ pub async fn list_creatures_handler(
                         "last_location_name": row.try_get::<Option<String>, _>("last_location_name").unwrap_or(None),
                         "cognition_level": row.try_get::<Option<i32>, _>("cognition_level").unwrap_or(Some(0)),
                         "creature_state": row.try_get::<Option<String>, _>("creature_state").unwrap_or(None),
-                        "rabble_id": row.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten(),
+                        "rabble_id": rabble_id,
                         "rabble_name": row.try_get::<Option<String>, _>("rabble_name").unwrap_or(None),
+                        "is_anchor": is_anchor,
+                        "rabble_role": rabble_role,
                         "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
                     })
                 })
@@ -224,12 +236,13 @@ pub async fn get_creature_handler(
                 .try_get::<Option<String>, _>("active_flight_data_source")
                 .unwrap_or(None);
 
-            // Derive the creature's role in its current rabble
+            // Derive the creature's role in its current rabble.
+            // The anchor creature IS the host — the user only manages by proxy.
+            // A user may have multiple creatures in their own rabble, but only
+            // the anchor shows as "host"; the rest are "participant".
             let rabble_role = if rabble_id_val.is_some() {
-                if rabble_creator.as_ref() == Some(&owner_id_val) {
+                if is_anchor {
                     Some("host")
-                } else if is_anchor {
-                    Some("anchor")
                 } else {
                     Some("participant")
                 }
@@ -291,7 +304,7 @@ pub async fn get_creature_handler(
                 "social": {
                     "friend_count": row.try_get::<i64, _>("friend_count").unwrap_or(0),
                     "pending_friend_requests": row.try_get::<i64, _>("pending_friend_requests").unwrap_or(0),
-                    "rabble_role": rabble_role,      // "host" | "anchor" | "participant" | null
+                    "rabble_role": rabble_role,      // "host" | "participant" | null  (host = anchor creature only)
                     "is_tethered": is_tethered,
                     "is_anchor": is_anchor,
                 },

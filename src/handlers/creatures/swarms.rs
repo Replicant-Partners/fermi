@@ -119,10 +119,13 @@ pub async fn my_rabbles_handler(
         let creature_sql = format!(
             "SELECT cf.swarm_id, c.creature_id, c.specimen_name, c.species_group,
                     c.asset_path, cf.data_source,
-                    cs.state AS creature_state
+                    cs.state AS creature_state,
+                    -- One creature = one host. Anchor creature IS the host; user is proxy.
+                    (CASE WHEN sw.anchor_creature_id = c.creature_id THEN true ELSE false END) AS is_anchor
              FROM creature_flights cf
              JOIN creatures c ON c.creature_id = cf.creature_id
              LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
+             LEFT JOIN swarm_events sw ON sw.swarm_id = cf.swarm_id
              WHERE c.owner_id = $1
                AND cf.swarm_id IN ({})
                AND cf.ended_at IS NULL
@@ -137,6 +140,7 @@ pub async fn my_rabbles_handler(
             for r in &rows {
                 let sid: Uuid = r.get("swarm_id");
                 let entry = my_creatures_in_rabbles.entry(sid).or_default();
+                let is_anchor = r.try_get::<bool, _>("is_anchor").unwrap_or(false);
                 entry.push(json!({
                     "creature_id": r.get::<Uuid, _>("creature_id"),
                     "specimen_name": r.try_get::<Option<String>, _>("specimen_name").unwrap_or(None),
@@ -144,6 +148,8 @@ pub async fn my_rabbles_handler(
                     "asset_path": r.try_get::<Option<String>, _>("asset_path").unwrap_or(None),
                     "data_source": r.try_get::<String, _>("data_source").unwrap_or_else(|_| "synthetic".into()),
                     "creature_state": r.try_get::<Option<String>, _>("creature_state").unwrap_or(None),
+                    "is_anchor": is_anchor,
+                    "role": if is_anchor { "host" } else { "participant" },
                 }));
             }
         }
@@ -941,5 +947,144 @@ pub async fn update_swarm_handler(
         "center_lng": returned_lng,
         "location_name": returned_loc,
         "moved": is_move,
+    })))
+}
+
+// ─── End Rabble ────────────────────────────────────────────────────
+//
+// POST /api/rabble/:id/end
+//
+// Two triggers:
+//   1. Host explicitly closes the rabble (this endpoint).
+//   2. Timed rabble — `ends_at` countdown expires (handled by a scheduled
+//      worker or client-side timer that calls this same endpoint).
+//
+// What happens:
+//   - Status → "completed"
+//   - All creature flights attached to this swarm are ended
+//   - Creature counts decremented
+//   - Followers notified
+//   - System message posted in chat
+
+pub async fn end_rabble_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(swarm_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify rabble exists and caller owns the anchor creature (host-by-proxy).
+    // One creature = one host. The user manages the rabble through their anchor creature.
+    let swarm = sqlx::query(
+        "SELECT s.creator_id, s.status, s.name, s.anchor_creature_id,
+                c.owner_id AS anchor_owner_id
+         FROM swarm_events s
+         LEFT JOIN creatures c ON c.creature_id = s.anchor_creature_id
+         WHERE s.swarm_id = $1",
+    )
+    .bind(swarm_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Rabble not found".to_string()))?;
+
+    let creator_id: String = swarm.get("creator_id");
+    let status: String = swarm.get("status");
+    let swarm_name: String = swarm.try_get("name").unwrap_or_else(|_| "Rabble".into());
+    let anchor_owner: Option<String> = swarm
+        .try_get::<Option<String>, _>("anchor_owner_id")
+        .unwrap_or(None);
+
+    // Auth: user must own the anchor creature OR be the original creator (fallback
+    // for edge cases where anchor_creature_id is NULL or creature was transferred).
+    let is_host = anchor_owner.as_deref() == Some(&user_id) || creator_id == user_id;
+    if !is_host {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the host creature's owner can end this rabble.".into(),
+        ));
+    }
+
+    if status == "completed" || status == "cancelled" {
+        return Ok(Json(json!({
+            "message": "Rabble already ended",
+            "swarm_id": swarm_id,
+            "status": status,
+        })));
+    }
+
+    // End all active creature flights in this rabble
+    let ended_flights = sqlx::query(
+        "UPDATE creature_flights
+         SET ended_at = NOW(),
+             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+         WHERE swarm_id = $1 AND ended_at IS NULL
+         RETURNING creature_id",
+    )
+    .bind(swarm_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let creatures_removed = ended_flights.len();
+
+    // Mark rabble as completed
+    sqlx::query(
+        "UPDATE swarm_events
+         SET status = 'completed', creature_count = 0, participant_count = 0
+         WHERE swarm_id = $1",
+    )
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Post system message in chat
+    let msg_id = Uuid::new_v4();
+    let _ = sqlx::query(
+        "INSERT INTO rabble_messages (message_id, swarm_id, sender_id, content, message_type, created_at)
+         VALUES ($1, $2, 'system', $3, 'system', NOW())",
+    )
+    .bind(msg_id)
+    .bind(swarm_id)
+    .bind(format!("The host has ended this rabble. {} creature{} released.",
+        creatures_removed, if creatures_removed == 1 { "" } else { "s" }))
+    .execute(pool)
+    .await;
+
+    // Broadcast end event to connected clients
+    let _ = state.rabble_broadcast.send(crate::RabbleEvent {
+        swarm_id,
+        message: json!({
+            "type": "rabble_ended",
+            "swarm_id": swarm_id,
+            "ended_by": user_id,
+            "creatures_removed": creatures_removed,
+        }),
+    });
+
+    // Notify followers in background
+    let pool_bg = pool.clone();
+    let name_clone = swarm_name.clone();
+    let uid = user_id.clone();
+    tokio::spawn(async move {
+        crate::handlers::social::notify_rabble_followers(
+            &pool_bg,
+            swarm_id,
+            "end",
+            &format!("{} has ended", name_clone),
+            Some("The host closed this rabble"),
+            Some(uid.as_str()),
+        )
+        .await;
+    });
+
+    Ok(Json(json!({
+        "message": "Rabble ended",
+        "swarm_id": swarm_id,
+        "swarm_name": swarm_name,
+        "creatures_removed": creatures_removed,
+        "status": "completed",
     })))
 }

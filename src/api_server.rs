@@ -1690,6 +1690,10 @@ async fn main() {
         )
         // Anchor creature management
         .route(
+            "/api/rabble/:id/end",
+            post(handlers::creatures::end_rabble_handler),
+        )
+        .route(
             "/api/rabble/:id/transfer-anchor",
             post(handlers::rabble_workspace::transfer_anchor_handler),
         )
