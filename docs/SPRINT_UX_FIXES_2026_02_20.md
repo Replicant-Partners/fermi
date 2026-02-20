@@ -408,6 +408,115 @@ For joined rabbles:
 
 ---
 
+### F11. Friendship 500 Errors with Legacy Users — 🔴 SOFT LAUNCH BLOCKER
+
+**What was said:**
+> "There are users in the system that I am trying to add as friends and I cannot —
+> perhaps it's because they were legacy users — and getting user-id 500 errors.
+> This needs to be fixed. I need to be able to invite and add friends and those
+> friends need to do the same — this has to be in place for soft launch."
+
+**Analysis:**
+
+The social layer has two tiers:
+1. **Contacts** (user-to-user): `POST /api/contacts` — requires the target `user_id` to exist in the `users` table
+2. **Creature friendships** (creature-to-creature): `POST /api/creature-friendships` — requires both creatures to exist + owners to be different users
+
+The 500 errors are likely caused by:
+
+**Root cause candidates:**
+1. **Legacy users with NULL user_id** — Migration 004 created users with `user_id TEXT PRIMARY KEY`, but migration 004b added a partial unique index excluding legacy users (`WHERE auth_provider != 'legacy'`). Migration 093 added a proper UNIQUE constraint. Legacy users may have auth_provider values that don't match the CHECK constraint, or their user_id format may be incompatible.
+
+2. **Contacts table FK violations** — The `contacts` table has `user_id` and `contact_id` columns. If these reference `users(user_id)` via FK, and the target user doesn't have a proper `users` row, the INSERT fails with a 500.
+
+3. **Creature ownership mismatch** — If a creature's `owner_id` points to a legacy user string that doesn't match the authenticated user's ID format (e.g., Ethereum address vs Google OAuth ID), the ownership check passes but downstream queries fail.
+
+4. **Notification INSERT failure** — After a successful friendship request, the handler tries to INSERT a notification for the target user. If the target user's `user_id` violates a NOT NULL or FK constraint on the `notifications` table, the whole request fails with 500 even though the friendship was created.
+
+**Investigation steps:**
+```bash
+# Check what users exist and their auth_providers
+psql -c "SELECT user_id, email, auth_provider, display_name FROM users ORDER BY created_at"
+
+# Check if contacts table has FK constraints
+psql -c "SELECT conname, conrelid::regclass, confrelid::regclass FROM pg_constraint WHERE conrelid = 'contacts'::regclass"
+
+# Check for any NULL user_ids in creatures
+psql -c "SELECT creature_id, owner_id FROM creatures WHERE owner_id NOT IN (SELECT user_id FROM users WHERE user_id IS NOT NULL)"
+
+# Look at recent 500s in logs
+# Check server logs for the exact SQL error
+```
+
+**Fixes needed:**
+1. **Defensive contact handler** — if `users` row doesn't exist for a legacy user, return a clear error ("This user needs to sign in with the new auth system first") instead of 500.
+
+2. **Friendship handler** — catch notification INSERT failures gracefully (don't let notification failure kill the friendship request). Wrap the notification INSERT in a try/catch that logs but doesn't propagate.
+
+3. **Legacy user migration** — ensure all users in the system have valid `user_id` entries. May need a backfill script.
+
+4. **User lookup endpoint** — `GET /api/users/search?q=<name>` so the Flutter app can find users to befriend (currently there's no user discovery).
+
+**Files to change:**
+- `fermi/src/handlers/social.rs` — defensive error handling in `add_contact_handler` and `send_friendship_request_handler`
+- `fermi/src/handlers/social.rs` — wrap notification INSERTs in error-swallowing blocks
+- New: `scripts/fix_legacy_users.sql` — backfill script
+- Potentially: new user search/discovery endpoint
+
+**This is the #1 blocker for soft launch. Without working friendships, the social layer is broken.**
+
+---
+
+### F12. Map Visual Distinction — Rabbles vs Creatures
+
+**What was said:**
+> "In the map view — need better visual distinction between rabbles and creatures."
+
+**Analysis:**
+
+Currently both creature pins and rabble markers are similarly sized (40-56px) with
+similar visual weight. Rabbles use an amber square with a groups icon, creatures use
+a circular avatar. At a glance it's hard to distinguish them, especially when
+zoomed out.
+
+**Fix:**
+- **Rabble markers**: Make larger (60px), use the radius circle as the primary visual (already added in Phase 3). Add the rabble NAME as a label below the marker, not just the creature count.
+- **Creature pins**: Keep current size (40px circular avatar) but add a subtle state-colored ring: mint for tethered/live, amber for flying, grey for perched.
+- **Colour coding**: Rabbles = amber/gold family. Creatures = species-colored (already the case). Make the distinction more prominent.
+- **Z-ordering**: Creatures render ON TOP of rabble circles, so they're never hidden.
+
+**Files to change:**
+- `rabble/lib/screens/explore_screen.dart` — adjust marker sizes, add name labels to rabble markers, z-order creature pins above rabbles
+
+---
+
+### F13. Map as Default View for Environment Tab
+
+**What was said:**
+> "The map should be the default view for environment."
+
+**Positive feedback noted:**
+> "The through the bug's eyes feature is great."
+> "I like the ability to join from map — that's great."
+
+**Analysis:**
+
+Currently the Environment tab defaults to the feed/list view (`_mapMode = false`).
+The user has to tap the map button to switch. The map IS the environment — it should
+be the first thing you see.
+
+**Fix:**
+- Change `_mapMode` default from `false` to `true` in `ExploreScreen`
+- Keep the list/feed view accessible via the list button in map controls
+- The feed becomes the secondary view, not the primary
+
+**Files to change:**
+- `rabble/lib/screens/explore_screen.dart` — change line `bool _mapMode = false;` to `bool _mapMode = true;`
+
+One-line fix. High impact.
+
+---
+
 ### F9. Environment Activity Feed — Remove Polling + Creature Context on Rabble Click-Through
 
 **What was said:**
@@ -487,21 +596,33 @@ profile page looks jarring and broken.
 
 ## Updated Priority Order for Sprint
 
+### 🔴 SOFT LAUNCH BLOCKERS
+1. **F11** — Fix friendship 500 errors (legacy users, defensive error handling, notification failure isolation)
+2. **F4** — Add befriend button + send friendship flow in creature detail
+
 ### Must (before user testing round 2)
-1. **F1** — Creature card simplification (remove legacy Live/Log tabs, promote map, single scroll)
-2. **F4** — Add befriend button + send friendship flow
-3. **F2** — Force-refresh creature state + deduplicate presences
-4. **F3** — Click-through to rabble (tappable row, keep Chat/Peek)
-5. **F8** — Rabble card enhancements (sort by activity, host creature, quick actions)
-6. **F9b** — Creature context when entering rabble ("You're here as Luna")
-7. **F10** — Profile page dark theming
+3. **F1** — Creature card simplification (remove legacy Live/Log tabs, promote map, single scroll, keep Chat/Peek)
+4. **F13** — Map as default view for Environment tab (one-line fix)
+5. **F2** — Force-refresh creature state + deduplicate presences
+6. **F3** — Click-through to rabble (tappable row, keep Chat/Peek)
+7. **F8** — Rabble card enhancements (sort by activity, host creature, quick actions)
+8. **F9b** — Creature context when entering rabble ("You're here as Luna")
+9. **F10** — Profile page dark theming
+10. **F12** — Map visual distinction (larger rabble markers with names, creature state rings)
 
 ### Should (same sprint if time)
-8. **F5 + F9a** — Remove ALL polling (explore map + feed), rely on SSE everywhere
-9. **F7** — Merge Log tab into expandable Journal section (part of F1)
+11. **F5 + F9a** — Remove ALL polling (explore map + feed), rely on SSE everywhere
+12. **F7** — Merge Log tab into expandable Journal section (part of F1)
 
 ### Discuss (design decision needed)
-10. **F6** — AR viewer as spatial view in rabble chat (needs owner decision on option A/B/C/D)
+13. **F6** — AR viewer as spatial view in rabble chat (needs owner decision on option A/B/C/D)
+
+### ✅ Positive feedback (keep/protect these)
+- "Through the bug's eyes" viewpoint toggle — loved
+- "Join from map" flow — great UX
+- Activity screen in environment — good
+- Rabble page structure — fine
+- Map view overall — looking good
 
 ---
 
@@ -509,13 +630,17 @@ profile page looks jarring and broken.
 
 | File | Fixes |
 |------|-------|
+| **BACKEND** | |
+| `fermi/src/handlers/social.rs` | F11 (defensive error handling, notification isolation) |
+| `fermi/scripts/fix_legacy_users.sql` | F11 (new — backfill legacy users) |
+| **FLUTTER** | |
 | `rabble/lib/screens/creature/creature_screen.dart` | F1, F2, F3, F4, F7 |
 | `rabble/lib/screens/creature/creature_live.dart` | F1 (absorbed into main screen) |
 | `rabble/lib/screens/creature/creature_history.dart` | F7 (becomes expandable journal content) |
 | `rabble/lib/screens/collection_screen.dart` | F2 |
 | `rabble/lib/screens/rabbles_screen.dart` | F8 |
 | `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b (extract invite + creature picker, add creature context banner) |
-| `rabble/lib/screens/explore_screen.dart` | F5, F9a (remove polling, wire SSE, pass creature context to rabble nav) |
+| `rabble/lib/screens/explore_screen.dart` | F5, F9a, F12, F13 (remove polling, wire SSE, map default, visual distinction) |
 | `rabble/lib/screens/profile_screen.dart` | F10 (dark theme) |
 | `rabble/lib/widgets/flock_viz.dart` | F2 |
 | `rabble/lib/widgets/send_friendship_sheet.dart` | F4 (new file) |
