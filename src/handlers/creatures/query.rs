@@ -40,14 +40,16 @@ pub async fn list_creatures_handler(
          c.total_flights, c.unique_locations, c.status, c.animation_status, c.created_at,
          COALESCE(cc.visibility, 'public') AS visibility,
          COALESCE(cc.presence, 'active') AS presence,
-         (SELECT location_name FROM creature_flights WHERE creature_id = c.creature_id
-          ORDER BY started_at DESC LIMIT 1) as last_location_name,
+         cf_last.location_name AS last_location_name,
+         -- Cognition level: uses pre-aggregated LATERAL joins instead of
+         -- 5 correlated subqueries. With indexes from migration 096 this
+         -- goes from O(n * table_scan) to O(n * index_seek).
          FLOOR(LOG(2, 1.0
-           + COALESCE((SELECT COUNT(*) FROM creature_versions WHERE creature_id = c.creature_id), 0) * 1.0
-           + COALESCE((SELECT COUNT(*) FROM creature_versions WHERE creature_id = c.creature_id AND transition_type = 'dream'), 0) * 5.0
+           + COALESCE(cv_stats.version_count, 0) * 1.0
+           + COALESCE(cv_stats.dream_count, 0) * 5.0
            + c.total_flights * 0.2
            + c.unique_locations * 0.3
-           + COALESCE((SELECT COUNT(DISTINCT swarm_id) FROM creature_flights WHERE creature_id = c.creature_id AND swarm_id IS NOT NULL), 0) * 2.0
+           + COALESCE(cf_stats.unique_swarms, 0) * 2.0
            + COALESCE(array_length(cc.active_modules, 1), 0) * 1.0
          ))::int AS cognition_level,
          cs.state AS creature_state,
@@ -59,6 +61,26 @@ pub async fn list_creatures_handler(
          LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
          LEFT JOIN creature_state cs ON cs.creature_id = c.creature_id
          LEFT JOIN swarm_events sw ON sw.swarm_id = cs.rabble_id
+         -- Perf: LATERAL join for last flight location (replaces correlated subquery)
+         LEFT JOIN LATERAL (
+             SELECT location_name
+             FROM creature_flights
+             WHERE creature_id = c.creature_id
+             ORDER BY started_at DESC LIMIT 1
+         ) cf_last ON true
+         -- Perf: LATERAL join for version counts (replaces 2 correlated subqueries)
+         LEFT JOIN LATERAL (
+             SELECT COUNT(*) AS version_count,
+                    COUNT(*) FILTER (WHERE transition_type = 'dream') AS dream_count
+             FROM creature_versions
+             WHERE creature_id = c.creature_id
+         ) cv_stats ON true
+         -- Perf: LATERAL join for distinct swarm count (replaces 1 correlated subquery)
+         LEFT JOIN LATERAL (
+             SELECT COUNT(DISTINCT swarm_id) AS unique_swarms
+             FROM creature_flights
+             WHERE creature_id = c.creature_id AND swarm_id IS NOT NULL
+         ) cf_stats ON true
          WHERE 1=1",
     );
     let mut bind_idx = 0u32;
