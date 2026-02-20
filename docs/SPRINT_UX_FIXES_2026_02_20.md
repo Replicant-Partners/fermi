@@ -233,28 +233,126 @@ through your camera, not on a flat map.
 The QR scan → AR viewer flow already works beautifully. Making it the default
 spatial view in rabble context would be a significant UX upgrade.
 
-**This is a design decision to discuss, not an immediate fix.**
+**Decision: Option D — toggle Map ↔ AR in the split panel. CONFIRMED.**
 
-Options:
-- **A)** Replace MiniMap in split panel with AR camera feed
-- **B)** Replace the entire split panel with AR viewer (full width)
-- **C)** Make the split panel default to AR left + FlockViz right
-- **D)** Add a toggle: Map ↔ AR in the split panel
+The owner's vision:
 
-**Considerations:**
-- AR requires camera permission — can't be default for everyone
-- AR doesn't work on desktop web — needs fallback
-- The FlockViz boids are beloved — keep them
-- Battery/CPU impact of always-on AR camera
+> "The experience of scanning the invite QR code delivers an interesting and cool
+> experience. The intent was to be able to show up to a location and have this kind
+> of magic viewer that allowed you to meet the AR creatures (in anticipation of Glasses).
+> I want that same experience you get with the scanning of the bar code to be something
+> I can see and toggle from the split panel view."
 
-**Recommendation for discussion:** Option D (toggle) with AR as the promoted
-option. The 👁 button in the split panel switches MiniMap ↔ AR camera feed.
-First-time users get MiniMap, but a prominent "Switch to AR" button encourages
-trying it.
+**What this means concretely:**
 
-**Files to change (if going with D):**
-- `rabble/lib/screens/rabble_chat.dart` — add AR/Map toggle to split panel
+The split panel in rabble chat currently shows:
+- Left: MiniMap (OpenStreetMap with creature dots)
+- Right: FlockViz (2D boids animation)
+
+With Option D:
+- Left: **Map ↔ AR toggle** — MiniMap by default, tap 👁 to switch to camera-through
+  AR view (same experience as the QR scan AR portal)
+- Right: FlockViz boids (keep — "the split panel is great")
+- Map should show **real-time tracks** (already wired via SSE in Phase 2)
+
+**Fallbacks:**
+- Desktop web (no camera) → MiniMap only, AR toggle hidden
+- Camera permission denied → MiniMap with "Enable camera for AR" prompt
+- Low battery → stay on MiniMap
+
+**The AR experience to replicate:**
+The QR code scanning flow currently opens `ArViewerScreen.portal()` which shows
+creatures overlaid on the camera feed at the rabble's GPS coordinates. The goal
+is to make this same renderer available as a panel in the split view — not a
+full-screen takeover, but an inline camera feed with creatures overlaid.
+
+This may require:
+- A new `ArPanel` widget that wraps the AR camera feed in a constrained box
+  (not full-screen like `ArViewerScreen`)
+- Or: using the existing `Camera` widget with creature overlay painters
+
+**Files to change:**
+- `rabble/lib/screens/rabble_chat.dart` — add AR/Map toggle button on left panel,
+  swap MiniMap ↔ ArPanel based on toggle state
+- `rabble/lib/widgets/ar_panel.dart` — NEW: inline AR camera with creature overlay
+  (extracted from `ar_viewer.dart` rendering logic, constrained to panel size)
 - `rabble/lib/widgets/split_panel.dart` — no changes needed (just swap child)
+
+---
+
+### F18. Flock Dynamics — Reynolds Host-Only
+
+**What was said:**
+> "We had much richer flock dynamics but those are being lost in the noise so we
+> will table them and reintroduce them in a better context. The one set of flight
+> dynamics we do have is the Reynolds stuff and that should only be currently
+> available to a host — to the host of the rabble (to be able to make the creatures
+> fly in coordinated movement)."
+
+**Analysis:**
+
+The app has two flock dynamics systems:
+1. **Reynolds boids** (separation/cohesion/alignment) — in `FlockViz` and the
+   `SwarmEngine`/`RingAttractor` simulation. These produce coordinated flock movement.
+2. **Onto4MAT formation algorithms** — purchasable from the swarm algorithm marketplace
+   (`swarm_algorithms.rs`). These are richer: V-formation, echelon, line, wedge, etc.
+
+The richer formations are getting lost in the noise. Decision: **table them for now**.
+
+**What stays active:**
+- Reynolds boids (FlockViz) — visible in the split panel right side
+- Reynolds parameter control (separation/cohesion/alignment sliders) — **host only**
+- The `FlightDynamics` widget that exposes these sliders should only appear for
+  the rabble creator, not for participants
+
+**What gets hidden/tabled:**
+- Onto4MAT formation marketplace
+- Advanced formation specs
+- `swarm_algorithms.rs` endpoints (keep in code, hide from UI)
+- Formation algorithm selector in rabble settings
+
+**Files to change:**
+- `rabble/lib/screens/rabble_chat.dart` — only show `FlightDynamics` sliders
+  when `swarm.creatorId == auth.userId` (host check)
+- `rabble/lib/widgets/flight_dynamics.dart` — no code changes, just gated by host check
+- Hide formation algorithm UI from rabble settings/marketplace (if exposed anywhere)
+
+---
+
+### F19. AR QR Experience as Split Panel Toggle
+
+**What was said:**
+> "I want that same experience you get with the scanning of the bar code to be
+> something I can see and toggle from the split panel view."
+
+**Analysis:**
+
+This is the implementation detail of F6. The QR scan flow currently:
+1. User scans QR code → resolves to a `swarm_id`
+2. Opens `ArViewerScreen.portal()` with the swarm's creatures
+3. Renders creatures in 3D space using the camera feed + GPS position
+4. User sees virtual creatures overlaid on the real world
+
+The key question: can this renderer work in a **panel** (200px tall, half-screen
+wide) rather than full-screen?
+
+**Technical considerations:**
+- Camera preview widget (`Camera` from the `camera` package) can be sized to any box
+- AR creature overlay uses `CustomPainter` — works at any size
+- GPS positioning logic is independent of screen size
+- The `PortalCreature` model and rendering pipeline are reusable
+
+**Implementation approach:**
+1. Extract the camera + overlay rendering from `ArViewerScreen` into an `ArPanel` widget
+2. `ArPanel` takes: `swarm`, `creatures`, `currentUserId`, `lat`, `lng`
+3. Wrap in a `ClipRRect` to fit the split panel dimensions
+4. Add a 👁 toggle button in the split panel header (left side)
+5. Toggle swaps `MiniMap` ↔ `ArPanel`
+
+**Files to change:**
+- `rabble/lib/widgets/ar_panel.dart` — NEW: constrained AR camera + creature overlay
+- `rabble/lib/screens/ar_viewer.dart` — extract shared rendering logic into reusable painters
+- `rabble/lib/screens/rabble_chat.dart` — toggle button + panel swap
 
 ---
 
@@ -405,6 +503,34 @@ For joined rabbles:
   `_MyRabbleCard` with edit/invite/add-creature actions, highlight anchor creature
 - Extract `_InviteSheet` from `rabble_chat.dart` → `rabble/lib/widgets/invite_sheet.dart`
 - Extract creature picker from `rabble_chat.dart` → `rabble/lib/widgets/creature_picker_sheet.dart`
+
+---
+
+### F20. "My Location" Button Should Zoom to GPS Position
+
+**What was said:**
+> "When I click on My Location in the map view it should — if I have allowed the
+> app to — zoom to me."
+
+**Analysis:**
+
+The "My Location" button in the viewpoint toggle currently sets `_viewpoint = 'my_location'`
+and updates `_viewpointCenter` to the device GPS position. But the map doesn't
+actually **animate** to that position — it only affects the `initialCenter` which
+is set once on build. Subsequent taps don't move the map.
+
+**Fix:**
+1. Add a `MapController` to the `FlutterMap` widget in `ExploreScreen`
+2. When "My Location" is tapped:
+   - Request/refresh GPS position via `LocationService.refreshPosition()`
+   - Animate the map to the new position: `mapController.move(LatLng(lat, lng), 15)`
+   - If location permission not granted, prompt with `LocationService.requestLocation()`
+3. Add a dedicated "locate me" FAB or use the existing "My Location" toggle as the trigger
+
+**Files to change:**
+- `rabble/lib/screens/explore_screen.dart` — add `MapController`, wire into
+  `_switchViewpoint('my_location')` to call `mapController.move()`, request
+  location permission if needed
 
 ---
 
@@ -737,7 +863,7 @@ profile page looks jarring and broken.
 
 ### Must (before user testing round 2)
 3. **F1** — Creature card simplification (remove legacy Live/Log tabs, promote map, single scroll, keep Chat/Peek)
-4. **F13 + F14** — Environment tab = map only (remove feed view entirely, map is default and only view)
+4. **F13 + F14 + F20** — Environment tab = map only, map is default, "My Location" zooms to GPS
 5. **F15** — Journals restructure: Activity | Friends | My Creatures | Flights (rename All Bugs, add friends filter, remove redundant Reports)
 6. **F16 + F17** — WhatsApp-style chat layout + creature handle colours (mine = mint, others = amber)
 7. **F2** — Force-refresh creature state + deduplicate presences
@@ -751,8 +877,11 @@ profile page looks jarring and broken.
 13. **F5 + F9a** — Remove ALL polling (explore map + feed), rely on SSE everywhere
 14. **F7** — Merge Log tab into expandable Journal section (part of F1)
 
-### Discuss (design decision needed)
-15. **F6** — AR viewer as spatial view in rabble chat (needs owner decision on option A/B/C/D)
+### Discuss (design decisions captured, ready to implement)
+15. **F6** — AR viewer as split panel toggle — Option D confirmed (see F6 + F18 + F19 below)
+
+### Design Notes (for future sprint)
+- **Reports** are a type of rich activity event (flight recap, rabble summary) with a rich payload, not a separate tab. Design the payload shape and delivery mechanism in a design session. Reports stay as a concept — they're deferred features that sit behind expandable journal entries.
 
 ### ✅ Positive feedback (keep/protect these)
 - "Through the bug's eyes" viewpoint toggle — loved
@@ -776,8 +905,10 @@ profile page looks jarring and broken.
 | `rabble/lib/screens/creature/creature_history.dart` | F7 (becomes expandable journal content) |
 | `rabble/lib/screens/collection_screen.dart` | F2 |
 | `rabble/lib/screens/rabbles_screen.dart` | F8 |
-| `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b (extract invite + creature picker, add creature context banner) |
-| `rabble/lib/screens/explore_screen.dart` | F5, F9a, F12, F13, F14 (map-only, remove feed view entirely, visual distinction) |
+| `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b, F18, F19 (AR toggle, host-only Reynolds, extract invite + creature picker, creature context banner) |
+| `rabble/lib/widgets/ar_panel.dart` | F6, F19 (new — inline AR camera panel for split view) |
+| `rabble/lib/widgets/flight_dynamics.dart` | F18 (gated to host-only, no code changes — just caller gating) |
+| `rabble/lib/screens/explore_screen.dart` | F5, F9a, F12, F13, F14, F20 (map-only, remove feed view, visual distinction, MapController + GPS zoom) |
 | `rabble/lib/screens/journals_screen.dart` | F15 (restructure tabs: Activity, Friends, My Creatures, Flights) |
 | `rabble/lib/screens/profile_screen.dart` | F10 (dark theme) |
 | `rabble/lib/widgets/chat_panel.dart` | F16, F17 (WhatsApp layout, creature handle colours: mine=mint, others=amber) |
