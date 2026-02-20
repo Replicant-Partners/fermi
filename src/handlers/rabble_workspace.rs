@@ -1227,7 +1227,7 @@ pub async fn flock_history_handler(
          FROM creature_flights cf
          JOIN creatures c ON c.creature_id = cf.creature_id
          LEFT JOIN swarm_sub_flocks sf ON sf.sub_flock_id = cf.sub_flock_id
-         WHERE cf.swarm_id = $1
+         WHERE cf.swarm_id = $1 AND cf.ended_at IS NULL
          ORDER BY cf.started_at ASC",
     )
     .bind(swarm_id)
