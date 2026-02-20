@@ -408,6 +408,83 @@ For joined rabbles:
 
 ---
 
+### F9. Environment Activity Feed — Remove Polling + Creature Context on Rabble Click-Through
+
+**What was said:**
+> "The activity screen in environment is great — but it's also polling and should
+> be real-time."
+> "When I click through into rabbles I have no idea which creature I've clicked
+> in with — I need that context to not be discombobulated."
+
+**Analysis:**
+
+Two related problems:
+
+**9a. Polling in the explore feed:**
+The ExploreScreen has a 30-second `_pollTimer` that refetches everything (feed
+events, swarms, creature positions). This causes visible refreshes and wasted
+API calls. Same issue as F5 but specifically about the activity feed in the
+explore tab, not just the map.
+
+The existing `ActivityFeedWidget` already has SSE support (connects to
+`/api/feed/stream`). The explore screen should use this widget or the same SSE
+pattern instead of its own polling timer.
+
+**Fix:**
+1. Remove `_pollTimer` from `explore_screen.dart` entirely
+2. Wire SSE stream for feed events (same pattern as `ActivityFeedWidget`)
+3. Keep manual refresh button in map view for on-demand reload
+4. Creature pin positions already update via `CreatureStreamService` SSE — no polling needed
+
+**9b. Creature context when clicking into a rabble:**
+When you tap a rabble on the map or in the feed, you enter `RabbleChatScreen`
+with NO indication of which of YOUR creatures is in that rabble. You're dropped
+into a chat and have to figure out your context.
+
+The `RabbleChatScreen` already has a creature tray that shows your creatures,
+but it loads asynchronously and doesn't prominently show "You're here as Luna".
+
+**Fix:**
+1. When navigating to a rabble from the explore screen, pass the user's creature
+   context: which creature was tapped, or which creature is in this rabble.
+2. `RabbleChatScreen` should show a prominent banner at the top:
+   "You're in this rabble as **Luna** 🦋" (with creature avatar)
+3. If the user has NO creature in this rabble, show:
+   "You're peeking — [Join with a creature]"
+4. Pre-select the relevant creature in the creature tray when entering
+
+**Files to change:**
+- `rabble/lib/screens/explore_screen.dart` — remove `_pollTimer`, wire SSE, pass
+  creature context when navigating to rabble
+- `rabble/lib/screens/rabble_chat.dart` — accept optional `activeCreatureId` param,
+  show "You're here as [creature]" banner prominently
+
+---
+
+### F10. Profile Page — White Background / Missing Theme
+
+**What was said:**
+> "Profile page is white and needs theming."
+
+**Analysis:**
+
+The `ProfileScreen` was moved from a bottom nav tab to the account menu. It
+likely uses a default `Scaffold` background without applying `RabbleTheme` colors.
+The rest of the app uses the dark theme (`RabbleTheme.bg0` / `bg1`), so a white
+profile page looks jarring and broken.
+
+**Fix:**
+- Apply `RabbleTheme.bg0` as scaffold background
+- Ensure all text uses `RabbleTheme.fg0` / `fg1` / `fg2` (not default black)
+- Check Card colors use `RabbleTheme.bg2` not default white
+- Check any `TextField` / `InputDecoration` uses themed borders and fill colors
+- Audit any hardcoded `Colors.white` backgrounds
+
+**Files to change:**
+- `rabble/lib/screens/profile_screen.dart` — apply dark theme consistently
+
+---
+
 ## Updated Priority Order for Sprint
 
 ### Must (before user testing round 2)
@@ -416,13 +493,15 @@ For joined rabbles:
 3. **F2** — Force-refresh creature state + deduplicate presences
 4. **F3** — Click-through to rabble (tappable row, keep Chat/Peek)
 5. **F8** — Rabble card enhancements (sort by activity, host creature, quick actions)
+6. **F9b** — Creature context when entering rabble ("You're here as Luna")
+7. **F10** — Profile page dark theming
 
 ### Should (same sprint if time)
-6. **F5** — Remove polling from explore map
-7. **F7** — Merge Log tab into expandable Journal section (part of F1)
+8. **F5 + F9a** — Remove ALL polling (explore map + feed), rely on SSE everywhere
+9. **F7** — Merge Log tab into expandable Journal section (part of F1)
 
 ### Discuss (design decision needed)
-8. **F6** — AR viewer as spatial view in rabble chat (needs owner decision on option A/B/C/D)
+10. **F6** — AR viewer as spatial view in rabble chat (needs owner decision on option A/B/C/D)
 
 ---
 
@@ -435,8 +514,9 @@ For joined rabbles:
 | `rabble/lib/screens/creature/creature_history.dart` | F7 (becomes expandable journal content) |
 | `rabble/lib/screens/collection_screen.dart` | F2 |
 | `rabble/lib/screens/rabbles_screen.dart` | F8 |
-| `rabble/lib/screens/rabble_chat.dart` | F6, F8 (extract invite + creature picker) |
-| `rabble/lib/screens/explore_screen.dart` | F5 |
+| `rabble/lib/screens/rabble_chat.dart` | F6, F8, F9b (extract invite + creature picker, add creature context banner) |
+| `rabble/lib/screens/explore_screen.dart` | F5, F9a (remove polling, wire SSE, pass creature context to rabble nav) |
+| `rabble/lib/screens/profile_screen.dart` | F10 (dark theme) |
 | `rabble/lib/widgets/flock_viz.dart` | F2 |
 | `rabble/lib/widgets/send_friendship_sheet.dart` | F4 (new file) |
 | `rabble/lib/widgets/invite_sheet.dart` | F8 (extracted from rabble_chat.dart) |
