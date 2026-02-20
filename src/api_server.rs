@@ -875,6 +875,10 @@ async fn main() {
             "/api/creatures/:creature_id/animation-status",
             get(handlers::creatures::creature_animation_status_handler),
         )
+        .route(
+            "/api/creatures/:creature_id/flight-path/:flight_id",
+            get(handlers::creatures::creature_flight_path_handler),
+        )
         .route("/api/swarms", get(handlers::creatures::list_swarms_handler))
         .route(
             "/api/swarms/:swarm_id",
@@ -1530,6 +1534,10 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/dream",
             post(handlers::creatures::creature_dream_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/activity",
+            get(handlers::creatures::creature_activity_handler),
         )
         // Creature visibility (authenticated)
         .route(

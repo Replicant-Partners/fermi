@@ -389,6 +389,272 @@ pub async fn creature_versions_handler(
 /// GET /api/creatures/:creature_id/versions/latest?transition_type=enemy_scan&after=<ISO8601>
 /// Poll endpoint: returns the most recent version matching the given transition_type
 /// created after the specified timestamp. Used by pills to poll for fire-and-forget results.
+// ═══════════════════════════════════════════════════════════════════
+// Per-creature activity feed (Phase 4, Task 4.3)
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct CreatureActivityQuery {
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+}
+
+/// GET /api/creatures/:creature_id/activity — per-creature activity feed.
+/// Filters activity_events to those referencing this creature.
+/// Same response shape as /api/feed/events but scoped to one creature.
+pub async fn creature_activity_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(creature_id): Path<String>,
+    Query(q): Query<CreatureActivityQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pool = state.memory_store.pool();
+    let cid: Uuid = creature_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid creature ID".to_string()))?;
+
+    let limit = q.limit.unwrap_or(30).min(100);
+    let offset = q.offset.unwrap_or(0);
+
+    let rows = sqlx::query(
+        "SELECT ae.event_id, ae.event_type, ae.title, ae.body, ae.metadata,
+                ae.rabble_id, ae.created_at,
+                se.name AS rabble_name,
+                c.specimen_name AS actor_creature_name,
+                c.species_group AS actor_species_group
+         FROM activity_events ae
+         LEFT JOIN swarm_events se ON se.swarm_id = ae.rabble_id
+         LEFT JOIN creatures c ON c.creature_id = ae.creature_id
+         WHERE ae.creature_id = $1
+         ORDER BY ae.created_at DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(cid)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let events: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row| {
+            serde_json::json!({
+                "event_id": row.get::<Uuid, _>("event_id"),
+                "event_type": row.get::<String, _>("event_type"),
+                "title": row.get::<String, _>("title"),
+                "body": row.get::<Option<String>, _>("body"),
+                "metadata": row.get::<Option<serde_json::Value>, _>("metadata"),
+                "rabble_id": row.get::<Option<Uuid>, _>("rabble_id"),
+                "rabble_name": row.get::<Option<String>, _>("rabble_name"),
+                "actor_creature_name": row.get::<Option<String>, _>("actor_creature_name"),
+                "actor_species_group": row.get::<Option<String>, _>("actor_species_group"),
+                "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+            })
+        })
+        .collect();
+
+    let has_more = events.len() as i32 == limit;
+
+    Ok(Json(serde_json::json!({
+        "events": events,
+        "creature_id": cid,
+        "has_more": has_more,
+        "limit": limit,
+        "offset": offset,
+    })))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Stitched flight path as GeoJSON (Phase 4, Task 4.5)
+// ═══════════════════════════════════════════════════════════════════
+
+/// GET /api/creatures/:creature_id/flight-path/:flight_id — flight path as GeoJSON.
+///
+/// Takes raw telemetry points + path_samples from the flight and returns a
+/// GeoJSON Feature with LineString geometry, plus computed stats (distance,
+/// speed, waypoints, rabbles crossed).
+pub async fn creature_flight_path_handler(
+    State(state): State<AppState>,
+    Path((creature_id, flight_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pool = state.memory_store.pool();
+    let cid: Uuid = creature_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid creature ID".to_string()))?;
+    let fid: Uuid = flight_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid flight ID".to_string()))?;
+
+    // Fetch the flight record
+    let flight = sqlx::query(
+        "SELECT flight_id, creature_id, owner_id, center_lat, center_lng,
+                h3_cell, location_name, flight_pattern, swarm_id,
+                started_at, ended_at, duration_seconds, path_samples, data_source
+         FROM creature_flights
+         WHERE flight_id = $1 AND creature_id = $2",
+    )
+    .bind(fid)
+    .bind(cid)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Flight not found".to_string()))?;
+
+    let started_at: chrono::DateTime<chrono::Utc> = flight.get("started_at");
+    let ended_at: Option<chrono::DateTime<chrono::Utc>> = flight.try_get("ended_at").ok();
+    let duration_seconds: Option<i32> = flight.try_get("duration_seconds").ok();
+    let path_samples: Option<serde_json::Value> = flight.try_get("path_samples").ok().flatten();
+    let swarm_id: Option<Uuid> = flight.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
+    let location_name: Option<String> = flight.try_get("location_name").ok();
+    let data_source: Option<String> = flight.try_get("data_source").ok();
+
+    // Also fetch telemetry points if available
+    let telemetry_rows = sqlx::query(
+        "SELECT lat, lng, altitude, speed, heading, recorded_at
+         FROM creature_telemetry
+         WHERE creature_id = $1
+           AND recorded_at >= $2
+           AND ($3::timestamptz IS NULL OR recorded_at <= $3)
+         ORDER BY recorded_at ASC
+         LIMIT 5000",
+    )
+    .bind(cid)
+    .bind(started_at)
+    .bind(ended_at)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // Build coordinates array from telemetry or path_samples
+    let mut coordinates: Vec<serde_json::Value> = Vec::new();
+    let mut waypoints: Vec<serde_json::Value> = Vec::new();
+    let mut total_distance_meters: f64 = 0.0;
+
+    if !telemetry_rows.is_empty() {
+        // Use real telemetry
+        let mut prev_lat: Option<f64> = None;
+        let mut prev_lng: Option<f64> = None;
+
+        for row in &telemetry_rows {
+            let lat: f64 = row.get("lat");
+            let lng: f64 = row.get("lng");
+            let recorded_at: chrono::DateTime<chrono::Utc> = row.get("recorded_at");
+
+            coordinates.push(serde_json::json!([lng, lat, recorded_at.to_rfc3339()]));
+
+            // Compute distance from previous point (Haversine)
+            if let (Some(plat), Some(plng)) = (prev_lat, prev_lng) {
+                total_distance_meters += haversine_meters(plat, plng, lat, lng);
+            }
+
+            // Add waypoint every ~10 points for enrichment hooks
+            if coordinates.len() % 10 == 0 || coordinates.len() == 1 {
+                let h3 = {
+                    use h3o::{LatLng as H3LatLng, Resolution};
+                    H3LatLng::new(lat, lng)
+                        .map(|ll| ll.to_cell(Resolution::Twelve).to_string())
+                        .unwrap_or_default()
+                };
+                waypoints.push(serde_json::json!({
+                    "lat": lat,
+                    "lng": lng,
+                    "timestamp": recorded_at.to_rfc3339(),
+                    "h3_cell": h3,
+                    "enrichment_hook": "waypoint_context",
+                }));
+            }
+
+            prev_lat = Some(lat);
+            prev_lng = Some(lng);
+        }
+    } else if let Some(ref samples) = path_samples {
+        // Fall back to path_samples from the flight record
+        if let Some(arr) = samples.as_array() {
+            for sample in arr {
+                let lat = sample.get("lat").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let lng = sample.get("lng").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let t = sample
+                    .get("t")
+                    .or_else(|| sample.get("timestamp"))
+                    .and_then(|v| v.as_f64());
+                coordinates.push(serde_json::json!([lng, lat, t]));
+            }
+        }
+    } else {
+        // No telemetry — just use the flight's center point
+        let lat: f64 = flight.get("center_lat");
+        let lng: f64 = flight.get("center_lng");
+        if lat != 0.0 || lng != 0.0 {
+            coordinates.push(serde_json::json!([lng, lat, started_at.to_rfc3339()]));
+        }
+    }
+
+    // Compute average speed
+    let dur_secs = duration_seconds.unwrap_or(0) as f64;
+    let avg_speed = if dur_secs > 0.0 {
+        total_distance_meters / dur_secs
+    } else {
+        0.0
+    };
+
+    // Find rabbles crossed (swarms whose area intersects the flight path)
+    let rabbles_crossed: Vec<Uuid> = if swarm_id.is_some() {
+        vec![swarm_id.unwrap()]
+    } else {
+        vec![]
+    };
+
+    // Build GeoJSON Feature
+    let geojson = serde_json::json!({
+        "type": "Feature",
+        "geometry": {
+            "type": if coordinates.len() > 1 { "LineString" } else { "Point" },
+            "coordinates": if coordinates.len() > 1 {
+                serde_json::Value::Array(coordinates.clone())
+            } else if coordinates.len() == 1 {
+                coordinates[0].clone()
+            } else {
+                serde_json::json!([0, 0])
+            },
+        },
+        "properties": {
+            "total_distance_meters": (total_distance_meters * 10.0).round() / 10.0,
+            "duration_seconds": duration_seconds,
+            "average_speed_mps": (avg_speed * 100.0).round() / 100.0,
+            "rabbles_crossed": rabbles_crossed,
+            "waypoints": waypoints,
+            "data_source": data_source,
+            "point_count": coordinates.len(),
+        },
+    });
+
+    let share_token = format!("{:x}", fid.as_u128() & 0xFFFFFFFFFFFF);
+
+    Ok(Json(serde_json::json!({
+        "flight_id": fid,
+        "creature_id": cid,
+        "started_at": started_at.to_rfc3339(),
+        "ended_at": ended_at.map(|t| t.to_rfc3339()),
+        "location_name": location_name,
+        "geojson": geojson,
+        "share_url": format!("/flights/{}", share_token),
+    })))
+}
+
+/// Haversine distance in meters between two lat/lng pairs.
+fn haversine_meters(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
+    const R: f64 = 6_371_000.0;
+    let d_lat = (lat2 - lat1).to_radians();
+    let d_lng = (lng2 - lng1).to_radians();
+    let a = (d_lat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lng / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+    R * c
+}
+
+// ═══════════════════════════════════════════════════════════════════
+
 #[allow(dead_code)]
 pub async fn creature_version_poll_handler(
     State(state): State<AppState>,
@@ -759,6 +1025,7 @@ pub async fn list_visible_flights_handler(
                 "specimen_name": row.try_get::<Option<String>, _>("specimen_name").unwrap_or(None),
                 "species_group": row.get::<String, _>("species_group"),
                 "asset_path": row.get::<String, _>("asset_path"),
+                "owner_id": row.get::<String, _>("owner_id"),
             })
         })
         .collect();

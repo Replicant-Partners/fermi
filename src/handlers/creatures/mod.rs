@@ -3,11 +3,11 @@
 //! Re-exports every public handler so `handlers::creatures::foo_handler` works
 //! unchanged in api_server.rs route registrations.
 
-pub(crate) mod helpers;
 mod agent_modules;
 mod collections;
 mod devices;
 mod flights;
+pub(crate) mod helpers;
 mod identity;
 mod query;
 mod state;
@@ -16,9 +16,10 @@ mod tethering;
 
 // ─── Re-exports: query ─────────────────────────────────────────────
 pub use query::{
-    creature_animation_layer_handler, creature_animation_status_handler, creature_flights_handler,
-    creature_image_handler, creature_versions_handler, feed_handler, get_creature_handler,
-    list_creatures_handler, list_visible_flights_handler,
+    creature_activity_handler, creature_animation_layer_handler, creature_animation_status_handler,
+    creature_flight_path_handler, creature_flights_handler, creature_image_handler,
+    creature_versions_handler, feed_handler, get_creature_handler, list_creatures_handler,
+    list_visible_flights_handler,
 };
 
 // ─── Re-exports: flights ───────────────────────────────────────────
@@ -29,8 +30,8 @@ pub use flights::{
 
 // ─── Re-exports: state (location + rabble) ─────────────────────────
 pub use state::{
-    favourite_creature_handler, host_rabble_handler, join_by_qr_token_handler,
-    join_swarm_handler, perch_handler, unfavourite_creature_handler,
+    favourite_creature_handler, host_rabble_handler, join_by_qr_token_handler, join_swarm_handler,
+    perch_handler, unfavourite_creature_handler,
 };
 
 // ─── Re-exports: tethering ─────────────────────────────────────────
@@ -41,16 +42,15 @@ pub use tethering::{
 
 // ─── Re-exports: agent_modules ─────────────────────────────────────
 pub use agent_modules::{
-    creature_dream_handler, creature_level_handler, enemy_sensor_handler,
-    genome_profiler_handler, prey_locator_handler,
+    creature_dream_handler, creature_level_handler, enemy_sensor_handler, genome_profiler_handler,
+    prey_locator_handler,
 };
 
 // ─── Re-exports: identity ──────────────────────────────────────────
 pub use identity::{
     animate_creature_handler, generate_art_batch_handler, generate_art_handler,
-    mint_creature_handler, sosa_opt_in_handler,
-    transfer_creature_handler, update_creature_handler, update_creature_status_handler,
-    update_creature_visibility_handler,
+    mint_creature_handler, sosa_opt_in_handler, transfer_creature_handler, update_creature_handler,
+    update_creature_status_handler, update_creature_visibility_handler,
 };
 
 // ─── Re-exports: swarms ────────────────────────────────────────────
