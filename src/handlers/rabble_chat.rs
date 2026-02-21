@@ -641,17 +641,25 @@ pub async fn list_rabble_members(
         .try_get::<Option<uuid::Uuid>, _>("anchor_creature_id")
         .unwrap_or(None);
 
-    // Get all creatures with active flights in this rabble
+    // Get all creatures currently in this rabble.
+    // Source of truth: creature_state.rabble_id (always up to date).
+    // Falls back to creature_flights for creatures that joined before
+    // creature_state was introduced.
     let rows = sqlx::query(
-        "SELECT c.creature_id, c.specimen_name, c.scientific_name,
+        "SELECT DISTINCT ON (c.creature_id)
+                c.creature_id, c.specimen_name, c.scientific_name,
                 c.species_group, c.asset_path, c.owner_id,
-                cf.data_source, cf.started_at,
+                COALESCE(cf.data_source, 'synthetic') AS data_source,
+                COALESCE(cf.started_at, cs.updated_at) AS started_at,
                 u.display_name AS owner_display_name
-         FROM creature_flights cf
-         JOIN creatures c ON c.creature_id = cf.creature_id
+         FROM creature_state cs
+         JOIN creatures c ON c.creature_id = cs.creature_id
          LEFT JOIN users u ON u.user_id = c.owner_id
-         WHERE cf.swarm_id = $1 AND cf.ended_at IS NULL
-         ORDER BY cf.started_at ASC",
+         LEFT JOIN creature_flights cf ON cf.creature_id = c.creature_id
+              AND cf.ended_at IS NULL
+         WHERE cs.rabble_id = $1
+           AND cs.state IN ('hosting', 'in_rabble')
+         ORDER BY c.creature_id, cf.started_at DESC NULLS LAST",
     )
     .bind(swarm_id)
     .fetch_all(&state.db)

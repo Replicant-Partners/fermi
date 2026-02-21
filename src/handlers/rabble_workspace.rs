@@ -1217,20 +1217,31 @@ pub async fn flock_history_handler(
     let center_lng: f64 = swarm.try_get("center_lng").unwrap_or(0.0);
     let swarm_name: String = swarm.try_get("name").unwrap_or_default();
 
-    // Get all flights in this swarm with their path_samples
+    // Get all creatures currently in this swarm.
+    // Source of truth: creature_state.rabble_id (always up to date).
+    // Falls back to creature_flights for path_samples and position data.
     let flights = sqlx::query(
-        "SELECT cf.creature_id, cf.center_lat, cf.center_lng, cf.path_samples, cf.started_at,
+        "SELECT DISTINCT ON (c.creature_id)
+                c.creature_id,
+                COALESCE(cf.center_lat, cs.location_lat, $2) AS center_lat,
+                COALESCE(cf.center_lng, cs.location_lng, $3) AS center_lng,
+                cf.path_samples, COALESCE(cf.started_at, cs.updated_at) AS started_at,
                 c.specimen_name, c.scientific_name, c.species_group, c.owner_id,
                 c.asset_path,
                 cf.sub_flock_id, sf.name AS sub_flock_name,
                 c.attraction_score
-         FROM creature_flights cf
-         JOIN creatures c ON c.creature_id = cf.creature_id
+         FROM creature_state cs
+         JOIN creatures c ON c.creature_id = cs.creature_id
+         LEFT JOIN creature_flights cf ON cf.creature_id = c.creature_id
+              AND cf.ended_at IS NULL
          LEFT JOIN swarm_sub_flocks sf ON sf.sub_flock_id = cf.sub_flock_id
-         WHERE cf.swarm_id = $1 AND cf.ended_at IS NULL
-         ORDER BY cf.started_at ASC",
+         WHERE cs.rabble_id = $1
+           AND cs.state IN ('hosting', 'in_rabble')
+         ORDER BY c.creature_id, cf.started_at DESC NULLS LAST",
     )
     .bind(swarm_id)
+    .bind(center_lat)
+    .bind(center_lng)
     .fetch_all(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
