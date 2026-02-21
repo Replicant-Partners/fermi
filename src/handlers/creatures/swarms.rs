@@ -1088,3 +1088,149 @@ pub async fn end_rabble_handler(
         "status": "completed",
     })))
 }
+
+// ─── Leave Rabble ──────────────────────────────────────────────────
+//
+// POST /api/rabble/:id/leave
+//
+// Explicit leave: removes a creature from a rabble without ending it.
+// If the creature is the anchor → reject with guidance to end/transfer.
+//
+// What happens:
+//   - Clears swarm_id on the creature's active flight
+//   - Decrements creature_count on the swarm
+//   - Updates creature_state to "perched" (still at location, just not in the gathering)
+//   - Posts system message in chat ("[creature] has left")
+
+#[derive(Deserialize)]
+pub struct LeaveRabbleRequest {
+    pub creature_id: Uuid,
+}
+
+pub async fn leave_rabble_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(swarm_id): Path<Uuid>,
+    Json(req): Json<LeaveRabbleRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Verify creature ownership
+    let creature =
+        super::helpers::verify_creature_ownership(pool, req.creature_id, &user_id).await?;
+    let creature_name: String = creature
+        .try_get("specimen_name")
+        .unwrap_or_else(|_| "A creature".into());
+
+    // Check if creature is actually in this rabble
+    let flight = sqlx::query(
+        "SELECT flight_id, data_source FROM creature_flights
+         WHERE creature_id = $1 AND swarm_id = $2 AND ended_at IS NULL
+         LIMIT 1",
+    )
+    .bind(req.creature_id)
+    .bind(swarm_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((
+        StatusCode::NOT_FOUND,
+        "This creature is not in this rabble".into(),
+    ))?;
+
+    let flight_id: Uuid = flight.get("flight_id");
+
+    // Block if creature is the anchor — must end or transfer rabble instead
+    let is_anchor = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM swarm_events
+            WHERE swarm_id = $1 AND anchor_creature_id = $2
+            AND status IN ('active', 'scheduled')
+        )",
+    )
+    .bind(swarm_id)
+    .bind(req.creature_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if is_anchor {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "{} is the anchor of this rabble. End the rabble or transfer the anchor first.",
+                creature_name
+            ),
+        ));
+    }
+
+    // Clear swarm_id on the flight — creature stays at its location but leaves the gathering
+    sqlx::query("UPDATE creature_flights SET swarm_id = NULL WHERE flight_id = $1")
+        .bind(flight_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Decrement creature count
+    sqlx::query(
+        "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
+         WHERE swarm_id = $1",
+    )
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .ok();
+
+    // Update creature_state to "perched" — still at location, just not in the rabble
+    sqlx::query(
+        "UPDATE creature_state SET state = 'perched', rabble_id = NULL, updated_at = NOW()
+         WHERE creature_id = $1",
+    )
+    .bind(req.creature_id)
+    .execute(pool)
+    .await
+    .ok();
+
+    // Post system message in chat
+    let msg_id = Uuid::new_v4();
+    let _ = sqlx::query(
+        "INSERT INTO rabble_messages (message_id, swarm_id, sender_id, content, message_type, created_at)
+         VALUES ($1, $2, 'system', $3, 'system', NOW())",
+    )
+    .bind(msg_id)
+    .bind(swarm_id)
+    .bind(format!("{} has left the rabble", creature_name))
+    .execute(pool)
+    .await;
+
+    // Broadcast leave event
+    let _ = state.rabble_broadcast.send(crate::RabbleEvent {
+        swarm_id,
+        message: json!({
+            "type": "creature_left",
+            "swarm_id": swarm_id,
+            "creature_id": req.creature_id,
+            "creature_name": creature_name,
+        }),
+    });
+
+    // Emit creature SSE event so the creature card updates
+    crate::handlers::streams::emit_creature_event(
+        &state,
+        req.creature_id,
+        "left_rabble",
+        json!({
+            "swarm_id": swarm_id,
+            "creature_id": req.creature_id,
+            "state": "perched",
+        }),
+    );
+
+    Ok(Json(json!({
+        "message": format!("{} left the rabble", creature_name),
+        "swarm_id": swarm_id,
+        "creature_id": req.creature_id,
+        "state": "perched",
+    })))
+}

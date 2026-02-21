@@ -1299,30 +1299,19 @@ pub async fn fly_handler(
         let sid: Option<Uuid> = af.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
         let pattern: String = af.try_get("flight_pattern").unwrap_or_default();
 
-        if pattern != "perch" {
-            // Already in non-perch flight — auto-end it so creature can start fresh
-            sqlx::query(
-                "UPDATE creature_flights SET ended_at = NOW(),
-                 duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-                 WHERE flight_id = $1",
-            )
-            .bind(fid)
-            .execute(pool)
-            .await
-            .ok();
-
-            // Decrement swarm creature count if leaving a rabble
-            if let Some(sid) = sid {
-                sqlx::query(
-                    "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
-                     WHERE swarm_id = $1",
-                )
-                .bind(sid)
-                .execute(pool)
-                .await
-                .ok();
-            }
-        }
+        // End the old flight so creature can start a new hop/expedition.
+        // IMPORTANT: do NOT decrement swarm creature count — hopping/flying
+        // within a rabble does not mean leaving. The creature stays a member.
+        // Use explicit "Leave Rabble" to remove from a gathering.
+        sqlx::query(
+            "UPDATE creature_flights SET ended_at = NOW(),
+             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+             WHERE flight_id = $1",
+        )
+        .bind(fid)
+        .execute(pool)
+        .await
+        .ok();
 
         (fid, sid)
     } else {
@@ -1330,6 +1319,9 @@ pub async fn fly_handler(
         (Uuid::nil(), None)
     };
 
+    // Preserve rabble membership: if the creature was in a rabble, the new
+    // flight inherits swarm_id. Movement != leaving. Use explicit leave.
+    let inherited_swarm_id = swarm_id;
     let swarm_id = swarm_id.unwrap_or(Uuid::nil());
 
     // Tiered fly pricing: hop (no prompt) = 1cr, expedition (with prompt) = 5cr
@@ -1363,23 +1355,25 @@ pub async fn fly_handler(
     // Start or update the flight
     let pattern = if is_expedition { "expedition" } else { "fly" };
     let flight_id = if flight_id.is_nil() {
-        // No active flight — create a new fly flight
+        // No active flight — create a new fly flight.
+        // Inherit swarm_id from previous flight so rabble membership is preserved.
         let new_fid = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO creature_flights (flight_id, creature_id, owner_id, h3_cell, center_lat, center_lng,
-             flight_pattern, started_at, data_source)
-             VALUES ($1, $2, $3, '', 0, 0, $4, NOW(), 'app')",
+             flight_pattern, started_at, data_source, swarm_id)
+             VALUES ($1, $2, $3, '', 0, 0, $4, NOW(), 'app', $5)",
         )
         .bind(new_fid)
         .bind(creature_id)
         .bind(&user_id)
         .bind(pattern)
+        .bind(inherited_swarm_id) // preserves rabble membership across hops
         .execute(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         new_fid
     } else {
-        // Active perch flight — update pattern
+        // Active perch flight — update pattern. swarm_id already set on this flight.
         sqlx::query("UPDATE creature_flights SET flight_pattern = $1 WHERE flight_id = $2")
             .bind(pattern)
             .bind(flight_id)
@@ -1413,7 +1407,7 @@ pub async fn fly_handler(
                 None,
                 &json!({
                     "flight_id": flight_id,
-                    "from_swarm_id": swarm_id,
+                    "swarm_id": swarm_id,
                     "destination": dest_bg,
                     "is_expedition": is_expedition,
                     "cost": fly_cost,
