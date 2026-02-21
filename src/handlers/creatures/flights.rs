@@ -1313,7 +1313,9 @@ pub async fn fly_handler(
         .await
         .ok();
 
-        (fid, sid)
+        // Old flight is ended — force creation of a NEW flight (with inherited swarm_id).
+        // Using Uuid::nil() so the "create new flight" branch is taken below.
+        (Uuid::nil(), sid)
     } else {
         // No active flight — that's fine, we'll create one
         (Uuid::nil(), None)
