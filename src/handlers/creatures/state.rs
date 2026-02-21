@@ -484,34 +484,60 @@ pub async fn host_rabble_handler(
         "total_cost": total_cost,
     });
 
-    // Record versioned state in background — not critical for response
-    // Synchronous: creature_state must be "hosting" before the response returns,
-    // so the client re-fetch sees the updated state immediately.
-    if let Err(e) = record_transition(
-        pool,
-        creature_id,
-        "hosting",
-        Some("perched"),
-        "host",
-        &user_id,
-        center_lat,
-        center_lng,
-        &h3_cell,
-        Some(swarm_id),
-        None,
-        &json!({
-            "flight_id": flight_id,
-            "swarm_id": swarm_id,
-            "rabble_name": rabble_name,
-            "walk_in_price": req.walk_in_price,
-        }),
+    // Fast inline creature_state UPSERT — must complete before response so
+    // the client re-fetch sees "hosting" immediately. This is a single cheap
+    // upsert (no MAX query, no version insert).
+    let _ = sqlx::query(
+        "INSERT INTO creature_state (creature_id, state, location_lat, location_lng, h3_cell, rabble_id, updated_at)
+         VALUES ($1, 'hosting', $2, $3, $4, $5, NOW())
+         ON CONFLICT (creature_id) DO UPDATE SET
+            state = 'hosting', location_lat = $2, location_lng = $3, h3_cell = $4,
+            rabble_id = $5, updated_at = NOW()",
     )
-    .await
+    .bind(creature_id)
+    .bind(center_lat)
+    .bind(center_lng)
+    .bind(&h3_cell)
+    .bind(swarm_id)
+    .execute(pool)
+    .await;
+
+    // Full record_transition in background — writes creature_versions history.
+    // Not critical for the response; the creature_state is already correct.
     {
-        eprintln!(
-            "[host] record_transition failed for creature {}: {}",
-            creature_id, e
-        );
+        let pool_bg = state.memory_store.pool().clone();
+        let user_bg = user_id.clone();
+        let h3_bg = h3_cell.clone();
+        let name_bg = rabble_name.clone();
+        let walk_in_bg = req.walk_in_price;
+        tokio::spawn(async move {
+            if let Err(e) = record_transition(
+                &pool_bg,
+                creature_id,
+                "hosting",
+                Some("perched"),
+                "host",
+                &user_bg,
+                center_lat,
+                center_lng,
+                &h3_bg,
+                Some(swarm_id),
+                None,
+                &json!({
+                    "flight_id": flight_id,
+                    "swarm_id": swarm_id,
+                    "rabble_name": name_bg,
+                    "walk_in_price": walk_in_bg,
+                }),
+            )
+            .await
+            {
+                eprintln!(
+                    "[host] record_transition failed for creature {}: {}",
+                    creature_id, e
+                );
+            }
+        });
     }
 
     // Record co-presence for post-rabble recap (host is first creature present)
@@ -1005,6 +1031,25 @@ pub async fn join_swarm_handler(
     .execute(pool)
     .await
     .ok();
+
+    // Fast inline creature_state UPSERT — must complete before response so
+    // the client re-fetch sees "in_rabble" immediately. Single cheap upsert.
+    let swarm_lat: f64 = swarm.try_get("center_lat").unwrap_or(0.0);
+    let swarm_lng: f64 = swarm.try_get("center_lng").unwrap_or(0.0);
+    let _ = sqlx::query(
+        "INSERT INTO creature_state (creature_id, state, location_lat, location_lng, h3_cell, rabble_id, updated_at)
+         VALUES ($1, 'in_rabble', $2, $3, $4, $5, NOW())
+         ON CONFLICT (creature_id) DO UPDATE SET
+            state = 'in_rabble', location_lat = $2, location_lng = $3, h3_cell = $4,
+            rabble_id = $5, updated_at = NOW()",
+    )
+    .bind(req.creature_id)
+    .bind(swarm_lat)
+    .bind(swarm_lng)
+    .bind(&h3_cell)
+    .bind(swarm_id)
+    .execute(pool)
+    .await;
 
     // Defer versioned state + system messages + agent welcomes to background
     {
