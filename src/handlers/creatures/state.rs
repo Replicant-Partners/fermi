@@ -609,6 +609,23 @@ pub async fn join_swarm_handler(
         return Err((StatusCode::CONFLICT, format!("Rabble is {}", status)));
     }
 
+    // Governance: check if creature is ejected from this rabble (cooldown or permanent ban)
+    crate::handlers::governance::check_ejection(pool, swarm_id, req.creature_id).await?;
+
+    // Governance: check if creature-level or user-level block exists between
+    // the joining creature and the anchor creature
+    let anchor_creature_id: Option<Uuid> = swarm
+        .try_get::<Option<Uuid>, _>("anchor_creature_id")
+        .unwrap_or(None);
+    if let Some(anchor_id) = anchor_creature_id {
+        if crate::handlers::governance::is_blocked(pool, req.creature_id, anchor_id).await {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Cannot join this rabble due to a block.".into(),
+            ));
+        }
+    }
+
     // Visibility access check
     let visibility: String = swarm
         .try_get("visibility")

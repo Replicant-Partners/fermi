@@ -280,6 +280,15 @@ pub async fn send_friendship_request_handler(
         ));
     }
 
+    // Governance: silently reject if blocked (blocked party never knows)
+    if crate::handlers::governance::is_blocked(pool, req.from_creature_id, req.to_creature_id).await
+    {
+        return Ok(Json(json!({
+            "status": "requested",
+            "friendship_id": Uuid::new_v4(),
+        })));
+    }
+
     // Canonical ordering: creature_a < creature_b
     let (creature_a, creature_b) = if req.from_creature_id < req.to_creature_id {
         (req.from_creature_id, req.to_creature_id)

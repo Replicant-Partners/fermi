@@ -1698,6 +1698,39 @@ async fn main() {
             post(handlers::creatures::leave_rabble_handler),
         )
         .route(
+            "/api/rabble/:id/eject",
+            post(handlers::governance::eject_creature_handler),
+        )
+        .route(
+            "/api/rabble/:id/eject/:creature_id",
+            delete(handlers::governance::lift_ejection_handler),
+        )
+        // Governance — Block + Report
+        .route(
+            "/api/creatures/:creature_id/block",
+            post(handlers::governance::block_creature_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/block/:blocked_creature_id",
+            delete(handlers::governance::unblock_creature_handler),
+        )
+        .route(
+            "/api/users/block",
+            post(handlers::governance::block_user_handler),
+        )
+        .route(
+            "/api/users/block/:blocked_user_id",
+            delete(handlers::governance::unblock_user_handler),
+        )
+        .route(
+            "/api/my/blocks",
+            get(handlers::governance::list_blocks_handler),
+        )
+        .route(
+            "/api/reports",
+            post(handlers::governance::create_report_handler),
+        )
+        .route(
             "/api/rabble/:id/transfer-anchor",
             post(handlers::rabble_workspace::transfer_anchor_handler),
         )

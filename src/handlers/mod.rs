@@ -15,6 +15,7 @@ pub mod creatures;
 pub mod dashboard;
 pub mod eval;
 pub mod execution;
+pub mod governance;
 pub mod kg;
 pub mod lifecycle;
 pub mod marketplace;
