@@ -620,7 +620,7 @@ pub async fn join_swarm_handler(
             "SELECT 1 FROM object_shares
              WHERE object_type = 'rabble' AND object_id = $1::text
              AND (share_target = $2 OR share_target IN
-                  (SELECT team_id::text FROM team_members WHERE user_id = $2))
+                  (SELECT team_id::text FROM team_members WHERE member_id = $2))
              LIMIT 1",
         )
         .bind(swarm_id)
@@ -759,7 +759,7 @@ pub async fn join_swarm_handler(
              SELECT 1 FROM object_shares
              WHERE object_type = 'rabble' AND object_id = $3::text
              AND (share_target = $2 OR share_target IN
-                  (SELECT team_id::text FROM team_members WHERE user_id = $2))
+                  (SELECT team_id::text FROM team_members WHERE member_id = $2))
              LIMIT 1",
         )
         .bind(&creator_id)
