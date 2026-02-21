@@ -1730,6 +1730,15 @@ async fn main() {
             "/api/reports",
             post(handlers::governance::create_report_handler),
         )
+        // Push notifications
+        .route(
+            "/api/push/vapid-key",
+            get(handlers::push::get_vapid_key_handler),
+        )
+        .route(
+            "/api/push/subscribe",
+            post(handlers::push::subscribe_handler).delete(handlers::push::unsubscribe_handler),
+        )
         .route(
             "/api/rabble/:id/transfer-anchor",
             post(handlers::rabble_workspace::transfer_anchor_handler),

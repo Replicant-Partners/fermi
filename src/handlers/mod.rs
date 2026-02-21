@@ -27,6 +27,7 @@ pub mod observations;
 pub mod ontology;
 pub mod pages;
 pub mod profile;
+pub mod push;
 pub mod qr_codes;
 pub mod rabble_chat;
 pub mod rabble_workspace;

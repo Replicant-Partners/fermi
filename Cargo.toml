@@ -98,6 +98,10 @@ base64 = "0.22"
 # H3 hexagonal grid (AR spatial suite)
 h3o = "0.6"
 
+# Web Push notifications — uses raw HTTP + openssl for VAPID signing
+# No external web-push crate needed (avoids unstable feature issues)
+url = "2"
+
 # QR code generation (Rabble events)
 qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png"] }
