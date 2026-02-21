@@ -201,7 +201,7 @@ pub async fn list_notifications_handler(
 
     let rows = if params.unread.unwrap_or(false) {
         sqlx::query(
-            "SELECT id, type, title, message, read, created_at FROM notifications
+            "SELECT id, type, title, message, read, metadata, created_at FROM notifications
              WHERE user_id = $1 AND read = FALSE ORDER BY created_at DESC LIMIT $2",
         )
         .bind(&user_id)
@@ -210,7 +210,7 @@ pub async fn list_notifications_handler(
         .await
     } else {
         sqlx::query(
-            "SELECT id, type, title, message, read, created_at FROM notifications
+            "SELECT id, type, title, message, read, metadata, created_at FROM notifications
              WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
         )
         .bind(&user_id)
@@ -244,6 +244,7 @@ pub async fn list_notifications_handler(
                 "title": r.try_get::<String, _>("title").unwrap_or_default(),
                 "message": r.try_get::<Option<String>, _>("message").unwrap_or(None),
                 "read": r.try_get::<bool, _>("read").unwrap_or(false),
+                "metadata": r.try_get::<Option<serde_json::Value>, _>("metadata").unwrap_or(None),
                 "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
             })
         })
