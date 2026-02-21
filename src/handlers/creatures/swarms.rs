@@ -1029,6 +1029,33 @@ pub async fn end_rabble_handler(
 
     let creatures_removed = ended_flights.len();
 
+    // Clear creature_state for all creatures that were in this rabble
+    // Sets them back to 'idle' with no rabble association.
+    sqlx::query(
+        "UPDATE creature_state SET state = 'idle', rabble_id = NULL, updated_at = NOW()
+         WHERE rabble_id = $1",
+    )
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .ok();
+
+    // Also emit SSE events so creature cards update in real-time
+    for row in &ended_flights {
+        let cid: Uuid = row.get("creature_id");
+        crate::handlers::streams::emit_creature_event(
+            &state,
+            cid,
+            "left_rabble",
+            json!({
+                "swarm_id": swarm_id,
+                "creature_id": cid,
+                "state": "idle",
+                "reason": "rabble_ended",
+            }),
+        );
+    }
+
     // Mark rabble as completed
     sqlx::query(
         "UPDATE swarm_events
