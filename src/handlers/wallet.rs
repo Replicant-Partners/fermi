@@ -200,18 +200,21 @@ pub async fn transfer_credits_handler(
     })?;
 
     // Create notification for recipient
-    let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, type, title, message, created_at)
-         VALUES ($1, $2, 'credit_transfer', $3, $4, NOW())",
+    crate::handlers::push::notify_user(
+        &state.db,
+        &body.recipient_id,
+        "credit_transfer",
+        &format!("Received {} credits", body.amount),
+        Some(&format!(
+            "You received {} credits from a friend: {}",
+            body.amount, note
+        )),
+        Some(&serde_json::json!({
+            "amount": body.amount,
+            "sender_id": sender_id,
+        })),
+        None,
     )
-    .bind(uuid::Uuid::new_v4())
-    .bind(&body.recipient_id)
-    .bind(format!("Received {} credits", body.amount))
-    .bind(format!(
-        "You received {} credits from a friend: {}",
-        body.amount, note
-    ))
-    .execute(&state.db)
     .await;
 
     // Return updated sender balance

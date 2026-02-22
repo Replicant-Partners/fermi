@@ -892,18 +892,21 @@ pub async fn transfer_creature_handler(
     .unwrap_or_else(|_| "a creature".to_string());
 
     // Notify recipient
-    let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, type, title, message, created_at)
-         VALUES ($1, $2, 'creature_gift', $3, $4, NOW())",
+    crate::handlers::push::notify_user(
+        &state.db,
+        &body.recipient_id,
+        "creature_gift",
+        &format!("You received {}!", creature_name),
+        Some(&format!(
+            "Someone gifted you the creature '{}'",
+            creature_name
+        )),
+        Some(&json!({
+            "creature_id": cid,
+            "creature_name": creature_name,
+        })),
+        None,
     )
-    .bind(Uuid::new_v4())
-    .bind(&body.recipient_id)
-    .bind(format!("You received {}!", creature_name))
-    .bind(format!(
-        "Someone gifted you the creature '{}'",
-        creature_name
-    ))
-    .execute(&state.db)
     .await;
 
     // Emit activity event (fire-and-forget)

@@ -254,12 +254,16 @@ pub async fn tether_handler(
     .await
     .ok();
 
-    // Set presence to tracking
-    sqlx::query("UPDATE creature_conditions SET presence = 'tracking', updated_at = NOW() WHERE creature_id = $1")
-        .bind(creature_id)
-        .execute(pool)
-        .await
-        .ok();
+    // Set presence to tracking — UPSERT to handle missing creature_conditions rows
+    sqlx::query(
+        "INSERT INTO creature_conditions (creature_id, presence, updated_at)
+         VALUES ($1, 'tracking', NOW())
+         ON CONFLICT (creature_id) DO UPDATE SET presence = 'tracking', updated_at = NOW()",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .ok();
 
     // Broadcast creature SSE event
     crate::handlers::streams::emit_creature_event(
@@ -391,12 +395,16 @@ pub async fn untether_handler(
         .await
         .ok();
 
-    // Set presence back to active
-    sqlx::query("UPDATE creature_conditions SET presence = 'active', updated_at = NOW() WHERE creature_id = $1")
-        .bind(creature_id)
-        .execute(pool)
-        .await
-        .ok();
+    // Set presence back to active — UPSERT for robustness
+    sqlx::query(
+        "INSERT INTO creature_conditions (creature_id, presence, updated_at)
+         VALUES ($1, 'active', NOW())
+         ON CONFLICT (creature_id) DO UPDATE SET presence = 'active', updated_at = NOW()",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .ok();
 
     // Broadcast creature SSE event
     crate::handlers::streams::emit_creature_event(

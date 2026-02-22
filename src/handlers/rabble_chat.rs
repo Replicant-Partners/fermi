@@ -594,18 +594,21 @@ pub async fn invite_to_rabble(
 
     // Create notification for invitee (only for user invites)
     if share_type == "user" {
-        let _ = sqlx::query(
-            "INSERT INTO notifications (id, user_id, type, title, message, created_at)
-             VALUES ($1, $2, 'rabble_invite', $3, $4, NOW())",
+        crate::handlers::push::notify_user(
+            &state.db,
+            &share_target,
+            "rabble_invite",
+            &format!("Invited to {}", rabble_name),
+            Some(&format!(
+                "You've been invited to the rabble '{}'",
+                rabble_name
+            )),
+            Some(&serde_json::json!({
+                "swarm_id": swarm_id,
+                "rabble_name": rabble_name,
+            })),
+            None,
         )
-        .bind(uuid::Uuid::new_v4())
-        .bind(&share_target)
-        .bind(format!("Invited to {}", rabble_name))
-        .bind(format!(
-            "You've been invited to the rabble '{}'",
-            rabble_name
-        ))
-        .execute(&state.db)
         .await;
     }
 

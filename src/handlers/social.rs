@@ -394,32 +394,25 @@ pub async fn send_friendship_request_handler(
     .await;
 
     // Create notification for target creature's owner (fire-and-forget, never 500)
-    if let Err(e) = sqlx::query(
-        "INSERT INTO notifications (id, user_id, type, title, message, metadata, created_at)
-         VALUES ($1, $2, 'friendship_request', $3, $4, $5, NOW())",
+    crate::handlers::push::notify_user(
+        pool,
+        &to_owner,
+        "friendship_request",
+        &format!("{} wants to be friends!", from_name),
+        Some(&format!(
+            "{} met your creature {} and wants to befriend it",
+            from_name, to_name
+        )),
+        Some(&json!({
+            "friendship_id": id,
+            "from_creature_id": req.from_creature_id,
+            "to_creature_id": req.to_creature_id,
+            "from_creature_name": from_name,
+            "to_creature_name": to_name,
+        })),
+        None,
     )
-    .bind(Uuid::new_v4())
-    .bind(&to_owner)
-    .bind(format!("{} wants to be friends!", from_name))
-    .bind(format!(
-        "{} met your creature {} and wants to befriend it",
-        from_name, to_name
-    ))
-    .bind(json!({
-        "friendship_id": id,
-        "from_creature_id": req.from_creature_id,
-        "to_creature_id": req.to_creature_id,
-        "from_creature_name": from_name,
-        "to_creature_name": to_name,
-    }))
-    .execute(pool)
-    .await
-    {
-        eprintln!(
-            "[friendship] Failed to create notification for {}: {}",
-            to_owner, e
-        );
-    }
+    .await;
 
     Ok(Json(json!({
         "status": "requested",
@@ -527,26 +520,22 @@ pub async fn accept_friendship_handler(
     } else {
         &owner_b
     };
-    if let Err(e) = sqlx::query(
-        "INSERT INTO notifications (id, user_id, type, title, message, metadata, created_at)
-         VALUES ($1, $2, 'friendship_accepted', $3, $4, $5, NOW())",
+    crate::handlers::push::notify_user(
+        pool,
+        initiator_owner,
+        "friendship_accepted",
+        &format!("{} and {} are now friends!", name_a, name_b),
+        Some("Your friendship request was accepted"),
+        Some(&json!({
+            "friendship_id": friendship_id,
+            "creature_a": creature_a,
+            "creature_b": creature_b,
+            "creature_a_name": name_a,
+            "creature_b_name": name_b,
+        })),
+        None,
     )
-    .bind(Uuid::new_v4())
-    .bind(initiator_owner)
-    .bind(format!("{} and {} are now friends!", name_a, name_b))
-    .bind("Your friendship request was accepted")
-    .bind(json!({
-        "friendship_id": friendship_id,
-        "creature_a": creature_a,
-        "creature_b": creature_b,
-        "creature_a_name": name_a,
-        "creature_b_name": name_b,
-    }))
-    .execute(pool)
-    .await
-    {
-        eprintln!("[friendship] Failed to notify {}: {}", initiator_owner, e);
-    }
+    .await;
 
     // Broadcast creature SSE events — both creatures get notified
     crate::handlers::streams::emit_creature_event(
@@ -895,30 +884,29 @@ pub async fn send_creature_invite_handler(
     .await;
 
     // Notify target creature's owner
-    let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, type, title, message, metadata, created_at)
-         VALUES ($1, $2, 'creature_invite', $3, $4, $5, NOW())",
+    crate::handlers::push::notify_user(
+        pool,
+        &to_owner,
+        "creature_invite",
+        &format!("{} says: come fly with me!", from_name),
+        Some(&format!(
+            "{} invites {} to join {} — {}",
+            from_name,
+            to_name,
+            rabble_name,
+            req.message.as_deref().unwrap_or("No message")
+        )),
+        Some(&json!({
+            "invite_id": invite_id,
+            "from_creature_id": req.from_creature_id,
+            "to_creature_id": req.to_creature_id,
+            "rabble_id": rabble_id,
+            "from_creature_name": from_name,
+            "to_creature_name": to_name,
+            "rabble_name": rabble_name,
+        })),
+        None,
     )
-    .bind(Uuid::new_v4())
-    .bind(&to_owner)
-    .bind(format!("{} says: come fly with me!", from_name))
-    .bind(format!(
-        "{} invites {} to join {} — {}",
-        from_name,
-        to_name,
-        rabble_name,
-        req.message.as_deref().unwrap_or("No message")
-    ))
-    .bind(json!({
-        "invite_id": invite_id,
-        "from_creature_id": req.from_creature_id,
-        "to_creature_id": req.to_creature_id,
-        "rabble_id": rabble_id,
-        "from_creature_name": from_name,
-        "to_creature_name": to_name,
-        "rabble_name": rabble_name,
-    }))
-    .execute(pool)
     .await;
 
     // Also grant rabble visibility via object_shares so the target can see it
@@ -1812,19 +1800,17 @@ pub(crate) async fn notify_rabble_followers(
             continue;
         }
 
-        let _ = sqlx::query(
-            "INSERT INTO notifications (id, user_id, type, title, message, metadata, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW())",
+        crate::handlers::push::notify_user(
+            pool,
+            &follower_id,
+            &format!("rabble_{}", event_type),
+            title,
+            message,
+            Some(&json!({
+                "swarm_id": swarm_id,
+            })),
+            None,
         )
-        .bind(Uuid::new_v4())
-        .bind(&follower_id)
-        .bind(format!("rabble_{}", event_type))
-        .bind(title)
-        .bind(message)
-        .bind(json!({
-            "swarm_id": swarm_id,
-        }))
-        .execute(pool)
         .await;
     }
 }

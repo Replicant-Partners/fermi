@@ -457,24 +457,23 @@ pub async fn eject_creature_handler(
     .await;
 
     // Notify the ejected user
-    let _ = sqlx::query(
-        "INSERT INTO notifications (id, user_id, type, title, message, metadata, created_at)
-         VALUES ($1, $2, 'rabble_eject', $3, $4, $5, NOW())",
+    crate::handlers::push::notify_user(
+        pool,
+        &ejected_user_id,
+        "rabble_eject",
+        &format!("{} was removed from {}", creature_name, swarm_name),
+        Some(if req.permanent {
+            "Your creature has been permanently removed from this rabble."
+        } else {
+            "Your creature was removed. You can rejoin after 24 hours."
+        }),
+        Some(&json!({
+            "swarm_id": swarm_id,
+            "creature_id": req.creature_id,
+            "permanent": req.permanent,
+        })),
+        None,
     )
-    .bind(Uuid::new_v4())
-    .bind(&ejected_user_id)
-    .bind(format!("{} was removed from {}", creature_name, swarm_name))
-    .bind(if req.permanent {
-        "Your creature has been permanently removed from this rabble."
-    } else {
-        "Your creature was removed. You can rejoin after 24 hours."
-    })
-    .bind(json!({
-        "swarm_id": swarm_id,
-        "creature_id": req.creature_id,
-        "permanent": req.permanent,
-    }))
-    .execute(pool)
     .await;
 
     // Broadcast event so chat UI updates
