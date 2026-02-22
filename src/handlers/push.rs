@@ -4,25 +4,28 @@
 //!   - GET  /api/push/vapid-key — public VAPID key for client subscription
 //!   - POST /api/push/subscribe — register a push subscription
 //!   - DELETE /api/push/subscribe — unregister a push subscription
+//!   - POST /api/push/proximity — check proximity and push nearby rabble alerts
 //!
 //! And helper functions:
 //!   - `notify_user` — creates in-app notification + sends web push
 //!   - `send_push_to_user` — sends web push only
 //!
-//! Push delivery uses a "tickle" pattern: sends a minimal push to wake the
-//! service worker, which then fetches notifications from the API and displays
-//! them natively. This avoids complex ECE payload encryption.
+//! Push delivery uses a "tickle" pattern with VAPID JWT authentication.
+//! The server sends a minimal push to wake the service worker, which then
+//! fetches notifications from the API and displays them natively.
 //!
-//! VAPID keys should be set via environment variables:
-//!   VAPID_PUBLIC_KEY  — base64url-encoded P-256 public key (65 bytes uncompressed)
-//!   VAPID_PRIVATE_KEY — base64url-encoded P-256 private key (32 bytes)
-//!
-//! Generate with:
+//! VAPID keys stored in push_config table. Generate with:
 //!   npx web-push generate-vapid-keys
-//! Or:
-//!   openssl ecparam -genkey -name prime256v1 -noout | openssl ec -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '='
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    Json,
+};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use ecdsa::signature::Signer;
+use p256::ecdsa::{Signature, SigningKey};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
@@ -144,22 +147,64 @@ pub async fn unsubscribe_handler(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PUSH DELIVERY
-//
-// Uses a "tickle" pattern: sends a minimal HTTP POST to the push endpoint
-// to wake the service worker. The service worker then fetches the latest
-// notifications from GET /api/notifications and displays them natively.
-//
-// For full encrypted payload push, VAPID JWT signing + ECE encryption
-// would be needed. This is deferred — the tickle pattern works for MVP
-// and the service worker handles the rest.
+// VAPID JWT SIGNING — ES256 (ECDSA P-256) per RFC 8292
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Build a VAPID Authorization header for a push endpoint.
+///
+/// Format: `vapid t=<JWT>, k=<public_key_base64url>`
+///
+/// The JWT is signed with ES256 using the private key from push_config.
+fn build_vapid_auth(
+    vapid_private_b64: &str,
+    vapid_public_b64: &str,
+    vapid_subject: &str,
+    endpoint: &str,
+) -> Result<String, String> {
+    // Parse endpoint to get audience (origin)
+    let audience = url::Url::parse(endpoint)
+        .map(|u| format!("{}://{}", u.scheme(), u.host_str().unwrap_or("")))
+        .map_err(|e| format!("Invalid endpoint URL: {}", e))?;
+
+    // Build JWT header + payload
+    let header = json!({"alg": "ES256", "typ": "JWT"});
+    let now = chrono::Utc::now().timestamp() as u64;
+    let payload = json!({
+        "aud": audience,
+        "exp": now + 12 * 3600,
+        "sub": vapid_subject,
+    });
+
+    let header_b64 = URL_SAFE_NO_PAD.encode(header.to_string().as_bytes());
+    let payload_b64 = URL_SAFE_NO_PAD.encode(payload.to_string().as_bytes());
+    let signing_input = format!("{}.{}", header_b64, payload_b64);
+
+    // Decode private key and sign
+    let priv_bytes = URL_SAFE_NO_PAD
+        .decode(vapid_private_b64)
+        .map_err(|e| format!("Invalid private key: {}", e))?;
+
+    let signing_key = SigningKey::from_bytes(priv_bytes.as_slice().into())
+        .map_err(|e| format!("Invalid P-256 key: {}", e))?;
+
+    let signature: Signature = signing_key.sign(signing_input.as_bytes());
+    let sig_bytes = signature.to_bytes();
+    let sig_b64 = URL_SAFE_NO_PAD.encode(&sig_bytes);
+
+    let jwt = format!("{}.{}", signing_input, sig_b64);
+    Ok(format!("vapid t={}, k={}", jwt, vapid_public_b64))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUSH DELIVERY — tickle push with VAPID authentication
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Send a push notification to all active subscriptions of a user.
 ///
+/// Uses VAPID JWT authentication (ES256). Sends a "tickle" push (empty body)
+/// to wake the service worker, which fetches from /api/notifications.
+///
 /// Fire-and-forget: errors are logged but never propagated to the caller.
-/// If VAPID keys are not configured, push is silently skipped (in-app
-/// notifications still work via the notify_user helper below).
 pub async fn send_push_to_user(
     pool: &PgPool,
     user_id: &str,
@@ -169,6 +214,26 @@ pub async fn send_push_to_user(
     _url: Option<&str>,
     _icon: Option<&str>,
 ) {
+    // Get VAPID keys
+    let vapid = match sqlx::query(
+        "SELECT vapid_public_key, vapid_private_key, vapid_subject FROM push_config WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(row)) => row,
+        _ => {
+            // No VAPID keys — can't send push, but in-app notifications still work
+            return;
+        }
+    };
+
+    let vapid_public: String = vapid.get("vapid_public_key");
+    let vapid_private: String = vapid.get("vapid_private_key");
+    let vapid_subject: String = vapid
+        .try_get("vapid_subject")
+        .unwrap_or_else(|_| "mailto:hello@rabble.world".into());
+
     // Get all active subscriptions for this user
     let subs = match sqlx::query(
         "SELECT id, endpoint, p256dh_key, auth_key
@@ -190,19 +255,8 @@ pub async fn send_push_to_user(
     };
 
     if subs.is_empty() {
-        return; // No subscriptions — user hasn't enabled push
+        return;
     }
-
-    // For MVP: send a "tickle" push (empty body) to each subscription endpoint.
-    // The service worker's `push` event fires and fetches from /api/notifications.
-    //
-    // NOTE: Most push services (Chrome/FCM, Firefox/autopush) require either:
-    //   a) VAPID authentication (Authorization header with JWT), or
-    //   b) Encrypted payload (ECE)
-    //
-    // Without VAPID keys configured, these pushes will likely fail with 401/403.
-    // That's OK for MVP — the in-app notification bell still works. When VAPID
-    // keys are set up, the service worker + push will come alive.
 
     let client = reqwest::Client::new();
 
@@ -210,8 +264,19 @@ pub async fn send_push_to_user(
         let sub_id: Uuid = sub.get("id");
         let endpoint: String = sub.get("endpoint");
 
+        // Build VAPID Authorization header for this endpoint
+        let auth_header =
+            match build_vapid_auth(&vapid_private, &vapid_public, &vapid_subject, &endpoint) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("[push] VAPID auth failed for sub {}: {}", sub_id, e);
+                    continue;
+                }
+            };
+
         let result = client
             .post(&endpoint)
+            .header("Authorization", &auth_header)
             .header("Content-Length", "0")
             .header("TTL", "86400")
             .header("Urgency", "normal")
@@ -231,7 +296,6 @@ pub async fn send_push_to_user(
                     .execute(pool)
                     .await;
                 } else if status.as_u16() == 410 || status.as_u16() == 404 {
-                    // Subscription expired — deactivate
                     eprintln!(
                         "[push] Subscription {} gone ({}), deactivating",
                         sub_id, status
@@ -242,10 +306,10 @@ pub async fn send_push_to_user(
                             .execute(pool)
                             .await;
                 } else {
-                    // Other error (likely 401/403 without VAPID) — increment fail count
+                    let resp_body = response.text().await.unwrap_or_default();
                     eprintln!(
-                        "[push] Push to {} returned {} for user {} (title: '{}')",
-                        sub_id, status, user_id, title
+                        "[push] Push to sub {} returned {} for user {} — {}",
+                        sub_id, status, user_id, resp_body
                     );
                     let _ = sqlx::query(
                         "UPDATE push_subscriptions SET failed_count = failed_count + 1,
@@ -329,4 +393,153 @@ pub async fn notify_user(
     tokio::spawn(async move {
         send_push_to_user(&pool, &user_id, &title, &body, &ntype, None, None).await;
     });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROXIMITY PUSH — "Rabble nearby!" alerts
+//
+// Called when a user's location is updated (from tether telemetry or
+// periodic client check-in). Finds active rabbles within a configurable
+// radius and sends push notifications for ones the user hasn't been
+// alerted about recently.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct ProximityCheckRequest {
+    pub lat: f64,
+    pub lng: f64,
+    pub radius_km: Option<f64>,
+}
+
+/// POST /api/push/proximity — check for nearby rabbles and send push alerts.
+///
+/// Called by the client periodically (or on significant location change).
+/// Finds active public rabbles within radius_km (default 2km) that the user
+/// hasn't been alerted about in the last 4 hours.
+pub async fn proximity_check_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<ProximityCheckRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+    let radius_km = req.radius_km.unwrap_or(2.0).max(0.1).min(50.0);
+
+    // Find active public rabbles within radius using PostGIS-style haversine.
+    // Excludes rabbles the user created or already has creatures in.
+    let nearby = sqlx::query(
+        "SELECT s.swarm_id, s.name, s.location_name, s.creature_count,
+                s.center_lat, s.center_lng, s.walk_in_price,
+                s.anchor_creature_id,
+                c.specimen_name AS anchor_creature_name,
+                -- Haversine distance in km
+                (6371 * acos(LEAST(1.0, GREATEST(-1.0,
+                    cos(radians($1)) * cos(radians(s.center_lat)) *
+                    cos(radians(s.center_lng) - radians($2)) +
+                    sin(radians($1)) * sin(radians(s.center_lat))
+                )))) AS distance_km
+         FROM swarm_events s
+         LEFT JOIN creatures c ON c.creature_id = s.anchor_creature_id
+         WHERE s.status = 'active'
+           AND s.visibility = 'public'
+           AND s.creator_id != $3
+           -- Rough bounding box first (fast)
+           AND s.center_lat BETWEEN $1 - ($4 / 111.0) AND $1 + ($4 / 111.0)
+           AND s.center_lng BETWEEN $2 - ($4 / (111.0 * GREATEST(cos(radians($1)), 0.01)))
+                                AND $2 + ($4 / (111.0 * GREATEST(cos(radians($1)), 0.01)))
+           -- Exclude rabbles user already has creatures in
+           AND s.swarm_id NOT IN (
+               SELECT cs.rabble_id FROM creature_state cs
+               JOIN creatures cr ON cr.creature_id = cs.creature_id
+               WHERE cr.owner_id = $3 AND cs.rabble_id IS NOT NULL
+           )
+         HAVING (6371 * acos(LEAST(1.0, GREATEST(-1.0,
+                    cos(radians($1)) * cos(radians(s.center_lat)) *
+                    cos(radians(s.center_lng) - radians($2)) +
+                    sin(radians($1)) * sin(radians(s.center_lat))
+                )))) <= $4
+         ORDER BY distance_km ASC
+         LIMIT 10",
+    )
+    .bind(req.lat)
+    .bind(req.lng)
+    .bind(&user_id)
+    .bind(radius_km)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut alerted = 0;
+
+    for row in &nearby {
+        let swarm_id: Uuid = row.get("swarm_id");
+        let name: String = row.get("name");
+        let distance: f64 = row.try_get("distance_km").unwrap_or(0.0);
+        let creature_count: i32 = row.try_get("creature_count").unwrap_or(0);
+        let location_name: Option<String> = row
+            .try_get::<Option<String>, _>("location_name")
+            .unwrap_or(None);
+
+        // Check if we already alerted about this rabble recently (4h cooldown)
+        let recently_alerted = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM notifications
+                WHERE user_id = $1 AND type = 'rabble_nearby'
+                AND metadata->>'swarm_id' = $2
+                AND created_at > NOW() - INTERVAL '4 hours'
+            )",
+        )
+        .bind(&user_id)
+        .bind(swarm_id.to_string())
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+
+        if recently_alerted {
+            continue;
+        }
+
+        // Send proximity notification
+        let dist_str = if distance < 1.0 {
+            format!("{}m away", (distance * 1000.0).round() as i32)
+        } else {
+            format!("{:.1}km away", distance)
+        };
+
+        let body_text = format!(
+            "{} creature{} gathering{} — {}",
+            creature_count,
+            if creature_count == 1 { "" } else { "s" },
+            if let Some(ref loc) = location_name {
+                format!(" at {}", loc)
+            } else {
+                String::new()
+            },
+            dist_str,
+        );
+
+        notify_user(
+            pool,
+            &user_id,
+            "rabble_nearby",
+            &format!("🦋 {} is nearby!", name),
+            Some(&body_text),
+            Some(&json!({
+                "swarm_id": swarm_id,
+                "distance_km": distance,
+                "center_lat": row.get::<f64, _>("center_lat"),
+                "center_lng": row.get::<f64, _>("center_lng"),
+            })),
+            None,
+        )
+        .await;
+
+        alerted += 1;
+    }
+
+    Ok(Json(json!({
+        "nearby_count": nearby.len(),
+        "alerted": alerted,
+        "radius_km": radius_km,
+    })))
 }

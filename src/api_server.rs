@@ -1740,6 +1740,10 @@ async fn main() {
             post(handlers::push::subscribe_handler).delete(handlers::push::unsubscribe_handler),
         )
         .route(
+            "/api/push/proximity",
+            post(handlers::push::proximity_check_handler),
+        )
+        .route(
             "/api/rabble/:id/transfer-anchor",
             post(handlers::rabble_workspace::transfer_anchor_handler),
         )

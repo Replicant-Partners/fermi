@@ -98,8 +98,9 @@ base64 = "0.22"
 # H3 hexagonal grid (AR spatial suite)
 h3o = "0.6"
 
-# Web Push notifications — uses raw HTTP + openssl for VAPID signing
-# No external web-push crate needed (avoids unstable feature issues)
+# Web Push notifications — VAPID JWT signing (ES256 / ECDSA P-256)
+p256 = { version = "0.13", features = ["ecdsa", "jwk"] }
+ecdsa = { version = "0.16", features = ["signing", "der"] }
 url = "2"
 
 # QR code generation (Rabble events)
