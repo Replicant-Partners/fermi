@@ -122,9 +122,75 @@ The AR button in rabble chat (`_launchAR`) should:
 
 ---
 
+## Tethering Semantics — Discussed, Ready to Build
+
+### Core Use Case
+
+The anchor creature is tethered to the host's GPS. The rabble moves with the host
+in real time. Think: a walking tour, a pub crawl, a nature hike — the gathering
+follows the person leading it.
+
+### Rules (confirmed with owner)
+
+1. **Radius moves with it** — the entire rabble area shifts when the anchor moves
+2. **Member creatures follow** — when creatures are in the rabble, they move with it
+   (their position updates to stay within the moving area)
+3. **"This rabble is moving" prompt** — followers/members who aren't following get:
+   "This rabble is moving — stay or follow?" Choice to leave or track.
+4. **Map updates in real time** — the rabble circle + creature pins move live on the map
+5. **Only the host determines movement** — non-host tethered creatures don't move the rabble
+6. **Creature cards on the map** — need creature pins on the map, not just rabble circles
+
+### Existing Infrastructure
+
+The `push_telemetry_handler` already has anchor propagation:
+```rust
+// In tethering.rs line 466-484:
+UPDATE swarm_events SET center_lat = $1, center_lng = $2, h3_cell = $3
+WHERE anchor_creature_id = $4 AND status IN ('scheduled', 'active')
+```
+
+And broadcasts `rabble_moved` events. But:
+- Member creatures don't update their positions to follow
+- No "rabble is moving" prompt for followers
+- Tether/untether doesn't update creature card or map properly
+- Creature pins not shown on explore map (only rabble markers)
+
+### What Needs Building
+
+| Task | Effort | Priority |
+|------|--------|----------|
+| **Fix tether/untether card state** — creature card doesn't reset on tether/untether | 30m | 🔴 |
+| **Fix tether map update** — tethered creature should show on map with live position | 1h | 🔴 |
+| **Member position follow** — when rabble moves, update member creature positions | 1-2h | 🔴 |
+| **"Rabble is moving" prompt** — notify members, offer stay/follow choice | 1-2h | 🟡 |
+| **Creature pins on explore map** — show creatures, not just rabble circles | 2h | 🟡 |
+| **Untether cleanup** — end tracking flight, reset presence, update card | 30m | 🔴 |
+
+### Tethering + Rabble Interaction Matrix
+
+| Scenario | What happens |
+|----------|-------------|
+| Host tethers anchor creature | Rabble center follows host GPS |
+| Host untethers | Rabble stops at last known position |
+| Non-host tethers their creature | Their creature tracks GPS independently (within rabble) |
+| Host moves outside their own radius | Radius moves with them (it's their rabble) |
+| Member's creature is > radius from moving center | "Rabble is moving" prompt: stay or follow |
+| Host enters another rabble's area | Both rabbles coexist (no collision) |
+
+---
+
 ## Plan — Next Session
 
-### Priority 1: Fix AR Portal (Integrity)
+### Priority 1: Tethering + Map (Core Loop)
+
+1. **Fix tether/untether creature card state** — presence should flip, card should update
+2. **Fix tether map update** — tethered creature pin on explore map, live position
+3. **Member position follow** — when anchor moves, update all member creature positions
+4. **Creature pins on explore map** — show all creatures (tethered + in rabbles), not just rabble circles
+5. **"Rabble is moving" prompt** — notify members when rabble center moves significantly
+
+### Priority 2: Fix AR Portal (Integrity)
 
 1. Trace `_launchAR()` in rabble_chat.dart — ensure all rabble creatures are passed
 2. Check `PortalCreature.fromJson()` for userId filtering
@@ -132,7 +198,7 @@ The AR button in rabble chat (`_launchAR`) should:
 4. Replace AR camera view with portal viewer in rabble chat
 5. Test: all creatures visible in AR, not just mine
 
-### Priority 2: Push Notifications (Go Live)
+### Priority 3: Push Notifications (Go Live)
 
 1. Generate VAPID keys: `npx web-push generate-vapid-keys`
 2. Set as Vercel env vars: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
@@ -140,8 +206,9 @@ The AR button in rabble chat (`_launchAR`) should:
 4. Flutter: request notification permission + subscribe to push
 5. Migrate existing `INSERT INTO notifications` calls to `notify_user()`
 6. Test: close app → receive push when someone joins rabble
+7. **Area-based discovery** — push notifications for nearby rabbles (uses GPS + rabble proximity)
 
-### Priority 3: Test & Polish
+### Priority 4: Test & Polish
 
 1. Test governance: block creature, block user, eject from rabble, report
 2. Test follow toggle on rabble cards
@@ -150,7 +217,7 @@ The AR button in rabble chat (`_launchAR`) should:
 5. Fix any remaining member count drift
 6. Error message cleanup (no raw SQL/stack traces to users)
 
-### Priority 4: Deferred Features (Design Docs Ready)
+### Priority 5: Deferred Features (Design Docs Ready)
 
 | Feature | Doc | Effort |
 |---------|-----|--------|
@@ -333,10 +400,15 @@ cd /home/ilabra/fermi && git add -A && git commit -m "build: ..." && git push or
 
 ### Must Fix (Next Session)
 
+- 🔴 **Tether/untether doesn't update creature card** — presence doesn't flip, card stale
+- 🔴 **Tethered creature not visible on map** — should show live position pin
+- 🔴 **Member creatures don't follow moving rabble** — positions static when anchor moves
 - 🔴 **AR portal only shows user's own creatures** — should show all rabble members
 - 🔴 **AR button in rabble chat opens blank camera** — should open portal viewer with spatial creatures
 - 🟡 **Push notifications not delivering** — infrastructure built, VAPID keys + service worker needed
 - 🟡 **Existing notification code** uses raw INSERT — should migrate to `notify_user()` for push
+- 🟡 **No creature pins on explore map** — only rabble markers, need individual creature pins
+- 🟡 **"Rabble is moving" prompt** — members not notified when host moves the gathering
 
 ### Open (Lower Priority)
 
@@ -365,6 +437,21 @@ cd /home/ilabra/fermi && git add -A && git commit -m "build: ..." && git push or
 ---
 
 **Status:** Active Development 🚀
-**Next Milestone:** AR portal fix + Push notifications go-live
+**Next Milestone:** Tethering semantics + Map creature pins + Push notifications
 **Session Duration:** ~8 hours
 **Commits:** 40+ across both repos
+
+---
+
+## Additional Fixes Applied (End of Session)
+
+- **Chat polling**: fixed — compares by message ID not just count, retries after send
+- **Leave rabble**: fixed — uses creature_state as membership authority (not flights)
+- **Creature card after leave**: fixed — reloads on return from rabble chat
+- **Stale tethers**: cleared — 2 old active tethers from before data reset
+- **Tether "already tethered" error**: resolved by clearing stale data
+
+## Last Commits (Final)
+
+- **fermi:** `8f767ed` — "Fix leave + tether: creature_state authority, cleared stale tethers"
+- **rabble:** `31d7add` — "Fix: creature card reloads on return from chat + leave uses creature_state"
