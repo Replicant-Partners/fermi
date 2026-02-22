@@ -561,15 +561,28 @@ pub async fn push_telemetry_handler(
 
         if let Some(ref swarm_row) = anchor_swarm {
             let swarm_id: Uuid = swarm_row.get("swarm_id");
+            let radius_meters: i32 = swarm_row.try_get("radius_meters").unwrap_or(100);
             eprintln!(
                 "[tether] Anchor creature {} moved rabble {} to ({}, {})",
                 creature_id, swarm_id, last.lat, last.lng
             );
 
-            // Member creatures follow: update all member creature positions
-            // to the new rabble center. Their flights + creature_state move with.
+            // Member creatures follow: scatter within the rabble radius instead
+            // of stacking at the exact center. Each creature gets a deterministic
+            // offset derived from hashtext(creature_id) so positions are stable
+            // across updates but visually distinct on the map.
+            //
+            // offset = (0.2 + 0.5 * hash_frac) * radius_m / 111000° per meter
+            // angle  = 2π * hash_frac_b (different hash seed for independence)
             sqlx::query(
-                "UPDATE creature_state SET location_lat = $1, location_lng = $2, updated_at = NOW()
+                "UPDATE creature_state SET
+                   location_lat = $1 + (0.2 + 0.5 * (abs(hashtext(creature_id::text)) % 1000) / 1000.0)
+                                      * cos(2.0 * 3.14159265 * (abs(hashtext(creature_id::text || 'a')) % 1000) / 1000.0)
+                                      * ($5::float / 111000.0),
+                   location_lng = $2 + (0.2 + 0.5 * (abs(hashtext(creature_id::text)) % 1000) / 1000.0)
+                                      * sin(2.0 * 3.14159265 * (abs(hashtext(creature_id::text || 'a')) % 1000) / 1000.0)
+                                      * ($5::float / (111000.0 * GREATEST(cos(radians($1)), 0.01))),
+                   updated_at = NOW()
                  WHERE rabble_id = $3 AND creature_id != $4
                  AND state IN ('hosting', 'in_rabble')",
             )
@@ -577,19 +590,27 @@ pub async fn push_telemetry_handler(
             .bind(last.lng)
             .bind(swarm_id)
             .bind(creature_id)
+            .bind(radius_meters)
             .execute(pool)
             .await
             .ok();
 
-            // Also update active flights for member creatures (for map display)
+            // Also scatter active flights for member creatures (for map display)
             sqlx::query(
-                "UPDATE creature_flights SET center_lat = $1, center_lng = $2
+                "UPDATE creature_flights SET
+                   center_lat = $1 + (0.2 + 0.5 * (abs(hashtext(creature_id::text)) % 1000) / 1000.0)
+                                    * cos(2.0 * 3.14159265 * (abs(hashtext(creature_id::text || 'a')) % 1000) / 1000.0)
+                                    * ($5::float / 111000.0),
+                   center_lng = $2 + (0.2 + 0.5 * (abs(hashtext(creature_id::text)) % 1000) / 1000.0)
+                                    * sin(2.0 * 3.14159265 * (abs(hashtext(creature_id::text || 'a')) % 1000) / 1000.0)
+                                    * ($5::float / (111000.0 * GREATEST(cos(radians($1)), 0.01)))
                  WHERE swarm_id = $3 AND creature_id != $4 AND ended_at IS NULL",
             )
             .bind(last.lat)
             .bind(last.lng)
             .bind(swarm_id)
             .bind(creature_id)
+            .bind(radius_meters)
             .execute(pool)
             .await
             .ok();
