@@ -1150,23 +1150,28 @@ pub async fn leave_rabble_handler(
         .try_get("specimen_name")
         .unwrap_or_else(|_| "A creature".into());
 
-    // Check if creature is actually in this rabble
-    let flight = sqlx::query(
-        "SELECT flight_id, data_source FROM creature_flights
-         WHERE creature_id = $1 AND swarm_id = $2 AND ended_at IS NULL
-         LIMIT 1",
+    // Check if creature is actually in this rabble via creature_state (source of truth).
+    // Many creatures have creature_state.rabble_id set but no matching flight with swarm_id
+    // (due to hops, data resets, etc). We trust creature_state.
+    let in_rabble = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM creature_state
+            WHERE creature_id = $1 AND rabble_id = $2
+            AND state IN ('hosting', 'in_rabble')
+        )",
     )
     .bind(req.creature_id)
     .bind(swarm_id)
-    .fetch_optional(pool)
+    .fetch_one(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((
-        StatusCode::NOT_FOUND,
-        "This creature is not in this rabble".into(),
-    ))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let flight_id: Uuid = flight.get("flight_id");
+    if !in_rabble {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "This creature is not in this rabble".into(),
+        ));
+    }
 
     // Block if creature is the anchor — must end or transfer rabble instead
     let is_anchor = sqlx::query_scalar::<_, bool>(
@@ -1192,12 +1197,16 @@ pub async fn leave_rabble_handler(
         ));
     }
 
-    // Clear swarm_id on the flight — creature stays at its location but leaves the gathering
-    sqlx::query("UPDATE creature_flights SET swarm_id = NULL WHERE flight_id = $1")
-        .bind(flight_id)
-        .execute(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Clear swarm_id on any active flights for this creature in this rabble
+    sqlx::query(
+        "UPDATE creature_flights SET swarm_id = NULL
+         WHERE creature_id = $1 AND swarm_id = $2 AND ended_at IS NULL",
+    )
+    .bind(req.creature_id)
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .ok();
 
     // Decrement creature count
     sqlx::query(
