@@ -145,12 +145,33 @@ pub async fn tether_handler(
         return Err((StatusCode::CONFLICT, "Creature is already tethered".into()));
     }
 
-    // End non-perch active flights (fly, solo). Keep perch flight alive so
-    // creature retains its location after untether. Perch = "creature is here."
+    // Get current rabble membership (preserve it on the new tether flight)
+    let current_state = sqlx::query(
+        "SELECT rabble_id, location_lat, location_lng, h3_cell FROM creature_state WHERE creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    let current_rabble_id: Option<Uuid> = current_state
+        .as_ref()
+        .and_then(|r| r.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten());
+    let current_lat: f64 = current_state
+        .as_ref()
+        .and_then(|r| r.try_get("location_lat").ok())
+        .unwrap_or(0.0);
+    let current_lng: f64 = current_state
+        .as_ref()
+        .and_then(|r| r.try_get("location_lng").ok())
+        .unwrap_or(0.0);
+
+    // End ALL active flights — tether replaces everything
     sqlx::query(
         "UPDATE creature_flights SET ended_at = NOW(),
          duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-         WHERE creature_id = $1 AND ended_at IS NULL AND flight_pattern != 'perch'",
+         WHERE creature_id = $1 AND ended_at IS NULL",
     )
     .bind(creature_id)
     .execute(pool)
@@ -192,6 +213,47 @@ pub async fn tether_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Create a device-source flight immediately (don't wait for first telemetry push).
+    // This makes the creature visible on the map and in member lists right away.
+    // Preserves rabble membership if the creature was in a rabble.
+    let flight_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO creature_flights
+         (flight_id, creature_id, owner_id, h3_cell, h3_resolution,
+          center_lat, center_lng, flight_pattern, data_source, swarm_id, started_at)
+         VALUES ($1, $2, $3, '', 12, $4, $5, 'tracking', 'device', $6, NOW())",
+    )
+    .bind(flight_id)
+    .bind(creature_id)
+    .bind(&user_id)
+    .bind(current_lat)
+    .bind(current_lng)
+    .bind(current_rabble_id)
+    .execute(pool)
+    .await
+    .ok();
+
+    // Update creature_state — set to tethered state so creature card reflects it immediately
+    let new_state = if current_rabble_id.is_some() {
+        "in_rabble"
+    } else {
+        "perched"
+    };
+    sqlx::query(
+        "INSERT INTO creature_state (creature_id, state, location_lat, location_lng, rabble_id, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (creature_id) DO UPDATE SET
+            state = $2, location_lat = $3, location_lng = $4, rabble_id = $5, updated_at = NOW()",
+    )
+    .bind(creature_id)
+    .bind(new_state)
+    .bind(current_lat)
+    .bind(current_lng)
+    .bind(current_rabble_id)
+    .execute(pool)
+    .await
+    .ok();
+
     // Set presence to tracking
     sqlx::query("UPDATE creature_conditions SET presence = 'tracking', updated_at = NOW() WHERE creature_id = $1")
         .bind(creature_id)
@@ -209,6 +271,8 @@ pub async fn tether_handler(
             "tether_id": tether_id,
             "tether_type": tether_type,
             "device_label": req.device_label,
+            "flight_id": flight_id,
+            "rabble_id": current_rabble_id,
         }),
     );
 
@@ -314,6 +378,19 @@ pub async fn untether_handler(
         false
     };
 
+    // Update creature_state — back to perched (or in_rabble if staying)
+    let new_state = if stayed_in_rabble {
+        "in_rabble"
+    } else {
+        "perched"
+    };
+    sqlx::query("UPDATE creature_state SET state = $1, updated_at = NOW() WHERE creature_id = $2")
+        .bind(new_state)
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .ok();
+
     // Set presence back to active
     sqlx::query("UPDATE creature_conditions SET presence = 'active', updated_at = NOW() WHERE creature_id = $1")
         .bind(creature_id)
@@ -327,7 +404,7 @@ pub async fn untether_handler(
         creature_id,
         "state_changed",
         json!({
-            "state": "untethered",
+            "state": new_state,
             "creature_id": creature_id,
             "stayed_in_rabble": stayed_in_rabble,
         }),
@@ -468,26 +545,79 @@ pub async fn push_telemetry_handler(
             .map(|ll| ll.to_cell(h3o::Resolution::Twelve).to_string())
             .unwrap_or_default();
 
-        let updated = sqlx::query(
+        let anchor_swarm = sqlx::query(
             "UPDATE swarm_events SET center_lat = $1, center_lng = $2, h3_cell = $3
-             WHERE anchor_creature_id = $4 AND status IN ('scheduled', 'active')",
+             WHERE anchor_creature_id = $4 AND status IN ('scheduled', 'active')
+             RETURNING swarm_id, radius_meters",
         )
         .bind(last.lat)
         .bind(last.lng)
         .bind(&h3)
         .bind(creature_id)
-        .execute(pool)
+        .fetch_optional(pool)
         .await
         .ok()
-        .map(|r| r.rows_affected())
-        .unwrap_or(0);
+        .flatten();
 
-        if updated > 0 {
+        if let Some(ref swarm_row) = anchor_swarm {
+            let swarm_id: Uuid = swarm_row.get("swarm_id");
             eprintln!(
-                "[tether] Anchor creature {} moved rabble to ({}, {})",
-                creature_id, last.lat, last.lng
+                "[tether] Anchor creature {} moved rabble {} to ({}, {})",
+                creature_id, swarm_id, last.lat, last.lng
             );
+
+            // Member creatures follow: update all member creature positions
+            // to the new rabble center. Their flights + creature_state move with.
+            sqlx::query(
+                "UPDATE creature_state SET location_lat = $1, location_lng = $2, updated_at = NOW()
+                 WHERE rabble_id = $3 AND creature_id != $4
+                 AND state IN ('hosting', 'in_rabble')",
+            )
+            .bind(last.lat)
+            .bind(last.lng)
+            .bind(swarm_id)
+            .bind(creature_id)
+            .execute(pool)
+            .await
+            .ok();
+
+            // Also update active flights for member creatures (for map display)
+            sqlx::query(
+                "UPDATE creature_flights SET center_lat = $1, center_lng = $2
+                 WHERE swarm_id = $3 AND creature_id != $4 AND ended_at IS NULL",
+            )
+            .bind(last.lat)
+            .bind(last.lng)
+            .bind(swarm_id)
+            .bind(creature_id)
+            .execute(pool)
+            .await
+            .ok();
+
+            // Broadcast rabble_moved event so map updates in real time
+            let _ = state.rabble_broadcast.send(crate::RabbleEvent {
+                swarm_id,
+                message: json!({
+                    "type": "rabble_moved",
+                    "swarm_id": swarm_id,
+                    "center_lat": last.lat,
+                    "center_lng": last.lng,
+                    "h3_cell": h3,
+                }),
+            });
         }
+
+        // Update creature_state with latest position
+        sqlx::query(
+            "UPDATE creature_state SET location_lat = $1, location_lng = $2, updated_at = NOW()
+             WHERE creature_id = $3",
+        )
+        .bind(last.lat)
+        .bind(last.lng)
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .ok();
     }
 
     // Broadcast creature SSE event — send latest position to subscribers
