@@ -97,6 +97,16 @@ pub async fn perch_handler(
             .execute(pool)
             .await
             .ok();
+
+            // Clear rabble membership in creature_state — perching means leaving
+            sqlx::query(
+                "UPDATE creature_state SET state = 'perched', rabble_id = NULL, updated_at = NOW()
+                 WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .execute(pool)
+            .await
+            .ok();
         }
     }
 
@@ -319,6 +329,16 @@ pub async fn host_rabble_handler(
                  WHERE swarm_id = $1",
             )
             .bind(sid)
+            .execute(pool)
+            .await
+            .ok();
+
+            // Clear rabble membership — hosting a new rabble means leaving any current one
+            sqlx::query(
+                "UPDATE creature_state SET state = 'perched', rabble_id = NULL, updated_at = NOW()
+                 WHERE creature_id = $1",
+            )
+            .bind(creature_id)
             .execute(pool)
             .await
             .ok();

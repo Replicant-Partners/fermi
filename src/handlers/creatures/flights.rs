@@ -1279,6 +1279,36 @@ pub async fn fly_handler(
     let specimen_name_for_activity = specimen_name.clone();
 
     // Check for active flight — auto-end if needed, creature can always change state
+    // Auto-untether if creature is tethered — hopping/flying replaces GPS tracking.
+    // No constraints on actions: the creature is free to fly, tether just stops.
+    let was_tethered = sqlx::query(
+        "UPDATE creature_tethers SET active = false, deactivated_at = NOW()
+         WHERE creature_id = $1 AND active = true RETURNING tether_id",
+    )
+    .bind(creature_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .is_some();
+
+    if was_tethered {
+        // Reset presence from 'tracking' to 'active'
+        sqlx::query(
+            "UPDATE creature_conditions SET presence = 'active', updated_at = NOW()
+             WHERE creature_id = $1 AND presence = 'tracking'",
+        )
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .ok();
+
+        eprintln!(
+            "[fly] Auto-untethered creature {} before flight",
+            creature_id
+        );
+    }
+
     let active_flight = sqlx::query(
         "SELECT flight_id, swarm_id, flight_pattern, location_name
          FROM creature_flights

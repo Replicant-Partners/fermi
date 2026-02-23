@@ -950,16 +950,21 @@ pub async fn join_batch_handler(
         }
 
         // Check not already flying at this swarm
-        let existing = sqlx::query(
-            "SELECT 1 FROM creature_flights WHERE creature_id = $1 AND swarm_id = $2 AND ended_at IS NULL",
+        // Check creature_state (source of truth) — not creature_flights
+        let existing = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM creature_state
+                WHERE creature_id = $1 AND rabble_id = $2
+                AND state IN ('hosting', 'in_rabble')
+            )",
         )
         .bind(cid)
         .bind(swarm_id)
-        .fetch_optional(pool)
+        .fetch_one(pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .unwrap_or(false);
 
-        if existing.is_some() {
+        if existing {
             return Err((
                 StatusCode::CONFLICT,
                 format!("Creature {} already in this rabble", cid),

@@ -1014,18 +1014,29 @@ pub async fn end_rabble_handler(
         })));
     }
 
-    // End all active creature flights in this rabble
+    // End active creature flights in this rabble — but NOT device flights.
+    // Tethered creatures keep their GPS tracking; they just leave the rabble.
     let ended_flights = sqlx::query(
         "UPDATE creature_flights
          SET ended_at = NOW(),
              duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-         WHERE swarm_id = $1 AND ended_at IS NULL
+         WHERE swarm_id = $1 AND ended_at IS NULL AND data_source != 'device'
          RETURNING creature_id",
     )
     .bind(swarm_id)
     .fetch_all(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Clear swarm_id on device flights (tethered creatures stay tracking, just leave rabble)
+    sqlx::query(
+        "UPDATE creature_flights SET swarm_id = NULL
+         WHERE swarm_id = $1 AND ended_at IS NULL AND data_source = 'device'",
+    )
+    .bind(swarm_id)
+    .execute(pool)
+    .await
+    .ok();
 
     let creatures_removed = ended_flights.len();
 
@@ -1191,18 +1202,28 @@ pub async fn leave_rabble_handler(
     // No constraints on creature actions — the creature is free to leave,
     // which naturally ends the gathering it was anchoring.
     if is_anchor {
-        // End all active creature flights in this rabble
+        // End active creature flights — but NOT device flights (tethered creatures keep tracking)
         let ended_flights = sqlx::query(
             "UPDATE creature_flights
              SET ended_at = NOW(),
                  duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-             WHERE swarm_id = $1 AND ended_at IS NULL
+             WHERE swarm_id = $1 AND ended_at IS NULL AND data_source != 'device'
              RETURNING creature_id",
         )
         .bind(swarm_id)
         .fetch_all(pool)
         .await
         .unwrap_or_default();
+
+        // Clear swarm_id on device flights (tethered creatures stay tracking, just leave rabble)
+        sqlx::query(
+            "UPDATE creature_flights SET swarm_id = NULL
+             WHERE swarm_id = $1 AND ended_at IS NULL AND data_source = 'device'",
+        )
+        .bind(swarm_id)
+        .execute(pool)
+        .await
+        .ok();
 
         // Clear creature_state for all creatures in this rabble
         sqlx::query(
