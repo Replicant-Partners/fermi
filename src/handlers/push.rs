@@ -428,36 +428,31 @@ pub async fn proximity_check_handler(
     // Find active public rabbles within radius using PostGIS-style haversine.
     // Excludes rabbles the user created or already has creatures in.
     let nearby = sqlx::query(
-        "SELECT s.swarm_id, s.name, s.location_name, s.creature_count,
-                s.center_lat, s.center_lng, s.walk_in_price,
-                s.anchor_creature_id,
-                c.specimen_name AS anchor_creature_name,
-                -- Haversine distance in km
-                (6371 * acos(LEAST(1.0, GREATEST(-1.0,
-                    cos(radians($1)) * cos(radians(s.center_lat)) *
-                    cos(radians(s.center_lng) - radians($2)) +
-                    sin(radians($1)) * sin(radians(s.center_lat))
-                )))) AS distance_km
-         FROM swarm_events s
-         LEFT JOIN creatures c ON c.creature_id = s.anchor_creature_id
-         WHERE s.status = 'active'
-           AND s.visibility = 'public'
-           AND s.creator_id != $3
-           -- Rough bounding box first (fast)
-           AND s.center_lat BETWEEN $1 - ($4 / 111.0) AND $1 + ($4 / 111.0)
-           AND s.center_lng BETWEEN $2 - ($4 / (111.0 * GREATEST(cos(radians($1)), 0.01)))
-                                AND $2 + ($4 / (111.0 * GREATEST(cos(radians($1)), 0.01)))
-           -- Exclude rabbles user already has creatures in
-           AND s.swarm_id NOT IN (
-               SELECT cs.rabble_id FROM creature_state cs
-               JOIN creatures cr ON cr.creature_id = cs.creature_id
-               WHERE cr.owner_id = $3 AND cs.rabble_id IS NOT NULL
-           )
-         HAVING (6371 * acos(LEAST(1.0, GREATEST(-1.0,
-                    cos(radians($1)) * cos(radians(s.center_lat)) *
-                    cos(radians(s.center_lng) - radians($2)) +
-                    sin(radians($1)) * sin(radians(s.center_lat))
-                )))) <= $4
+        "SELECT * FROM (
+            SELECT s.swarm_id, s.name, s.location_name, s.creature_count,
+                    s.center_lat, s.center_lng, s.walk_in_price,
+                    s.anchor_creature_id,
+                    c.specimen_name AS anchor_creature_name,
+                    (6371 * acos(LEAST(1.0, GREATEST(-1.0,
+                        cos(radians($1)) * cos(radians(s.center_lat)) *
+                        cos(radians(s.center_lng) - radians($2)) +
+                        sin(radians($1)) * sin(radians(s.center_lat))
+                    )))) AS distance_km
+             FROM swarm_events s
+             LEFT JOIN creatures c ON c.creature_id = s.anchor_creature_id
+             WHERE s.status = 'active'
+               AND s.visibility = 'public'
+               AND s.creator_id != $3
+               AND s.center_lat BETWEEN $1 - ($4 / 111.0) AND $1 + ($4 / 111.0)
+               AND s.center_lng BETWEEN $2 - ($4 / (111.0 * GREATEST(cos(radians($1)), 0.01)))
+                                    AND $2 + ($4 / (111.0 * GREATEST(cos(radians($1)), 0.01)))
+               AND s.swarm_id NOT IN (
+                   SELECT cs.rabble_id FROM creature_state cs
+                   JOIN creatures cr ON cr.creature_id = cs.creature_id
+                   WHERE cr.owner_id = $3 AND cs.rabble_id IS NOT NULL
+               )
+         ) nearby
+         WHERE distance_km <= $4
          ORDER BY distance_km ASC
          LIMIT 10",
     )
@@ -467,7 +462,7 @@ pub async fn proximity_check_handler(
     .bind(radius_km)
     .fetch_all(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .unwrap_or_default();
 
     let mut alerted = 0;
 
