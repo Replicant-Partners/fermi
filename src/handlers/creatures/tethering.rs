@@ -674,6 +674,162 @@ pub async fn push_telemetry_handler(
         .execute(pool)
         .await
         .ok();
+
+        // ── D: Tethered member drift check ─────────────────────────────
+        // If this creature is in a rabble but NOT the anchor, check if
+        // it has drifted outside the rabble radius. If so, notify the owner.
+        if anchor_swarm.is_none() {
+            // Not an anchor — check if we're in a rabble
+            let member_rabble = sqlx::query(
+                "SELECT cs.rabble_id, se.center_lat, se.center_lng, se.radius_meters, se.name
+                 FROM creature_state cs
+                 JOIN swarm_events se ON se.swarm_id = cs.rabble_id
+                 WHERE cs.creature_id = $1
+                   AND cs.rabble_id IS NOT NULL
+                   AND cs.state IN ('hosting', 'in_rabble')
+                   AND se.status = 'active'",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+            if let Some(rabble_row) = member_rabble {
+                let rabble_center_lat: f64 = rabble_row.try_get("center_lat").unwrap_or(0.0);
+                let rabble_center_lng: f64 = rabble_row.try_get("center_lng").unwrap_or(0.0);
+                let radius_m: i32 = rabble_row.try_get("radius_meters").unwrap_or(100);
+                let rabble_name: String = rabble_row
+                    .try_get("name")
+                    .unwrap_or_else(|_| "the rabble".into());
+                let rabble_id: Uuid = rabble_row.get("rabble_id");
+
+                // Haversine distance in meters
+                let dlat = (last.lat - rabble_center_lat).to_radians();
+                let dlng = (last.lng - rabble_center_lng).to_radians();
+                let a = (dlat / 2.0).sin().powi(2)
+                    + last.lat.to_radians().cos()
+                        * rabble_center_lat.to_radians().cos()
+                        * (dlng / 2.0).sin().powi(2);
+                let distance_m = 6_371_000.0 * 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+
+                if distance_m > radius_m as f64 {
+                    // Outside the rabble radius — notify the owner (4h cooldown)
+                    let recently_notified = sqlx::query_scalar::<_, bool>(
+                        "SELECT EXISTS(
+                            SELECT 1 FROM notifications
+                            WHERE user_id = $1 AND type = 'rabble_drift'
+                            AND metadata->>'creature_id' = $2
+                            AND created_at > NOW() - INTERVAL '4 hours'
+                        )",
+                    )
+                    .bind(&user_id)
+                    .bind(creature_id.to_string())
+                    .fetch_one(pool)
+                    .await
+                    .unwrap_or(false);
+
+                    if !recently_notified {
+                        let dist_str = if distance_m < 1000.0 {
+                            format!("{}m", distance_m.round() as i32)
+                        } else {
+                            format!("{:.1}km", distance_m / 1000.0)
+                        };
+
+                        let creature_name: String = sqlx::query_scalar(
+                            "SELECT specimen_name FROM creatures WHERE creature_id = $1",
+                        )
+                        .bind(creature_id)
+                        .fetch_optional(pool)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| "Your creature".into());
+
+                        crate::handlers::push::notify_user(
+                            pool,
+                            &user_id,
+                            "rabble_drift",
+                            &format!("{} is {} from {}", creature_name, dist_str, rabble_name),
+                            Some("Your creature has drifted outside the rabble area. Leave or return?"),
+                            Some(&json!({
+                                "creature_id": creature_id,
+                                "rabble_id": rabble_id,
+                                "distance_m": distance_m,
+                                "radius_m": radius_m,
+                            })),
+                            None,
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
+
+        // ── E: "Rabble is moving" notification ─────────────────────────
+        // When the anchor moves the rabble significantly (>50m since last
+        // notification), notify all non-anchor members so they can choose
+        // to follow or stay.
+        if let Some(ref swarm_row) = anchor_swarm {
+            let swarm_id: Uuid = swarm_row.get("swarm_id");
+
+            // Check if rabble moved >50m since last notification
+            let should_notify = sqlx::query_scalar::<_, bool>(
+                "SELECT NOT EXISTS(
+                    SELECT 1 FROM notifications
+                    WHERE type = 'rabble_moving'
+                    AND metadata->>'swarm_id' = $1
+                    AND created_at > NOW() - INTERVAL '5 minutes'
+                )",
+            )
+            .bind(swarm_id.to_string())
+            .fetch_one(pool)
+            .await
+            .unwrap_or(true);
+
+            if should_notify {
+                // Get all member owners (excluding the anchor owner)
+                let member_owners: Vec<String> = sqlx::query_scalar(
+                    "SELECT DISTINCT c.owner_id
+                     FROM creature_state cs
+                     JOIN creatures c ON c.creature_id = cs.creature_id
+                     WHERE cs.rabble_id = $1
+                       AND cs.state IN ('hosting', 'in_rabble')
+                       AND c.owner_id != $2",
+                )
+                .bind(swarm_id)
+                .bind(&user_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
+
+                let swarm_name: String =
+                    sqlx::query_scalar("SELECT name FROM swarm_events WHERE swarm_id = $1")
+                        .bind(swarm_id)
+                        .fetch_optional(pool)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| "The rabble".into());
+
+                for owner_id in &member_owners {
+                    crate::handlers::push::notify_user(
+                        pool,
+                        owner_id,
+                        "rabble_moving",
+                        &format!("📍 {} is on the move!", swarm_name),
+                        Some("The rabble host is moving. Your creatures are following along."),
+                        Some(&json!({
+                            "swarm_id": swarm_id,
+                            "center_lat": last.lat,
+                            "center_lng": last.lng,
+                        })),
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
     }
 
     // Broadcast creature SSE event — send latest position to subscribers
