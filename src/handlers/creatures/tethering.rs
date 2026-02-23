@@ -132,7 +132,9 @@ pub async fn tether_handler(
     // Verify ownership
     let _creature = verify_creature_ownership(pool, creature_id, &user_id).await?;
 
-    // Check not already tethered
+    // Check not already tethered — auto-clean stale tethers.
+    // A stale tether is one marked active but with no corresponding device flight
+    // (happens when the app crashes, connection drops, or data is reset).
     let existing = sqlx::query(
         "SELECT tether_id FROM creature_tethers WHERE creature_id = $1 AND active = true LIMIT 1",
     )
@@ -142,7 +144,46 @@ pub async fn tether_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if existing.is_some() {
-        return Err((StatusCode::CONFLICT, "Creature is already tethered".into()));
+        // Check if there's actually a live device flight for this tether
+        let has_device_flight = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM creature_flights
+                WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device'
+            )",
+        )
+        .bind(creature_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+
+        if has_device_flight {
+            // Genuinely active tether — reject
+            return Err((StatusCode::CONFLICT, "Creature is already tethered".into()));
+        }
+
+        // Stale tether — auto-clean and proceed
+        eprintln!(
+            "[tether] Auto-cleaning stale tether for creature {}",
+            creature_id
+        );
+        sqlx::query(
+            "UPDATE creature_tethers SET active = false, deactivated_at = NOW()
+             WHERE creature_id = $1 AND active = true",
+        )
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .ok();
+
+        // Also reset presence if stuck on tracking
+        sqlx::query(
+            "UPDATE creature_conditions SET presence = 'active', updated_at = NOW()
+             WHERE creature_id = $1 AND presence = 'tracking'",
+        )
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .ok();
     }
 
     // Get current rabble membership (preserve it on the new tether flight)
