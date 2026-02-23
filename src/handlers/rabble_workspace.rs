@@ -1315,6 +1315,9 @@ pub async fn flock_history_handler(
                 asset_path.clone()
             },
             "points": points,
+            // Raw lat/lng for AR portal positioning (points get normalized to x,y below)
+            "origin_lat": origin_lat,
+            "origin_lng": origin_lng,
             "sub_flock_id": sub_flock_id,
             "sub_flock_name": sub_flock_name,
             "attraction_score": attraction_score,
