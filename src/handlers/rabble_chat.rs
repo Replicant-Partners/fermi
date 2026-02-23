@@ -235,6 +235,69 @@ pub async fn post_rabble_message(
         message: msg_json.clone(),
     });
 
+    // @mention notifications — parse @creatureName from content,
+    // find the creature's owner, and send a push notification.
+    // Runs in background (fire-and-forget, never blocks the response).
+    if body.content.contains('@') {
+        let pool_mention = state.db.clone();
+        let content_mention = body.content.clone();
+        let sender_name = creature_name
+            .clone()
+            .unwrap_or_else(|| "Someone".to_string());
+        let swarm_id_mention = swarm_id;
+        let sender_user_id = user_id.clone();
+
+        tokio::spawn(async move {
+            // Extract all @mentions — match @word or @"multi word"
+            let re = regex::Regex::new(r"@(\S+)").unwrap();
+            for cap in re.captures_iter(&content_mention) {
+                let mentioned_name = &cap[1];
+
+                // Look up creature by specimen_name (case-insensitive)
+                let creature_row = sqlx::query(
+                    "SELECT c.creature_id, c.owner_id, c.specimen_name
+                     FROM creatures c
+                     WHERE LOWER(c.specimen_name) = LOWER($1)
+                     LIMIT 1",
+                )
+                .bind(mentioned_name)
+                .fetch_optional(&pool_mention)
+                .await
+                .ok()
+                .flatten();
+
+                if let Some(row) = creature_row {
+                    let mentioned_owner: String = row.get("owner_id");
+                    let mentioned_creature_name: String = row
+                        .try_get("specimen_name")
+                        .unwrap_or_else(|_| mentioned_name.to_string());
+                    let mentioned_creature_id: uuid::Uuid = row.get("creature_id");
+
+                    // Don't notify yourself
+                    if mentioned_owner == sender_user_id {
+                        continue;
+                    }
+
+                    crate::handlers::push::notify_user(
+                        &pool_mention,
+                        &mentioned_owner,
+                        "chat_mention",
+                        &format!("{} mentioned {}!", sender_name, mentioned_creature_name),
+                        Some(&content_mention),
+                        Some(&serde_json::json!({
+                            "swarm_id": swarm_id_mention,
+                            "creature_id": mentioned_creature_id,
+                            "creature_name": mentioned_creature_name,
+                            "sender_name": sender_name,
+                        })),
+                        None,
+                    )
+                    .await;
+                }
+            }
+        });
+    }
+
     // Every Nth message, dispatch swarm_host narrator (non-blocking)
     let narrator_interval: i64 = std::env::var("RABBLE_NARRATOR_INTERVAL")
         .ok()

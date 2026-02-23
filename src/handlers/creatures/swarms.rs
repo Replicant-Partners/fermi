@@ -1043,7 +1043,7 @@ pub async fn end_rabble_handler(
     // Clear creature_state for all creatures that were in this rabble
     // Sets them back to 'idle' with no rabble association.
     sqlx::query(
-        "UPDATE creature_state SET state = 'idle', rabble_id = NULL, updated_at = NOW()
+        "UPDATE creature_state SET state = 'perched', rabble_id = NULL, updated_at = NOW()
          WHERE rabble_id = $1",
     )
     .bind(swarm_id)
@@ -1061,7 +1061,7 @@ pub async fn end_rabble_handler(
             json!({
                 "swarm_id": swarm_id,
                 "creature_id": cid,
-                "state": "idle",
+                "state": "perched",
                 "reason": "rabble_ended",
             }),
         );
@@ -1227,7 +1227,7 @@ pub async fn leave_rabble_handler(
 
         // Clear creature_state for all creatures in this rabble
         sqlx::query(
-            "UPDATE creature_state SET state = 'idle', rabble_id = NULL, updated_at = NOW()
+            "UPDATE creature_state SET state = 'perched', rabble_id = NULL, updated_at = NOW()
              WHERE rabble_id = $1",
         )
         .bind(swarm_id)
@@ -1277,7 +1277,7 @@ pub async fn leave_rabble_handler(
                 &state,
                 cid,
                 "left_rabble",
-                json!({ "swarm_id": swarm_id, "state": "idle", "reason": "rabble_ended" }),
+                json!({ "swarm_id": swarm_id, "state": "perched", "reason": "rabble_ended" }),
             );
         }
 
@@ -1286,7 +1286,7 @@ pub async fn leave_rabble_handler(
             "swarm_id": swarm_id,
             "creature_id": req.creature_id,
             "rabble_ended": true,
-            "state": "idle",
+            "state": "perched",
         })));
     }
 
