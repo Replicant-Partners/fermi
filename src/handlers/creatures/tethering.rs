@@ -346,25 +346,30 @@ pub async fn untether_handler(
     // Verify ownership
     let _creature = verify_creature_ownership(pool, creature_id, &user_id).await?;
 
-    let result = sqlx::query(
+    // Deactivate tether — tolerate missing (stale cleanup handles this)
+    sqlx::query(
         "UPDATE creature_tethers SET active = false, deactivated_at = NOW()
          WHERE creature_id = $1 AND active = true",
     )
     .bind(creature_id)
     .execute(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .ok();
 
-    if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, "No active tether".into()));
-    }
+    // End ALL device flights for this creature
+    sqlx::query(
+        "UPDATE creature_flights SET ended_at = NOW(),
+         duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+         WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device'",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .ok();
 
-    // End tracking flights — but if the creature is in a rabble, keep it there.
-    // Find the tether flight first to check if it's attached to a swarm.
-    let tether_flight = sqlx::query(
-        "SELECT flight_id, swarm_id, center_lat, center_lng, h3_cell
-         FROM creature_flights
-         WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device' LIMIT 1",
+    // Check creature_state (source of truth) — is the creature in a rabble?
+    let cs_row = sqlx::query(
+        "SELECT rabble_id, location_lat, location_lng FROM creature_state WHERE creature_id = $1",
     )
     .bind(creature_id)
     .fetch_optional(pool)
@@ -372,62 +377,40 @@ pub async fn untether_handler(
     .ok()
     .flatten();
 
-    let stayed_in_rabble = if let Some(ref tf) = tether_flight {
-        let swarm_id: Option<Uuid> = tf.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
-        let tf_id: Uuid = tf.get("flight_id");
+    let rabble_id: Option<Uuid> = cs_row
+        .as_ref()
+        .and_then(|r| r.try_get::<Option<Uuid>, _>("rabble_id").ok().flatten());
+    let lat: f64 = cs_row
+        .as_ref()
+        .and_then(|r| r.try_get("location_lat").ok())
+        .unwrap_or(0.0);
+    let lng: f64 = cs_row
+        .as_ref()
+        .and_then(|r| r.try_get("location_lng").ok())
+        .unwrap_or(0.0);
 
-        // End the tether flight
-        sqlx::query(
-            "UPDATE creature_flights SET ended_at = NOW(),
-             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-             WHERE flight_id = $1",
-        )
-        .bind(tf_id)
-        .execute(pool)
-        .await
-        .ok();
+    let stayed_in_rabble = rabble_id.is_some();
 
-        // If it was in a rabble, create a new static swarm flight at current position.
-        // The rabble freezes at the last anchor location.
-        if let Some(sid) = swarm_id {
-            let lat: f64 = tf.try_get("center_lat").unwrap_or(0.0);
-            let lng: f64 = tf.try_get("center_lng").unwrap_or(0.0);
-            let h3: String = tf.try_get("h3_cell").unwrap_or_else(|_| String::new());
-            sqlx::query(
-                "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
-                 h3_cell, h3_resolution, center_lat, center_lng,
-                 flight_pattern, swarm_id, started_at)
-                 VALUES ($1, $2, $3, $4, 12, $5, $6, 'swarm', $7, NOW())",
-            )
-            .bind(Uuid::new_v4())
-            .bind(creature_id)
-            .bind(&user_id)
-            .bind(&h3)
-            .bind(lat)
-            .bind(lng)
-            .bind(sid)
-            .execute(pool)
-            .await
-            .ok();
-            true
-        } else {
-            false
-        }
-    } else {
-        // No tether flight found — end any other device flights
+    // If in a rabble, create a static swarm flight to preserve membership
+    if let Some(sid) = rabble_id {
         sqlx::query(
-            "UPDATE creature_flights SET ended_at = NOW(),
-             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-             WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device'",
+            "INSERT INTO creature_flights (flight_id, creature_id, owner_id,
+             h3_cell, h3_resolution, center_lat, center_lng,
+             flight_pattern, swarm_id, started_at)
+             VALUES ($1, $2, $3, '', 12, $4, $5, 'swarm', $6, NOW())",
         )
+        .bind(Uuid::new_v4())
         .bind(creature_id)
+        .bind(&user_id)
+        .bind(lat)
+        .bind(lng)
+        .bind(sid)
         .execute(pool)
         .await
         .ok();
-        false
-    };
+    }
 
-    // Update creature_state — back to perched (or in_rabble if staying)
+    // Update creature_state — keep rabble_id if in rabble, just update state
     let new_state = if stayed_in_rabble {
         "in_rabble"
     } else {
@@ -440,20 +423,15 @@ pub async fn untether_handler(
         .await
         .ok();
 
-    // Set presence back to active
-    if let Err(e) = sqlx::query(
+    // Always reset presence to active
+    sqlx::query(
         "UPDATE creature_conditions SET presence = 'active', updated_at = NOW()
          WHERE creature_id = $1",
     )
     .bind(creature_id)
     .execute(pool)
     .await
-    {
-        eprintln!(
-            "[untether] Failed to set presence=active for {}: {}",
-            creature_id, e
-        );
-    }
+    .ok();
 
     // Broadcast creature SSE event
     crate::handlers::streams::emit_creature_event(

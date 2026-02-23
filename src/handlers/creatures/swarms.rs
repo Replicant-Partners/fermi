@@ -1187,14 +1187,86 @@ pub async fn leave_rabble_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // If anchor creature is leaving, auto-end the rabble.
+    // No constraints on creature actions — the creature is free to leave,
+    // which naturally ends the gathering it was anchoring.
     if is_anchor {
-        return Err((
-            StatusCode::CONFLICT,
-            format!(
-                "{} is the anchor of this rabble. End the rabble or transfer the anchor first.",
-                creature_name
-            ),
-        ));
+        // End all active creature flights in this rabble
+        let ended_flights = sqlx::query(
+            "UPDATE creature_flights
+             SET ended_at = NOW(),
+                 duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+             WHERE swarm_id = $1 AND ended_at IS NULL
+             RETURNING creature_id",
+        )
+        .bind(swarm_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        // Clear creature_state for all creatures in this rabble
+        sqlx::query(
+            "UPDATE creature_state SET state = 'idle', rabble_id = NULL, updated_at = NOW()
+             WHERE rabble_id = $1",
+        )
+        .bind(swarm_id)
+        .execute(pool)
+        .await
+        .ok();
+
+        // Mark rabble as completed
+        sqlx::query(
+            "UPDATE swarm_events
+             SET status = 'completed', creature_count = 0, participant_count = 0
+             WHERE swarm_id = $1",
+        )
+        .bind(swarm_id)
+        .execute(pool)
+        .await
+        .ok();
+
+        // System message
+        let _ = sqlx::query(
+            "INSERT INTO rabble_messages (message_id, swarm_id, sender_id, content, message_type, created_at)
+             VALUES ($1, $2, 'system', $3, 'system', NOW())",
+        )
+        .bind(Uuid::new_v4())
+        .bind(swarm_id)
+        .bind(format!("{} left — the rabble has ended. {} creature{} released.",
+            creature_name, ended_flights.len(),
+            if ended_flights.len() == 1 { "" } else { "s" }))
+        .execute(pool)
+        .await;
+
+        // Broadcast end event
+        let _ = state.rabble_broadcast.send(crate::RabbleEvent {
+            swarm_id,
+            message: json!({
+                "type": "rabble_ended",
+                "swarm_id": swarm_id,
+                "ended_by": user_id,
+                "reason": "anchor_left",
+            }),
+        });
+
+        // SSE events for all affected creatures
+        for row in &ended_flights {
+            let cid: Uuid = row.get("creature_id");
+            crate::handlers::streams::emit_creature_event(
+                &state,
+                cid,
+                "left_rabble",
+                json!({ "swarm_id": swarm_id, "state": "idle", "reason": "rabble_ended" }),
+            );
+        }
+
+        return Ok(Json(json!({
+            "message": format!("{} left — rabble ended", creature_name),
+            "swarm_id": swarm_id,
+            "creature_id": req.creature_id,
+            "rabble_ended": true,
+            "state": "idle",
+        })));
     }
 
     // Clear swarm_id on any active flights for this creature in this rabble
