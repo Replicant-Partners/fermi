@@ -1273,9 +1273,24 @@ pub async fn flock_history_handler(
         let species: String = flight.try_get("species_group").unwrap_or_default();
         let owner_id: String = flight.try_get("owner_id").unwrap_or_default();
         let asset_path: String = flight.try_get("asset_path").unwrap_or_default();
-        let origin_lat: f64 = flight.try_get("center_lat").unwrap_or(center_lat);
-        let origin_lng: f64 = flight.try_get("center_lng").unwrap_or(center_lng);
+        let raw_lat: f64 = flight.try_get("center_lat").unwrap_or(center_lat);
+        let raw_lng: f64 = flight.try_get("center_lng").unwrap_or(center_lng);
         let color = colors[i % colors.len()];
+
+        // Scatter creatures within a ~30m radius so they don't stack in AR.
+        // Deterministic offset from creature_id hash — stable across refreshes.
+        let hash_val = creature_id
+            .as_bytes()
+            .iter()
+            .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
+        let hash_frac_r = (hash_val % 1000) as f64 / 1000.0;
+        let hash_frac_a = ((hash_val / 1000) % 1000) as f64 / 1000.0;
+        let scatter_radius_m = 5.0 + 25.0 * hash_frac_r; // 5-30 meters
+        let scatter_angle = hash_frac_a * 2.0 * std::f64::consts::PI;
+        let origin_lat = raw_lat + scatter_angle.cos() * scatter_radius_m / 111000.0;
+        let origin_lng = raw_lng
+            + scatter_angle.sin() * scatter_radius_m
+                / (111000.0 * raw_lat.to_radians().cos().max(0.01));
 
         // Build points array: origin + path_samples
         let mut points: Vec<Value> = vec![json!({
