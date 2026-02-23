@@ -143,9 +143,10 @@ pub async fn resolve_qr_token_handler(
         }
     }
 
-    // Count current creatures in this rabble
+    // Count current creatures in this rabble — source of truth: creature_state
     let creature_count: i64 = sqlx::query(
-        "SELECT COUNT(*) as cnt FROM creature_flights WHERE swarm_id = $1 AND ended_at IS NULL",
+        "SELECT COUNT(*) as cnt FROM creature_state
+         WHERE rabble_id = $1 AND state IN ('hosting', 'in_rabble')",
     )
     .bind(swarm_id)
     .fetch_one(&state.db)
@@ -153,18 +154,23 @@ pub async fn resolve_qr_token_handler(
     .map(|r| r.try_get("cnt").unwrap_or(0))
     .unwrap_or(0);
 
-    // Fetch creatures currently at this rabble (for portal projection)
+    // Fetch creatures currently at this rabble (for portal projection).
+    // Source of truth: creature_state.rabble_id (not creature_flights).
     let creature_rows = sqlx::query(
-        "SELECT c.creature_id, c.specimen_name, c.common_name, c.scientific_name,
+        "SELECT DISTINCT ON (c.creature_id)
+                c.creature_id, c.specimen_name, c.common_name, c.scientific_name,
                 c.species_group, c.asset_path, c.animation_status,
-                f.center_lat, f.center_lng, f.owner_id,
+                c.owner_id,
+                COALESCE(cs.location_lat, 0) AS center_lat,
+                COALESCE(cs.location_lng, 0) AS center_lng,
                 u.display_name AS owner_name
-         FROM creature_flights f
-         JOIN creatures c ON c.creature_id = f.creature_id
-         LEFT JOIN users u ON u.user_id = f.owner_id
-         WHERE f.swarm_id = $1 AND f.ended_at IS NULL
-         ORDER BY f.started_at ASC
-         LIMIT 20",
+         FROM creature_state cs
+         JOIN creatures c ON c.creature_id = cs.creature_id
+         LEFT JOIN users u ON u.user_id = c.owner_id
+         WHERE cs.rabble_id = $1
+           AND cs.state IN ('hosting', 'in_rabble')
+         ORDER BY c.creature_id
+         LIMIT 50",
     )
     .bind(swarm_id)
     .fetch_all(&state.db)
@@ -182,6 +188,7 @@ pub async fn resolve_qr_token_handler(
                 "species_group": r.try_get::<String, _>("species_group").ok(),
                 "asset_path": r.try_get::<String, _>("asset_path").ok(),
                 "animation_status": r.try_get::<Option<String>, _>("animation_status").ok().flatten(),
+                "owner_id": r.try_get::<String, _>("owner_id").ok(),
                 "owner_name": r.try_get::<Option<String>, _>("owner_name").ok().flatten(),
                 "lat": r.try_get::<f64, _>("center_lat").ok(),
                 "lng": r.try_get::<f64, _>("center_lng").ok(),
