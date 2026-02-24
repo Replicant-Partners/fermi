@@ -235,6 +235,86 @@ pub async fn post_rabble_message(
         message: msg_json.clone(),
     });
 
+    // Push notification for new chat messages — notify all rabble members
+    // except the sender. 5-minute cooldown per user per rabble to avoid
+    // spam during active conversations.
+    {
+        let pool_push = state.db.clone();
+        let sender_uid = user_id.clone();
+        let sender_creature_name = creature_name
+            .clone()
+            .unwrap_or_else(|| "Someone".to_string());
+        let msg_content = body.content.clone();
+        let swarm_name: String =
+            sqlx::query_scalar("SELECT name FROM swarm_events WHERE swarm_id = $1")
+                .bind(swarm_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "a rabble".into());
+
+        tokio::spawn(async move {
+            // Get all member owners except the sender
+            let member_owners: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT c.owner_id
+                 FROM creature_state cs
+                 JOIN creatures c ON c.creature_id = cs.creature_id
+                 WHERE cs.rabble_id = $1
+                   AND cs.state IN ('hosting', 'in_rabble')
+                   AND c.owner_id != $2",
+            )
+            .bind(swarm_id)
+            .bind(&sender_uid)
+            .fetch_all(&pool_push)
+            .await
+            .unwrap_or_default();
+
+            for owner_id in &member_owners {
+                // 5-minute cooldown per user per rabble
+                let recently_notified = sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM notifications
+                        WHERE user_id = $1 AND type = 'chat_message'
+                        AND metadata->>'swarm_id' = $2
+                        AND created_at > NOW() - INTERVAL '5 minutes'
+                    )",
+                )
+                .bind(owner_id)
+                .bind(swarm_id.to_string())
+                .fetch_one(&pool_push)
+                .await
+                .unwrap_or(false);
+
+                if recently_notified {
+                    continue;
+                }
+
+                // Truncate message for notification body
+                let body_text = if msg_content.len() > 100 {
+                    format!("{}...", &msg_content[..100])
+                } else {
+                    msg_content.clone()
+                };
+
+                crate::handlers::push::notify_user(
+                    &pool_push,
+                    owner_id,
+                    "chat_message",
+                    &format!("{} in {}", sender_creature_name, swarm_name),
+                    Some(&body_text),
+                    Some(&serde_json::json!({
+                        "swarm_id": swarm_id,
+                        "creature_name": sender_creature_name,
+                        "swarm_name": swarm_name,
+                    })),
+                    None,
+                )
+                .await;
+            }
+        });
+    }
+
     // @mention notifications — parse @creatureName from content,
     // find the creature's owner, and send a push notification.
     // Runs in background (fire-and-forget, never blocks the response).
