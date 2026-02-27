@@ -557,18 +557,37 @@ pub async fn push_telemetry_handler(
             .await
             .ok();
         } else {
-            // Create a tracking flight record
+            // Self-healing: create a tracking flight record.
+            // Inherit swarm_id from creature_state so rabble membership is preserved
+            // (device flights get ended by perch/host handlers — this recreates them).
+            let rabble_id: Option<Uuid> = sqlx::query_scalar(
+                "SELECT rabble_id FROM creature_state
+                 WHERE creature_id = $1 AND rabble_id IS NOT NULL
+                 AND state IN ('hosting', 'in_rabble')",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+            eprintln!(
+                "[tether] Self-healing: creating device flight for {} (rabble: {:?})",
+                creature_id, rabble_id
+            );
+
             sqlx::query(
                 "INSERT INTO creature_flights
                  (flight_id, creature_id, owner_id, h3_cell, h3_resolution,
-                  center_lat, center_lng, flight_pattern, data_source, started_at)
-                 VALUES ($1, $2, $3, '', 12, $4, $5, 'tracking', 'device', NOW())",
+                  center_lat, center_lng, flight_pattern, data_source, swarm_id, started_at)
+                 VALUES ($1, $2, $3, '', 12, $4, $5, 'tracking', 'device', $6, NOW())",
             )
             .bind(Uuid::new_v4())
             .bind(creature_id)
             .bind(&user_id)
             .bind(last.lat)
             .bind(last.lng)
+            .bind(rabble_id)
             .execute(pool)
             .await
             .ok();

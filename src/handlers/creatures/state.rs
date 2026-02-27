@@ -78,15 +78,35 @@ pub async fn perch_handler(
         let old_fid: Uuid = row.get("flight_id");
         let old_sid: Option<Uuid> = row.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
 
-        sqlx::query(
-            "UPDATE creature_flights SET ended_at = NOW(),
-             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-             WHERE flight_id = $1",
-        )
-        .bind(old_fid)
-        .execute(pool)
-        .await
-        .ok();
+        // Check if this is a device flight (tether) — don't end it!
+        let old_source: String =
+            sqlx::query_scalar("SELECT data_source FROM creature_flights WHERE flight_id = $1")
+                .bind(old_fid)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "app".into());
+
+        if old_source == "device" {
+            // Device flight — preserve it, just clear swarm_id
+            sqlx::query("UPDATE creature_flights SET swarm_id = NULL WHERE flight_id = $1")
+                .bind(old_fid)
+                .execute(pool)
+                .await
+                .ok();
+        } else {
+            // Non-device flight — end it normally
+            sqlx::query(
+                "UPDATE creature_flights SET ended_at = NOW(),
+                 duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+                 WHERE flight_id = $1",
+            )
+            .bind(old_fid)
+            .execute(pool)
+            .await
+            .ok();
+        }
 
         if let Some(sid) = old_sid {
             sqlx::query(
@@ -314,15 +334,38 @@ pub async fn host_rabble_handler(
     if let Some(ef) = existing_flight {
         let old_fid: Uuid = ef.get("flight_id");
         let old_sid: Option<Uuid> = ef.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
-        sqlx::query(
-            "UPDATE creature_flights SET ended_at = NOW(),
-             duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
-             WHERE flight_id = $1",
-        )
-        .bind(old_fid)
-        .execute(pool)
-        .await
-        .ok();
+
+        // Check if this is a device flight (tether) — don't end it!
+        // Tethered creatures keep tracking. Just clear swarm_id if needed.
+        let old_source: String =
+            sqlx::query_scalar("SELECT data_source FROM creature_flights WHERE flight_id = $1")
+                .bind(old_fid)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "app".into());
+
+        if old_source == "device" {
+            // Device flight — preserve it, just clear swarm_id
+            sqlx::query("UPDATE creature_flights SET swarm_id = NULL WHERE flight_id = $1")
+                .bind(old_fid)
+                .execute(pool)
+                .await
+                .ok();
+        } else {
+            // Non-device flight — end it normally
+            sqlx::query(
+                "UPDATE creature_flights SET ended_at = NOW(),
+                 duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
+                 WHERE flight_id = $1",
+            )
+            .bind(old_fid)
+            .execute(pool)
+            .await
+            .ok();
+        }
+
         if let Some(sid) = old_sid {
             sqlx::query(
                 "UPDATE swarm_events SET creature_count = GREATEST(creature_count - 1, 0)
@@ -465,6 +508,17 @@ pub async fn host_rabble_handler(
         .execute(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Also link any active device flights (tethered creature keeps tracking within the rabble)
+    sqlx::query(
+        "UPDATE creature_flights SET swarm_id = $1
+         WHERE creature_id = $2 AND ended_at IS NULL AND data_source = 'device'",
+    )
+    .bind(swarm_id)
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .ok();
 
     // Create workspace in background
     {

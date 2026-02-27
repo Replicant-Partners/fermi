@@ -1,0 +1,20 @@
+{
+  "name": "Workspace",
+  "tabs": [
+    {
+      "name": "Tab 1",
+      "layout": {
+        "Terminal": 1
+      },
+      "terminals": {
+        "1": {
+          "shell": "Default",
+          "cwd": "/home/ilabra/fermi/docs",
+          "title": "ilabra@neruda: ~/fermi/docs"
+        }
+      }
+    }
+  ],
+  "floating_windows": [],
+  "active_tab_index": 0
+}
