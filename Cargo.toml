@@ -12,7 +12,7 @@ members = [
     "agent-bestiary/coherence/crates/coherence-protocols",
     "fermi-memory",
     "fermi-auth",
-    "fermi-lsp",
+    "fermi-lsp", "crates/fermi-console",
 ]
 resolver = "2"
 

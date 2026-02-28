@@ -1,0 +1,49 @@
+[package]
+name = "fermi-console"
+version = "0.1.0"
+edition = "2021"
+description = "MMOG-style forecasting command center built on GPUI"
+license = "MIT"
+
+[[bin]]
+name = "fermi-console"
+path = "src/main.rs"
+
+[dependencies]
+# GPU-accelerated UI framework (Zed's framework)
+gpui = "0.2"
+
+# Local database for portfolio, drafts, agent cache
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# HTTP client for ABW API calls
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Unique IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# SSE client for real-time events (leaderboard, forecast resolution)
+eventsource-client = "0.13"
+
+# Random (for Monte Carlo simulation)
+rand = "0.8"
+rand_distr = "0.4"
