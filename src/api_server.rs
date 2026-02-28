@@ -457,6 +457,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/093_users_user_id_unique.sql",
         "migrations/091_swarm_participants.sql",
         "migrations/092_fix_social_layer.sql",
+        "migrations/094_fermi_forecasting.sql",
     ];
 
     for file in &migration_files {
@@ -667,6 +668,11 @@ async fn main() {
         .route("/api/health", get(handlers::misc::health))
         .route("/api/debug/startup", get(handlers::misc::debug_startup))
         .route("/api/geocode", get(handlers::misc::geocode_search_handler))
+        // Public forecast discovery (no auth required)
+        .route(
+            "/api/forecasts/public",
+            get(handlers::forecasts::public_forecasts_handler),
+        )
         // Per-agent MCP endpoints
         .route(
             "/mcp/agents/:agent_id",
@@ -1271,6 +1277,69 @@ async fn main() {
         .route(
             "/api/notebooks/:notebook_id/execute",
             post(handlers::notebooks::execute_notebook_handler),
+        )
+        // ── Forecast routes ────────────────────────────────────────────
+        .route(
+            "/api/forecasts",
+            post(handlers::forecasts::create_forecast_handler),
+        )
+        .route(
+            "/api/forecasts",
+            get(handlers::forecasts::list_forecasts_handler),
+        )
+        .route(
+            "/api/forecasts/my-stats",
+            get(handlers::forecasts::my_stats_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id",
+            get(handlers::forecasts::get_forecast_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id",
+            put(handlers::forecasts::update_forecast_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id",
+            delete(handlers::forecasts::delete_forecast_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/resolve",
+            post(handlers::forecasts::resolve_forecast_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/void",
+            post(handlers::forecasts::void_forecast_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/update-probability",
+            post(handlers::forecasts::update_probability_handler),
+        )
+        // ── Portfolio routes ───────────────────────────────────────────
+        .route(
+            "/api/portfolios",
+            post(handlers::forecasts::create_portfolio_handler),
+        )
+        .route(
+            "/api/portfolios",
+            get(handlers::forecasts::list_portfolios_handler),
+        )
+        .route(
+            "/api/portfolios/:portfolio_id/stats",
+            get(handlers::forecasts::portfolio_stats_handler),
+        )
+        .route(
+            "/api/portfolios/:portfolio_id/forecasts",
+            post(handlers::forecasts::add_forecast_to_portfolio_handler),
+        )
+        .route(
+            "/api/portfolios/:portfolio_id/forecasts/:forecast_id",
+            delete(handlers::forecasts::remove_forecast_from_portfolio_handler),
+        )
+        // ── Leaderboard routes ─────────────────────────────────────────
+        .route(
+            "/api/leaderboard",
+            get(handlers::forecasts::leaderboard_handler),
         )
         // Sharing routes
         .route("/api/shares", post(handlers::teams::share_object_handler))
