@@ -322,39 +322,46 @@ pub async fn host_rabble_handler(
     }
 
     // End any existing flight — creature moves on, no state gating
-    let existing_flight = sqlx::query(
-        "SELECT flight_id, swarm_id FROM creature_flights
-         WHERE creature_id = $1 AND ended_at IS NULL LIMIT 1",
+    // Check if creature is tethered (has an active device flight).
+    // Tethered creatures keep their device flight — we DON'T create a
+    // separate perch flight. The device flight IS the rabble flight.
+    let active_device_flight: Option<Uuid> = sqlx::query_scalar(
+        "SELECT flight_id FROM creature_flights
+         WHERE creature_id = $1 AND ended_at IS NULL AND data_source = 'device'
+         LIMIT 1",
     )
     .bind(creature_id)
     .fetch_optional(pool)
     .await
+    .ok()
+    .flatten();
+
+    let is_tethered = active_device_flight.is_some();
+
+    // End or clear any existing NON-device flights
+    let existing_flights = sqlx::query(
+        "SELECT flight_id, swarm_id, data_source FROM creature_flights
+         WHERE creature_id = $1 AND ended_at IS NULL",
+    )
+    .bind(creature_id)
+    .fetch_all(pool)
+    .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if let Some(ef) = existing_flight {
+    for ef in &existing_flights {
         let old_fid: Uuid = ef.get("flight_id");
         let old_sid: Option<Uuid> = ef.try_get::<Option<Uuid>, _>("swarm_id").ok().flatten();
-
-        // Check if this is a device flight (tether) — don't end it!
-        // Tethered creatures keep tracking. Just clear swarm_id if needed.
-        let old_source: String =
-            sqlx::query_scalar("SELECT data_source FROM creature_flights WHERE flight_id = $1")
-                .bind(old_fid)
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "app".into());
+        let old_source: String = ef.try_get("data_source").unwrap_or_else(|_| "app".into());
 
         if old_source == "device" {
-            // Device flight — preserve it, just clear swarm_id
+            // Device flight — preserve it, just clear swarm_id (will be re-linked below)
             sqlx::query("UPDATE creature_flights SET swarm_id = NULL WHERE flight_id = $1")
                 .bind(old_fid)
                 .execute(pool)
                 .await
                 .ok();
         } else {
-            // Non-device flight — end it normally
+            // Non-device flight — end it
             sqlx::query(
                 "UPDATE creature_flights SET ended_at = NOW(),
                  duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::int
@@ -375,18 +382,18 @@ pub async fn host_rabble_handler(
             .execute(pool)
             .await
             .ok();
-
-            // Clear rabble membership — hosting a new rabble means leaving any current one
-            sqlx::query(
-                "UPDATE creature_state SET state = 'perched', rabble_id = NULL, updated_at = NOW()
-                 WHERE creature_id = $1",
-            )
-            .bind(creature_id)
-            .execute(pool)
-            .await
-            .ok();
         }
     }
+
+    // Clear any existing rabble membership — hosting a new rabble means leaving current one
+    sqlx::query(
+        "UPDATE creature_state SET state = 'perched', rabble_id = NULL, updated_at = NOW()
+         WHERE creature_id = $1 AND rabble_id IS NOT NULL",
+    )
+    .bind(creature_id)
+    .execute(pool)
+    .await
+    .ok();
 
     // Location from request (client always sends it)
     let center_lat = req.center_lat.unwrap_or(0.0);
@@ -401,23 +408,34 @@ pub async fn host_rabble_handler(
         }
     };
 
-    // Create perch flight at this location
-    let flight_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO creature_flights (flight_id, creature_id, owner_id, h3_cell,
-         center_lat, center_lng, location_name, flight_pattern, started_at, data_source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'perch', NOW(), 'app')",
-    )
-    .bind(flight_id)
-    .bind(creature_id)
-    .bind(&user_id)
-    .bind(&h3_cell)
-    .bind(center_lat)
-    .bind(center_lng)
-    .bind(&location_name)
-    .execute(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Flight for the rabble:
+    // - Tethered creature: reuse the device flight (no new flight created)
+    // - Non-tethered creature: create a perch flight as before
+    let flight_id = if let Some(device_fid) = active_device_flight {
+        eprintln!(
+            "[host] Tethered creature {} — reusing device flight {} for rabble",
+            creature_id, device_fid
+        );
+        device_fid
+    } else {
+        let fid = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO creature_flights (flight_id, creature_id, owner_id, h3_cell,
+             center_lat, center_lng, location_name, flight_pattern, started_at, data_source)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'perch', NOW(), 'app')",
+        )
+        .bind(fid)
+        .bind(creature_id)
+        .bind(&user_id)
+        .bind(&h3_cell)
+        .bind(center_lat)
+        .bind(center_lng)
+        .bind(&location_name)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        fid
+    };
 
     let invite_pool = req.invite_pool.unwrap_or(0).max(0);
     let walk_in_budget = req.walk_in_budget.unwrap_or(0).max(0);
@@ -509,16 +527,20 @@ pub async fn host_rabble_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Also link any active device flights (tethered creature keeps tracking within the rabble)
-    sqlx::query(
-        "UPDATE creature_flights SET swarm_id = $1
-         WHERE creature_id = $2 AND ended_at IS NULL AND data_source = 'device'",
-    )
-    .bind(swarm_id)
-    .bind(creature_id)
-    .execute(pool)
-    .await
-    .ok();
+    // For tethered creatures, the device flight was already linked above via flight_id.
+    // For non-tethered creatures that happen to also have a device flight (edge case),
+    // link it too so the swarm_id is consistent.
+    if !is_tethered {
+        sqlx::query(
+            "UPDATE creature_flights SET swarm_id = $1
+             WHERE creature_id = $2 AND ended_at IS NULL AND data_source = 'device'",
+        )
+        .bind(swarm_id)
+        .bind(creature_id)
+        .execute(pool)
+        .await
+        .ok();
+    }
 
     // Create workspace in background
     {
