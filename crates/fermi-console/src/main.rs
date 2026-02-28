@@ -4,6 +4,8 @@
 //! This is the Phase 0 spike: prove the shell works, render the dashboard,
 //! and establish the entity/view patterns we'll use throughout.
 
+mod api;
+
 use gpui::prelude::*;
 use gpui::*;
 
