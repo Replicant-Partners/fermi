@@ -15,6 +15,66 @@ use gpui::prelude::*;
 use gpui::*;
 use std::sync::Arc;
 
+// ─── Menu builder ─────────────────────────────────────────────────────────────
+
+fn build_menus() -> Vec<Menu> {
+    vec![
+        // ── Application menu ──────────────────────────────────────
+        Menu {
+            name: "Fermi Console".into(),
+            items: vec![
+                MenuItem::action("About Fermi Console", ShowDashboard),
+                MenuItem::separator(),
+                MenuItem::action("New Forecast          ⌘N", NewForecast),
+                MenuItem::separator(),
+                MenuItem::action("Quit Fermi Console    ⌘Q", Quit),
+            ],
+        },
+        // ── File menu ─────────────────────────────────────────────
+        Menu {
+            name: "File".into(),
+            items: vec![
+                MenuItem::action("New Forecast          ⌘N", NewForecast),
+                MenuItem::separator(),
+                MenuItem::action("Publish Forecast      ⌘P", PublishForecast),
+            ],
+        },
+        // ── View menu ─────────────────────────────────────────────
+        Menu {
+            name: "View".into(),
+            items: vec![
+                MenuItem::action("Dashboard             ⌘1", ShowDashboard),
+                MenuItem::action("Portfolio             ⌘2", ShowPortfolio),
+                MenuItem::action("Agent Fleet           ⌘3", ShowAgentFleet),
+                MenuItem::action("Composer              ⌘4", ShowComposer),
+                MenuItem::action("Leaderboard           ⌘5", ShowLeaderboard),
+                MenuItem::separator(),
+                MenuItem::action("Toggle FPL Source     ⌘E", ToggleFplSource),
+            ],
+        },
+        // ── Forecast menu ─────────────────────────────────────────
+        Menu {
+            name: "Forecast".into(),
+            items: vec![
+                MenuItem::action("Research Question     ⌘Enter", TriggerQuestionOrchestration),
+                MenuItem::action("Run Simulation        ⌘R", RunSimulation),
+                MenuItem::action("Publish               ⌘P", PublishForecast),
+                MenuItem::separator(),
+                MenuItem::action("Reset Cockpit", ResetCockpit),
+            ],
+        },
+        // ── Window menu ───────────────────────────────────────────
+        Menu {
+            name: "Window".into(),
+            items: vec![
+                MenuItem::action("Minimize              ⌘M", MinimizeWindow),
+                MenuItem::action("Zoom", ZoomWindow),
+                MenuItem::action("Toggle Fullscreen     ^⌘F", ToggleFullscreen),
+            ],
+        },
+    ]
+}
+
 // ─── Ayu Mirage Theme Colors ──────────────────────────────────────────────────
 
 mod theme {
@@ -102,6 +162,10 @@ actions!(
         TriggerQuestionOrchestration,
         PublishForecast,
         ToggleFplSource,
+        MinimizeWindow,
+        ZoomWindow,
+        ToggleFullscreen,
+        ResetCockpit,
     ]
 );
 
@@ -497,6 +561,38 @@ impl FermiConsole {
         }
     }
 
+    // ── Window management ─────────────────────────────────────────────
+
+    fn on_minimize_window(
+        &mut self,
+        _: &MinimizeWindow,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        window.minimize_window();
+    }
+
+    fn on_zoom_window(&mut self, _: &ZoomWindow, window: &mut Window, _cx: &mut Context<Self>) {
+        window.zoom_window();
+    }
+
+    fn on_toggle_fullscreen(
+        &mut self,
+        _: &ToggleFullscreen,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        window.toggle_fullscreen();
+    }
+
+    /// Reset the cockpit to a fresh state (new forecast).
+    fn on_reset_cockpit(&mut self, _: &ResetCockpit, _window: &mut Window, cx: &mut Context<Self>) {
+        let api = self.api.clone();
+        self.cockpit = Some(cx.new(|cx| CockpitState::new(api, cx)));
+        self.active_panel = Panel::Composer;
+        cx.notify();
+    }
+
     fn on_show_dashboard(&mut self, _: &ShowDashboard, _w: &mut Window, cx: &mut Context<Self>) {
         self.navigate(Panel::Dashboard, cx);
     }
@@ -530,10 +626,78 @@ impl FermiConsole {
             .border_r_1()
             .border_color(theme::fg_faint())
             .child(
-                // Logo / title
+                // Logo / title + window controls
                 div()
                     .px(px(16.0))
-                    .py(px(20.0))
+                    .py(px(14.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    // Window control buttons row
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            // Close
+                            .child(
+                                div()
+                                    .id("win-close")
+                                    .w(px(12.0))
+                                    .h(px(12.0))
+                                    .rounded_full()
+                                    .bg(rgb(theme::RED))
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.8))
+                                    .on_click(cx.listener(|_this, _event, _window, cx| {
+                                        cx.quit();
+                                    })),
+                            )
+                            // Minimize
+                            .child(
+                                div()
+                                    .id("win-minimize")
+                                    .w(px(12.0))
+                                    .h(px(12.0))
+                                    .rounded_full()
+                                    .bg(rgb(theme::GOLD))
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.8))
+                                    .on_click(cx.listener(|_this, _event, window, _cx| {
+                                        window.minimize_window();
+                                    })),
+                            )
+                            // Maximize / Zoom
+                            .child(
+                                div()
+                                    .id("win-zoom")
+                                    .w(px(12.0))
+                                    .h(px(12.0))
+                                    .rounded_full()
+                                    .bg(rgb(theme::GREEN))
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.8))
+                                    .on_click(cx.listener(|_this, _event, window, _cx| {
+                                        window.zoom_window();
+                                    })),
+                            )
+                            // Spacer pushes title right
+                            .child(div().flex_grow())
+                            // Fullscreen toggle (double-click area or explicit button)
+                            .child(
+                                div()
+                                    .id("win-fullscreen")
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_faint())
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(theme::fg_dim()))
+                                    .on_click(cx.listener(|_this, _event, window, _cx| {
+                                        window.toggle_fullscreen();
+                                    }))
+                                    .child("⛶"),
+                            ),
+                    )
+                    // Title
                     .child(
                         div()
                             .text_size(px(18.0))
@@ -545,7 +709,6 @@ impl FermiConsole {
                         div()
                             .text_size(px(11.0))
                             .text_color(theme::fg_dim())
-                            .mt(px(4.0))
                             .child("Forecasting Command Center"),
                     ),
             )
@@ -600,7 +763,7 @@ impl FermiConsole {
                             .text_size(px(10.0))
                             .text_color(theme::fg_dim())
                             .mt(px(2.0))
-                            .child("v0.1.0 — Sprint 2"),
+                            .child("v0.2.0 — Sprint 3"),
                     ),
             )
     }
@@ -1151,6 +1314,10 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_run_simulation))
             .on_action(cx.listener(Self::on_publish_forecast))
             .on_action(cx.listener(Self::on_toggle_fpl_source))
+            .on_action(cx.listener(Self::on_minimize_window))
+            .on_action(cx.listener(Self::on_zoom_window))
+            .on_action(cx.listener(Self::on_toggle_fullscreen))
+            .on_action(cx.listener(Self::on_reset_cockpit))
             .flex()
             .size_full()
             .bg(theme::bg())
@@ -1214,7 +1381,8 @@ fn main() {
 
         cx.on_action(|_: &Quit, cx| cx.quit());
         text_input::register_key_bindings(cx);
-        // Cmd+Enter triggers question orchestration (fires agents)
+
+        // Register all keyboard shortcuts
         cx.bind_keys([
             KeyBinding::new(
                 "cmd-enter",
@@ -1224,7 +1392,12 @@ fn main() {
             KeyBinding::new("cmd-r", RunSimulation, Some("FermiConsole")),
             KeyBinding::new("cmd-p", PublishForecast, Some("FermiConsole")),
             KeyBinding::new("cmd-e", ToggleFplSource, Some("FermiConsole")),
+            KeyBinding::new("cmd-m", MinimizeWindow, Some("FermiConsole")),
+            KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, Some("FermiConsole")),
         ]);
+
+        // Set native application menu bar
+        cx.set_menus(build_menus());
 
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         let api_clone = api.clone();

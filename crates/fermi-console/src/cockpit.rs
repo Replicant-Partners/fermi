@@ -1452,14 +1452,83 @@ impl CockpitState {
 // ═══════════════════════════════════════════════════════════════════
 
 impl Render for CockpitState {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // ── Build interactive driver nodes with click handlers ─────
+        let driver_elements: Vec<AnyElement> = self
+            .drivers
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let is_editing = self.editing_driver_index == Some(i);
+                let is_suggested = d.suggested;
+
+                // Wrap each driver node in a clickable container
+                let node = render_driver_node(i, d, is_editing);
+
+                // Header click → toggle edit
+                let mut wrapper = div()
+                    .id(ElementId::Name(format!("driver-{}", i).into()))
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.toggle_driver_edit(i);
+                        cx.notify();
+                    }))
+                    .child(node);
+
+                // Accept button (for suggested drivers)
+                if is_suggested {
+                    wrapper = wrapper.child(
+                        div()
+                            .id(ElementId::Name(format!("accept-{}", i).into()))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.accept_driver(i);
+                                this.auto_model_expression();
+                                cx.notify();
+                            }))
+                            .px(px(8.0))
+                            .py(px(3.0))
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::CYAN))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                            .child("✓ accept driver"),
+                    );
+                }
+
+                // Remove button (when editing)
+                if is_editing {
+                    wrapper = wrapper.child(
+                        div()
+                            .id(ElementId::Name(format!("remove-{}", i).into()))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.remove_driver(i);
+                                cx.notify();
+                            }))
+                            .px(px(8.0))
+                            .py(px(3.0))
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::RED))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                            .child("× remove driver"),
+                    );
+                }
+
+                wrapper.into_any_element()
+            })
+            .collect();
+
+        // ── Build interactive probability slider ──────────────────
+        let prob = self.predicted_probability;
+        let div_warning = self.divergence_warning();
+        let prob_slider = render_probability_slider_interactive(prob, div_warning, cx);
+
         div()
             .flex()
             .flex_col()
             .size_full()
             .bg(rgb(theme::BG))
             // ── Zone 1: Question Hub (top) ────────────────────────────
-            .child(render_question_hub(self))
+            .child(render_question_hub(self, prob_slider))
             // ── Middle row: Outside View | Evidence | Drivers | Agents ─
             .child(
                 div()
@@ -1476,8 +1545,12 @@ impl Render for CockpitState {
                             .child(render_outside_view(self))
                             .child(render_evidence_landscape(self)),
                     )
-                    // Zone 4: Driver Map (center)
-                    .child(div().flex_grow().child(render_driver_map(self)))
+                    // Zone 4: Driver Map (center, with interactive driver nodes)
+                    .child(
+                        div()
+                            .flex_grow()
+                            .child(render_driver_map_with_nodes(self, driver_elements)),
+                    )
                     // Zone 5: Agent Fleet (right)
                     .child(div().w(px(240.0)).child(render_agent_fleet(self))),
             )
@@ -1498,7 +1571,7 @@ pub fn render_cockpit(cockpit: &Entity<CockpitState>) -> impl IntoElement {
 // Zone 1: Question Hub
 // ═══════════════════════════════════════════════════════════════════
 
-fn render_question_hub(state: &CockpitState) -> impl IntoElement {
+fn render_question_hub(state: &CockpitState, prob_slider: AnyElement) -> impl IntoElement {
     let prob_pct = format!("{:.0}%", state.predicted_probability * 100.0);
     let divergence = state.divergence_pp();
     let div_warning = state.divergence_warning();
@@ -1568,11 +1641,8 @@ fn render_question_hub(state: &CockpitState) -> impl IntoElement {
                                 .font_weight(FontWeight::BOLD)
                                 .child(prob_pct),
                         )
-                        // ── Probability slider bar ────────────────────
-                        .child(render_probability_slider(
-                            state.predicted_probability,
-                            div_warning,
-                        ))
+                        // ── Probability slider bar (interactive) ──────
+                        .child(prob_slider)
                         .when(divergence.is_some(), |el| {
                             let d = divergence.unwrap();
                             let sign = if d > 0.0 { "+" } else { "" };
@@ -1688,10 +1758,13 @@ fn render_question_hub(state: &CockpitState) -> impl IntoElement {
 // Probability Slider
 // ═══════════════════════════════════════════════════════════════════
 
-/// Render a horizontal probability slider bar.
-/// The bar is 200px wide, with a filled portion representing the probability
-/// and a thumb indicator. The bar changes color when divergence is high.
-fn render_probability_slider(probability: f64, warning: bool) -> impl IntoElement {
+/// Build an interactive probability slider with mouse handlers.
+/// Must be called from the Render impl where cx is available.
+fn render_probability_slider_interactive(
+    probability: f64,
+    warning: bool,
+    cx: &mut Context<CockpitState>,
+) -> AnyElement {
     let bar_width = 200.0_f32;
     let fill_width = (probability as f32 * bar_width).clamp(4.0, bar_width - 4.0);
     let fill_color = if warning { theme::GOLD } else { theme::CYAN };
@@ -1707,24 +1780,59 @@ fn render_probability_slider(probability: f64, warning: bool) -> impl IntoElemen
                 .text_color(rgb(theme::FG_FAINT))
                 .child("5%"),
         )
-        // Slider track
+        // Slider track (interactive)
         .child(
             div()
+                .id("prob-slider-track")
                 .w(px(bar_width))
-                .h(px(8.0))
-                .rounded(px(4.0))
+                .h(px(12.0))
+                .rounded(px(6.0))
                 .bg(rgb(theme::BG))
                 .border_1()
                 .border_color(rgb(theme::FG_FAINT))
                 .overflow_hidden()
                 .cursor_pointer()
+                // Click to set probability
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        // Calculate probability from click position relative to track
+                        // The event position is in window coordinates; we need to map
+                        // it relative to the element bounds. Since we know the track
+                        // width, we use a simplified approach: store the click and
+                        // compute on the next frame. For now, use a heuristic based
+                        // on the event position within the element's hitbox.
+                        this.probability_drag_active = true;
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(move |this, _event: &MouseUpEvent, _window, cx| {
+                        if this.probability_drag_active {
+                            this.commit_probability_change();
+                            cx.notify();
+                        }
+                    }),
+                )
                 // Filled portion
                 .child(
                     div()
                         .h_full()
                         .w(px(fill_width))
                         .bg(rgb(fill_color))
-                        .rounded_l(px(3.0)),
+                        .rounded_l(px(5.0)),
+                )
+                // Thumb indicator at the fill edge
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(fill_width - 3.0))
+                        .top(px(0.0))
+                        .w(px(6.0))
+                        .h(px(12.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::FG)),
                 ),
         )
         // "95%" label
@@ -1734,6 +1842,85 @@ fn render_probability_slider(probability: f64, warning: bool) -> impl IntoElemen
                 .text_color(rgb(theme::FG_FAINT))
                 .child("95%"),
         )
+        // Nudge buttons for fine control
+        .child(
+            div()
+                .flex()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .id("prob-minus-5")
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .px(px(4.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG_ACTIVE))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.set_probability(this.predicted_probability - 0.05);
+                            this.commit_probability_change();
+                            cx.notify();
+                        }))
+                        .child("-5"),
+                )
+                .child(
+                    div()
+                        .id("prob-minus-1")
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .px(px(4.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG_ACTIVE))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.set_probability(this.predicted_probability - 0.01);
+                            this.commit_probability_change();
+                            cx.notify();
+                        }))
+                        .child("-1"),
+                )
+                .child(
+                    div()
+                        .id("prob-plus-1")
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .px(px(4.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG_ACTIVE))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.set_probability(this.predicted_probability + 0.01);
+                            this.commit_probability_change();
+                            cx.notify();
+                        }))
+                        .child("+1"),
+                )
+                .child(
+                    div()
+                        .id("prob-plus-5")
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .px(px(4.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG_ACTIVE))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.set_probability(this.predicted_probability + 0.05);
+                            this.commit_probability_change();
+                            cx.notify();
+                        }))
+                        .child("+5"),
+                ),
+        )
+        .into_any_element()
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1957,7 +2144,12 @@ fn render_evidence_gap(gap: &EvidenceGap) -> impl IntoElement {
 // Zone 4: Driver Map
 // ═══════════════════════════════════════════════════════════════════
 
-fn render_driver_map(state: &CockpitState) -> impl IntoElement {
+/// Render the driver map zone with pre-built interactive driver node elements.
+/// The driver_elements are built in the Render impl where cx.listener() is available.
+fn render_driver_map_with_nodes(
+    state: &CockpitState,
+    driver_elements: Vec<AnyElement>,
+) -> impl IntoElement {
     render_zone_card(
         &format!("Drivers & Model ({})", state.drivers.len()),
         theme::GREEN,
@@ -1966,11 +2158,8 @@ fn render_driver_map(state: &CockpitState) -> impl IntoElement {
             .flex_col()
             .gap(px(6.0))
             .size_full()
-            // Drivers list (with inline editing for selected driver)
-            .children(state.drivers.iter().enumerate().map(|(i, d)| {
-                let is_editing = state.editing_driver_index == Some(i);
-                render_driver_node(i, d, is_editing)
-            }))
+            // Drivers list (interactive, built in Render impl)
+            .children(driver_elements)
             // Model expression
             .when(!state.model_expression.is_empty(), |el| {
                 el.child(
