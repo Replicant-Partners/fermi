@@ -1,8 +1,8 @@
 # Session Context — 2026-02-27/28 Marathon Session
 
 **Duration:** ~12 hours across two days (+ follow-up session)
-**Commits:** 17 total (14 fermi, 3 rabble)
-**Status:** Research Cockpit functional with live agent results streaming via Entity channel integration
+**Commits:** 19 total (16 fermi, 3 rabble)
+**Status:** Research Cockpit fully interactive — agent streaming, editable drivers, local simulation, publish flow, probability slider all wired
 
 ---
 
@@ -264,32 +264,53 @@ User types question + ⌘Enter
 → cx.notify() → GPUI re-renders → zones update live
 ```
 
-### 2. Editable Driver Parameters
+### 2. ~~Editable Driver Parameters~~ ✅ DONE (fermi `d646d86`)
 
-- Click a driver node in the Driver Map → inline editing of distribution parameters
-- Sliders for triangular p5/p50/p95, normal mean/stddev, etc.
-- Changes trigger FPL regeneration and auto-simulation (debounced)
+**Completed:** Click driver node → inline editor expands with full parameter editing.
 
-### 3. ⌘R Local Simulation
+- `toggle_driver_edit()` expands/collapses driver nodes in the Driver Map
+- Continuous drivers: p5/p50/p95 values with visual range bar, distribution type, unit
+- Binary drivers: probability + impact multiplier display
+- `accept_driver()` confirms suggested (ghost) drivers from agents
+- `remove_driver()` deletes a driver and recomputes model expression
+- `update_continuous_driver()` / `update_binary_driver()` for parameter changes
+- `render_driver_editor()`, `render_param_value()`, `render_range_bar()` visual components
+- Accept/remove buttons on each driver node
 
-- Generate FPL from cockpit state
-- Run fermi executor locally (10k iterations <100ms)
-- Display results in Driver Map zone (mean, percentiles, histogram)
-- Code exists in `composer.rs` → needs to be wired into cockpit
+### 3. ~~⌘R Local Simulation~~ ✅ DONE (fermi `d646d86`)
 
-### 4. ⌘Enter Publish Flow
+**Completed:** Full FPL generation → parse → execute → display pipeline.
 
-- POST forecast to `/api/forecasts` with all cockpit state
-- Includes: probability, base_rate, reference_class, divergence, drivers, evidence, agents_used, fpl_source
-- Forecast enters Brier tracking
-- Portfolio panel updates
+- `generate_fpl()` builds FPL source from cockpit state (accepted drivers only)
+- `auto_model_expression()` generates model from driver names (continuous multiply, binary if-then)
+- `run_simulation()` parses FPL → runs `fermi::executor::Executor` (10k iterations <100ms)
+- Results displayed in Driver Map zone: mean, median, p5, p95, σ, iteration count, timing
+- `effective_fpl()` supports manual FPL override via `fpl_source_override`
+- ⌘E toggles FPL source view with `cached_fpl_source` for display
+- Timeline event recorded on simulation complete
 
-### 5. Probability Slider
+### 4. ~~⌘P Publish Flow~~ ✅ DONE (fermi `d646d86`)
 
-- Drag to adjust probability in the Question Hub
-- Divergence indicator updates in real time
-- >20pp divergence triggers justification prompt
-- Revision recorded in forecast_updates
+**Completed:** Async publish via `cx.spawn()` with full cockpit state serialization.
+
+- `publish_forecast()` collects all cockpit state into `CreateForecastRequest`
+- Includes: probability, drivers JSON, evidence JSON, sim results, FPL source, domain, target date, resolution criteria
+- Async POST via `cx.spawn()` + `WeakEntity` callback (same pattern as agent orchestration)
+- Success: `forecast_id` stored, status → "active", timeline event "Forecast published"
+- Failure: error displayed in `publish_status` (red text in Question Hub)
+- Status indicator in Question Hub (green = published, red = error, gold = in progress)
+- Agents used list included in the request
+
+### 5. ~~Probability Slider~~ ✅ DONE (fermi `d646d86`)
+
+**Completed:** Visual slider bar in Question Hub with divergence-aware coloring.
+
+- `render_probability_slider()` — 200px horizontal bar with filled portion
+- 5%–95% range labels, fill color changes to gold on divergence warning
+- `set_probability()` clamps to [0.05, 0.95]
+- `commit_probability_change()` records timeline event on drag end
+- Divergence indicator updates in real time (pp from base rate)
+- Keyboard hints bar added: ⌘Enter research · ⌘R simulate · ⌘P publish · ⌘E toggle FPL
 
 ---
 
@@ -328,8 +349,10 @@ sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libfon
 
 ## Commit Log
 
-### fermi (14 commits)
+### fermi (16 commits)
 ```
+d646d86 feat: Editable drivers, ⌘R simulation, ⌘P publish, probability slider
+7a4e1df docs: update session notes — channel integration marked DONE
 957d41a feat: Entity channel integration — agent results flow back to Research Cockpit UI
 77b7027 feat: Agent orchestration on question submit — cockpit comes alive
 a8e8f3b feat: Research Cockpit — six-zone OODA loop workspace with editable text input
