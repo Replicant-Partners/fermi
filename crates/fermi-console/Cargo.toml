@@ -48,5 +48,8 @@ eventsource-client = "0.13"
 rand = "0.8"
 rand_distr = "0.4"
 
+# Unicode text handling
+unicode-segmentation = "1.11"
+
 # FPL parser and executor (local simulation)
 fermi = { path = "../.." }

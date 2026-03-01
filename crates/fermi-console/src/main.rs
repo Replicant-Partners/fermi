@@ -4,9 +4,12 @@
 //! Sprint 2: real API integration, portfolio panel with live data.
 
 mod api;
+mod cockpit;
 mod composer;
+mod text_input;
 
 use api::client::{ApiClient, ApiConfig, ApiError, Forecast, ForecastQuery, MyStats, Portfolio};
+use cockpit::CockpitState;
 use composer::ComposerState;
 use gpui::prelude::*;
 use gpui::*;
@@ -183,8 +186,11 @@ struct FermiConsole {
     // Activity feed (derived from recent forecasts)
     recent_activity: Vec<ActivityItem>,
 
-    // Composer state
+    // Composer state (legacy linear form)
     composer: ComposerState,
+
+    // Research Cockpit state (OODA loop workspace)
+    cockpit: Option<CockpitState>,
 }
 
 #[derive(Clone)]
@@ -214,6 +220,7 @@ impl FermiConsole {
             forecasts_loading: false,
             recent_activity: Vec::new(),
             composer: ComposerState::new(),
+            cockpit: None,
         };
 
         // Try to load API key from environment
@@ -406,6 +413,10 @@ impl FermiConsole {
                 Panel::Portfolio => self.fetch_forecasts(cx),
                 _ => {}
             }
+        }
+        // Create cockpit on first visit to Composer
+        if panel == Panel::Composer && self.cockpit.is_none() {
+            self.cockpit = Some(CockpitState::new(self.api.clone(), &mut **cx));
         }
         cx.notify();
     }
@@ -1076,7 +1087,12 @@ impl Render for FermiConsole {
                         Panel::Dashboard => self.render_dashboard().into_any_element(),
                         Panel::Portfolio => self.render_portfolio().into_any_element(),
                         Panel::Composer => {
-                            composer::render_composer(&self.composer).into_any_element()
+                            if let Some(ref cockpit_state) = self.cockpit {
+                                cockpit::render_cockpit(cockpit_state, cx).into_any_element()
+                            } else {
+                                // Shouldn't happen — navigate() creates it
+                                composer::render_composer(&self.composer).into_any_element()
+                            }
                         }
                         other => self.render_placeholder(other).into_any_element(),
                     },
@@ -1117,6 +1133,7 @@ fn main() {
         ]);
 
         cx.on_action(|_: &Quit, cx| cx.quit());
+        text_input::register_key_bindings(cx);
 
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         let api_clone = api.clone();
