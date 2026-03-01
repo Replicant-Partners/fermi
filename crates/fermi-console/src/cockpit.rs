@@ -309,9 +309,21 @@ pub struct CockpitState {
     pub sim_running: bool,
     pub sim_error: Option<String>,
     pub editing_driver_index: Option<usize>, // which driver is expanded for editing
-    pub show_fpl_source: bool,               // toggle FPL source view (⌘E)
+    pub show_fpl_source: bool,               // toggle FPL source view (Ctrl+E)
     pub fpl_source_override: Option<String>, // manual FPL override
     pub cached_fpl_source: String,           // last-generated FPL for display
+
+    // ── Driver Editor (single active editor, Option D pattern) ────
+    // One set of TextInput entities shared across all drivers.
+    // Populated from the selected driver, written back on change.
+    pub editor_p5: Entity<TextInput>,
+    pub editor_p50: Entity<TextInput>,
+    pub editor_p95: Entity<TextInput>,
+    pub editor_unit: Entity<TextInput>,
+    pub editor_prob: Entity<TextInput>,      // binary probability
+    pub editor_impact: Entity<TextInput>,    // binary impact_multiplier
+    pub editor_name: Entity<TextInput>,      // driver name
+    pub editor_rationale: Entity<TextInput>, // driver rationale
 
     // ── Agent Fleet ───────────────────────────────────────────────
     pub agents: Vec<FleetAgent>,
@@ -356,6 +368,48 @@ impl CockpitState {
                 .with_label("Resolution Criteria")
         });
 
+        // ── Driver editor fields (shared across all drivers) ──────
+        let editor_p5 = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("p5")
+                .with_label("p5 (low)")
+        });
+        let editor_p50 = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("p50")
+                .with_label("p50 (mid)")
+        });
+        let editor_p95 = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("p95")
+                .with_label("p95 (high)")
+        });
+        let editor_unit = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("unit")
+                .with_label("Unit")
+        });
+        let editor_prob = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("0.5")
+                .with_label("Probability")
+        });
+        let editor_impact = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("1.3")
+                .with_label("Impact ×")
+        });
+        let editor_name = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("driver_name")
+                .with_label("Name")
+        });
+        let editor_rationale = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("Why this driver?")
+                .with_label("Rationale")
+        });
+
         Self {
             question_input,
             domain_input,
@@ -374,6 +428,14 @@ impl CockpitState {
             show_fpl_source: false,
             fpl_source_override: None,
             cached_fpl_source: String::new(),
+            editor_p5,
+            editor_p50,
+            editor_p95,
+            editor_unit,
+            editor_prob,
+            editor_impact,
+            editor_name,
+            editor_rationale,
             agents: Vec::new(),
             session_cost: 0.0,
             timeline: vec![TimelineEvent {
@@ -1125,24 +1187,121 @@ impl CockpitState {
     // ═══════════════════════════════════════════════════════════════
 
     /// Toggle inline editing for a driver node. Clicking the same driver
-    /// again collapses it; clicking a different one switches.
-    pub fn toggle_driver_edit(&mut self, index: usize) {
+    /// again collapses it (writing back changes); clicking a different one
+    /// saves the current and opens the new one.
+    pub fn toggle_driver_edit(&mut self, index: usize, cx: &mut Context<Self>) {
+        // Write back current editor values before switching
+        if let Some(prev) = self.editing_driver_index {
+            self.write_editor_to_driver(prev, cx);
+        }
+
         if self.editing_driver_index == Some(index) {
             self.editing_driver_index = None;
         } else if index < self.drivers.len() {
             self.editing_driver_index = Some(index);
+            self.populate_editor_from_driver(index, cx);
+        }
+    }
+
+    /// Populate the shared editor TextInput fields from a driver's current values.
+    fn populate_editor_from_driver(&self, index: usize, cx: &mut Context<Self>) {
+        let Some(driver) = self.drivers.get(index) else {
+            return;
+        };
+
+        self.editor_name.update(cx, |input, cx| {
+            input.set_text(&driver.name, cx);
+        });
+        self.editor_rationale.update(cx, |input, cx| {
+            input.set_text(&driver.rationale, cx);
+        });
+
+        match &driver.driver_type {
+            CockpitDriverType::Continuous {
+                distribution: _,
+                unit,
+                p5,
+                p50,
+                p95,
+            } => {
+                self.editor_p5
+                    .update(cx, |input, cx| input.set_text(format!("{}", p5), cx));
+                self.editor_p50
+                    .update(cx, |input, cx| input.set_text(format!("{}", p50), cx));
+                self.editor_p95
+                    .update(cx, |input, cx| input.set_text(format!("{}", p95), cx));
+                self.editor_unit
+                    .update(cx, |input, cx| input.set_text(unit, cx));
+            }
+            CockpitDriverType::Binary {
+                probability,
+                impact_multiplier,
+            } => {
+                self.editor_prob.update(cx, |input, cx| {
+                    input.set_text(format!("{}", probability), cx)
+                });
+                self.editor_impact.update(cx, |input, cx| {
+                    input.set_text(format!("{}", impact_multiplier), cx)
+                });
+            }
+        }
+    }
+
+    /// Write the editor TextInput values back into the driver at the given index.
+    fn write_editor_to_driver(&mut self, index: usize, cx: &App) {
+        let Some(driver) = self.drivers.get_mut(index) else {
+            return;
+        };
+
+        // Update name and rationale
+        let new_name = self.editor_name.read(cx).text().to_string();
+        if !new_name.trim().is_empty() {
+            driver.name = new_name;
+        }
+        driver.rationale = self.editor_rationale.read(cx).text().to_string();
+
+        match &mut driver.driver_type {
+            CockpitDriverType::Continuous {
+                p5, p50, p95, unit, ..
+            } => {
+                if let Ok(v) = self.editor_p5.read(cx).text().parse::<f64>() {
+                    *p5 = v;
+                }
+                if let Ok(v) = self.editor_p50.read(cx).text().parse::<f64>() {
+                    *p50 = v;
+                }
+                if let Ok(v) = self.editor_p95.read(cx).text().parse::<f64>() {
+                    *p95 = v;
+                }
+                *unit = self.editor_unit.read(cx).text().to_string();
+            }
+            CockpitDriverType::Binary {
+                probability,
+                impact_multiplier,
+            } => {
+                if let Ok(v) = self.editor_prob.read(cx).text().parse::<f64>() {
+                    *probability = v.clamp(0.0, 1.0);
+                }
+                if let Ok(v) = self.editor_impact.read(cx).text().parse::<f64>() {
+                    *impact_multiplier = v;
+                }
+            }
         }
     }
 
     /// Accept a suggested (ghost) driver — marks it as user-confirmed.
-    pub fn accept_driver(&mut self, index: usize) {
+    pub fn accept_driver(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(driver) = self.drivers.get_mut(index) {
             driver.suggested = false;
         }
+        self.auto_model_expression();
+        // Open the editor so the user can tweak values immediately
+        self.editing_driver_index = Some(index);
+        self.populate_editor_from_driver(index, cx);
     }
 
     /// Remove a driver by index.
-    pub fn remove_driver(&mut self, index: usize) {
+    pub fn remove_driver(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.drivers.len() {
             self.drivers.remove(index);
             // Collapse editor if we removed the one being edited
@@ -1154,6 +1313,55 @@ impl CockpitState {
                 }
             }
             self.auto_model_expression();
+            cx.notify();
+        }
+    }
+
+    /// Add a new blank continuous driver and open it for editing.
+    pub fn add_continuous_driver(&mut self, cx: &mut Context<Self>) {
+        let idx = self.drivers.len();
+        let name = format!("driver_{}", idx + 1);
+        self.drivers.push(CockpitDriver {
+            name,
+            driver_type: CockpitDriverType::Continuous {
+                distribution: "triangular".into(),
+                unit: "".into(),
+                p5: 0.0,
+                p50: 50.0,
+                p95: 100.0,
+            },
+            rationale: String::new(),
+            suggested: false,
+        });
+        self.auto_model_expression();
+        self.editing_driver_index = Some(idx);
+        self.populate_editor_from_driver(idx, cx);
+        cx.notify();
+    }
+
+    /// Add a new blank binary driver and open it for editing.
+    pub fn add_binary_driver(&mut self, cx: &mut Context<Self>) {
+        let idx = self.drivers.len();
+        let name = format!("event_{}", idx + 1);
+        self.drivers.push(CockpitDriver {
+            name,
+            driver_type: CockpitDriverType::Binary {
+                probability: 0.5,
+                impact_multiplier: 1.3,
+            },
+            rationale: String::new(),
+            suggested: false,
+        });
+        self.auto_model_expression();
+        self.editing_driver_index = Some(idx);
+        self.populate_editor_from_driver(idx, cx);
+        cx.notify();
+    }
+
+    /// Save current editor state back to the driver (call before simulation).
+    pub fn save_editor(&mut self, cx: &App) {
+        if let Some(idx) = self.editing_driver_index {
+            self.write_editor_to_driver(idx, cx);
         }
     }
 
@@ -1310,10 +1518,13 @@ impl CockpitState {
         self.cached_fpl_source = self.effective_fpl(cx);
     }
 
-    /// Run Monte Carlo simulation locally (⌘R).
+    /// Run Monte Carlo simulation locally (Ctrl+R).
     /// Generates FPL from cockpit state, parses, executes, and stores results.
     /// This is synchronous and fast — 10k iterations in <100ms.
     pub fn run_simulation(&mut self, cx: &mut Context<Self>) {
+        // Save any in-progress editor changes first
+        self.save_editor(cx);
+
         self.sim_running = true;
         self.sim_error = None;
 
@@ -1413,6 +1624,9 @@ impl CockpitState {
     /// Publish the forecast to the API for Brier tracking.
     /// Collects all cockpit state into a CreateForecastRequest and POSTs it.
     pub fn publish_forecast(&mut self, cx: &mut Context<Self>) {
+        // Save any in-progress editor changes
+        self.save_editor(cx);
+
         let question = self.question_input.read(cx).text().to_string();
         if question.trim().is_empty() {
             self.publish_status = Some("Cannot publish: no question".into());
@@ -1659,7 +1873,7 @@ impl Render for CockpitState {
                 let mut wrapper = div()
                     .id(ElementId::Name(format!("driver-{}", i).into()))
                     .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.toggle_driver_edit(i);
+                        this.toggle_driver_edit(i, cx);
                         cx.notify();
                     }))
                     .child(node);
@@ -1670,8 +1884,7 @@ impl Render for CockpitState {
                         div()
                             .id(ElementId::Name(format!("accept-{}", i).into()))
                             .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.accept_driver(i);
-                                this.auto_model_expression();
+                                this.accept_driver(i, cx);
                                 cx.notify();
                             }))
                             .px(px(8.0))
@@ -1690,7 +1903,7 @@ impl Render for CockpitState {
                         div()
                             .id(ElementId::Name(format!("remove-{}", i).into()))
                             .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.remove_driver(i);
+                                this.remove_driver(i, cx);
                                 cx.notify();
                             }))
                             .px(px(8.0))
@@ -1701,6 +1914,88 @@ impl Render for CockpitState {
                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                             .child("× remove driver"),
                     );
+                }
+
+                // Inline editor with real TextInput fields (when editing)
+                if is_editing {
+                    let is_continuous =
+                        matches!(d.driver_type, CockpitDriverType::Continuous { .. });
+                    let editor_panel = div()
+                        .px(px(12.0))
+                        .py(px(8.0))
+                        .bg(rgb(theme::BG_ACTIVE))
+                        .border_t_1()
+                        .border_color(rgb(theme::CYAN))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        // Name + Rationale row
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(8.0))
+                                .child(div().w(px(140.0)).child(self.editor_name.clone()))
+                                .child(div().flex_grow().child(self.editor_rationale.clone())),
+                        );
+
+                    let editor_panel = if is_continuous {
+                        // p5 / p50 / p95 / unit
+                        editor_panel.child(
+                            div()
+                                .flex()
+                                .gap(px(8.0))
+                                .child(div().w(px(80.0)).child(self.editor_p5.clone()))
+                                .child(div().w(px(80.0)).child(self.editor_p50.clone()))
+                                .child(div().w(px(80.0)).child(self.editor_p95.clone()))
+                                .child(div().w(px(80.0)).child(self.editor_unit.clone())),
+                        )
+                    } else {
+                        // probability / impact
+                        editor_panel.child(
+                            div()
+                                .flex()
+                                .gap(px(8.0))
+                                .child(div().w(px(120.0)).child(self.editor_prob.clone()))
+                                .child(div().w(px(120.0)).child(self.editor_impact.clone())),
+                        )
+                    };
+
+                    // Save button
+                    let editor_panel = editor_panel.child(
+                        div()
+                            .id(ElementId::Name(format!("save-driver-{}", i).into()))
+                            .flex()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .id(ElementId::Name(format!("save-btn-{}", i).into()))
+                                    .px(px(12.0))
+                                    .py(px(4.0))
+                                    .rounded(px(4.0))
+                                    .bg(rgb(theme::CYAN))
+                                    .text_color(rgb(theme::BG_DEEP))
+                                    .text_size(px(11.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.8))
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.write_editor_to_driver(i, cx);
+                                        this.editing_driver_index = None;
+                                        this.auto_model_expression();
+                                        cx.notify();
+                                    }))
+                                    .child("Save"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .py(px(4.0))
+                                    .child("Edit values above, then Save or click another driver"),
+                            ),
+                    );
+
+                    wrapper = wrapper.child(editor_panel);
                 }
 
                 wrapper.into_any_element()
@@ -1735,11 +2030,56 @@ impl Render for CockpitState {
                             .child(render_outside_view(self))
                             .child(render_evidence_landscape(self)),
                     )
-                    // Zone 4: Driver Map (center, with interactive driver nodes)
+                    // Zone 4: Driver Map (center, with interactive driver nodes + add buttons)
                     .child(
                         div()
                             .flex_grow()
-                            .child(render_driver_map_with_nodes(self, driver_elements)),
+                            .flex()
+                            .flex_col()
+                            .child(render_driver_map_with_nodes(self, driver_elements))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(8.0))
+                                    .px(px(12.0))
+                                    .py(px(6.0))
+                                    .child(
+                                        div()
+                                            .id("add-continuous-driver")
+                                            .px(px(10.0))
+                                            .py(px(4.0))
+                                            .rounded(px(4.0))
+                                            .bg(rgb(theme::BG_ELEVATED))
+                                            .border_1()
+                                            .border_color(rgb(theme::GREEN))
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::GREEN))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                                this.add_continuous_driver(cx);
+                                            }))
+                                            .child("+ Continuous driver"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("add-binary-driver")
+                                            .px(px(10.0))
+                                            .py(px(4.0))
+                                            .rounded(px(4.0))
+                                            .bg(rgb(theme::BG_ELEVATED))
+                                            .border_1()
+                                            .border_color(rgb(theme::GOLD))
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::GOLD))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                                this.add_binary_driver(cx);
+                                            }))
+                                            .child("+ Binary event"),
+                                    ),
+                            ),
                     )
                     // Zone 5: Agent Fleet (right)
                     .child(div().w(px(240.0)).child(render_agent_fleet(self))),
@@ -2488,13 +2828,14 @@ fn render_driver_map_with_nodes(
                         ),
                 )
             })
-            // Simulation hint
+            // Add driver buttons
             .child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::FG_FAINT))
-                    .mt(px(4.0))
-                    .child("Ctrl+R simulate · Ctrl+E toggle FPL source"),
+                div().flex().gap(px(8.0)).mt(px(4.0)).child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("Ctrl+R simulate · Ctrl+E toggle FPL"),
+                ),
             ),
     )
 }
@@ -2595,143 +2936,6 @@ fn render_driver_node(index: usize, driver: &CockpitDriver, is_editing: bool) ->
                             .child("× remove"),
                     )
                 }),
-        )
-        // ── Expanded editor (visible when is_editing) ─────────────
-        .when(is_editing, |el| el.child(render_driver_editor(driver)))
-}
-
-/// Render the inline parameter editor for an expanded driver node.
-fn render_driver_editor(driver: &CockpitDriver) -> impl IntoElement {
-    div()
-        .px(px(12.0))
-        .py(px(8.0))
-        .border_t_1()
-        .border_color(rgb(theme::FG_FAINT))
-        .flex()
-        .flex_col()
-        .gap(px(6.0))
-        .child(match &driver.driver_type {
-            CockpitDriverType::Continuous {
-                distribution,
-                unit,
-                p5,
-                p50,
-                p95,
-            } => div()
-                .flex()
-                .flex_col()
-                .gap(px(6.0))
-                // Distribution type
-                .child(render_param_row("distribution", distribution))
-                .child(render_param_row(
-                    "unit",
-                    if unit.is_empty() { "—" } else { unit },
-                ))
-                // P5 / P50 / P95 parameter bars
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(12.0))
-                        .child(render_param_value("p5", *p5, theme::FG_DIM))
-                        .child(render_param_value("p50", *p50, theme::CYAN))
-                        .child(render_param_value("p95", *p95, theme::FG_DIM)),
-                )
-                // Visual range bar
-                .child(render_range_bar(*p5, *p50, *p95))
-                .child(
-                    div()
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::FG_FAINT))
-                        .child("Click values to edit · Tab between fields"),
-                )
-                .into_any_element(),
-            CockpitDriverType::Binary {
-                probability,
-                impact_multiplier,
-            } => div()
-                .flex()
-                .flex_col()
-                .gap(px(6.0))
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(16.0))
-                        .child(render_param_value(
-                            "probability",
-                            *probability * 100.0,
-                            theme::GOLD,
-                        ))
-                        .child(render_param_value(
-                            "impact ×",
-                            *impact_multiplier,
-                            theme::CYAN,
-                        )),
-                )
-                .child(
-                    div()
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::FG_FAINT))
-                        .child("Click values to edit"),
-                )
-                .into_any_element(),
-        })
-        // Rationale
-        .when(!driver.rationale.is_empty(), |el| {
-            el.child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::FG_DIM))
-                    .child(format!("rationale: {}", driver.rationale)),
-            )
-        })
-}
-
-/// Render a label: value parameter row.
-fn render_param_row(label: &str, value: &str) -> impl IntoElement {
-    div()
-        .flex()
-        .gap(px(8.0))
-        .child(
-            div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_DIM))
-                .w(px(80.0))
-                .child(format!("{}:", label)),
-        )
-        .child(
-            div()
-                .text_size(px(11.0))
-                .text_color(rgb(theme::FG))
-                .child(value.to_string()),
-        )
-}
-
-/// Render a single numeric parameter with label and colored value.
-fn render_param_value(label: &str, value: f64, color: u32) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .child(
-            div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_DIM))
-                .child(label.to_string()),
-        )
-        .child(
-            div()
-                .text_size(px(14.0))
-                .text_color(rgb(color))
-                .font_weight(FontWeight::BOLD)
-                .px(px(8.0))
-                .py(px(2.0))
-                .rounded(px(3.0))
-                .bg(rgb(theme::BG))
-                .border_1()
-                .border_color(rgb(theme::FG_FAINT))
-                .cursor_pointer()
-                .hover(|s| s.border_color(rgb(theme::CYAN)))
-                .child(format!("{:.1}", value)),
         )
 }
 

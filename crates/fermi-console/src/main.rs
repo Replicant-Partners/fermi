@@ -18,6 +18,7 @@ use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
+use text_input::TextInput;
 
 // ─── Menu builder ─────────────────────────────────────────────────────────────
 
@@ -243,6 +244,11 @@ struct FermiConsole {
     user_display_name: Option<String>,
     api_key_input: String,
 
+    // Sign-in UI (in-app token entry)
+    sign_in_token_input: Entity<TextInput>,
+    sign_in_error: Option<String>,
+    sign_in_loading: bool,
+
     // Dashboard data (from /api/forecasts/my-stats)
     my_stats: Option<MyStats>,
     stats_loading: bool,
@@ -289,6 +295,13 @@ struct ActivityItem {
 
 impl FermiConsole {
     fn new(api: Arc<ApiClient>, cx: &mut Context<Self>) -> Self {
+        let sign_in_token_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("Paste your ABW token or API key")
+                .with_label("Sign In")
+                .with_large(true)
+        });
+
         let mut console = Self {
             active_panel: Panel::Dashboard,
             focus_handle: cx.focus_handle(),
@@ -296,6 +309,9 @@ impl FermiConsole {
             connected: false,
             user_display_name: None,
             api_key_input: String::new(),
+            sign_in_token_input,
+            sign_in_error: None,
+            sign_in_loading: false,
             my_stats: None,
             stats_loading: false,
             portfolios: Vec::new(),
@@ -315,7 +331,7 @@ impl FermiConsole {
             leaderboard_loading: false,
         };
 
-        // Try to load API key from environment
+        // Try to load API key from environment (fallback for dev)
         if let Ok(key) = std::env::var("FERMI_API_KEY").or_else(|_| std::env::var("ABW_API_KEY")) {
             console.api_key_input = key;
             console.try_connect(cx);
@@ -325,6 +341,22 @@ impl FermiConsole {
     }
 
     // ── API connection ────────────────────────────────────────────────
+
+    /// Sign in with a token entered in the UI.
+    fn sign_in_from_ui(&mut self, cx: &mut Context<Self>) {
+        let token = self.sign_in_token_input.read(cx).text().to_string();
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            self.sign_in_error = Some("Please enter a token or API key".into());
+            cx.notify();
+            return;
+        }
+        self.api_key_input = token;
+        self.sign_in_error = None;
+        self.sign_in_loading = true;
+        cx.notify();
+        self.try_connect(cx);
+    }
 
     fn try_connect(&mut self, cx: &mut Context<Self>) {
         if self.api_key_input.is_empty() {
@@ -341,6 +373,8 @@ impl FermiConsole {
                 Ok(me) => {
                     this.update(cx, |this, cx| {
                         this.connected = true;
+                        this.sign_in_loading = false;
+                        this.sign_in_error = None;
                         this.user_display_name = me.display_name.clone();
                         log::info!("Connected as: {:?}", me.display_name);
                         this.fetch_all_data(cx);
@@ -350,9 +384,12 @@ impl FermiConsole {
                 Err(e) => {
                     log::error!("Auth failed: {}", e);
                     api.clear_api_key().await;
-                    this.update(cx, |this, _cx| {
+                    this.update(cx, |this, cx| {
                         this.connected = false;
+                        this.sign_in_loading = false;
+                        this.sign_in_error = Some(format!("Sign in failed: {}", e));
                         this.user_display_name = None;
+                        cx.notify();
                     })
                     .ok();
                 }
@@ -934,7 +971,7 @@ impl FermiConsole {
 
     // ── Dashboard Panel ───────────────────────────────────────────────────
 
-    fn render_dashboard(&self) -> impl IntoElement {
+    fn render_dashboard(&self, cx: &Context<Self>) -> impl IntoElement {
         // Extract stats from API response or use defaults
         let (brier, active, resolved, drafts, rank, days_30d) =
             if let Some(ref stats) = self.my_stats {
@@ -978,11 +1015,13 @@ impl FermiConsole {
                     } else {
                         div()
                             .text_size(px(12.0))
-                            .text_color(theme::gold())
-                            .child("Set FERMI_API_KEY or ABW_API_KEY to connect")
+                            .text_color(theme::fg_faint())
+                            .child("Sign in to sync forecasts and use agents")
                             .into_any_element()
                     }),
             )
+            // ── Sign-in card (when not connected) ─────────────────
+            .when(!self.connected, |el| el.child(self.render_sign_in_card(cx)))
             .child(
                 // Stats cards row
                 div()
@@ -1119,6 +1158,84 @@ impl FermiConsole {
                     .text_size(px(11.0))
                     .text_color(theme::fg_dim())
                     .child(item.time.clone()),
+            )
+    }
+
+    // ── Sign-in Card ──────────────────────────────────────────────────
+
+    fn render_sign_in_card(&self, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p(px(20.0))
+            .bg(theme::bg_elevated())
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .max_w(px(480.0))
+            .child(
+                div()
+                    .text_size(px(16.0))
+                    .text_color(theme::cyan())
+                    .font_weight(FontWeight::BOLD)
+                    .child("Sign In to Agent Bestiary World"),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(theme::fg_dim())
+                    .child("Enter your ABW API key or session token to connect. You can get one from agent-bestiary.world/settings."),
+            )
+            // Token input field
+            .child(self.sign_in_token_input.clone())
+            // Sign in button
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.0))
+                    .items_center()
+                    .child(
+                        div()
+                            .id("sign-in-btn")
+                            .px(px(20.0))
+                            .py(px(8.0))
+                            .rounded(px(6.0))
+                            .bg(rgb(theme::CYAN))
+                            .text_color(rgb(theme::BG_DEEP))
+                            .text_size(px(13.0))
+                            .font_weight(FontWeight::BOLD)
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.85))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.sign_in_from_ui(cx);
+                            }))
+                            .child(if self.sign_in_loading {
+                                "Connecting…"
+                            } else {
+                                "Sign In"
+                            }),
+                    )
+                    // Error message
+                    .when(self.sign_in_error.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::red())
+                                .child(
+                                    self.sign_in_error
+                                        .as_deref()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                ),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .child("You can also use the app offline — Ctrl+4 to open the Composer and create local forecasts."),
             )
     }
 
@@ -1920,7 +2037,7 @@ impl Render for FermiConsole {
                 // Main content area
                 div().flex().flex_col().flex_grow().overflow_hidden().child(
                     match self.active_panel {
-                        Panel::Dashboard => self.render_dashboard().into_any_element(),
+                        Panel::Dashboard => self.render_dashboard(cx).into_any_element(),
                         Panel::Portfolio => self.render_portfolio(cx).into_any_element(),
                         Panel::AgentFleet => self.render_agent_fleet_panel().into_any_element(),
                         Panel::Composer => {
