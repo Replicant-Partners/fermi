@@ -4,8 +4,10 @@
 //! Sprint 2: real API integration, portfolio panel with live data.
 
 mod api;
+mod composer;
 
 use api::client::{ApiClient, ApiConfig, ApiError, Forecast, ForecastQuery, MyStats, Portfolio};
+use composer::ComposerState;
 use gpui::prelude::*;
 use gpui::*;
 use std::sync::Arc;
@@ -180,6 +182,9 @@ struct FermiConsole {
 
     // Activity feed (derived from recent forecasts)
     recent_activity: Vec<ActivityItem>,
+
+    // Composer state
+    composer: ComposerState,
 }
 
 #[derive(Clone)]
@@ -208,6 +213,7 @@ impl FermiConsole {
             draft_forecasts: Vec::new(),
             forecasts_loading: false,
             recent_activity: Vec::new(),
+            composer: ComposerState::new(),
         };
 
         // Try to load API key from environment
@@ -1069,6 +1075,9 @@ impl Render for FermiConsole {
                     match self.active_panel {
                         Panel::Dashboard => self.render_dashboard().into_any_element(),
                         Panel::Portfolio => self.render_portfolio().into_any_element(),
+                        Panel::Composer => {
+                            composer::render_composer(&self.composer).into_any_element()
+                        }
                         other => self.render_placeholder(other).into_any_element(),
                     },
                 ),

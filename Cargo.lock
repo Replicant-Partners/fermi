@@ -3387,6 +3387,7 @@ dependencies = [
  "chrono",
  "env_logger",
  "eventsource-client",
+ "fermi",
  "futures",
  "gpui",
  "log",
