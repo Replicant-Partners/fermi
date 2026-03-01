@@ -396,10 +396,7 @@ impl FermiConsole {
             // 2. Open browser to ABW OAuth
             let base_url = api.base_url().await;
             let callback_url = format!("http://127.0.0.1:{}/callback", port);
-            let auth_url = format!(
-                "{}/api/auth/{}?redirect={}",
-                base_url, provider, callback_url
-            );
+            let auth_url = format!("{}/auth/{}?redirect={}", base_url, provider, callback_url);
             log::info!("[oauth] Opening browser: {}", auth_url);
             let _ = open::that(&auth_url);
 
