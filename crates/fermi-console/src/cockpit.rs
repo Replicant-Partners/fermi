@@ -1866,17 +1866,24 @@ impl Render for CockpitState {
                 let is_editing = self.editing_driver_index == Some(i);
                 let is_suggested = d.suggested;
 
-                // Wrap each driver node in a clickable container
+                // Build driver node: clickable HEADER + non-clickable EDITOR
+                // The on_click is ONLY on the header row so clicking TextInput
+                // fields in the editor doesn't collapse it.
                 let node = render_driver_node(i, d, is_editing);
 
-                // Header click → toggle edit
-                let mut wrapper = div()
-                    .id(ElementId::Name(format!("driver-{}", i).into()))
+                // Header row — click toggles edit (this is the summary line only)
+                let header = div()
+                    .id(ElementId::Name(format!("driver-header-{}", i).into()))
                     .on_click(cx.listener(move |this, _event, _window, cx| {
                         this.toggle_driver_edit(i, cx);
                         cx.notify();
                     }))
                     .child(node);
+
+                // Wrapper holds header + buttons + editor, but is NOT clickable
+                let mut wrapper = div()
+                    .id(ElementId::Name(format!("driver-{}", i).into()))
+                    .child(header);
 
                 // Accept button (for suggested drivers)
                 if is_suggested {
@@ -1917,6 +1924,7 @@ impl Render for CockpitState {
                 }
 
                 // Inline editor with real TextInput fields (when editing)
+                // This is OUTSIDE the clickable header so focus doesn't collapse it
                 if is_editing {
                     let is_continuous =
                         matches!(d.driver_type, CockpitDriverType::Continuous { .. });
@@ -3312,8 +3320,8 @@ fn agent_result_to_json(result: &AgentExecutionResult) -> JsonValue {
     let mut obj = serde_json::Map::new();
 
     obj.insert(
-        "agent_name".into(),
-        JsonValue::String(result.agent_name.clone()),
+        "agent_id".into(),
+        JsonValue::String(result.agent_id.clone()),
     );
     obj.insert("status".into(), JsonValue::String(result.status.clone()));
 

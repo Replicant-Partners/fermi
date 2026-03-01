@@ -362,12 +362,17 @@ pub struct AgentCard {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentExecutionResult {
-    pub agent_name: String,
+    pub agent_id: String,
+    #[serde(default)]
+    pub episode_id: Option<String>,
     pub status: String,
     pub evidence: Option<Vec<JsonValue>>,
     pub confidence: Option<f64>,
     pub execution_time_ms: Option<u64>,
     pub tokens_used: Option<u32>,
+    pub credits_charged: Option<f64>,
+    pub loop_iterations: Option<u32>,
+    pub tool_invocations: Option<Vec<JsonValue>>,
     pub metadata: Option<JsonValue>,
 }
 
