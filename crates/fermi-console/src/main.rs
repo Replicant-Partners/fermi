@@ -250,6 +250,7 @@ struct FermiConsole {
     sign_in_error: Option<String>,
     sign_in_loading: bool,
     oauth_port: Option<u16>,
+    sign_in_fallback_message: bool,
 
     // Dashboard data (from /api/forecasts/my-stats)
     my_stats: Option<MyStats>,
@@ -315,6 +316,7 @@ impl FermiConsole {
             sign_in_error: None,
             sign_in_loading: false,
             oauth_port: None,
+            sign_in_fallback_message: false,
             my_stats: None,
             stats_loading: false,
             portfolios: Vec::new(),
@@ -394,22 +396,27 @@ impl FermiConsole {
             .ok();
 
             // 2. Open browser to ABW OAuth
+            // We try the localhost callback flow first. If the server doesn't
+            // support localhost redirects yet, the user lands on ABW's dashboard
+            // with a valid session cookie. They can then copy their token from
+            // the ABW settings page and paste it into the manual token field.
             let base_url = api.base_url().await;
             let callback_url = format!("http://127.0.0.1:{}/callback", port);
             let auth_url = format!("{}/auth/{}?redirect={}", base_url, provider, callback_url);
             log::info!("[oauth] Opening browser: {}", auth_url);
             let _ = open::that(&auth_url);
 
-            // 3. Wait for the callback (with timeout)
+            // 3. Wait for the callback (with short timeout — if the server
+            // doesn't support localhost redirects, we fall back gracefully)
             let result = tokio::time::timeout(
-                std::time::Duration::from_secs(120),
+                std::time::Duration::from_secs(30),
                 accept_oauth_callback(&listener),
             )
             .await;
 
             match result {
                 Ok(Ok(token)) => {
-                    log::info!("[oauth] Got token, connecting...");
+                    log::info!("[oauth] Got token via localhost callback");
                     api.set_api_key(&token).await;
 
                     match api.auth_me().await {
@@ -440,6 +447,7 @@ impl FermiConsole {
                     }
                 }
                 Ok(Err(e)) => {
+                    log::warn!("[oauth] Callback error: {}", e);
                     this.update(cx, |this, cx| {
                         this.sign_in_loading = false;
                         this.sign_in_error = Some(format!("OAuth error: {}", e));
@@ -449,10 +457,16 @@ impl FermiConsole {
                     .ok();
                 }
                 Err(_) => {
+                    // Timeout — the server probably doesn't support localhost
+                    // redirects yet. The user signed in on ABW but the redirect
+                    // went to /dashboard instead of our callback.
+                    log::info!("[oauth] Localhost callback timed out — server may not support desktop redirect yet");
                     this.update(cx, |this, cx| {
                         this.sign_in_loading = false;
-                        this.sign_in_error = Some("Sign in timed out (2 minutes)".into());
+                        this.sign_in_error = None;
                         this.oauth_port = None;
+                        // Show a helpful message instead of an error
+                        this.sign_in_fallback_message = true;
                         cx.notify();
                     })
                     .ok();
@@ -1289,7 +1303,7 @@ impl FermiConsole {
                 div()
                     .text_size(px(12.0))
                     .text_color(theme::fg_dim())
-                    .child("Sign in to use AI agents, save forecasts, and compete on the leaderboard."),
+                    .child("Sign in to use AI research agents, save forecasts, and compete on the leaderboard."),
             )
             // ── OAuth buttons ─────────────────────────────────────
             .child(
@@ -1366,7 +1380,59 @@ impl FermiConsole {
                         ),
                 )
             })
-            // ── Manual token entry (collapsed by default) ─────────
+            // ── Fallback message (shown after OAuth timeout) ──────
+            .when(self.sign_in_fallback_message, |el| {
+                el.child(
+                    div()
+                        .px(px(12.0))
+                        .py(px(10.0))
+                        .bg(rgb(0x2A2D3A))
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(theme::gold())
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(theme::gold())
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Almost there! You signed in on ABW."),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::fg_dim())
+                                .child("Copy your session token from your browser:"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::fg())
+                                .child("1. Open agent-bestiary.world in your browser"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::fg())
+                                .child("2. Open DevTools (F12) → Application → Cookies"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::fg())
+                                .child("3. Copy the value of 'abw_session'"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::fg())
+                                .child("4. Paste it below and click Connect"),
+                        ),
+                )
+            })
+            // ── Token entry ───────────────────────────────────────
             .child(
                 div()
                     .flex()
@@ -1379,7 +1445,11 @@ impl FermiConsole {
                         div()
                             .text_size(px(10.0))
                             .text_color(theme::fg_faint())
-                            .child("Or paste a session token directly:"),
+                            .child(if self.sign_in_fallback_message {
+                                "Paste your session token here:"
+                            } else {
+                                "Or paste a session token directly:"
+                            }),
                     )
                     .child(
                         div()
