@@ -1,8 +1,8 @@
 # Session Context — 2026-02-27/28 Marathon Session
 
-**Duration:** ~12 hours across two days
-**Commits:** 16 total (13 fermi, 3 rabble)
-**Status:** Research Cockpit functional with agent orchestration, needs channel integration for live results
+**Duration:** ~12 hours across two days (+ follow-up session)
+**Commits:** 17 total (14 fermi, 3 rabble)
+**Status:** Research Cockpit functional with live agent results streaming via Entity channel integration
 
 ---
 
@@ -239,25 +239,30 @@ rabble/
 
 ## What Needs to Happen Next (Priority Order)
 
-### 1. Channel Integration for Agent Results (CRITICAL)
+### 1. ~~Channel Integration for Agent Results~~ ✅ DONE (fermi `957d41a`)
 
-The cockpit fires agent API calls via `tokio::spawn` but results can't flow back to the GPUI UI thread. Options:
+**Completed:** Option A — CockpitState is now a GPUI Entity.
 
-**Option A: Make CockpitState an Entity**
-- Wrap `CockpitState` in a GPUI `Entity<CockpitState>` so it can use `cx.spawn()` with `WeakEntity` callbacks
-- This is the cleanest approach but requires restructuring how the cockpit is owned
+- `CockpitState` implements `Render`, owned as `Entity<CockpitState>` by `FermiConsole`
+- `orchestrate_question()` uses `cx.spawn()` instead of `tokio::spawn`
+- Each agent gets its own spawned task with a `WeakEntity` handle
+- On completion: `this.update(cx, |cockpit, cx| { ... })` pushes results back to UI thread
+- On failure: `mark_agent_failed()` updates fleet panel with error details
+- `check_orchestration_complete()` finalizes probability adjustment when all agents done
+- `populate_from_agent_result()` now also extracts drivers and updates base rate / reference class / sample size from agent metadata
+- `agent_result_to_json()` bridges typed `AgentExecutionResult` → `JsonValue`
+- Orchestration status bar shows live progress (`N/M complete`)
+- Agent fleet panel shows error details for failed agents
 
-**Option B: Shared channel with polling**
-- Use `tokio::sync::mpsc` channel between tokio tasks and the cockpit
-- Poll the channel on each render frame (GPUI calls render ~60fps)
-- Simpler but adds polling overhead
-
-**Option C: GPUI's `cx.background_executor()`**
-- Use GPUI's built-in background executor which integrates with the event loop
-- Results come back on the UI thread automatically
-- Requires the cockpit to be an Entity
-
-**Recommendation:** Option A — make CockpitState an Entity. This aligns with GPUI's architecture and enables proper async integration.
+**Flow:**
+```
+User types question + ⌘Enter
+→ FermiConsole.on_trigger_question_orchestration()
+→ cockpit.update(cx, |c, cx| c.orchestrate_question(..., cx))
+→ cx.spawn() fires N agent API calls in parallel
+→ Each completes → this.update(cx, |c, cx| c.populate_from_agent_result())
+→ cx.notify() → GPUI re-renders → zones update live
+```
 
 ### 2. Editable Driver Parameters
 
@@ -323,8 +328,9 @@ sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libfon
 
 ## Commit Log
 
-### fermi (13 commits)
+### fermi (14 commits)
 ```
+957d41a feat: Entity channel integration — agent results flow back to Research Cockpit UI
 77b7027 feat: Agent orchestration on question submit — cockpit comes alive
 a8e8f3b feat: Research Cockpit — six-zone OODA loop workspace with editable text input
 9eb51d3 docs: Add Outside View (Tetlock base rate) as first-class zone
