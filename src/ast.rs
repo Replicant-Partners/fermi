@@ -231,6 +231,178 @@ pub enum Expression {
     },
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+// Program helpers — accessors, mutators, builders for the console
+// ═══════════════════════════════════════════════════════════════════
+
+impl Program {
+    /// Create an empty program.
+    pub fn empty() -> Self {
+        Self { statements: Vec::new() }
+    }
+
+    /// Create a program with just a question.
+    pub fn with_question(text: &str) -> Self {
+        Self {
+            statements: vec![Statement::Question(QuestionStmt {
+                text: text.to_string(),
+                base_rate: None,
+                target_date: None,
+                resolution_criteria: None,
+            })],
+        }
+    }
+
+    // ── Read accessors ────────────────────────────────────────────
+
+    pub fn question(&self) -> Option<&QuestionStmt> {
+        self.statements.iter().find_map(|s| match s {
+            Statement::Question(q) => Some(q),
+            _ => None,
+        })
+    }
+
+    pub fn drivers(&self) -> Vec<&DriverStmt> {
+        self.statements.iter().filter_map(|s| match s {
+            Statement::Driver(d) => Some(d),
+            _ => None,
+        }).collect()
+    }
+
+    pub fn driver(&self, name: &str) -> Option<&DriverStmt> {
+        self.drivers().into_iter().find(|d| d.name == name)
+    }
+
+    pub fn evidence_items(&self) -> Vec<&EvidenceStmt> {
+        self.statements.iter().filter_map(|s| match s {
+            Statement::Evidence(e) => Some(e),
+            _ => None,
+        }).collect()
+    }
+
+    pub fn agents(&self) -> Vec<&AgentStmt> {
+        self.statements.iter().filter_map(|s| match s {
+            Statement::Agent(a) => Some(a),
+            _ => None,
+        }).collect()
+    }
+
+    pub fn agent(&self, name: &str) -> Option<&AgentStmt> {
+        self.agents().into_iter().find(|a| a.name == name)
+    }
+
+    pub fn model(&self) -> Option<&ModelStmt> {
+        self.statements.iter().find_map(|s| match s {
+            Statement::Model(m) => Some(m),
+            _ => None,
+        })
+    }
+
+    pub fn simulate(&self) -> Option<&SimulateStmt> {
+        self.statements.iter().find_map(|s| match s {
+            Statement::Simulate(s) => Some(s),
+            _ => None,
+        })
+    }
+
+    // ── Mutable accessors ─────────────────────────────────────────
+
+    pub fn question_mut(&mut self) -> Option<&mut QuestionStmt> {
+        self.statements.iter_mut().find_map(|s| match s {
+            Statement::Question(q) => Some(q),
+            _ => None,
+        })
+    }
+
+    pub fn driver_mut(&mut self, name: &str) -> Option<&mut DriverStmt> {
+        self.statements.iter_mut().find_map(|s| match s {
+            Statement::Driver(d) if d.name == name => Some(d),
+            _ => None,
+        })
+    }
+
+    pub fn agent_mut(&mut self, name: &str) -> Option<&mut AgentStmt> {
+        self.statements.iter_mut().find_map(|s| match s {
+            Statement::Agent(a) if a.name == name => Some(a),
+            _ => None,
+        })
+    }
+
+    // ── Builders / mutators ───────────────────────────────────────
+
+    pub fn set_question(&mut self, question: QuestionStmt) {
+        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Question(_))) {
+            self.statements[pos] = Statement::Question(question);
+        } else {
+            self.statements.insert(0, Statement::Question(question));
+        }
+    }
+
+    pub fn add_driver(&mut self, driver: DriverStmt) {
+        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Driver(d) if d.name == driver.name)) {
+            self.statements[pos] = Statement::Driver(driver);
+        } else {
+            let insert_pos = self.statements.iter()
+                .rposition(|s| matches!(s, Statement::Driver(_)))
+                .map(|p| p + 1)
+                .or_else(|| self.statements.iter().rposition(|s| matches!(s, Statement::Question(_))).map(|p| p + 1))
+                .unwrap_or(self.statements.len());
+            self.statements.insert(insert_pos, Statement::Driver(driver));
+        }
+    }
+
+    pub fn remove_driver(&mut self, name: &str) -> bool {
+        let before = self.statements.len();
+        self.statements.retain(|s| !matches!(s, Statement::Driver(d) if d.name == name));
+        self.statements.len() < before
+    }
+
+    pub fn add_evidence(&mut self, evidence: EvidenceStmt) {
+        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Evidence(e) if e.id == evidence.id)) {
+            self.statements[pos] = Statement::Evidence(evidence);
+        } else {
+            let insert_pos = self.statements.iter()
+                .rposition(|s| matches!(s, Statement::Evidence(_) | Statement::Driver(_)))
+                .map(|p| p + 1)
+                .unwrap_or(self.statements.len());
+            self.statements.insert(insert_pos, Statement::Evidence(evidence));
+        }
+    }
+
+    pub fn add_agent(&mut self, agent: AgentStmt) {
+        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Agent(a) if a.name == agent.name)) {
+            self.statements[pos] = Statement::Agent(agent);
+        } else {
+            let insert_pos = self.statements.iter()
+                .rposition(|s| matches!(s, Statement::Agent(_) | Statement::Evidence(_) | Statement::Driver(_)))
+                .map(|p| p + 1)
+                .unwrap_or(self.statements.len());
+            self.statements.insert(insert_pos, Statement::Agent(agent));
+        }
+    }
+
+    pub fn set_model(&mut self, model: ModelStmt) {
+        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Model(_))) {
+            self.statements[pos] = Statement::Model(model);
+        } else {
+            let insert_pos = self.statements.iter()
+                .rposition(|s| !matches!(s, Statement::Simulate(_)))
+                .map(|p| p + 1)
+                .unwrap_or(self.statements.len());
+            self.statements.insert(insert_pos, Statement::Model(model));
+        }
+    }
+
+    pub fn set_simulate(&mut self, sim: SimulateStmt) {
+        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Simulate(_))) {
+            self.statements[pos] = Statement::Simulate(sim);
+        } else {
+            self.statements.push(Statement::Simulate(sim));
+        }
+    }
+}
+
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Program({} statements)", self.statements.len())

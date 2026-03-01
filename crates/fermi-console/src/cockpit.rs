@@ -23,8 +23,10 @@
 
 use gpui::prelude::*;
 use gpui::*;
+use fermi::ast::{AgentStmt, BaseRate, DriverStmt, DriverType, Distribution, EvidenceStmt, Expression, GeneratedBy, ModelStmt, Program, QuestionStmt, Schedule, SimulateStmt, Statement};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use crate::api::client::{AgentExecutionResult, ApiClient, CreateForecastRequest};
 use crate::text_input::TextInput;
@@ -289,6 +291,9 @@ pub struct SimResults {
 /// agent API calls that flow results back to the UI thread.
 pub struct CockpitState {
     // ── Question Hub ──────────────────────────────────────────────
+
+    // ── FPL AST (source of truth) ─────────────────────────────────
+    pub program: Program,
     pub question_input: Entity<TextInput>,
     pub domain_input: Entity<TextInput>,
     pub target_date_input: Entity<TextInput>,
@@ -411,6 +416,7 @@ impl CockpitState {
         });
 
         Self {
+            program: Program::empty(),
             question_input,
             domain_input,
             target_date_input,
@@ -482,6 +488,53 @@ impl CockpitState {
         self.sim_results = None;
         self.sim_error = None;
         self.session_cost = 0.0;
+
+        // ── Build FPL AST ─────────────────────────────────────────
+        // The Program is the source of truth. Create proper AST nodes
+        // for the question and agents. Drivers/evidence will be added
+        // as agents return results.
+        self.program = Program::with_question(&question);
+        self.program.set_simulate(SimulateStmt {
+            iterations: 10_000,
+            target: None,
+        });
+
+        // Create AgentStmt nodes — these are the FPL agent assignments
+        self.program.add_agent(AgentStmt {
+            name: "macro_forecaster".into(),
+            agent_type: Some("research".into()),
+            query: format!(
+                "Analyze the following forecast question and suggest 3-5 key drivers with probability distributions. \
+                 Also identify the reference class and base rate for the outside view. \
+                 Question: {}",
+                question
+            ),
+            executor: Some(fermi::ast::ExecutorType::LLM),
+            schedule: Some(Schedule::Once),
+            driver_refs: vec![],  // will be bound as drivers are created
+            depends_on: vec![],
+            confidence_threshold: Some(0.6),
+        });
+        self.program.add_agent(AgentStmt {
+            name: "market_research".into(),
+            agent_type: Some("research".into()),
+            query: format!("Research market data, analyst consensus, and competitive dynamics relevant to: {}", question),
+            executor: Some(fermi::ast::ExecutorType::LLM),
+            schedule: Some(Schedule::Once),
+            driver_refs: vec![],
+            depends_on: vec![],
+            confidence_threshold: Some(0.5),
+        });
+        self.program.add_agent(AgentStmt {
+            name: "sentiment_analyzer".into(),
+            agent_type: Some("research".into()),
+            query: format!("Analyze current sentiment from news, social media, and expert opinions about: {}", question),
+            executor: Some(fermi::ast::ExecutorType::LLM),
+            schedule: Some(Schedule::Once),
+            driver_refs: vec![],
+            depends_on: vec!["macro_forecaster".into()],
+            confidence_threshold: Some(0.5),
+        });
 
         // Add timeline event
         self.timeline.push(TimelineEvent {
@@ -939,6 +992,27 @@ impl CockpitState {
                     dismissed: false,
                 });
 
+                // Also add to the FPL AST
+                let key_findings_vec: Vec<String> = ev
+                    .get("key_findings")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+                let ev_id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let ev_source = ev.get("source").and_then(|v| v.as_str()).unwrap_or(agent_id).to_string();
+                let ev_summary = ev.get("summary").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let ev_relevance = ev.get("relevance").and_then(|v| v.as_f64());
+                self.program.add_evidence(EvidenceStmt {
+                    id: if ev_id.is_empty() { format!("ev_{}_{}", agent_id, self.program.evidence_items().len()) } else { ev_id },
+                    source: ev_source,
+                    summary: ev_summary,
+                    url: None,
+                    relevance: ev_relevance,
+                    date: ev.get("date").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    strength: None,
+                    key_findings: key_findings_vec,
+                });
+
                 // Remove matching evidence gaps
                 self.evidence_gaps
                     .retain(|g| g.suggested_agent.as_deref() != Some(agent_id));
@@ -1002,6 +1076,56 @@ impl CockpitState {
                         p95: 0.0,
                     }
                 };
+
+                // Also add to the FPL AST
+                let ast_driver = match &driver_type {
+                    CockpitDriverType::Continuous { distribution: _, unit, p5, p50, p95 } => {
+                        DriverStmt {
+                            name: name.clone(),
+                            display_name: None,
+                            description: Some(rationale.clone()),
+                            driver_type: DriverType::Continuous,
+                            distribution: Some(Distribution::Triangular {
+                                p5: Expression::Number(*p5),
+                                p50: Expression::Number(*p50),
+                                p95: Expression::Number(*p95),
+                            }),
+                            probability: None,
+                            impact_multiplier: None,
+                            values: None,
+                            weights: None,
+                            unit: if unit.is_empty() { None } else { Some(unit.clone()) },
+                            rationale: if rationale.is_empty() { None } else { Some(rationale.clone()) },
+                            constraints: vec![],
+                            evidence_refs: vec![],
+                        }
+                    }
+                    CockpitDriverType::Binary { probability, impact_multiplier } => {
+                        DriverStmt {
+                            name: name.clone(),
+                            display_name: None,
+                            description: Some(rationale.clone()),
+                            driver_type: DriverType::Binary,
+                            distribution: None,
+                            probability: Some(*probability),
+                            impact_multiplier: Some(*impact_multiplier),
+                            values: None,
+                            weights: None,
+                            unit: None,
+                            rationale: if rationale.is_empty() { None } else { Some(rationale.clone()) },
+                            constraints: vec![],
+                            evidence_refs: vec![],
+                        }
+                    }
+                };
+                self.program.add_driver(ast_driver);
+
+                // Bind the agent to this driver in the AST
+                if let Some(ast_agent) = self.program.agent_mut(agent_id) {
+                    if !ast_agent.driver_refs.contains(&name) {
+                        ast_agent.driver_refs.push(name.clone());
+                    }
+                }
 
                 self.drivers.push(CockpitDriver {
                     name,
@@ -1287,6 +1411,46 @@ impl CockpitState {
                 }
             }
         }
+
+        // Sync changes back to the FPL AST
+        let driver = &self.drivers[index];
+        let ast_driver = match &driver.driver_type {
+            CockpitDriverType::Continuous { distribution: _, unit, p5, p50, p95 } => DriverStmt {
+                name: driver.name.clone(),
+                display_name: None,
+                description: if driver.rationale.is_empty() { None } else { Some(driver.rationale.clone()) },
+                driver_type: DriverType::Continuous,
+                distribution: Some(Distribution::Triangular {
+                    p5: Expression::Number(*p5),
+                    p50: Expression::Number(*p50),
+                    p95: Expression::Number(*p95),
+                }),
+                probability: None,
+                impact_multiplier: None,
+                values: None,
+                weights: None,
+                unit: if unit.is_empty() { None } else { Some(unit.clone()) },
+                rationale: if driver.rationale.is_empty() { None } else { Some(driver.rationale.clone()) },
+                constraints: vec![],
+                evidence_refs: vec![],
+            },
+            CockpitDriverType::Binary { probability, impact_multiplier } => DriverStmt {
+                name: driver.name.clone(),
+                display_name: None,
+                description: if driver.rationale.is_empty() { None } else { Some(driver.rationale.clone()) },
+                driver_type: DriverType::Binary,
+                distribution: None,
+                probability: Some(*probability),
+                impact_multiplier: Some(*impact_multiplier),
+                values: None,
+                weights: None,
+                unit: None,
+                rationale: if driver.rationale.is_empty() { None } else { Some(driver.rationale.clone()) },
+                constraints: vec![],
+                evidence_refs: vec![],
+            },
+        };
+        self.program.add_driver(ast_driver);
     }
 
     /// Accept a suggested (ghost) driver — marks it as user-confirmed.
@@ -1528,10 +1692,10 @@ impl CockpitState {
         self.sim_running = true;
         self.sim_error = None;
 
-        let fpl_source = self.effective_fpl(cx);
-        self.cached_fpl_source = fpl_source.clone();
+        // Refresh the FPL cache for display
+        self.cached_fpl_source = self.generate_fpl(cx);
 
-        if fpl_source.trim().is_empty() || self.drivers.iter().all(|d| d.suggested) {
+        if self.drivers.iter().all(|d| d.suggested) {
             self.sim_error = Some("No accepted drivers to simulate. Accept drivers first.".into());
             self.sim_running = false;
             cx.notify();
@@ -1543,32 +1707,52 @@ impl CockpitState {
             self.auto_model_expression();
         }
 
+        // Sync model expression to AST
+        if !self.model_expression.is_empty() {
+            // Parse the model expression text into an AST Expression
+            // For now, use the text-based approach: generate FPL, parse, execute
+            // TODO: build Expression directly from model_expression string
+        }
+
         let start = std::time::Instant::now();
 
-        // Parse
-        let tokens = match ::fermi::lexer::Lexer::new(&fpl_source).tokenize() {
-            Ok(t) => t,
-            Err(e) => {
-                self.sim_error = Some(format!("Tokenization error: {:?}", e));
+        // Execute directly from the AST program when possible,
+        // fall back to text-based parse if the AST doesn't have a model
+        let exec_program = if self.program.model().is_some() {
+            // AST has a model — execute directly
+            self.program.clone()
+        } else {
+            // Generate FPL text, parse it, execute
+            let fpl_source = self.cached_fpl_source.clone();
+            if fpl_source.trim().is_empty() {
+                self.sim_error = Some("No FPL source to simulate".into());
                 self.sim_running = false;
                 cx.notify();
                 return;
             }
-        };
-
-        let program = match ::fermi::parser::Parser::new(tokens).parse() {
-            Ok(p) => p,
-            Err(e) => {
-                self.sim_error = Some(format!("Parse error: {}", e));
-                self.sim_running = false;
-                cx.notify();
-                return;
+            let tokens = match ::fermi::lexer::Lexer::new(&fpl_source).tokenize() {
+                Ok(t) => t,
+                Err(e) => {
+                    self.sim_error = Some(format!("Tokenization error: {:?}", e));
+                    self.sim_running = false;
+                    cx.notify();
+                    return;
+                }
+            };
+            match ::fermi::parser::Parser::new(tokens).parse() {
+                Ok(p) => p,
+                Err(e) => {
+                    self.sim_error = Some(format!("Parse error: {}", e));
+                    self.sim_running = false;
+                    cx.notify();
+                    return;
+                }
             }
         };
 
-        // Execute
+        // Execute Monte Carlo simulation
         let mut executor = ::fermi::executor::Executor::new(10_000);
-        match executor.execute(&program) {
+        match executor.execute(&exec_program) {
             Ok(results) => {
                 let elapsed = start.elapsed();
                 let histogram_data = results.histogram(20);
