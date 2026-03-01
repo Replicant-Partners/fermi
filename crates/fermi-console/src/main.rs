@@ -2189,6 +2189,13 @@ fn render_calibration_mini(cal: &CalibrationData) -> String {
 fn main() {
     env_logger::init();
 
+    // Start a background Tokio runtime — reqwest needs this for HTTP.
+    // GPUI has its own async executor, but reqwest's Client::builder()
+    // and all HTTP operations require a Tokio reactor. We keep the
+    // runtime alive for the lifetime of the app.
+    let tokio_rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+    let _guard = tokio_rt.enter();
+
     // Create the API client — shared across the entire app
     let api_config = ApiConfig::default();
     let api = Arc::new(ApiClient::new(api_config));

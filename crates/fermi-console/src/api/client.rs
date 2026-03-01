@@ -12,8 +12,8 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
+use std::sync::RwLock;
 use thiserror::Error;
-use tokio::sync::RwLock;
 
 // ═══════════════════════════════════════════════════════════════════
 // Error types
@@ -525,32 +525,32 @@ impl ApiClient {
 
     /// Update the API key at runtime (e.g., after user enters it in settings).
     pub async fn set_api_key(&self, key: impl Into<String>) {
-        let mut config = self.config.write().await;
+        let mut config = self.config.write().unwrap();
         config.api_key = Some(key.into());
     }
 
-    /// Clear the API key (log out).
+    /// Clear the API key (e.g., on logout).
     pub async fn clear_api_key(&self) {
-        let mut config = self.config.write().await;
+        let mut config = self.config.write().unwrap();
         config.api_key = None;
     }
 
     /// Check if the client has an API key set.
     pub async fn is_authenticated(&self) -> bool {
-        let config = self.config.read().await;
+        let config = self.config.read().unwrap();
         config.api_key.is_some()
     }
 
     /// Get the current base URL.
     pub async fn base_url(&self) -> String {
-        let config = self.config.read().await;
+        let config = self.config.read().unwrap();
         config.base_url.clone()
     }
 
-    // ── Internal HTTP helpers ──────────────────────────────────────
+    // ── Internal helpers ──────────────────────────────────────────────
 
-    async fn headers(&self) -> Result<HeaderMap, ApiError> {
-        let config = self.config.read().await;
+    async fn headers(&self) -> Result<reqwest::header::HeaderMap, ApiError> {
+        let config = self.config.read().unwrap();
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -566,7 +566,7 @@ impl ApiClient {
     }
 
     async fn url(&self, path: &str) -> String {
-        let config = self.config.read().await;
+        let config = self.config.read().unwrap();
         format!("{}{}", config.base_url, path)
     }
 
@@ -742,11 +742,8 @@ impl ApiClient {
 
     /// Void a forecast (cancel without resolution).
     pub async fn void_forecast(&self, forecast_id: &str) -> Result<JsonValue, ApiError> {
-        self.post(
-            &format!("/api/forecasts/{}/void", forecast_id),
-            &json!({}),
-        )
-        .await
+        self.post(&format!("/api/forecasts/{}/void", forecast_id), &json!({}))
+            .await
     }
 
     /// Update a forecast's probability with reason and optional agent attribution.
@@ -938,9 +935,7 @@ mod tests {
         let q = ForecastQuery::resolved();
         let pairs = q.to_query_pairs();
         assert!(pairs.iter().any(|(k, v)| k == "status" && v == "resolved"));
-        assert!(pairs
-            .iter()
-            .any(|(k, v)| k == "sort" && v == "brier_score"));
+        assert!(pairs.iter().any(|(k, v)| k == "sort" && v == "brier_score"));
         assert!(pairs.iter().any(|(k, v)| k == "order" && v == "asc"));
     }
 
