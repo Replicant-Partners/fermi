@@ -160,7 +160,10 @@ pub async fn auth_callback_inner(
         // Web flow: set cookie and redirect
         let dest = redirect_to
             .filter(|r| {
-                (r.starts_with('/') && !r.contains("//")) || r.starts_with("https://rabble.world")
+                (r.starts_with('/') && !r.contains("//"))
+                    || r.starts_with("https://rabble.world")
+                    || r.starts_with("http://127.0.0.1:")
+                    || r.starts_with("http://localhost:")
             })
             .unwrap_or_else(|| "/dashboard".to_string());
         let cookie = format!(
@@ -172,6 +175,13 @@ pub async fn auth_callback_inner(
             format!(
                 "https://rabble.world/#/auth?token={}&user_id={}",
                 token, user.user_id
+            )
+        } else if dest.starts_with("http://127.0.0.1:") || dest.starts_with("http://localhost:") {
+            // Desktop app flow: redirect to localhost callback with token
+            let separator = if dest.contains('?') { "&" } else { "?" };
+            format!(
+                "{}{}token={}&user_id={}",
+                dest, separator, token, user.user_id
             )
         } else {
             dest

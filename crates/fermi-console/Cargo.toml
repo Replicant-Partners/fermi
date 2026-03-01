@@ -51,5 +51,8 @@ rand_distr = "0.4"
 # Unicode text handling
 unicode-segmentation = "1.11"
 
+# Open URLs in default browser (for OAuth flow)
+open = "5"
+
 # FPL parser and executor (local simulation)
 fermi = { path = "../.." }

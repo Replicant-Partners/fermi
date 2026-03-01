@@ -3391,6 +3391,7 @@ dependencies = [
  "futures",
  "gpui",
  "log",
+ "open",
  "rand 0.8.5",
  "rand_distr",
  "reqwest 0.12.28",

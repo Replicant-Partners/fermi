@@ -19,6 +19,7 @@ use gpui::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use text_input::TextInput;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // ─── Menu builder ─────────────────────────────────────────────────────────────
 
@@ -244,10 +245,11 @@ struct FermiConsole {
     user_display_name: Option<String>,
     api_key_input: String,
 
-    // Sign-in UI (in-app token entry)
+    // Sign-in UI
     sign_in_token_input: Entity<TextInput>,
     sign_in_error: Option<String>,
     sign_in_loading: bool,
+    oauth_port: Option<u16>,
 
     // Dashboard data (from /api/forecasts/my-stats)
     my_stats: Option<MyStats>,
@@ -312,6 +314,7 @@ impl FermiConsole {
             sign_in_token_input,
             sign_in_error: None,
             sign_in_loading: false,
+            oauth_port: None,
             my_stats: None,
             stats_loading: false,
             portfolios: Vec::new(),
@@ -356,6 +359,110 @@ impl FermiConsole {
         self.sign_in_loading = true;
         cx.notify();
         self.try_connect(cx);
+    }
+
+    /// Start OAuth flow: spin up a localhost listener, open the browser,
+    /// wait for ABW to redirect back with the token.
+    fn start_oauth_flow(&mut self, provider: &str, cx: &mut Context<Self>) {
+        self.sign_in_loading = true;
+        self.sign_in_error = None;
+        cx.notify();
+
+        let provider = provider.to_string();
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| {
+            // 1. Bind a TCP listener on a random port
+            let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+                Ok(l) => l,
+                Err(e) => {
+                    this.update(cx, |this, cx| {
+                        this.sign_in_loading = false;
+                        this.sign_in_error = Some(format!("Failed to start auth server: {}", e));
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+
+            this.update(cx, |this, cx| {
+                this.oauth_port = Some(port);
+                cx.notify();
+            })
+            .ok();
+
+            // 2. Open browser to ABW OAuth
+            let base_url = api.base_url().await;
+            let callback_url = format!("http://127.0.0.1:{}/callback", port);
+            let auth_url = format!(
+                "{}/api/auth/{}?redirect={}",
+                base_url, provider, callback_url
+            );
+            log::info!("[oauth] Opening browser: {}", auth_url);
+            let _ = open::that(&auth_url);
+
+            // 3. Wait for the callback (with timeout)
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(120),
+                accept_oauth_callback(&listener),
+            )
+            .await;
+
+            match result {
+                Ok(Ok(token)) => {
+                    log::info!("[oauth] Got token, connecting...");
+                    api.set_api_key(&token).await;
+
+                    match api.auth_me().await {
+                        Ok(me) => {
+                            this.update(cx, |this, cx| {
+                                this.api_key_input = token;
+                                this.connected = true;
+                                this.sign_in_loading = false;
+                                this.sign_in_error = None;
+                                this.oauth_port = None;
+                                this.user_display_name = me.display_name.clone();
+                                log::info!("[oauth] Connected as: {:?}", me.display_name);
+                                this.fetch_all_data(cx);
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                        Err(e) => {
+                            api.clear_api_key().await;
+                            this.update(cx, |this, cx| {
+                                this.sign_in_loading = false;
+                                this.sign_in_error = Some(format!("Auth failed: {}", e));
+                                this.oauth_port = None;
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    this.update(cx, |this, cx| {
+                        this.sign_in_loading = false;
+                        this.sign_in_error = Some(format!("OAuth error: {}", e));
+                        this.oauth_port = None;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(_) => {
+                    this.update(cx, |this, cx| {
+                        this.sign_in_loading = false;
+                        this.sign_in_error = Some("Sign in timed out (2 minutes)".into());
+                        this.oauth_port = None;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     fn try_connect(&mut self, cx: &mut Context<Self>) {
@@ -1167,8 +1274,8 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
-            .p(px(20.0))
+            .gap(px(16.0))
+            .p(px(24.0))
             .bg(theme::bg_elevated())
             .rounded(px(8.0))
             .border_1()
@@ -1176,7 +1283,7 @@ impl FermiConsole {
             .max_w(px(480.0))
             .child(
                 div()
-                    .text_size(px(16.0))
+                    .text_size(px(18.0))
                     .text_color(theme::cyan())
                     .font_weight(FontWeight::BOLD)
                     .child("Sign In to Agent Bestiary World"),
@@ -1185,51 +1292,122 @@ impl FermiConsole {
                 div()
                     .text_size(px(12.0))
                     .text_color(theme::fg_dim())
-                    .child("Enter your ABW API key or session token to connect. You can get one from agent-bestiary.world/settings."),
+                    .child("Sign in to use AI agents, save forecasts, and compete on the leaderboard."),
             )
-            // Token input field
-            .child(self.sign_in_token_input.clone())
-            // Sign in button
+            // ── OAuth buttons ─────────────────────────────────────
             .child(
                 div()
                     .flex()
                     .gap(px(12.0))
-                    .items_center()
                     .child(
                         div()
-                            .id("sign-in-btn")
+                            .id("oauth-google")
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
                             .px(px(20.0))
-                            .py(px(8.0))
+                            .py(px(10.0))
                             .rounded(px(6.0))
-                            .bg(rgb(theme::CYAN))
-                            .text_color(rgb(theme::BG_DEEP))
+                            .bg(rgb(0xFFFFFF))
+                            .text_color(rgb(0x333333))
                             .text_size(px(13.0))
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
-                            .hover(|s| s.opacity(0.85))
+                            .hover(|s| s.opacity(0.9))
                             .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.sign_in_from_ui(cx);
+                                this.start_oauth_flow("google", cx);
                             }))
-                            .child(if self.sign_in_loading {
-                                "Connecting…"
-                            } else {
-                                "Sign In"
-                            }),
+                            .child("G")
+                            .child("Sign in with Google"),
                     )
-                    // Error message
-                    .when(self.sign_in_error.is_some(), |el| {
-                        el.child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(theme::red())
-                                .child(
-                                    self.sign_in_error
-                                        .as_deref()
-                                        .unwrap_or("")
-                                        .to_string(),
-                                ),
-                        )
-                    }),
+                    .child(
+                        div()
+                            .id("oauth-github")
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .px(px(20.0))
+                            .py(px(10.0))
+                            .rounded(px(6.0))
+                            .bg(rgb(0x24292E))
+                            .text_color(rgb(0xFFFFFF))
+                            .text_size(px(13.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.9))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.start_oauth_flow("github", cx);
+                            }))
+                            .child("⬡")
+                            .child("Sign in with GitHub"),
+                    ),
+            )
+            // Loading / waiting state
+            .when(self.sign_in_loading, |el| {
+                el.child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(theme::gold())
+                        .child(if self.oauth_port.is_some() {
+                            "Waiting for sign-in in your browser…"
+                        } else {
+                            "Connecting…"
+                        }),
+                )
+            })
+            // Error message
+            .when(self.sign_in_error.is_some(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::red())
+                        .child(
+                            self.sign_in_error
+                                .as_deref()
+                                .unwrap_or("")
+                                .to_string(),
+                        ),
+                )
+            })
+            // ── Manual token entry (collapsed by default) ─────────
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .pt(px(8.0))
+                    .border_t_1()
+                    .border_color(theme::fg_faint())
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child("Or paste a session token directly:"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.0))
+                            .items_end()
+                            .child(div().flex_grow().child(self.sign_in_token_input.clone()))
+                            .child(
+                                div()
+                                    .id("sign-in-btn")
+                                    .px(px(16.0))
+                                    .py(px(7.0))
+                                    .rounded(px(4.0))
+                                    .bg(rgb(theme::CYAN))
+                                    .text_color(rgb(theme::BG_DEEP))
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.85))
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.sign_in_from_ui(cx);
+                                    }))
+                                    .child("Connect"),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -2302,6 +2480,82 @@ fn render_calibration_mini(cal: &CalibrationData) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+// ─── OAuth localhost callback handler ─────────────────────────────────────────
+
+/// Accept a single HTTP request on the localhost listener, extract the token
+/// from the query string, and return a success page to the browser.
+async fn accept_oauth_callback(listener: &tokio::net::TcpListener) -> Result<String, String> {
+    let (mut stream, _addr) = listener
+        .accept()
+        .await
+        .map_err(|e| format!("Accept failed: {}", e))?;
+
+    let mut buf = vec![0u8; 4096];
+    let n = stream
+        .read(&mut buf)
+        .await
+        .map_err(|e| format!("Read failed: {}", e))?;
+    let request = String::from_utf8_lossy(&buf[..n]);
+
+    // Parse the GET request line: "GET /callback?token=...&user_id=... HTTP/1.1"
+    let first_line = request.lines().next().unwrap_or("");
+    let path = first_line.split_whitespace().nth(1).unwrap_or("");
+
+    // Extract token from query string
+    let token = path
+        .split('?')
+        .nth(1)
+        .and_then(|qs| {
+            qs.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string())
+        })
+        .ok_or_else(|| "No token in callback URL".to_string())?;
+
+    // URL-decode the token (basic: just handle %xx)
+    let token = urlish_decode(&token);
+
+    // Send a nice HTML response to the browser
+    let html = r#"<!DOCTYPE html>
+<html><head><title>Fermi Console</title>
+<style>body{font-family:system-ui;background:#1f2430;color:#cbccc6;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
+.card{text-align:center;padding:40px;border-radius:12px;background:#232834;border:1px solid #33374a}
+h1{color:#73d0ff;margin:0 0 12px}p{color:#707a8c;margin:0}</style></head>
+<body><div class="card"><h1>✓ Signed In</h1><p>You can close this tab and return to Fermi Console.</p></div></body></html>"#;
+
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        html.len(),
+        html
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+    let _ = stream.flush().await;
+
+    Ok(token)
+}
+
+/// Basic URL decode (handles %XX sequences).
+fn urlish_decode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let hex: String = chars.by_ref().take(2).collect();
+            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                result.push(byte as char);
+            } else {
+                result.push('%');
+                result.push_str(&hex);
+            }
+        } else if c == '+' {
+            result.push(' ');
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
