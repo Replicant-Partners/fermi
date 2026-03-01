@@ -2371,7 +2371,9 @@ fn render_driver_map_with_nodes(
                             div()
                                 .text_size(px(12.0))
                                 .text_color(rgb(theme::FG))
-                                .font_family("Berkeley Mono, JetBrains Mono, monospace")
+                                .font_family(
+                                    "Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace",
+                                )
                                 .child(state.model_expression.clone()),
                         ),
                 )
@@ -2479,7 +2481,9 @@ fn render_driver_map_with_nodes(
                             div()
                                 .text_size(px(11.0))
                                 .text_color(rgb(theme::FG_DIM))
-                                .font_family("Berkeley Mono, JetBrains Mono, monospace")
+                                .font_family(
+                                    "Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace",
+                                )
                                 .child(fpl.to_string()),
                         ),
                 )

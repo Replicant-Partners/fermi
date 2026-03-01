@@ -703,7 +703,7 @@ impl Render for TextInput {
             .rounded(px(4.0))
             .text_size(font_size)
             .text_color(rgb(theme::FG))
-            .font_family("Berkeley Mono, JetBrains Mono, Menlo, monospace")
+            .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
             .child(
                 div()
                     .h(line_h)

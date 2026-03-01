@@ -637,7 +637,7 @@ fn render_model_section(state: &ComposerState) -> impl IntoElement {
                     .border_1()
                     .border_color(theme::fg_faint())
                     .text_size(px(13.0))
-                    .font_family("Berkeley Mono, JetBrains Mono, monospace")
+                    .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
                     .text_color(if state.model_expression.is_empty() {
                         theme::fg_faint()
                     } else {
@@ -794,7 +794,7 @@ fn render_error_section(error: &str) -> impl IntoElement {
                 .text_size(px(12.0))
                 .text_color(rgb(0xFFAAAA))
                 .mt(px(8.0))
-                .font_family("Berkeley Mono, JetBrains Mono, monospace")
+                .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
                 .child(error.to_string()),
         )
 }
@@ -814,7 +814,7 @@ fn render_fpl_source_section(state: &ComposerState) -> impl IntoElement {
             .border_1()
             .border_color(theme::fg_faint())
             .text_size(px(12.0))
-            .font_family("Berkeley Mono, JetBrains Mono, monospace")
+            .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
             .text_color(theme::fg_dim())
             .child(if fpl.is_empty() {
                 "# Empty — add a question and drivers".to_string()

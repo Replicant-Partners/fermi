@@ -1911,7 +1911,7 @@ impl Render for FermiConsole {
             .size_full()
             .bg(theme::bg())
             .text_color(theme::fg())
-            .font_family("Berkeley Mono, JetBrains Mono, Menlo, monospace")
+            .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
             .child(
                 // Sidebar
                 self.render_sidebar(cx),
