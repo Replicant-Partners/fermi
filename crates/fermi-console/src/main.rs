@@ -8,11 +8,15 @@ mod cockpit;
 mod composer;
 mod text_input;
 
-use api::client::{ApiClient, ApiConfig, ApiError, Forecast, ForecastQuery, MyStats, Portfolio};
+use api::client::{
+    ApiClient, ApiConfig, ApiError, CalibrationData, Forecast, ForecastQuery, LeaderboardEntry,
+    LeaderboardQuery, LeaderboardResponse, MyStats, Portfolio,
+};
 use cockpit::CockpitState;
 use composer::ComposerState;
 use gpui::prelude::*;
 use gpui::*;
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 // ─── Menu builder ─────────────────────────────────────────────────────────────
@@ -258,6 +262,15 @@ struct FermiConsole {
 
     // Research Cockpit state (OODA loop workspace) — Entity for async channel integration
     cockpit: Option<Entity<CockpitState>>,
+
+    // Agent Fleet data (from /api/agents)
+    agent_cards: Vec<JsonValue>,
+    agents_loading: bool,
+    agent_search: String,
+
+    // Leaderboard data (from /api/leaderboard)
+    leaderboard: Vec<LeaderboardEntry>,
+    leaderboard_loading: bool,
 }
 
 #[derive(Clone)]
@@ -288,6 +301,11 @@ impl FermiConsole {
             recent_activity: Vec::new(),
             composer: ComposerState::new(),
             cockpit: None,
+            agent_cards: Vec::new(),
+            agents_loading: false,
+            agent_search: String::new(),
+            leaderboard: Vec::new(),
+            leaderboard_loading: false,
         };
 
         // Try to load API key from environment
@@ -340,6 +358,74 @@ impl FermiConsole {
         self.fetch_stats(cx);
         self.fetch_forecasts(cx);
         self.fetch_portfolios(cx);
+        self.fetch_agents(cx);
+        self.fetch_leaderboard(cx);
+    }
+
+    fn fetch_agents(&mut self, cx: &mut Context<Self>) {
+        self.agents_loading = true;
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| match api.list_agents().await {
+            Ok(data) => {
+                let cards = data
+                    .as_array()
+                    .cloned()
+                    .or_else(|| data.get("agents").and_then(|a| a.as_array()).cloned())
+                    .unwrap_or_default();
+
+                this.update(cx, |this, cx| {
+                    this.agent_cards = cards;
+                    this.agents_loading = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(e) => {
+                log::error!("Failed to fetch agents: {}", e);
+                this.update(cx, |this, cx| {
+                    this.agents_loading = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn fetch_leaderboard(&mut self, cx: &mut Context<Self>) {
+        self.leaderboard_loading = true;
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| {
+            let query = LeaderboardQuery {
+                domain: None,
+                team_id: None,
+                min_forecasts: Some(3),
+                limit: Some(50),
+                offset: None,
+            };
+
+            match api.leaderboard(&query).await {
+                Ok(resp) => {
+                    this.update(cx, |this, cx| {
+                        this.leaderboard = resp.leaderboard;
+                        this.leaderboard_loading = false;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::error!("Failed to fetch leaderboard: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.leaderboard_loading = false;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     fn fetch_stats(&mut self, cx: &mut Context<Self>) {
@@ -486,6 +572,14 @@ impl FermiConsole {
             let api = self.api.clone();
             self.cockpit = Some(cx.new(|cx| CockpitState::new(api, cx)));
         }
+        // Refresh data when switching to agent fleet or leaderboard
+        if changed && self.connected {
+            match panel {
+                Panel::AgentFleet => self.fetch_agents(cx),
+                Panel::Leaderboard => self.fetch_leaderboard(cx),
+                _ => {}
+            }
+        }
         cx.notify();
     }
 
@@ -526,6 +620,8 @@ impl FermiConsole {
     }
 
     /// ⌘P — Publish forecast to the API for Brier tracking.
+    /// After the cockpit fires the publish, we schedule a delayed
+    /// refresh of portfolio + stats so the sidebar data updates.
     fn on_publish_forecast(
         &mut self,
         _: &PublishForecast,
@@ -537,6 +633,22 @@ impl FermiConsole {
             cockpit.update(cx, |cockpit, cx| {
                 cockpit.publish_forecast(cx);
             });
+
+            // Refresh portfolio and stats after a short delay to let
+            // the publish POST complete on the server side.
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(2))
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.fetch_forecasts(cx);
+                    this.fetch_stats(cx);
+                    this.fetch_portfolios(cx);
+                })
+                .ok();
+            })
+            .detach();
+
             cx.notify();
         }
     }
@@ -1263,33 +1375,469 @@ impl FermiConsole {
             })
     }
 
-    // ── Placeholder Panels ────────────────────────────────────────────────
+    // ── Agent Fleet Panel ─────────────────────────────────────────────────
 
-    fn render_placeholder(&self, panel: Panel) -> impl IntoElement {
+    fn render_agent_fleet_panel(&self) -> impl IntoElement {
         div()
+            .id("agent-fleet-panel")
             .flex()
             .flex_col()
             .size_full()
-            .items_center()
-            .justify_center()
-            .gap(px(16.0))
+            .overflow_y_scroll()
+            // Header
             .child(
                 div()
-                    .text_size(px(48.0))
-                    .text_color(theme::fg_faint())
-                    .child(panel.icon()),
+                    .px(px(24.0))
+                    .py(px(16.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .text_size(px(20.0))
+                            .text_color(theme::cyan())
+                            .font_weight(FontWeight::BOLD)
+                            .child("⚙ Agent Fleet"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!("{} agents available", self.agent_cards.len())),
+                    )
+                    .when(self.agents_loading, |el| {
+                        el.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::gold())
+                                .child("⟳ Loading…"),
+                        )
+                    }),
             )
+            // Agent grid
             .child(
                 div()
-                    .text_size(px(20.0))
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(12.0))
+                    .p(px(16.0))
+                    .children(
+                        self.agent_cards
+                            .iter()
+                            .map(|card| self.render_agent_card(card)),
+                    )
+                    .when(self.agent_cards.is_empty() && !self.agents_loading, |el| {
+                        el.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .justify_center()
+                                .py(px(48.0))
+                                .w_full()
+                                .child(
+                                    div()
+                                        .text_size(px(14.0))
+                                        .text_color(theme::fg_dim())
+                                        .child("No agents found"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(theme::fg_faint())
+                                        .mt(px(4.0))
+                                        .child("Connect to the API to browse available agents"),
+                                ),
+                        )
+                    }),
+            )
+    }
+
+    fn render_agent_card(&self, card: &JsonValue) -> impl IntoElement {
+        let agent_id = card
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let agent_type = card
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("research");
+        let description = card
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No description");
+        let tier = card
+            .get("tier")
+            .and_then(|v| v.as_str())
+            .unwrap_or("standard");
+        let model = card.get("model").and_then(|v| v.as_str()).unwrap_or("—");
+        let tags: Vec<&str> = card
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|t| t.as_str()).collect())
+            .unwrap_or_default();
+
+        let tier_color = match tier {
+            "premium" => theme::GOLD,
+            "standard" => theme::CYAN,
+            "free" => theme::GREEN,
+            _ => theme::FG_DIM,
+        };
+
+        let type_icon = match agent_type {
+            "research" => "🔍",
+            "creative" => "✨",
+            "system" => "⚙",
+            "coherence" => "🧠",
+            "game" => "🎮",
+            _ => "●",
+        };
+
+        div()
+            .w(px(280.0))
+            .bg(theme::bg_elevated())
+            .border_1()
+            .border_color(theme::fg_faint())
+            .rounded(px(6.0))
+            .p(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .hover(|s| s.border_color(rgb(tier_color)))
+            .cursor_pointer()
+            // Header: icon + name + tier badge
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(div().text_size(px(16.0)).child(type_icon.to_string()))
+                    .child(
+                        div()
+                            .flex_grow()
+                            .text_size(px(13.0))
+                            .text_color(theme::fg())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(agent_id.to_string()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(tier_color))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(3.0))
+                            .bg(theme::bg_active())
+                            .child(tier.to_string()),
+                    ),
+            )
+            // Description
+            .child(
+                div()
+                    .text_size(px(11.0))
                     .text_color(theme::fg_dim())
-                    .child(panel.label()),
+                    .child(truncate(description, 80)),
             )
+            // Model
             .child(
                 div()
-                    .text_size(px(13.0))
+                    .flex()
+                    .gap(px(8.0))
+                    .text_size(px(10.0))
+                    .child(div().text_color(theme::fg_faint()).child("model:"))
+                    .child(div().text_color(theme::fg_dim()).child(model.to_string())),
+            )
+            // Tags
+            .when(!tags.is_empty(), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(4.0))
+                        .children(tags.iter().map(|tag| {
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(theme::fg_faint())
+                                .px(px(5.0))
+                                .py(px(1.0))
+                                .rounded(px(2.0))
+                                .bg(theme::bg())
+                                .child(tag.to_string())
+                        })),
+                )
+            })
+            // Performance stats (if available)
+            .when(card.get("performance").is_some(), |el| {
+                let perf = card.get("performance").unwrap();
+                let avg_time = perf
+                    .get("avg_execution_time_ms")
+                    .and_then(|v| v.as_u64())
+                    .map(|t| format!("{}ms", t))
+                    .unwrap_or_else(|| "—".into());
+                let total_runs = perf
+                    .get("total_executions")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| format!("{} runs", n))
+                    .unwrap_or_else(|| "—".into());
+
+                el.child(
+                    div()
+                        .flex()
+                        .gap(px(12.0))
+                        .mt(px(4.0))
+                        .pt(px(4.0))
+                        .border_t_1()
+                        .border_color(theme::fg_faint())
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .child(avg_time)
+                        .child(total_runs),
+                )
+            })
+    }
+
+    // ── Leaderboard Panel ─────────────────────────────────────────────────
+
+    fn render_leaderboard_panel(&self) -> impl IntoElement {
+        div()
+            .id("leaderboard-panel")
+            .flex()
+            .flex_col()
+            .size_full()
+            .overflow_y_scroll()
+            // Header
+            .child(
+                div()
+                    .px(px(24.0))
+                    .py(px(16.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .text_size(px(20.0))
+                            .text_color(theme::gold())
+                            .font_weight(FontWeight::BOLD)
+                            .child("⚑ Leaderboard"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!("{} forecasters", self.leaderboard.len())),
+                    )
+                    .when(self.leaderboard_loading, |el| {
+                        el.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::gold())
+                                .child("⟳ Loading…"),
+                        )
+                    })
+                    // My rank badge
+                    .when(self.my_stats.is_some(), |el| {
+                        let rank = self
+                            .my_stats
+                            .as_ref()
+                            .and_then(|s| s.rank)
+                            .map(|r| format!("Your rank: #{}", r))
+                            .unwrap_or_else(|| "Unranked".into());
+                        el.child(div().flex_grow()).child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(theme::cyan())
+                                .px(px(10.0))
+                                .py(px(4.0))
+                                .rounded(px(4.0))
+                                .bg(theme::bg_active())
+                                .child(rank),
+                        )
+                    }),
+            )
+            // Column headers
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .px(px(24.0))
+                    .py(px(8.0))
+                    .bg(theme::bg_deep())
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .text_size(px(10.0))
                     .text_color(theme::fg_faint())
-                    .child("Coming next sprint"),
+                    .child(div().w(px(40.0)).child("Rank"))
+                    .child(div().flex_grow().child("Forecaster"))
+                    .child(div().w(px(70.0)).text_right().child("Resolved"))
+                    .child(div().w(px(80.0)).text_right().child("Avg Brier"))
+                    .child(div().w(px(80.0)).text_right().child("Best"))
+                    .child(div().w(px(80.0)).text_right().child("Calibration")),
+            )
+            // Leaderboard rows
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .children(
+                        self.leaderboard
+                            .iter()
+                            .enumerate()
+                            .map(|(i, entry)| self.render_leaderboard_row(i, entry)),
+                    )
+                    .when(
+                        self.leaderboard.is_empty() && !self.leaderboard_loading,
+                        |el| {
+                            el.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .justify_center()
+                                    .py(px(48.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(14.0))
+                                            .text_color(theme::fg_dim())
+                                            .child("No leaderboard data"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .text_color(theme::fg_faint())
+                                            .mt(px(4.0))
+                                            .child(
+                                                "Resolve forecasts to appear on the leaderboard",
+                                            ),
+                                    ),
+                            )
+                        },
+                    ),
+            )
+            // Calibration legend
+            .child(
+                div()
+                    .px(px(24.0))
+                    .py(px(12.0))
+                    .border_t_1()
+                    .border_color(theme::fg_faint())
+                    .flex()
+                    .gap(px(16.0))
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .child("Brier score: 0.0 = perfect, 0.25 = coin flip, lower is better")
+                    .child("Min 3 resolved forecasts to rank"),
+            )
+    }
+
+    fn render_leaderboard_row(&self, index: usize, entry: &LeaderboardEntry) -> impl IntoElement {
+        let rank = entry.rank.unwrap_or(index as i64 + 1);
+        let name = entry.display_name.as_deref().unwrap_or("Anonymous");
+        let resolved = entry.total_resolved.unwrap_or(0);
+        let avg_brier = entry.avg_brier_score.unwrap_or(0.0);
+        let best_brier = entry.best_brier_score.unwrap_or(0.0);
+
+        let is_me = self
+            .my_stats
+            .as_ref()
+            .map(|s| s.owner_id == entry.owner_id.as_deref().unwrap_or(""))
+            .unwrap_or(false);
+
+        let rank_color = match rank {
+            1 => theme::GOLD,
+            2 => theme::FG,
+            3 => theme::ORANGE,
+            _ => theme::FG_DIM,
+        };
+
+        let brier_color = if avg_brier < 0.1 {
+            theme::GREEN
+        } else if avg_brier < 0.2 {
+            theme::CYAN
+        } else if avg_brier < 0.3 {
+            theme::GOLD
+        } else {
+            theme::RED
+        };
+
+        // Simple calibration indicator from calibration data
+        let cal_indicator = entry
+            .calibration
+            .as_ref()
+            .map(|c| render_calibration_mini(c))
+            .unwrap_or_else(|| "—".to_string());
+
+        div()
+            .flex()
+            .items_center()
+            .px(px(24.0))
+            .py(px(10.0))
+            .border_b_1()
+            .border_color(theme::fg_faint())
+            .hover(|s| s.bg(theme::bg_hover()))
+            .when(is_me, |el| el.bg(theme::bg_active()))
+            // Rank
+            .child(
+                div()
+                    .w(px(40.0))
+                    .text_size(px(14.0))
+                    .text_color(rgb(rank_color))
+                    .font_weight(FontWeight::BOLD)
+                    .child(format!("#{}", rank)),
+            )
+            // Name
+            .child(
+                div().flex_grow().flex().flex_col().child(
+                    div()
+                        .text_size(px(13.0))
+                        .text_color(if is_me { theme::cyan() } else { theme::fg() })
+                        .font_weight(if is_me {
+                            FontWeight::BOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .child(format!("{}{}", name, if is_me { " (you)" } else { "" })),
+                ),
+            )
+            // Resolved count
+            .child(
+                div()
+                    .w(px(70.0))
+                    .text_size(px(12.0))
+                    .text_color(theme::fg_dim())
+                    .text_right()
+                    .child(format!("{}", resolved)),
+            )
+            // Avg Brier
+            .child(
+                div()
+                    .w(px(80.0))
+                    .text_size(px(13.0))
+                    .text_color(rgb(brier_color))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_right()
+                    .child(format!("{:.3}", avg_brier)),
+            )
+            // Best Brier
+            .child(
+                div()
+                    .w(px(80.0))
+                    .text_size(px(12.0))
+                    .text_color(theme::fg_dim())
+                    .text_right()
+                    .child(format!("{:.3}", best_brier)),
+            )
+            // Calibration mini
+            .child(
+                div()
+                    .w(px(80.0))
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .text_right()
+                    .child(cal_indicator),
             )
     }
 }
@@ -1333,6 +1881,7 @@ impl Render for FermiConsole {
                     match self.active_panel {
                         Panel::Dashboard => self.render_dashboard().into_any_element(),
                         Panel::Portfolio => self.render_portfolio().into_any_element(),
+                        Panel::AgentFleet => self.render_agent_fleet_panel().into_any_element(),
                         Panel::Composer => {
                             if let Some(ref cockpit_entity) = self.cockpit {
                                 cockpit::render_cockpit(cockpit_entity).into_any_element()
@@ -1341,7 +1890,7 @@ impl Render for FermiConsole {
                                 composer::render_composer(&self.composer).into_any_element()
                             }
                         }
-                        other => self.render_placeholder(other).into_any_element(),
+                        Panel::Leaderboard => self.render_leaderboard_panel().into_any_element(),
                     },
                 ),
             )
@@ -1356,6 +1905,43 @@ fn truncate(s: &str, max_len: usize) -> String {
     } else {
         format!("{}…", &s[..max_len - 1])
     }
+}
+
+/// Render a mini calibration indicator from calibration bucket data.
+/// Shows a 5-char string like "▁▃▅▇█" representing how well-calibrated
+/// each probability bucket is (closer to diagonal = better).
+fn render_calibration_mini(cal: &CalibrationData) -> String {
+    let buckets = [
+        (cal.bucket_0_20, 0.10),   // ideal: 10% of 0-20 bucket resolve true
+        (cal.bucket_20_40, 0.30),  // ideal: 30%
+        (cal.bucket_40_60, 0.50),  // ideal: 50%
+        (cal.bucket_60_80, 0.70),  // ideal: 70%
+        (cal.bucket_80_100, 0.90), // ideal: 90%
+    ];
+
+    let bars = ["▁", "▂", "▃", "▅", "▇"];
+
+    buckets
+        .iter()
+        .map(|(actual, ideal)| {
+            let actual = actual.unwrap_or(*ideal);
+            let error = (actual - ideal).abs();
+            // Lower error = taller bar (better calibration)
+            let idx = if error < 0.05 {
+                4
+            } else if error < 0.10 {
+                3
+            } else if error < 0.15 {
+                2
+            } else if error < 0.25 {
+                1
+            } else {
+                0
+            };
+            bars[idx]
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
