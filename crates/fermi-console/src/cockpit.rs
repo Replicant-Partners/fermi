@@ -541,17 +541,23 @@ impl CockpitState {
     /// Populate the cockpit with an initial scaffold based on the question.
     /// This runs synchronously and gives immediate visual feedback while
     /// agents are still executing in the background.
+    ///
+    /// Includes sensible default drivers so the user can immediately
+    /// accept them and run ⌘R simulation — even without an API connection.
     fn populate_initial_scaffold(&mut self, question: &str) {
         // Simple heuristic: extract likely domain from question keywords
         let q_lower = question.to_lowercase();
         let domain = if q_lower.contains("stock")
             || q_lower.contains("price")
             || q_lower.contains("market")
+            || q_lower.contains("revenue")
+            || q_lower.contains("valuation")
         {
             "finance"
         } else if q_lower.contains("election")
             || q_lower.contains("vote")
             || q_lower.contains("president")
+            || q_lower.contains("congress")
         {
             "politics"
         } else if q_lower.contains("ai") || q_lower.contains("tech") || q_lower.contains("software")
@@ -579,6 +585,188 @@ impl CockpitState {
 
         // Anchor probability to base rate (Tetlock discipline)
         self.predicted_probability = 0.35;
+
+        // ── Scaffold drivers based on domain ──────────────────────
+        // These give the user something to accept + simulate immediately,
+        // even without an API connection. Agents will add/replace these
+        // when their results arrive.
+        self.drivers = match domain {
+            "finance" => vec![
+                CockpitDriver {
+                    name: "revenue_growth".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "%".into(),
+                        p5: -5.0,
+                        p50: 8.0,
+                        p95: 25.0,
+                    },
+                    rationale: "Year-over-year revenue growth rate".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "market_sentiment".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "index".into(),
+                        p5: 0.3,
+                        p50: 0.6,
+                        p95: 0.9,
+                    },
+                    rationale: "Aggregate market sentiment indicator".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "macro_shock".into(),
+                    driver_type: CockpitDriverType::Binary {
+                        probability: 0.15,
+                        impact_multiplier: 0.7,
+                    },
+                    rationale: "Probability of adverse macro event (recession, rate shock)".into(),
+                    suggested: true,
+                },
+            ],
+            "politics" => vec![
+                CockpitDriver {
+                    name: "incumbent_approval".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "%".into(),
+                        p5: 30.0,
+                        p50: 45.0,
+                        p95: 55.0,
+                    },
+                    rationale: "Incumbent approval rating at decision time".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "turnout_factor".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "multiplier".into(),
+                        p5: 0.85,
+                        p50: 1.0,
+                        p95: 1.15,
+                    },
+                    rationale: "Voter turnout relative to baseline".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "october_surprise".into(),
+                    driver_type: CockpitDriverType::Binary {
+                        probability: 0.20,
+                        impact_multiplier: 1.4,
+                    },
+                    rationale: "Late-breaking event that shifts dynamics".into(),
+                    suggested: true,
+                },
+            ],
+            "technology" => vec![
+                CockpitDriver {
+                    name: "adoption_rate".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "%".into(),
+                        p5: 5.0,
+                        p50: 20.0,
+                        p95: 50.0,
+                    },
+                    rationale: "Market adoption rate within forecast horizon".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "competitive_moat".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "score".into(),
+                        p5: 0.2,
+                        p50: 0.5,
+                        p95: 0.8,
+                    },
+                    rationale: "Strength of competitive advantage".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "regulatory_risk".into(),
+                    driver_type: CockpitDriverType::Binary {
+                        probability: 0.25,
+                        impact_multiplier: 0.6,
+                    },
+                    rationale: "Probability of adverse regulatory action".into(),
+                    suggested: true,
+                },
+            ],
+            "climate" => vec![
+                CockpitDriver {
+                    name: "emissions_trajectory".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "GtCO2".into(),
+                        p5: 30.0,
+                        p50: 38.0,
+                        p95: 45.0,
+                    },
+                    rationale: "Annual global CO2 emissions".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "policy_ambition".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "index".into(),
+                        p5: 0.2,
+                        p50: 0.4,
+                        p95: 0.7,
+                    },
+                    rationale: "Aggregate climate policy ambition score".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "tipping_point".into(),
+                    driver_type: CockpitDriverType::Binary {
+                        probability: 0.10,
+                        impact_multiplier: 2.0,
+                    },
+                    rationale: "Probability of crossing a climate tipping point".into(),
+                    suggested: true,
+                },
+            ],
+            _ => vec![
+                CockpitDriver {
+                    name: "base_factor".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "".into(),
+                        p5: 10.0,
+                        p50: 50.0,
+                        p95: 90.0,
+                    },
+                    rationale: "Primary driver — adjust range to match your question".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "trend_modifier".into(),
+                    driver_type: CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "multiplier".into(),
+                        p5: 0.8,
+                        p50: 1.0,
+                        p95: 1.3,
+                    },
+                    rationale: "Trend direction and magnitude".into(),
+                    suggested: true,
+                },
+                CockpitDriver {
+                    name: "disruption_event".into(),
+                    driver_type: CockpitDriverType::Binary {
+                        probability: 0.15,
+                        impact_multiplier: 1.5,
+                    },
+                    rationale: "Probability of a disruptive event".into(),
+                    suggested: true,
+                },
+            ],
+        };
 
         // Add evidence gaps (agents will fill these)
         self.evidence_gaps = vec![
@@ -1044,7 +1232,8 @@ impl CockpitState {
         // Question
         let question = self.question_input.read(cx).text().to_string();
         if !question.is_empty() {
-            lines.push(format!("question \"{}\"", question));
+            let escaped = question.replace('"', r#"\""#);
+            lines.push(format!("question \"{}\"", escaped));
             lines.push(String::new());
         }
 
@@ -1053,9 +1242,10 @@ impl CockpitState {
             if driver.suggested {
                 continue;
             }
+            let safe_name = sanitize_fpl_name(&driver.name);
             match &driver.driver_type {
                 CockpitDriverType::Continuous {
-                    distribution,
+                    distribution: _,
                     unit,
                     p5,
                     p50,
@@ -1074,7 +1264,7 @@ impl CockpitState {
                     };
                     lines.push(format!(
                         "driver {} continuous {{\n    distribution: {}{}{}\n}}",
-                        driver.name, dist_str, unit_str, rationale_str
+                        safe_name, dist_str, unit_str, rationale_str
                     ));
                 }
                 CockpitDriverType::Binary {
@@ -1088,7 +1278,7 @@ impl CockpitState {
                     };
                     lines.push(format!(
                         "driver {} binary {{\n    probability: {}p\n    impact_multiplier: {}{}\n}}",
-                        driver.name, probability, impact_multiplier, rationale_str
+                        safe_name, probability, impact_multiplier, rationale_str
                     ));
                 }
             }
@@ -2219,6 +2409,10 @@ fn render_driver_map_with_nodes(
                                 .child(render_sim_stat("p95", sim.p95))
                                 .child(render_sim_stat("σ", sim.std_dev)),
                         )
+                        // Histogram sparkline
+                        .when(!sim.histogram.is_empty(), |el| {
+                            el.child(render_histogram_bars(&sim.histogram))
+                        })
                         .child(
                             div()
                                 .text_size(px(9.0))
@@ -2941,6 +3135,56 @@ fn agent_result_to_json(result: &AgentExecutionResult) -> JsonValue {
 // ═══════════════════════════════════════════════════════════════════
 // Sentiment detection (simple heuristic)
 // ═══════════════════════════════════════════════════════════════════
+
+/// Sanitize a driver name for use in FPL source.
+/// FPL identifiers must be alphanumeric + underscore, no spaces.
+fn sanitize_fpl_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    // Ensure it doesn't start with a digit
+    if sanitized.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("d_{}", sanitized)
+    } else if sanitized.is_empty() {
+        "unnamed_driver".to_string()
+    } else {
+        sanitized
+    }
+}
+
+/// Render a histogram as a row of vertical bars (sparkline style).
+/// Each bar's height is proportional to the max bin count.
+fn render_histogram_bars(bins: &[u32]) -> impl IntoElement {
+    let max_count = bins.iter().copied().max().unwrap_or(1).max(1);
+    let bar_height = 32.0_f32;
+
+    div()
+        .flex()
+        .items_end()
+        .gap(px(1.0))
+        .h(px(bar_height + 4.0))
+        .mt(px(4.0))
+        .children(bins.iter().enumerate().map(move |(i, &count)| {
+            let frac = count as f32 / max_count as f32;
+            let h = (frac * bar_height).max(1.0);
+            // Color gradient: low bins dim, high bins bright
+            let color = if i < bins.len() / 4 || i > bins.len() * 3 / 4 {
+                theme::FG_FAINT
+            } else if i < bins.len() * 2 / 5 || i > bins.len() * 3 / 5 {
+                theme::CYAN
+            } else {
+                theme::GREEN
+            };
+            div().w(px(6.0)).h(px(h)).bg(rgb(color)).rounded_t(px(1.0))
+        }))
+}
 
 fn detect_sentiment(text: &str) -> Sentiment {
     let t = text.to_lowercase();

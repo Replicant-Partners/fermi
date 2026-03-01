@@ -263,6 +263,9 @@ struct FermiConsole {
     // Research Cockpit state (OODA loop workspace) — Entity for async channel integration
     cockpit: Option<Entity<CockpitState>>,
 
+    // Forecast detail view (click a row in Portfolio to expand)
+    selected_forecast_id: Option<String>,
+
     // Agent Fleet data (from /api/agents)
     agent_cards: Vec<JsonValue>,
     agents_loading: bool,
@@ -301,6 +304,7 @@ impl FermiConsole {
             recent_activity: Vec::new(),
             composer: ComposerState::new(),
             cockpit: None,
+            selected_forecast_id: None,
             agent_cards: Vec::new(),
             agents_loading: false,
             agent_search: String::new(),
@@ -1117,7 +1121,7 @@ impl FermiConsole {
 
     // ── Portfolio Panel ───────────────────────────────────────────────────
 
-    fn render_portfolio(&self) -> impl IntoElement {
+    fn render_portfolio(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -1188,6 +1192,7 @@ impl FermiConsole {
                             "Active Forecasts",
                             &self.active_forecasts,
                             theme::CYAN,
+                            cx,
                         ))
                     })
                     // Draft forecasts section
@@ -1196,6 +1201,7 @@ impl FermiConsole {
                             "Drafts",
                             &self.draft_forecasts,
                             theme::FG_DIM,
+                            cx,
                         ))
                     })
                     // Resolved forecasts section
@@ -1204,6 +1210,7 @@ impl FermiConsole {
                             "Resolved",
                             &self.resolved_forecasts,
                             theme::GREEN,
+                            cx,
                         ))
                     })
                     // Empty state
@@ -1243,6 +1250,7 @@ impl FermiConsole {
         title: &str,
         forecasts: &[Forecast],
         accent: u32,
+        cx: &Context<Self>,
     ) -> impl IntoElement {
         div()
             .flex()
@@ -1272,11 +1280,11 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .children(forecasts.iter().map(|f| self.render_forecast_row(f))),
+                    .children(forecasts.iter().map(|f| self.render_forecast_row(f, cx))),
             )
     }
 
-    fn render_forecast_row(&self, forecast: &Forecast) -> impl IntoElement {
+    fn render_forecast_row(&self, forecast: &Forecast, cx: &Context<Self>) -> impl IntoElement {
         let status_color = match forecast.status.as_str() {
             "active" => theme::CYAN,
             "resolved" => theme::GREEN,
@@ -1291,88 +1299,118 @@ impl FermiConsole {
             .map(|b| format!("Brier {:.3}", b))
             .unwrap_or_default();
 
+        let is_selected = self.selected_forecast_id.as_deref() == Some(&forecast.id);
+        let fid_toggle = forecast.id.clone();
+
         div()
             .id(SharedString::from(format!("forecast-{}", forecast.id)))
             .flex()
-            .items_center()
-            .gap(px(12.0))
-            .px(px(16.0))
-            .py(px(10.0))
+            .flex_col()
             .border_b_1()
             .border_color(theme::fg_faint())
-            .cursor_pointer()
-            .hover(|style| style.bg(theme::bg_hover()))
+            .when(is_selected, |el| el.bg(theme::bg_active()))
+            // ── Summary row (click to toggle detail) ──────────────
             .child(
-                // Probability badge
                 div()
-                    .w(px(48.0))
-                    .text_size(px(14.0))
-                    .text_color(rgb(status_color))
-                    .font_weight(FontWeight::BOLD)
-                    .child(prob_text),
-            )
-            .child(
-                // Question text
-                div()
-                    .flex_grow()
+                    .id(SharedString::from(format!("forecast-row-{}", forecast.id)))
                     .flex()
-                    .flex_col()
-                    .gap(px(2.0))
+                    .items_center()
+                    .gap(px(12.0))
+                    .px(px(16.0))
+                    .py(px(10.0))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        if this.selected_forecast_id.as_deref() == Some(&fid_toggle) {
+                            this.selected_forecast_id = None;
+                        } else {
+                            this.selected_forecast_id = Some(fid_toggle.clone());
+                        }
+                        cx.notify();
+                    }))
                     .child(
+                        // Probability badge
                         div()
-                            .text_size(px(13.0))
-                            .text_color(theme::fg())
-                            .child(truncate(&forecast.question_text, 60)),
+                            .w(px(48.0))
+                            .text_size(px(14.0))
+                            .text_color(rgb(status_color))
+                            .font_weight(FontWeight::BOLD)
+                            .child(prob_text),
                     )
                     .child(
+                        // Question text
                         div()
+                            .flex_grow()
                             .flex()
-                            .gap(px(8.0))
-                            .text_size(px(11.0))
-                            .text_color(theme::fg_dim())
-                            .when(forecast.domain.is_some(), |el| {
-                                el.child(forecast.domain.as_deref().unwrap_or("").to_string())
-                            })
-                            .when(!brier_text.is_empty(), |el| el.child(brier_text.clone()))
-                            .when(forecast.target_date.is_some(), |el| {
-                                el.child(format!(
-                                    "→ {}",
-                                    forecast
-                                        .target_date
-                                        .as_deref()
-                                        .and_then(|s| s.split('T').next())
-                                        .unwrap_or("?")
-                                ))
-                            }),
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(theme::fg())
+                                    .child(truncate(&forecast.question_text, 60)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(8.0))
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_dim())
+                                    .when(forecast.domain.is_some(), |el| {
+                                        el.child(
+                                            forecast.domain.as_deref().unwrap_or("").to_string(),
+                                        )
+                                    })
+                                    .when(!brier_text.is_empty(), |el| el.child(brier_text.clone()))
+                                    .when(forecast.target_date.is_some(), |el| {
+                                        el.child(format!(
+                                            "→ {}",
+                                            forecast
+                                                .target_date
+                                                .as_deref()
+                                                .and_then(|s| s.split('T').next())
+                                                .unwrap_or("?")
+                                        ))
+                                    }),
+                            ),
+                    )
+                    .child(
+                        // Status badge
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(status_color))
+                            .px(px(8.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .bg(theme::bg_active())
+                            .child(forecast.status.clone()),
+                    )
+                    .when(forecast.actual_outcome.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(if forecast.actual_outcome == Some(true) {
+                                    theme::green()
+                                } else {
+                                    theme::red()
+                                })
+                                .child(if forecast.actual_outcome == Some(true) {
+                                    "Yes"
+                                } else {
+                                    "No"
+                                }),
+                        )
+                    })
+                    // Expand/collapse indicator
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child(if is_selected { "▾" } else { "▸" }),
                     ),
             )
-            .child(
-                // Status badge
-                div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(status_color))
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(4.0))
-                    .bg(theme::bg_active())
-                    .child(forecast.status.clone()),
-            )
-            .when(forecast.actual_outcome.is_some(), |el| {
-                el.child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(if forecast.actual_outcome == Some(true) {
-                            theme::green()
-                        } else {
-                            theme::red()
-                        })
-                        .child(if forecast.actual_outcome == Some(true) {
-                            "Yes"
-                        } else {
-                            "No"
-                        }),
-                )
-            })
+            // ── Detail panel (visible when selected) ──────────────
+            .when(is_selected, |el| el.child(render_forecast_detail(forecast)))
     }
 
     // ── Agent Fleet Panel ─────────────────────────────────────────────────
@@ -1880,7 +1918,7 @@ impl Render for FermiConsole {
                 div().flex().flex_col().flex_grow().overflow_hidden().child(
                     match self.active_panel {
                         Panel::Dashboard => self.render_dashboard().into_any_element(),
-                        Panel::Portfolio => self.render_portfolio().into_any_element(),
+                        Panel::Portfolio => self.render_portfolio(cx).into_any_element(),
                         Panel::AgentFleet => self.render_agent_fleet_panel().into_any_element(),
                         Panel::Composer => {
                             if let Some(ref cockpit_entity) = self.cockpit {
@@ -1905,6 +1943,208 @@ fn truncate(s: &str, max_len: usize) -> String {
     } else {
         format!("{}…", &s[..max_len - 1])
     }
+}
+
+/// Render the expanded detail panel for a forecast.
+fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
+    let created = f
+        .created_at
+        .as_deref()
+        .and_then(|s| s.split('T').next())
+        .unwrap_or("—");
+    let updated = f
+        .updated_at
+        .as_deref()
+        .and_then(|s| s.split('T').next())
+        .unwrap_or("—");
+
+    div()
+        .px(px(24.0))
+        .py(px(12.0))
+        .bg(theme::bg())
+        .border_t_1()
+        .border_color(theme::fg_faint())
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        // Full question
+        .child(
+            div()
+                .text_size(px(14.0))
+                .text_color(theme::fg())
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(f.question_text.clone()),
+        )
+        // Metadata grid
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_x(px(24.0))
+                .gap_y(px(6.0))
+                .text_size(px(11.0))
+                .child(render_detail_kv(
+                    "Domain",
+                    f.domain.as_deref().unwrap_or("—"),
+                ))
+                .child(render_detail_kv(
+                    "Target Date",
+                    f.target_date
+                        .as_deref()
+                        .and_then(|s| s.split('T').next())
+                        .unwrap_or("—"),
+                ))
+                .child(render_detail_kv(
+                    "Probability",
+                    &format!("{:.1}%", f.predicted_probability * 100.0),
+                ))
+                .child(render_detail_kv(
+                    "Brier Score",
+                    &f.brier_score
+                        .map(|b| format!("{:.4}", b))
+                        .unwrap_or_else(|| "—".into()),
+                ))
+                .child(render_detail_kv("Created", created))
+                .child(render_detail_kv("Updated", updated))
+                .child(render_detail_kv("Visibility", &f.visibility)),
+        )
+        // Resolution criteria
+        .when(f.resolution_criteria.is_some(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child("Resolution Criteria"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .child(f.resolution_criteria.as_deref().unwrap_or("").to_string()),
+                    ),
+            )
+        })
+        // Confidence interval
+        .when(
+            f.confidence_interval_low.is_some() || f.confidence_interval_high.is_some(),
+            |el| {
+                let low = f.confidence_interval_low.unwrap_or(0.0);
+                let high = f.confidence_interval_high.unwrap_or(0.0);
+                el.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_dim())
+                        .child(format!("Confidence interval: [{:.1}, {:.1}]", low, high)),
+                )
+            },
+        )
+        // Resolution info
+        .when(f.resolved_at.is_some(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .gap(px(12.0))
+                    .text_size(px(11.0))
+                    .child(render_detail_kv(
+                        "Resolved",
+                        f.resolved_at
+                            .as_deref()
+                            .and_then(|s| s.split('T').next())
+                            .unwrap_or("—"),
+                    ))
+                    .child(render_detail_kv(
+                        "Outcome",
+                        match f.actual_outcome {
+                            Some(true) => "Yes",
+                            Some(false) => "No",
+                            None => "—",
+                        },
+                    )),
+            )
+        })
+        // Update history
+        .when(
+            f.update_history
+                .as_ref()
+                .map(|h| !h.is_empty())
+                .unwrap_or(false),
+            |el| {
+                let updates = f.update_history.as_ref().unwrap();
+                el.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_faint())
+                                .child(format!("Update History ({})", updates.len())),
+                        )
+                        .children(updates.iter().map(|u| {
+                            let prev = u
+                                .previous_probability
+                                .map(|p| format!("{:.0}%", p * 100.0))
+                                .unwrap_or_else(|| "—".into());
+                            let new_p = u
+                                .new_probability
+                                .map(|p| format!("{:.0}%", p * 100.0))
+                                .unwrap_or_else(|| "—".into());
+                            let reason = u.reason.as_deref().unwrap_or("");
+                            let date = u
+                                .created_at
+                                .as_deref()
+                                .and_then(|s| s.split('T').next())
+                                .unwrap_or("");
+                            div()
+                                .flex()
+                                .gap(px(8.0))
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_dim())
+                                .child(format!("{} → {}", prev, new_p))
+                                .when(!reason.is_empty(), |el| {
+                                    el.child(
+                                        div()
+                                            .text_color(theme::fg_faint())
+                                            .child(truncate(reason, 40)),
+                                    )
+                                })
+                                .child(div().text_color(theme::fg_faint()).child(date.to_string()))
+                        })),
+                )
+            },
+        )
+        // Forecast ID
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(theme::fg_faint())
+                .child(format!("ID: {}", f.id)),
+        )
+}
+
+/// Render a key-value pair for the forecast detail view.
+fn render_detail_kv(key: &str, value: &str) -> impl IntoElement {
+    div()
+        .flex()
+        .gap(px(6.0))
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(theme::fg_faint())
+                .child(format!("{}:", key)),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(theme::fg())
+                .child(value.to_string()),
+        )
 }
 
 /// Render a mini calibration indicator from calibration bucket data.
