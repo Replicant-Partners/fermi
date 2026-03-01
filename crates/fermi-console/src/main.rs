@@ -100,6 +100,8 @@ actions!(
         RunSimulation,
         ToggleCommandPalette,
         TriggerQuestionOrchestration,
+        PublishForecast,
+        ToggleFplSource,
     ]
 );
 
@@ -438,6 +440,58 @@ impl FermiConsole {
                 if !question.trim().is_empty() {
                     cockpit.orchestrate_question(&question, cx);
                 }
+            });
+            cx.notify();
+        }
+    }
+
+    /// ⌘R — Run local Monte Carlo simulation from cockpit drivers.
+    fn on_run_simulation(
+        &mut self,
+        _: &RunSimulation,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ref cockpit) = self.cockpit {
+            let cockpit = cockpit.clone();
+            cockpit.update(cx, |cockpit, cx| {
+                cockpit.run_simulation(cx);
+            });
+            cx.notify();
+        }
+    }
+
+    /// ⌘P — Publish forecast to the API for Brier tracking.
+    fn on_publish_forecast(
+        &mut self,
+        _: &PublishForecast,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ref cockpit) = self.cockpit {
+            let cockpit = cockpit.clone();
+            cockpit.update(cx, |cockpit, cx| {
+                cockpit.publish_forecast(cx);
+            });
+            cx.notify();
+        }
+    }
+
+    /// ⌘E — Toggle FPL source view in the Driver Map zone.
+    fn on_toggle_fpl_source(
+        &mut self,
+        _: &ToggleFplSource,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ref cockpit) = self.cockpit {
+            let cockpit = cockpit.clone();
+            cockpit.update(cx, |cockpit, cx| {
+                cockpit.show_fpl_source = !cockpit.show_fpl_source;
+                if cockpit.show_fpl_source {
+                    cockpit.refresh_fpl_cache(cx);
+                }
+                cx.notify();
             });
             cx.notify();
         }
@@ -1094,6 +1148,9 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_show_composer))
             .on_action(cx.listener(Self::on_show_leaderboard))
             .on_action(cx.listener(Self::on_trigger_question_orchestration))
+            .on_action(cx.listener(Self::on_run_simulation))
+            .on_action(cx.listener(Self::on_publish_forecast))
+            .on_action(cx.listener(Self::on_toggle_fpl_source))
             .flex()
             .size_full()
             .bg(theme::bg())
@@ -1158,11 +1215,16 @@ fn main() {
         cx.on_action(|_: &Quit, cx| cx.quit());
         text_input::register_key_bindings(cx);
         // Cmd+Enter triggers question orchestration (fires agents)
-        cx.bind_keys([KeyBinding::new(
-            "cmd-enter",
-            TriggerQuestionOrchestration,
-            Some("FermiConsole"),
-        )]);
+        cx.bind_keys([
+            KeyBinding::new(
+                "cmd-enter",
+                TriggerQuestionOrchestration,
+                Some("FermiConsole"),
+            ),
+            KeyBinding::new("cmd-r", RunSimulation, Some("FermiConsole")),
+            KeyBinding::new("cmd-p", PublishForecast, Some("FermiConsole")),
+            KeyBinding::new("cmd-e", ToggleFplSource, Some("FermiConsole")),
+        ]);
 
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         let api_clone = api.clone();

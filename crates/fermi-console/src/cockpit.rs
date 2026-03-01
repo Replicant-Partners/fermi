@@ -26,7 +26,7 @@ use gpui::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
-use crate::api::client::{AgentExecutionResult, ApiClient};
+use crate::api::client::{AgentExecutionResult, ApiClient, CreateForecastRequest};
 use crate::text_input::TextInput;
 use crate::theme;
 
@@ -308,6 +308,10 @@ pub struct CockpitState {
     pub sim_results: Option<SimResults>,
     pub sim_running: bool,
     pub sim_error: Option<String>,
+    pub editing_driver_index: Option<usize>, // which driver is expanded for editing
+    pub show_fpl_source: bool,               // toggle FPL source view (⌘E)
+    pub fpl_source_override: Option<String>, // manual FPL override
+    pub cached_fpl_source: String,           // last-generated FPL for display
 
     // ── Agent Fleet ───────────────────────────────────────────────
     pub agents: Vec<FleetAgent>,
@@ -321,6 +325,8 @@ pub struct CockpitState {
     pub status: String,              // "draft", "active", "resolved"
     pub api: Arc<ApiClient>,
     pub orchestration_running: bool,
+    pub publish_status: Option<String>, // "publishing…", "published!", error msg
+    pub probability_drag_active: bool,  // true while user is dragging the slider
 }
 
 impl CockpitState {
@@ -364,6 +370,10 @@ impl CockpitState {
             sim_results: None,
             sim_running: false,
             sim_error: None,
+            editing_driver_index: None,
+            show_fpl_source: false,
+            fpl_source_override: None,
+            cached_fpl_source: String::new(),
             agents: Vec::new(),
             session_cost: 0.0,
             timeline: vec![TimelineEvent {
@@ -376,6 +386,8 @@ impl CockpitState {
             status: "draft".into(),
             api,
             orchestration_running: false,
+            publish_status: None,
+            probability_drag_active: false,
         }
     }
 
@@ -919,6 +931,520 @@ impl CockpitState {
         }
         (bull, bear, neut)
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Driver Editing
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Toggle inline editing for a driver node. Clicking the same driver
+    /// again collapses it; clicking a different one switches.
+    pub fn toggle_driver_edit(&mut self, index: usize) {
+        if self.editing_driver_index == Some(index) {
+            self.editing_driver_index = None;
+        } else if index < self.drivers.len() {
+            self.editing_driver_index = Some(index);
+        }
+    }
+
+    /// Accept a suggested (ghost) driver — marks it as user-confirmed.
+    pub fn accept_driver(&mut self, index: usize) {
+        if let Some(driver) = self.drivers.get_mut(index) {
+            driver.suggested = false;
+        }
+    }
+
+    /// Remove a driver by index.
+    pub fn remove_driver(&mut self, index: usize) {
+        if index < self.drivers.len() {
+            self.drivers.remove(index);
+            // Collapse editor if we removed the one being edited
+            if self.editing_driver_index == Some(index) {
+                self.editing_driver_index = None;
+            } else if let Some(ref mut ei) = self.editing_driver_index {
+                if *ei > index {
+                    *ei -= 1;
+                }
+            }
+            self.auto_model_expression();
+        }
+    }
+
+    /// Update a continuous driver's parameters.
+    pub fn update_continuous_driver(
+        &mut self,
+        index: usize,
+        p5: f64,
+        p50: f64,
+        p95: f64,
+        unit: &str,
+    ) {
+        if let Some(driver) = self.drivers.get_mut(index) {
+            if let CockpitDriverType::Continuous {
+                p5: ref mut dp5,
+                p50: ref mut dp50,
+                p95: ref mut dp95,
+                unit: ref mut dunit,
+                ..
+            } = driver.driver_type
+            {
+                *dp5 = p5;
+                *dp50 = p50;
+                *dp95 = p95;
+                *dunit = unit.to_string();
+            }
+        }
+    }
+
+    /// Update a binary driver's parameters.
+    pub fn update_binary_driver(&mut self, index: usize, probability: f64, impact: f64) {
+        if let Some(driver) = self.drivers.get_mut(index) {
+            if let CockpitDriverType::Binary {
+                probability: ref mut dp,
+                impact_multiplier: ref mut di,
+            } = driver.driver_type
+            {
+                *dp = probability.clamp(0.0, 1.0);
+                *di = impact;
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FPL Generation & Simulation (⌘R)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Auto-generate a model expression from driver names.
+    /// Continuous drivers multiply; binary drivers use if-then.
+    pub fn auto_model_expression(&mut self) {
+        let parts: Vec<String> = self
+            .drivers
+            .iter()
+            .filter(|d| !d.suggested) // only accepted drivers
+            .map(|d| match &d.driver_type {
+                CockpitDriverType::Continuous { .. } => d.name.clone(),
+                CockpitDriverType::Binary {
+                    impact_multiplier, ..
+                } => {
+                    format!("(if {} then {} else 1.0)", d.name, impact_multiplier)
+                }
+            })
+            .collect();
+
+        self.model_expression = if parts.is_empty() {
+            String::new()
+        } else {
+            parts.join(" * ")
+        };
+    }
+
+    /// Generate FPL source from the current cockpit state.
+    pub fn generate_fpl(&self, cx: &App) -> String {
+        let mut lines = Vec::new();
+
+        // Question
+        let question = self.question_input.read(cx).text().to_string();
+        if !question.is_empty() {
+            lines.push(format!("question \"{}\"", question));
+            lines.push(String::new());
+        }
+
+        // Drivers (only accepted ones)
+        for driver in &self.drivers {
+            if driver.suggested {
+                continue;
+            }
+            match &driver.driver_type {
+                CockpitDriverType::Continuous {
+                    distribution,
+                    unit,
+                    p5,
+                    p50,
+                    p95,
+                } => {
+                    let dist_str = format!("triangular({}, {}, {})", p5, p50, p95);
+                    let unit_str = if unit.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n    unit: \"{}\"", unit)
+                    };
+                    let rationale_str = if driver.rationale.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n    rationale: \"{}\"", driver.rationale)
+                    };
+                    lines.push(format!(
+                        "driver {} continuous {{\n    distribution: {}{}{}\n}}",
+                        driver.name, dist_str, unit_str, rationale_str
+                    ));
+                }
+                CockpitDriverType::Binary {
+                    probability,
+                    impact_multiplier,
+                } => {
+                    let rationale_str = if driver.rationale.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n    rationale: \"{}\"", driver.rationale)
+                    };
+                    lines.push(format!(
+                        "driver {} binary {{\n    probability: {}p\n    impact_multiplier: {}{}\n}}",
+                        driver.name, probability, impact_multiplier, rationale_str
+                    ));
+                }
+            }
+            lines.push(String::new());
+        }
+
+        // Model
+        if !self.model_expression.is_empty() {
+            lines.push(format!("model: {}", self.model_expression));
+            lines.push(String::new());
+        }
+
+        // Simulate
+        lines.push("simulate 10000 iterations".to_string());
+
+        lines.join("\n")
+    }
+
+    /// Get the effective FPL source (manual override or auto-generated).
+    pub fn effective_fpl(&self, cx: &App) -> String {
+        self.fpl_source_override
+            .clone()
+            .unwrap_or_else(|| self.generate_fpl(cx))
+    }
+
+    /// Regenerate the cached FPL source string for display.
+    /// Called when toggling the FPL view or before simulation.
+    pub fn refresh_fpl_cache(&mut self, cx: &App) {
+        self.cached_fpl_source = self.effective_fpl(cx);
+    }
+
+    /// Run Monte Carlo simulation locally (⌘R).
+    /// Generates FPL from cockpit state, parses, executes, and stores results.
+    /// This is synchronous and fast — 10k iterations in <100ms.
+    pub fn run_simulation(&mut self, cx: &mut Context<Self>) {
+        self.sim_running = true;
+        self.sim_error = None;
+
+        let fpl_source = self.effective_fpl(cx);
+        self.cached_fpl_source = fpl_source.clone();
+
+        if fpl_source.trim().is_empty() || self.drivers.iter().all(|d| d.suggested) {
+            self.sim_error = Some("No accepted drivers to simulate. Accept drivers first.".into());
+            self.sim_running = false;
+            cx.notify();
+            return;
+        }
+
+        // Auto-generate model expression if empty
+        if self.model_expression.is_empty() {
+            self.auto_model_expression();
+        }
+
+        let start = std::time::Instant::now();
+
+        // Parse
+        let tokens = match ::fermi::lexer::Lexer::new(&fpl_source).tokenize() {
+            Ok(t) => t,
+            Err(e) => {
+                self.sim_error = Some(format!("Tokenization error: {:?}", e));
+                self.sim_running = false;
+                cx.notify();
+                return;
+            }
+        };
+
+        let program = match ::fermi::parser::Parser::new(tokens).parse() {
+            Ok(p) => p,
+            Err(e) => {
+                self.sim_error = Some(format!("Parse error: {}", e));
+                self.sim_running = false;
+                cx.notify();
+                return;
+            }
+        };
+
+        // Execute
+        let mut executor = ::fermi::executor::Executor::new(10_000);
+        match executor.execute(&program) {
+            Ok(results) => {
+                let elapsed = start.elapsed();
+                let histogram_data = results.histogram(20);
+
+                self.sim_results = Some(SimResults {
+                    mean: results.mean,
+                    median: results.median,
+                    p5: results.p5,
+                    p95: results.p95,
+                    std_dev: results.std_dev,
+                    iterations: results.iterations as u64,
+                    execution_time_ms: elapsed.as_millis() as u64,
+                    histogram: histogram_data
+                        .iter()
+                        .map(|(_, count)| *count as u32)
+                        .collect(),
+                });
+                self.sim_running = false;
+
+                // Add timeline event
+                self.timeline.push(TimelineEvent {
+                    label: format!(
+                        "Simulated: mean={:.1}, p5={:.1}, p95={:.1}",
+                        results.mean, results.p5, results.p95
+                    ),
+                    probability: Some(self.predicted_probability),
+                    event_type: TimelineEventType::ProbabilityUpdated,
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                });
+
+                log::info!(
+                    "[cockpit] Simulation complete: mean={:.2}, median={:.2}, p5={:.2}, p95={:.2} ({}ms)",
+                    results.mean,
+                    results.median,
+                    results.p5,
+                    results.p95,
+                    elapsed.as_millis(),
+                );
+            }
+            Err(e) => {
+                self.sim_error = Some(format!("Execution error: {:?}", e));
+                self.sim_running = false;
+            }
+        }
+
+        cx.notify();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Publish Flow (⌘Enter from cockpit, not question submit)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Publish the forecast to the API for Brier tracking.
+    /// Collects all cockpit state into a CreateForecastRequest and POSTs it.
+    pub fn publish_forecast(&mut self, cx: &mut Context<Self>) {
+        let question = self.question_input.read(cx).text().to_string();
+        if question.trim().is_empty() {
+            self.publish_status = Some("Cannot publish: no question".into());
+            cx.notify();
+            return;
+        }
+
+        self.publish_status = Some("Publishing…".into());
+        cx.notify();
+
+        let domain = self.domain_input.read(cx).text().to_string();
+        let target_date = self.target_date_input.read(cx).text().to_string();
+        let resolution_criteria = self.resolution_criteria_input.read(cx).text().to_string();
+        let fpl_source = self.effective_fpl(cx);
+
+        // Build drivers JSON
+        let drivers_json: Vec<JsonValue> = self
+            .drivers
+            .iter()
+            .filter(|d| !d.suggested)
+            .map(|d| {
+                let mut obj = serde_json::Map::new();
+                obj.insert("name".into(), JsonValue::String(d.name.clone()));
+                obj.insert("rationale".into(), JsonValue::String(d.rationale.clone()));
+                match &d.driver_type {
+                    CockpitDriverType::Continuous {
+                        distribution,
+                        unit,
+                        p5,
+                        p50,
+                        p95,
+                    } => {
+                        obj.insert("type".into(), JsonValue::String("continuous".into()));
+                        obj.insert(
+                            "distribution".into(),
+                            serde_json::json!({
+                                "type": distribution,
+                                "unit": unit,
+                                "p5": p5,
+                                "p50": p50,
+                                "p95": p95,
+                            }),
+                        );
+                    }
+                    CockpitDriverType::Binary {
+                        probability,
+                        impact_multiplier,
+                    } => {
+                        obj.insert("type".into(), JsonValue::String("binary".into()));
+                        obj.insert("probability".into(), serde_json::json!(probability));
+                        obj.insert(
+                            "impact_multiplier".into(),
+                            serde_json::json!(impact_multiplier),
+                        );
+                    }
+                }
+                JsonValue::Object(obj)
+            })
+            .collect();
+
+        // Build evidence JSON
+        let evidence_json: Vec<JsonValue> = self
+            .evidence
+            .iter()
+            .filter(|e| !e.dismissed)
+            .map(|e| {
+                serde_json::json!({
+                    "source": e.source,
+                    "summary": e.summary,
+                    "relevance": e.relevance,
+                    "sentiment": format!("{:?}", e.sentiment),
+                    "agent_id": e.agent_id,
+                })
+            })
+            .collect();
+
+        // Build sim results JSON
+        let sim_json = self.sim_results.as_ref().map(|s| {
+            serde_json::json!({
+                "mean": s.mean,
+                "median": s.median,
+                "p5": s.p5,
+                "p95": s.p95,
+                "std_dev": s.std_dev,
+                "iterations": s.iterations,
+            })
+        });
+
+        // Agents used
+        let agents_used: Vec<String> = self
+            .agents
+            .iter()
+            .filter(|a| a.status == AgentStatus::Completed)
+            .map(|a| a.agent_id.clone())
+            .collect();
+
+        let req = CreateForecastRequest {
+            question_text: question,
+            predicted_probability: self.predicted_probability,
+            domain: if domain.is_empty() {
+                None
+            } else {
+                Some(domain)
+            },
+            resolution_criteria: if resolution_criteria.is_empty() {
+                None
+            } else {
+                Some(resolution_criteria)
+            },
+            target_date: if target_date.is_empty() {
+                None
+            } else {
+                Some(target_date)
+            },
+            confidence_interval_low: self.sim_results.as_ref().map(|s| s.p5),
+            confidence_interval_high: self.sim_results.as_ref().map(|s| s.p95),
+            fpl_source: if fpl_source.trim().is_empty() {
+                None
+            } else {
+                Some(fpl_source)
+            },
+            simulation_results: sim_json,
+            drivers: if drivers_json.is_empty() {
+                None
+            } else {
+                Some(JsonValue::Array(drivers_json))
+            },
+            evidence: if evidence_json.is_empty() {
+                None
+            } else {
+                Some(JsonValue::Array(evidence_json))
+            },
+            visibility: Some("private".into()),
+            tags: None,
+            portfolio_id: None,
+            status: Some("active".into()),
+        };
+
+        let api = self.api.clone();
+
+        cx.spawn(
+            async move |this, cx| match api.create_forecast(&req).await {
+                Ok(response) => {
+                    let forecast_id = response
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    log::info!("[cockpit] Forecast published: {}", forecast_id);
+
+                    this.update(cx, |cockpit, cx| {
+                        cockpit.forecast_id = Some(forecast_id.clone());
+                        cockpit.status = "active".into();
+                        cockpit.publish_status =
+                            Some(format!("Published! ID: {}", truncate(&forecast_id, 12)));
+
+                        cockpit.timeline.push(TimelineEvent {
+                            label: "Forecast published".into(),
+                            probability: Some(cockpit.predicted_probability),
+                            event_type: TimelineEventType::Published,
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        });
+
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::error!("[cockpit] Publish failed: {}", e);
+
+                    this.update(cx, |cockpit, cx| {
+                        cockpit.publish_status = Some(format!("Publish failed: {}", e));
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Probability Slider
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Set the predicted probability (from slider drag or direct input).
+    /// Clamps to [0.05, 0.95] and records a timeline event.
+    pub fn set_probability(&mut self, new_prob: f64) {
+        let clamped = new_prob.clamp(0.05, 0.95);
+        let old = self.predicted_probability;
+        if (clamped - old).abs() < 0.001 {
+            return;
+        }
+        self.predicted_probability = clamped;
+
+        // Only record timeline event when drag ends (not every frame)
+        // The caller should add the timeline event on mouse_up.
+    }
+
+    /// Record a probability change in the timeline (call on drag end).
+    pub fn commit_probability_change(&mut self) {
+        self.probability_drag_active = false;
+
+        self.timeline.push(TimelineEvent {
+            label: format!(
+                "Probability set to {:.0}%",
+                self.predicted_probability * 100.0
+            ),
+            probability: Some(self.predicted_probability),
+            event_type: TimelineEventType::ProbabilityUpdated,
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        });
+
+        // Check divergence warning
+        if self.divergence_warning() {
+            log::info!(
+                "[cockpit] Divergence warning: {:.0}pp from base rate",
+                self.divergence_pp().unwrap_or(0.0)
+            );
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1028,12 +1554,13 @@ fn render_question_hub(state: &CockpitState) -> impl IntoElement {
                                 .child("base rate"),
                         ),
                 )
-                // Central probability (large)
+                // Central probability (large) + slider
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .items_center()
+                        .gap(px(4.0))
                         .child(
                             div()
                                 .text_size(px(36.0))
@@ -1041,6 +1568,11 @@ fn render_question_hub(state: &CockpitState) -> impl IntoElement {
                                 .font_weight(FontWeight::BOLD)
                                 .child(prob_pct),
                         )
+                        // ── Probability slider bar ────────────────────
+                        .child(render_probability_slider(
+                            state.predicted_probability,
+                            div_warning,
+                        ))
                         .when(divergence.is_some(), |el| {
                             let d = divergence.unwrap();
                             let sign = if d > 0.0 { "+" } else { "" };
@@ -1121,6 +1653,87 @@ fn render_question_hub(state: &CockpitState) -> impl IntoElement {
                     )),
             )
         })
+        // Publish status
+        .when(state.publish_status.is_some(), |el| {
+            let status = state.publish_status.as_deref().unwrap_or("");
+            let color = if status.starts_with("Published") {
+                theme::GREEN
+            } else if status.starts_with("Publish failed") || status.starts_with("Cannot") {
+                theme::RED
+            } else {
+                theme::GOLD
+            };
+            el.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(color))
+                    .child(status.to_string()),
+            )
+        })
+        // Keyboard hints
+        .child(
+            div()
+                .flex()
+                .gap(px(16.0))
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("⌘Enter research")
+                .child("⌘R simulate")
+                .child("⌘P publish")
+                .child("⌘E toggle FPL"),
+        )
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Probability Slider
+// ═══════════════════════════════════════════════════════════════════
+
+/// Render a horizontal probability slider bar.
+/// The bar is 200px wide, with a filled portion representing the probability
+/// and a thumb indicator. The bar changes color when divergence is high.
+fn render_probability_slider(probability: f64, warning: bool) -> impl IntoElement {
+    let bar_width = 200.0_f32;
+    let fill_width = (probability as f32 * bar_width).clamp(4.0, bar_width - 4.0);
+    let fill_color = if warning { theme::GOLD } else { theme::CYAN };
+
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        // "5%" label
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("5%"),
+        )
+        // Slider track
+        .child(
+            div()
+                .w(px(bar_width))
+                .h(px(8.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG))
+                .border_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .overflow_hidden()
+                .cursor_pointer()
+                // Filled portion
+                .child(
+                    div()
+                        .h_full()
+                        .w(px(fill_width))
+                        .bg(rgb(fill_color))
+                        .rounded_l(px(3.0)),
+                ),
+        )
+        // "95%" label
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("95%"),
+        )
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1353,14 +1966,11 @@ fn render_driver_map(state: &CockpitState) -> impl IntoElement {
             .flex_col()
             .gap(px(6.0))
             .size_full()
-            // Drivers list
-            .children(
-                state
-                    .drivers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, d)| render_driver_node(i, d)),
-            )
+            // Drivers list (with inline editing for selected driver)
+            .children(state.drivers.iter().enumerate().map(|(i, d)| {
+                let is_editing = state.editing_driver_index == Some(i);
+                render_driver_node(i, d, is_editing)
+            }))
             // Model expression
             .when(!state.model_expression.is_empty(), |el| {
                 el.child(
@@ -1460,6 +2070,37 @@ fn render_driver_map(state: &CockpitState) -> impl IntoElement {
                         .child("Agents will suggest drivers based on your question"),
                 )
             })
+            // FPL source toggle
+            .when(state.show_fpl_source, |el| {
+                let fpl = if state.cached_fpl_source.is_empty() {
+                    "[auto-generated — press ⌘R to simulate]"
+                } else {
+                    &state.cached_fpl_source
+                };
+                el.child(
+                    div()
+                        .mt(px(8.0))
+                        .px(px(10.0))
+                        .py(px(6.0))
+                        .bg(rgb(theme::BG))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(rgb(theme::PURPLE))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::PURPLE))
+                                .child("FPL source:"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .font_family("Berkeley Mono, JetBrains Mono, monospace")
+                                .child(fpl.to_string()),
+                        ),
+                )
+            })
             // Simulation hint
             .child(
                 div()
@@ -1471,79 +2112,293 @@ fn render_driver_map(state: &CockpitState) -> impl IntoElement {
     )
 }
 
-fn render_driver_node(index: usize, driver: &CockpitDriver) -> impl IntoElement {
+fn render_driver_node(index: usize, driver: &CockpitDriver, is_editing: bool) -> impl IntoElement {
     let type_color = match &driver.driver_type {
         CockpitDriverType::Continuous { .. } => theme::GREEN,
         CockpitDriverType::Binary { .. } => theme::GOLD,
     };
 
-    let border_style = if driver.suggested {
-        rgb(theme::FG_FAINT) // dashed would be ideal but GPUI doesn't support it
+    let border_style = if is_editing {
+        rgb(theme::CYAN)
+    } else if driver.suggested {
+        rgb(theme::FG_FAINT)
     } else {
         rgb(type_color)
     };
 
     div()
         .flex()
-        .items_center()
-        .gap(px(8.0))
-        .px(px(8.0))
-        .py(px(5.0))
+        .flex_col()
+        .gap(px(2.0))
         .rounded(px(4.0))
         .border_1()
         .border_color(border_style)
-        .bg(if driver.suggested {
+        .bg(if is_editing {
+            rgb(theme::BG_ACTIVE)
+        } else if driver.suggested {
             rgb(theme::BG)
         } else {
             rgb(theme::BG_ELEVATED)
         })
         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
         .cursor_pointer()
+        // ── Header row (always visible, click to toggle edit) ─────
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(8.0))
+                .py(px(5.0))
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .w(px(18.0))
+                        .child(format!("{}.", index + 1)),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::FG))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .w(px(100.0))
+                        .child(driver.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(type_color))
+                        .px(px(4.0))
+                        .py(px(1.0))
+                        .rounded(px(2.0))
+                        .bg(rgb(theme::BG_ACTIVE))
+                        .child(driver.type_label()),
+                )
+                .child(
+                    div()
+                        .flex_grow()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(driver.summary()),
+                )
+                .when(driver.suggested, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::CYAN))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(theme::BG_ACTIVE))
+                            .cursor_pointer()
+                            .child("+ accept"),
+                    )
+                })
+                .when(is_editing, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::RED))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(theme::BG_ACTIVE))
+                            .cursor_pointer()
+                            .child("× remove"),
+                    )
+                }),
+        )
+        // ── Expanded editor (visible when is_editing) ─────────────
+        .when(is_editing, |el| el.child(render_driver_editor(driver)))
+}
+
+/// Render the inline parameter editor for an expanded driver node.
+fn render_driver_editor(driver: &CockpitDriver) -> impl IntoElement {
+    div()
+        .px(px(12.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .child(match &driver.driver_type {
+            CockpitDriverType::Continuous {
+                distribution,
+                unit,
+                p5,
+                p50,
+                p95,
+            } => div()
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                // Distribution type
+                .child(render_param_row("distribution", distribution))
+                .child(render_param_row(
+                    "unit",
+                    if unit.is_empty() { "—" } else { unit },
+                ))
+                // P5 / P50 / P95 parameter bars
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(12.0))
+                        .child(render_param_value("p5", *p5, theme::FG_DIM))
+                        .child(render_param_value("p50", *p50, theme::CYAN))
+                        .child(render_param_value("p95", *p95, theme::FG_DIM)),
+                )
+                // Visual range bar
+                .child(render_range_bar(*p5, *p50, *p95))
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("Click values to edit · Tab between fields"),
+                )
+                .into_any_element(),
+            CockpitDriverType::Binary {
+                probability,
+                impact_multiplier,
+            } => div()
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(16.0))
+                        .child(render_param_value(
+                            "probability",
+                            *probability * 100.0,
+                            theme::GOLD,
+                        ))
+                        .child(render_param_value(
+                            "impact ×",
+                            *impact_multiplier,
+                            theme::CYAN,
+                        )),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("Click values to edit"),
+                )
+                .into_any_element(),
+        })
+        // Rationale
+        .when(!driver.rationale.is_empty(), |el| {
+            el.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child(format!("rationale: {}", driver.rationale)),
+            )
+        })
+}
+
+/// Render a label: value parameter row.
+fn render_param_row(label: &str, value: &str) -> impl IntoElement {
+    div()
+        .flex()
+        .gap(px(8.0))
         .child(
             div()
                 .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
-                .w(px(18.0))
-                .child(format!("{}.", index + 1)),
+                .text_color(rgb(theme::FG_DIM))
+                .w(px(80.0))
+                .child(format!("{}:", label)),
         )
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(11.0))
                 .text_color(rgb(theme::FG))
-                .font_weight(FontWeight::SEMIBOLD)
-                .w(px(100.0))
-                .child(driver.name.clone()),
+                .child(value.to_string()),
+        )
+}
+
+/// Render a single numeric parameter with label and colored value.
+fn render_param_value(label: &str, value: f64, color: u32) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(label.to_string()),
+        )
+        .child(
+            div()
+                .text_size(px(14.0))
+                .text_color(rgb(color))
+                .font_weight(FontWeight::BOLD)
+                .px(px(8.0))
+                .py(px(2.0))
+                .rounded(px(3.0))
+                .bg(rgb(theme::BG))
+                .border_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .cursor_pointer()
+                .hover(|s| s.border_color(rgb(theme::CYAN)))
+                .child(format!("{:.1}", value)),
+        )
+}
+
+/// Render a visual range bar showing p5–p50–p95 spread.
+fn render_range_bar(p5: f64, p50: f64, p95: f64) -> impl IntoElement {
+    // Normalize to 0..1 within the p5..p95 range for display
+    let range = (p95 - p5).max(0.001);
+    let mid_frac = ((p50 - p5) / range).clamp(0.0, 1.0) as f32;
+    let bar_width = 200.0_f32;
+    let mid_px = mid_frac * bar_width;
+
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .w(px(40.0))
+                .text_right()
+                .child(format!("{:.0}", p5)),
+        )
+        .child(
+            div()
+                .w(px(bar_width))
+                .h(px(6.0))
+                .rounded(px(3.0))
+                .bg(rgb(theme::BG))
+                .border_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .overflow_hidden()
+                .child(
+                    // Full range fill
+                    div().h_full().w_full().bg(rgb(theme::GREEN)).opacity(0.3),
+                )
+                // Median marker (absolute positioned via a nested approach)
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(mid_px))
+                        .top(px(0.0))
+                        .w(px(2.0))
+                        .h(px(6.0))
+                        .bg(rgb(theme::CYAN)),
+                ),
         )
         .child(
             div()
                 .text_size(px(9.0))
-                .text_color(rgb(type_color))
-                .px(px(4.0))
-                .py(px(1.0))
-                .rounded(px(2.0))
-                .bg(rgb(theme::BG_ACTIVE))
-                .child(driver.type_label()),
+                .text_color(rgb(theme::FG_FAINT))
+                .w(px(40.0))
+                .child(format!("{:.0}", p95)),
         )
-        .child(
-            div()
-                .flex_grow()
-                .text_size(px(11.0))
-                .text_color(rgb(theme::FG_DIM))
-                .child(driver.summary()),
-        )
-        .when(driver.suggested, |el| {
-            el.child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::CYAN))
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
-                    .bg(rgb(theme::BG_ACTIVE))
-                    .cursor_pointer()
-                    .child("+ accept"),
-            )
-        })
 }
 
 fn render_sim_stat(label: &str, value: f64) -> impl IntoElement {
