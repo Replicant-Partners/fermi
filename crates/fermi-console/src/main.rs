@@ -190,8 +190,8 @@ struct FermiConsole {
     // Composer state (legacy linear form)
     composer: ComposerState,
 
-    // Research Cockpit state (OODA loop workspace)
-    cockpit: Option<CockpitState>,
+    // Research Cockpit state (OODA loop workspace) — Entity for async channel integration
+    cockpit: Option<Entity<CockpitState>>,
 }
 
 #[derive(Clone)]
@@ -415,9 +415,10 @@ impl FermiConsole {
                 _ => {}
             }
         }
-        // Create cockpit on first visit to Composer
+        // Create cockpit Entity on first visit to Composer
         if panel == Panel::Composer && self.cockpit.is_none() {
-            self.cockpit = Some(CockpitState::new(self.api.clone(), &mut **cx));
+            let api = self.api.clone();
+            self.cockpit = Some(cx.new(|cx| CockpitState::new(api, cx)));
         }
         cx.notify();
     }
@@ -430,12 +431,15 @@ impl FermiConsole {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(ref mut cockpit) = self.cockpit {
-            let question = cockpit.question_input.read(cx).text().to_string();
-            if !question.trim().is_empty() {
-                cockpit.orchestrate_question(&question, &mut **cx);
-                cx.notify();
-            }
+        if let Some(ref cockpit) = self.cockpit {
+            let cockpit = cockpit.clone();
+            cockpit.update(cx, |cockpit, cx| {
+                let question = cockpit.question_input.read(cx).text().to_string();
+                if !question.trim().is_empty() {
+                    cockpit.orchestrate_question(&question, cx);
+                }
+            });
+            cx.notify();
         }
     }
 
@@ -1106,8 +1110,8 @@ impl Render for FermiConsole {
                         Panel::Dashboard => self.render_dashboard().into_any_element(),
                         Panel::Portfolio => self.render_portfolio().into_any_element(),
                         Panel::Composer => {
-                            if let Some(ref cockpit_state) = self.cockpit {
-                                cockpit::render_cockpit(cockpit_state, cx).into_any_element()
+                            if let Some(ref cockpit_entity) = self.cockpit {
+                                cockpit::render_cockpit(cockpit_entity).into_any_element()
                             } else {
                                 // Shouldn't happen — navigate() creates it
                                 composer::render_composer(&self.composer).into_any_element()

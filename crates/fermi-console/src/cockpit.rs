@@ -11,13 +11,22 @@
 //! 4. Driver Map (center) — drivers + model expression + simulation results
 //! 5. Agent Fleet (right) — active/completed/idle agents
 //! 6. Timeline (bottom) — probability evolution audit trail
+//!
+//! ## Channel Integration (Sprint 2)
+//!
+//! CockpitState is a GPUI Entity, which means it can use `cx.spawn()` to
+//! fire async tasks that hold a `WeakEntity<CockpitState>` handle. When an
+//! agent API call completes, the task calls `this.update(cx, ...)` to push
+//! results back onto the UI thread. GPUI's event loop ensures the update
+//! runs on the main thread, and `cx.notify()` triggers a re-render so the
+//! six zones update live as each agent finishes.
 
 use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
-use crate::api::client::ApiClient;
+use crate::api::client::{AgentExecutionResult, ApiClient};
 use crate::text_input::TextInput;
 use crate::theme;
 
@@ -30,10 +39,10 @@ use crate::theme;
 pub struct OutsideView {
     pub reference_class: String,
     pub historical_frequency: f64,
-    pub sample_size: Option<usize>,
+    pub sample_size: Option<u32>,
     pub source: String,
     pub reasoning: Option<String>,
-    pub generated_by: Option<String>, // agent that found it
+    pub generated_by: Option<String>,
     pub loading: bool,
 }
 
@@ -61,19 +70,20 @@ impl OutsideView {
     }
 }
 
-/// A single piece of evidence.
+/// A piece of evidence discovered by an agent or entered manually.
 #[derive(Debug, Clone)]
 pub struct EvidenceItem {
     pub id: String,
     pub source: String,
     pub summary: String,
-    pub relevance: f64,       // 0.0 to 1.0
-    pub sentiment: Sentiment, // bullish / bearish / neutral
+    pub relevance: f64,
+    pub sentiment: Sentiment,
     pub date: Option<String>,
-    pub agent_id: Option<String>, // which agent found it
+    pub agent_id: Option<String>,
     pub dismissed: bool,
 }
 
+/// Sentiment classification for evidence.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Sentiment {
     Bullish,
@@ -107,7 +117,7 @@ impl Sentiment {
     }
 }
 
-/// An evidence gap — something we don't know but should.
+/// An identified gap in the evidence landscape that an agent could fill.
 #[derive(Debug, Clone)]
 pub struct EvidenceGap {
     pub description: String,
@@ -115,19 +125,20 @@ pub struct EvidenceGap {
     pub suggested_query: Option<String>,
 }
 
-/// A forecast driver.
+/// A driver in the forecast model.
 #[derive(Debug, Clone)]
 pub struct CockpitDriver {
     pub name: String,
     pub driver_type: CockpitDriverType,
     pub rationale: String,
-    pub suggested: bool, // true = agent-suggested ghost node, not yet accepted
+    pub suggested: bool,
 }
 
+/// Driver type — continuous (distribution) or binary (probability).
 #[derive(Debug, Clone)]
 pub enum CockpitDriverType {
     Continuous {
-        distribution: String, // e.g. "triangular(500, 1200, 2500)"
+        distribution: String,
         unit: String,
         p5: f64,
         p50: f64,
@@ -150,24 +161,28 @@ impl CockpitDriver {
     pub fn summary(&self) -> String {
         match &self.driver_type {
             CockpitDriverType::Continuous {
-                p5, p50, p95, unit, ..
+                distribution,
+                unit,
+                p5,
+                p50,
+                p95,
             } => {
-                let u = if unit.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", unit)
-                };
-                format!("p5={:.0}, p50={:.0}, p95={:.0}{}", p5, p50, p95, u)
+                format!(
+                    "{} ({:.0}–{:.0}–{:.0} {})",
+                    distribution, p5, p50, p95, unit
+                )
             }
             CockpitDriverType::Binary {
                 probability,
                 impact_multiplier,
-            } => format!("{:.0}% (×{:.1})", probability * 100.0, impact_multiplier),
+            } => {
+                format!("{:.0}% (×{:.1})", probability * 100.0, impact_multiplier)
+            }
         }
     }
 }
 
-/// An agent in the fleet.
+/// An agent in the fleet panel.
 #[derive(Debug, Clone)]
 pub struct FleetAgent {
     pub agent_id: String,
@@ -180,6 +195,7 @@ pub struct FleetAgent {
     pub cost_credits: Option<f64>,
 }
 
+/// Agent execution status.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AgentStatus {
     Running,
@@ -217,7 +233,7 @@ impl AgentStatus {
     }
 }
 
-/// A point on the timeline.
+/// A point on the probability evolution timeline.
 #[derive(Debug, Clone)]
 pub struct TimelineEvent {
     pub label: String,
@@ -226,6 +242,7 @@ pub struct TimelineEvent {
     pub timestamp: String,
 }
 
+/// Type of timeline event (determines color).
 #[derive(Debug, Clone, Copy)]
 pub enum TimelineEventType {
     Created,
@@ -246,12 +263,12 @@ impl TimelineEventType {
             TimelineEventType::ProbabilityUpdated => theme::GREEN,
             TimelineEventType::AgentExecuted => theme::BLUE,
             TimelineEventType::Published => theme::PURPLE,
-            TimelineEventType::Resolved => theme::GREEN,
+            TimelineEventType::Resolved => theme::ORANGE,
         }
     }
 }
 
-/// Simulation results from local Monte Carlo.
+/// Local simulation results.
 #[derive(Debug, Clone)]
 pub struct SimResults {
     pub mean: f64,
@@ -259,15 +276,17 @@ pub struct SimResults {
     pub p5: f64,
     pub p95: f64,
     pub std_dev: f64,
-    pub iterations: usize,
+    pub iterations: u64,
     pub execution_time_ms: u64,
-    pub histogram: Vec<(f64, usize)>,
+    pub histogram: Vec<u32>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Cockpit State
+// Cockpit State — GPUI Entity
 // ═══════════════════════════════════════════════════════════════════
 
+/// The cockpit is a GPUI Entity so it can use `cx.spawn()` for async
+/// agent API calls that flow results back to the UI thread.
 pub struct CockpitState {
     // ── Question Hub ──────────────────────────────────────────────
     pub question_input: Entity<TextInput>,
@@ -305,7 +324,7 @@ pub struct CockpitState {
 }
 
 impl CockpitState {
-    pub fn new(api: Arc<ApiClient>, cx: &mut App) -> Self {
+    pub fn new(api: Arc<ApiClient>, cx: &mut Context<Self>) -> Self {
         let question_input = cx.new(|cx| {
             TextInput::new(cx)
                 .with_placeholder("What are you forecasting? (Enter to research)")
@@ -361,7 +380,7 @@ impl CockpitState {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Agent Orchestration
+    // Agent Orchestration — async with Entity channel integration
     // ═══════════════════════════════════════════════════════════════
 
     /// Fire the full research orchestration for a question.
@@ -371,8 +390,9 @@ impl CockpitState {
     /// 1. Outside view search (base rate) — fires first
     /// 2. Inside view agents (evidence + drivers) — fire in parallel
     ///
-    /// Results stream back and populate the cockpit zones.
-    pub fn orchestrate_question(&mut self, question: &str, cx: &mut App) {
+    /// Results stream back via `cx.spawn()` + `WeakEntity` callbacks,
+    /// updating the cockpit zones live as each agent completes.
+    pub fn orchestrate_question(&mut self, question: &str, cx: &mut Context<Self>) {
         if question.trim().is_empty() {
             return;
         }
@@ -410,21 +430,8 @@ impl CockpitState {
             cost_credits: None,
         });
 
-        let api = self.api.clone();
-        let q_base = question.clone();
-
-        // We can't use cx.spawn here (CockpitState is not an Entity).
-        // Instead, fire a tokio task and use a channel to send results back.
-        // For now, use tokio::spawn — the results will be picked up on next
-        // render via a polling mechanism or we'll refactor to Entity later.
-        //
-        // TEMPORARY: fire and forget with logging. The real integration
-        // requires making CockpitState an Entity or using a shared channel.
-        // For this sprint, we populate mock results to prove the UI works,
-        // then wire real API calls when CockpitState becomes an Entity.
-
         // ── Phase 2: Inside View agents ───────────────────────────
-        let inside_agents = vec![
+        let inside_agents: Vec<(&str, String)> = vec![
             ("macro_forecaster", format!(
                 "Analyze the following forecast question and suggest 3-5 key drivers with probability distributions. \
                  Also identify the reference class and base rate for the outside view. \
@@ -458,19 +465,29 @@ impl CockpitState {
             });
         }
 
-        // ── Fire API calls ────────────────────────────────────────
-        // For each agent, spawn an async task that calls the API and
-        // stores results. We use a shared results channel.
-        let api_clone = api.clone();
-        let agents_to_fire = inside_agents;
+        // ── Populate with illustrative scaffold while agents run ──
+        // This gives the user immediate visual feedback that the cockpit
+        // is alive. Real agent results will replace/augment this as they
+        // stream in via the Entity channel.
+        self.populate_initial_scaffold(&question);
 
-        // Spawn all agent executions
-        for (agent_id, query) in agents_to_fire {
-            let api = api_clone.clone();
+        // ── Fire API calls via cx.spawn() ─────────────────────────
+        // Each agent gets its own spawned task with a WeakEntity handle.
+        // When the API call completes, the task calls this.update(cx, ...)
+        // to push results back onto the UI thread. GPUI ensures the
+        // update closure runs on the main thread, and cx.notify()
+        // triggers a re-render so the zones update live.
+        let api = self.api.clone();
+
+        for (agent_id, query) in inside_agents {
+            let api = api.clone();
             let aid = agent_id.to_string();
-            tokio::spawn(async move {
+            let q = query.clone();
+
+            cx.spawn(async move |this, cx| {
                 log::info!("[cockpit] Firing agent {} for question research", aid);
-                match api.execute_agent(&aid, &query).await {
+
+                match api.execute_agent(&aid, &q).await {
                     Ok(result) => {
                         log::info!(
                             "[cockpit] Agent {} completed: {} evidence items, confidence={:?}",
@@ -478,21 +495,35 @@ impl CockpitState {
                             result.evidence.as_ref().map(|e| e.len()).unwrap_or(0),
                             result.confidence,
                         );
-                        // Results are logged for now. Real integration requires
-                        // a channel back to the UI thread. See populate_from_agent_result().
+
+                        // Convert AgentExecutionResult to JsonValue for
+                        // populate_from_agent_result (which handles the
+                        // heterogeneous agent response shapes).
+                        let result_json = agent_result_to_json(&result);
+
+                        // Push results back to the UI thread
+                        this.update(cx, |cockpit, cx| {
+                            cockpit.populate_from_agent_result(&aid, &result_json);
+                            cx.notify(); // trigger re-render
+                        })
+                        .ok();
                     }
                     Err(e) => {
                         log::error!("[cockpit] Agent {} failed: {}", aid, e);
+
+                        // Mark agent as failed in the fleet panel
+                        this.update(cx, |cockpit, cx| {
+                            cockpit.mark_agent_failed(&aid, &e.to_string());
+                            cx.notify();
+                        })
+                        .ok();
                     }
                 }
-            });
+            })
+            .detach();
         }
 
-        // ── Populate with illustrative data while agents run ──────
-        // This gives the user immediate visual feedback that the cockpit
-        // is alive. Real agent results will replace this when the channel
-        // integration is complete.
-        self.populate_initial_scaffold(&question);
+        cx.notify();
     }
 
     /// Populate the cockpit with an initial scaffold based on the question.
@@ -556,7 +587,7 @@ impl CockpitState {
             },
         ];
 
-        // Add timeline event
+        // Add timeline events
         self.timeline.push(TimelineEvent {
             label: "Base rate anchored".into(),
             probability: Some(0.35),
@@ -573,7 +604,7 @@ impl CockpitState {
     }
 
     /// Process results from an agent execution and populate the cockpit.
-    /// Called when an agent completes (via channel from async task).
+    /// Called on the UI thread when an agent's cx.spawn() task completes.
     pub fn populate_from_agent_result(&mut self, agent_id: &str, result: &JsonValue) {
         // Update agent status in fleet
         if let Some(agent) = self.agents.iter_mut().find(|a| a.agent_id == agent_id) {
@@ -618,7 +649,13 @@ impl CockpitState {
                     })
                     .unwrap_or_default();
 
-                let sentiment = detect_sentiment(&key_findings);
+                // Also consider the summary text for sentiment if key_findings is empty
+                let sentiment_text = if key_findings.is_empty() {
+                    &summary
+                } else {
+                    &key_findings
+                };
+                let sentiment = detect_sentiment(sentiment_text);
 
                 let evidence_id = ev
                     .get("id")
@@ -632,7 +669,10 @@ impl CockpitState {
                     summary,
                     relevance,
                     sentiment,
-                    date: None,
+                    date: ev
+                        .get("date")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     agent_id: Some(agent_id.to_string()),
                     dismissed: false,
                 });
@@ -653,6 +693,63 @@ impl CockpitState {
             }
         }
 
+        // Extract drivers from agent results (macro_forecaster suggests these)
+        if let Some(drivers_array) = result.get("drivers").and_then(|v| v.as_array()) {
+            for drv in drivers_array {
+                let name = drv
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown")
+                    .to_string();
+                let rationale = drv
+                    .get("rationale")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let driver_type = if let Some(dist) = drv.get("distribution") {
+                    CockpitDriverType::Continuous {
+                        distribution: dist
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("triangular")
+                            .to_string(),
+                        unit: dist
+                            .get("unit")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        p5: dist.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        p50: dist.get("p50").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        p95: dist.get("p95").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    }
+                } else if let Some(prob) = drv.get("probability").and_then(|v| v.as_f64()) {
+                    CockpitDriverType::Binary {
+                        probability: prob,
+                        impact_multiplier: drv
+                            .get("impact_multiplier")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(1.0),
+                    }
+                } else {
+                    CockpitDriverType::Continuous {
+                        distribution: "triangular".into(),
+                        unit: "".into(),
+                        p5: 0.0,
+                        p50: 0.0,
+                        p95: 0.0,
+                    }
+                };
+
+                self.drivers.push(CockpitDriver {
+                    name,
+                    driver_type,
+                    rationale,
+                    suggested: true,
+                });
+            }
+        }
+
         // Extract reasoning for outside view (from macro_forecaster)
         if agent_id == "macro_forecaster" {
             if let Some(reasoning) = result
@@ -663,6 +760,34 @@ impl CockpitState {
                 self.outside_view.reasoning = Some(reasoning.to_string());
                 self.outside_view.loading = false;
                 self.outside_view.source = "macro_forecaster".into();
+            }
+
+            // Update base rate if the agent provided one
+            if let Some(base_rate) = result
+                .get("metadata")
+                .and_then(|m| m.get("base_rate"))
+                .and_then(|v| v.as_f64())
+            {
+                self.outside_view.historical_frequency = base_rate;
+                self.outside_view.loading = false;
+            }
+
+            // Update reference class if provided
+            if let Some(ref_class) = result
+                .get("metadata")
+                .and_then(|m| m.get("reference_class"))
+                .and_then(|v| v.as_str())
+            {
+                self.outside_view.reference_class = ref_class.to_string();
+            }
+
+            // Update sample size if provided
+            if let Some(n) = result
+                .get("metadata")
+                .and_then(|m| m.get("sample_size"))
+                .and_then(|v| v.as_u64())
+            {
+                self.outside_view.sample_size = Some(n as u32);
             }
         }
 
@@ -680,31 +805,80 @@ impl CockpitState {
         });
 
         // Check if all agents are done
-        let all_done = self.agents.iter().all(|a| a.status != AgentStatus::Running);
-        if all_done {
-            self.orchestration_running = false;
-            self.outside_view.loading = false;
+        self.check_orchestration_complete();
+    }
 
-            // Suggest probability adjustment based on evidence balance
-            let (bull, bear, _neut) = self.sentiment_counts();
-            if bull + bear > 0 {
-                let bull_ratio = bull as f64 / (bull + bear) as f64;
-                // Adjust from base rate toward evidence direction
-                let base = self.outside_view.historical_frequency;
-                let adjustment = (bull_ratio - 0.5) * 0.3; // conservative adjustment
-                self.predicted_probability = (base + adjustment).clamp(0.05, 0.95);
-
-                self.timeline.push(TimelineEvent {
-                    label: format!(
-                        "Probability adjusted to {:.0}%",
-                        self.predicted_probability * 100.0
-                    ),
-                    probability: Some(self.predicted_probability),
-                    event_type: TimelineEventType::ProbabilityUpdated,
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                });
-            }
+    /// Mark an agent as failed in the fleet panel.
+    /// Called on the UI thread when an agent's API call errors.
+    pub fn mark_agent_failed(&mut self, agent_id: &str, error_msg: &str) {
+        if let Some(agent) = self.agents.iter_mut().find(|a| a.agent_id == agent_id) {
+            agent.status = AgentStatus::Failed;
+            agent.findings_summary = Some(format!("Error: {}", truncate(error_msg, 60)));
         }
+
+        // Add timeline event for the failure
+        self.timeline.push(TimelineEvent {
+            label: format!("{}: failed", agent_id),
+            probability: None,
+            event_type: TimelineEventType::AgentExecuted,
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        });
+
+        // Check if all agents are done (including failures)
+        self.check_orchestration_complete();
+    }
+
+    /// Check if all agents have finished (completed or failed) and
+    /// finalize the orchestration: adjust probability, clear loading states.
+    fn check_orchestration_complete(&mut self) {
+        let all_done = self.agents.iter().all(|a| a.status != AgentStatus::Running);
+
+        if !all_done {
+            return;
+        }
+
+        self.orchestration_running = false;
+        self.outside_view.loading = false;
+
+        // Suggest probability adjustment based on evidence balance
+        let (bull, bear, _neut) = self.sentiment_counts();
+        if bull + bear > 0 {
+            let bull_ratio = bull as f64 / (bull + bear) as f64;
+            // Adjust from base rate toward evidence direction
+            let base = self.outside_view.historical_frequency;
+            let adjustment = (bull_ratio - 0.5) * 0.3; // conservative adjustment
+            self.predicted_probability = (base + adjustment).clamp(0.05, 0.95);
+
+            self.timeline.push(TimelineEvent {
+                label: format!(
+                    "Probability adjusted to {:.0}%",
+                    self.predicted_probability * 100.0
+                ),
+                probability: Some(self.predicted_probability),
+                event_type: TimelineEventType::ProbabilityUpdated,
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            });
+        }
+
+        // Log orchestration summary
+        let completed = self
+            .agents
+            .iter()
+            .filter(|a| a.status == AgentStatus::Completed)
+            .count();
+        let failed = self
+            .agents
+            .iter()
+            .filter(|a| a.status == AgentStatus::Failed)
+            .count();
+        log::info!(
+            "[cockpit] Orchestration complete: {}/{} agents succeeded, {} failed, {} evidence items, {:.1}cr total",
+            completed,
+            self.agents.len(),
+            failed,
+            self.evidence.len(),
+            self.session_cost,
+        );
     }
 
     /// Divergence between predicted probability and base rate (percentage points).
@@ -748,47 +922,57 @@ impl CockpitState {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Render — Six-Zone Layout
+// Render — CockpitState is now a GPUI Entity with Render impl
 // ═══════════════════════════════════════════════════════════════════
 
-pub fn render_cockpit(state: &CockpitState, cx: &App) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .size_full()
-        .bg(rgb(theme::BG))
-        // ── Zone 1: Question Hub (top) ────────────────────────────
-        .child(render_question_hub(state, cx))
-        // ── Middle row: Outside View | Evidence | Drivers | Agents ─
-        .child(
-            div()
-                .flex()
-                .flex_grow()
-                .gap(px(1.0))
-                // Zone 2: Outside View (left-top)
-                .child(
-                    div()
-                        .w(px(220.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(1.0))
-                        .child(render_outside_view(state))
-                        .child(render_evidence_landscape(state)),
-                )
-                // Zone 4: Driver Map (center)
-                .child(div().flex_grow().child(render_driver_map(state)))
-                // Zone 5: Agent Fleet (right)
-                .child(div().w(px(240.0)).child(render_agent_fleet(state))),
-        )
-        // ── Zone 6: Timeline (bottom) ─────────────────────────────
-        .child(render_timeline(state))
+impl Render for CockpitState {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(rgb(theme::BG))
+            // ── Zone 1: Question Hub (top) ────────────────────────────
+            .child(render_question_hub(self))
+            // ── Middle row: Outside View | Evidence | Drivers | Agents ─
+            .child(
+                div()
+                    .flex()
+                    .flex_grow()
+                    .gap(px(1.0))
+                    // Zone 2: Outside View (left-top)
+                    .child(
+                        div()
+                            .w(px(220.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(1.0))
+                            .child(render_outside_view(self))
+                            .child(render_evidence_landscape(self)),
+                    )
+                    // Zone 4: Driver Map (center)
+                    .child(div().flex_grow().child(render_driver_map(self)))
+                    // Zone 5: Agent Fleet (right)
+                    .child(div().w(px(240.0)).child(render_agent_fleet(self))),
+            )
+            // ── Zone 6: Timeline (bottom) ─────────────────────────────
+            .child(render_timeline(self))
+    }
+}
+
+/// Standalone render function for use from FermiConsole when it holds
+/// an `Entity<CockpitState>`. The Entity's own Render impl is used
+/// internally, but this provides backward-compatible access for the
+/// parent to embed the cockpit as a child element.
+pub fn render_cockpit(cockpit: &Entity<CockpitState>) -> impl IntoElement {
+    cockpit.clone()
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // Zone 1: Question Hub
 // ═══════════════════════════════════════════════════════════════════
 
-fn render_question_hub(state: &CockpitState, cx: &App) -> impl IntoElement {
+fn render_question_hub(state: &CockpitState) -> impl IntoElement {
     let prob_pct = format!("{:.0}%", state.predicted_probability * 100.0);
     let divergence = state.divergence_pp();
     let div_warning = state.divergence_warning();
@@ -804,7 +988,7 @@ fn render_question_hub(state: &CockpitState, cx: &App) -> impl IntoElement {
         .gap(px(8.0))
         // Question input (large, editable)
         .child(state.question_input.clone())
-        // Probability row: outside view ← probability → inside view
+        // Probability row: outside view <- probability -> inside view
         .child(
             div()
                 .flex()
@@ -920,11 +1104,21 @@ fn render_question_hub(state: &CockpitState, cx: &App) -> impl IntoElement {
         )
         // Orchestration status
         .when(state.orchestration_running, |el| {
+            let running_count = state
+                .agents
+                .iter()
+                .filter(|a| a.status == AgentStatus::Running)
+                .count();
+            let total = state.agents.len();
+            let completed = total - running_count;
             el.child(
                 div()
                     .text_size(px(11.0))
                     .text_color(rgb(theme::GOLD))
-                    .child("⟳ Agents researching… results will stream in as they complete"),
+                    .child(format!(
+                        "⟳ Agents researching… {}/{} complete — results streaming in live",
+                        completed, total
+                    )),
             )
         })
 }
@@ -1506,6 +1700,22 @@ fn render_agent_row(agent: &FleetAgent) -> impl IntoElement {
                     )),
             )
         })
+        // Error line (when failed)
+        .when(agent.status == AgentStatus::Failed, |el| {
+            el.child(
+                div()
+                    .pl(px(20.0))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::RED))
+                    .child(
+                        agent
+                            .findings_summary
+                            .as_deref()
+                            .unwrap_or("Unknown error")
+                            .to_string(),
+                    ),
+            )
+        })
         // Summary (when completed and has summary)
         .when(
             agent.status == AgentStatus::Completed && agent.findings_summary.is_some(),
@@ -1643,6 +1853,45 @@ fn truncate(s: &str, max_len: usize) -> String {
     } else {
         format!("{}…", &s[..max_len.min(s.len()) - 1])
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Agent result conversion
+// ═══════════════════════════════════════════════════════════════════
+
+/// Convert a typed `AgentExecutionResult` into a `JsonValue` for
+/// `populate_from_agent_result`, which handles the heterogeneous
+/// response shapes from different agents.
+fn agent_result_to_json(result: &AgentExecutionResult) -> JsonValue {
+    let mut obj = serde_json::Map::new();
+
+    obj.insert(
+        "agent_name".into(),
+        JsonValue::String(result.agent_name.clone()),
+    );
+    obj.insert("status".into(), JsonValue::String(result.status.clone()));
+
+    if let Some(ref evidence) = result.evidence {
+        obj.insert("evidence".into(), JsonValue::Array(evidence.clone()));
+    }
+
+    if let Some(confidence) = result.confidence {
+        obj.insert("confidence".into(), serde_json::json!(confidence));
+    }
+
+    if let Some(time_ms) = result.execution_time_ms {
+        obj.insert("execution_time_ms".into(), serde_json::json!(time_ms));
+    }
+
+    if let Some(tokens) = result.tokens_used {
+        obj.insert("tokens_used".into(), serde_json::json!(tokens));
+    }
+
+    if let Some(ref metadata) = result.metadata {
+        obj.insert("metadata".into(), metadata.clone());
+    }
+
+    JsonValue::Object(obj)
 }
 
 // ═══════════════════════════════════════════════════════════════════
