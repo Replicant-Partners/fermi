@@ -99,6 +99,7 @@ actions!(
         NewForecast,
         RunSimulation,
         ToggleCommandPalette,
+        TriggerQuestionOrchestration,
     ]
 );
 
@@ -419,6 +420,23 @@ impl FermiConsole {
             self.cockpit = Some(CockpitState::new(self.api.clone(), &mut **cx));
         }
         cx.notify();
+    }
+
+    /// Handle question submission — read the question from the cockpit's
+    /// text input and fire the agent orchestration.
+    fn on_trigger_question_orchestration(
+        &mut self,
+        _: &TriggerQuestionOrchestration,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ref mut cockpit) = self.cockpit {
+            let question = cockpit.question_input.read(cx).text().to_string();
+            if !question.trim().is_empty() {
+                cockpit.orchestrate_question(&question, &mut **cx);
+                cx.notify();
+            }
+        }
     }
 
     fn on_show_dashboard(&mut self, _: &ShowDashboard, _w: &mut Window, cx: &mut Context<Self>) {
@@ -1071,6 +1089,7 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_show_agent_fleet))
             .on_action(cx.listener(Self::on_show_composer))
             .on_action(cx.listener(Self::on_show_leaderboard))
+            .on_action(cx.listener(Self::on_trigger_question_orchestration))
             .flex()
             .size_full()
             .bg(theme::bg())
@@ -1134,6 +1153,12 @@ fn main() {
 
         cx.on_action(|_: &Quit, cx| cx.quit());
         text_input::register_key_bindings(cx);
+        // Cmd+Enter triggers question orchestration (fires agents)
+        cx.bind_keys([KeyBinding::new(
+            "cmd-enter",
+            TriggerQuestionOrchestration,
+            Some("FermiConsole"),
+        )]);
 
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         let api_clone = api.clone();

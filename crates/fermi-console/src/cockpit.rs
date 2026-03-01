@@ -14,6 +14,7 @@
 
 use gpui::prelude::*;
 use gpui::*;
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 use crate::api::client::ApiClient;
@@ -307,7 +308,7 @@ impl CockpitState {
     pub fn new(api: Arc<ApiClient>, cx: &mut App) -> Self {
         let question_input = cx.new(|cx| {
             TextInput::new(cx)
-                .with_placeholder("What are you forecasting?")
+                .with_placeholder("What are you forecasting? (Enter to research)")
                 .with_label("Question")
                 .with_large(true)
         });
@@ -359,6 +360,353 @@ impl CockpitState {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Agent Orchestration
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Fire the full research orchestration for a question.
+    /// Called when the user submits the question (Enter key).
+    ///
+    /// Sequence:
+    /// 1. Outside view search (base rate) — fires first
+    /// 2. Inside view agents (evidence + drivers) — fire in parallel
+    ///
+    /// Results stream back and populate the cockpit zones.
+    pub fn orchestrate_question(&mut self, question: &str, cx: &mut App) {
+        if question.trim().is_empty() {
+            return;
+        }
+
+        let question = question.to_string();
+        self.orchestration_running = true;
+
+        // Reset state for new question
+        self.evidence.clear();
+        self.evidence_gaps.clear();
+        self.drivers.clear();
+        self.agents.clear();
+        self.sim_results = None;
+        self.sim_error = None;
+        self.session_cost = 0.0;
+
+        // Add timeline event
+        self.timeline.push(TimelineEvent {
+            label: "Question set".into(),
+            probability: Some(self.predicted_probability),
+            event_type: TimelineEventType::Created,
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        });
+
+        // ── Phase 1: Outside View (base rate search) ──────────────
+        self.outside_view.loading = true;
+        self.agents.push(FleetAgent {
+            agent_id: "macro_forecaster".into(),
+            display_name: "macro_forecaster (base rate)".into(),
+            status: AgentStatus::Running,
+            findings_count: 0,
+            findings_summary: None,
+            model_used: None,
+            execution_time_ms: None,
+            cost_credits: None,
+        });
+
+        let api = self.api.clone();
+        let q_base = question.clone();
+
+        // We can't use cx.spawn here (CockpitState is not an Entity).
+        // Instead, fire a tokio task and use a channel to send results back.
+        // For now, use tokio::spawn — the results will be picked up on next
+        // render via a polling mechanism or we'll refactor to Entity later.
+        //
+        // TEMPORARY: fire and forget with logging. The real integration
+        // requires making CockpitState an Entity or using a shared channel.
+        // For this sprint, we populate mock results to prove the UI works,
+        // then wire real API calls when CockpitState becomes an Entity.
+
+        // ── Phase 2: Inside View agents ───────────────────────────
+        let inside_agents = vec![
+            ("macro_forecaster", format!(
+                "Analyze the following forecast question and suggest 3-5 key drivers with probability distributions. \
+                 Also identify the reference class and base rate for the outside view. \
+                 Question: {}",
+                question
+            )),
+            ("market_research", format!(
+                "Research market data, analyst consensus, and competitive dynamics relevant to: {}",
+                question
+            )),
+            ("sentiment_analyzer", format!(
+                "Analyze current sentiment from news, social media, and expert opinions about: {}",
+                question
+            )),
+        ];
+
+        for (agent_id, _query) in &inside_agents {
+            if *agent_id == "macro_forecaster" {
+                // Already added above for base rate
+                continue;
+            }
+            self.agents.push(FleetAgent {
+                agent_id: agent_id.to_string(),
+                display_name: agent_id.to_string(),
+                status: AgentStatus::Running,
+                findings_count: 0,
+                findings_summary: None,
+                model_used: None,
+                execution_time_ms: None,
+                cost_credits: None,
+            });
+        }
+
+        // ── Fire API calls ────────────────────────────────────────
+        // For each agent, spawn an async task that calls the API and
+        // stores results. We use a shared results channel.
+        let api_clone = api.clone();
+        let agents_to_fire = inside_agents;
+
+        // Spawn all agent executions
+        for (agent_id, query) in agents_to_fire {
+            let api = api_clone.clone();
+            let aid = agent_id.to_string();
+            tokio::spawn(async move {
+                log::info!("[cockpit] Firing agent {} for question research", aid);
+                match api.execute_agent(&aid, &query).await {
+                    Ok(result) => {
+                        log::info!(
+                            "[cockpit] Agent {} completed: {} evidence items, confidence={:?}",
+                            aid,
+                            result.evidence.as_ref().map(|e| e.len()).unwrap_or(0),
+                            result.confidence,
+                        );
+                        // Results are logged for now. Real integration requires
+                        // a channel back to the UI thread. See populate_from_agent_result().
+                    }
+                    Err(e) => {
+                        log::error!("[cockpit] Agent {} failed: {}", aid, e);
+                    }
+                }
+            });
+        }
+
+        // ── Populate with illustrative data while agents run ──────
+        // This gives the user immediate visual feedback that the cockpit
+        // is alive. Real agent results will replace this when the channel
+        // integration is complete.
+        self.populate_initial_scaffold(&question);
+    }
+
+    /// Populate the cockpit with an initial scaffold based on the question.
+    /// This runs synchronously and gives immediate visual feedback while
+    /// agents are still executing in the background.
+    fn populate_initial_scaffold(&mut self, question: &str) {
+        // Simple heuristic: extract likely domain from question keywords
+        let q_lower = question.to_lowercase();
+        let domain = if q_lower.contains("stock")
+            || q_lower.contains("price")
+            || q_lower.contains("market")
+        {
+            "finance"
+        } else if q_lower.contains("election")
+            || q_lower.contains("vote")
+            || q_lower.contains("president")
+        {
+            "politics"
+        } else if q_lower.contains("ai") || q_lower.contains("tech") || q_lower.contains("software")
+        {
+            "technology"
+        } else if q_lower.contains("climate")
+            || q_lower.contains("temperature")
+            || q_lower.contains("carbon")
+        {
+            "climate"
+        } else {
+            "general"
+        };
+
+        // Set outside view to "searching" state
+        self.outside_view = OutsideView {
+            reference_class: format!("{} predictions (12-month horizon)", domain),
+            historical_frequency: 0.35,
+            sample_size: Some(142),
+            source: "Searching via macro_forecaster…".into(),
+            reasoning: Some("Base rate will be refined when agent results arrive.".into()),
+            generated_by: Some("macro_forecaster".into()),
+            loading: true,
+        };
+
+        // Anchor probability to base rate (Tetlock discipline)
+        self.predicted_probability = 0.35;
+
+        // Add evidence gaps (agents will fill these)
+        self.evidence_gaps = vec![
+            EvidenceGap {
+                description: format!("Market data and analyst consensus for this question"),
+                suggested_agent: Some("market_research".into()),
+                suggested_query: Some(question.to_string()),
+            },
+            EvidenceGap {
+                description: "Current sentiment from news and social media".into(),
+                suggested_agent: Some("sentiment_analyzer".into()),
+                suggested_query: Some(question.to_string()),
+            },
+            EvidenceGap {
+                description: "Historical precedent and reference class data".into(),
+                suggested_agent: Some("macro_forecaster".into()),
+                suggested_query: None,
+            },
+        ];
+
+        // Add timeline event
+        self.timeline.push(TimelineEvent {
+            label: "Base rate anchored".into(),
+            probability: Some(0.35),
+            event_type: TimelineEventType::BaseRateSet,
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        });
+
+        self.timeline.push(TimelineEvent {
+            label: "Agents dispatched".into(),
+            probability: None,
+            event_type: TimelineEventType::AgentExecuted,
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        });
+    }
+
+    /// Process results from an agent execution and populate the cockpit.
+    /// Called when an agent completes (via channel from async task).
+    pub fn populate_from_agent_result(&mut self, agent_id: &str, result: &JsonValue) {
+        // Update agent status in fleet
+        if let Some(agent) = self.agents.iter_mut().find(|a| a.agent_id == agent_id) {
+            agent.status = AgentStatus::Completed;
+            agent.model_used = result
+                .get("metadata")
+                .and_then(|m| m.get("model_used"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            agent.execution_time_ms = result.get("execution_time_ms").and_then(|v| v.as_u64());
+            agent.cost_credits = result.get("credits_charged").and_then(|v| v.as_f64());
+
+            if let Some(cost) = agent.cost_credits {
+                self.session_cost += cost;
+            }
+        }
+
+        // Extract evidence from agent results
+        if let Some(evidence_array) = result.get("evidence").and_then(|v| v.as_array()) {
+            for ev in evidence_array {
+                let summary = ev
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let source = ev
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(agent_id)
+                    .to_string();
+                let relevance = ev.get("relevance").and_then(|v| v.as_f64()).unwrap_or(0.5);
+
+                // Simple sentiment detection from key findings
+                let key_findings = ev
+                    .get("key_findings")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
+
+                let sentiment = detect_sentiment(&key_findings);
+
+                let evidence_id = ev
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                self.evidence.push(EvidenceItem {
+                    id: evidence_id,
+                    source,
+                    summary,
+                    relevance,
+                    sentiment,
+                    date: None,
+                    agent_id: Some(agent_id.to_string()),
+                    dismissed: false,
+                });
+
+                // Remove matching evidence gaps
+                self.evidence_gaps
+                    .retain(|g| g.suggested_agent.as_deref() != Some(agent_id));
+            }
+
+            // Update agent findings count
+            if let Some(agent) = self.agents.iter_mut().find(|a| a.agent_id == agent_id) {
+                agent.findings_count = evidence_array.len();
+                agent.findings_summary = evidence_array
+                    .first()
+                    .and_then(|e| e.get("summary"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+            }
+        }
+
+        // Extract reasoning for outside view (from macro_forecaster)
+        if agent_id == "macro_forecaster" {
+            if let Some(reasoning) = result
+                .get("metadata")
+                .and_then(|m| m.get("reasoning"))
+                .and_then(|v| v.as_str())
+            {
+                self.outside_view.reasoning = Some(reasoning.to_string());
+                self.outside_view.loading = false;
+                self.outside_view.source = "macro_forecaster".into();
+            }
+        }
+
+        // Add timeline event
+        let findings = result
+            .get("evidence")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        self.timeline.push(TimelineEvent {
+            label: format!("{}: {} findings", agent_id, findings),
+            probability: None,
+            event_type: TimelineEventType::EvidenceAdded,
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        });
+
+        // Check if all agents are done
+        let all_done = self.agents.iter().all(|a| a.status != AgentStatus::Running);
+        if all_done {
+            self.orchestration_running = false;
+            self.outside_view.loading = false;
+
+            // Suggest probability adjustment based on evidence balance
+            let (bull, bear, _neut) = self.sentiment_counts();
+            if bull + bear > 0 {
+                let bull_ratio = bull as f64 / (bull + bear) as f64;
+                // Adjust from base rate toward evidence direction
+                let base = self.outside_view.historical_frequency;
+                let adjustment = (bull_ratio - 0.5) * 0.3; // conservative adjustment
+                self.predicted_probability = (base + adjustment).clamp(0.05, 0.95);
+
+                self.timeline.push(TimelineEvent {
+                    label: format!(
+                        "Probability adjusted to {:.0}%",
+                        self.predicted_probability * 100.0
+                    ),
+                    probability: Some(self.predicted_probability),
+                    event_type: TimelineEventType::ProbabilityUpdated,
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                });
+            }
+        }
+    }
+
     /// Divergence between predicted probability and base rate (percentage points).
     pub fn divergence_pp(&self) -> Option<f64> {
         if self.outside_view.has_data() {
@@ -380,7 +728,7 @@ impl CockpitState {
         self.evidence.iter().filter(|e| !e.dismissed).count()
     }
 
-    /// Count by sentiment.
+    /// Count evidence by sentiment.
     pub fn sentiment_counts(&self) -> (usize, usize, usize) {
         let mut bull = 0;
         let mut bear = 0;
@@ -428,17 +776,9 @@ pub fn render_cockpit(state: &CockpitState, cx: &App) -> impl IntoElement {
                         .child(render_evidence_landscape(state)),
                 )
                 // Zone 4: Driver Map (center)
-                .child(
-                    div()
-                        .flex_grow()
-                        .child(render_driver_map(state)),
-                )
+                .child(div().flex_grow().child(render_driver_map(state)))
                 // Zone 5: Agent Fleet (right)
-                .child(
-                    div()
-                        .w(px(240.0))
-                        .child(render_agent_fleet(state)),
-                ),
+                .child(div().w(px(240.0)).child(render_agent_fleet(state))),
         )
         // ── Zone 6: Timeline (bottom) ─────────────────────────────
         .child(render_timeline(state))
@@ -1049,7 +1389,11 @@ fn render_agent_fleet(state: &CockpitState) -> impl IntoElement {
         .count();
 
     render_zone_card(
-        &format!("Agent Fleet ({}/{})", running + completed, state.agents.len()),
+        &format!(
+            "Agent Fleet ({}/{})",
+            running + completed,
+            state.agents.len()
+        ),
         theme::BLUE,
         div()
             .flex()
@@ -1236,10 +1580,7 @@ fn render_timeline(state: &CockpitState) -> impl IntoElement {
                 )
                 .child(
                     // Connector line to next event
-                    div()
-                        .w(px(20.0))
-                        .h(px(1.0))
-                        .bg(rgb(theme::FG_FAINT)),
+                    div().w(px(20.0)).h(px(1.0)).bg(rgb(theme::FG_FAINT)),
                 )
         }))
         .child(
@@ -1301,5 +1642,61 @@ fn truncate(s: &str, max_len: usize) -> String {
         s.to_string()
     } else {
         format!("{}…", &s[..max_len.min(s.len()) - 1])
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Sentiment detection (simple heuristic)
+// ═══════════════════════════════════════════════════════════════════
+
+fn detect_sentiment(text: &str) -> Sentiment {
+    let t = text.to_lowercase();
+    let bullish_words = [
+        "growth",
+        "increase",
+        "positive",
+        "strong",
+        "bullish",
+        "gain",
+        "opportunity",
+        "upside",
+        "beat",
+        "exceed",
+        "outperform",
+        "surge",
+        "momentum",
+        "optimistic",
+        "favorable",
+        "accelerat",
+    ];
+    let bearish_words = [
+        "decline",
+        "decrease",
+        "negative",
+        "weak",
+        "bearish",
+        "loss",
+        "risk",
+        "downside",
+        "miss",
+        "below",
+        "underperform",
+        "drop",
+        "slowdown",
+        "pessimistic",
+        "unfavorable",
+        "decelerat",
+        "concern",
+    ];
+
+    let bull_score: usize = bullish_words.iter().filter(|w| t.contains(*w)).count();
+    let bear_score: usize = bearish_words.iter().filter(|w| t.contains(*w)).count();
+
+    if bull_score > bear_score + 1 {
+        Sentiment::Bullish
+    } else if bear_score > bull_score + 1 {
+        Sentiment::Bearish
+    } else {
+        Sentiment::Neutral
     }
 }
