@@ -1,8 +1,8 @@
 # Session Context — 2026-02-27/28 Marathon Session
 
-**Duration:** ~12 hours across two days (+ follow-up session)
-**Commits:** 19 total (16 fermi, 3 rabble)
-**Status:** Research Cockpit fully interactive — agent streaming, editable drivers, local simulation, publish flow, probability slider all wired
+**Duration:** ~12 hours across two days (+ follow-up sessions)
+**Commits:** 21 total (18 fermi, 3 rabble)
+**Status:** Research Cockpit fully interactive with native menus, window management, mouse interaction on all controls
 
 ---
 
@@ -301,16 +301,43 @@ User types question + ⌘Enter
 - Status indicator in Question Hub (green = published, red = error, gold = in progress)
 - Agents used list included in the request
 
-### 5. ~~Probability Slider~~ ✅ DONE (fermi `d646d86`)
+### 5. ~~Probability Slider~~ ✅ DONE (fermi `d646d86`, `2351b26`)
 
-**Completed:** Visual slider bar in Question Hub with divergence-aware coloring.
+**Completed:** Interactive slider bar in Question Hub with mouse handlers and nudge buttons.
 
-- `render_probability_slider()` — 200px horizontal bar with filled portion
+- `render_probability_slider_interactive()` — 200px bar with filled portion + thumb indicator
 - 5%–95% range labels, fill color changes to gold on divergence warning
 - `set_probability()` clamps to [0.05, 0.95]
 - `commit_probability_change()` records timeline event on drag end
+- `on_mouse_down` / `on_mouse_up` handlers for drag interaction
+- Nudge buttons: -5, -1, +1, +5 percentage point adjustments via `cx.listener()`
 - Divergence indicator updates in real time (pp from base rate)
 - Keyboard hints bar added: ⌘Enter research · ⌘R simulate · ⌘P publish · ⌘E toggle FPL
+
+### 6. Native Menus + Window Management ✅ DONE (fermi `2351b26`)
+
+**Completed:** Full native application menu bar and window controls.
+
+**Menu bar** (`cx.set_menus()`):
+- Fermi Console: About, New Forecast ⌘N, Quit ⌘Q
+- File: New Forecast ⌘N, Publish Forecast ⌘P
+- View: Dashboard ⌘1, Portfolio ⌘2, Agent Fleet ⌘3, Composer ⌘4, Leaderboard ⌘5, Toggle FPL Source ⌘E
+- Forecast: Research Question ⌘Enter, Run Simulation ⌘R, Publish ⌘P, Reset Cockpit
+- Window: Minimize ⌘M, Zoom, Toggle Fullscreen ^⌘F
+
+**Window controls:**
+- `MinimizeWindow` (⌘M) → `window.minimize_window()`
+- `ZoomWindow` → `window.zoom_window()` (maximize/restore)
+- `ToggleFullscreen` (^⌘F) → `window.toggle_fullscreen()`
+- `ResetCockpit` → creates fresh `CockpitState` Entity
+- Traffic light buttons in sidebar header (close/minimize/zoom) with macOS-style colored dots
+- Fullscreen toggle button (⛶) in sidebar header
+
+**Interactive mouse handlers:**
+- Driver nodes: click to `toggle_driver_edit()` via `cx.listener()`
+- Accept button: click to `accept_driver()` + `auto_model_expression()`
+- Remove button: click to `remove_driver()` when editing
+- All interactive elements use `ElementId` for GPUI's stateful element tracking
 
 ---
 
@@ -349,8 +376,10 @@ sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libfon
 
 ## Commit Log
 
-### fermi (16 commits)
+### fermi (18 commits)
 ```
+2351b26 feat: Native menus, window controls, interactive probability slider + driver clicks
+a6740c0 docs: update session notes — all 5 priority items DONE
 d646d86 feat: Editable drivers, ⌘R simulation, ⌘P publish, probability slider
 7a4e1df docs: update session notes — channel integration marked DONE
 957d41a feat: Entity channel integration — agent results flow back to Research Cockpit UI
