@@ -29,40 +29,43 @@ fn build_menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action("About Fermi Console", ShowDashboard),
                 MenuItem::separator(),
-                MenuItem::action("New Forecast          ⌘N", NewForecast),
+                MenuItem::action("New Forecast          Ctrl+N", NewForecast),
                 MenuItem::separator(),
-                MenuItem::action("Quit Fermi Console    ⌘Q", Quit),
+                MenuItem::action("Quit Fermi Console    Ctrl+Q", Quit),
             ],
         },
         // ── File menu ─────────────────────────────────────────────
         Menu {
             name: "File".into(),
             items: vec![
-                MenuItem::action("New Forecast          ⌘N", NewForecast),
+                MenuItem::action("New Forecast          Ctrl+N", NewForecast),
                 MenuItem::separator(),
-                MenuItem::action("Publish Forecast      ⌘P", PublishForecast),
+                MenuItem::action("Publish Forecast      Ctrl+P", PublishForecast),
             ],
         },
         // ── View menu ─────────────────────────────────────────────
         Menu {
             name: "View".into(),
             items: vec![
-                MenuItem::action("Dashboard             ⌘1", ShowDashboard),
-                MenuItem::action("Portfolio             ⌘2", ShowPortfolio),
-                MenuItem::action("Agent Fleet           ⌘3", ShowAgentFleet),
-                MenuItem::action("Composer              ⌘4", ShowComposer),
-                MenuItem::action("Leaderboard           ⌘5", ShowLeaderboard),
+                MenuItem::action("Dashboard             Ctrl+1", ShowDashboard),
+                MenuItem::action("Portfolio             Ctrl+2", ShowPortfolio),
+                MenuItem::action("Agent Fleet           Ctrl+3", ShowAgentFleet),
+                MenuItem::action("Composer              Ctrl+4", ShowComposer),
+                MenuItem::action("Leaderboard           Ctrl+5", ShowLeaderboard),
                 MenuItem::separator(),
-                MenuItem::action("Toggle FPL Source     ⌘E", ToggleFplSource),
+                MenuItem::action("Toggle FPL Source     Ctrl+E", ToggleFplSource),
             ],
         },
         // ── Forecast menu ─────────────────────────────────────────
         Menu {
             name: "Forecast".into(),
             items: vec![
-                MenuItem::action("Research Question     ⌘Enter", TriggerQuestionOrchestration),
-                MenuItem::action("Run Simulation        ⌘R", RunSimulation),
-                MenuItem::action("Publish               ⌘P", PublishForecast),
+                MenuItem::action(
+                    "Research Question     Ctrl+Enter",
+                    TriggerQuestionOrchestration,
+                ),
+                MenuItem::action("Run Simulation        Ctrl+R", RunSimulation),
+                MenuItem::action("Publish               Ctrl+P", PublishForecast),
                 MenuItem::separator(),
                 MenuItem::action("Reset Cockpit", ResetCockpit),
             ],
@@ -71,9 +74,9 @@ fn build_menus() -> Vec<Menu> {
         Menu {
             name: "Window".into(),
             items: vec![
-                MenuItem::action("Minimize              ⌘M", MinimizeWindow),
+                MenuItem::action("Minimize              Ctrl+M", MinimizeWindow),
                 MenuItem::action("Zoom", ZoomWindow),
-                MenuItem::action("Toggle Fullscreen     ^⌘F", ToggleFullscreen),
+                MenuItem::action("Toggle Fullscreen     Ctrl+Shift+F", ToggleFullscreen),
             ],
         },
     ]
@@ -207,11 +210,11 @@ impl Panel {
 
     fn shortcut_hint(&self) -> &'static str {
         match self {
-            Panel::Dashboard => "⌘1",
-            Panel::Portfolio => "⌘2",
-            Panel::AgentFleet => "⌘3",
-            Panel::Composer => "⌘4",
-            Panel::Leaderboard => "⌘5",
+            Panel::Dashboard => "Ctrl+1",
+            Panel::Portfolio => "Ctrl+2",
+            Panel::AgentFleet => "Ctrl+3",
+            Panel::Composer => "Ctrl+4",
+            Panel::Leaderboard => "Ctrl+5",
         }
     }
 
@@ -2203,13 +2206,13 @@ fn main() {
     Application::new().run(move |cx: &mut App| {
         // Register keyboard shortcuts
         cx.bind_keys([
-            KeyBinding::new("cmd-1", ShowDashboard, Some("FermiConsole")),
-            KeyBinding::new("cmd-2", ShowPortfolio, Some("FermiConsole")),
-            KeyBinding::new("cmd-3", ShowAgentFleet, Some("FermiConsole")),
-            KeyBinding::new("cmd-4", ShowComposer, Some("FermiConsole")),
-            KeyBinding::new("cmd-5", ShowLeaderboard, Some("FermiConsole")),
-            KeyBinding::new("cmd-n", NewForecast, Some("FermiConsole")),
-            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("secondary-1", ShowDashboard, Some("FermiConsole")),
+            KeyBinding::new("secondary-2", ShowPortfolio, Some("FermiConsole")),
+            KeyBinding::new("secondary-3", ShowAgentFleet, Some("FermiConsole")),
+            KeyBinding::new("secondary-4", ShowComposer, Some("FermiConsole")),
+            KeyBinding::new("secondary-5", ShowLeaderboard, Some("FermiConsole")),
+            KeyBinding::new("secondary-n", NewForecast, Some("FermiConsole")),
+            KeyBinding::new("secondary-q", Quit, None),
         ]);
 
         cx.on_action(|_: &Quit, cx| cx.quit());
@@ -2218,15 +2221,15 @@ fn main() {
         // Register all keyboard shortcuts
         cx.bind_keys([
             KeyBinding::new(
-                "cmd-enter",
+                "secondary-enter",
                 TriggerQuestionOrchestration,
                 Some("FermiConsole"),
             ),
-            KeyBinding::new("cmd-r", RunSimulation, Some("FermiConsole")),
-            KeyBinding::new("cmd-p", PublishForecast, Some("FermiConsole")),
-            KeyBinding::new("cmd-e", ToggleFplSource, Some("FermiConsole")),
-            KeyBinding::new("cmd-m", MinimizeWindow, Some("FermiConsole")),
-            KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, Some("FermiConsole")),
+            KeyBinding::new("secondary-r", RunSimulation, Some("FermiConsole")),
+            KeyBinding::new("secondary-p", PublishForecast, Some("FermiConsole")),
+            KeyBinding::new("secondary-e", ToggleFplSource, Some("FermiConsole")),
+            KeyBinding::new("secondary-m", MinimizeWindow, Some("FermiConsole")),
+            KeyBinding::new("ctrl-shift-f", ToggleFullscreen, Some("FermiConsole")),
         ]);
 
         // Set native application menu bar

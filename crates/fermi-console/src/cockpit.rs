@@ -1937,10 +1937,10 @@ fn render_question_hub(state: &CockpitState, prob_slider: AnyElement) -> impl In
                 .gap(px(16.0))
                 .text_size(px(10.0))
                 .text_color(rgb(theme::FG_FAINT))
-                .child("⌘Enter research")
-                .child("⌘R simulate")
-                .child("⌘P publish")
-                .child("⌘E toggle FPL"),
+                .child("Ctrl+Enter research")
+                .child("Ctrl+R simulate")
+                .child("Ctrl+P publish")
+                .child("Ctrl+E toggle FPL"),
         )
 }
 
@@ -2456,7 +2456,7 @@ fn render_driver_map_with_nodes(
             // FPL source toggle
             .when(state.show_fpl_source, |el| {
                 let fpl = if state.cached_fpl_source.is_empty() {
-                    "[auto-generated — press ⌘R to simulate]"
+                    "[auto-generated — press Ctrl+R to simulate]"
                 } else {
                     &state.cached_fpl_source
                 };
@@ -2490,7 +2490,7 @@ fn render_driver_map_with_nodes(
                     .text_size(px(10.0))
                     .text_color(rgb(theme::FG_FAINT))
                     .mt(px(4.0))
-                    .child("⌘R simulate · ⌘E toggle FPL source"),
+                    .child("Ctrl+R simulate · Ctrl+E toggle FPL source"),
             ),
     )
 }
