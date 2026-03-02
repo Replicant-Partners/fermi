@@ -344,6 +344,23 @@ pub struct CockpitState {
     pub orchestration_running: bool,
     pub publish_status: Option<String>, // "publishing…", "published!", error msg
     pub probability_drag_active: bool,  // true while user is dragging the slider
+
+    // ── Versioning ────────────────────────────────────────────────
+    pub versions: Vec<ForecastVersion>,
+    pub current_version: u32,
+}
+
+/// A snapshot of the forecast at a point in time.
+/// The FPL program IS the forecast — versions are program snapshots.
+#[derive(Debug, Clone)]
+pub struct ForecastVersion {
+    pub version: u32,
+    pub timestamp: String,
+    pub program_fpl: String,           // serialized FPL text
+    pub probability: f64,
+    pub change_summary: String,
+    pub driver_count: usize,
+    pub evidence_count: usize,
 }
 
 impl CockpitState {
@@ -456,6 +473,8 @@ impl CockpitState {
             orchestration_running: false,
             publish_status: None,
             probability_drag_active: false,
+            versions: Vec::new(),
+            current_version: 0,
         }
     }
 
@@ -1454,14 +1473,64 @@ impl CockpitState {
     }
 
     /// Accept a suggested (ghost) driver — marks it as user-confirmed.
+    /// Syncs the driver to the AST and regenerates the model expression.
     pub fn accept_driver(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(driver) = self.drivers.get_mut(index) {
             driver.suggested = false;
+
+            // Sync accepted driver to AST
+            let ast_driver = match &driver.driver_type {
+                CockpitDriverType::Continuous { distribution: _, unit, p5, p50, p95 } => DriverStmt {
+                    name: driver.name.clone(),
+                    display_name: None,
+                    description: if driver.rationale.is_empty() { None } else { Some(driver.rationale.clone()) },
+                    driver_type: DriverType::Continuous,
+                    distribution: Some(Distribution::Triangular {
+                        p5: Expression::Number(*p5),
+                        p50: Expression::Number(*p50),
+                        p95: Expression::Number(*p95),
+                    }),
+                    probability: None,
+                    impact_multiplier: None,
+                    values: None,
+                    weights: None,
+                    unit: if unit.is_empty() { None } else { Some(unit.clone()) },
+                    rationale: if driver.rationale.is_empty() { None } else { Some(driver.rationale.clone()) },
+                    constraints: vec![],
+                    evidence_refs: vec![],
+                },
+                CockpitDriverType::Binary { probability, impact_multiplier } => DriverStmt {
+                    name: driver.name.clone(),
+                    display_name: None,
+                    description: if driver.rationale.is_empty() { None } else { Some(driver.rationale.clone()) },
+                    driver_type: DriverType::Binary,
+                    distribution: None,
+                    probability: Some(*probability),
+                    impact_multiplier: Some(*impact_multiplier),
+                    values: None,
+                    weights: None,
+                    unit: None,
+                    rationale: if driver.rationale.is_empty() { None } else { Some(driver.rationale.clone()) },
+                    constraints: vec![],
+                    evidence_refs: vec![],
+                },
+            };
+            self.program.add_driver(ast_driver);
         }
         self.auto_model_expression();
         // Open the editor so the user can tweak values immediately
         self.editing_driver_index = Some(index);
         self.populate_editor_from_driver(index, cx);
+
+        // Add timeline event
+        if let Some(driver) = self.drivers.get(index) {
+            self.timeline.push(TimelineEvent {
+                label: format!("Accepted driver: {}", driver.name),
+                probability: None,
+                event_type: TimelineEventType::EvidenceAdded,
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            });
+        }
     }
 
     /// Remove a driver by index.
@@ -1595,6 +1664,11 @@ impl CockpitState {
         } else {
             parts.join(" * ")
         };
+
+        // Sync model expression to AST by parsing it
+        // The model expression is like "revenue_growth * market_sentiment * (if macro_shock then 0.7 else 1.0)"
+        // For now, generate FPL text and let the parser handle it during simulation
+        // TODO: build Expression AST directly from the model_expression string
     }
 
     /// Generate FPL source from the current cockpit state.
@@ -1807,9 +1881,44 @@ impl CockpitState {
 
     /// Publish the forecast to the API for Brier tracking.
     /// Collects all cockpit state into a CreateForecastRequest and POSTs it.
+    /// Snapshot the current forecast state as a new version.
+    /// Called on publish, or manually by the user.
+    pub fn snapshot_version(&mut self, change_summary: &str, cx: &App) {
+        self.current_version += 1;
+        let fpl_text = self.generate_fpl(cx);
+        let driver_count = self.drivers.iter().filter(|d| !d.suggested).count();
+        let evidence_count = self.evidence.len();
+
+        self.versions.push(ForecastVersion {
+            version: self.current_version,
+            timestamp: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
+            program_fpl: fpl_text,
+            probability: self.predicted_probability,
+            change_summary: change_summary.to_string(),
+            driver_count,
+            evidence_count,
+        });
+
+        self.timeline.push(TimelineEvent {
+            label: format!("v{}: {}", self.current_version, change_summary),
+            probability: Some(self.predicted_probability),
+            event_type: TimelineEventType::Published,
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        });
+
+        log::info!(
+            "[cockpit] Snapshot v{}: {} drivers, {} evidence, prob={:.0}%",
+            self.current_version, driver_count, evidence_count,
+            self.predicted_probability * 100.0,
+        );
+    }
+
     pub fn publish_forecast(&mut self, cx: &mut Context<Self>) {
         // Save any in-progress editor changes
         self.save_editor(cx);
+
+        // Snapshot the current state as a new version
+        self.snapshot_version("Published forecast", cx);
 
         let question = self.question_input.read(cx).text().to_string();
         if question.trim().is_empty() {
