@@ -102,7 +102,8 @@
     "tags": [
       "sentiment",
       "social-media",
-      "public-opinion"
+      "public-opinion",
+      "fermi-orchestra"
     ],
     "sample_queries": [
       "What is the current market sentiment around semiconductor stocks?",

@@ -680,17 +680,11 @@ impl CockpitState {
     /// Discover research-relevant agents from the local registry.
     /// Filters by agent_type and tags to find agents suitable for forecasting.
     fn discover_research_agents(&self) -> Vec<(String, String)> {
-        let forecasting_tags = ["forecasting", "research", "analysis", "economics",
-            "macro", "sentiment", "market", "investigation", "monte-carlo"];
-        
         let cards = self.registry.list_cards().unwrap_or_default();
         cards.iter()
             .filter(|card| {
-                // Must be research type or have forecasting-relevant tags
-                card.agent_type == "research" && 
-                card.metadata.tags.iter().any(|t| {
-                    forecasting_tags.iter().any(|ft| t.contains(ft))
-                })
+                // Only agents tagged for the Fermi forecasting orchestra
+                card.metadata.tags.iter().any(|t| t == "fermi-orchestra")
             })
             .map(|card| (card.agent_id.clone(), card.metadata.description.clone()))
             .collect()
