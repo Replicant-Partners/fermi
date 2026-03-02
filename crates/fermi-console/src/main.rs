@@ -13,6 +13,7 @@ use api::client::{
     LeaderboardQuery, LeaderboardResponse, MyStats, Portfolio,
 };
 use cockpit::CockpitState;
+use fermi::agent_backend::{llm_executor::LLMExecutor, registry::AgentRegistry};
 use composer::ComposerState;
 use gpui::prelude::*;
 use gpui::*;
@@ -239,6 +240,8 @@ struct FermiConsole {
 
     // API client (shared, thread-safe)
     api: Arc<ApiClient>,
+    // Local agent registry (same as MCP server)
+    registry: Arc<AgentRegistry>,
 
     // Connection state
     connected: bool,
@@ -297,7 +300,7 @@ struct ActivityItem {
 }
 
 impl FermiConsole {
-    fn new(api: Arc<ApiClient>, cx: &mut Context<Self>) -> Self {
+    fn new(api: Arc<ApiClient>, registry: Arc<AgentRegistry>, cx: &mut Context<Self>) -> Self {
         let sign_in_token_input = cx.new(|cx| {
             TextInput::new(cx)
                 .with_placeholder("Paste your ABW token or API key")
@@ -309,6 +312,7 @@ impl FermiConsole {
             active_panel: Panel::Dashboard,
             focus_handle: cx.focus_handle(),
             api,
+            registry: registry.clone(),
             connected: false,
             user_display_name: None,
             api_key_input: String::new(),
@@ -732,7 +736,7 @@ impl FermiConsole {
         // Create cockpit Entity on first visit to Composer
         if panel == Panel::Composer && self.cockpit.is_none() {
             let api = self.api.clone();
-            self.cockpit = Some(cx.new(|cx| CockpitState::new(api, cx)));
+            self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
         }
         // Refresh data when switching to agent fleet or leaderboard
         if changed && self.connected {
@@ -862,7 +866,7 @@ impl FermiConsole {
     /// Reset the cockpit to a fresh state (new forecast).
     fn on_reset_cockpit(&mut self, _: &ResetCockpit, _window: &mut Window, cx: &mut Context<Self>) {
         let api = self.api.clone();
-        self.cockpit = Some(cx.new(|cx| CockpitState::new(api, cx)));
+        self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
         self.active_panel = Panel::Composer;
         cx.notify();
     }
@@ -2641,6 +2645,23 @@ fn main() {
     let api_config = ApiConfig::default();
     let api = Arc::new(ApiClient::new(api_config));
 
+    // Create local agent registry (same as MCP server)
+    let registry = if let Ok(llm_executor) = LLMExecutor::from_env() {
+        log::info!("Using LLM Executor (Anthropic API)");
+        Arc::new(AgentRegistry::with_executor(Arc::new(llm_executor)))
+    } else {
+        log::warn!("No ANTHROPIC_API_KEY found — agents will use mock executor");
+        Arc::new(AgentRegistry::new())
+    };
+
+    // Load agents from filesystem
+    let agents_dir = std::env::var("AGENTS_DIR")
+        .unwrap_or_else(|_| "agents/curated".to_string());
+    match registry.load_from_directory(&agents_dir) {
+        Ok(count) => log::info!("Loaded {} agents from {}", count, agents_dir),
+        Err(e) => log::warn!("Failed to load agents: {}", e),
+    }
+
     Application::new().run(move |cx: &mut App| {
         // Register keyboard shortcuts
         cx.bind_keys([
@@ -2675,6 +2696,7 @@ fn main() {
 
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         let api_clone = api.clone();
+        let registry_clone = registry.clone();
 
         let window = cx
             .open_window(
@@ -2686,7 +2708,7 @@ fn main() {
                     }),
                     ..Default::default()
                 },
-                move |_, cx| cx.new(|cx| FermiConsole::new(api_clone, cx)),
+                move |_, cx| cx.new(|cx| FermiConsole::new(api_clone, registry_clone, cx)),
             )
             .unwrap();
 

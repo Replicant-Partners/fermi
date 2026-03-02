@@ -25,6 +25,11 @@ use fermi::ast::{
     AgentStmt, BaseRate, Distribution, DriverStmt, DriverType, EvidenceStmt, Expression,
     GeneratedBy, ModelStmt, Program, QuestionStmt, Schedule, SimulateStmt, Statement,
 };
+use fermi::agent_backend::{
+    AgentOutput, ExecutionContext,
+    llm_executor::LLMExecutor,
+    registry::AgentRegistry,
+};
 
 use crate::api::client::{AgentExecutionResult, ApiClient, CreateForecastRequest};
 use crate::text_input::TextInput;
@@ -137,6 +142,7 @@ pub struct CockpitState {
     pub forecast_id: Option<String>,
     pub publish_status: Option<String>,
     pub api: Arc<ApiClient>,
+    pub registry: Arc<AgentRegistry>,
     pub cached_fpl: String,
 }
 
@@ -157,7 +163,7 @@ pub struct SimResults {
 // ═══════════════════════════════════════════════════════════════════
 
 impl CockpitState {
-    pub fn new(api: Arc<ApiClient>, cx: &mut Context<Self>) -> Self {
+    pub fn new(api: Arc<ApiClient>, registry: Arc<AgentRegistry>, cx: &mut Context<Self>) -> Self {
         let question_input = cx.new(|cx| {
             TextInput::new(cx)
                 .with_placeholder("What are you forecasting?")
@@ -234,6 +240,7 @@ impl CockpitState {
             forecast_id: None,
             publish_status: None,
             api,
+            registry,
             cached_fpl: String::new(),
         }
     }
@@ -363,25 +370,87 @@ impl CockpitState {
             credits_charged: None,
         });
 
+        // Execute agent LOCALLY using the registry (same as MCP server)
+        let registry = self.registry.clone();
         let q = macro_query.clone();
         cx.spawn(async move |this, cx| {
-            log::info!("[composer] Firing macro_forecaster");
-            match api.execute_agent("macro_forecaster", &q).await {
-                Ok(result) => {
-                    let result_json = agent_result_to_json(&result);
+            log::info!("[composer] Firing macro_forecaster (local registry)");
+
+            // Get agent card from local registry
+            let card = match registry.get("macro_forecaster") {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("[composer] Agent not found in registry: {}", e);
+                    this.update(cx, |state, cx| {
+                        state.mark_agent_failed("macro_forecaster",
+                            &format!("Agent not in local registry: {}. Check agents/curated/ directory.", e));
+                        cx.notify();
+                    }).ok();
+                    return;
+                }
+            };
+
+            // Build execution context (same pattern as MCP server)
+            let agent_stmt = AgentStmt {
+                name: "macro_forecaster".into(),
+                agent_type: Some("research".into()),
+                query: q,
+                executor: Some(fermi::ast::ExecutorType::LLM),
+                schedule: None,
+                driver_refs: vec![],
+                depends_on: vec![],
+                confidence_threshold: None,
+            };
+
+            let program = Program {
+                statements: vec![Statement::Agent(agent_stmt.clone())],
+            };
+
+            let context = ExecutionContext {
+                program,
+                agent_card: card.clone(),
+            };
+
+            // Execute locally
+            match registry.execute_agent(&agent_stmt, &context).await {
+                Ok(output) => {
+                    log::info!(
+                        "[composer] macro_forecaster completed: {} evidence, confidence={:.2}",
+                        output.evidence.len(),
+                        output.confidence,
+                    );
+
+                    // Convert AgentOutput to JsonValue for processing
+                    let result_json = serde_json::json!({
+                        "agent_id": output.agent_name,
+                        "status": format!("{:?}", output.status),
+                        "confidence": output.confidence,
+                        "execution_time_ms": output.execution_time_ms,
+                        "tokens_used": output.tokens_used,
+                        "evidence": output.evidence.iter().map(|e| serde_json::json!({
+                            "id": e.id,
+                            "source": e.source,
+                            "summary": e.summary.clone().unwrap_or_default(),
+                            "key_findings": e.key_findings,
+                            "relevance": e.relevance.unwrap_or(0.0),
+                        })).collect::<Vec<_>>(),
+                        "metadata": {
+                            "model_used": output.metadata.model_used,
+                            "reasoning": output.metadata.reasoning,
+                        }
+                    });
+
                     this.update(cx, |state, cx| {
                         state.process_macro_forecaster_result(&result_json);
                         cx.notify();
-                    })
-                    .ok();
+                    }).ok();
                 }
                 Err(e) => {
-                    log::error!("[composer] macro_forecaster failed: {}", e);
+                    log::error!("[composer] macro_forecaster execution failed: {}", e);
                     this.update(cx, |state, cx| {
-                        state.mark_agent_failed("macro_forecaster", &e.to_string());
+                        state.mark_agent_failed("macro_forecaster", &format!("{}", e));
                         cx.notify();
-                    })
-                    .ok();
+                    }).ok();
                 }
             }
         })
