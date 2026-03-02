@@ -704,12 +704,14 @@ impl Render for TextInput {
             .text_size(font_size)
             .text_color(rgb(theme::FG))
             .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
+            .overflow_hidden()
             .child(
                 div()
                     .h(line_h)
                     .w_full()
                     .px(pad)
                     .py(px(2.0))
+                    .overflow_hidden()
                     .child(TextInputElement { input: cx.entity() }),
             );
 
