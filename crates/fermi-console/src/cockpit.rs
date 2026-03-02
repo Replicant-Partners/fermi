@@ -552,12 +552,25 @@ impl CockpitState {
             .unwrap_or("");
 
         // Try parsing reasoning as JSON (works when agent returns structured output)
-        let structured: Option<JsonValue> = serde_json::from_str(reasoning).ok();
+        // Strip markdown code fences if present (agent often wraps JSON in ```json ... ```)
+        let clean_reasoning = reasoning
+            .trim()
+            .strip_prefix("```json").or_else(|| reasoning.trim().strip_prefix("```"))
+            .and_then(|s| s.strip_suffix("```"))
+            .unwrap_or(reasoning)
+            .trim();
+
+        let structured: Option<JsonValue> = if !clean_reasoning.is_empty() {
+            serde_json::from_str(clean_reasoning).ok()
+        } else {
+            None
+        };
         
         if structured.is_some() {
             log::info!("[composer] Parsed structured JSON from reasoning");
         } else {
-            log::info!("[composer] Agent returned text (not JSON) - using as evidence");
+            log::info!("[composer] Agent returned text (not JSON) - using as evidence. First 80 chars: {}", 
+                &reasoning.chars().take(80).collect::<String>());
         }
 
         // ── Base Rate ─────────────────────────────────────────────
