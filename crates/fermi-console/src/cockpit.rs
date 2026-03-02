@@ -1176,11 +1176,12 @@ impl Render for CockpitState {
             // ── Left: Program Tree ────────────────────────────────
             .child(
                 div()
+                    .id("composer-left-panel")
                     .flex()
                     .flex_col()
                     .w(px(700.0))
                     .h_full()
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     // Question section
                     .child(render_question_section(self))
                     // Drivers section (the core of the forecast)
@@ -1188,8 +1189,6 @@ impl Render for CockpitState {
                         div()
                             .flex()
                             .flex_col()
-                            .flex_grow()
-                            .overflow_hidden()
                             .child(
                                 div()
                                     .px(px(16.0))
@@ -1216,15 +1215,17 @@ impl Render for CockpitState {
             // ── Right: Assistant + Editor ──────────────────────────
             .child(
                 div()
+                    .id("composer-right-panel")
                     .flex()
                     .flex_col()
                     .flex_grow()
                     .h_full()
+                    .overflow_y_scroll()
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_l_1()
                     .border_color(rgb(theme::FG_FAINT))
-                    // Editor panel (for focused driver)
-                    .child(render_editor_panel(self, &focused))
+                    // Editor panel (for focused driver) — with close button
+                    .child(render_editor_panel(self, &focused, cx))
                     // Assistant messages
                     .child(render_assistant_panel(&self.messages))
                     // FPL source (if toggled)
@@ -1483,13 +1484,23 @@ fn render_driver_card(
         .into_any_element()
 }
 
-fn render_editor_panel(state: &CockpitState, focused: &FocusedNode) -> impl IntoElement {
+fn render_editor_panel(
+    state: &CockpitState,
+    focused: &FocusedNode,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
     match focused {
         FocusedNode::Driver(name) => {
             let driver = state.program.driver(name);
             let is_continuous = driver
                 .map(|d| d.driver_type == DriverType::Continuous)
                 .unwrap_or(true);
+
+            // Get the driver's rationale for display
+            let rationale_text = driver
+                .and_then(|d| d.rationale.as_deref())
+                .unwrap_or("")
+                .to_string();
 
             div()
                 .flex()
@@ -1498,13 +1509,50 @@ fn render_editor_panel(state: &CockpitState, focused: &FocusedNode) -> impl Into
                 .p(px(16.0))
                 .border_b_1()
                 .border_color(rgb(theme::FG_FAINT))
+                // Header with close button
                 .child(
                     div()
-                        .text_size(px(14.0))
-                        .text_color(rgb(theme::CYAN))
-                        .font_weight(FontWeight::BOLD)
-                        .child(format!("Editing: {}", name)),
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(14.0))
+                                .text_color(rgb(theme::CYAN))
+                                .font_weight(FontWeight::BOLD)
+                                .child(format!("Editing: {}", name)),
+                        )
+                        .child(
+                            div()
+                                .id("close-editor")
+                                .text_size(px(12.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .px(px(8.0))
+                                .py(px(2.0))
+                                .rounded(px(4.0))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.save_focused_driver(cx);
+                                    this.focused_node = FocusedNode::Question;
+                                    cx.notify();
+                                }))
+                                .child("✕ Close"),
+                        ),
                 )
+                // Rationale display (from the driver definition)
+                .when(!rationale_text.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .px(px(8.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG))
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::FG_DIM))
+                            .child(rationale_text),
+                    )
+                })
                 .child(
                     div()
                         .flex()
@@ -1536,7 +1584,7 @@ fn render_editor_panel(state: &CockpitState, focused: &FocusedNode) -> impl Into
                     div()
                         .text_size(px(10.0))
                         .text_color(rgb(theme::FG_FAINT))
-                        .child("Values save automatically when you switch drivers or simulate."),
+                        .child("Values save when you close, switch drivers, or simulate (Ctrl+R)."),
                 )
                 .into_any_element()
         }
@@ -1548,7 +1596,7 @@ fn render_editor_panel(state: &CockpitState, focused: &FocusedNode) -> impl Into
                 div()
                     .text_size(px(12.0))
                     .text_color(rgb(theme::FG_DIM))
-                    .child("Click a driver to edit its parameters."),
+                    .child("Click a driver on the left to edit its parameters."),
             )
             .into_any_element(),
     }
@@ -1561,7 +1609,6 @@ fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
         .flex_grow()
         .p(px(12.0))
         .gap(px(6.0))
-        .overflow_hidden()
         .child(
             div()
                 .text_size(px(11.0))

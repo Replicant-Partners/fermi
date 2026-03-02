@@ -13,8 +13,8 @@ use api::client::{
     LeaderboardQuery, LeaderboardResponse, MyStats, Portfolio,
 };
 use cockpit::CockpitState;
-use fermi::agent_backend::{llm_executor::LLMExecutor, registry::AgentRegistry};
 use composer::ComposerState;
+use fermi::agent_backend::{llm_executor::LLMExecutor, registry::AgentRegistry};
 use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
@@ -1296,6 +1296,7 @@ impl FermiConsole {
             .border_1()
             .border_color(theme::fg_faint())
             .max_w(px(480.0))
+            .overflow_hidden()
             .child(
                 div()
                     .text_size(px(18.0))
@@ -1460,7 +1461,7 @@ impl FermiConsole {
                             .flex()
                             .gap(px(8.0))
                             .items_end()
-                            .child(div().flex_grow().child(self.sign_in_token_input.clone()))
+                            .child(div().flex_grow().overflow_hidden().child(self.sign_in_token_input.clone()))
                             .child(
                                 div()
                                     .id("sign-in-btn")
@@ -2655,8 +2656,7 @@ fn main() {
     };
 
     // Load agents from filesystem
-    let agents_dir = std::env::var("AGENTS_DIR")
-        .unwrap_or_else(|_| "agents/curated".to_string());
+    let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents/curated".to_string());
     match registry.load_from_directory(&agents_dir) {
         Ok(count) => log::info!("Loaded {} agents from {}", count, agents_dir),
         Err(e) => log::warn!("Failed to load agents: {}", e),
