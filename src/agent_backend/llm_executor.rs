@@ -97,21 +97,59 @@ impl LLMExecutor {
             ));
         }
 
-        // Try to parse as JSON
-        let evidence_data: EvidenceData = serde_json::from_str(&text).map_err(|e| {
-            ExecutionError::ExecutionFailed(format!("Failed to parse JSON response: {}", e))
-        })?;
+        // Try to extract JSON from the response (it may be embedded in text)
+        let json_text = if let Some(start) = text.find('{') {
+            if let Some(end) = text.rfind('}') {
+                &text[start..=end]
+            } else {
+                &text
+            }
+        } else {
+            &text
+        };
 
-        Ok(EvidenceStmt {
-            id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
-            source: format!("Agent: {} (Claude API)", agent_name),
-            summary: Some(evidence_data.summary),
-            url: None,
-            relevance: Some(evidence_data.confidence),
-            date: Some(Utc::now().format("%Y-%m-%d").to_string()),
-            strength: Some(evidence_data.confidence),
-            key_findings: evidence_data.key_findings,
-        })
+        // Try JSON parse first, fall back to plain text
+        match serde_json::from_str::<EvidenceData>(json_text) {
+            Ok(evidence_data) => {
+                let confidence = if evidence_data.confidence > 0.0 {
+                    evidence_data.confidence
+                } else {
+                    0.5
+                };
+                Ok(EvidenceStmt {
+                    id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
+                    source: format!("Agent: {} (Claude API)", agent_name),
+                    summary: Some(evidence_data.summary),
+                    url: None,
+                    relevance: Some(confidence),
+                    date: Some(Utc::now().format("%Y-%m-%d").to_string()),
+                    strength: Some(confidence),
+                    key_findings: evidence_data.key_findings,
+                })
+            }
+            Err(_) => {
+                // Fallback: treat as plain text evidence
+                // Take first 500 chars as summary, split into findings by newlines
+                let summary: String = text.chars().take(500).collect();
+                let findings: Vec<String> = text
+                    .lines()
+                    .filter(|l| !l.trim().is_empty() && l.len() > 10)
+                    .take(5)
+                    .map(|l| l.trim().to_string())
+                    .collect();
+
+                Ok(EvidenceStmt {
+                    id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
+                    source: format!("Agent: {} (Claude API)", agent_name),
+                    summary: Some(summary),
+                    url: None,
+                    relevance: Some(0.5),
+                    date: Some(Utc::now().format("%Y-%m-%d").to_string()),
+                    strength: Some(0.5),
+                    key_findings: findings,
+                })
+            }
+        }
     }
 
     /// Send a raw ClaudeRequest and return the parsed response
