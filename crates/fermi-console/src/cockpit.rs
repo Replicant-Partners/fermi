@@ -1005,11 +1005,41 @@ impl CockpitState {
 
     /// Focus on a driver for editing. Populates the shared editor fields.
     pub fn focus_driver(&mut self, name: &str, cx: &mut Context<Self>) {
+        // Don't override if we're in the agent picker for this driver
+        // (the click bubbles from the "+ agent" button)
+        if let FocusedNode::AgentPicker(ref dn) = self.focused_node {
+            if dn == name {
+                return;
+            }
+        }
         self.save_focused_driver(cx); // save previous
         self.focused_node = FocusedNode::Driver(name.to_string());
 
         self.populate_editor_from_driver(name, cx);
         cx.notify();
+    }
+
+    /// Add a new continuous driver manually and open it for editing.
+    pub fn add_manual_driver(&mut self, binary: bool, cx: &mut Context<Self>) {
+        let idx = self.program.drivers().len() + 1;
+        let (name, driver) = if binary {
+            (format!("event_{}", idx), make_binary_driver(
+                &format!("event_{}", idx), &format!("Event {}", idx),
+                0.5, 1.3, "Describe this event and its impact",
+            ))
+        } else {
+            (format!("driver_{}", idx), make_continuous_driver(
+                &format!("driver_{}", idx), &format!("Driver {}", idx),
+                "", 0.0, 0.0, 0.0, "Describe this driver and set your estimates",
+            ))
+        };
+        self.program.add_driver(driver);
+        self.focus_driver(&name, cx);
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", name),
+            kind: MessageKind::Suggestion,
+            text: format!("New driver '{}' added. Set your estimates in the editor.", name),
+        });
     }
 
     /// Save the currently focused driver's editor values back to the AST.
@@ -1333,6 +1363,50 @@ impl Render for CockpitState {
                                     &n,
                                 )
                             }))
+                            // Add driver buttons
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(8.0))
+                                    .px(px(12.0))
+                                    .py(px(6.0))
+                                    .child(
+                                        div()
+                                            .id("add-continuous-btn")
+                                            .px(px(10.0))
+                                            .py(px(4.0))
+                                            .rounded(px(4.0))
+                                            .bg(rgb(theme::BG_ELEVATED))
+                                            .border_1()
+                                            .border_color(rgb(theme::GREEN))
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::GREEN))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.add_manual_driver(false, cx);
+                                            }))
+                                            .child("+ Continuous driver"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("add-binary-btn")
+                                            .px(px(10.0))
+                                            .py(px(4.0))
+                                            .rounded(px(4.0))
+                                            .bg(rgb(theme::BG_ELEVATED))
+                                            .border_1()
+                                            .border_color(rgb(theme::GOLD))
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::GOLD))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.add_manual_driver(true, cx);
+                                            }))
+                                            .child("+ Binary event"),
+                                    ),
+                            )
                             // Simulation results
                             .child(render_simulation_section(self))
                             // Status bar
@@ -2442,14 +2516,9 @@ fn generate_fpl_text(program: &Program) -> String {
     if let Some(q) = program.question() {
         let escaped = q.text.replace('"', r#"\""#);
         lines.push(format!("question \"{}\"", escaped));
-
-        if let Some(ref br) = q.base_rate {
-            lines.push(format!(
-                "  base_rate: reference_class(\"{}\", confidence: medium)",
-                br.reference_class
-            ));
-        }
-
+        // Note: base_rate is stored in the AST and shown in the UI
+        // but not output in the FPL text to avoid parser issues
+        // with the simplified question syntax
         lines.push(String::new());
     }
 
