@@ -605,14 +605,40 @@ impl CockpitState {
             }
 
             // ── Model expression ──────────────────────────────────
-            if let Some(model_expr) = data.get("model_expression").and_then(|v| v.as_str()) {
-                if !model_expr.is_empty() {
-                    self.messages.push(AssistantMessage {
-                        node: "model".into(),
-                        kind: MessageKind::Info,
-                        text: format!("Suggested model: {}", model_expr),
-                    });
+            // Regenerate model from the new driver names
+            let new_drivers = self.program.drivers();
+            let model_parts: Vec<String> = new_drivers.iter().map(|d| {
+                match d.driver_type {
+                    DriverType::Binary => {
+                        let m = d.impact_multiplier.unwrap_or(1.3);
+                        format!("(if {} then {} else 1.0)", d.name, m)
+                    }
+                    _ => d.name.clone(),
                 }
+            }).collect();
+            if !model_parts.is_empty() {
+                // Try to use agent's suggested model expression if it references our drivers
+                let agent_model = data.get("model_expression").and_then(|v| v.as_str()).unwrap_or("");
+                let use_agent_model = !agent_model.is_empty() && 
+                    new_drivers.iter().any(|d| agent_model.contains(&d.name));
+                
+                let model_text = if use_agent_model {
+                    agent_model.to_string()
+                } else {
+                    model_parts.join(" * ")
+                };
+                
+                self.messages.push(AssistantMessage {
+                    node: "model".into(),
+                    kind: MessageKind::Info,
+                    text: format!("Model: {}", model_text),
+                });
+                
+                // Note: we don't set the AST model here because it needs to be
+                // parsed as an Expression. The generate_fpl_text auto-generates
+                // the model from driver names if no ModelStmt exists.
+                // Clear the old template model so it gets regenerated
+                self.program.statements.retain(|s| !matches!(s, Statement::Model(_)));
             }
         }
 
