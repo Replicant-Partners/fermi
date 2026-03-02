@@ -345,14 +345,12 @@ impl CockpitState {
             }
         }
 
-        // ── Fire agents that are embedded in drivers ──────────────
-        // In FPL, agents live inside driver definitions. We extract
-        // them and fire API calls. Results flow back to the driver.
-        let api = self.api.clone();
-
-        // The macro_forecaster researches the overall question
-        // and provides base rate + initial estimates
-        let macro_query = format!(
+        // ── Discover and fire research agents in parallel ─────────
+        // Query the registry for forecasting-relevant agents
+        let research_agents = self.discover_research_agents();
+        
+        // Build the structured query for the lead agent (macro_forecaster)
+        let structured_query = format!(
             "You are co-authoring a Fermi forecast. Question: \"{}\"\n\n\
              Provide a JSON response with:\n\
              - \"base_rate\": {{\"reference_class\": \"...\", \"historical_frequency\": 0.0-1.0, \"sample_size\": N, \"reasoning\": \"...\"}}\n\
@@ -365,140 +363,39 @@ impl CockpitState {
             question
         );
 
-        self.agent_runs.push(AgentExecution {
-            agent_name: "macro_forecaster".into(),
-            status: AgentRunStatus::Running,
-            evidence_count: 0,
-            confidence: None,
-            error: None,
-            credits_charged: None,
-        });
+        // Register all agents and show assembly feedback
+        for (agent_id, description) in &research_agents {
+            self.agent_runs.push(AgentExecution {
+                agent_name: agent_id.clone(),
+                status: AgentRunStatus::Running,
+                evidence_count: 0,
+                confidence: None,
+                error: None,
+                credits_charged: None,
+            });
+            self.messages.push(AssistantMessage {
+                node: format!("agent:{}", agent_id),
+                kind: MessageKind::Info,
+                text: format!("⟳ {} — {}", agent_id, 
+                    if description.len() > 60 { &description[..60] } else { description }),
+            });
+        }
 
         self.messages.push(AssistantMessage {
             node: "question".into(),
             kind: MessageKind::Info,
-            text: "⟳ Assembling research team… macro_forecaster is analyzing your question.".into(),
+            text: format!("⟳ Research team: {} agents dispatched in parallel", research_agents.len()),
         });
 
-        // Execute agent LOCALLY using the registry (same as MCP server)
-        let registry = self.registry.clone();
-        let q = macro_query.clone();
-        cx.spawn(async move |this, cx| {
-            log::info!("[composer] Firing macro_forecaster (local registry)");
-
-            // Get agent card from local registry
-            let card = match registry.get("macro_forecaster") {
-                Ok(c) => c,
-                Err(e) => {
-                    log::error!("[composer] Agent not found in registry: {}", e);
-                    this.update(cx, |state, cx| {
-                        state.mark_agent_failed("macro_forecaster",
-                            &format!("Agent not in local registry: {}. Check agents/curated/ directory.", e));
-                        cx.notify();
-                    }).ok();
-                    return;
-                }
+        // Fire all agents in parallel
+        for (agent_id, _description) in &research_agents {
+            let query = if agent_id == "macro_forecaster" {
+                structured_query.clone()
+            } else {
+                format!("Research the following forecast question and provide evidence with key findings, sources, and relevance scores. Question: \"{}\"", question)
             };
-
-            // Build execution context (same pattern as MCP server)
-            let agent_stmt = AgentStmt {
-                name: "macro_forecaster".into(),
-                agent_type: Some("research".into()),
-                query: q,
-                executor: Some(fermi::ast::ExecutorType::LLM),
-                schedule: None,
-                driver_refs: vec![],
-                depends_on: vec![],
-                confidence_threshold: None,
-            };
-
-            let program = Program {
-                statements: vec![Statement::Agent(agent_stmt.clone())],
-            };
-
-            let context = ExecutionContext {
-                program,
-                agent_card: card.clone(),
-            };
-
-            // Execute locally
-            match registry.execute_agent(&agent_stmt, &context).await {
-                Ok(output) => {
-                    log::info!(
-                        "[composer] macro_forecaster completed: {} evidence, confidence={:.2}",
-                        output.evidence.len(),
-                        output.confidence,
-                    );
-
-                    // Store the raw analysis for the Fermi Assistant
-                    let raw_analysis: String = output.evidence.iter()
-                        .map(|e| e.summary.clone().unwrap_or_default())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let reasoning = output.metadata.reasoning.clone().unwrap_or_default();
-                    let full_analysis = format!("{}\n\n{}", reasoning, raw_analysis);
-
-                    // Convert AgentOutput to JsonValue for evidence processing
-                    let result_json = serde_json::json!({
-                        "agent_id": output.agent_name,
-                        "status": format!("{:?}", output.status),
-                        "confidence": output.confidence,
-                        "execution_time_ms": output.execution_time_ms,
-                        "tokens_used": output.tokens_used,
-                        "evidence": output.evidence.iter().map(|e| serde_json::json!({
-                            "id": e.id,
-                            "source": e.source,
-                            "summary": e.summary.clone().unwrap_or_default(),
-                            "key_findings": e.key_findings,
-                            "relevance": e.relevance.unwrap_or(0.0),
-                        })).collect::<Vec<_>>(),
-                        "metadata": {
-                            "model_used": output.metadata.model_used,
-                            "reasoning": output.metadata.reasoning,
-                        }
-                    });
-
-                    // Process evidence and update UI immediately
-                    this.update(cx, |state, cx| {
-                        state.process_macro_forecaster_result(&result_json);
-
-                        // Extract key findings from evidence to guide the user
-                        let findings: Vec<String> = output.evidence.iter()
-                            .flat_map(|e| e.key_findings.iter().cloned())
-                            .take(5)
-                            .collect();
-
-                        if !findings.is_empty() {
-                            state.messages.push(AssistantMessage {
-                                node: "question".into(),
-                                kind: MessageKind::Tip,
-                                text: format!("🦊 Key findings from research:\n{}",
-                                    findings.iter()
-                                        .map(|f| format!("• {}", f))
-                                        .collect::<Vec<_>>()
-                                        .join("\n")),
-                            });
-                        }
-
-                        state.messages.push(AssistantMessage {
-                            node: "question".into(),
-                            kind: MessageKind::Suggestion,
-                            text: "Review the evidence above and adjust driver estimates. Click a driver to edit, then Ctrl+R to simulate.".into(),
-                        });
-
-                        cx.notify();
-                    }).ok();
-                }
-                Err(e) => {
-                    log::error!("[composer] macro_forecaster execution failed: {}", e);
-                    this.update(cx, |state, cx| {
-                        state.mark_agent_failed("macro_forecaster", &format!("{}", e));
-                        cx.notify();
-                    }).ok();
-                }
-            }
-        })
-        .detach();
+            self.fire_agent(agent_id, &query, cx);
+        }
 
         self.focused_node = FocusedNode::Question;
         cx.notify();
@@ -779,6 +676,188 @@ impl CockpitState {
         self.orchestration_running = false;
     }
 
+
+    /// Discover research-relevant agents from the local registry.
+    /// Filters by agent_type and tags to find agents suitable for forecasting.
+    fn discover_research_agents(&self) -> Vec<(String, String)> {
+        let forecasting_tags = ["forecasting", "research", "analysis", "economics",
+            "macro", "sentiment", "market", "investigation", "monte-carlo"];
+        
+        let cards = self.registry.list_cards().unwrap_or_default();
+        cards.iter()
+            .filter(|card| {
+                // Must be research type or have forecasting-relevant tags
+                card.agent_type == "research" && 
+                card.metadata.tags.iter().any(|t| {
+                    forecasting_tags.iter().any(|ft| t.contains(ft))
+                })
+            })
+            .map(|card| (card.agent_id.clone(), card.metadata.description.clone()))
+            .collect()
+    }
+
+    /// Fire a single agent in the background. Results flow back via cx.spawn.
+    fn fire_agent(&self, agent_id: &str, query: &str, cx: &mut Context<Self>) {
+        let registry = self.registry.clone();
+        let aid = agent_id.to_string();
+        let q = query.to_string();
+
+        cx.spawn(async move |this, cx| {
+            log::info!("[composer] Firing {} (local registry)", aid);
+
+            let card = match registry.get(&aid) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("[composer] {} not found: {}", aid, e);
+                    this.update(cx, |state, cx| {
+                        state.mark_agent_failed(&aid, &format!("Not in registry: {}", e));
+                        cx.notify();
+                    }).ok();
+                    return;
+                }
+            };
+
+            let agent_stmt = AgentStmt {
+                name: aid.clone(),
+                agent_type: Some("research".into()),
+                query: q,
+                executor: Some(fermi::ast::ExecutorType::LLM),
+                schedule: None,
+                driver_refs: vec![],
+                depends_on: vec![],
+                confidence_threshold: None,
+            };
+
+            let program = Program {
+                statements: vec![Statement::Agent(agent_stmt.clone())],
+            };
+
+            let context = ExecutionContext {
+                program,
+                agent_card: card.clone(),
+            };
+
+            match registry.execute_agent(&agent_stmt, &context).await {
+                Ok(output) => {
+                    log::info!("[composer] {} completed: {} evidence, confidence={:.2}",
+                        aid, output.evidence.len(), output.confidence);
+
+                    let result_json = serde_json::json!({
+                        "agent_id": output.agent_name,
+                        "status": format!("{:?}", output.status),
+                        "confidence": output.confidence,
+                        "execution_time_ms": output.execution_time_ms,
+                        "tokens_used": output.tokens_used,
+                        "evidence": output.evidence.iter().map(|e| serde_json::json!({
+                            "id": e.id,
+                            "source": e.source,
+                            "summary": e.summary.clone().unwrap_or_default(),
+                            "key_findings": e.key_findings,
+                            "relevance": e.relevance.unwrap_or(0.0),
+                        })).collect::<Vec<_>>(),
+                        "metadata": {
+                            "model_used": output.metadata.model_used,
+                            "reasoning": output.metadata.reasoning,
+                        }
+                    });
+
+                    let findings: Vec<String> = output.evidence.iter()
+                        .flat_map(|e| e.key_findings.iter().cloned())
+                        .take(5)
+                        .collect();
+
+                    this.update(cx, |state, cx| {
+                        // macro_forecaster gets special processing (base rate + drivers)
+                        if aid == "macro_forecaster" {
+                            state.process_macro_forecaster_result(&result_json);
+                        } else {
+                            // Other agents: add evidence to AST
+                            state.process_agent_evidence(&aid, &result_json);
+                        }
+
+                        if !findings.is_empty() {
+                            state.messages.push(AssistantMessage {
+                                node: format!("agent:{}", aid),
+                                kind: MessageKind::Tip,
+                                text: format!("🦊 {} findings:\n{}",
+                                    aid,
+                                    findings.iter()
+                                        .map(|f| format!("• {}", f))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")),
+                            });
+                        }
+
+                        state.messages.push(AssistantMessage {
+                            node: format!("agent:{}", aid),
+                            kind: MessageKind::Info,
+                            text: format!("✓ {} complete", aid),
+                        });
+
+                        // Check if all agents done
+                        let all_done = state.agent_runs.iter()
+                            .all(|r| r.status != AgentRunStatus::Running);
+                        if all_done {
+                            state.orchestration_running = false;
+                            state.messages.push(AssistantMessage {
+                                node: "question".into(),
+                                kind: MessageKind::Suggestion,
+                                text: "All agents complete. Review drivers and evidence, then Ctrl+R to simulate.".into(),
+                            });
+                        }
+
+                        cx.notify();
+                    }).ok();
+                }
+                Err(e) => {
+                    log::error!("[composer] {} failed: {}", aid, e);
+                    this.update(cx, |state, cx| {
+                        state.mark_agent_failed(&aid, &format!("{}", e));
+                        cx.notify();
+                    }).ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Process evidence from a non-macro_forecaster agent.
+    fn process_agent_evidence(&mut self, agent_id: &str, result: &JsonValue) {
+        if let Some(run) = self.agent_runs.iter_mut().find(|r| r.agent_name == agent_id) {
+            run.status = AgentRunStatus::Completed;
+            run.confidence = result.get("confidence").and_then(|v| v.as_f64());
+            run.credits_charged = result.get("credits_charged").and_then(|v| v.as_f64());
+            if let Some(c) = run.credits_charged { self.session_cost += c; }
+        }
+
+        if let Some(evidence_arr) = result.get("evidence").and_then(|v| v.as_array()) {
+            let mut count = 0;
+            for ev in evidence_arr {
+                let source = ev.get("source").and_then(|v| v.as_str()).unwrap_or(agent_id);
+                let summary = ev.get("summary").and_then(|v| v.as_str());
+                let relevance = ev.get("relevance").and_then(|v| v.as_f64());
+                let key_findings: Vec<String> = ev.get("key_findings")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+
+                self.program.add_evidence(EvidenceStmt {
+                    id: format!("{}_{}", agent_id, count),
+                    source: source.to_string(),
+                    summary: summary.map(|s| s.to_string()),
+                    url: None,
+                    relevance,
+                    date: Some(chrono::Utc::now().format("%Y-%m-%d").to_string()),
+                    strength: relevance,
+                    key_findings,
+                });
+                count += 1;
+            }
+            if let Some(run) = self.agent_runs.iter_mut().find(|r| r.agent_name == agent_id) {
+                run.evidence_count = count;
+            }
+        }
+    }
     fn mark_agent_failed(&mut self, agent_name: &str, error: &str) {
         if let Some(run) = self
             .agent_runs
