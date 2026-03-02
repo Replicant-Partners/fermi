@@ -551,70 +551,13 @@ impl CockpitState {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        // Try parsing reasoning as JSON first
-        let mut structured: Option<JsonValue> = serde_json::from_str(reasoning).ok();
-
-        // Fallback: reconstruct JSON from evidence key_findings + summary
-        // The LLMExecutor splits JSON responses into individual lines as findings
-        // and truncates the summary. We need to reassemble the original JSON.
-        if structured.is_none() {
-            if let Some(evidence_arr) = result.get("evidence").and_then(|v| v.as_array()) {
-                // Concatenate summary + all key_findings to reconstruct the response
-                let mut all_text = String::new();
-                for ev in evidence_arr {
-                    if let Some(summary) = ev.get("summary").and_then(|v| v.as_str()) {
-                        all_text.push_str(summary);
-                    }
-                    if let Some(findings) = ev.get("key_findings").and_then(|v| v.as_array()) {
-                        for f in findings {
-                            if let Some(s) = f.as_str() {
-                                all_text.push('\n');
-                                all_text.push_str(s);
-                            }
-                        }
-                    }
-                }
-                // Also try reasoning
-                if !reasoning.is_empty() {
-                    all_text.push('\n');
-                    all_text.push_str(reasoning);
-                }
-
-                log::info!("[composer] Reconstructed text length: {}", all_text.len());
-
-                // Try to find a JSON object in the concatenated text
-                if let Some(start) = all_text.find('{') {
-                    // Find matching closing brace (handle nesting)
-                    let mut depth = 0;
-                    let mut end = start;
-                    for (i, ch) in all_text[start..].char_indices() {
-                        match ch {
-                            '{' => depth += 1,
-                            '}' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    end = start + i;
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    if end > start {
-                        let json_candidate = &all_text[start..=end];
-                        log::info!("[composer] JSON candidate length: {}", json_candidate.len());
-                        match serde_json::from_str::<JsonValue>(json_candidate) {
-                            Ok(parsed) => {
-                                log::info!("[composer] Successfully parsed JSON from evidence text");
-                                structured = Some(parsed);
-                            }
-                            Err(e) => {
-                                log::warn!("[composer] JSON parse failed: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
+        // Try parsing reasoning as JSON (works when agent returns structured output)
+        let structured: Option<JsonValue> = serde_json::from_str(reasoning).ok();
+        
+        if structured.is_some() {
+            log::info!("[composer] Parsed structured JSON from reasoning");
+        } else {
+            log::info!("[composer] Agent returned text (not JSON) - using as evidence");
         }
 
         // ── Base Rate ─────────────────────────────────────────────
@@ -648,6 +591,7 @@ impl CockpitState {
                     });
                 }
                 self.predicted_probability = freq;
+                log::info!("[composer] BASE RATE SET: {:.0}% ref_class={}", freq * 100.0, ref_class);
 
                 self.messages.push(AssistantMessage {
                     node: "question".into(),
@@ -731,6 +675,7 @@ impl CockpitState {
 
                     // Replace scaffold driver if it exists, otherwise add
                     self.program.add_driver(driver_stmt);
+                    log::info!("[composer] DRIVER ADDED from agent: {}", sanitize_name(name));
 
                     self.messages.push(AssistantMessage {
                         node: format!("driver:{}", sanitize_name(name)),

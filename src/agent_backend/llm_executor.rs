@@ -217,6 +217,9 @@ impl AgentExecutor for LLMExecutor {
         // Call Claude API
         let claude_response = self.send_request(&request).await?;
 
+        // Extract the full response text BEFORE parsing into evidence
+        let full_response_text = extract_text_from_content(&claude_response.content);
+
         // Extract evidence
         let evidence = self.parse_response(&claude_response, &agent.name)?;
         let confidence = evidence.strength.unwrap_or(0.5);
@@ -238,7 +241,9 @@ impl AgentExecutor for LLMExecutor {
             metadata: AgentMetadata {
                 model_used: Some(claude_response.model),
                 temperature: Some(request.temperature),
-                reasoning: None,
+                // Store the full response text so downstream consumers
+                // can parse structured data from it
+                reasoning: Some(full_response_text),
             },
             tool_invocations: vec![],
             loop_iterations: 1,
