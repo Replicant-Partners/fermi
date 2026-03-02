@@ -129,12 +129,14 @@ impl LLMExecutor {
             }
             Err(_) => {
                 // Fallback: treat as plain text evidence
-                // Take first 500 chars as summary, split into findings by newlines
-                let summary: String = text.chars().take(500).collect();
+                // IMPORTANT: preserve the FULL text as summary so downstream
+                // consumers can parse structured data from it.
+                // Also store key lines as findings for display.
+                let summary = text.to_string();
                 let findings: Vec<String> = text
                     .lines()
                     .filter(|l| !l.trim().is_empty() && l.len() > 10)
-                    .take(5)
+                    .take(10)
                     .map(|l| l.trim().to_string())
                     .collect();
 
