@@ -368,6 +368,12 @@ impl CockpitState {
             credits_charged: None,
         });
 
+        self.messages.push(AssistantMessage {
+            node: "question".into(),
+            kind: MessageKind::Info,
+            text: "⟳ Assembling research team… macro_forecaster is analyzing your question.".into(),
+        });
+
         // Execute agent LOCALLY using the registry (same as MCP server)
         let registry = self.registry.clone();
         let q = macro_query.clone();
@@ -446,137 +452,36 @@ impl CockpitState {
                         }
                     });
 
-                    // Process the raw evidence first
+                    // Process evidence and update UI immediately
                     this.update(cx, |state, cx| {
                         state.process_macro_forecaster_result(&result_json);
+
+                        // Extract key findings from evidence to guide the user
+                        let findings: Vec<String> = output.evidence.iter()
+                            .flat_map(|e| e.key_findings.iter().cloned())
+                            .take(5)
+                            .collect();
+
+                        if !findings.is_empty() {
+                            state.messages.push(AssistantMessage {
+                                node: "question".into(),
+                                kind: MessageKind::Tip,
+                                text: format!("🦊 Key findings from research:\n{}",
+                                    findings.iter()
+                                        .map(|f| format!("• {}", f))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")),
+                            });
+                        }
+
                         state.messages.push(AssistantMessage {
                             node: "question".into(),
-                            kind: MessageKind::Info,
-                            text: "Research complete. Interpreting into Fermi decomposition…".into(),
+                            kind: MessageKind::Suggestion,
+                            text: "Review the evidence above and adjust driver estimates. Click a driver to edit, then Ctrl+R to simulate.".into(),
                         });
+
                         cx.notify();
                     }).ok();
-
-                    // ── Fermi Assistant: interpret analysis into structured FPL ──
-                    // This is what Claude does in Zed — reads agent output, writes FPL.
-                    log::info!("[composer] Firing Fermi Assistant to interpret analysis");
-
-                    let assist_card = match registry.get("macro_forecaster") {
-                        Ok(c) => c.clone(),
-                        Err(_) => { return; }
-                    };
-
-                    let assist_query = format!(
-                        "Based on this research analysis, generate a JSON Fermi decomposition.\n\n\
-                         ANALYSIS:\n{}\n\n\
-                         Return ONLY a JSON object with this exact structure:\n\
-                         {{\"base_rate\":{{\"reference_class\":\"...\",\"historical_frequency\":0.35,\"sample_size\":100,\"reasoning\":\"...\"}},\
-                         \"drivers\":[{{\"name\":\"snake_case\",\"display_name\":\"Human Name\",\"type\":\"continuous\",\"p5\":10,\"p50\":50,\"p95\":100,\"unit\":\"USD\",\"rationale\":\"...\"}},\
-                         {{\"name\":\"event_name\",\"display_name\":\"Event\",\"type\":\"binary\",\"probability\":0.3,\"impact_multiplier\":1.4,\"rationale\":\"...\"}}],\
-                         \"model_expression\":\"driver_a * driver_b * (if event then 1.4 else 1.0)\",\
-                         \"confidence\":0.7}}\n\n\
-                         Use 3-5 drivers with REALISTIC estimates from the analysis. JSON ONLY, no markdown.",
-                        full_analysis
-                    );
-
-                    let assist_stmt = AgentStmt {
-                        name: "fermi_assistant".into(),
-                        agent_type: Some("research".into()),
-                        query: assist_query,
-                        executor: Some(fermi::ast::ExecutorType::LLM),
-                        schedule: None,
-                        driver_refs: vec![],
-                        depends_on: vec![],
-                        confidence_threshold: None,
-                    };
-
-                    let assist_program = Program {
-                        statements: vec![Statement::Agent(assist_stmt.clone())],
-                    };
-
-                    let mut assist_card_mod = assist_card;
-                    assist_card_mod.system_prompt = Some(
-                        "You are the Fermi FPL Assistant. You interpret research into structured \
-                         JSON for probabilistic forecasts. Always respond with valid JSON only. \
-                         No markdown, no explanation, just the JSON object.".to_string()
-                    );
-
-                    let assist_context = ExecutionContext {
-                        program: assist_program,
-                        agent_card: assist_card_mod,
-                    };
-
-                    match registry.execute_agent(&assist_stmt, &assist_context).await {
-                        Ok(assist_output) => {
-                            // Collect all text from the assistant response
-                            let assist_text = assist_output.evidence.iter()
-                                .map(|e| e.summary.clone().unwrap_or_default())
-                                .collect::<Vec<_>>()
-                                .join("");
-                            let assist_reasoning = assist_output.metadata.reasoning
-                                .clone().unwrap_or_default();
-
-                            // Try to find JSON in either the evidence text or reasoning
-                            let json_source = if assist_text.contains('{') {
-                                assist_text.clone()
-                            } else {
-                                assist_reasoning.clone()
-                            };
-
-                            let json_start = json_source.find('{').unwrap_or(0);
-                            let json_end = json_source.rfind('}')
-                                .map(|i| i + 1)
-                                .unwrap_or(json_source.len());
-                            let json_str = &json_source[json_start..json_end];
-
-                            if let Ok(structured) = serde_json::from_str::<JsonValue>(json_str) {
-                                log::info!("[composer] Fermi Assistant produced structured decomposition");
-
-                                // Wrap it so process_macro_forecaster_result can parse it
-                                let structured_json = serde_json::json!({
-                                    "metadata": {
-                                        "reasoning": serde_json::to_string(&structured)
-                                            .unwrap_or_default()
-                                    },
-                                    "evidence": [],
-                                    "confidence": structured.get("confidence")
-                                        .and_then(|v| v.as_f64()).unwrap_or(0.5),
-                                });
-
-                                this.update(cx, |state, cx| {
-                                    state.process_macro_forecaster_result(&structured_json);
-                                    state.messages.push(AssistantMessage {
-                                        node: "question".into(),
-                                        kind: MessageKind::Tip,
-                                        text: "🦊 Fermi Assistant interpreted the research into driver estimates. Review and adjust.".into(),
-                                    });
-                                    cx.notify();
-                                }).ok();
-                            } else {
-                                log::warn!("[composer] Fermi Assistant response was not valid JSON: {}",
-                                    &json_str[..json_str.len().min(200)]);
-                                this.update(cx, |state, cx| {
-                                    state.messages.push(AssistantMessage {
-                                        node: "question".into(),
-                                        kind: MessageKind::Warning,
-                                        text: "Assistant couldn't produce structured decomposition. Set driver values manually.".into(),
-                                    });
-                                    cx.notify();
-                                }).ok();
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("[composer] Fermi Assistant failed: {}", e);
-                            this.update(cx, |state, cx| {
-                                state.messages.push(AssistantMessage {
-                                    node: "question".into(),
-                                    kind: MessageKind::Warning,
-                                    text: format!("Assistant interpretation failed: {}. Set driver values manually.", e),
-                                });
-                                cx.notify();
-                            }).ok();
-                        }
-                    }
                 }
                 Err(e) => {
                     log::error!("[composer] macro_forecaster execution failed: {}", e);
@@ -1385,9 +1290,27 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                 .when(state.orchestration_running, |el| {
                     el.child(
                         div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(theme::GOLD))
-                            .child("⟳ Researching…"),
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(0x2A2D3A))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(rgb(theme::GOLD))
+                                    .child("⟳"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(theme::GOLD))
+                                    .child(
+                                        "Researching… macro_forecaster is analyzing your question",
+                                    ),
+                            ),
                     )
                 })
                 .when(state.publish_status.is_some(), |el| {
@@ -1998,35 +1921,35 @@ fn generate_decomposition(question: &str, domain: &str) -> (Vec<DriverStmt>, Opt
                     "market_tam",
                     "Total Addressable Market",
                     "USD",
-                    0.0,
-                    0.0,
-                    0.0,
-                    "TAM for the relevant market segment",
+                    500_000_000.0,
+                    2_000_000_000.0,
+                    5_000_000_000.0,
+                    "TAM for the relevant market segment — adjust to your specific market",
                 ),
                 make_continuous_driver(
                     "market_share",
                     "Market Share",
                     "ratio",
-                    0.0,
-                    0.0,
-                    0.0,
-                    "Expected market share capture",
+                    0.05,
+                    0.15,
+                    0.30,
+                    "Expected market share capture — typical range for established players",
                 ),
                 make_continuous_driver(
                     "growth_rate",
                     "Growth Rate",
                     "annual ratio",
-                    0.0,
-                    0.0,
-                    0.0,
-                    "Year-over-year growth rate",
+                    0.05,
+                    0.15,
+                    0.35,
+                    "Year-over-year growth rate — adjust based on industry and maturity",
                 ),
                 make_binary_driver(
                     "major_event",
                     "Major Catalyst/Risk",
-                    0.0,
+                    0.20,
                     1.3,
-                    "Probability of a significant positive or negative event",
+                    "Probability of a significant positive or negative event (e.g. acquisition, regulation)",
                 ),
             ];
             let model = Expression::Multiply(
@@ -2051,26 +1974,26 @@ fn generate_decomposition(question: &str, domain: &str) -> (Vec<DriverStmt>, Opt
                     "adoption_rate",
                     "Adoption Rate",
                     "%",
-                    0.0,
-                    0.0,
-                    0.0,
-                    "Market adoption within forecast horizon",
+                    5.0,
+                    20.0,
+                    50.0,
+                    "Market adoption within forecast horizon — S-curve position matters",
                 ),
                 make_continuous_driver(
                     "competitive_moat",
                     "Competitive Advantage",
                     "score",
-                    0.0,
-                    0.0,
-                    0.0,
-                    "Strength of competitive position",
+                    0.2,
+                    0.5,
+                    0.8,
+                    "Strength of competitive position (0=none, 1=monopoly)",
                 ),
                 make_binary_driver(
                     "regulatory_risk",
                     "Regulatory Risk",
-                    0.0,
+                    0.25,
                     0.6,
-                    "Probability of adverse regulatory action",
+                    "Probability of adverse regulatory action reducing outcome by 40%",
                 ),
             ];
             let model = Expression::Multiply(
@@ -2092,26 +2015,26 @@ fn generate_decomposition(question: &str, domain: &str) -> (Vec<DriverStmt>, Opt
                     "primary_factor",
                     "Primary Factor",
                     "",
-                    0.0,
-                    0.0,
-                    0.0,
-                    "The main driver — set your estimates",
+                    10.0,
+                    50.0,
+                    100.0,
+                    "The main driver — adjust the range to match your question",
                 ),
                 make_continuous_driver(
                     "secondary_factor",
                     "Secondary Factor",
                     "multiplier",
-                    0.0,
-                    0.0,
-                    0.0,
-                    "A modifying factor",
+                    0.7,
+                    1.0,
+                    1.5,
+                    "A modifying factor (1.0 = neutral, >1 = amplifying, <1 = dampening)",
                 ),
                 make_binary_driver(
                     "disruption",
                     "Disruption Event",
-                    0.0,
+                    0.15,
                     1.5,
-                    "Probability of a disruptive event",
+                    "Probability of a disruptive event that amplifies the outcome by 50%",
                 ),
             ];
             let model = Expression::Multiply(
