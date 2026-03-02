@@ -21,14 +21,12 @@ use gpui::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
+use fermi::agent_backend::{
+    llm_executor::LLMExecutor, registry::AgentRegistry, AgentOutput, ExecutionContext,
+};
 use fermi::ast::{
     AgentStmt, BaseRate, Distribution, DriverStmt, DriverType, EvidenceStmt, Expression,
     GeneratedBy, ModelStmt, Program, QuestionStmt, Schedule, SimulateStmt, Statement,
-};
-use fermi::agent_backend::{
-    AgentOutput, ExecutionContext,
-    llm_executor::LLMExecutor,
-    registry::AgentRegistry,
 };
 
 use crate::api::client::{AgentExecutionResult, ApiClient, CreateForecastRequest};
@@ -420,7 +418,15 @@ impl CockpitState {
                         output.confidence,
                     );
 
-                    // Convert AgentOutput to JsonValue for processing
+                    // Store the raw analysis for the Fermi Assistant
+                    let raw_analysis: String = output.evidence.iter()
+                        .map(|e| e.summary.clone().unwrap_or_default())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let reasoning = output.metadata.reasoning.clone().unwrap_or_default();
+                    let full_analysis = format!("{}\n\n{}", reasoning, raw_analysis);
+
+                    // Convert AgentOutput to JsonValue for evidence processing
                     let result_json = serde_json::json!({
                         "agent_id": output.agent_name,
                         "status": format!("{:?}", output.status),
@@ -440,10 +446,137 @@ impl CockpitState {
                         }
                     });
 
+                    // Process the raw evidence first
                     this.update(cx, |state, cx| {
                         state.process_macro_forecaster_result(&result_json);
+                        state.messages.push(AssistantMessage {
+                            node: "question".into(),
+                            kind: MessageKind::Info,
+                            text: "Research complete. Interpreting into Fermi decomposition…".into(),
+                        });
                         cx.notify();
                     }).ok();
+
+                    // ── Fermi Assistant: interpret analysis into structured FPL ──
+                    // This is what Claude does in Zed — reads agent output, writes FPL.
+                    log::info!("[composer] Firing Fermi Assistant to interpret analysis");
+
+                    let assist_card = match registry.get("macro_forecaster") {
+                        Ok(c) => c.clone(),
+                        Err(_) => { return; }
+                    };
+
+                    let assist_query = format!(
+                        "Based on this research analysis, generate a JSON Fermi decomposition.\n\n\
+                         ANALYSIS:\n{}\n\n\
+                         Return ONLY a JSON object with this exact structure:\n\
+                         {{\"base_rate\":{{\"reference_class\":\"...\",\"historical_frequency\":0.35,\"sample_size\":100,\"reasoning\":\"...\"}},\
+                         \"drivers\":[{{\"name\":\"snake_case\",\"display_name\":\"Human Name\",\"type\":\"continuous\",\"p5\":10,\"p50\":50,\"p95\":100,\"unit\":\"USD\",\"rationale\":\"...\"}},\
+                         {{\"name\":\"event_name\",\"display_name\":\"Event\",\"type\":\"binary\",\"probability\":0.3,\"impact_multiplier\":1.4,\"rationale\":\"...\"}}],\
+                         \"model_expression\":\"driver_a * driver_b * (if event then 1.4 else 1.0)\",\
+                         \"confidence\":0.7}}\n\n\
+                         Use 3-5 drivers with REALISTIC estimates from the analysis. JSON ONLY, no markdown.",
+                        full_analysis
+                    );
+
+                    let assist_stmt = AgentStmt {
+                        name: "fermi_assistant".into(),
+                        agent_type: Some("research".into()),
+                        query: assist_query,
+                        executor: Some(fermi::ast::ExecutorType::LLM),
+                        schedule: None,
+                        driver_refs: vec![],
+                        depends_on: vec![],
+                        confidence_threshold: None,
+                    };
+
+                    let assist_program = Program {
+                        statements: vec![Statement::Agent(assist_stmt.clone())],
+                    };
+
+                    let mut assist_card_mod = assist_card;
+                    assist_card_mod.system_prompt = Some(
+                        "You are the Fermi FPL Assistant. You interpret research into structured \
+                         JSON for probabilistic forecasts. Always respond with valid JSON only. \
+                         No markdown, no explanation, just the JSON object.".to_string()
+                    );
+
+                    let assist_context = ExecutionContext {
+                        program: assist_program,
+                        agent_card: assist_card_mod,
+                    };
+
+                    match registry.execute_agent(&assist_stmt, &assist_context).await {
+                        Ok(assist_output) => {
+                            // Collect all text from the assistant response
+                            let assist_text = assist_output.evidence.iter()
+                                .map(|e| e.summary.clone().unwrap_or_default())
+                                .collect::<Vec<_>>()
+                                .join("");
+                            let assist_reasoning = assist_output.metadata.reasoning
+                                .clone().unwrap_or_default();
+
+                            // Try to find JSON in either the evidence text or reasoning
+                            let json_source = if assist_text.contains('{') {
+                                assist_text.clone()
+                            } else {
+                                assist_reasoning.clone()
+                            };
+
+                            let json_start = json_source.find('{').unwrap_or(0);
+                            let json_end = json_source.rfind('}')
+                                .map(|i| i + 1)
+                                .unwrap_or(json_source.len());
+                            let json_str = &json_source[json_start..json_end];
+
+                            if let Ok(structured) = serde_json::from_str::<JsonValue>(json_str) {
+                                log::info!("[composer] Fermi Assistant produced structured decomposition");
+
+                                // Wrap it so process_macro_forecaster_result can parse it
+                                let structured_json = serde_json::json!({
+                                    "metadata": {
+                                        "reasoning": serde_json::to_string(&structured)
+                                            .unwrap_or_default()
+                                    },
+                                    "evidence": [],
+                                    "confidence": structured.get("confidence")
+                                        .and_then(|v| v.as_f64()).unwrap_or(0.5),
+                                });
+
+                                this.update(cx, |state, cx| {
+                                    state.process_macro_forecaster_result(&structured_json);
+                                    state.messages.push(AssistantMessage {
+                                        node: "question".into(),
+                                        kind: MessageKind::Tip,
+                                        text: "🦊 Fermi Assistant interpreted the research into driver estimates. Review and adjust.".into(),
+                                    });
+                                    cx.notify();
+                                }).ok();
+                            } else {
+                                log::warn!("[composer] Fermi Assistant response was not valid JSON: {}",
+                                    &json_str[..json_str.len().min(200)]);
+                                this.update(cx, |state, cx| {
+                                    state.messages.push(AssistantMessage {
+                                        node: "question".into(),
+                                        kind: MessageKind::Warning,
+                                        text: "Assistant couldn't produce structured decomposition. Set driver values manually.".into(),
+                                    });
+                                    cx.notify();
+                                }).ok();
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("[composer] Fermi Assistant failed: {}", e);
+                            this.update(cx, |state, cx| {
+                                state.messages.push(AssistantMessage {
+                                    node: "question".into(),
+                                    kind: MessageKind::Warning,
+                                    text: format!("Assistant interpretation failed: {}. Set driver values manually.", e),
+                                });
+                                cx.notify();
+                            }).ok();
+                        }
+                    }
                 }
                 Err(e) => {
                     log::error!("[composer] macro_forecaster execution failed: {}", e);
@@ -811,34 +944,54 @@ impl CockpitState {
             let d_rationale = driver.rationale.clone().unwrap_or_default();
             let d_unit = driver.unit.clone().unwrap_or_default();
             let d_type = driver.driver_type.clone();
-            let d_p5 = driver.distribution.as_ref().map(|d| match d {
-                Distribution::Triangular { p5, .. } => expr_to_f64(p5),
-                _ => 0.0,
-            }).unwrap_or(0.0);
-            let d_p50 = driver.distribution.as_ref().map(|d| match d {
-                Distribution::Triangular { p50, .. } => expr_to_f64(p50),
-                _ => 0.0,
-            }).unwrap_or(0.0);
-            let d_p95 = driver.distribution.as_ref().map(|d| match d {
-                Distribution::Triangular { p95, .. } => expr_to_f64(p95),
-                _ => 0.0,
-            }).unwrap_or(0.0);
+            let d_p5 = driver
+                .distribution
+                .as_ref()
+                .map(|d| match d {
+                    Distribution::Triangular { p5, .. } => expr_to_f64(p5),
+                    _ => 0.0,
+                })
+                .unwrap_or(0.0);
+            let d_p50 = driver
+                .distribution
+                .as_ref()
+                .map(|d| match d {
+                    Distribution::Triangular { p50, .. } => expr_to_f64(p50),
+                    _ => 0.0,
+                })
+                .unwrap_or(0.0);
+            let d_p95 = driver
+                .distribution
+                .as_ref()
+                .map(|d| match d {
+                    Distribution::Triangular { p95, .. } => expr_to_f64(p95),
+                    _ => 0.0,
+                })
+                .unwrap_or(0.0);
             let d_prob = driver.probability.unwrap_or(0.5);
             let d_impact = driver.impact_multiplier.unwrap_or(1.3);
 
-            self.editor_name.update(cx, |input, cx| input.set_text(d_name, cx));
-            self.editor_rationale.update(cx, |input, cx| input.set_text(d_rationale, cx));
+            self.editor_name
+                .update(cx, |input, cx| input.set_text(d_name, cx));
+            self.editor_rationale
+                .update(cx, |input, cx| input.set_text(d_rationale, cx));
 
             match d_type {
                 DriverType::Continuous => {
-                    self.editor_p5.update(cx, |input, cx| input.set_text(format!("{}", d_p5), cx));
-                    self.editor_p50.update(cx, |input, cx| input.set_text(format!("{}", d_p50), cx));
-                    self.editor_p95.update(cx, |input, cx| input.set_text(format!("{}", d_p95), cx));
-                    self.editor_unit.update(cx, |input, cx| input.set_text(d_unit, cx));
+                    self.editor_p5
+                        .update(cx, |input, cx| input.set_text(format!("{}", d_p5), cx));
+                    self.editor_p50
+                        .update(cx, |input, cx| input.set_text(format!("{}", d_p50), cx));
+                    self.editor_p95
+                        .update(cx, |input, cx| input.set_text(format!("{}", d_p95), cx));
+                    self.editor_unit
+                        .update(cx, |input, cx| input.set_text(d_unit, cx));
                 }
                 DriverType::Binary => {
-                    self.editor_prob.update(cx, |input, cx| input.set_text(format!("{}", d_prob), cx));
-                    self.editor_impact.update(cx, |input, cx| input.set_text(format!("{}", d_impact), cx));
+                    self.editor_prob
+                        .update(cx, |input, cx| input.set_text(format!("{}", d_prob), cx));
+                    self.editor_impact
+                        .update(cx, |input, cx| input.set_text(format!("{}", d_impact), cx));
                 }
                 _ => {}
             }
