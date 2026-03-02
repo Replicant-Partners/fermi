@@ -729,8 +729,8 @@ impl Lexer {
             token_type,
             lexeme,
             self.line,
-            self.column - lexeme_len,
-            self.current - lexeme_len,
+            self.column.saturating_sub(lexeme_len),
+            self.current.saturating_sub(lexeme_len),
         );
         self.tokens.push(token);
     }

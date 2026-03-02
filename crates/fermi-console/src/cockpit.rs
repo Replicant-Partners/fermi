@@ -622,6 +622,15 @@ impl CockpitState {
 
             // ── Drivers from structured response ──────────────────
             if let Some(drivers_arr) = data.get("drivers").and_then(|v| v.as_array()) {
+                // Clear template drivers — agent provides real ones
+                let template_names: Vec<String> = self.program.drivers()
+                    .iter().map(|d| d.name.clone()).collect();
+                for name in &template_names {
+                    self.program.remove_driver(&name);
+                }
+                // Also clear the template model — agent may suggest a new one
+                let cleared_count = template_names.len();
+                log::info!("[composer] Cleared {} template drivers, replacing with agent suggestions", cleared_count);
                 for drv in drivers_arr {
                     let name = drv
                         .get("name")
