@@ -44,6 +44,8 @@ pub enum FocusedNode {
     Question,
     /// A specific driver by name — editing its parameters
     Driver(String),
+    /// Picking an agent to assign to a driver
+    AgentPicker(String),
     /// The model expression
     Model,
     /// Simulation config / results
@@ -126,6 +128,9 @@ pub struct CockpitState {
 
     // ── Assistant Messages ─────────────────────────────────────────
     pub messages: Vec<AssistantMessage>,
+
+    // ── Agent Picker State ─────────────────────────────────────────
+    pub agent_search_query: String,
 
     // ── Simulation Results (runtime, not in AST) ──────────────────
     pub sim_results: Option<SimResults>,
@@ -230,6 +235,7 @@ impl CockpitState {
                 kind: MessageKind::Suggestion,
                 text: "Type a forecast question to begin. The FPL Assistant will analyze it and suggest a Fermi decomposition.".into(),
             }],
+            agent_search_query: String::new(),
             sim_results: None,
             sim_running: false,
             sim_error: None,
@@ -838,12 +844,58 @@ impl CockpitState {
     // Driver Editing
     // ═══════════════════════════════════════════════════════════════
 
-    /// Focus on a driver for editing. Populates the shared editor fields.
-    pub fn focus_driver(&mut self, name: &str, cx: &mut Context<Self>) {
-        self.save_focused_driver(cx); // save previous
-        self.focused_node = FocusedNode::Driver(name.to_string());
+    /// Open the agent picker for a specific driver.
+    pub fn open_agent_picker(&mut self, driver_name: &str, cx: &mut Context<Self>) {
+        self.save_focused_driver(cx);
+        self.agent_search_query.clear();
+        self.focused_node = FocusedNode::AgentPicker(driver_name.to_string());
+        cx.notify();
+    }
 
-        // Extract values from driver to avoid borrow conflicts
+    /// Assign an agent to a driver in the AST.
+    pub fn assign_agent_to_driver(
+        &mut self,
+        driver_name: &str,
+        agent_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        // Add an AgentStmt to the program bound to this driver
+        let question_text = self
+            .program
+            .question()
+            .map(|q| q.text.clone())
+            .unwrap_or_default();
+
+        let query = format!(
+            "Research evidence for the '{}' driver in the forecast: \"{}\"",
+            driver_name, question_text
+        );
+
+        self.program.add_agent(AgentStmt {
+            name: agent_id.to_string(),
+            agent_type: Some("research".into()),
+            query,
+            executor: Some(fermi::ast::ExecutorType::LLM),
+            schedule: Some(Schedule::Once),
+            driver_refs: vec![driver_name.to_string()],
+            depends_on: vec![],
+            confidence_threshold: None,
+        });
+
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", driver_name),
+            kind: MessageKind::Info,
+            text: format!("Agent '{}' assigned to driver '{}'.", agent_id, driver_name),
+        });
+
+        // Switch back to driver view
+        self.focused_node = FocusedNode::Driver(driver_name.to_string());
+        self.populate_editor_from_driver(driver_name, cx);
+        cx.notify();
+    }
+
+    /// Helper to populate editor fields from a driver name.
+    fn populate_editor_from_driver(&self, name: &str, cx: &mut Context<Self>) {
         if let Some(driver) = self.program.driver(name) {
             let d_name = driver.name.clone();
             let d_rationale = driver.rationale.clone().unwrap_or_default();
@@ -901,6 +953,14 @@ impl CockpitState {
                 _ => {}
             }
         }
+    }
+
+    /// Focus on a driver for editing. Populates the shared editor fields.
+    pub fn focus_driver(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.save_focused_driver(cx); // save previous
+        self.focused_node = FocusedNode::Driver(name.to_string());
+
+        self.populate_editor_from_driver(name, cx);
         cx.notify();
     }
 
@@ -1182,8 +1242,9 @@ impl Render for CockpitState {
                     .w(px(700.0))
                     .h_full()
                     .overflow_y_scroll()
-                    // Question section
+                    // Question + Outside View section
                     .child(render_question_section(self))
+                    .child(render_outside_view(self))
                     // Drivers section (the core of the forecast)
                     .child(
                         div()
@@ -1201,10 +1262,28 @@ impl Render for CockpitState {
                                     .child(format!("Drivers ({})", driver_names.len())),
                             )
                             .children(driver_names.iter().enumerate().map(|(i, name)| {
-                                let is_focused = focused == FocusedNode::Driver(name.clone());
+                                let is_focused = focused == FocusedNode::Driver(name.clone())
+                                    || focused == FocusedNode::AgentPicker(name.clone());
                                 let driver = self.program.driver(name);
+                                // Find agents assigned to this driver
+                                let assigned_agents: Vec<String> = self
+                                    .program
+                                    .agents()
+                                    .iter()
+                                    .filter(|a| a.driver_refs.contains(&name.to_string()))
+                                    .map(|a| a.name.clone())
+                                    .collect();
                                 let n = name.clone();
-                                render_driver_card(i, driver, is_focused, &self.messages, cx, &n)
+                                render_driver_card(
+                                    i,
+                                    driver,
+                                    is_focused,
+                                    &assigned_agents,
+                                    &self.agent_runs,
+                                    &self.messages,
+                                    cx,
+                                    &n,
+                                )
                             }))
                             // Simulation results
                             .child(render_simulation_section(self))
@@ -1224,8 +1303,8 @@ impl Render for CockpitState {
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_l_1()
                     .border_color(rgb(theme::FG_FAINT))
-                    // Editor panel (for focused driver) — with close button
-                    .child(render_editor_panel(self, &focused, cx))
+                    // Right panel content — context-sensitive
+                    .child(render_right_panel(self, &focused, cx))
                     // Assistant messages
                     .child(render_assistant_panel(&self.messages))
                     // FPL source (if toggled)
@@ -1246,17 +1325,6 @@ pub fn render_cockpit(cockpit: &Entity<CockpitState>) -> impl IntoElement {
 
 fn render_question_section(state: &CockpitState) -> impl IntoElement {
     let prob_pct = format!("{:.0}%", state.predicted_probability * 100.0);
-    let base_rate = state
-        .program
-        .question()
-        .and_then(|q| q.base_rate.as_ref())
-        .map(|br| {
-            format!(
-                "Base rate: {:.0}% ({})",
-                br.historical_frequency * 100.0,
-                br.reference_class
-            )
-        });
 
     div()
         .bg(rgb(theme::BG_ELEVATED))
@@ -1280,14 +1348,6 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                         .font_weight(FontWeight::BOLD)
                         .child(prob_pct),
                 )
-                .when(base_rate.is_some(), |el| {
-                    el.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(theme::GOLD))
-                            .child(base_rate.unwrap_or_default()),
-                    )
-                })
                 .when(state.orchestration_running, |el| {
                     el.child(
                         div()
@@ -1336,10 +1396,100 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
         )
 }
 
+/// Outside View — base rate, reference class, reasoning.
+/// Populated by the macro_forecaster's research.
+fn render_outside_view(state: &CockpitState) -> impl IntoElement {
+    let base_rate = state.program.question().and_then(|q| q.base_rate.as_ref());
+
+    div()
+        .mx(px(8.0))
+        .my(px(4.0))
+        .px(px(12.0))
+        .py(px(8.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_1()
+        .border_color(rgb(theme::GOLD))
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::GOLD))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("Outside View (Base Rate)"),
+        )
+        .when(base_rate.is_some(), |el| {
+            let br = base_rate.unwrap();
+            el.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .text_size(px(22.0))
+                            .text_color(rgb(theme::GOLD))
+                            .font_weight(FontWeight::BOLD)
+                            .child(format!("{:.0}%", br.historical_frequency * 100.0)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::FG))
+                                    .child(br.reference_class.clone()),
+                            )
+                            .when(br.sample_size.is_some(), |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(theme::FG_FAINT))
+                                        .child(format!("n={}", br.sample_size.unwrap_or(0))),
+                                )
+                            }),
+                    ),
+            )
+            .when(br.reasoning.is_some(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(br.reasoning.as_deref().unwrap_or("").to_string()),
+                )
+            })
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child(format!("Source: {}", br.source)),
+            )
+        })
+        .when(base_rate.is_none(), |el| {
+            el.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child(if state.orchestration_running {
+                        "Searching for reference class…"
+                    } else {
+                        "No base rate yet — Ctrl+Enter to research"
+                    }),
+            )
+        })
+}
+
 fn render_driver_card(
     _index: usize,
     driver: Option<&DriverStmt>,
     is_focused: bool,
+    assigned_agents: &[String],
+    agent_runs: &[AgentExecution],
     messages: &[AssistantMessage],
     cx: &mut Context<CockpitState>,
     name: &str,
@@ -1481,7 +1631,436 @@ fn render_driver_card(
                     .child(driver.rationale.as_deref().unwrap_or("").to_string()),
             )
         })
+        // Assigned agents
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .mt(px(2.0))
+                .children(assigned_agents.iter().map(|agent_name| {
+                    let status = agent_runs
+                        .iter()
+                        .find(|r| r.agent_name == *agent_name)
+                        .map(|r| &r.status);
+                    let status_icon = match status {
+                        Some(AgentRunStatus::Running) => "⟳",
+                        Some(AgentRunStatus::Completed) => "✓",
+                        Some(AgentRunStatus::Failed) => "✗",
+                        _ => "○",
+                    };
+                    let status_color = match status {
+                        Some(AgentRunStatus::Running) => theme::GOLD,
+                        Some(AgentRunStatus::Completed) => theme::GREEN,
+                        Some(AgentRunStatus::Failed) => theme::RED,
+                        _ => theme::FG_DIM,
+                    };
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(3.0))
+                        .px(px(5.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(status_color))
+                                .child(status_icon.to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .child(agent_name.clone()),
+                        )
+                }))
+                // "Assign agent" button
+                .child({
+                    let driver_name = name.to_string();
+                    div()
+                        .id(ElementId::Name(format!("assign-agent-{}", name).into()))
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::BLUE))
+                        .px(px(5.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.open_agent_picker(&driver_name, cx);
+                        }))
+                        .child("+ agent")
+                }),
+        )
         .into_any_element()
+}
+
+/// Right panel — context-sensitive content based on focused node.
+fn render_right_panel(
+    state: &CockpitState,
+    focused: &FocusedNode,
+    cx: &mut Context<CockpitState>,
+) -> AnyElement {
+    match focused {
+        FocusedNode::AgentPicker(driver_name) => {
+            render_agent_picker(state, driver_name, cx).into_any_element()
+        }
+        FocusedNode::Driver(name) => {
+            render_driver_editor_and_evidence(state, name, cx).into_any_element()
+        }
+        _ => {
+            // Default: assistant messages
+            div()
+                .flex()
+                .flex_col()
+                .p(px(16.0))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child("Click a driver on the left to edit, or click '+ agent' to assign research agents."),
+                )
+                .into_any_element()
+        }
+    }
+}
+
+/// Agent picker panel — shown when assigning an agent to a driver.
+fn render_agent_picker(
+    state: &CockpitState,
+    driver_name: &str,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    // Get recommended agents from the registry
+    let available_agents: Vec<(String, String, String)> = state
+        .registry
+        .list_cards()
+        .unwrap_or_default()
+        .iter()
+        .filter(|card| {
+            // Filter to research-relevant agents
+            let tags = &card.metadata.tags;
+            tags.iter().any(|t| {
+                t.contains("research")
+                    || t.contains("forecast")
+                    || t.contains("analysis")
+                    || t.contains("economics")
+                    || t.contains("macro")
+                    || t.contains("sentiment")
+                    || t.contains("market")
+            })
+        })
+        .take(10)
+        .map(|card| {
+            (
+                card.agent_id.clone(),
+                card.metadata.description.clone(),
+                card.capabilities.model.clone(),
+            )
+        })
+        .collect();
+
+    let dn = driver_name.to_string();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .p(px(16.0))
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
+        // Header
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(rgb(theme::BLUE))
+                        .font_weight(FontWeight::BOLD)
+                        .child(format!("Assign Agent → {}", driver_name)),
+                )
+                .child({
+                    let dn2 = dn.clone();
+                    div()
+                        .id("close-agent-picker")
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.focused_node = FocusedNode::Driver(dn2.clone());
+                            this.populate_editor_from_driver(&dn2, cx);
+                            cx.notify();
+                        }))
+                        .child("✕ Cancel")
+                }),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child("Recommended research agents:"),
+        )
+        // Agent list
+        .children(
+            available_agents
+                .iter()
+                .map(|(agent_id, description, model)| {
+                    let aid = agent_id.clone();
+                    let dn3 = dn.clone();
+                    div()
+                        .id(ElementId::Name(format!("pick-agent-{}", agent_id).into()))
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.0))
+                        .px(px(10.0))
+                        .py(px(8.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(theme::BG))
+                        .border_1()
+                        .border_color(rgb(theme::FG_FAINT))
+                        .cursor_pointer()
+                        .hover(|s| s.border_color(rgb(theme::BLUE)).bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.assign_agent_to_driver(&dn3, &aid, cx);
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(theme::FG))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(agent_id.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::FG_FAINT))
+                                        .child(model.clone()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .child(description.clone()),
+                        )
+                }),
+        )
+        .when(available_agents.is_empty(), |el| {
+            el.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child("No research agents found in registry."),
+            )
+        })
+}
+
+/// Driver editor + evidence panel (shown when a driver is focused).
+fn render_driver_editor_and_evidence(
+    state: &CockpitState,
+    name: &str,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let driver = state.program.driver(name);
+    let is_continuous = driver
+        .map(|d| d.driver_type == DriverType::Continuous)
+        .unwrap_or(true);
+
+    let rationale_text = driver
+        .and_then(|d| d.rationale.as_deref())
+        .unwrap_or("")
+        .to_string();
+
+    // Evidence for this driver (from agents bound to it)
+    let driver_agents: Vec<&str> = state
+        .program
+        .agents()
+        .iter()
+        .filter(|a| a.driver_refs.contains(&name.to_string()))
+        .map(|a| a.name.as_str())
+        .collect();
+
+    let driver_evidence: Vec<&EvidenceStmt> = state
+        .program
+        .evidence_items()
+        .into_iter()
+        .filter(|e| {
+            // Evidence from agents assigned to this driver
+            driver_agents
+                .iter()
+                .any(|agent_name| e.source.contains(agent_name))
+        })
+        .collect();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .p(px(16.0))
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
+        // Header with close button
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(rgb(theme::CYAN))
+                        .font_weight(FontWeight::BOLD)
+                        .child(format!("Editing: {}", name)),
+                )
+                .child(
+                    div()
+                        .id("close-editor")
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.save_focused_driver(cx);
+                            this.focused_node = FocusedNode::Question;
+                            cx.notify();
+                        }))
+                        .child("✕ Close"),
+                ),
+        )
+        // Rationale
+        .when(!rationale_text.is_empty(), |el| {
+            el.child(
+                div()
+                    .px(px(8.0))
+                    .py(px(6.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::BG))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child(rationale_text),
+            )
+        })
+        // Editor fields
+        .child(
+            div()
+                .flex()
+                .gap(px(8.0))
+                .child(div().w(px(140.0)).child(state.editor_name.clone()))
+                .child(div().flex_grow().child(state.editor_rationale.clone())),
+        )
+        .when(is_continuous, |el| {
+            el.child(
+                div()
+                    .flex()
+                    .gap(px(8.0))
+                    .child(div().w(px(90.0)).child(state.editor_p5.clone()))
+                    .child(div().w(px(90.0)).child(state.editor_p50.clone()))
+                    .child(div().w(px(90.0)).child(state.editor_p95.clone()))
+                    .child(div().w(px(90.0)).child(state.editor_unit.clone())),
+            )
+        })
+        .when(!is_continuous, |el| {
+            el.child(
+                div()
+                    .flex()
+                    .gap(px(8.0))
+                    .child(div().w(px(120.0)).child(state.editor_prob.clone()))
+                    .child(div().w(px(120.0)).child(state.editor_impact.clone())),
+            )
+        })
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("Values save when you close, switch drivers, or simulate (Ctrl+R)."),
+        )
+        // ── Evidence for this driver ──────────────────────────────
+        .when(!driver_evidence.is_empty(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .mt(px(8.0))
+                    .pt(px(8.0))
+                    .border_t_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::CYAN))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("Evidence ({})", driver_evidence.len())),
+                    )
+                    .children(driver_evidence.iter().map(|ev| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .px(px(8.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .child(ev.source.clone()),
+                                    )
+                                    .when(ev.relevance.is_some(), |el| {
+                                        el.child(
+                                            div()
+                                                .text_size(px(9.0))
+                                                .text_color(rgb(theme::CYAN))
+                                                .child(format!(
+                                                    "{:.0}%",
+                                                    ev.relevance.unwrap_or(0.0) * 100.0
+                                                )),
+                                        )
+                                    }),
+                            )
+                            .when(ev.summary.is_some(), |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(theme::FG))
+                                        .child(ev.summary.as_deref().unwrap_or("").to_string()),
+                                )
+                            })
+                            .when(!ev.key_findings.is_empty(), |el| {
+                                el.children(ev.key_findings.iter().take(3).map(|f| {
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(theme::FG_DIM))
+                                        .child(format!("• {}", f))
+                                }))
+                            })
+                    })),
+            )
+        })
 }
 
 fn render_editor_panel(
@@ -1601,6 +2180,9 @@ fn render_editor_panel(
             .into_any_element(),
     }
 }
+
+// Note: render_editor_panel is kept but render_right_panel is the new entry point.
+// render_editor_panel is used as fallback within render_right_panel.
 
 fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
     div()
