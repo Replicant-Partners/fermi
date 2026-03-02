@@ -519,25 +519,62 @@ impl CockpitState {
         });
 
         // Create AgentStmt nodes — these are the FPL agent assignments
+        // The macro_forecaster query explicitly requests structured output
+        // with driver definitions, base rate, and evidence — this is what
+        // makes it a co-authoring agent, not just a data source.
+        let structured_query = format!(
+            r#"You are co-authoring a Fermi forecast for the question: "{}"
+
+Analyze this question and return a JSON object with:
+
+1. "base_rate": {{ "reference_class": "description", "historical_frequency": 0.0-1.0, "sample_size": number, "reasoning": "why this base rate" }}
+
+2. "drivers": an array of 3-5 key drivers, each with:
+   - "name": snake_case identifier
+   - "type": "continuous" or "binary"
+   - "rationale": why this driver matters
+   - For continuous: "p5", "p50", "p95", "unit" (your best estimates for the triangular distribution)
+   - For binary: "probability" (0.0-1.0), "impact_multiplier" (e.g. 1.3 means 30% increase if true)
+
+3. "evidence": array of evidence items, each with:
+   - "source": where this comes from
+   - "summary": one-line summary
+   - "key_findings": array of specific findings
+   - "relevance": 0.0-1.0
+
+4. "model_expression": how the drivers combine (e.g. "driver_a * driver_b * (if driver_c then 1.3 else 1.0)")
+
+5. "confidence": your overall confidence in this analysis (0.0-1.0)
+6. "reasoning": your analytical reasoning
+
+Return ONLY the JSON object, no markdown formatting."#,
+            question
+        );
+
         self.program.add_agent(AgentStmt {
             name: "macro_forecaster".into(),
             agent_type: Some("research".into()),
-            query: format!(
-                "Analyze the following forecast question and suggest 3-5 key drivers with probability distributions. \
-                 Also identify the reference class and base rate for the outside view. \
-                 Question: {}",
-                question
-            ),
+            query: structured_query.clone(),
             executor: Some(fermi::ast::ExecutorType::LLM),
             schedule: Some(Schedule::Once),
-            driver_refs: vec![],  // will be bound as drivers are created
+            driver_refs: vec![],
             depends_on: vec![],
             confidence_threshold: Some(0.6),
         });
         self.program.add_agent(AgentStmt {
             name: "market_research".into(),
             agent_type: Some("research".into()),
-            query: format!("Research market data, analyst consensus, and competitive dynamics relevant to: {}", question),
+            query: format!(
+                r#"Research market data, analyst consensus, and competitive dynamics relevant to: "{}"
+
+Return a JSON object with:
+- "evidence": array of evidence items with "source", "summary", "key_findings" (array), "relevance" (0.0-1.0)
+- "confidence": your overall confidence (0.0-1.0)
+- "reasoning": your analysis
+
+Return ONLY the JSON object."#,
+                question
+            ),
             executor: Some(fermi::ast::ExecutorType::LLM),
             schedule: Some(Schedule::Once),
             driver_refs: vec![],
@@ -547,7 +584,18 @@ impl CockpitState {
         self.program.add_agent(AgentStmt {
             name: "sentiment_analyzer".into(),
             agent_type: Some("research".into()),
-            query: format!("Analyze current sentiment from news, social media, and expert opinions about: {}", question),
+            query: format!(
+                r#"Analyze current sentiment from news, social media, and expert opinions about: "{}"
+
+Return a JSON object with:
+- "evidence": array of evidence items with "source", "summary", "key_findings" (array), "relevance" (0.0-1.0)
+- "sentiment_score": -1.0 (very bearish) to 1.0 (very bullish)
+- "confidence": your overall confidence (0.0-1.0)
+- "reasoning": your analysis
+
+Return ONLY the JSON object."#,
+                question
+            ),
             executor: Some(fermi::ast::ExecutorType::LLM),
             schedule: Some(Schedule::Once),
             driver_refs: vec![],
@@ -577,31 +625,29 @@ impl CockpitState {
         });
 
         // ── Phase 2: Inside View agents ───────────────────────────
-        let inside_agents: Vec<(&str, String)> = vec![
-            ("macro_forecaster", format!(
-                "Analyze the following forecast question and suggest 3-5 key drivers with probability distributions. \
-                 Also identify the reference class and base rate for the outside view. \
-                 Question: {}",
-                question
-            )),
-            ("market_research", format!(
-                "Research market data, analyst consensus, and competitive dynamics relevant to: {}",
-                question
-            )),
-            ("sentiment_analyzer", format!(
-                "Analyze current sentiment from news, social media, and expert opinions about: {}",
-                question
-            )),
-        ];
+        // Use the structured queries from the AST agent statements
+        let inside_agents: Vec<(&str, String)> = self.program.agents()
+            .iter()
+            .map(|a| (a.name.as_str(), a.query.clone()))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(name, query)| {
+                // We need owned strings, convert &str to &str that lives long enough
+                (name, query)
+            })
+            .collect();
+        // Collect agent names to avoid borrow issues
+        let agent_names: Vec<String> = inside_agents.iter().map(|(n, _)| n.to_string()).collect();
+        let agent_queries: Vec<String> = inside_agents.iter().map(|(_, q)| q.clone()).collect();
 
-        for (agent_id, _query) in &inside_agents {
-            if *agent_id == "macro_forecaster" {
+        for name in &agent_names {
+            if name == "macro_forecaster" {
                 // Already added above for base rate
                 continue;
             }
             self.agents.push(FleetAgent {
-                agent_id: agent_id.to_string(),
-                display_name: agent_id.to_string(),
+                agent_id: name.clone(),
+                display_name: name.clone(),
                 status: AgentStatus::Running,
                 findings_count: 0,
                 findings_summary: None,
@@ -612,23 +658,13 @@ impl CockpitState {
         }
 
         // ── Populate with illustrative scaffold while agents run ──
-        // This gives the user immediate visual feedback that the cockpit
-        // is alive. Real agent results will replace/augment this as they
-        // stream in via the Entity channel.
         self.populate_initial_scaffold(&question);
 
         // ── Fire API calls via cx.spawn() ─────────────────────────
-        // Each agent gets its own spawned task with a WeakEntity handle.
-        // When the API call completes, the task calls this.update(cx, ...)
-        // to push results back onto the UI thread. GPUI ensures the
-        // update closure runs on the main thread, and cx.notify()
-        // triggers a re-render so the zones update live.
         let api = self.api.clone();
 
-        for (agent_id, query) in inside_agents {
+        for (aid, q) in agent_names.into_iter().zip(agent_queries.into_iter()) {
             let api = api.clone();
-            let aid = agent_id.to_string();
-            let q = query.clone();
 
             cx.spawn(async move |this, cx| {
                 log::info!("[cockpit] Firing agent {} for question research", aid);
@@ -1155,16 +1191,135 @@ impl CockpitState {
             }
         }
 
-        // Extract reasoning for outside view (from macro_forecaster)
+        // Extract reasoning and structured data from macro_forecaster
         if agent_id == "macro_forecaster" {
-            if let Some(reasoning) = result
+            // Try to parse the reasoning as JSON (structured output)
+            let reasoning_text = result
                 .get("metadata")
                 .and_then(|m| m.get("reasoning"))
                 .and_then(|v| v.as_str())
-            {
-                self.outside_view.reasoning = Some(reasoning.to_string());
-                self.outside_view.loading = false;
-                self.outside_view.source = "macro_forecaster".into();
+                .unwrap_or("");
+
+            // Try to parse structured JSON from reasoning
+            if let Ok(structured) = serde_json::from_str::<JsonValue>(reasoning_text) {
+                // Extract base_rate
+                if let Some(br) = structured.get("base_rate") {
+                    if let Some(freq) = br.get("historical_frequency").and_then(|v| v.as_f64()) {
+                        self.outside_view.historical_frequency = freq;
+                        self.predicted_probability = freq; // anchor to base rate
+                    }
+                    if let Some(rc) = br.get("reference_class").and_then(|v| v.as_str()) {
+                        self.outside_view.reference_class = rc.to_string();
+                    }
+                    if let Some(n) = br.get("sample_size").and_then(|v| v.as_u64()) {
+                        self.outside_view.sample_size = Some(n as u32);
+                    }
+                    if let Some(r) = br.get("reasoning").and_then(|v| v.as_str()) {
+                        self.outside_view.reasoning = Some(r.to_string());
+                    }
+                    self.outside_view.loading = false;
+                    self.outside_view.source = "macro_forecaster".into();
+                    self.outside_view.generated_by = Some("macro_forecaster".into());
+
+                    // Sync base rate to AST
+                    if let Some(q) = self.program.question_mut() {
+                        q.base_rate = Some(BaseRate {
+                            reference_class: self.outside_view.reference_class.clone(),
+                            historical_frequency: self.outside_view.historical_frequency,
+                            sample_size: self.outside_view.sample_size.map(|n| n as usize),
+                            source: "macro_forecaster".into(),
+                            reasoning: self.outside_view.reasoning.clone(),
+                            generated_by: GeneratedBy::Agent("macro_forecaster".into()),
+                        });
+                    }
+                }
+
+                // Extract model_expression
+                if let Some(model_expr) = structured.get("model_expression").and_then(|v| v.as_str()) {
+                    if !model_expr.is_empty() {
+                        self.model_expression = model_expr.to_string();
+                    }
+                }
+
+                // Extract drivers from structured response (these have real estimates!)
+                if let Some(drivers) = structured.get("drivers").and_then(|v| v.as_array()) {
+                    for drv in drivers {
+                        let name = drv.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                        let rationale = drv.get("rationale").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let drv_type = drv.get("type").and_then(|v| v.as_str()).unwrap_or("continuous");
+
+                        let driver_type = if drv_type == "binary" {
+                            CockpitDriverType::Binary {
+                                probability: drv.get("probability").and_then(|v| v.as_f64()).unwrap_or(0.5),
+                                impact_multiplier: drv.get("impact_multiplier").and_then(|v| v.as_f64()).unwrap_or(1.3),
+                            }
+                        } else {
+                            CockpitDriverType::Continuous {
+                                distribution: "triangular".into(),
+                                unit: drv.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                p5: drv.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                p50: drv.get("p50").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                p95: drv.get("p95").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                            }
+                        };
+
+                        // Only add if we don't already have this driver
+                        if !self.drivers.iter().any(|d| d.name == name) {
+                            self.drivers.push(CockpitDriver {
+                                name: name.clone(),
+                                driver_type: driver_type.clone(),
+                                rationale: rationale.clone(),
+                                suggested: true,
+                            });
+
+                            // Add to AST
+                            let ast_driver = match &driver_type {
+                                CockpitDriverType::Continuous { unit, p5, p50, p95, .. } => DriverStmt {
+                                    name: name.clone(),
+                                    display_name: None,
+                                    description: Some(rationale.clone()),
+                                    driver_type: DriverType::Continuous,
+                                    distribution: Some(Distribution::Triangular {
+                                        p5: Expression::Number(*p5),
+                                        p50: Expression::Number(*p50),
+                                        p95: Expression::Number(*p95),
+                                    }),
+                                    probability: None, impact_multiplier: None,
+                                    values: None, weights: None,
+                                    unit: if unit.is_empty() { None } else { Some(unit.clone()) },
+                                    rationale: Some(rationale.clone()),
+                                    constraints: vec![], evidence_refs: vec![],
+                                },
+                                CockpitDriverType::Binary { probability, impact_multiplier } => DriverStmt {
+                                    name: name.clone(),
+                                    display_name: None,
+                                    description: Some(rationale.clone()),
+                                    driver_type: DriverType::Binary,
+                                    distribution: None,
+                                    probability: Some(*probability),
+                                    impact_multiplier: Some(*impact_multiplier),
+                                    values: None, weights: None, unit: None,
+                                    rationale: Some(rationale.clone()),
+                                    constraints: vec![], evidence_refs: vec![],
+                                },
+                            };
+                            self.program.add_driver(ast_driver);
+
+                            if let Some(ast_agent) = self.program.agent_mut(agent_id) {
+                                if !ast_agent.driver_refs.contains(&name) {
+                                    ast_agent.driver_refs.push(name);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Fallback: plain text reasoning
+                if !reasoning_text.is_empty() {
+                    self.outside_view.reasoning = Some(reasoning_text.to_string());
+                    self.outside_view.loading = false;
+                    self.outside_view.source = "macro_forecaster".into();
+                }
             }
 
             // Update base rate if the agent provided one
