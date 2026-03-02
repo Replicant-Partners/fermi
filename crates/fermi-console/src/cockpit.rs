@@ -533,8 +533,36 @@ impl CockpitState {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        // Try parsing as JSON first, fall back to treating evidence array directly
-        let structured: Option<JsonValue> = serde_json::from_str(reasoning).ok();
+        // Try parsing reasoning as JSON first
+        let mut structured: Option<JsonValue> = serde_json::from_str(reasoning).ok();
+
+        // Fallback: scan evidence key_findings for JSON content
+        // The agent often returns structured data embedded in text findings
+        if structured.is_none() {
+            if let Some(evidence_arr) = result.get("evidence").and_then(|v| v.as_array()) {
+                // Concatenate all key_findings and summaries
+                let mut all_text = reasoning.to_string();
+                for ev in evidence_arr {
+                    if let Some(summary) = ev.get("summary").and_then(|v| v.as_str()) {
+                        all_text.push_str(summary);
+                    }
+                    if let Some(findings) = ev.get("key_findings").and_then(|v| v.as_array()) {
+                        for f in findings {
+                            if let Some(s) = f.as_str() {
+                                all_text.push_str(s);
+                            }
+                        }
+                    }
+                }
+                // Try to find a JSON object in the concatenated text
+                if let Some(start) = all_text.find('{') {
+                    if let Some(end) = all_text.rfind('}') {
+                        let json_candidate = &all_text[start..=end];
+                        structured = serde_json::from_str(json_candidate).ok();
+                    }
+                }
+            }
+        }
 
         // ── Base Rate ─────────────────────────────────────────────
         if let Some(ref data) = structured {
