@@ -2756,27 +2756,16 @@ fn render_stat(label: &str, value: f64, color: u32) -> impl IntoElement {
 }
 
 fn render_histogram(bins: &[u32]) -> impl IntoElement {
-    let max_count = bins.iter().copied().max().unwrap_or(1).max(1);
-    let bar_height = 28.0_f32;
+    let chart_w = 400u32;
+    let chart_h = 80u32;
+    let rgb_buf = crate::charts::render_histogram_chart(bins, chart_w, chart_h);
+    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
 
-    div()
-        .flex()
-        .items_end()
-        .gap(px(1.0))
-        .h(px(bar_height + 4.0))
-        .children(bins.iter().enumerate().map(move |(i, &count)| {
-            let frac = count as f32 / max_count as f32;
-            let h = (frac * bar_height).max(1.0);
-            let color = if i < bins.len() / 4 || i > bins.len() * 3 / 4 {
-                theme::FG_FAINT
-            } else if i < bins.len() * 2 / 5 || i > bins.len() * 3 / 5 {
-                theme::CYAN
-            } else {
-                theme::GREEN
-            };
-            div().w(px(6.0)).h(px(h)).bg(rgb(color)).rounded_t(px(1.0))
-        }))
+    gpui::img(gpui::ImageSource::Render(render_img))
+        .w(gpui::px(chart_w as f32))
+        .h(gpui::px(chart_h as f32))
 }
+
 
 fn render_status_bar(state: &CockpitState) -> impl IntoElement {
     div()

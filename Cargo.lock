@@ -3406,6 +3406,7 @@ dependencies = [
  "fermi",
  "futures",
  "gpui",
+ "image",
  "log",
  "open",
  "plotters",

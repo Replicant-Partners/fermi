@@ -1,6 +1,7 @@
 //! Chart rendering using plotters — produces RGB pixel buffers.
 
 use plotters::prelude::*;
+use std::sync::Arc;
 
 pub struct DriverViz {
     pub name: String,
@@ -171,4 +172,21 @@ pub fn render_treemap(
         let _ = root.present();
     }
     buf
+}
+
+/// Convert an RGB pixel buffer to a GPUI RenderImage.
+pub fn rgb_to_render_image(rgb_buf: &[u8], width: u32, height: u32) -> Arc<gpui::RenderImage> {
+    // Convert RGB to RGBA (GPUI needs RGBA)
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for chunk in rgb_buf.chunks(3) {
+        rgba.push(chunk.get(0).copied().unwrap_or(0));
+        rgba.push(chunk.get(1).copied().unwrap_or(0));
+        rgba.push(chunk.get(2).copied().unwrap_or(0));
+        rgba.push(255); // alpha
+    }
+
+    let img_buf = image::RgbaImage::from_raw(width, height, rgba)
+        .unwrap_or_else(|| image::RgbaImage::new(width, height));
+    let frame = image::Frame::new(img_buf);
+    Arc::new(gpui::RenderImage::new(vec![frame]))
 }
