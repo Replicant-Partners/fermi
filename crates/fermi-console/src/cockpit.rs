@@ -1021,7 +1021,7 @@ impl CockpitState {
         self.program.add_agent(AgentStmt {
             name: agent_id.to_string(),
             agent_type: Some("research".into()),
-            query,
+            query: query.clone(),
             executor: Some(fermi::ast::ExecutorType::LLM),
             schedule: Some(Schedule::Once),
             driver_refs: vec![driver_name.to_string()],
@@ -1029,11 +1029,24 @@ impl CockpitState {
             confidence_threshold: None,
         });
 
+        // Track the agent run
+        self.agent_runs.push(AgentExecution {
+            agent_name: agent_id.to_string(),
+            status: AgentRunStatus::Running,
+            evidence_count: 0,
+            confidence: None,
+            error: None,
+            credits_charged: None,
+        });
+
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
             kind: MessageKind::Info,
-            text: format!("Agent '{}' assigned to driver '{}'.", agent_id, driver_name),
+            text: format!("Agent '{}' assigned to driver '{}' — researching now.", agent_id, driver_name),
         });
+
+        // Fire the agent immediately
+        self.fire_agent(agent_id, &query, cx);
 
         // Switch back to driver view
         self.focused_node = FocusedNode::Driver(driver_name.to_string());
