@@ -1,0 +1,168 @@
+question "will italy win the eurovision song contest this year?"
+
+driver song_quality__expert_ratings_ continuous {
+    distribution: triangular(3, 6.5, 9)
+    unit: "rating_out_of_10"
+    rationale: "Eurovision outcomes correlate moderately with pre-contest expert ratings and betting odds. Italy's 2025 entry would need to score 8+ to be competitive for victory. Historical winners average 7.5-8.5 in pre-contest expert assessments."
+}
+
+driver betting_odds_rank continuous {
+    distribution: triangular(1, 8, 20)
+    unit: "rank_position"
+    rationale: "Betting markets are the strongest predictor of Eurovision outcomes. Since 2010, the betting favorite wins ~40% of the time, and top-3 favorites win ~70% of the time. Italy's typical pre-contest ranking varies widely (1st in 2021, 10th+ in other years)."
+}
+
+driver sanremo_winner_effect binary {
+    probability: 0.5p
+    impact_multiplier: 1.3
+    rationale: "Italy selects via Sanremo Festival. Sanremo winners have mixed Eurovision success: Måneskin (2021 winner) won Eurovision, but many Sanremo winners place mid-table. The selection process matters: internally-chosen songs sometimes outperform."
+}
+
+driver voting_bloc_advantage continuous {
+    distribution: triangular(50, 120, 200)
+    unit: "expected_points"
+    rationale: "Italy receives moderate diaspora/cultural voting from neighboring countries (Malta, San Marino typically award high points) but lacks a strong voting bloc compared to Balkans or Nordics. Expected baseline: 100-150 points from geographic/cultural voting patterns."
+}
+
+driver big_5_automatic_final_advantage binary {
+    probability: 0.5p
+    impact_multiplier: 1.3
+    rationale: "As a Big 5 country, Italy automatically qualifies for the final, avoiding semi-final momentum building but guaranteeing exposure. Big 5 countries win ~25% of contests (above their 20% representation), suggesting slight structural advantage."
+}
+
+evidence market_research_0 {
+    source: "Agent: market_research (Claude API)"
+    summary: "Based on Italy's past success in the Eurovision Song Contest, the positive reception of their 2023 entry, and their current status as a favorite among bookmakers, there is a reasonable probability that Italy could win the 2023 competition. However, the unpredictable nature of the contest means that other countries may also have a strong chance of winning, and the final result is difficult to forecast with high confidence."
+    relevance: 0.75p
+    date: 2026-03-03
+}
+
+evidence sentiment_analyzer_0 {
+    source: "Agent: sentiment_analyzer (Claude API)"
+    summary: "The research indicates that Italy has a favorable history in the Eurovision Song Contest and their 2023 entry is receiving positive reviews, which suggests they have a good chance of winning. However, the inherent unpredictability of the contest means there is still significant uncertainty around the outcome."
+    relevance: 0.75p
+    date: 2026-03-03
+}
+
+evidence entity_investigator_0 {
+    source: "Agent: entity_investigator (Claude API)"
+    summary: "Betting odds are a meaningful but imperfect driver for Eurovision forecasting, with favorites winning ~40-45% historically. Italy is consistently competitive (top 10 finisher in recent years) but not a perennial favorite. Actual 2025 odds would depend on song selection outcomes not yet available. The 'betting_odds_rank' driver has moderate predictive validity but should be weighted alongside other factors like rehearsal reception and voting pattern analysis."
+    relevance: 0.65p
+    date: 2026-03-03
+}
+
+evidence macro_forecaster_evidence_1772525436 {
+    source: "Agent: macro_forecaster (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"Italy's Eurovision performance history (1956-2024)\",
+    \"historical_frequency\": 0.044,
+    \"sample_size\": 45,
+    \"reasoning\": \"Italy has won Eurovision 3 times (1964, 1990, 2021) out of 68 contests total, but participated in only ~45 contests due to boycotts/withdrawals. This gives a raw win rate of ~6.7% across all contests, or ~4.4% when considering participation years. However, the modern era (post-2011 return) shows stronger performance: 1 win in 14 participations (7.1%). The contest typically has 25-40 competing countries, suggesting a naive base rate of 2.5-4% per country, but historical winners show clustering (Big 5 countries + Scandinavia overperform).\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"Song Quality (Expert Ratings)\",
+      \"type\": \"continuous\",
+      \"p5\": 3.0,
+      \"p50\": 6.5,
+      \"p95\": 9.0,
+      \"unit\": \"rating_out_of_10\",
+      \"rationale\": \"Eurovision outcomes correlate moderately with pre-contest expert ratings and betting odds. Italy's 2025 entry would need to score 8+ to be competitive for victory. Historical winners average 7.5-8.5 in pre-contest expert assessments.\"
+    },
+    {
+      \"name\": \"Betting Odds Rank\",
+      \"type\": \"continuous\",
+      \"p5\": 1,
+      \"p50\": 8,
+      \"p95\": 20,
+      \"unit\": \"rank_position\",
+      \"rationale\": \"Betting markets are the strongest predictor of Eurovision outcomes. Since 2010, the betting favorite wins ~40% of the time, and top-3 favorites win ~70% of the time. Italy's typical pre-contest ranking varies widely (1st in 2021, 10th+ in other years).\"
+    },
+    {
+      \"name\": \"Sanremo Winner Effect\",
+      \"type\": \"binary\",
+      \"p5\": 0,
+      \"p50\": 1,
+      \"p95\": 1,
+      \"unit\": \"boolean\",
+      \"rationale\": \"Italy selects via Sanremo Festival. Sanremo winners have mixed Eurovision success: Måneskin (2021 winner) won Eurovision, but many Sanremo winners place mid-table. The selection process matters: internally-chosen songs sometimes outperform.\"
+    },
+    {
+      \"name\": \"Voting Bloc Advantage\",
+      \"type\": \"continuous\",
+      \"p5\": 50,
+      \"p50\": 120,
+      \"p95\": 200,
+      \"unit\": \"expected_points\",
+      \"rationale\": \"Italy receives moderate diaspora/cultural voting from neighboring countries (Malta, San Marino typically award high points) but lacks a strong voting bloc compared to Balkans or Nordics. Expected baseline: 100-150 points from geographic/cultural voting patterns.\"
+    },
+    {
+      \"name\": \"Big 5 Automatic Final Advantage\",
+      \"type\": \"binary\",
+      \"p5\": 1,
+      \"p50\": 1,
+      \"p95\": 1,
+      \"unit\": \"boolean\",
+      \"rationale\": \"As a Big 5 country, Italy automatically qualifies for the final, avoiding semi-final momentum building but guaranteeing exposure. Big 5 countries win ~25% of contests (above their 20% representation), suggesting slight structural advantage.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"Eurovision Historical Database (1956-2024)\",
+      \"summary\": \"Italy's complete Eurovision participation record and voting pattern analysis\",
+      \"key_findings\": [
+        \"Italy won in 2021 with Måneskin, ending a 31-year drought\",
+        \"Since returning in 2011, Italy has: 1 win, 2 second places, 3 third places - strong recent performance\",
+        \"Italy's average finish position (2011-2024): 8.4th place\",
+        \"Italy has never finished outside top 10 since 2011 return except 2023 (not counting 2024 data)\"
+      ],
+      \"relevance\": 0.95
+    },
+    {
+      \"source\": \"Betting Market Analysis (Oddschecker, Betfair historical data)\",
+      \"summary\": \"Predictive power of pre-contest betting markets\",
+      \"key_findings\": [
+        \"Betting favorite wins 38-42% of contests (2010-2024)\",
+        \"Top 3 betting favorites account for ~70% of winners\",
+        \"Odds accurately predict outcome better than expert panels or fan polls\",
+        \"Italy 2025 entry not yet selected (Sanremo 2025 scheduled for February 11-15)\"
+      ],
+      \"relevance\": 0.90
+    },
+    {
+      \"source\": \"Eurovision 2025 Contest Details\",
+      \"summary\": \"Structural factors for 2025 contest\",
+      \"key_findings\": [
+        \"Eurovision 2025 will be held in Basel, Switzerland (May 13, 15, 17)\",
+        \"Expected 37-40 participating countries\",
+        \"Italy automatically in final as Big 5 member\",
+        \"Sanremo 2025 (Feb 11-15) will select Italian entry - artist/song unknown as of knowledge cutoff\"
+      ],
+      \"relevance\": 0.85
+    },
+    {
+      \"source\": \"Academic Studies on Eurovision Voting Patterns\",
+      \"summary\": \"Quantitative analysis of voting behavior and win predictors\",
+      \"key_findings\": [
+        \"Song quality (as measured by Spotify streams post-contest) correlates 0.65 with final placement\",
+        \"Geographic/cultural voting explains ~30% of point variance\",
+        \"Performance order matters: second-half performers win 73% of contests\",
+        \"Italy benefits from moderate cultural voting but lacks strong bloc\"
+      ],
+      \"relevance\": 0.75
+    }
+  ],
+  \"model_expression\": \"P(Italy wins) = P(Strong Song) × P(Top-3 Betting Odds) × P(Favorable Draw) × P(Voting Coalition) × Base_Rate_Adjustment. Given unknown 2025 entry, estimate: 0.04 (base) × 1.5 (recent performance multiplier) × 0.7 (uncertainty discount) ≈ 4-6% prior probability, updating to 15-25% IF betting markets place Italy top-3, or 1-3% if outside top-10 in odds.\",
+  \"confidence\": 0.65,
+  \"reasoning\": \"Confidence is moderate (0.65) because: (1) Italy's 2025 entry is unknown until Sanremo Feb 2025, creating fundamental uncertainty; (2) Historical data is robust for base rates and betting market predictiveness; (3) Italy's recent Eurovision performance (2011-2024) is strong and well-documented; (4) Structural factors (Big 5 status, voting patterns) are stable and measurable. Confidence would increase to 0.85+ once the Italian entry is known and betting markets open, as these are the strongest predictors. Current assessment must rely on prior probabilities rather than song-specific factors.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-03
+}
+
+model: song_quality__expert_ratings_ * betting_odds_rank * (if sanremo_winner_effect then 1.3 else 1.0) * voting_bloc_advantage * (if big_5_automatic_final_advantage then 1.3 else 1.0)
+
+simulate 10000 iterations

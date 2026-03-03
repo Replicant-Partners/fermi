@@ -1131,6 +1131,23 @@ impl CockpitState {
         cx.notify();
     }
 
+    /// Delete a driver from the program.
+    pub fn delete_driver(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.save_focused_driver(cx);
+        self.program.remove_driver(name);
+        if let FocusedNode::Driver(ref n) = self.focused_node {
+            if n == name {
+                self.focused_node = FocusedNode::Question;
+            }
+        }
+        self.messages.push(AssistantMessage {
+            node: "question".into(),
+            kind: MessageKind::Info,
+            text: format!("Driver '{}' removed.", name),
+        });
+        cx.notify();
+    }
+
     /// Add a new continuous driver manually and open it for editing.
     pub fn add_manual_driver(&mut self, binary: bool, cx: &mut Context<Self>) {
         let idx = self.program.drivers().len() + 1;
@@ -2237,7 +2254,23 @@ fn render_driver_editor_and_evidence(
                             cx.notify();
                         }))
                         .child("✕ Close"),
-                ),
+                )
+                .child({
+                    let del_name = name.to_string();
+                    div()
+                        .id("delete-driver-btn")
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::RED))
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.delete_driver(&del_name, cx);
+                        }))
+                        .child("Delete")
+                }),
         )
         // Rationale
         .when(!rationale_text.is_empty(), |el| {
