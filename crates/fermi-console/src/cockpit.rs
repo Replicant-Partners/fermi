@@ -352,11 +352,10 @@ impl CockpitState {
             }
         }
 
-        // ── Discover and fire research agents in parallel ─────────
-        // Query the registry for forecasting-relevant agents
-        let research_agents = self.discover_research_agents();
-        
-        // Build the structured query for the lead agent (macro_forecaster)
+        // ── Phase 1: Fire macro_forecaster to build decomposition ──
+        // Only the lead agent fires initially. It creates the base rate
+        // and driver structure. Other agents get suggested per-driver
+        // after the decomposition is ready — this is the governance model.
         let structured_query = format!(
             "You are co-authoring a Fermi forecast. Question: \"{}\"\n\n\
              Provide a JSON response with:\n\
@@ -370,45 +369,26 @@ impl CockpitState {
             question
         );
 
-        // Register all agents and show assembly feedback
-        for (agent_id, description) in &research_agents {
-            self.agent_runs.push(AgentExecution {
-                agent_name: agent_id.clone(),
-                status: AgentRunStatus::Running,
-                evidence_count: 0,
-                confidence: None,
-                error: None,
-                credits_charged: None,
-            });
-            self.messages.push(AssistantMessage {
-                node: format!("agent:{}", agent_id),
-                kind: MessageKind::Info,
-                text: format!("⟳ {} — {}", agent_id, 
-                    if description.len() > 60 { &description[..60] } else { description }),
-            });
-        }
+        self.agent_runs.push(AgentExecution {
+            agent_name: "macro_forecaster".into(),
+            status: AgentRunStatus::Running,
+            evidence_count: 0,
+            confidence: None,
+            error: None,
+            credits_charged: None,
+        });
 
         self.messages.push(AssistantMessage {
             node: "question".into(),
             kind: MessageKind::Info,
-            text: format!("⟳ Research team: {} agents dispatched in parallel", research_agents.len()),
+            text: "⟳ macro_forecaster is building the forecast decomposition…".into(),
         });
 
-        // Fire all agents in parallel
-        for (agent_id, _description) in &research_agents {
-            let query = if agent_id == "macro_forecaster" {
-                structured_query.clone()
-            } else {
-                format!("Research the following forecast question and provide evidence with key findings, sources, and relevance scores. Question: \"{}\"", question)
-            };
-            self.fire_agent(agent_id, &query, cx);
-        }
+        self.fire_agent("macro_forecaster", &structured_query, cx);
 
         self.focused_node = FocusedNode::Question;
         cx.notify();
     }
-
-    // ═══════════════════════════════════════════════════════════════
     // Agent Result Processing
     // ═══════════════════════════════════════════════════════════════
 
@@ -707,6 +687,46 @@ impl CockpitState {
         // ── Validation hints ──────────────────────────────────────
         self.run_validation_hints();
         self.orchestration_running = false;
+
+        // ── Suggest agent assignments for new drivers ─────────────
+        // Now that the decomposition is ready, suggest which research
+        // agents would be good for each driver. User confirms via picker.
+        let available = self.discover_research_agents();
+        let driver_names: Vec<String> = self.program.drivers()
+            .iter().map(|d| d.name.clone()).collect();
+
+        if !driver_names.is_empty() && !available.is_empty() {
+            self.messages.push(AssistantMessage {
+                node: "question".into(),
+                kind: MessageKind::Suggestion,
+                text: format!(
+                    "Decomposition ready with {} drivers. Click '+ agent' on each driver to assign research agents with specific queries.",
+                    driver_names.len()
+                ),
+            });
+
+            // Suggest specific agents for drivers based on keywords
+            for driver_name in &driver_names {
+                let dn_lower = driver_name.to_lowercase();
+                let suggested = if dn_lower.contains("sentiment") || dn_lower.contains("opinion") || dn_lower.contains("perception") {
+                    Some("sentiment_analyzer")
+                } else if dn_lower.contains("market") || dn_lower.contains("competition") || dn_lower.contains("betting") {
+                    Some("market_research")
+                } else if dn_lower.contains("entity") || dn_lower.contains("company") || dn_lower.contains("ownership") {
+                    Some("entity_investigator")
+                } else {
+                    None
+                };
+
+                if let Some(agent) = suggested {
+                    self.messages.push(AssistantMessage {
+                        node: format!("driver:{}", driver_name),
+                        kind: MessageKind::Suggestion,
+                        text: format!("💡 Consider assigning '{}' to research '{}'", agent, driver_name),
+                    });
+                }
+            }
+        }
     }
 
 
