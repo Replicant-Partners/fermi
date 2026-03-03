@@ -1004,9 +1004,9 @@ impl CockpitState {
         &mut self,
         driver_name: &str,
         agent_id: &str,
+        schedule: Schedule,
         cx: &mut Context<Self>,
     ) {
-        // Add an AgentStmt to the program bound to this driver
         let question_text = self
             .program
             .question()
@@ -1018,18 +1018,23 @@ impl CockpitState {
             driver_name, question_text
         );
 
+        let schedule_label = match &schedule {
+            Schedule::Once => "once".to_string(),
+            Schedule::Every { interval, unit } => format!("every {} {:?}", interval, unit),
+            Schedule::Cron(c) => format!("cron: {}", c),
+        };
+
         self.program.add_agent(AgentStmt {
             name: agent_id.to_string(),
             agent_type: Some("research".into()),
             query: query.clone(),
             executor: Some(fermi::ast::ExecutorType::LLM),
-            schedule: Some(Schedule::Once),
+            schedule: Some(schedule),
             driver_refs: vec![driver_name.to_string()],
             depends_on: vec![],
             confidence_threshold: None,
         });
 
-        // Track the agent run
         self.agent_runs.push(AgentExecution {
             agent_name: agent_id.to_string(),
             status: AgentRunStatus::Running,
@@ -1042,13 +1047,12 @@ impl CockpitState {
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
             kind: MessageKind::Info,
-            text: format!("Agent '{}' assigned to driver '{}' — researching now.", agent_id, driver_name),
+            text: format!("Agent '{}' assigned to '{}' (schedule: {}) — researching now.",
+                agent_id, driver_name, schedule_label),
         });
 
-        // Fire the agent immediately
         self.fire_agent(agent_id, &query, cx);
 
-        // Switch back to driver view
         self.focused_node = FocusedNode::Driver(driver_name.to_string());
         self.populate_editor_from_driver(driver_name, cx);
         cx.notify();
@@ -2131,7 +2135,7 @@ fn render_agent_picker(
                         .cursor_pointer()
                         .hover(|s| s.border_color(rgb(theme::BLUE)).bg(rgb(theme::BG_HOVER)))
                         .on_click(cx.listener(move |this, _event, _window, cx| {
-                            this.assign_agent_to_driver(&dn3, &aid, cx);
+                            // Card click does nothing — use schedule buttons below
                         }))
                         .child(
                             div()
@@ -2176,6 +2180,69 @@ fn render_agent_picker(
                                             .child(s.clone())
                                     })),
                             )
+                        })
+                        // Schedule buttons
+                        .child({
+                            let aid_once = agent_id.clone();
+                            let aid_daily = agent_id.clone();
+                            let aid_weekly = agent_id.clone();
+                            let dn_once = dn.clone();
+                            let dn_daily = dn.clone();
+                            let dn_weekly = dn.clone();
+                            div()
+                                .flex()
+                                .gap(px(4.0))
+                                .mt(px(4.0))
+                                .child(
+                                    div()
+                                        .id(ElementId::Name(format!("sched-once-{}", agent_id).into()))
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(theme::CYAN))
+                                        .px(px(8.0))
+                                        .py(px(3.0))
+                                        .rounded(px(3.0))
+                                        .bg(rgb(theme::BG_ACTIVE))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.assign_agent_to_driver(&dn_once, &aid_once, Schedule::Once, cx);
+                                        }))
+                                        .child("Run once"),
+                                )
+                                .child(
+                                    div()
+                                        .id(ElementId::Name(format!("sched-daily-{}", agent_id).into()))
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(theme::GREEN))
+                                        .px(px(8.0))
+                                        .py(px(3.0))
+                                        .rounded(px(3.0))
+                                        .bg(rgb(theme::BG_ACTIVE))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.assign_agent_to_driver(&dn_daily, &aid_daily,
+                                                Schedule::Every { interval: 1, unit: fermi::ast::TimeUnit::Day }, cx);
+                                        }))
+                                        .child("Daily"),
+                                )
+                                .child(
+                                    div()
+                                        .id(ElementId::Name(format!("sched-weekly-{}", agent_id).into()))
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(theme::GOLD))
+                                        .px(px(8.0))
+                                        .py(px(3.0))
+                                        .rounded(px(3.0))
+                                        .bg(rgb(theme::BG_ACTIVE))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.assign_agent_to_driver(&dn_weekly, &aid_weekly,
+                                                Schedule::Every { interval: 1, unit: fermi::ast::TimeUnit::Week }, cx);
+                                        }))
+                                        .child("Weekly"),
+                                )
                         })
                 }),
         )
