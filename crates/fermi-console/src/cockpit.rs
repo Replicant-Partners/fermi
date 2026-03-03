@@ -1664,7 +1664,7 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                 .child("Ctrl+Enter research")
                 .child("Ctrl+R simulate")
                 .child("Ctrl+P publish")
-                .child("Ctrl+E toggle FPL"),
+                .child("Ctrl+S save").child("Ctrl+E toggle FPL"),
         )
 }
 
