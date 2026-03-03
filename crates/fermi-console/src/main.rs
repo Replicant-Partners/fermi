@@ -290,6 +290,9 @@ struct FermiConsole {
     // Leaderboard data (from /api/leaderboard)
     leaderboard: Vec<LeaderboardEntry>,
     leaderboard_loading: bool,
+
+    // Local forecasts (from forecasts/ directory)
+    local_forecasts: Vec<(String, String, String)>, // (filename, question, timestamp)
 }
 
 #[derive(Clone)]
@@ -339,6 +342,7 @@ impl FermiConsole {
             agent_search: String::new(),
             leaderboard: Vec::new(),
             leaderboard_loading: false,
+            local_forecasts: Vec::new(),
         };
 
         // Try to load API key from environment (fallback for dev)
@@ -527,6 +531,7 @@ impl FermiConsole {
         self.fetch_portfolios(cx);
         self.fetch_agents(cx);
         self.fetch_leaderboard(cx);
+        self.load_local_forecasts();
     }
 
     fn fetch_agents(&mut self, cx: &mut Context<Self>) {
@@ -593,6 +598,40 @@ impl FermiConsole {
             }
         })
         .detach();
+    }
+
+    fn load_local_forecasts(&mut self) {
+        self.local_forecasts.clear();
+        if let Ok(entries) = std::fs::read_dir("forecasts") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "fpl").unwrap_or(false) {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        let filename = path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        // Extract question from first line
+                        let question = content.lines()
+                            .find(|l| l.starts_with("question"))
+                            .and_then(|l| l.split('"').nth(1))
+                            .unwrap_or(&filename)
+                            .to_string();
+                        // Get file modification time
+                        let timestamp = entry.metadata()
+                            .and_then(|m| m.modified())
+                            .map(|t| {
+                                let dt: chrono::DateTime<chrono::Utc> = t.into();
+                                dt.format("%Y-%m-%d %H:%M").to_string()
+                            })
+                            .unwrap_or_else(|_| "unknown".into());
+                        self.local_forecasts.push((filename, question, timestamp));
+                    }
+                }
+            }
+        }
+        // Sort by timestamp descending
+        self.local_forecasts.sort_by(|a, b| b.2.cmp(&a.2));
     }
 
     fn fetch_stats(&mut self, cx: &mut Context<Self>) {
@@ -730,7 +769,7 @@ impl FermiConsole {
         if changed && self.connected {
             match panel {
                 Panel::Dashboard => self.fetch_stats(cx),
-                Panel::Portfolio => self.fetch_forecasts(cx),
+                Panel::Portfolio => { self.fetch_forecasts(cx); self.load_local_forecasts(); }
                 _ => {}
             }
         }
@@ -1599,6 +1638,76 @@ impl FermiConsole {
                             theme::GREEN,
                             cx,
                         ))
+                    })
+                    // Local forecasts (saved to disk)
+                    .when(!self.local_forecasts.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .bg(theme::bg_elevated())
+                                .rounded(px(8.0))
+                                .border_1()
+                                .border_color(theme::fg_faint())
+                                .child(
+                                    div()
+                                        .px(px(16.0))
+                                        .py(px(10.0))
+                                        .border_b_1()
+                                        .border_color(theme::fg_faint())
+                                        .child(
+                                            div()
+                                                .text_size(px(13.0))
+                                                .text_color(rgb(theme::PURPLE))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(format!("Local Forecasts ({})", self.local_forecasts.len())),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .children(self.local_forecasts.iter().map(|(filename, question, timestamp)| {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(12.0))
+                                                .px(px(16.0))
+                                                .py(px(10.0))
+                                                .border_b_1()
+                                                .border_color(theme::fg_faint())
+                                                .hover(|s| s.bg(theme::bg_hover()))
+                                                .child(
+                                                    div()
+                                                        .w(px(48.0))
+                                                        .text_size(px(14.0))
+                                                        .text_color(rgb(theme::PURPLE))
+                                                        .font_weight(FontWeight::BOLD)
+                                                        .child("📄"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_grow()
+                                                        .min_w(px(0.0))
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap(px(2.0))
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(13.0))
+                                                                .text_color(theme::fg())
+                                                                .child(question.clone()),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(10.0))
+                                                                .text_color(theme::fg_faint())
+                                                                .child(format!("{} · {}.fpl", timestamp, filename)),
+                                                        ),
+                                                )
+                                        })),
+                                ),
+                        )
                     })
                     // Empty state
                     .when(
