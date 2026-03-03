@@ -171,6 +171,7 @@ actions!(
         ToggleCommandPalette,
         TriggerQuestionOrchestration,
         PublishForecast,
+        SaveForecast,
         ToggleFplSource,
         MinimizeWindow,
         ZoomWindow,
@@ -785,7 +786,23 @@ impl FermiConsole {
         }
     }
 
-    /// ⌘P — Publish forecast to the API for Brier tracking.
+    /// Ctrl+S — Save FPL to disk with version snapshot.
+    fn on_save_forecast(
+        &mut self,
+        _: &SaveForecast,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ref cockpit) = self.cockpit {
+            let cockpit = cockpit.clone();
+            cockpit.update(cx, |cockpit, cx| {
+                cockpit.save_forecast(cx);
+            });
+            cx.notify();
+        }
+    }
+
+    /// Ctrl+P — Publish forecast to the API for Brier tracking.
     /// After the cockpit fires the publish, we schedule a delayed
     /// refresh of portfolio + stats so the sidebar data updates.
     fn on_publish_forecast(
@@ -2269,6 +2286,7 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_trigger_question_orchestration))
             .on_action(cx.listener(Self::on_run_simulation))
             .on_action(cx.listener(Self::on_publish_forecast))
+            .on_action(cx.listener(Self::on_save_forecast))
             .on_action(cx.listener(Self::on_toggle_fpl_source))
             .on_action(cx.listener(Self::on_minimize_window))
             .on_action(cx.listener(Self::on_zoom_window))
@@ -2686,6 +2704,7 @@ fn main() {
             ),
             KeyBinding::new("secondary-r", RunSimulation, Some("FermiConsole")),
             KeyBinding::new("secondary-p", PublishForecast, Some("FermiConsole")),
+            KeyBinding::new("secondary-s", SaveForecast, Some("FermiConsole")),
             KeyBinding::new("secondary-e", ToggleFplSource, Some("FermiConsole")),
             KeyBinding::new("secondary-m", MinimizeWindow, Some("FermiConsole")),
             KeyBinding::new("ctrl-shift-f", ToggleFullscreen, Some("FermiConsole")),

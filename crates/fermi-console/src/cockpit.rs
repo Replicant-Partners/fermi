@@ -1302,6 +1302,56 @@ impl CockpitState {
     // Publish + Version
     // ═══════════════════════════════════════════════════════════════
 
+    /// Save the FPL program to disk and create a version snapshot.
+    pub fn save_forecast(&mut self, cx: &mut Context<Self>) {
+        self.save_focused_driver(cx);
+        self.cached_fpl = generate_fpl_text(&self.program);
+
+        // Create version snapshot
+        self.current_version += 1;
+        self.versions.push(ForecastVersion {
+            version: self.current_version,
+            timestamp: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
+            fpl_text: self.cached_fpl.clone(),
+            probability: self.predicted_probability,
+            change_summary: if self.current_version == 1 {
+                "Initial forecast".into()
+            } else {
+                format!("v{} update", self.current_version)
+            },
+        });
+
+        // Save to disk
+        let filename = self.program.question()
+            .map(|q| sanitize_name(&q.text))
+            .unwrap_or_else(|| "forecast".into());
+        let path = format!("forecasts/{}.fpl", filename);
+
+        // Ensure directory exists
+        let _ = std::fs::create_dir_all("forecasts");
+
+        match std::fs::write(&path, &self.cached_fpl) {
+            Ok(_) => {
+                log::info!("[composer] Saved FPL to {}", path);
+                self.messages.push(AssistantMessage {
+                    node: "save".into(),
+                    kind: MessageKind::Info,
+                    text: format!("Saved v{} to {}", self.current_version, path),
+                });
+                self.publish_status = Some(format!("Saved v{}", self.current_version));
+            }
+            Err(e) => {
+                log::error!("[composer] Failed to save: {}", e);
+                self.messages.push(AssistantMessage {
+                    node: "save".into(),
+                    kind: MessageKind::Error,
+                    text: format!("Save failed: {}", e),
+                });
+            }
+        }
+        cx.notify();
+    }
+
     pub fn publish_forecast(&mut self, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.cached_fpl = generate_fpl_text(&self.program);
