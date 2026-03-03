@@ -15,7 +15,7 @@ use api::client::{
 };
 use cockpit::CockpitState;
 use composer::ComposerState;
-use fermi::agent_backend::{llm_executor::LLMExecutor, registry::AgentRegistry};
+use fermi::agent_backend::{agent_card::AgentCard, llm_executor::LLMExecutor, registry::AgentRegistry};
 use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
@@ -1913,13 +1913,17 @@ impl FermiConsole {
     // ── Agent Fleet Panel ─────────────────────────────────────────────────
 
     fn render_agent_fleet_panel(&self) -> impl IntoElement {
+        let cards = self.registry.list_cards().unwrap_or_default();
+        let fermi_agents: Vec<_> = cards.iter()
+            .filter(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
+            .collect();
+
         div()
             .id("agent-fleet-panel")
             .flex()
             .flex_col()
             .size_full()
             .overflow_y_scroll()
-            // Header
             .child(
                 div()
                     .px(px(24.0))
@@ -1934,36 +1938,25 @@ impl FermiConsole {
                             .text_size(px(20.0))
                             .text_color(theme::cyan())
                             .font_weight(FontWeight::BOLD)
-                            .child("⚙ Agent Fleet"),
+                            .child("My Research Team"),
                     )
                     .child(
                         div()
                             .text_size(px(12.0))
                             .text_color(theme::fg_dim())
-                            .child(format!("{} agents available", self.agent_cards.len())),
-                    )
-                    .when(self.agents_loading, |el| {
-                        el.child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(theme::gold())
-                                .child("⟳ Loading…"),
-                        )
-                    }),
+                            .child(format!("{} fermi-orchestra agents", fermi_agents.len())),
+                    ),
             )
-            // Agent grid
             .child(
                 div()
                     .flex()
                     .flex_wrap()
                     .gap(px(12.0))
                     .p(px(16.0))
-                    .children(
-                        self.agent_cards
-                            .iter()
-                            .map(|card| self.render_agent_card(card)),
-                    )
-                    .when(self.agent_cards.is_empty() && !self.agents_loading, |el| {
+                    .children(fermi_agents.iter().map(|card| {
+                        render_local_agent_card(card)
+                    }))
+                    .when(fermi_agents.is_empty(), |el| {
                         el.child(
                             div()
                                 .flex()
@@ -1976,161 +1969,18 @@ impl FermiConsole {
                                     div()
                                         .text_size(px(14.0))
                                         .text_color(theme::fg_dim())
-                                        .child("No agents found"),
+                                        .child("No fermi-orchestra agents found"),
                                 )
                                 .child(
                                     div()
                                         .text_size(px(12.0))
                                         .text_color(theme::fg_faint())
                                         .mt(px(4.0))
-                                        .child("Connect to the API to browse available agents"),
+                                        .child("Check agents/curated/ directory"),
                                 ),
                         )
                     }),
             )
-    }
-
-    fn render_agent_card(&self, card: &JsonValue) -> impl IntoElement {
-        let agent_id = card
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let agent_type = card
-            .get("agent_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("research");
-        let description = card
-            .get("description")
-            .and_then(|v| v.as_str())
-            .unwrap_or("No description");
-        let tier = card
-            .get("tier")
-            .and_then(|v| v.as_str())
-            .unwrap_or("standard");
-        let model = card.get("model").and_then(|v| v.as_str()).unwrap_or("—");
-        let tags: Vec<&str> = card
-            .get("tags")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|t| t.as_str()).collect())
-            .unwrap_or_default();
-
-        let tier_color = match tier {
-            "premium" => theme::GOLD,
-            "standard" => theme::CYAN,
-            "free" => theme::GREEN,
-            _ => theme::FG_DIM,
-        };
-
-        let type_icon = match agent_type {
-            "research" => "🔍",
-            "creative" => "✨",
-            "system" => "⚙",
-            "coherence" => "🧠",
-            "game" => "🎮",
-            _ => "●",
-        };
-
-        div()
-            .w(px(280.0))
-            .bg(theme::bg_elevated())
-            .border_1()
-            .border_color(theme::fg_faint())
-            .rounded(px(6.0))
-            .p(px(12.0))
-            .flex()
-            .flex_col()
-            .gap(px(6.0))
-            .hover(|s| s.border_color(rgb(tier_color)))
-            .cursor_pointer()
-            // Header: icon + name + tier badge
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(div().text_size(px(16.0)).child(type_icon.to_string()))
-                    .child(
-                        div()
-                            .flex_grow()
-                            .text_size(px(13.0))
-                            .text_color(theme::fg())
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(agent_id.to_string()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(9.0))
-                            .text_color(rgb(tier_color))
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(3.0))
-                            .bg(theme::bg_active())
-                            .child(tier.to_string()),
-                    ),
-            )
-            // Description
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(theme::fg_dim())
-                    .child(truncate(description, 80)),
-            )
-            // Model
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.0))
-                    .text_size(px(10.0))
-                    .child(div().text_color(theme::fg_faint()).child("model:"))
-                    .child(div().text_color(theme::fg_dim()).child(model.to_string())),
-            )
-            // Tags
-            .when(!tags.is_empty(), |el| {
-                el.child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(4.0))
-                        .children(tags.iter().map(|tag| {
-                            div()
-                                .text_size(px(9.0))
-                                .text_color(theme::fg_faint())
-                                .px(px(5.0))
-                                .py(px(1.0))
-                                .rounded(px(2.0))
-                                .bg(theme::bg())
-                                .child(tag.to_string())
-                        })),
-                )
-            })
-            // Performance stats (if available)
-            .when(card.get("performance").is_some(), |el| {
-                let perf = card.get("performance").unwrap();
-                let avg_time = perf
-                    .get("avg_execution_time_ms")
-                    .and_then(|v| v.as_u64())
-                    .map(|t| format!("{}ms", t))
-                    .unwrap_or_else(|| "—".into());
-                let total_runs = perf
-                    .get("total_executions")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| format!("{} runs", n))
-                    .unwrap_or_else(|| "—".into());
-
-                el.child(
-                    div()
-                        .flex()
-                        .gap(px(12.0))
-                        .mt(px(4.0))
-                        .pt(px(4.0))
-                        .border_t_1()
-                        .border_color(theme::fg_faint())
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
-                        .child(avg_time)
-                        .child(total_runs),
-                )
-            })
     }
 
     // ── Leaderboard Panel ─────────────────────────────────────────────────
@@ -2627,6 +2477,82 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
 }
 
 /// Render a key-value pair for the forecast detail view.
+fn render_local_agent_card(card: &AgentCard) -> impl IntoElement {
+    let tier_color = match card.tier {
+        fermi::agent_backend::agent_card::AgentTier::Curated => theme::CYAN,
+        _ => theme::FG_DIM,
+    };
+
+    div()
+        .w(px(300.0))
+        .bg(theme::bg_elevated())
+        .border_1()
+        .border_color(theme::fg_faint())
+        .rounded(px(6.0))
+        .p(px(14.0))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .hover(|s| s.border_color(rgb(tier_color)))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(theme::fg())
+                        .font_weight(FontWeight::BOLD)
+                        .child(card.agent_id.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(tier_color))
+                        .px(px(5.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(theme::bg_active())
+                        .child(card.agent_type.clone()),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(theme::fg_dim())
+                .min_w(px(0.0))
+                .child(card.metadata.description.clone()),
+        )
+        .when(!card.capabilities.skills.is_empty(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(4.0))
+                    .children(card.capabilities.skills.iter().take(4).map(|s| {
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::CYAN))
+                            .px(px(4.0))
+                            .py(px(1.0))
+                            .rounded(px(2.0))
+                            .bg(theme::bg())
+                            .child(s.clone())
+                    })),
+            )
+        })
+        .child(
+            div()
+                .flex()
+                .gap(px(12.0))
+                .text_size(px(10.0))
+                .text_color(theme::fg_faint())
+                .child(card.capabilities.model.clone())
+                .child(format!("{} runs", card.usage.total_executions)),
+        )
+}
+
 fn render_detail_kv(key: &str, value: &str) -> impl IntoElement {
     div()
         .flex()
