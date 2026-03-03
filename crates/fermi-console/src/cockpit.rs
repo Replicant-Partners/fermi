@@ -1956,31 +1956,21 @@ fn render_agent_picker(
     driver_name: &str,
     cx: &mut Context<CockpitState>,
 ) -> impl IntoElement {
-    // Get recommended agents from the registry
-    let available_agents: Vec<(String, String, String)> = state
+    // Get fermi-orchestra agents from the registry
+    let available_agents: Vec<(String, String, String, Vec<String>)> = state
         .registry
         .list_cards()
         .unwrap_or_default()
         .iter()
         .filter(|card| {
-            // Filter to research-relevant agents
-            let tags = &card.metadata.tags;
-            tags.iter().any(|t| {
-                t.contains("research")
-                    || t.contains("forecast")
-                    || t.contains("analysis")
-                    || t.contains("economics")
-                    || t.contains("macro")
-                    || t.contains("sentiment")
-                    || t.contains("market")
-            })
+            card.metadata.tags.iter().any(|t| t == "fermi-orchestra")
         })
-        .take(10)
         .map(|card| {
             (
                 card.agent_id.clone(),
                 card.metadata.description.clone(),
                 card.capabilities.model.clone(),
+                card.capabilities.skills.clone(),
             )
         })
         .collect();
@@ -2036,7 +2026,7 @@ fn render_agent_picker(
         .children(
             available_agents
                 .iter()
-                .map(|(agent_id, description, model)| {
+                .map(|(agent_id, description, model, skills)| {
                     let aid = agent_id.clone();
                     let dn3 = dn.clone();
                     div()
@@ -2078,8 +2068,27 @@ fn render_agent_picker(
                             div()
                                 .text_size(px(10.0))
                                 .text_color(rgb(theme::FG_DIM))
+                                .min_w(px(0.0))
                                 .child(description.clone()),
                         )
+                        .when(!skills.is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap(px(4.0))
+                                    .children(skills.iter().take(4).map(|s| {
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::CYAN))
+                                            .px(px(4.0))
+                                            .py(px(1.0))
+                                            .rounded(px(2.0))
+                                            .bg(rgb(theme::BG_ACTIVE))
+                                            .child(s.clone())
+                                    })),
+                            )
+                        })
                 }),
         )
         .when(available_agents.is_empty(), |el| {
