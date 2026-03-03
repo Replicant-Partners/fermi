@@ -1519,6 +1519,7 @@ impl Render for CockpitState {
                     .flex()
                     .flex_col()
                     .flex_grow()
+                    .min_w(px(0.0))
                     .h_full()
                     .overflow_y_scroll()
                     .bg(rgb(theme::BG_ELEVATED))
@@ -2185,7 +2186,7 @@ fn render_driver_editor_and_evidence(
                 .flex()
                 .gap(px(8.0))
                 .child(div().w(px(140.0)).child(state.editor_name.clone()))
-                .child(div().flex_grow().child(state.editor_rationale.clone())),
+                .child(div().flex_grow().min_w(px(0.0)).child(state.editor_rationale.clone())),
         )
         .when(is_continuous, |el| {
             el.child(
@@ -2358,7 +2359,7 @@ fn render_editor_panel(
                         .flex()
                         .gap(px(8.0))
                         .child(div().w(px(140.0)).child(state.editor_name.clone()))
-                        .child(div().flex_grow().child(state.editor_rationale.clone())),
+                        .child(div().flex_grow().min_w(px(0.0)).child(state.editor_rationale.clone())),
                 )
                 .when(is_continuous, |el| {
                     el.child(
@@ -2440,6 +2441,7 @@ fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
                 .child(
                     div()
                         .flex_grow()
+                        .min_w(px(0.0))
                         .text_size(px(11.0))
                         .text_color(rgb(color))
                         .child(msg.text.clone()),
