@@ -1,0 +1,36 @@
+question "will serbia win the eurovision  in 2026?"
+
+driver primary_factor continuous {
+    distribution: triangular(10, 50, 100)
+    rationale: "The main driver — adjust the range to match your question"
+}
+
+driver secondary_factor continuous {
+    distribution: triangular(0.7, 1, 1.5)
+    unit: "multiplier"
+    rationale: "A modifying factor (1.0 = neutral, >1 = amplifying, <1 = dampening)"
+}
+
+driver disruption binary {
+    probability: 0.15p
+    impact_multiplier: 1.5
+    rationale: "Probability of a disruptive event that amplifies the outcome by 50%"
+}
+
+evidence market_research_0 {
+    source: "Agent: market_research (Claude API)"
+    summary: "Based on Serbia's past performance in the Eurovision Song Contest, the country has a reasonable chance of winning the competition in 2026, but it is a highly competitive event with many unpredictable factors that could influence the outcome. Serbia's previous win in 2007 and strong showings in recent years suggest the country has the potential to win again, but it will depend on the quality and appeal of its 2026 entry, as well as the overall competition that year."
+    relevance: 0.65p
+    date: 2026-03-03
+}
+
+evidence sentiment_analyzer_0 {
+    source: "Agent: sentiment_analyzer (Claude API)"
+    summary: "Based on Serbia's past performance in the Eurovision Song Contest, including its one previous win in 2007 and recent top 10 finishes, the country has a reasonable chance of performing well in the 2026 competition. However, the unpredictable nature of the contest and the wide range of potential winners make it difficult to confidently predict Serbia as the outright winner in 2026."
+    relevance: 0.65p
+    date: 2026-03-03
+}
+
+model: ((primary_factor * secondary_factor) * (if disruption then 1.5 else 1))
+
+simulate 10000 iterations

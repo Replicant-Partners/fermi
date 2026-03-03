@@ -120,6 +120,7 @@ pub struct CockpitState {
     pub editor_prob: Entity<TextInput>,
     pub editor_impact: Entity<TextInput>,
     pub editor_rationale: Entity<TextInput>,
+    pub agent_query_input: Entity<TextInput>,
 
     // ── Agent Execution State (runtime, not in AST) ───────────────
     pub agent_runs: Vec<AgentExecution>,
@@ -212,6 +213,11 @@ impl CockpitState {
                 .with_placeholder("Why does this driver matter?")
                 .with_label("Rationale")
         });
+        let agent_query_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("What should this agent research for this driver?")
+                .with_label("Agent Query")
+        });
 
         Self {
             program: Program::empty(),
@@ -227,6 +233,7 @@ impl CockpitState {
             editor_prob,
             editor_impact,
             editor_rationale,
+            agent_query_input,
             agent_runs: Vec::new(),
             orchestration_running: false,
             session_cost: 0.0,
@@ -1013,10 +1020,16 @@ impl CockpitState {
             .map(|q| q.text.clone())
             .unwrap_or_default();
 
-        let query = format!(
-            "Research evidence for the '{}' driver in the forecast: \"{}\"",
-            driver_name, question_text
-        );
+        // Use custom query from input, or generate a default
+        let custom_query = self.agent_query_input.read(cx).text().to_string();
+        let query = if custom_query.trim().is_empty() {
+            format!(
+                "Research evidence for the '{}' driver in the forecast: \"{}\"",
+                driver_name, question_text
+            )
+        } else {
+            custom_query
+        };
 
         let schedule_label = match &schedule {
             Schedule::Once => "once".to_string(),
@@ -2113,6 +2126,14 @@ fn render_agent_picker(
                 .text_size(px(11.0))
                 .text_color(rgb(theme::FG_DIM))
                 .child("Recommended research agents:"),
+        )
+        // Custom query input
+        .child(state.agent_query_input.clone())
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("Define what this agent should research for this driver, or leave blank for default."),
         )
         // Agent list
         .children(
