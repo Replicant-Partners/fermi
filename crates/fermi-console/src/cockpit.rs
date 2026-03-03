@@ -1369,6 +1369,14 @@ impl CockpitState {
                     text: format!("Saved v{} to {}", self.current_version, path),
                 });
                 self.publish_status = Some(format!("Saved v{}", self.current_version));
+
+                // Also save evidence wiki
+                let wiki_path = format!("forecasts/{}.evidence.md", filename);
+                let wiki = generate_evidence_wiki(&self.program, self.current_version, self.predicted_probability);
+                match std::fs::write(&wiki_path, &wiki) {
+                    Ok(_) => log::info!("[composer] Saved evidence wiki to {}", wiki_path),
+                    Err(e) => log::warn!("[composer] Failed to save evidence wiki: {}", e),
+                }
             }
             Err(e) => {
                 log::error!("[composer] Failed to save: {}", e);
@@ -2833,6 +2841,180 @@ fn generate_fpl_text(program: &Program) -> String {
 // ═══════════════════════════════════════════════════════════════════
 // Domain Detection + Decomposition Template Generation
 // ═══════════════════════════════════════════════════════════════════
+
+/// Generate an evidence wiki markdown file organized by driver.
+/// Each driver is a heading, with agent evidence entries as logs.
+fn generate_evidence_wiki(program: &Program, version: u32, probability: f64) -> String {
+    let mut md = String::new();
+    let question = program.question().map(|q| q.text.as_str()).unwrap_or("Untitled Forecast");
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
+
+    md.push_str(&format!("# Evidence Log: {}\n\n", question));
+    md.push_str(&format!("**Version:** v{} | **Probability:** {:.1}% | **Updated:** {}\n\n", version, probability * 100.0, timestamp));
+    md.push_str("---\n\n");
+
+    // Base rate section
+    if let Some(br) = program.question().and_then(|q| q.base_rate.as_ref()) {
+        md.push_str("## Outside View (Base Rate)\n\n");
+        md.push_str(&format!("- **Reference class:** {}\n", br.reference_class));
+        md.push_str(&format!("- **Historical frequency:** {:.1}%\n", br.historical_frequency * 100.0));
+        if let Some(n) = br.sample_size {
+            md.push_str(&format!("- **Sample size:** n={}\n", n));
+        }
+        md.push_str(&format!("- **Source:** {}\n", br.source));
+        if let Some(ref r) = br.reasoning {
+            md.push_str(&format!("\n> {}\n", r));
+        }
+        md.push_str("\n---\n\n");
+    }
+
+    // Drivers with their evidence
+    let drivers = program.drivers();
+    let evidence_items = program.evidence_items();
+    let agents = program.agents();
+
+    for driver in &drivers {
+        let display = driver.display_name.as_deref().unwrap_or(&driver.name);
+        let type_label = match driver.driver_type {
+            DriverType::Continuous => "continuous",
+            DriverType::Binary => "binary",
+            _ => "discrete",
+        };
+
+        md.push_str(&format!("## {} `{}`\n\n", display, type_label));
+
+        // Driver parameters
+        match driver.driver_type {
+            DriverType::Continuous => {
+                if let Some(ref dist) = driver.distribution {
+                    if let Distribution::Triangular { ref p5, ref p50, ref p95 } = dist {
+                        let unit = driver.unit.as_deref().unwrap_or("");
+                        md.push_str(&format!("| p5 | p50 | p95 | unit |\n|---|---|---|---|\n| {} | {} | {} | {} |\n\n",
+                            expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95), unit));
+                    }
+                }
+            }
+            DriverType::Binary => {
+                md.push_str(&format!("- **Probability:** {:.0}%\n", driver.probability.unwrap_or(0.0) * 100.0));
+                md.push_str(&format!("- **Impact multiplier:** {:.1}x\n\n", driver.impact_multiplier.unwrap_or(1.0)));
+            }
+            _ => {}
+        }
+
+        if let Some(ref rationale) = driver.rationale {
+            md.push_str(&format!("> {}\n\n", rationale));
+        }
+
+        // Agents assigned to this driver
+        let driver_agents: Vec<_> = agents.iter()
+            .filter(|a| a.driver_refs.contains(&driver.name))
+            .collect();
+
+        if !driver_agents.is_empty() {
+            md.push_str("### Assigned Agents\n\n");
+            for agent in &driver_agents {
+                let schedule = match &agent.schedule {
+                    Some(Schedule::Once) => "once",
+                    Some(Schedule::Every { interval, unit }) => {
+                        &format!("every {} {:?}", interval, unit)
+                    }
+                    _ => "on-demand",
+                };
+                md.push_str(&format!("- **{}** (schedule: {})\n", agent.name, schedule));
+                md.push_str(&format!("  - Query: _{}_\n", agent.query.chars().take(100).collect::<String>()));
+            }
+            md.push_str("\n");
+        }
+
+        // Evidence linked to this driver (from its agents)
+        let driver_evidence: Vec<_> = evidence_items.iter()
+            .filter(|e| driver_agents.iter().any(|a| e.source.contains(&a.name)))
+            .collect();
+
+        if !driver_evidence.is_empty() {
+            md.push_str("### Evidence\n\n");
+            for ev in &driver_evidence {
+                md.push_str(&format!("#### {} (relevance: {:.0}%)\n\n",
+                    ev.source,
+                    ev.relevance.unwrap_or(0.0) * 100.0));
+                if let Some(ref summary) = ev.summary {
+                    // Truncate very long summaries (like raw JSON dumps)
+                    let clean = if summary.len() > 500 {
+                        format!("{}...", &summary[..500])
+                    } else {
+                        summary.clone()
+                    };
+                    md.push_str(&format!("{}\n\n", clean));
+                }
+                if !ev.key_findings.is_empty() {
+                    md.push_str("**Key findings:**\n\n");
+                    for f in &ev.key_findings {
+                        md.push_str(&format!("- {}\n", f));
+                    }
+                    md.push_str("\n");
+                }
+                if let Some(ref date) = ev.date {
+                    md.push_str(&format!("_Collected: {}_\n\n", date));
+                }
+            }
+        }
+
+        // Also show unlinked evidence that mentions this driver
+        let unlinked: Vec<_> = evidence_items.iter()
+            .filter(|e| {
+                !driver_evidence.iter().any(|de| de.id == e.id) &&
+                (e.summary.as_deref().unwrap_or("").to_lowercase().contains(&driver.name.to_lowercase()) ||
+                 e.key_findings.iter().any(|f| f.to_lowercase().contains(&driver.name.to_lowercase())))
+            })
+            .collect();
+
+        if !unlinked.is_empty() {
+            md.push_str("### Related Evidence\n\n");
+            for ev in &unlinked {
+                md.push_str(&format!("- **{}**: {}\n",
+                    ev.source,
+                    ev.summary.as_deref().unwrap_or("").chars().take(200).collect::<String>()));
+            }
+            md.push_str("\n");
+        }
+
+        md.push_str("---\n\n");
+    }
+
+    // Unassigned evidence (not linked to any driver)
+    let all_driver_agents: Vec<String> = agents.iter()
+        .filter(|a| !a.driver_refs.is_empty())
+        .map(|a| a.name.clone())
+        .collect();
+    let unassigned: Vec<_> = evidence_items.iter()
+        .filter(|e| !all_driver_agents.iter().any(|a| e.source.contains(a)))
+        .collect();
+
+    if !unassigned.is_empty() {
+        md.push_str("## General Evidence\n\n");
+        for ev in &unassigned {
+            md.push_str(&format!("### {} (relevance: {:.0}%)\n\n",
+                ev.source,
+                ev.relevance.unwrap_or(0.0) * 100.0));
+            if let Some(ref summary) = ev.summary {
+                let clean = if summary.len() > 500 {
+                    format!("{}...", &summary[..500])
+                } else {
+                    summary.clone()
+                };
+                md.push_str(&format!("{}\n\n", clean));
+            }
+            if !ev.key_findings.is_empty() {
+                for f in &ev.key_findings {
+                    md.push_str(&format!("- {}\n", f));
+                }
+                md.push_str("\n");
+            }
+        }
+    }
+
+    md
+}
 
 fn detect_domain(question: &str) -> String {
     let q = question.to_lowercase();
