@@ -5,6 +5,7 @@
 
 mod api;
 mod cockpit;
+mod charts;
 mod composer;
 mod text_input;
 
