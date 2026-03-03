@@ -1,0 +1,135 @@
+question "will switzerland win the eurovision in 2026?"
+
+driver song_quality___artist_appeal continuous {
+    distribution: triangular(0.2, 0.5, 0.9)
+    unit: "normalized quality score 0-1"
+    rationale: "Switzerland's 2024 win with Nemo shows they can produce competitive entries. Song quality is the primary driver but highly uncertain 18 months before contest. Swiss broadcaster SRG SSR has demonstrated improved selection process."
+}
+
+driver voting_bloc_disadvantage continuous {
+    distribution: triangular(-0.3, -0.15, 0)
+    unit: "voting advantage modifier"
+    rationale: "Switzerland lacks strong voting bloc allies (unlike Nordics, Balkans, ex-Soviet states). This is a structural disadvantage. However, 2024 win shows exceptional songs can overcome this."
+}
+
+driver recent_winner_penalty binary {
+    probability: 0.5p
+    impact_multiplier: 1.3
+    rationale: "Historical pattern shows recent winners rarely win again soon. Since 2000, no country has won twice within 3 years. Hosting in 2025 may reduce momentum/focus for 2026 entry."
+}
+
+driver number_of_competing_countries continuous {
+    distribution: triangular(37, 40, 43)
+    unit: "countries"
+    rationale: "Typical modern Eurovision has 38-42 countries. More competitors = lower base probability per country, though quality matters more than quantity."
+}
+
+evidence macro_forecaster_evidence_1772569945 {
+    source: "Agent: macro_forecaster (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"Switzerland's Eurovision performance history (1956-2024)\",
+    \"historical_frequency\": 0.029,
+    \"sample_size\": 68,
+    \"reasoning\": \"Switzerland has won Eurovision 2 times in 68 participations (1956 with Lys Assia, 1988 with Celine Dion). Most recent win was 36 years ago. However, Switzerland won in 2024 with Nemo's 'The Code', making it 3 wins in 69 participations = 0.043. For small countries in modern era (post-2000), win rate is approximately 1-2% per year given ~40 competing countries and voting bloc dynamics.\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"Song Quality & Artist Appeal\",
+      \"type\": \"continuous\",
+      \"p5\": 0.2,
+      \"p50\": 0.5,
+      \"p95\": 0.9,
+      \"unit\": \"normalized quality score 0-1\",
+      \"rationale\": \"Switzerland's 2024 win with Nemo shows they can produce competitive entries. Song quality is the primary driver but highly uncertain 18 months before contest. Swiss broadcaster SRG SSR has demonstrated improved selection process.\"
+    },
+    {
+      \"name\": \"Voting Bloc Disadvantage\",
+      \"type\": \"continuous\",
+      \"p5\": -0.3,
+      \"p50\": -0.15,
+      \"p95\": 0.0,
+      \"unit\": \"voting advantage modifier\",
+      \"rationale\": \"Switzerland lacks strong voting bloc allies (unlike Nordics, Balkans, ex-Soviet states). This is a structural disadvantage. However, 2024 win shows exceptional songs can overcome this.\"
+    },
+    {
+      \"name\": \"Recent Winner Penalty\",
+      \"type\": \"binary\",
+      \"p5\": 0.3,
+      \"p50\": 0.5,
+      \"p95\": 0.7,
+      \"unit\": \"probability of penalty effect\",
+      \"rationale\": \"Historical pattern shows recent winners rarely win again soon. Since 2000, no country has won twice within 3 years. Hosting in 2025 may reduce momentum/focus for 2026 entry.\"
+    },
+    {
+      \"name\": \"Number of Competing Countries\",
+      \"type\": \"continuous\",
+      \"p5\": 37,
+      \"p50\": 40,
+      \"p95\": 43,
+      \"unit\": \"countries\",
+      \"rationale\": \"Typical modern Eurovision has 38-42 countries. More competitors = lower base probability per country, though quality matters more than quantity.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"Eurovision historical data 1956-2024\",
+      \"summary\": \"Switzerland won Eurovision in 2024 with Nemo, their third victory ever\",
+      \"key_findings\": [
+        \"Switzerland's wins: 1956, 1988, 2024 (3 in 69 participations)\",
+        \"Average gap between Swiss wins: 34 years\",
+        \"2024 win breaks 36-year drought\",
+        \"Switzerland will host 2025 contest in Basel/Geneva\"
+      ],
+      \"relevance\": 0.95
+    },
+    {
+      \"source\": \"Eurovision voting pattern analysis (2009-2024, post-jury reintroduction)\",
+      \"summary\": \"Modern Eurovision combines jury and televote; voting blocs remain influential\",
+      \"key_findings\": [
+        \"Countries with strong regional allies (Nordics, Balkans) have structural advantage\",
+        \"Switzerland typically receives scattered votes, no consistent bloc support\",
+        \"Exceptional songs can overcome bloc disadvantage (Ukraine 2016, Portugal 2017, Switzerland 2024)\",
+        \"Host country (2025) effect on 2026 performance is historically neutral to slightly negative\"
+      ],
+      \"relevance\": 0.85
+    },
+    {
+      \"source\": \"Recent winner repeat performance analysis\",
+      \"summary\": \"Winners rarely achieve back-to-back success or quick repeat wins\",
+      \"key_findings\": [
+        \"Since 2000: No country won twice within 5 years\",
+        \"Host year following win: countries average 10th-15th place finish\",
+        \"Ireland's 1990s dominance (3 wins in 5 years) is historical anomaly, unlikely to repeat in modern voting system\",
+        \"Pressure and expectations on recent winners may affect song selection\"
+      ],
+      \"relevance\": 0.80
+    }
+  ],
+  \"model_expression\": \"P(Swiss win 2026) = base_rate × song_quality_multiplier × (1 + voting_bloc_modifier) × recent_winner_penalty / (competing_countries/40). Given 2024 win, base rate should be adjusted upward slightly (demonstrated capability) but recent_winner_penalty strongly applies. Expected value: ~1-3%\",
+  \"confidence\": 0.72,
+  \"reasoning\": \"High confidence in historical data and voting patterns (well-documented). Medium confidence in modeling future song quality (inherently unpredictable 18 months out). The 2024 win is very recent and relevant, but creates competing effects: demonstrates capability but triggers historical penalty pattern. Switzerland's structural voting disadvantage is well-established. Overall assessment: Switzerland's probability is likely below the naive 1/40 = 2.5% due to recent winner penalty, despite proven recent capability.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-03
+}
+
+evidence macro_forecaster_evidence_1772569986 {
+    source: "Agent: macro_forecaster (Claude API)"
+    summary: "Switzerland's 2024 Eurovision win demonstrates capability to produce winning entries, but historical data reveals this is sporadic rather than systematic. Their 4.5% historical win rate, inconsistent qualification record, and lack of Sweden-style artist development infrastructure suggest song quality/artist appeal cannot be reliably predicted as high for 2026. The 'winner's curse' effect and regression to mean further dampen prospects. Eurovision outcomes are highly stochastic - even strong entries face 39+ competitors with unpredictable jury/televote splits."
+    relevance: 0.78p
+    date: 2026-03-03
+}
+
+evidence market_research_0 {
+    source: "Agent: market_research (Claude API)"
+    summary: "The research suggests that Switzerland faces significant challenges in winning the Eurovision Song Contest in 2026 due to its long drought of victories, poor recent performance, waning public support, and diminished voting bloc. While Switzerland remains a regular participant, the data indicates that the country is at a significant disadvantage compared to other potential contenders."
+    relevance: 0.85p
+    date: 2026-03-03
+}
+
+model: song_quality___artist_appeal * voting_bloc_disadvantage * (if recent_winner_penalty then 1.3 else 1.0) * number_of_competing_countries
+
+simulate 10000 iterations

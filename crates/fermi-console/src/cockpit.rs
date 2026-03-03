@@ -2711,6 +2711,50 @@ fn render_simulation_section(state: &CockpitState) -> impl IntoElement {
             .when(!sim.histogram.is_empty(), |el| {
                 el.child(render_histogram(&sim.histogram))
             })
+            // Index comparison chart (inside view vs outside view over versions)
+            .when(state.versions.len() > 0, |el| {
+                let base_rate = state.program.question()
+                    .and_then(|q| q.base_rate.as_ref())
+                    .map(|br| br.historical_frequency * 100.0)
+                    .unwrap_or(50.0);
+
+                let history: Vec<crate::charts::IndexPoint> = state.versions.iter()
+                    .map(|v| crate::charts::IndexPoint {
+                        label: format!("v{}", v.version),
+                        inside_view: v.probability * 100.0,
+                        outside_view: base_rate,
+                    })
+                    .collect();
+
+                let chart_w = 400u32;
+                let chart_h = 120u32;
+                let rgb_buf = crate::charts::render_index_chart(
+                    &history,
+                    history.len().saturating_sub(1),
+                    chart_w,
+                    chart_h,
+                );
+                let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+
+                el.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .mt(px(4.0))
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child("Inside View (blue) vs Outside View (gold)"),
+                        )
+                        .child(
+                            gpui::img(gpui::ImageSource::Render(render_img))
+                                .w(gpui::px(chart_w as f32))
+                                .h(gpui::px(chart_h as f32)),
+                        ),
+                )
+            })
             .child(
                 div()
                     .text_size(px(9.0))
