@@ -886,11 +886,16 @@ impl FermiConsole {
         if let Some(ref cockpit) = self.cockpit {
             let cockpit = cockpit.clone();
             cockpit.update(cx, |cockpit, cx| {
-                cockpit.show_fpl_source = !cockpit.show_fpl_source;
-                if cockpit.show_fpl_source {
-                    cockpit.refresh_fpl_cache(cx);
-                }
-                cx.notify();
+                cockpit.right_tab = match cockpit.right_tab {
+                    crate::cockpit::RightTab::Edit => crate::cockpit::RightTab::Fpl,
+                    crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Wiki,
+                    crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Edit,
+                };
+
+
+
+
+
             });
             cx.notify();
         }

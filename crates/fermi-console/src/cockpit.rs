@@ -54,6 +54,15 @@ pub enum FocusedNode {
     FplSource,
 }
 
+
+/// Which tab is active in the right panel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RightTab {
+    Edit,
+    Fpl,
+    Wiki,
+}
+
 /// Status of an agent execution within a driver context.
 #[derive(Debug, Clone)]
 pub struct AgentExecution {
@@ -106,7 +115,7 @@ pub struct CockpitState {
 
     // ── UI State ──────────────────────────────────────────────────
     pub focused_node: FocusedNode,
-    pub show_fpl_source: bool,
+    pub right_tab: RightTab,
     pub predicted_probability: f64,
 
     // ── Text Inputs ───────────────────────────────────────────────
@@ -222,7 +231,7 @@ impl CockpitState {
         Self {
             program: Program::empty(),
             focused_node: FocusedNode::Question,
-            show_fpl_source: false,
+            right_tab: RightTab::Edit,
             predicted_probability: 0.5,
             question_input,
             editor_name,
@@ -1638,6 +1647,7 @@ impl Render for CockpitState {
                     ),
             )
             // ── Right: Assistant + Editor ──────────────────────────
+            // ── Right: Tabbed Panel ───────────────────────────────
             .child(
                 div()
                     .id("composer-right-panel")
@@ -1646,20 +1656,30 @@ impl Render for CockpitState {
                     .flex_grow()
                     .min_w(px(0.0))
                     .h_full()
-                    .overflow_y_scroll()
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_l_1()
                     .border_color(rgb(theme::FG_FAINT))
-                    // Right panel content — context-sensitive
-                    .child(render_right_panel(self, &focused, cx))
-                    // Assistant messages
+                    // Tab bar
+                    .child(render_tab_bar(self.right_tab, cx))
+                    // Tab content (scrollable)
+                    .child(
+                        div()
+                            .id("right-tab-content")
+                            .flex()
+                            .flex_col()
+                            .flex_grow()
+                            .overflow_y_scroll()
+                            .min_w(px(0.0))
+                            .child(match self.right_tab {
+                                RightTab::Edit => render_right_panel(self, &focused, cx),
+                                RightTab::Fpl => render_fpl_tab(self).into_any_element(),
+                                RightTab::Wiki => render_wiki_tab(self).into_any_element(),
+                            })
+                    )
+                    // Assistant messages (always visible below tabs)
                     .child(render_assistant_panel(&self.messages))
-                    // FPL source (if toggled)
-                    .when(self.show_fpl_source, |el| {
-                        el.child(render_fpl_source(&self.cached_fpl))
-                    }),
             )
-    }
+}
 }
 
 pub fn render_cockpit(cockpit: &Entity<CockpitState>) -> impl IntoElement {
@@ -2830,6 +2850,268 @@ fn render_status_bar(state: &CockpitState) -> impl IntoElement {
         })
         .when(state.current_version > 0, |el| {
             el.child(format!("v{}", state.current_version))
+        })
+}
+
+fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl IntoElement {
+    let tabs = [
+        (RightTab::Edit, "Edit"),
+        (RightTab::Fpl, "FPL"),
+        (RightTab::Wiki, "Wiki"),
+    ];
+
+    div()
+        .flex()
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .children(tabs.iter().map(|(tab, label)| {
+            let t = *tab;
+            let is_active = t == active;
+            div()
+                .id(ElementId::Name(format!("tab-{}", label).into()))
+                .px(px(16.0))
+                .py(px(8.0))
+                .text_size(px(12.0))
+                .font_weight(if is_active { FontWeight::BOLD } else { FontWeight::NORMAL })
+                .text_color(if is_active { rgb(theme::CYAN) } else { rgb(theme::FG_DIM) })
+                .border_b_2()
+                .border_color(if is_active { rgb(theme::CYAN) } else { rgb(0x00000000) })
+                .cursor_pointer()
+                .hover(|s| s.text_color(rgb(theme::FG)))
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.right_tab = t;
+                    if t == RightTab::Fpl || t == RightTab::Wiki {
+                        this.cached_fpl = generate_fpl_text(&this.program);
+                    }
+                    cx.notify();
+                }))
+                .child(label.to_string())
+        }))
+}
+
+fn render_fpl_tab(state: &CockpitState) -> impl IntoElement {
+    let fpl = if state.cached_fpl.is_empty() {
+        generate_fpl_text(&state.program)
+    } else {
+        state.cached_fpl.clone()
+    };
+
+    div()
+        .p(px(12.0))
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
+                .min_w(px(0.0))
+                .child(if fpl.is_empty() { "# Empty program".to_string() } else { fpl }),
+        )
+}
+
+fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
+    let drivers = state.program.drivers();
+    let evidence = state.program.evidence_items();
+    let agents = state.program.agents();
+
+    div()
+        .p(px(12.0))
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .min_w(px(0.0))
+        // Base rate section
+        .when(state.program.question().and_then(|q| q.base_rate.as_ref()).is_some(), |el| {
+            let br = state.program.question().unwrap().base_rate.as_ref().unwrap();
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .pb(px(8.0))
+                    .border_b_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(theme::GOLD))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Outside View (Base Rate)"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::FG))
+                            .min_w(px(0.0))
+                            .child(format!("{:.1}% — {}", br.historical_frequency * 100.0, br.reference_class)),
+                    )
+                    .when(br.reasoning.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .min_w(px(0.0))
+                                .child(br.reasoning.as_deref().unwrap_or("").to_string()),
+                        )
+                    }),
+            )
+        })
+        // Per-driver evidence sections
+        .children(drivers.iter().map(|driver| {
+            let display = driver.display_name.as_deref().unwrap_or(&driver.name);
+            let driver_agents: Vec<&str> = agents.iter()
+                .filter(|a| a.driver_refs.contains(&driver.name))
+                .map(|a| a.name.as_str())
+                .collect();
+            let driver_ev: Vec<_> = evidence.iter()
+                .filter(|e| driver_agents.iter().any(|a| e.source.contains(a)))
+                .collect();
+
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .pb(px(8.0))
+                .border_b_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::GREEN))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(display.to_string()),
+                )
+                .when(driver.rationale.is_some(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::FG_DIM))
+                            .min_w(px(0.0))
+                            .child(driver.rationale.as_deref().unwrap_or("").to_string()),
+                    )
+                })
+                // Agent assignments
+                .when(!driver_agents.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .gap(px(4.0))
+                            .children(driver_agents.iter().map(|a| {
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::BLUE))
+                                    .px(px(4.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::BG))
+                                    .child(a.to_string())
+                            })),
+                    )
+                })
+                // Evidence items
+                .children(driver_ev.iter().map(|ev| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(theme::BG))
+                        .mt(px(4.0))
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(6.0))
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::FG_FAINT))
+                                        .child(ev.source.clone()),
+                                )
+                                .when(ev.relevance.is_some(), |el| {
+                                    el.child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::CYAN))
+                                            .child(format!("{:.0}%", ev.relevance.unwrap_or(0.0) * 100.0)),
+                                    )
+                                }),
+                        )
+                        .when(ev.summary.is_some(), |el| {
+                            let summary = ev.summary.as_deref().unwrap_or("");
+                            let display = if summary.len() > 300 {
+                                format!("{}…", &summary[..300])
+                            } else {
+                                summary.to_string()
+                            };
+                            el.child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::FG))
+                                    .min_w(px(0.0))
+                                    .child(display),
+                            )
+                        })
+                        .when(!ev.key_findings.is_empty(), |el| {
+                            el.children(ev.key_findings.iter().take(4).map(|f| {
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .min_w(px(0.0))
+                                    .child(format!("• {}", f))
+                            }))
+                        })
+                }))
+                // No evidence yet
+                .when(driver_ev.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .child("No evidence yet — assign an agent to research this driver"),
+                    )
+                })
+        }))
+        // Unlinked evidence
+        .when(!evidence.is_empty(), |el| {
+            let all_agent_names: Vec<String> = agents.iter()
+                .filter(|a| !a.driver_refs.is_empty())
+                .map(|a| a.name.clone())
+                .collect();
+            let unlinked: Vec<_> = evidence.iter()
+                .filter(|e| !all_agent_names.iter().any(|a| e.source.contains(a)))
+                .collect();
+            if unlinked.is_empty() {
+                el
+            } else {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .pt(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("General Evidence"),
+                        )
+                        .children(unlinked.iter().map(|ev| {
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .min_w(px(0.0))
+                                .child(format!("{}: {}",
+                                    ev.source,
+                                    ev.summary.as_deref().unwrap_or("").chars().take(200).collect::<String>()
+                                ))
+                        })),
+                )
+            }
         })
 }
 
