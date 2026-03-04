@@ -1,6 +1,6 @@
 # Evidence Log: Will finland win the eurovision 2026 song contest?
 
-**Version:** v1 | **Probability:** 1.5% | **Updated:** 2026-03-04 12:19 UTC
+**Version:** v2 | **Probability:** 1.5% | **Updated:** 2026-03-04 13:23 UTC
 
 ---
 
@@ -60,7 +60,7 @@ _Collected: 2026-03-04_
 
 | p5 | p50 | p95 | unit |
 |---|---|---|---|
-| 0.2 | 0.4 | 0.7 | probability_big5_wins |
+| 0.2 | 0.4 | 0.9 | probability_big5_wins |
 
 > Big 5 countries (UK, France, Germany, Italy, Spain) auto-qualify and have won ~25% of contests since 2000. Strong Big 5 entries reduce Finland's winning probability by concentrating votes.
 

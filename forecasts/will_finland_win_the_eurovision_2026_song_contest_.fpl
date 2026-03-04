@@ -13,7 +13,7 @@ driver voting_bloc_advantage continuous {
 }
 
 driver big_5_competition_strength continuous {
-    distribution: triangular(0.2, 0.4, 0.7)
+    distribution: triangular(0.2, 0.4, 0.9)
     unit: "probability_big5_wins"
     rationale: "Big 5 countries (UK, France, Germany, Italy, Spain) auto-qualify and have won ~25% of contests since 2000. Strong Big 5 entries reduce Finland's winning probability by concentrating votes."
 }

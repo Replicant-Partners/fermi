@@ -173,6 +173,7 @@ actions!(
         TriggerQuestionOrchestration,
         PublishForecast,
         SaveForecast,
+        ImportForecast,
         ToggleFplSource,
         MinimizeWindow,
         ZoomWindow,
@@ -827,6 +828,33 @@ impl FermiConsole {
     }
 
     /// Ctrl+S — Save FPL to disk with version snapshot.
+    fn on_import_forecast(&mut self, _: &ImportForecast, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("FPL Forecasts", &["fpl"])
+                .set_title("Import FPL Forecast")
+                .pick_file()
+                .await;
+            if let Some(file) = file {
+                let path = file.path().to_string_lossy().to_string();
+                this.update(cx, |this, cx| {
+                    if this.cockpit.is_none() {
+                        let api = this.api.clone();
+                        this.cockpit = Some(cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx)));
+                    }
+                    if let Some(ref cockpit) = this.cockpit {
+                        let cockpit = cockpit.clone();
+                        cockpit.update(cx, |cockpit, cx| {
+                            cockpit.load_forecast(&path, cx);
+                        });
+                    }
+                    this.active_panel = Panel::Composer;
+                    cx.notify();
+                }).ok();
+            }
+        }).detach();
+    }
+
     fn on_save_forecast(
         &mut self,
         _: &SaveForecast,
@@ -2276,6 +2304,7 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_run_simulation))
             .on_action(cx.listener(Self::on_publish_forecast))
             .on_action(cx.listener(Self::on_save_forecast))
+            .on_action(cx.listener(Self::on_import_forecast))
             .on_action(cx.listener(Self::on_toggle_fpl_source))
             .on_action(cx.listener(Self::on_minimize_window))
             .on_action(cx.listener(Self::on_zoom_window))
@@ -2771,6 +2800,7 @@ fn main() {
             KeyBinding::new("secondary-r", RunSimulation, Some("FermiConsole")),
             KeyBinding::new("secondary-p", PublishForecast, Some("FermiConsole")),
             KeyBinding::new("secondary-s", SaveForecast, Some("FermiConsole")),
+            KeyBinding::new("secondary-o", ImportForecast, Some("FermiConsole")),
             KeyBinding::new("secondary-e", ToggleFplSource, Some("FermiConsole")),
             KeyBinding::new("secondary-m", MinimizeWindow, Some("FermiConsole")),
             KeyBinding::new("ctrl-shift-f", ToggleFullscreen, Some("FermiConsole")),
