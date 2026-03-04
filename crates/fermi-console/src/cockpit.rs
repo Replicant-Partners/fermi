@@ -1472,6 +1472,65 @@ impl CockpitState {
     // ═══════════════════════════════════════════════════════════════
 
     /// Save the FPL program to disk and create a version snapshot.
+    /// Load a forecast from an FPL file on disk.
+    pub fn load_forecast(&mut self, path: &str, cx: &mut Context<Self>) {
+        match std::fs::read_to_string(path) {
+            Ok(fpl_text) => {
+                // Parse the FPL
+                let tokens = match ::fermi::lexer::Lexer::new(&fpl_text).tokenize() {
+                    Ok(t) => t,
+                    Err(e) => {
+                        self.messages.push(AssistantMessage {
+                            node: "load".into(),
+                            kind: MessageKind::Error,
+                            text: format!("Failed to parse {}: {:?}", path, e),
+                        });
+                        cx.notify();
+                        return;
+                    }
+                };
+                match ::fermi::parser::Parser::new(tokens).parse() {
+                    Ok(program) => {
+                        self.program = program;
+                        self.cached_fpl = fpl_text;
+                        self.messages.clear();
+                        self.messages.push(AssistantMessage {
+                            node: "load".into(),
+                            kind: MessageKind::Info,
+                            text: format!("Loaded forecast from {}", path),
+                        });
+                        // Update question input
+                        if let Some(q) = self.program.question() {
+                            self.question_input.update(cx, |input, cx| {
+                                input.set_text(&q.text, cx);
+                            });
+                            if let Some(ref br) = q.base_rate {
+                                self.predicted_probability = br.historical_frequency;
+                            }
+                        }
+                        self.focused_node = FocusedNode::Question;
+                        self.right_tab = RightTab::Wiki;
+                    }
+                    Err(e) => {
+                        self.messages.push(AssistantMessage {
+                            node: "load".into(),
+                            kind: MessageKind::Error,
+                            text: format!("Parse error in {}: {}", path, e),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                self.messages.push(AssistantMessage {
+                    node: "load".into(),
+                    kind: MessageKind::Error,
+                    text: format!("Failed to read {}: {}", path, e),
+                });
+            }
+        }
+        cx.notify();
+    }
+
     pub fn save_forecast(&mut self, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.cached_fpl = generate_fpl_text(&self.program);

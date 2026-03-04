@@ -926,6 +926,13 @@ impl FermiConsole {
     }
 
     /// Reset the cockpit to a fresh state (new forecast).
+    fn on_new_forecast(&mut self, _: &NewForecast, _window: &mut Window, cx: &mut Context<Self>) {
+        let api = self.api.clone();
+        self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
+        self.active_panel = Panel::Composer;
+        cx.notify();
+    }
+
     fn on_reset_cockpit(&mut self, _: &ResetCockpit, _window: &mut Window, cx: &mut Context<Self>) {
         let api = self.api.clone();
         self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
@@ -1674,7 +1681,23 @@ impl FermiConsole {
                                         .flex()
                                         .flex_col()
                                         .children(self.local_forecasts.iter().map(|(filename, question, timestamp)| {
+                                        {
+                                            let path = format!("forecasts/{}.fpl", filename);
                                             div()
+                                                .id(SharedString::from(format!("local-forecast-{}", filename)))
+                                                .cursor_pointer()
+                                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                    // Load forecast and switch to composer
+                                                    if let Some(ref cockpit) = this.cockpit {
+                                                        let cockpit = cockpit.clone();
+                                                        let p = path.clone();
+                                                        cockpit.update(cx, |cockpit, cx| {
+                                                            cockpit.load_forecast(&p, cx);
+                                                        });
+                                                    }
+                                                    this.active_panel = Panel::Composer;
+                                                    cx.notify();
+                                                }))
                                                 .flex()
                                                 .items_center()
                                                 .gap(px(12.0))
@@ -1711,6 +1734,7 @@ impl FermiConsole {
                                                                 .child(format!("{} · {}.fpl", timestamp, filename)),
                                                         ),
                                                 )
+                                        }
                                         })),
                                 ),
                         )
@@ -2257,6 +2281,7 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_zoom_window))
             .on_action(cx.listener(Self::on_toggle_fullscreen))
             .on_action(cx.listener(Self::on_reset_cockpit))
+            .on_action(cx.listener(Self::on_new_forecast))
             .flex()
             .size_full()
             .bg(theme::bg())
