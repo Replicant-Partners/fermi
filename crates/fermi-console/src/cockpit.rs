@@ -130,6 +130,8 @@ pub struct CockpitState {
     pub editor_impact: Entity<TextInput>,
     pub editor_rationale: Entity<TextInput>,
     pub agent_query_input: Entity<TextInput>,
+    pub evidence_source_input: Entity<TextInput>,
+    pub evidence_summary_input: Entity<TextInput>,
 
     // ── Agent Execution State (runtime, not in AST) ───────────────
     pub agent_runs: Vec<AgentExecution>,
@@ -228,6 +230,16 @@ impl CockpitState {
                 .with_label("Agent Query")
         });
 
+        let evidence_source_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("Source (e.g. Bloomberg, analyst report, URL)")
+                .with_label("Source")
+        });
+        let evidence_summary_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("What does this evidence say?")
+                .with_label("Summary")
+        });
         Self {
             program: Program::empty(),
             focused_node: FocusedNode::Question,
@@ -243,6 +255,8 @@ impl CockpitState {
             editor_impact,
             editor_rationale,
             agent_query_input,
+            evidence_source_input,
+            evidence_summary_input,
             agent_runs: Vec::new(),
             orchestration_running: false,
             session_cost: 0.0,
@@ -1271,6 +1285,46 @@ impl CockpitState {
     }
 
     /// Delete a driver from the program.
+    /// Add manual evidence to the currently focused driver.
+    pub fn add_manual_evidence(&mut self, cx: &mut Context<Self>) {
+        let driver_name = match &self.focused_node {
+            FocusedNode::Driver(n) => n.clone(),
+            _ => return,
+        };
+
+        let source = self.evidence_source_input.read(cx).text().to_string();
+        let summary = self.evidence_summary_input.read(cx).text().to_string();
+
+        if source.trim().is_empty() && summary.trim().is_empty() {
+            return;
+        }
+
+        let ev_id = format!("manual_{}_{}", sanitize_name(&driver_name),
+            self.program.evidence_items().len());
+
+        self.program.add_evidence(EvidenceStmt {
+            id: ev_id,
+            source: if source.is_empty() { "Manual entry".into() } else { source },
+            summary: if summary.is_empty() { None } else { Some(summary) },
+            url: None,
+            relevance: Some(0.7),
+            date: Some(chrono::Utc::now().format("%Y-%m-%d").to_string()),
+            strength: Some(0.7),
+            key_findings: vec![],
+        });
+
+        // Clear inputs
+        self.evidence_source_input.update(cx, |input, cx| input.set_text("", cx));
+        self.evidence_summary_input.update(cx, |input, cx| input.set_text("", cx));
+
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", driver_name),
+            kind: MessageKind::Info,
+            text: format!("Manual evidence added to '{}'", driver_name),
+        });
+        cx.notify();
+    }
+
     pub fn delete_driver(&mut self, name: &str, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.program.remove_driver(name);
@@ -2676,6 +2730,43 @@ fn render_driver_editor_and_evidence(
                     })),
             )
         })
+        // ── Add manual evidence ───────────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .mt(px(8.0))
+                .pt(px(8.0))
+                .border_t_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Add Evidence"),
+                )
+                .child(state.evidence_source_input.clone())
+                .child(state.evidence_summary_input.clone())
+                .child({
+                    div()
+                        .id("add-evidence-btn")
+                        .px(px(12.0))
+                        .py(px(4.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(theme::CYAN))
+                        .text_color(rgb(theme::BG_DEEP))
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.8))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.add_manual_evidence(cx);
+                        }))
+                        .child("+ Add Evidence")
+                }),
+        )
 }
 
 fn render_editor_panel(

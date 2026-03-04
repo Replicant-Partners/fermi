@@ -1,30 +1,30 @@
 question "will poland win the eruvision contest in 2026?"
 
-driver song_quality_ranking continuous {
-    distribution: triangular(15, 25, 38)
-    unit: "final_position_out_of_40"
-    rationale: "Poland's historical performance: median finish ~20th-25th place. Recent entries (2019-2024) have not qualified for finals or finished lower half. Quality depends on national selection process and artist appeal. No structural advantage in production quality or artist development compared to consistent winners (Sweden, Italy, Ukraine)."
+driver song_quality_percentile continuous {
+    distribution: triangular(30, 50, 85)
+    unit: "percentile_rank"
+    rationale: "Poland's best Eurovision result was 2nd place (Michał Szpak, 2016). Historical performance: median finish ~15th place (out of ~26 finalists). Song quality is highly variable year-to-year. Poland has qualified for finals 11/20 times (55% qualification rate vs ~50% baseline for semi-finalists)."
 }
 
-driver jury_televote_appeal continuous {
-    distribution: triangular(30, 95, 180)
-    unit: "combined_points"
-    rationale: "Winners typically score 400-600 points in modern voting. Poland's best (1994) scored 166 points under old system. Recent qualifiers score 50-150 points. Poland lacks diaspora voting bloc advantage (unlike Russia, Ukraine, Greece) and cultural proximity clusters are weak. Jury appeal requires exceptional song craft."
+driver televoting_appeal_factor continuous {
+    distribution: triangular(0.6, 1, 1.8)
+    unit: "relative_to_average"
+    rationale: "Poland receives moderate diaspora voting support (UK, Ireland, Scandinavia have Polish communities). However, lacks strong regional voting bloc compared to Balkans, Nordics, or ex-Soviet states. 2016 runner-up finish showed Poland CAN achieve high televoting when song resonates broadly."
 }
 
-driver geopolitical_sentiment binary {
-    probability: 0.5p
-    impact_multiplier: 1.3
-    rationale: "Eurovision voting has geopolitical dimensions. Poland's position: EU member, NATO ally, Ukraine war supporter. Could benefit from solidarity voting if Ukraine-related narrative resonates (2026 = 4 years post-invasion). However, Poland lacks the direct sympathy narrative Ukraine had in 2022. Neutral-to-slightly-positive context."
+driver jury_appeal_factor continuous {
+    distribution: triangular(0.5, 0.9, 1.4)
+    unit: "relative_to_average"
+    rationale: "Poland historically underperforms with juries vs televoting. Juries favor vocal technique, staging sophistication, and contemporary production. Poland's entries often more traditional/rock-oriented, less aligned with jury preferences (pop, ballads with strong vocals)."
 }
 
-driver national_selection_investment binary {
-    probability: 0.5p
-    impact_multiplier: 1.3
-    rationale: "Poland's broadcaster TVP has not demonstrated consistent strategic investment in Eurovision success (unlike SVT Sweden, RAI Italy). Recent political changes in Poland (2023 government transition) may affect cultural policy. No evidence of systematic artist development program or hiring international songwriters/producers like winning countries do."
+driver competitive_field_strength continuous {
+    distribution: triangular(22, 26, 30)
+    unit: "number_of_strong_competitors"
+    rationale: "2026 will have ~40 countries competing, ~26 finalists. Typically 5-8 countries enter as genuine contenders (based on national selection quality, artist profile, production budget). Poland competes against perennial strong performers: Sweden, Italy, Ukraine, Netherlands, Australia, France."
 }
 
-evidence macro_forecaster_evidence_1772582137 {
+evidence macro_forecaster_evidence_1772659626 {
     source: "Agent: macro_forecaster (Claude API)"
     summary: "```json
 {
@@ -32,101 +32,107 @@ evidence macro_forecaster_evidence_1772582137 {
     \"reference_class\": \"Eurovision Song Contest winners (1956-2024)\",
     \"historical_frequency\": 0.015,
     \"sample_size\": 68,
-    \"reasoning\": \"Poland has never won Eurovision in 68 contests (competed 1994-2024 with gaps). Historical win rate for Poland specifically is 0/~25 = 0%. For any single country in modern era (post-1998, ~40 countries competing), base rate is approximately 1/40 = 2.5%. Poland's track record suggests below-average performance: best result was 2nd place (1994, Edyta Górniak), with most entries finishing mid-to-lower table.\"
+    \"reasoning\": \"Poland has never won Eurovision in 68 contests (competed since 1994, 20 participations). Historical win rate for any single country is ~1.5% (1/68). For countries that have never won, the rate is effectively 0% historically, but forward-looking probability must account for competitive dynamics. Big 5 countries (automatic finalists) have ~7.4% win rate each; other countries ~0.8% per appearance.\"
   },
   \"drivers\": [
     {
-      \"name\": \"song_quality_ranking\",
-      \"type\": \"continuous\",
-      \"p5\": 15,
-      \"p50\": 25,
-      \"p95\": 38,
-      \"unit\": \"final_position_out_of_40\",
-      \"rationale\": \"Poland's historical performance: median finish ~20th-25th place. Recent entries (2019-2024) have not qualified for finals or finished lower half. Quality depends on national selection process and artist appeal. No structural advantage in production quality or artist development compared to consistent winners (Sweden, Italy, Ukraine).\"
-    },
-    {
-      \"name\": \"jury_televote_appeal\",
+      \"name\": \"song_quality_percentile\",
       \"type\": \"continuous\",
       \"p5\": 30,
-      \"p50\": 95,
-      \"p95\": 180,
-      \"unit\": \"combined_points\",
-      \"rationale\": \"Winners typically score 400-600 points in modern voting. Poland's best (1994) scored 166 points under old system. Recent qualifiers score 50-150 points. Poland lacks diaspora voting bloc advantage (unlike Russia, Ukraine, Greece) and cultural proximity clusters are weak. Jury appeal requires exceptional song craft.\"
+      \"p50\": 50,
+      \"p95\": 85,
+      \"unit\": \"percentile_rank\",
+      \"rationale\": \"Poland's best Eurovision result was 2nd place (Michał Szpak, 2016). Historical performance: median finish ~15th place (out of ~26 finalists). Song quality is highly variable year-to-year. Poland has qualified for finals 11/20 times (55% qualification rate vs ~50% baseline for semi-finalists).\"
     },
     {
-      \"name\": \"geopolitical_sentiment\",
+      \"name\": \"televoting_appeal_factor\",
+      \"type\": \"continuous\",
+      \"p5\": 0.6,
+      \"p50\": 1.0,
+      \"p95\": 1.8,
+      \"unit\": \"relative_to_average\",
+      \"rationale\": \"Poland receives moderate diaspora voting support (UK, Ireland, Scandinavia have Polish communities). However, lacks strong regional voting bloc compared to Balkans, Nordics, or ex-Soviet states. 2016 runner-up finish showed Poland CAN achieve high televoting when song resonates broadly.\"
+    },
+    {
+      \"name\": \"jury_appeal_factor\",
+      \"type\": \"continuous\",
+      \"p5\": 0.5,
+      \"p50\": 0.9,
+      \"p95\": 1.4,
+      \"unit\": \"relative_to_average\",
+      \"rationale\": \"Poland historically underperforms with juries vs televoting. Juries favor vocal technique, staging sophistication, and contemporary production. Poland's entries often more traditional/rock-oriented, less aligned with jury preferences (pop, ballads with strong vocals).\"
+    },
+    {
+      \"name\": \"competitive_field_strength\",
+      \"type\": \"continuous\",
+      \"p5\": 22,
+      \"p50\": 26,
+      \"p95\": 30,
+      \"unit\": \"number_of_strong_competitors\",
+      \"rationale\": \"2026 will have ~40 countries competing, ~26 finalists. Typically 5-8 countries enter as genuine contenders (based on national selection quality, artist profile, production budget). Poland competes against perennial strong performers: Sweden, Italy, Ukraine, Netherlands, Australia, France.\"
+    },
+    {
+      \"name\": \"host_country_advantage\",
       \"type\": \"binary\",
       \"p5\": 0,
       \"p50\": 0,
-      \"p95\": 1,
-      \"unit\": \"favorable_context\",
-      \"rationale\": \"Eurovision voting has geopolitical dimensions. Poland's position: EU member, NATO ally, Ukraine war supporter. Could benefit from solidarity voting if Ukraine-related narrative resonates (2026 = 4 years post-invasion). However, Poland lacks the direct sympathy narrative Ukraine had in 2022. Neutral-to-slightly-positive context.\"
-    },
-    {
-      \"name\": \"national_selection_investment\",
-      \"type\": \"binary\",
-      \"p5\": 0,
-      \"p50\": 0,
-      \"p95\": 1,
-      \"unit\": \"strategic_approach\",
-      \"rationale\": \"Poland's broadcaster TVP has not demonstrated consistent strategic investment in Eurovision success (unlike SVT Sweden, RAI Italy). Recent political changes in Poland (2023 government transition) may affect cultural policy. No evidence of systematic artist development program or hiring international songwriters/producers like winning countries do.\"
+      \"p95\": 0,
+      \"unit\": \"boolean\",
+      \"rationale\": \"Poland is NOT hosting Eurovision 2026 (Switzerland won 2024, will host 2025; 2026 host depends on 2025 winner). Host country advantage exists but doesn't apply here. If Poland somehow hosted, win probability would increase ~2-3x.\"
     }
   ],
   \"evidence\": [
     {
       \"source\": \"Eurovision historical database (1956-2024)\",
-      \"summary\": \"Poland's complete Eurovision record shows structural underperformance\",
+      \"summary\": \"Poland's complete Eurovision participation record\",
       \"key_findings\": [
-        \"Poland competed approximately 25 times, never won\",
-        \"Best result: 2nd place 1994 (Edyta Górniak - 'To nie ja')\",
-        \"Failed to qualify for finals: 2011, 2018, 2021, 2022, 2024\",
-        \"No top-10 finishes since 1994 (30 years)\"
+        \"Poland competed 20 times since 1994 debut\",
+        \"Best result: 2nd place (2016, Michał Szpak - 'Color of Your Life')\",
+        \"Qualified for final 11/20 times (55% rate)\",
+        \"Average final position when qualifying: 14.3rd place\",
+        \"Never won; only one top-3 finish\"
       ],
       \"relevance\": 0.95
     },
     {
-      \"source\": \"Eurovision voting pattern analysis (academic studies, fan databases)\",
-      \"summary\": \"Voting blocs and cultural proximity strongly influence outcomes\",
+      \"source\": \"Eurovision voting pattern analysis (2016-2024)\",
+      \"summary\": \"Structural factors in modern Eurovision voting\",
       \"key_findings\": [
-        \"Nordic bloc (Sweden, Norway, Denmark, Finland) exchanges high votes\",
-        \"Balkan bloc similarly cohesive\",
-        \"Poland receives modest support from Lithuania, but lacks strong voting partnerships\",
-        \"Diaspora voting (Turkey, Greece, Armenia) provides structural advantage Poland lacks\"
+        \"50/50 jury-televote split since 2016 reduces diaspora advantage\",
+        \"Western/Northern Europe countries win 60% of contests (2010-2024)\",
+        \"Countries with strong public broadcaster investment (Sweden, Netherlands, Italy) consistently competitive\",
+        \"Poland's TVP (public broadcaster) has moderate Eurovision investment compared to top performers\"
       ],
       \"relevance\": 0.85
     },
     {
-      \"source\": \"Recent Eurovision winners analysis (2015-2024)\",
-      \"summary\": \"Winning formula requires multiple factors aligning\",
+      \"source\": \"2024-2025 Eurovision context\",
+      \"summary\": \"Current competitive landscape\",
       \"key_findings\": [
-        \"Winners typically: exceptional song craft, professional staging, jury+televote appeal\",
-        \"Countries with systematic approaches win repeatedly (Sweden 6x total, Italy resurgence)\",
-        \"Sympathy votes rare but powerful (Ukraine 2016, 2022)\",
-        \"Poland has not demonstrated winning-level production values in recent entries\"
-      ],
-      \"relevance\": 0.90
-    },
-    {
-      \"source\": \"2024-2025 Polish cultural policy context\",
-      \"summary\": \"Political transition may affect Eurovision approach\",
-      \"key_findings\": [
-        \"TVP (Polish broadcaster) underwent leadership changes after 2023 election\",
-        \"Uncertain if new management will prioritize Eurovision investment\",
-        \"No announced strategic initiatives for Eurovision 2026\",
-        \"Poland's music industry lacks the international co-production networks of Sweden/UK\"
+        \"Switzerland won 2024, hosts 2025\",
+        \"2026 host unknown (depends on 2025 winner)\",
+        \"Poland has not yet selected or announced 2026 representative (typical timeline: Q4 2025 or Q1 2026)\",
+        \"Recent trend: countries using established artists perform better than unknowns\"
       ],
       \"relevance\": 0.70
     }
   ],
-  \"model_expression\": \"P(Poland wins 2026) = base_rate × quality_multiplier × voting_advantage × investment_factor. Given historical underperformance (0% win rate), lack of voting bloc, no evidence of strategic shift, and structural disadvantages, probability remains near base rate for underperforming countries: ~0.5-2%\",
-  \"confidence\": 0.80,
-  \"reasoning\": \"High confidence in historical data (complete Eurovision records available). Medium-high confidence in structural factors (voting patterns well-documented). Lower confidence on 2026 specifics (song unknown, national selection process for 2026 not yet announced, potential for surprise breakthrough). The 30-year gap since Poland's last strong performance and consistent recent underperformance provides strong signal. Macro factors (geopolitics, cultural trends) could shift odds slightly but unlikely to overcome structural disadvantages without major strategic investment.\"
+  \"model_expression\": \"P(Poland wins 2026) = base_rate × (song_quality_percentile/50) × televoting_appeal × jury_appeal × (26/competitive_field_strength) × selection_process_quality_multiplier. Given Poland's historical underperformance, structural disadvantages (no strong voting bloc, moderate jury appeal), and high variance in song quality, probability is low but non-zero. A breakthrough song (like 2016) could reach top-5, but winning requires simultaneous excellence in song, performance, staging, AND favorable competitive field.\",
+  \"confidence\": 0.78,
+  \"reasoning\": \"High confidence in historical data (complete Eurovision records available). Medium confidence in forward-looking drivers due to: (1) unknown song quality for 2026 - not yet selected, (2) unpredictable competitive field strength, (3) Eurovision has high variance - 'dark horse' winners occur. Confidence reduced by 2-year forecast horizon and inherent randomness in artistic competition. However, structural factors (voting patterns, Poland's track record, broadcaster investment levels) are well-established and stable.\"
 }
 ```"
     relevance: 0.5p
-    date: 2026-03-03
+    date: 2026-03-04
 }
 
-model: song_quality_ranking * jury_televote_appeal * (if geopolitical_sentiment then 1.3 else 1.0) * (if national_selection_investment then 1.3 else 1.0)
+evidence entity_investigator_0 {
+    source: "Agent: entity_investigator (Claude API)"
+    summary: "Poland's Eurovision televoting performance 2014-2024 shows a clear outlier in 2016 (222 televote points, 3rd place) versus typical 40-80 point performances. The data reveals that while Poland benefits from diaspora support in UK/Ireland/Scandinavia (providing baseline 20-30 points), breakthrough pan-European televoting success requires specific musical elements: theatrical presentation, emotional vocal peaks, universal themes, and staging spectacle. Poland's 2016 entry succeeded by combining these Eurovision-optimized elements, while other entries prioritized artistic authenticity over televoting optimization, resulting in diaspora-dependent rather than pan-European appeal."
+    relevance: 0.72p
+    date: 2026-03-04
+}
+
+model: song_quality_percentile * televoting_appeal_factor * jury_appeal_factor * competitive_field_strength
 
 simulate 10000 iterations
