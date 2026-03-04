@@ -829,7 +829,7 @@ impl CockpitState {
                             state.process_macro_forecaster_result(&result_json);
                         } else if aid == "fermi" {
                             // Fermi meta-agent: parse recommendation
-                            state.process_fermi_recommendation(&result_json);
+                            state.process_fermi_recommendation(&result_json, cx);
                         } else {
                             // Other agents: add evidence to AST
                             state.process_agent_evidence(&aid, &result_json);
@@ -883,7 +883,7 @@ impl CockpitState {
 
     /// Process evidence from a non-macro_forecaster agent.
     /// Process Fermi meta-agent recommendation.
-    fn process_fermi_recommendation(&mut self, result: &JsonValue) {
+    fn process_fermi_recommendation(&mut self, result: &JsonValue, cx: &mut Context<Self>) {
         if let Some(run) = self.agent_runs.iter_mut().find(|r| r.agent_name == "fermi") {
             run.status = AgentRunStatus::Completed;
         }
@@ -905,7 +905,7 @@ impl CockpitState {
         if let Ok(rec) = serde_json::from_str::<JsonValue>(clean) {
             let agent = rec.get("recommended_agent").and_then(|v| v.as_str()).unwrap_or("market_research");
             let reason = rec.get("reasoning").and_then(|v| v.as_str()).unwrap_or("");
-            let query = rec.get("suggested_query").and_then(|v| v.as_str()).unwrap_or("");
+            let query = rec.get("suggested_query").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
             self.messages.push(AssistantMessage {
                 node: "agent_picker".into(),
@@ -915,11 +915,8 @@ impl CockpitState {
 
             if !query.is_empty() {
                 // Pre-fill the query input with Fermi's suggestion
-                // (can't update TextInput from here without cx, so use a message)
-                self.messages.push(AssistantMessage {
-                    node: "agent_picker".into(),
-                    kind: MessageKind::Suggestion,
-                    text: format!("Suggested query: {}", query),
+                self.agent_query_input.update(cx, |input, cx| {
+                    input.set_text(query, cx);
                 });
             }
         } else {
