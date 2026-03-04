@@ -1,0 +1,75 @@
+{
+  "agent_id": "fermi",
+  "agent_type": "system",
+  "version": "1.0.0",
+  "tier": "curated",
+  "system_prompt": "You are Fermi, the meta-forecasting agent. You are an absolute expert in Tetlock superforecasting methodology and its application through the Forecasting Programming Language (FPL).\n\nYou know all agents in the fermi-orchestra:\n- macro_forecaster: macroeconomic analysis, base rates, scenario forecasting\n- market_research: market trends, competitive dynamics, analyst consensus\n- sentiment_analyzer: news/social sentiment, public perception\n- entity_investigator: deep entity research, ownership structures, relationships\n\nYour role is to:\n1. Suggest which agent to assign to which driver based on the driver's nature\n2. Help formulate compelling research queries for each agent+driver combination\n3. Advise on probability distributions (triangular vs normal, parameter ranges)\n4. Warn about common forecasting biases and errors\n5. Guide the decomposition process (which drivers matter, how they combine)\n\nWhen asked to suggest an agent for a driver, respond with JSON:\n{\n  \"recommended_agent\": \"agent_id\",\n  \"reasoning\": \"why this agent is best for this driver\",\n  \"suggested_query\": \"the specific research query to use\",\n  \"alternative_agents\": [\"other_agent_id\"]\n}\n\nWhen asked to review a forecast, provide structured feedback on:\n- Decomposition quality (are the right drivers identified?)\n- Distribution reasonableness (are the ranges sensible?)\n- Missing factors (what's not being considered?)\n- Calibration advice (is the probability well-calibrated?)",
+  "capabilities": {
+    "executor": "llm",
+    "mcp_tools": [],
+    "skills": [
+      "tetlock-methodology",
+      "forecast-decomposition",
+      "agent-orchestration",
+      "distribution-advice",
+      "calibration-guidance",
+      "fpl-expertise"
+    ],
+    "model": "claude-sonnet-4-5-20250929",
+    "temperature": 0.3,
+    "provider": "anthropic"
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0,
+    "total_queries": 0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "metadata": {
+    "created": "2026-03-03",
+    "author": "Fermi Team",
+    "description": "The meta-forecasting agent. Expert in Tetlock methodology, FPL language, and agent orchestration. Suggests which research agents to assign to which drivers, helps formulate queries, and provides calibration guidance.",
+    "tags": [
+      "fermi-orchestra",
+      "meta-agent",
+      "forecasting",
+      "tetlock",
+      "orchestration",
+      "calibration"
+    ],
+    "sample_queries": [
+      "Which agent should I assign to research market share for a tech company forecast?",
+      "Review my forecast decomposition and suggest improvements",
+      "Help me formulate a query for sentiment_analyzer on public opinion about climate policy"
+    ],
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Prognosticales",
+      "class": "Metaforsia",
+      "order": "Orchestrales",
+      "family": "Forecastidae",
+      "genus": "Fermius",
+      "species": "fermi"
+    }
+  },
+  "accepts": ["query", "program", "driver"],
+  "produces": ["recommendation", "query", "guidance"],
+  "dependencies": {
+    "required": [],
+    "optional": ["macro_forecaster", "market_research", "sentiment_analyzer", "entity_investigator"]
+  }
+}

@@ -824,8 +824,12 @@ impl CockpitState {
 
                     this.update(cx, |state, cx| {
                         // macro_forecaster gets special processing (base rate + drivers)
+                        // macro_forecaster gets special processing (base rate + drivers)
                         if aid == "macro_forecaster" {
                             state.process_macro_forecaster_result(&result_json);
+                        } else if aid == "fermi" {
+                            // Fermi meta-agent: parse recommendation
+                            state.process_fermi_recommendation(&result_json);
                         } else {
                             // Other agents: add evidence to AST
                             state.process_agent_evidence(&aid, &result_json);
@@ -878,6 +882,59 @@ impl CockpitState {
     }
 
     /// Process evidence from a non-macro_forecaster agent.
+    /// Process Fermi meta-agent recommendation.
+    fn process_fermi_recommendation(&mut self, result: &JsonValue) {
+        if let Some(run) = self.agent_runs.iter_mut().find(|r| r.agent_name == "fermi") {
+            run.status = AgentRunStatus::Completed;
+        }
+
+        // Try to parse the recommendation from reasoning
+        let reasoning = result
+            .get("metadata")
+            .and_then(|m| m.get("reasoning"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let clean = reasoning
+            .trim()
+            .strip_prefix("```json").or_else(|| reasoning.trim().strip_prefix("```"))
+            .and_then(|s| s.strip_suffix("```"))
+            .unwrap_or(reasoning)
+            .trim();
+
+        if let Ok(rec) = serde_json::from_str::<JsonValue>(clean) {
+            let agent = rec.get("recommended_agent").and_then(|v| v.as_str()).unwrap_or("market_research");
+            let reason = rec.get("reasoning").and_then(|v| v.as_str()).unwrap_or("");
+            let query = rec.get("suggested_query").and_then(|v| v.as_str()).unwrap_or("");
+
+            self.messages.push(AssistantMessage {
+                node: "agent_picker".into(),
+                kind: MessageKind::Tip,
+                text: format!("🦊 Fermi recommends **{}**: {}", agent, reason),
+            });
+
+            if !query.is_empty() {
+                // Pre-fill the query input with Fermi's suggestion
+                // (can't update TextInput from here without cx, so use a message)
+                self.messages.push(AssistantMessage {
+                    node: "agent_picker".into(),
+                    kind: MessageKind::Suggestion,
+                    text: format!("Suggested query: {}", query),
+                });
+            }
+        } else {
+            // Fallback: show raw reasoning as guidance
+            let summary: String = reasoning.chars().take(300).collect();
+            if !summary.is_empty() {
+                self.messages.push(AssistantMessage {
+                    node: "agent_picker".into(),
+                    kind: MessageKind::Tip,
+                    text: format!("🦊 Fermi: {}", summary),
+                });
+            }
+        }
+    }
+
     fn process_agent_evidence(&mut self, agent_id: &str, result: &JsonValue) {
         if let Some(run) = self.agent_runs.iter_mut().find(|r| r.agent_name == agent_id) {
             run.status = AgentRunStatus::Completed;
@@ -1032,10 +1089,49 @@ impl CockpitState {
         self.save_focused_driver(cx);
         self.agent_search_query.clear();
         self.focused_node = FocusedNode::AgentPicker(driver_name.to_string());
+        self.right_tab = RightTab::Edit;
+
+        // Ask Fermi for agent recommendation in the background
+        let driver = self.program.driver(driver_name);
+        let driver_rationale = driver
+            .and_then(|d| d.rationale.as_deref())
+            .unwrap_or("")
+            .to_string();
+        let driver_type = driver
+            .map(|d| format!("{:?}", d.driver_type))
+            .unwrap_or_else(|| "unknown".into());
+        let question = self.program.question()
+            .map(|q| q.text.clone())
+            .unwrap_or_default();
+
+        let query = format!(
+            "I'm building a forecast for: \"{}\"\n\n\
+             I need to assign a research agent to the driver '{}' (type: {}).\n\
+             Driver rationale: {}\n\n\
+             Available agents: macro_forecaster, market_research, sentiment_analyzer, entity_investigator.\n\n\
+             Which agent is best for this driver? Suggest a specific research query.\n\
+             Respond with JSON: {{\"recommended_agent\": \"...\", \"reasoning\": \"...\", \"suggested_query\": \"...\"}}",
+            question, driver_name, driver_type, driver_rationale
+        );
+
+        let dn = driver_name.to_string();
+        self.fire_agent("fermi", &query, cx);
+        self.agent_runs.push(AgentExecution {
+            agent_name: "fermi".into(),
+            status: AgentRunStatus::Running,
+            evidence_count: 0,
+            confidence: None,
+            error: None,
+            credits_charged: None,
+        });
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", dn),
+            kind: MessageKind::Info,
+            text: format!("🦊 Fermi is analyzing which agent is best for '{}'…", dn),
+        });
+
         cx.notify();
     }
-
-    /// Assign an agent to a driver in the AST.
     pub fn assign_agent_to_driver(
         &mut self,
         driver_name: &str,
