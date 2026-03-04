@@ -2744,7 +2744,10 @@ fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .flex_grow()
+        .max_h(px(200.0))
+        .overflow_hidden()
+        .border_t_1()
+        .border_color(rgb(theme::FG_FAINT))
         .p(px(12.0))
         .gap(px(6.0))
         .child(
