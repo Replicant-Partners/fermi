@@ -1,0 +1,280 @@
+question "will finland win the eurovision in 2026?"
+
+driver song_quality_ranking continuous {
+    distribution: triangular(15, 20, 35)
+    unit: "final_position_rank"
+    rationale: "Finland's historical performance: median finish around 15-20th place. Recent performances: 2023 (2nd - Käärijä 'Cha Cha Cha'), 2024 (not qualified to final), 2022 (not qualified). Strong 2023 showing suggests capability but high variance."
+}
+
+driver public_vote_strength continuous {
+    distribution: triangular(50, 120, 300)
+    unit: "televote_points"
+    rationale: "Finland won televote in 2023 with 376 points (record). Historical pattern: Nordic countries perform well in televoting. Finland needs both jury and public support to win - 2023 lost despite televote dominance due to jury preference for Sweden."
+}
+
+driver jury_appeal continuous {
+    distribution: triangular(30, 80, 200)
+    unit: "jury_points"
+    rationale: "Finland's jury scores typically lower than televote. 2023: 150 jury points (vs 376 televote). Winning requires ~250+ combined points typically. Jury tends to favor polished pop, ballads over novelty/rock acts that Finland often sends."
+}
+
+driver competitive_field_strength binary {
+    probability: 0.5p
+    impact_multiplier: 1.3
+    rationale: "Eurovision competitiveness varies. 2026 field unknown. Strong traditional competitors: Sweden, Italy, Ukraine, Netherlands, UK (post-reform). Probability of weak competitive year: ~20-30%."
+}
+
+driver geopolitical_voting_impact continuous {
+    distribution: triangular(-20, 10, 40)
+    unit: "net_points_from_bloc"
+    rationale: "Nordic voting bloc typically gives Finland 20-40 points. Finland benefits from Scandinavian neighbors but lacks large diaspora voting base unlike Turkey, Greece, or Balkan countries. Recent NATO membership (2023) unlikely to affect voting patterns significantly."
+}
+
+evidence macro_forecaster_evidence_1772656906 {
+    source: "Agent: macro_forecaster (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"Small Nordic countries winning Eurovision (population <6M)\",
+    \"historical_frequency\": 0.015,
+    \"sample_size\": 68,
+    \"reasoning\": \"Eurovision has run 68 contests (1956-2024, excluding cancelled years). Small Nordic countries (Finland, Norway, Denmark) have won 1 time (Finland 2006). This gives ~1.5% per contest. However, Finland specifically has won 1/68 times = 1.47%. With ~40 countries competing typically, random chance would be 2.5%, so Finland performs slightly below random baseline historically.\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"finnish_music_quality_ranking\",
+      \"type\": \"continuous\",
+      \"p5\": 15,
+      \"p50\": 22,
+      \"p95\": 35,
+      \"unit\": \"rank_position_out_of_40\",
+      \"rationale\": \"Finland's historical Eurovision performance: 1 win (2006), 3 top-5 finishes in 68 entries. Recent performance (2020-2024): 2023 placed 2nd (Käärijä - 'Cha Cha Cha'), 2024 placed outside top 10, 2021 placed 21st. Finland tends to send unconventional entries (heavy metal, rap) that polarize voters. Median finish around 22nd suggests moderate competitiveness.\"
+    },
+    {
+      \"name\": \"voting_bloc_support\",
+      \"type\": \"continuous\",
+      \"p5\": 30,
+      \"p50\": 65,
+      \"p95\": 110,
+      \"unit\": \"points_from_nordic_bloc\",
+      \"rationale\": \"Nordic voting bloc (Sweden, Norway, Denmark, Iceland) historically provides Finland 50-80 points. However, Eurovision reformed voting in 2016 (separate jury/televote), reducing bloc voting impact. Finland's 2023 near-win showed strong pan-European televote support (376 points, 2nd place) but weaker jury support (150 points, 4th place).\"
+    },
+    {
+      \"name\": \"song_genre_novelty\",
+      \"type\": \"binary\",
+      \"p5\": 0,
+      \"p50\": 0.6,
+      \"p95\": 1,
+      \"unit\": \"probability_unconventional_genre\",
+      \"rationale\": \"Finland has 60% probability of sending unconventional genre (metal, rap, avant-garde) based on last 10 entries. Unconventional entries create high variance: either top-5 or bottom-10. 2006 win (Lordi - hard rock) and 2023 runner-up (Käärijä - rap/electronic) both unconventional. Conventional pop entries from Finland typically place 15th-25th.\"
+    },
+    {
+      \"name\": \"geopolitical_sympathy_factor\",
+      \"type\": \"continuous\",
+      \"p5\": 0,
+      \"p50\": 15,
+      \"p95\": 45,
+      \"unit\": \"bonus_points\",
+      \"rationale\": \"Finland's 2023 NATO accession and proximity to Russia-Ukraine conflict may generate 10-30 sympathy points in 2025-2026 contests. Historical precedent: Ukraine won 2016 (Crimea annexation context) and 2022 (invasion context) with significant geopolitical sympathy voting. Effect diminishes over time; by 2026 likely reduced to 10-20 points.\"
+    },
+    {
+      \"name\": \"competition_field_strength\",
+      \"type\": \"continuous\",
+      \"p5\": 3,
+      \"p50\": 6,
+      \"p95\": 10,
+      \"unit\": \"number_of_strong_competitors\",
+      \"rationale\": \"Typically 5-8 countries enter with professional, well-funded entries (Sweden, Italy, France, UK, Spain, Netherlands, Ukraine, Australia). Finland must outperform these. Sweden (7 wins, most recent 2023) is strongest Nordic competitor. In weak years (fewer than 5 strong entries), Finland's win probability increases 2-3x.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"Eurovision historical results database (1956-2024)\",
+      \"summary\": \"Finland has participated 58 times, won once (2006), finished last 3 times, and achieved 3 top-5 finishes\",
+      \"key_findings\": [
+        \"Finland's win rate: 1/58 participations = 1.7%\",
+        \"Recent strong performance: 2nd place in 2023 with 526 total points\",
+        \"Finland qualified for grand final in 14 of last 18 contests (78% qualification rate)\"
+      ],
+      \"relevance\": 0.95
+    },
+    {
+      \"source\": \"Eurovision voting pattern analysis (2016-2024 post-reform era)\",
+      \"summary\": \"Voting bloc influence reduced but not eliminated; televote increasingly rewards viral/unconventional acts\",
+      \"key_findings\": [
+        \"Nordic bloc provides Finland average 55 points (down from 75 pre-2016)\",
+        \"Televote winners differ from jury winners in 6/8 contests (2016-2024)\",
+        \"Unconventional genres won televote in 2021, 2022, 2023 but lost jury vote\"
+      ],
+      \"relevance\": 0.85
+    },
+    {
+      \"source\": \"Finland's national selection process (UMK - Uuden Musiikin Kilpailu)\",
+      \"summary\": \"Finland uses public selection with jury input; tends to favor distinctive over commercial entries\",
+      \"key_findings\": [
+        \"2023 selection chose Käärijä (unconventional) over safer pop entries\",
+        \"Finnish public broadcaster YLE has budget €150k-200k for Eurovision entry (mid-tier)\",
+        \"Finland's selection typically occurs February-March, 2-3 months before contest\"
+      ],
+      \"relevance\": 0.70
+    },
+    {
+      \"source\": \"Betting markets and Eurovision forecasting (2023-2024 data)\",
+      \"summary\": \"Pre-contest betting odds provide 60-70% accuracy for top-5 prediction\",
+      \"key_findings\": [
+        \"Finland opened 2023 contest at 8-1 odds (11% implied probability), finished 2nd\",
+        \"Small countries rarely favored pre-contest unless viral social media presence\",
+        \"2026 odds not yet available; typically published March 2026\"
+      ],
+      \"relevance\": 0.60
+    }
+  ],
+  \"model_expression\": \"P(Finland wins 2026) = base_rate × quality_multiplier × bloc_support_factor × novelty_variance × geopolitical_bonus × (1/competition_strength). Quality_multiplier = (40-finnish_ranking)/40. Bloc_support_factor = voting_bloc_support/60. Novelty creates bimodal distribution: if unconventional AND resonates, multiply by 3-5x; if unconventional and fails, multiply by 0.3x. Geopolitical bonus adds 0-2 percentage points. Strong competition field (8+ competitors) reduces probability by 40-60%.\",
+  \"confidence\": 0.72,
+  \"reasoning\": \"High confidence in historical data (Eurovision results are well-documented). Moderate confidence in driver quantification because: (1) 2026 song unknown until Feb 2026, creating irreducible uncertainty; (2) Eurovision has high variance - viral moments and staging can shift outcomes dramatically; (3) geopolitical sympathy factor is speculative and may fade by 2026; (4) voting system changes could occur before 2026. The 2023 near-win suggests Finland is competitive, but Sweden's dominance (7 wins vs Finland's 1) and the field's randomness keep base rate low. Confidence would increase to 0.85+ once national selections complete in March 2026.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-04
+}
+
+evidence macro_forecaster_evidence_1772656920 {
+    source: "Agent: macro_forecaster (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"Small Nordic countries winning Eurovision (population <10M)\",
+    \"historical_frequency\": 0.015,
+    \"sample_size\": 68,
+    \"reasoning\": \"Eurovision has run 68 contests (1956-2024, excluding cancelled years). Small Nordic countries (Finland, Norway, Denmark) have won 1 time (Finland 2006). This gives a base rate of ~1.5%. However, Finland specifically has won 1/68 = 1.47%. Expanding to all countries: average win rate per country is ~1.5-2% given ~40 regular participants.\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"song_quality_ranking\",
+      \"type\": \"continuous\",
+      \"p5\": 15,
+      \"p50\": 20,
+      \"p95\": 35,
+      \"unit\": \"final_position_rank\",
+      \"rationale\": \"Finland's historical performance: median finish around 15-20th place. Recent performances: 2023 (2nd - Käärijä 'Cha Cha Cha'), 2024 (not qualified to final), 2022 (not qualified). Strong 2023 showing suggests capability but high variance.\"
+    },
+    {
+      \"name\": \"public_vote_strength\",
+      \"type\": \"continuous\",
+      \"p5\": 50,
+      \"p50\": 120,
+      \"p95\": 300,
+      \"unit\": \"televote_points\",
+      \"rationale\": \"Finland won televote in 2023 with 376 points (record). Historical pattern: Nordic countries perform well in televoting. Finland needs both jury and public support to win - 2023 lost despite televote dominance due to jury preference for Sweden.\"
+    },
+    {
+      \"name\": \"jury_appeal\",
+      \"type\": \"continuous\",
+      \"p5\": 30,
+      \"p50\": 80,
+      \"p95\": 200,
+      \"unit\": \"jury_points\",
+      \"rationale\": \"Finland's jury scores typically lower than televote. 2023: 150 jury points (vs 376 televote). Winning requires ~250+ combined points typically. Jury tends to favor polished pop, ballads over novelty/rock acts that Finland often sends.\"
+    },
+    {
+      \"name\": \"competitive_field_strength\",
+      \"type\": \"binary\",
+      \"p5\": 0,
+      \"p50\": 0.5,
+      \"p95\": 1,
+      \"unit\": \"probability_weak_year\",
+      \"rationale\": \"Eurovision competitiveness varies. 2026 field unknown. Strong traditional competitors: Sweden, Italy, Ukraine, Netherlands, UK (post-reform). Probability of weak competitive year: ~20-30%.\"
+    },
+    {
+      \"name\": \"geopolitical_voting_impact\",
+      \"type\": \"continuous\",
+      \"p5\": -20,
+      \"p50\": 10,
+      \"p95\": 40,
+      \"unit\": \"net_points_from_bloc\",
+      \"rationale\": \"Nordic voting bloc typically gives Finland 20-40 points. Finland benefits from Scandinavian neighbors but lacks large diaspora voting base unlike Turkey, Greece, or Balkan countries. Recent NATO membership (2023) unlikely to affect voting patterns significantly.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"Eurovision historical results database (1956-2024)\",
+      \"summary\": \"Finland has won Eurovision once in 68 contests (2006 - Lordi). Participated 58 times, qualified to final 33 times.\",
+      \"key_findings\": [
+        \"Finland win rate: 1/68 contests = 1.47%\",
+        \"Recent strong performance: 2nd place 2023 (Käärijä)\",
+        \"High variance: ranges from non-qualification to podium finishes\",
+        \"Median finishing position when qualifying: 15th-18th place\"
+      ],
+      \"relevance\": 0.95
+    },
+    {
+      \"source\": \"Eurovision 2023 voting analysis\",
+      \"summary\": \"Finland (Käärijä) won televote with record 376 points but lost overall to Sweden due to jury vote (150 points)\",
+      \"key_findings\": [
+        \"Demonstrated Finland can generate massive public support\",
+        \"Jury-televote split remains critical - need both to win\",
+        \"Viral/novelty acts can dominate televote but struggle with juries\",
+        \"Sweden's consistent jury appeal (winning 7 times) shows importance of professional polish\"
+      ],
+      \"relevance\": 0.90
+    },
+    {
+      \"source\": \"Eurovision betting markets and historical odds\",
+      \"summary\": \"Pre-contest betting odds provide predictive signal. Finland typically 15-25/1 odds pre-contest.\",
+      \"key_findings\": [
+        \"Betting favorites win ~30-40% of the time\",
+        \"Finland rarely enters as favorite (exception: 2023 became favorite mid-contest)\",
+        \"2026 odds not yet available (contest in May 2026, national selections early 2026)\",
+        \"Historical pattern: ~25-30 countries compete, top 5 betting favorites account for ~60% of wins\"
+      ],
+      \"relevance\": 0.75
+    },
+    {
+      \"source\": \"Finnish national selection (UMK) track record\",
+      \"summary\": \"Finland's selection process quality affects competitiveness\",
+      \"key_findings\": [
+        \"UMK has produced competitive entries (2023, 2006 winners of selection)\",
+        \"Internal selection vs. public vote affects song type\",
+        \"Finland tends toward rock/metal/novelty rather than pop ballads\",
+        \"This genre preference correlates with televote strength but jury weakness\"
+      ],
+      \"relevance\": 0.70
+    },
+    {
+      \"source\": \"Eurovision structural factors 2024-2026\",
+      \"summary\": \"Contest format and rules remain stable\",
+      \"key_findings\": [
+        \"50/50 jury-televote split continues\",
+        \"Big 5 (France, Germany, Italy, Spain, UK) auto-qualify, increasing competition\",
+        \"Host city for 2026 not yet determined (depends on 2025 winner)\",
+        \"No major rule changes expected that would advantage/disadvantage Finland\"
+      ],
+      \"relevance\": 0.65
+    }
+  ],
+  \"model_expression\": \"P(Finland wins 2026) = base_rate × song_quality_multiplier × voting_system_fit × competitive_field_adjustment. Where: song_quality_multiplier = f(UMK selection outcome, unknown until Feb 2026), voting_system_fit = (public_vote_strength × 0.5 + jury_appeal × 0.5) / threshold_for_victory, competitive_field_adjustment = 1 / number_of_strong_competitors. Given unknowns about 2026 entry, revert toward base rate with modest adjustment for recent demonstrated capability (2023 near-win).\",
+  \"confidence\": 0.72,
+  \"reasoning\": \"High confidence in historical base rate data (complete records available). Medium confidence in structural factors (voting system, competitive dynamics well-understood). Low confidence in 2026-specific factors: song quality unknown until early 2026, competitive field unknown, geopolitical factors unpredictable. The 2023 near-miss provides evidence of capability but also highlights jury-televote split challenge. Overall assessment: slightly above base rate (~2-4% vs 1.5% base) due to demonstrated recent competitiveness, but high uncertainty remains. Confidence limited by 18-month forecast horizon and dependence on unknowable song selection.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-04
+}
+
+evidence sentiment_analyzer_0 {
+    source: "Agent: sentiment_analyzer (Claude API)"
+    summary: "The analysis of geopolitical sympathy voting patterns in Eurovision, Finland's post-NATO accession sentiment, and the decay rate of such effects, as well as the impact of the Russia-Ukraine conflict on European public opinion and voting patterns, suggests that these factors will continue to play a significant role in future Eurovision competitions. The findings indicate that Ukraine's performances are likely to receive strong support from neighboring countries and allies, while Russia-affiliated acts may face increased scrutiny and lower scores from European audiences."
+    relevance: 0.85p
+    date: 2026-03-04
+}
+
+evidence market_research_0 {
+    source: "Agent: market_research (Claude API)"
+    summary: "The analysis of Finland's Eurovision voting patterns from Nordic/Scandinavian countries over the past 10 years indicates a stable and predictable trend, with Finland consistently receiving strong support from its neighbors. Finland's 2023 NATO membership does not appear to have significantly altered this dynamic, suggesting that cultural and linguistic ties remain the primary determinants of voting behavior in the region. There are no clear indications of emerging geopolitical factors that would substantially weaken the traditional Nordic voting solidarity in the 2026 Eurovision contest."
+    relevance: 0.85p
+    date: 2026-03-04
+}
+
+model: song_quality_ranking * public_vote_strength * jury_appeal * (if competitive_field_strength then 1.3 else 1.0) * geopolitical_voting_impact
+
+simulate 10000 iterations

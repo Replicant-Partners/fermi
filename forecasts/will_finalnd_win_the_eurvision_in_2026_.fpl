@@ -25,16 +25,16 @@ driver song_quality_variance continuous {
 }
 
 driver geopolitical_sentiment continuous {
-    distribution: triangular(-0.02, 0.01, 0.05)
+    distribution: triangular(0, 0.01, 0.05)
     unit: "probability adjustment"
     rationale: "Finland's 2023 NATO accession and proximity to Russia may generate sympathy voting in 2026, though this effect typically fades after 2-3 years. Ukraine's strong performances 2022-2024 show geopolitical sympathy exists but is time-limited."
 }
 
 evidence sentiment_analyzer_0 {
     source: "Agent: sentiment_analyzer (Claude API)"
-    summary: "Based on Finland's past Eurovision performance, current odds, and the unpredictable nature of the contest, there is a moderate likelihood that Finland could win the Eurovision Song Contest in 2026, but it is far from a guarantee."
-    relevance: 0.65p
-    date: 2026-03-03
+    summary: "The research indicates that while Finland's association with NATO tensions will likely persist through 2025, public sentiment toward Finland may decline across various contexts, including cultural events and broader attitudes toward Nordic countries. This suggests that geopolitical sympathy for Finland's NATO membership may not remain a significant factor by May 2026."
+    relevance: 0.85p
+    date: 2026-03-04
 }
 
 evidence market_research_0 {
@@ -163,6 +163,6 @@ evidence macro_forecaster_evidence_1772540326 {
     date: 2026-03-03
 }
 
-model: (if recent_momentum_effect then 1.3 else 1.0) * (if big_5_advantage_factor then 1.3 else 1.0) * voting_bloc_strength * song_quality_variance * geopolitical_sentiment
+model: (((((if recent_momentum_effect then 1.3 else 1) * (if big_5_advantage_factor then 1.3 else 1)) * voting_bloc_strength) * song_quality_variance) * geopolitical_sentiment)
 
 simulate 10000 iterations
