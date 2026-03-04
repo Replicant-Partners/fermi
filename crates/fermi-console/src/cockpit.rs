@@ -3212,7 +3212,7 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                 .map(|a| a.name.as_str())
                 .collect();
             let driver_ev: Vec<_> = evidence.iter()
-                .filter(|e| driver_agents.iter().any(|a| e.source.contains(a)))
+                .filter(|e| driver_agents.iter().any(|a| e.source.contains(a)) || e.id.contains(&driver.name))
                 .collect();
 
             div()
@@ -3597,7 +3597,7 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64) -> 
 
         // Evidence linked to this driver (from its agents)
         let driver_evidence: Vec<_> = evidence_items.iter()
-            .filter(|e| driver_agents.iter().any(|a| e.source.contains(&a.name)))
+            .filter(|e| driver_agents.iter().any(|a| e.source.contains(&a.name)) || e.id.contains(&driver.name))
             .collect();
 
         if !driver_evidence.is_empty() {
