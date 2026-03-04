@@ -2968,7 +2968,7 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                 .font_weight(if is_active { FontWeight::BOLD } else { FontWeight::NORMAL })
                 .text_color(if is_active { rgb(theme::CYAN) } else { rgb(theme::FG_DIM) })
                 .border_b_2()
-                .border_color(if is_active { rgb(theme::CYAN) } else { rgb(0x00000000) })
+                .border_color(if is_active { rgb(theme::CYAN) } else { rgb(theme::BG_ELEVATED) })
                 .cursor_pointer()
                 .hover(|s| s.text_color(rgb(theme::FG)))
                 .on_click(cx.listener(move |this, _event, _window, cx| {
