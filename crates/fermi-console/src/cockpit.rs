@@ -1642,15 +1642,30 @@ impl CockpitState {
                     };
                     self.predicted_probability = (base_rate * ratio).clamp(0.01, 0.99);
 
+                    self.predicted_probability = (base_rate * ratio).clamp(0.01, 0.99);
+
+                    // Build narrative explanation
+                    let direction = if ratio > 1.05 { "increases" }
+                        else if ratio < 0.95 { "decreases" }
+                        else { "confirms" };
+                    let strength = if (ratio - 1.0).abs() > 0.3 { "significantly" }
+                        else if (ratio - 1.0).abs() > 0.1 { "moderately" }
+                        else { "slightly" };
+
+                    // Find the most influential drivers from the sensitivity analysis
+                    let top_drivers: Vec<String> = self.program.drivers().iter()
+                        .take(3)
+                        .map(|d| d.display_name.as_deref().unwrap_or(&d.name).to_string())
+                        .collect();
+
                     self.inside_view_explanation = format!(
-                        "P = {:.1}% base rate × {:.2} adjustment = {:.1}%\n\
-                         Model mean: {:.2}, Baseline (all p50): {:.2}, Ratio: {:.2}",
+                        "Starting from a {:.1}% base rate, our model {} {} the probability to {:.1}%. \
+                         The key factors are: {}.",
                         base_rate * 100.0,
-                        ratio,
+                        strength,
+                        direction,
                         self.predicted_probability * 100.0,
-                        results.mean,
-                        baseline_mean,
-                        ratio,
+                        top_drivers.join(", "),
                     );
                 } else {
                     // No base rate — use raw mean or clamp
