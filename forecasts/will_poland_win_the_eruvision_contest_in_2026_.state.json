@@ -1,0 +1,87 @@
+{
+  "current_version": 12,
+  "predicted_probability": 1510.8148774831932,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-05 01:53",
+      "probability": 0.015,
+      "change_summary": "Initial forecast"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-05 01:57",
+      "probability": 0.1297124709958915,
+      "change_summary": "v2 update"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-05 01:58",
+      "probability": 0.34147467575150214,
+      "change_summary": "v3 update"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-05 01:58",
+      "probability": 0.09644166830574653,
+      "change_summary": "v4 update"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-05 01:59",
+      "probability": 0.03615168483842053,
+      "change_summary": "v5 update"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-05 01:59",
+      "probability": 0.031566704480106,
+      "change_summary": "v6 update"
+    },
+    {
+      "version": 7,
+      "timestamp": "2026-03-05 02:00",
+      "probability": 0.03647130869492942,
+      "change_summary": "v7 update"
+    },
+    {
+      "version": 8,
+      "timestamp": "2026-03-05 02:01",
+      "probability": 0.026920750676299912,
+      "change_summary": "v8 update"
+    },
+    {
+      "version": 9,
+      "timestamp": "2026-03-05 02:01",
+      "probability": 0.0355582082564836,
+      "change_summary": "v9 update"
+    },
+    {
+      "version": 10,
+      "timestamp": "2026-03-05 02:03",
+      "probability": 0.02799475807728359,
+      "change_summary": "v10 update"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-05 02:04",
+      "probability": 0.02799475807728359,
+      "change_summary": "v11 update"
+    },
+    {
+      "version": 12,
+      "timestamp": "2026-03-05 02:04",
+      "probability": 1510.8148774831932,
+      "change_summary": "v12 update"
+    }
+  ],
+  "sim_results": {
+    "mean": 1510.8148774831932,
+    "median": 1424.2144160826128,
+    "p5": 749.128534958468,
+    "p95": 2585.4179380183828,
+    "std_dev": 567.6659151428329,
+    "iterations": 10000
+  },
+  "base_rate": null
+}

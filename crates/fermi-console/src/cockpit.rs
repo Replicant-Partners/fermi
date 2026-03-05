@@ -159,6 +159,7 @@ pub struct CockpitState {
     pub api: Arc<ApiClient>,
     pub registry: Arc<AgentRegistry>,
     pub cached_fpl: String,
+    pub inside_view_explanation: String,
 }
 
 #[derive(Debug, Clone)]
@@ -276,6 +277,7 @@ impl CockpitState {
             api,
             registry,
             cached_fpl: String::new(),
+            inside_view_explanation: String::new(),
         }
     }
 
@@ -2167,7 +2169,7 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                                     .text_size(px(12.0))
                                     .text_color(rgb(theme::GOLD))
                                     .child(
-                                        "Researching… macro_forecaster is analyzing your question",
+                                        "Researching… Fermi is decomposing your forecast",
                                     ),
                             ),
                     )
