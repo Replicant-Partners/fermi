@@ -1517,47 +1517,78 @@ impl CockpitState {
 
                 // ── Update inside view from simulation ────────────
                 // Update inside view from simulation
-                // If this is a probability forecast (has base rate), the model
-                // output needs to be interpreted as a probability.
-                let is_probability_forecast = self.program.question()
+                // ── Normalize simulation output to probability ────
+                // The simulation produces a raw model output. For probability
+                // forecasts (has base_rate), we normalize deterministically:
+                //
+                // 1. Compute baseline: run model with all drivers at p50
+                // 2. Compute ratio: sim_mean / baseline
+                // 3. P = base_rate × ratio, clamped to [0.01, 0.99]
+                //
+                // This uses the executor deterministically — no LLM involved.
+                let base_rate = self.program.question()
                     .and_then(|q| q.base_rate.as_ref())
-                    .is_some();
+                    .map(|br| br.historical_frequency)
+                    .unwrap_or(0.0);
 
-                if is_probability_forecast {
-                    // For probability forecasts, the model output may not be
-                    // in [0,1]. We need to normalize it. If the model produces
-                    // values >> 1, it's a raw multiplicative model and we need
-                    // to convert: P = base_rate * (model_output / baseline_output)
-                    // For now, clamp to [0, 1] and use the mean as probability.
-                    let base_rate = self.program.question()
-                        .and_then(|q| q.base_rate.as_ref())
-                        .map(|br| br.historical_frequency)
-                        .unwrap_or(0.5);
-
-                    // If mean is way outside [0,1], normalize relative to base rate
-                    if results.mean > 1.0 || results.mean < 0.0 {
-                        // The model output is a raw value, not a probability.
-                        // Use the ratio of p50 values to adjust base rate.
-                        // This is a heuristic — proper probability models should
-                        // output values in [0,1] directly.
-                        self.predicted_probability = base_rate;
-                        self.messages.push(AssistantMessage {
-                            node: "simulation".into(),
-                            kind: MessageKind::Warning,
-                            text: format!(
-                                "Model output ({:.1}) is not a probability. Inside view kept at base rate {:.1}%. \
-                                 Consider restructuring drivers as probability multipliers (values near 1.0).",
-                                results.mean, base_rate * 100.0
-                            ),
-                        });
-                    } else {
-                        self.predicted_probability = results.mean.clamp(0.01, 0.99);
+                if base_rate > 0.0 {
+                    // Compute baseline (all drivers at p50/median)
+                    let mut fixed_drivers = std::collections::HashMap::new();
+                    for driver in self.program.drivers() {
+                        match driver.driver_type {
+                            DriverType::Continuous => {
+                                if let Some(Distribution::Triangular { ref p50, .. }) = driver.distribution {
+                                    fixed_drivers.insert(driver.name.clone(), expr_to_f64(p50));
+                                }
+                            }
+                            DriverType::Binary => {
+                                // Binary at expected value: probability * impact + (1-p) * 1.0
+                                let p = driver.probability.unwrap_or(0.5);
+                                let m = driver.impact_multiplier.unwrap_or(1.0);
+                                fixed_drivers.insert(driver.name.clone(), p * m + (1.0 - p) * 1.0);
+                            }
+                            _ => {}
+                        }
                     }
-                } else {
-                    // Value forecast — use raw mean
-                    self.predicted_probability = results.mean;
-                }
 
+                    let mut baseline_executor = ::fermi::executor::Executor::with_fixed_drivers(
+                        1, fixed_drivers
+                    );
+                    let baseline = baseline_executor.execute(&parsed);
+                    let baseline_mean = baseline.as_ref()
+                        .map(|r| r.mean)
+                        .unwrap_or(results.mean);
+
+                    // Normalize: P = base_rate × (sim_mean / baseline_mean)
+                    let ratio = if baseline_mean.abs() > 0.001 {
+                        results.mean / baseline_mean
+                    } else {
+                        1.0
+                    };
+                    self.predicted_probability = (base_rate * ratio).clamp(0.01, 0.99);
+
+                    self.inside_view_explanation = format!(
+                        "P = {:.1}% base rate × {:.2} adjustment = {:.1}%\n\
+                         Model mean: {:.2}, Baseline (all p50): {:.2}, Ratio: {:.2}",
+                        base_rate * 100.0,
+                        ratio,
+                        self.predicted_probability * 100.0,
+                        results.mean,
+                        baseline_mean,
+                        ratio,
+                    );
+                } else {
+                    // No base rate — use raw mean or clamp
+                    if results.mean >= 0.0 && results.mean <= 1.0 {
+                        self.predicted_probability = results.mean;
+                    } else {
+                        self.predicted_probability = 0.5;
+                    }
+                    self.inside_view_explanation = format!(
+                        "Raw model output: {:.2} (no base rate for normalization)",
+                        results.mean
+                    );
+                }
                 // ── Fermi interprets the result ───────────────────
                 let base_rate = self.program.question()
                     .and_then(|q| q.base_rate.as_ref())
@@ -2148,6 +2179,15 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                         .font_weight(FontWeight::BOLD)
                         .child(prob_pct),
                 )
+                .when(!state.inside_view_explanation.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::FG_DIM))
+                            .min_w(px(0.0))
+                            .child(state.inside_view_explanation.clone()),
+                    )
+                })
                 .when(state.orchestration_running, |el| {
                     el.child(
                         div()
