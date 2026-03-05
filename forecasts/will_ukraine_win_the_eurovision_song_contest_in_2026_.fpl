@@ -25,7 +25,7 @@ driver competition_strength continuous {
 }
 
 driver ukraine_participates binary {
-    probability: 0.98p
+    probability: 0.97p
     impact_multiplier: 0
     rationale: "Ukraine must participate to win. High probability (0.92) they will participate barring extreme circumstances (complete infrastructure collapse, EBU suspension). If they don't participate, win probability = 0."
 }
@@ -165,6 +165,13 @@ evidence sentiment_analyzer_0 {
     date: 2026-03-05
 }
 
-model: song_quality_performance * geopolitical_sympathy_factor * voting_bloc_support * competition_strength * (if ukraine_participates then 0 else 1.0)
+evidence entity_investigator_0 {
+    source: "Agent: entity_investigator (Claude API)"
+    summary: "Ukraine demonstrates exceptional Eurovision consistency (92.9% qualification rate) with two wins driven by narrative resonance and jury-public alignment. Betting markets show 67% predictive accuracy for Ukraine's placements. Winning formula combines cultural authenticity, emotional storytelling, and balanced technical-popular appeal (35-45% jury, 55-65% public vote split). Quantitative benchmarks established across three performance tiers, with 'exceptional' entries requiring 500+ points and sub-5/1 closing odds."
+    relevance: 0.78p
+    date: 2026-03-05
+}
+
+model: ((((song_quality_performance * geopolitical_sympathy_factor) * voting_bloc_support) * competition_strength) * (if ukraine_participates then 0 else 1))
 
 simulate 10000 iterations

@@ -1,6 +1,6 @@
 {
-  "current_version": 10,
-  "predicted_probability": 0.02799475807728359,
+  "current_version": 19,
+  "predicted_probability": 0.6647492731931618,
   "versions": [
     {
       "version": 1,
@@ -23,7 +23,7 @@
     {
       "version": 4,
       "timestamp": "2026-03-05 01:58",
-      "probability": 0.09644166830574653,
+      "probability": 0.09644166830574652,
       "change_summary": "v4 update"
     },
     {
@@ -61,19 +61,69 @@
       "timestamp": "2026-03-05 02:03",
       "probability": 0.02799475807728359,
       "change_summary": "v10 update"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-05 10:02",
+      "probability": 0.02799475807728359,
+      "change_summary": "v11 update"
+    },
+    {
+      "version": 12,
+      "timestamp": "2026-03-05 10:39",
+      "probability": 0.02898233222421473,
+      "change_summary": "v12 update"
+    },
+    {
+      "version": 13,
+      "timestamp": "2026-03-05 10:39",
+      "probability": 0.0321081464092337,
+      "change_summary": "v13 update"
+    },
+    {
+      "version": 14,
+      "timestamp": "2026-03-05 10:39",
+      "probability": 0.04262159397390589,
+      "change_summary": "v14 update"
+    },
+    {
+      "version": 15,
+      "timestamp": "2026-03-05 10:40",
+      "probability": 0.26474100765504627,
+      "change_summary": "v15 update"
+    },
+    {
+      "version": 16,
+      "timestamp": "2026-03-05 10:40",
+      "probability": 0.3993251472839575,
+      "change_summary": "v16 update"
+    },
+    {
+      "version": 17,
+      "timestamp": "2026-03-05 10:41",
+      "probability": 0.08113564670110898,
+      "change_summary": "v17 update"
+    },
+    {
+      "version": 18,
+      "timestamp": "2026-03-05 10:41",
+      "probability": 0.0,
+      "change_summary": "v18 update"
+    },
+    {
+      "version": 19,
+      "timestamp": "2026-03-05 10:41",
+      "probability": 0.6647492731931618,
+      "change_summary": "v19 update"
     }
   ],
   "sim_results": {
-    "mean": 0.02799475807728359,
+    "mean": 0.6647492731931618,
     "median": 0.0,
     "p5": 0.0,
-    "p95": 0.0,
-    "std_dev": 0.20761285769871035,
+    "p95": 2.00529308122561,
+    "std_dev": 0.7521399036127698,
     "iterations": 10000
   },
-  "base_rate": {
-    "reference_class": "Eurovision Song Contest winners (1956-2025)",
-    "historical_frequency": 0.015,
-    "sample_size": 67
-  }
+  "base_rate": null
 }

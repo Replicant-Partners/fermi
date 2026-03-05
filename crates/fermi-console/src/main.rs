@@ -1716,6 +1716,10 @@ impl FermiConsole {
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(move |this, _event, _window, cx| {
                                                     // Load forecast and switch to composer
+                                                    if this.cockpit.is_none() {
+                                                        let api = this.api.clone();
+                                                        this.cockpit = Some(cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx)));
+                                                    }
                                                     if let Some(ref cockpit) = this.cockpit {
                                                         let cockpit = cockpit.clone();
                                                         let p = path.clone();
@@ -1723,6 +1727,13 @@ impl FermiConsole {
                                                             cockpit.load_forecast(&p, cx);
                                                         });
                                                     }
+
+
+
+
+
+
+
                                                     this.active_panel = Panel::Composer;
                                                     cx.notify();
                                                 }))

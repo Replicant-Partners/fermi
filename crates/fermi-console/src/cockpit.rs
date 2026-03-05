@@ -1351,6 +1351,42 @@ impl CockpitState {
         cx.notify();
     }
 
+    /// Update the outside rate (base rate) without resetting drivers.
+    /// Fires Fermi to research the current base rate for the question.
+    pub fn update_outside_rate(&mut self, cx: &mut Context<Self>) {
+        let question = self.program.question()
+            .map(|q| q.text.clone())
+            .unwrap_or_default();
+        if question.is_empty() { return; }
+
+        let query = format!(
+            "What is the base rate for this forecast question? \
+             Provide ONLY a JSON object: \
+             {{\"reference_class\": \"...\", \"historical_frequency\": 0.0-1.0, \
+             \"sample_size\": N, \"reasoning\": \"...\"}}\n\n\
+             Question: \"{}\"",
+            question
+        );
+
+        self.agent_runs.push(AgentExecution {
+            agent_name: "fermi_base_rate".into(),
+            status: AgentRunStatus::Running,
+            evidence_count: 0,
+            confidence: None,
+            error: None,
+            credits_charged: None,
+        });
+
+        self.messages.push(AssistantMessage {
+            node: "question".into(),
+            kind: MessageKind::Info,
+            text: "⟳ Updating outside rate…".into(),
+        });
+
+        // Fire fermi agent for base rate only
+        self.fire_agent("fermi", &query, cx);
+    }
+
     pub fn delete_driver(&mut self, name: &str, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.program.remove_driver(name);
@@ -1779,6 +1815,49 @@ impl CockpitState {
                                         execution_time_ms: 0,
                                         histogram: vec![],
                                     });
+                                // Restore base rate into AST
+                                if let Some(br) = state_json.get("base_rate").and_then(|v| v.as_object()) {
+                                    if let Some(q) = self.program.question_mut() {
+                                        q.base_rate = Some(BaseRate {
+                                            reference_class: br.get("reference_class")
+                                                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                            historical_frequency: br.get("historical_frequency")
+                                                .and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                            sample_size: br.get("sample_size")
+                                                .and_then(|v| v.as_u64()).map(|n| n as usize),
+                                            source: br.get("source")
+                                                .and_then(|v| v.as_str()).unwrap_or("restored").to_string(),
+                                            reasoning: br.get("reasoning")
+                                                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                            generated_by: GeneratedBy::Agent("fermi".into()),
+                                        });
+                                    }
+                                }
+                                // Restore inside view explanation
+                                if let Some(expl) = state_json.get("inside_view_explanation").and_then(|v| v.as_str()) {
+                                    self.inside_view_explanation = expl.to_string();
+                                }
+                                // Restore evidence into AST
+                                if let Some(ev_arr) = state_json.get("evidence").and_then(|v| v.as_array()) {
+                                    for ev in ev_arr {
+                                        let id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        if !id.is_empty() && self.program.evidence_items().iter().all(|e| e.id != id) {
+                                            self.program.add_evidence(EvidenceStmt {
+                                                id,
+                                                source: ev.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                summary: ev.get("summary").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                                url: None,
+                                                relevance: ev.get("relevance").and_then(|v| v.as_f64()),
+                                                date: ev.get("date").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                                strength: ev.get("relevance").and_then(|v| v.as_f64()),
+                                                key_findings: ev.get("key_findings")
+                                                    .and_then(|v| v.as_array())
+                                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                                    .unwrap_or_default(),
+                                            });
+                                        }
+                                    }
+                                }
                                 }
                                 self.messages.push(AssistantMessage {
                                     node: "load".into(),
@@ -1861,6 +1940,7 @@ impl CockpitState {
                 let state_json = serde_json::json!({
                     "current_version": self.current_version,
                     "predicted_probability": self.predicted_probability,
+                    "inside_view_explanation": self.inside_view_explanation,
                     "versions": self.versions.iter().map(|v| serde_json::json!({
                         "version": v.version,
                         "timestamp": v.timestamp,
@@ -1881,7 +1961,17 @@ impl CockpitState {
                             "reference_class": br.reference_class,
                             "historical_frequency": br.historical_frequency,
                             "sample_size": br.sample_size,
+                            "source": br.source,
+                            "reasoning": br.reasoning,
                         })),
+                    "evidence": self.program.evidence_items().iter().map(|e| serde_json::json!({
+                        "id": e.id,
+                        "source": e.source,
+                        "summary": e.summary,
+                        "relevance": e.relevance,
+                        "date": e.date,
+                        "key_findings": e.key_findings,
+                    })).collect::<Vec<_>>(),
                 });
                 match std::fs::write(&state_path, serde_json::to_string_pretty(&state_json).unwrap_or_default()) {
                     Ok(_) => log::info!("[composer] Saved state to {}", state_path),
