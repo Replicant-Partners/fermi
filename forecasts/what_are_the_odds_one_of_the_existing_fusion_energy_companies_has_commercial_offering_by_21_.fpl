@@ -1,0 +1,132 @@
+question "what are the odds one of the existing fusion energy companies has commercial offering by 21?"
+
+driver primary_factor continuous {
+    distribution: triangular(10, 50, 100)
+    rationale: "The main driver — adjust the range to match your question"
+}
+
+driver secondary_factor continuous {
+    distribution: triangular(0.7, 1, 1.5)
+    unit: "multiplier"
+    rationale: "A modifying factor (1.0 = neutral, >1 = amplifying, <1 = dampening)"
+}
+
+driver disruption binary {
+    probability: 0.15p
+    impact_multiplier: 1.5
+    rationale: "Probability of a disruptive event that amplifies the outcome by 50%"
+}
+
+evidence fermi_evidence_1772714293 {
+    source: "Agent: fermi (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"Major energy technology commercialization timelines (nuclear, solar PV, wind, shale gas)\",
+    \"historical_frequency\": 0.15,
+    \"sample_size\": 20,
+    \"reasoning\": \"Looking at transformative energy technologies from first demonstration to commercial viability: nuclear (1942 demo → 1956 commercial: 14 years), solar PV (1954 → 1980s: ~30 years), wind (1970s → 1990s: ~20 years), shale gas (1980s → 2005: ~20 years). Fusion has had demonstration since 1950s but net energy gain only achieved in 2022 (NIF). Given 2021 as target year is in the PAST, and we're now in 2024, this question asks about historical outcome. However, interpreting as '2031' (10 years from 2021), the base rate for a 10-year commercialization window after breakthrough is ~15% based on energy tech history.\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"technical_readiness_multiplier\",
+      \"display_name\": \"Technical Readiness & Recent Breakthroughs\",
+      \"type\": \"continuous\",
+      \"p5\": 0.6,
+      \"p50\": 1.1,
+      \"p95\": 1.8,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"NIF achieved net energy gain (Q>1) in Dec 2022 with 3.15 MJ out from 2.05 MJ in. Commonwealth Fusion Systems plans SPARC demonstration by 2025. However, engineering gain (total energy in vs out) remains negative. Multiple approaches (tokamak, stellarator, inertial confinement, magnetized target) are being pursued. P50 of 1.1 reflects modest optimism from recent progress; P95 of 1.8 accounts for potential rapid breakthrough; P5 of 0.6 reflects risk of fundamental engineering barriers.\"
+    },
+    {
+      \"name\": \"funding_and_investment_multiplier\",
+      \"display_name\": \"Private Investment & Funding Momentum\",
+      \"type\": \"continuous\",
+      \"p5\": 0.8,
+      \"p50\": 1.3,
+      \"p95\": 2.0,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Private fusion investment exceeded $5B by 2023, with major players: Commonwealth Fusion ($2B+), TAE Technologies ($1.2B+), Helion ($0.5B+), General Fusion ($0.4B+). This represents 10x increase from 2018. Strong VC and strategic investor interest (Google, Chevron, Bill Gates, Jeff Bezos). However, commercial offering requires not just demonstration but economically viable power plant. P50 of 1.3 reflects strong funding tailwinds; P95 of 2.0 for exceptional capital deployment scenario.\"
+    },
+    {
+      \"name\": \"regulatory_and_grid_integration_multiplier\",
+      \"display_name\": \"Regulatory Framework & Grid Integration Readiness\",
+      \"type\": \"continuous\",
+      \"p5\": 0.5,
+      \"p50\": 0.9,
+      \"p95\": 1.2,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Fusion regulation is nascent. NRC and DOE developing frameworks but no clear commercial licensing path yet. Grid integration for novel baseload source requires extensive testing and certification. LCOE competitiveness uncertain - estimates range from $60-150/MWh vs current renewables at $30-50/MWh. P50 of 0.9 reflects regulatory uncertainty as slight headwind; P5 of 0.5 accounts for major regulatory delays; P95 of 1.2 for streamlined approval scenario.\"
+    },
+    {
+      \"name\": \"timeline_compression_multiplier\",
+      \"display_name\": \"Accelerated Development Timeline Feasibility\",
+      \"type\": \"continuous\",
+      \"p5\": 0.4,
+      \"p50\": 0.8,
+      \"p95\": 1.3,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Traditional energy infrastructure takes 15-25 years from demonstration to commercial deployment. Companies claim 2028-2032 commercial timelines (Commonwealth, Helion). This requires unprecedented compression: demonstration → pilot plant → commercial plant in <10 years. P50 of 0.8 reflects skepticism about aggressive timelines; P5 of 0.4 for significant delays; P95 of 1.3 for successful fast-track scenario with modular approaches.\"
+    },
+    {
+      \"name\": \"definition_of_commercial_multiplier\",
+      \"display_name\": \"Definition Ambiguity: Commercial Offering vs Grid Power\",
+      \"type\": \"continuous\",
+      \"p5\": 1.0,
+      \"p50\": 1.4,
+      \"p95\": 2.2,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"'Commercial offering' could mean: (1) selling power to grid at scale, (2) operating demonstration plant with customer contracts, (3) selling fusion technology/reactors to utilities, or (4) limited commercial pilot agreements. Helion has Microsoft PPA for 2028. If 'commercial offering' includes PPAs, pilot sales, or technology licensing rather than full grid-scale deployment, probability increases significantly. P50 of 1.4 reflects this definitional flexibility; P95 of 2.2 for broad interpretation.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"National Ignition Facility (NIF) December 2022 announcement, DOE press releases\",
+      \"summary\": \"First controlled fusion reaction achieving net energy gain (Q>1)\",
+      \"key_findings\": [
+        \"NIF achieved 3.15 MJ output from 2.05 MJ laser energy input on Dec 5, 2022\",
+        \"This is 'scientific breakeven' but not 'engineering breakeven' (total facility used ~300 MJ)\",
+        \"Inertial confinement approach, not directly scalable to power plants\",
+        \"Represents proof of concept after 60+ years of fusion research\"
+      ],
+      \"relevance\": 0.95
+    },
+    {
+      \"source\": \"Fusion Industry Association 'Global Fusion Industry in 2023' report, company announcements\",
+      \"summary\": \"Private fusion companies and their commercial timelines\",
+      \"key_findings\": [
+        \"Commonwealth Fusion Systems: SPARC demo by 2025, ARC commercial plant by early 2030s, $2B+ raised\",
+        \"Helion Energy: signed PPA with Microsoft for 2028 power delivery, magnetized target fusion approach\",
+        \"TAE Technologies: targeting late 2020s for commercial prototype, $1.2B+ funding\",
+        \"General Fusion: demonstration plant in UK by 2025, commercial by early 2030s\",
+        \"35+ private fusion companies globally, up from ~5 in 2010\"
+      ],
+      \"relevance\": 0.98
+    },
+    {
+      \"source\": \"ITER project status reports, tokamak development timelines\",
+      \"summary\": \"Public sector fusion development as baseline comparison\",
+      \"key_findings\": [
+        \"ITER (international tokamak): first plasma now delayed to 2030s, full operation 2040s\",
+        \"ITER budget: $22B+ and rising, demonstrating capital intensity of fusion\",
+        \"China's EAST tokamak achieved 70M°C for 17 minutes (2022), showing sustained plasma progress\",
+        \"Public projects provide technical foundation but move slower than private ventures\"
+      ],
+      \"relevance\": 0.75
+    },
+    {
+      \"source\": \"Energy technology commercialization studies, LCOE analyses\",
+      \"summary\": \"Historical precedents for energy technology deployment\",
+      \"key_findings\": [
+        \"Solar PV: 30 years from Bell Labs demo (1954) to meaningful commercial deployment (1980s)\",
+        \"Wind power: ~20 years from 1970s prototypes to 1990s commercial farms\",
+        \"Shale gas: ~25 years from technique development to commercial viability\",
+        \"Nuclear fission: 14 years from Chicago Pile-1 to Shippingport (fastest case, military priority)\",
+        \"Average time from breakthrough to 1% market penetration: 20-30 years"
+    relevance: 0.5p
+    date: 2026-03-05
+}
+
+model: ((primary_factor * secondary_factor) * (if disruption then 1.5 else 1))
+
+simulate 10000 iterations

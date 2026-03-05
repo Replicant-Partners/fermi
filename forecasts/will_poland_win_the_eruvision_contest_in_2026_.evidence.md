@@ -1,6 +1,6 @@
 # Evidence Log: will poland win the eruvision contest in 2026?
 
-**Version:** v12 | **Probability:** 151081.5% | **Updated:** 2026-03-05 02:04 UTC
+**Version:** v13 | **Probability:** 50.0% | **Updated:** 2026-03-05 12:41 UTC
 
 ---
 
@@ -52,25 +52,6 @@
 
 > Poland historically underperforms with juries vs televoting. Juries favor vocal technique, staging sophistication, and contemporary production. Poland's entries often more traditional/rock-oriented, less aligned with jury preferences (pop, ballads with strong vocals).
 
-### Assigned Agents
-
-- **market_research** (schedule: once)
-  - Query: _Analyze Eurovision jury voting patterns 2016-2025: What song characteristics (genre, vocal style, pr_
-
-### Evidence
-
-#### Agent: market_research (Claude API) (relevance: 85%)
-
-The analysis of Eurovision jury voting patterns from 2016-2025 indicates that contemporary pop/ballad styles, strong vocal performances, high production values, and emotive staging are key factors in achieving high jury scores. There is a noticeable gap between jury and public preferences, with Poland's entries tending to score better with the public than with juries, especially for more traditional or rock-oriented songs.
-
-**Key findings:**
-
-- Based on analysis of Eurovision jury voting from 2016-2025, songs with contemporary pop/ballad styles tend to score higher with juries than traditional or rock-oriented entries. Vocal performances, production quality, and staging that showcase the artist's technical ability and emotional delivery are key factors in jury evaluation.
-- Poland's Eurovision entries have generally scored higher with the public than with juries over the past decade. Jury scores for Poland have tended to be lower for songs with more traditional or rock-influenced styles compared to contemporary pop ballads.
-- There is a trend towards juries favoring songs with strong vocal performances, high production values, and emotive staging that showcase the artist's technical skill and interpretive abilities. Entries that fit this profile, regardless of genre, have tended to perform better with juries in recent years.
-
-_Collected: 2026-03-05_
-
 ### Related Evidence
 
 - **Agent: macro_forecaster (Claude API)**: ```json
@@ -118,4 +99,8 @@ _Collected: 2026-03-05_
 ### Agent: entity_investigator (Claude API) (relevance: 72%)
 
 Poland's Eurovision televoting performance 2014-2024 shows a clear outlier in 2016 (222 televote points, 3rd place) versus typical 40-80 point performances. The data reveals that while Poland benefits from diaspora support in UK/Ireland/Scandinavia (providing baseline 20-30 points), breakthrough pan-European televoting success requires specific musical elements: theatrical presentation, emotional vocal peaks, universal themes, and staging spectacle. Poland's 2016 entry succeeded by combining the...
+
+### Agent: market_research (Claude API) (relevance: 85%)
+
+The analysis of Eurovision jury voting patterns from 2016-2025 indicates that contemporary pop/ballad styles, strong vocal performances, high production values, and emotive staging are key factors in achieving high jury scores. There is a noticeable gap between jury and public preferences, with Poland's entries tending to score better with the public than with juries, especially for more traditional or rock-oriented songs.
 

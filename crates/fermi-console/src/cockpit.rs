@@ -4073,56 +4073,33 @@ fn detect_domain(question: &str) -> String {
 /// Generate a Fermi decomposition template for the given domain.
 /// Returns (drivers, model_expression).
 /// Drivers have <SPECIFY> equivalent (zero values) that the user or agent fills in.
-fn generate_decomposition(question: &str, domain: &str) -> (Vec<DriverStmt>, Option<Expression>) {
+fn generate_decomposition(_question: &str, domain: &str) -> (Vec<DriverStmt>, Option<Expression>) {
+    // All templates use probability multipliers (values near 1.0).
+    // The model is: driver_a * driver_b * ... producing a relative adjustment.
+    // The simulation output gets normalized: P = base_rate × (mean / baseline)
     match domain {
         "finance" => {
             let drivers = vec![
-                make_continuous_driver(
-                    "market_tam",
-                    "Total Addressable Market",
-                    "USD",
-                    500_000_000.0,
-                    2_000_000_000.0,
-                    5_000_000_000.0,
-                    "TAM for the relevant market segment — adjust to your specific market",
-                ),
-                make_continuous_driver(
-                    "market_share",
-                    "Market Share",
-                    "ratio",
-                    0.05,
-                    0.15,
-                    0.30,
-                    "Expected market share capture — typical range for established players",
-                ),
-                make_continuous_driver(
-                    "growth_rate",
-                    "Growth Rate",
-                    "annual ratio",
-                    0.05,
-                    0.15,
-                    0.35,
-                    "Year-over-year growth rate — adjust based on industry and maturity",
-                ),
-                make_binary_driver(
-                    "major_event",
-                    "Major Catalyst/Risk",
-                    0.20,
-                    1.3,
-                    "Probability of a significant positive or negative event (e.g. acquisition, regulation)",
-                ),
+                make_continuous_driver("fundamentals", "Fundamentals Strength", "multiplier",
+                    0.7, 1.0, 1.4, "How strong are the fundamentals relative to expectations? 1.0 = neutral"),
+                make_continuous_driver("market_conditions", "Market Conditions", "multiplier",
+                    0.6, 1.0, 1.5, "Favorable (>1) or unfavorable (<1) market environment"),
+                make_continuous_driver("momentum", "Momentum Factor", "multiplier",
+                    0.8, 1.0, 1.3, "Recent trend direction and strength. 1.0 = no trend"),
+                make_binary_driver("catalyst_event", "Major Catalyst/Risk",
+                    0.20, 1.4, "Probability of a significant event that shifts the outcome"),
             ];
             let model = Expression::Multiply(
                 Box::new(Expression::Multiply(
                     Box::new(Expression::Multiply(
-                        Box::new(Expression::Identifier("market_tam".into())),
-                        Box::new(Expression::Identifier("market_share".into())),
+                        Box::new(Expression::Identifier("fundamentals".into())),
+                        Box::new(Expression::Identifier("market_conditions".into())),
                     )),
-                    Box::new(Expression::Identifier("growth_rate".into())),
+                    Box::new(Expression::Identifier("momentum".into())),
                 )),
                 Box::new(Expression::If {
-                    condition: Box::new(Expression::Identifier("major_event".into())),
-                    then_expr: Box::new(Expression::Number(1.3)),
+                    condition: Box::new(Expression::Identifier("catalyst_event".into())),
+                    then_expr: Box::new(Expression::Number(1.4)),
                     else_expr: Box::new(Expression::Number(1.0)),
                 }),
             );
@@ -4130,40 +4107,21 @@ fn generate_decomposition(question: &str, domain: &str) -> (Vec<DriverStmt>, Opt
         }
         "technology" => {
             let drivers = vec![
-                make_continuous_driver(
-                    "adoption_rate",
-                    "Adoption Rate",
-                    "%",
-                    5.0,
-                    20.0,
-                    50.0,
-                    "Market adoption within forecast horizon — S-curve position matters",
-                ),
-                make_continuous_driver(
-                    "competitive_moat",
-                    "Competitive Advantage",
-                    "score",
-                    0.2,
-                    0.5,
-                    0.8,
-                    "Strength of competitive position (0=none, 1=monopoly)",
-                ),
-                make_binary_driver(
-                    "regulatory_risk",
-                    "Regulatory Risk",
-                    0.25,
-                    0.6,
-                    "Probability of adverse regulatory action reducing outcome by 40%",
-                ),
+                make_continuous_driver("feasibility", "Technical Feasibility", "multiplier",
+                    0.5, 1.0, 1.3, "How feasible is the technical achievement? 1.0 = expected"),
+                make_continuous_driver("adoption", "Adoption Likelihood", "multiplier",
+                    0.6, 1.0, 1.5, "Market readiness and adoption potential. 1.0 = baseline"),
+                make_binary_driver("regulatory_block", "Regulatory Blocker",
+                    0.25, 0.5, "Probability of regulatory action that halves the outcome"),
             ];
             let model = Expression::Multiply(
                 Box::new(Expression::Multiply(
-                    Box::new(Expression::Identifier("adoption_rate".into())),
-                    Box::new(Expression::Identifier("competitive_moat".into())),
+                    Box::new(Expression::Identifier("feasibility".into())),
+                    Box::new(Expression::Identifier("adoption".into())),
                 )),
                 Box::new(Expression::If {
-                    condition: Box::new(Expression::Identifier("regulatory_risk".into())),
-                    then_expr: Box::new(Expression::Number(0.6)),
+                    condition: Box::new(Expression::Identifier("regulatory_block".into())),
+                    then_expr: Box::new(Expression::Number(0.5)),
                     else_expr: Box::new(Expression::Number(1.0)),
                 }),
             );
@@ -4171,36 +4129,17 @@ fn generate_decomposition(question: &str, domain: &str) -> (Vec<DriverStmt>, Opt
         }
         _ => {
             let drivers = vec![
-                make_continuous_driver(
-                    "primary_factor",
-                    "Primary Factor",
-                    "",
-                    10.0,
-                    50.0,
-                    100.0,
-                    "The main driver — adjust the range to match your question",
-                ),
-                make_continuous_driver(
-                    "secondary_factor",
-                    "Secondary Factor",
-                    "multiplier",
-                    0.7,
-                    1.0,
-                    1.5,
-                    "A modifying factor (1.0 = neutral, >1 = amplifying, <1 = dampening)",
-                ),
-                make_binary_driver(
-                    "disruption",
-                    "Disruption Event",
-                    0.15,
-                    1.5,
-                    "Probability of a disruptive event that amplifies the outcome by 50%",
-                ),
+                make_continuous_driver("strength_factor", "Strength of Case", "multiplier",
+                    0.5, 1.0, 1.5, "How strong is the case for this outcome? 1.0 = neutral"),
+                make_continuous_driver("conditions", "Favorable Conditions", "multiplier",
+                    0.7, 1.0, 1.3, "Are conditions favorable (>1) or unfavorable (<1)?"),
+                make_binary_driver("disruption", "Disruption Event",
+                    0.15, 1.5, "Probability of a disruptive event that amplifies the outcome"),
             ];
             let model = Expression::Multiply(
                 Box::new(Expression::Multiply(
-                    Box::new(Expression::Identifier("primary_factor".into())),
-                    Box::new(Expression::Identifier("secondary_factor".into())),
+                    Box::new(Expression::Identifier("strength_factor".into())),
+                    Box::new(Expression::Identifier("conditions".into())),
                 )),
                 Box::new(Expression::If {
                     condition: Box::new(Expression::Identifier("disruption".into())),
