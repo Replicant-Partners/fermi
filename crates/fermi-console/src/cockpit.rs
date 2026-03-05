@@ -1488,6 +1488,63 @@ impl CockpitState {
                 });
                 self.sim_running = false;
 
+
+                // ── Update inside view from simulation ────────────
+                self.predicted_probability = results.mean;
+
+                // ── Fermi interprets the result ───────────────────
+                let base_rate = self.program.question()
+                    .and_then(|q| q.base_rate.as_ref())
+                    .map(|br| br.historical_frequency)
+                    .unwrap_or(0.0);
+                let divergence = (results.mean - base_rate) * 100.0;
+                let div_direction = if divergence > 0.0 { "above" } else { "below" };
+
+                // Build driver contribution summary
+                let driver_summary: Vec<String> = self.program.drivers().iter().map(|d| {
+                    let display = d.display_name.as_deref().unwrap_or(&d.name);
+                    match d.driver_type {
+                        DriverType::Continuous => {
+                            if let Some(Distribution::Triangular { ref p50, .. }) = d.distribution {
+                                format!("{} (p50={:.1})", display, expr_to_f64(p50))
+                            } else {
+                                display.to_string()
+                            }
+                        }
+                        DriverType::Binary => {
+                            format!("{} ({:.0}%)", display, d.probability.unwrap_or(0.0) * 100.0)
+                        }
+                        _ => display.to_string(),
+                    }
+                }).collect();
+
+                self.messages.push(AssistantMessage {
+                    node: "simulation".into(),
+                    kind: MessageKind::Tip,
+                    text: format!(
+                        "🦊 Inside view: {:.1} (mean from {} drivers: {}). \
+                         This is {:.0}pp {} the outside view base rate of {:.1}%.",
+                        results.mean,
+                        driver_summary.len(),
+                        driver_summary.join(", "),
+                        divergence.abs(),
+                        div_direction,
+                        base_rate * 100.0,
+                    ),
+                });
+
+                if divergence.abs() > 20.0 {
+                    self.messages.push(AssistantMessage {
+                        node: "simulation".into(),
+                        kind: MessageKind::Warning,
+                        text: format!(
+                            "⚠ Significant divergence ({:.0}pp) from base rate. \
+                             Strong evidence needed to justify this difference.",
+                            divergence.abs()
+                        ),
+                    });
+                }
+
                 self.messages.push(AssistantMessage {
                     node: "simulation".into(),
                     kind: MessageKind::Info,
@@ -1562,6 +1619,49 @@ impl CockpitState {
                                 self.predicted_probability = br.historical_frequency;
                             }
                         }
+                        // Load state.json if it exists
+                        let state_path = path.replace(".fpl", ".state.json");
+                        if let Ok(state_text) = std::fs::read_to_string(&state_path) {
+                            if let Ok(state_json) = serde_json::from_str::<JsonValue>(&state_text) {
+                                // Restore probability
+                                if let Some(prob) = state_json.get("predicted_probability").and_then(|v| v.as_f64()) {
+                                    self.predicted_probability = prob;
+                                }
+                                // Restore version history
+                                if let Some(versions) = state_json.get("versions").and_then(|v| v.as_array()) {
+                                    self.versions = versions.iter().filter_map(|v| {
+                                        Some(ForecastVersion {
+                                            version: v.get("version")?.as_u64()? as u32,
+                                            timestamp: v.get("timestamp")?.as_str()?.to_string(),
+                                            fpl_text: String::new(), // not stored per version
+                                            probability: v.get("probability")?.as_f64()?,
+                                            change_summary: v.get("change_summary")?.as_str()?.to_string(),
+                                        })
+                                    }).collect();
+                                    self.current_version = self.versions.last()
+                                        .map(|v| v.version).unwrap_or(0);
+                                }
+                                // Restore sim results
+                                if let Some(sim) = state_json.get("sim_results").and_then(|v| v.as_object()) {
+                                    self.sim_results = Some(SimResults {
+                                        mean: sim.get("mean").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                        median: sim.get("median").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                        p5: sim.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                        p95: sim.get("p95").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                        std_dev: sim.get("std_dev").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                        iterations: sim.get("iterations").and_then(|v| v.as_u64()).unwrap_or(0),
+                                        execution_time_ms: 0,
+                                        histogram: vec![],
+                                    });
+                                }
+                                self.messages.push(AssistantMessage {
+                                    node: "load".into(),
+                                    kind: MessageKind::Info,
+                                    text: format!("Restored v{} state (probability: {:.1}%)",
+                                        self.current_version, self.predicted_probability * 100.0),
+                                });
+                            }
+                        }
                         self.focused_node = FocusedNode::Question;
                         self.right_tab = RightTab::Wiki;
                     }
@@ -1628,6 +1728,38 @@ impl CockpitState {
                 match std::fs::write(&wiki_path, &wiki) {
                     Ok(_) => log::info!("[composer] Saved evidence wiki to {}", wiki_path),
                     Err(e) => log::warn!("[composer] Failed to save evidence wiki: {}", e),
+                }
+
+                // Save state.json (versions, probability, sim results)
+                let state_path = format!("forecasts/{}.state.json", filename);
+                let state_json = serde_json::json!({
+                    "current_version": self.current_version,
+                    "predicted_probability": self.predicted_probability,
+                    "versions": self.versions.iter().map(|v| serde_json::json!({
+                        "version": v.version,
+                        "timestamp": v.timestamp,
+                        "probability": v.probability,
+                        "change_summary": v.change_summary,
+                    })).collect::<Vec<_>>(),
+                    "sim_results": self.sim_results.as_ref().map(|s| serde_json::json!({
+                        "mean": s.mean,
+                        "median": s.median,
+                        "p5": s.p5,
+                        "p95": s.p95,
+                        "std_dev": s.std_dev,
+                        "iterations": s.iterations,
+                    })),
+                    "base_rate": self.program.question()
+                        .and_then(|q| q.base_rate.as_ref())
+                        .map(|br| serde_json::json!({
+                            "reference_class": br.reference_class,
+                            "historical_frequency": br.historical_frequency,
+                            "sample_size": br.sample_size,
+                        })),
+                });
+                match std::fs::write(&state_path, serde_json::to_string_pretty(&state_json).unwrap_or_default()) {
+                    Ok(_) => log::info!("[composer] Saved state to {}", state_path),
+                    Err(e) => log::warn!("[composer] Failed to save state: {}", e),
                 }
             }
             Err(e) => {
