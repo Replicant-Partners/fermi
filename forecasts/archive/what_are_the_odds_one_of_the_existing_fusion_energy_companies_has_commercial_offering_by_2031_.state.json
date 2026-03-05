@@ -1,7 +1,7 @@
 {
-  "current_version": 20,
-  "predicted_probability": 0.16281250746849238,
-  "inside_view_explanation": "P = 15.0% base rate × 1.09 adjustment = 16.3%\nModel mean: 0.57, Baseline (all p50): 0.53, Ratio: 1.09",
+  "current_version": 23,
+  "predicted_probability": 0.18305175078777616,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately increases the probability to 18.3%. The key factors are: technical_milestone_acceleration, funding_sustainability, regulatory_pathway_clarity. Most influential: funding_sustainability (37%), technical_milestone_acceleration (29%), competing_technology_disruption (28%).",
   "versions": [
     {
       "version": 1,
@@ -122,14 +122,32 @@
       "timestamp": "2026-03-05 18:41",
       "probability": 0.16281250746849238,
       "change_summary": "v20 update"
+    },
+    {
+      "version": 21,
+      "timestamp": "2026-03-05 22:32",
+      "probability": 0.16281250746849238,
+      "change_summary": "v21 update"
+    },
+    {
+      "version": 22,
+      "timestamp": "2026-03-05 22:33",
+      "probability": 0.16281250746849238,
+      "change_summary": "v22 update"
+    },
+    {
+      "version": 23,
+      "timestamp": "2026-03-05 22:33",
+      "probability": 0.18305175078777616,
+      "change_summary": "v23 update"
     }
   ],
   "sim_results": {
-    "mean": 0.5704136199158631,
-    "median": 0.5433717119931313,
-    "p5": 0.31530173196189565,
-    "p95": 0.9133196989730014,
-    "std_dev": 0.18580257149864984,
+    "mean": 0.40811387838134694,
+    "median": 0.38346481521671216,
+    "p5": 0.20026521818501974,
+    "p95": 0.7020988292379265,
+    "std_dev": 0.15665722924919298,
     "iterations": 10000
   },
   "base_rate": {
@@ -146,31 +164,48 @@
       "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"Deep technology commercialization timelines (7-year horizon)\",\n    \"historical_frequency\": 0.15,\n    \"sample_size\": 40,\n    \"reasoning\": \"Looking at deep tech sectors with similar characteristics (capital intensive, physics-based, regulatory complexity): commercial solar (1970s-1990s), LEDs (1960s-1990s), lithium batteries (1980s-2000s), and recent examples like quantum computing and advanced nuclear. For a 7-year commercialization window starting from 2024, historical base rate for technologies at fusion's current stage (demonstrated scientific feasibility, multiple well-funded companies, but no commercial deployment) achieving commercial offering is approximately 15%. This accounts for the fact that fusion has achieved net energy gain (NIF 2022) but faces enormous engineering and economic challenges.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"technical_milestone_acceleration\",\n      \"display_name\": \"Technical Milestone Achievement Rate\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.8,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Commonwealth Fusion Systems (CFS) aims for SPARC demonstration by 2026 and ARC pilot plant by early 2030s. Helion claims commercial delivery to Microsoft by 2028. TAE Technologies targeting 2030s. If multiple companies hit Q>1 milestones by 2027-2028, probability increases significantly. However, delays are common in fusion (ITER delayed decades). P50=1.0 assumes timeline slippage matches historical patterns. P95=1.8 if breakthrough acceleration occurs. P5=0.6 if major technical barriers emerge.\"\n    },\n    {\n      \"name\": \"funding_sustainability\",\n      \"display_name\": \"Private Funding and Investment Climate\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 1.1,\n      \"p95\": 1.5,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Fusion industry raised $6B+ through 2023, with companies like CFS ($2B+), Helion ($500M+), TAE ($1.2B+) well-capitalized. However, path to commercial offering requires $10-20B more across the sector. P50=1.1 assumes continued strong investor interest given AI power demands and climate urgency. P95=1.5 if energy crisis or breakthrough sparks funding surge. P5=0.7 if economic downturn or competing technologies (SMRs, advanced geothermal) drain investment.\"\n    },\n    {\n      \"name\": \"regulatory_pathway_clarity\",\n      \"display_name\": \"Regulatory Framework Development\",\n      \"type\": \"continuous\",\n      \"p5\": 0.8,\n      \"p50\": 1.05,\n      \"p95\": 1.3,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"US NRC and UK regulators developing fusion-specific frameworks (not treating as fission). This is positive but untested. 'Commercial offering' could mean power purchase agreements before full grid deployment, lowering regulatory bar. P50=1.05 assumes moderate progress. P95=1.3 if streamlined approval processes emerge. P5=0.8 if unexpected safety concerns or regulatory delays emerge.\"\n    },\n    {\n      \"name\": \"definition_flexibility\",\n      \"display_name\": \"Commercial Offering Definition Breadth\",\n      \"type\": \"continuous\",\n      \"p5\": 1.0,\n      \"p50\": 1.3,\n      \"p95\": 1.8,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Critical ambiguity: 'commercial offering' could mean (1) signed power purchase agreement, (2) demonstration plant with customer, (3) actual electricity delivery, or (4) multiple deployed units. Helion's 2028 Microsoft agreement, if executed, would qualify under definitions 1-2. CFS's ARC timeline targets early 2030s for demonstration. P50=1.3 assumes looser definition (PPA or demonstration plant). P95=1.8 if PPAs or pilot customer agreements count. P5=1.0 if only actual sustained grid delivery counts.\"\n    },\n    {\n      \"name\": \"competing_technology_disruption\",\n      \"display_name\": \"Alternative Energy Technology Competition\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 0.95,\n      \"p95\": 1.1,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Small modular reactors (SMRs), advanced geothermal, long-duration storage could capture fusion's market opportunity before 2031. However, AI data center power demands may create market space for multiple solutions. P50=0.95 assumes modest competitive pressure. P5=0.7 if SMRs or other tech achieve rapid deployment, reducing fusion urgency. P95=1.1 if power shortage creates desperate demand for any new source.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"Fusion Industry Association 2023 Report\",\n      \"summary\": \"Global private fusion funding exceeded $6B across 40+ companies by end of 2023\",\n      \"key_findings\": [\n        \"Commonwealth Fusion Systems raised over $2B, largest in sector\",\n        \"Multiple companies targeting 2028-2032 demonstration timelines\",\n        \"Net energy gain achieved at NIF (December 2022) catalyzed investment\"\n      ],\n      \"relevance\": 0.95\n    },\n    {\n      \"source\": \"Helion Energy - Microsoft Power Purchase Agreement (May 2023)\",\n      \"summary\": \"First commercial fusion power purchase agreement signed\",\n      \"key_findings\": [\n        \"Helion committed to provide 50MW to Microsoft by 2028\",\n        \"Agreement includes financial penalties for non-delivery\",\n        \"Represents concrete commercial commitment, not just R&D\"\n      ],\n      \"relevance\": 0.98\n    },\n    {\n      \"source\": \"Commonwealth Fusion Systems Technical Timeline\",\n      \"summary\": \"SPARC tokamak demonstration planned for 2026, ARC pilot plant early 2030s\",\n      \"key_findings\": [\n        \"SPARC aims to demonstrate Q>2 (net energy gain) by 2026\",\n        \"ARC commercial demonstration plant targeting 2030-2033\",\n        \"Uses high-temperature superconducting magnets (proven technology)\"\n      ],\n      \"relevance\": 0.92\n    },\n    {\n      \"source\": \"US Nuclear Regulatory Commission Fusion Regulatory Framework (2023)\",\n      \"summary\": \"NRC developing fusion-specific regulations separate from fission\",\n      \"key_findings\": [\n        \"Fusion classified under byproduct material framework, not reactor licensing\",\n        \"Significantly lower regulatory burden than fission reactors\",\n        \"Pathway potentially clearer than anticipated 5 years ago\"\n      ],\n      \"relevance\": 0.85\n    },\n    {\n      \"source\": \"Historical Deep Tech Commercialization Analysis\",\n      \"summary\": \"Analysis of 40 deep tech sectors from scientific breakthrough to commercial deployment\",\n      \"key_findings\": [\n        \"Median time from net energy demonstration to commercial offering: 15-25 years\",\n        \"7-year commercialization window historically captures ~15% of technologies at fusion's stage\",\n        \"Acceleration factors: military/strategic importance, clear market pull, modular scaling\"\n      ],\n      \"relevance\": 0.88\n    }\n  ],\n  \"model_expression\": \"base_rate * technical_milestone_acceleration * funding_sustainability * regulatory_pathway_clarity * definition_flexibility * competing_technology_disruption\",\n  \"confidence\": 0.75,\n  \"reasoning\": \"High confidence in base rate analysis (extensive historical precedent) and current funding landscape (public data). Moderate confidence in technical timelines (companies have incentive to be optimistic, but recent NIF breakthrough is real). Lower confidence in regulatory pathway (untested) and definition interpretation (question ambiguity). The Helion-Microsoft 2028 agreement is a concrete data point that significantly increases probability if 'commercial offering' includes PPAs. Key uncertainty: whether 'commercial offering' means signed agreement, demonstration plant, or sustained delivery. This definitional ambiguity creates wide probability range. Overall confidence of 0.75 reflects good data availability but significant timeline and definition uncertainties.\"\n}\n```",
       "relevance": 0.5,
       "date": "2026-03-05",
-      "key_findings": [
-        "\"base_rate\": {",
-        "\"reference_class\": \"Deep technology commercialization timelines (7-year horizon)\",",
-        "\"historical_frequency\": 0.15,",
-        "\"sample_size\": 40,",
-        "\"reasoning\": \"Looking at deep tech sectors with similar characteristics (capital intensive, physics-based, regulatory complexity): commercial solar (1970s-1990s), LEDs (1960s-1990s), lithium batteries (1980s-2000s), and recent examples like quantum computing and advanced nuclear. For a 7-year commercialization window starting from 2024, historical base rate for technologies at fusion's current stage (demonstrated scientific feasibility, multiple well-funded companies, but no commercial deployment) achieving commercial offering is approximately 15%. This accounts for the fact that fusion has achieved net energy gain (NIF 2022) but faces enormous engineering and economic challenges.\"",
-        "\"drivers\": [",
-        "\"name\": \"technical_milestone_acceleration\",",
-        "\"display_name\": \"Technical Milestone Achievement Rate\",",
-        "\"type\": \"continuous\",",
-        "\"p5\": 0.6,"
-      ]
+      "key_findings": []
     },
     {
       "id": "market_research_0",
       "source": "Agent: market_research (Claude API)",
-      "summary": "The research indicates that fusion energy technology is still in the early stages of development, with significant technical and engineering challenges remaining before it can be commercially viable. While recent advancements have been promising, the timeline for the commercialization of fusion energy is highly uncertain, and the development of the necessary supply chain will be a critical factor in determining the pace of its adoption.",
-      "relevance": 0.85,
+      "summary": "The research indicates that the regulatory pathway for fusion energy companies to commercialize their technology is currently unclear, with no established regulatory framework or approval process in place. This regulatory uncertainty is a major barrier to commercialization and could delay or hinder the ability of fusion energy companies to bring commercial offerings to market by 2031.",
+      "relevance": 0.8,
       "date": "2026-03-05",
       "key_findings": [
-        "Fusion energy technology is still in the research and development stage, with no commercially viable fusion power plants currently in operation. Significant technical and engineering challenges remain to be overcome before fusion can be a reliable and cost-effective energy source.",
-        "Recent advancements in fusion reactor designs, such as the development of stellarators and tokamaks, have shown promising progress in achieving the high temperatures and plasma confinement necessary for fusion reactions. However, these technologies are still years away from commercial deployment.",
-        "The timeline for the commercialization of fusion energy is highly uncertain, with estimates ranging from 20 to 50 years or more. The pace of innovation and the maturity of the technology will be critical factors in determining when fusion can be integrated into the energy supply chain.",
-        "The supply chain for fusion energy will need to be developed in parallel with the technological advancements. This will require significant investments in manufacturing, materials science, and logistics to ensure the reliable and cost-effective production and deployment of fusion power plants.",
-        "The impact of fusion energy on the broader energy supply chain is also uncertain, as it will depend on factors such as the cost-competitiveness of fusion compared to other energy sources, the scalability of fusion technology, and the integration of fusion into existing energy infrastructure."
+        "The regulatory pathway for fusion energy companies to commercialize their technology is currently unclear, with no established regulatory framework or approval process in place.",
+        "Existing fusion energy companies have cited regulatory uncertainty as a major barrier to commercialization, as they lack clear guidance on safety, environmental, and other regulatory requirements.",
+        "Efforts are underway to develop a regulatory framework for fusion energy, but progress has been slow, with no definitive timeline for when a clear pathway may be established.",
+        "Regulatory bodies like the U.S. Nuclear Regulatory Commission and the International Atomic Energy Agency are in the early stages of studying how to approach fusion energy regulation, but have not yet issued formal guidelines.",
+        "The lack of a clear regulatory pathway introduces significant risk and uncertainty for fusion energy companies, which could delay or hinder their ability to bring commercial offerings to market by 2031."
+      ]
+    },
+    {
+      "id": "entity_investigator_0",
+      "source": "Agent: entity_investigator (Claude API)",
+      "summary": "Technical milestones in fusion have genuinely accelerated 2021-2024, with multiple companies achieving plasma parameters previously thought years away. The most aggressive timeline is Helion's 2028 PPA with Microsoft, though this is for a demonstration plant, not full commercial offering. CFS's ARC timeline points to early 2030s. The key uncertainty is not plasma physics (where progress is real) but engineering integration - no company has demonstrated tritium self-sufficiency, continuous operation, or economic electricity production. A 2031 commercial offering would require everything going right on first attempt.",
+      "relevance": 0.75,
+      "date": "2026-03-05",
+      "key_findings": [
+        "Commonwealth Fusion Systems (CFS) achieved Q>1 plasma in their SPARC tokamak design validation in 2021, with construction of SPARC beginning in 2021 and first plasma targeted for 2025. Their commercial pilot plant ARC is projected for early 2030s, making a 2031 commercial offering plausible but tight.",
+        "TAE Technologies has demonstrated plasma confinement times exceeding 30 milliseconds in their Norman device (2023), representing 8x improvement over previous generation. They project commercial fusion by early 2030s, with their approach (aneutronic fusion) potentially enabling smaller, faster-to-market systems.",
+        "Helion Energy signed the world's first commercial fusion power purchase agreement with Microsoft in May 2023, committing to provide 50MW by 2028. This represents a binding commercial commitment with financial penalties, suggesting high internal confidence in technical timeline acceleration.",
+        "Multiple companies have achieved key plasma milestones 2021-2024: JT-60SA (Japan) achieved first plasma 2023, China's EAST tokamak sustained 1056-second plasma in 2024, and private ventures like Tokamak Energy reached 100 million°C in spherical tokamak. The acceleration in milestone achievement frequency suggests technical learning curves are steepening.",
+        "However, the gap between 'net energy gain' (Q>1) and 'commercial electricity generation' remains substantial. NIF achieved fusion ignition in Dec 2022 but their approach (inertial confinement) is not considered commercially viable. The engineering challenges of tritium breeding, materials science for neutron bombardment, and continuous operation at scale remain largely undemonstrated even by leaders."
+      ]
+    },
+    {
+      "id": "macro_forecaster_evidence_1772749986",
+      "source": "Agent: macro_forecaster (Claude API)",
+      "summary": "Technical milestone acceleration in fusion is real but nuanced. Three companies (CFS, Helion, TAE) have credible 2028-2031 commercial timelines based on: (1) breakthrough HTS magnet technology enabling smaller reactors, (2) alternative confinement approaches (spherical tokamaks, FRC, beam-driven), (3) massive capital influx ($6B+ raised 2021-2023), and (4) AI-accelerated optimization. However, 'commercial offering' is ambiguous - demonstration plants producing some electricity differ from economically viable grid-scale power. CFS/Helion target demonstration by 2025-2028, scaling to 'commercial' 2030-2033. Key risk: engineering challenges (tritium breeding, materials degradation, reliability) remain largely unproven at scale.",
+      "relevance": 0.72,
+      "date": "2026-03-05",
+      "key_findings": [
+        "Commonwealth Fusion Systems (CFS) achieved Q>1 plasma in their SPARC tokamak design validation in 2021, with commercial pilot plant 'ARC' targeted for early 2030s. They've raised $2B+ and claim first electricity to grid by 2025-2027 from SPARC, commercial power from ARC by 2031-2033.",
+        "TAE Technologies reported sustaining plasma at 75 million°C for 30+ milliseconds in their Norman device (2023), claiming pathway to commercial fusion by early 2030s. However, their aneutronic p-B11 approach is considered higher-risk/higher-reward than D-T fusion, requiring ~3 billion°C.",
+        "Helion Energy signed world's first fusion power purchase agreement with Microsoft for 50MW by 2028, representing unprecedented commercial commitment. Their 6th-generation Polaris device aims for net electricity demonstration by 2024-2025, scaling to commercial by 2028-2030.",
+        "ITER (international tokamak) timeline has slipped repeatedly - now targeting first plasma 2025, D-T operations 2035, making it irrelevant for 2031 commercial timeline. However, ITER's delays paradoxically validate private sector's faster, smaller approach.",
+        "Technical milestone acceleration evidence: (1) High-temperature superconducting magnets (HTS) now enable 20T+ fields vs ITER's 5.3T, shrinking reactor size 40x; (2) Private fusion investment reached $5.9B by 2023 vs <$1B pre-2021; (3) Plasma confinement time improved 10x in some designs 2018-2023; (4) AI/ML optimization reducing experimental iteration time 5-10x per Tokamak Energy reports."
       ]
     }
   ]

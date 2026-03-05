@@ -1,0 +1,146 @@
+question "will sweden win the eurovision in 2026?"
+
+driver recent_performance_momentum continuous {
+    distribution: triangular(0.9, 1.3, 2)
+    unit: "multiplier"
+    rationale: "Sweden won in 2023 (Loreen - 'Tattoo') and has strong recent form with 3 wins in the last 12 years (2012, 2015, 2023). Countries with recent wins often maintain competitive momentum through strong national selection processes (Melodifestivalen is highly professional). However, 2026 is 3 years after their last win, so momentum may moderate."
+}
+
+driver melodifestivalen_quality continuous {
+    distribution: triangular(1.1, 1.4, 1.8)
+    unit: "multiplier"
+    rationale: "Sweden's Melodifestivalen is widely regarded as the most professional and competitive national selection, consistently producing high-quality entries. It attracts top songwriters and performers, has high production values, and serves as a proving ground. This structural advantage is persistent and significant."
+}
+
+driver voting_bloc_dynamics continuous {
+    distribution: triangular(0.95, 1.3, 1.6)
+    unit: "multiplier"
+    rationale: "Sweden benefits from Nordic voting patterns (Norway, Denmark, Finland often exchange points) and general Western European support. However, voting has become more quality-focused with jury/televote split. The advantage exists but is moderate and depends on song quality."
+}
+
+driver host_nation_effect binary {
+    probability: 0.15p
+    impact_multiplier: 0.6
+    rationale: "If Sweden hosts Eurovision 2026 (possible if they won a 2025 contest or another scenario), host nations historically have a disadvantage (no host has won since 2017, and it's rare). However, probability Sweden hosts in 2026 is low (~15%) since Switzerland hosted 2025 after Nemo's 2024 win. If they don't host, this driver = 1.0."
+}
+
+driver competition_strength continuous {
+    distribution: triangular(0.7, 0.95, 1.1)
+    unit: "multiplier"
+    rationale: "The competitive landscape in 2026 is uncertain. Strong competitors like Italy, Ukraine, France, and UK have been investing heavily. Australia and other countries are improving. A stronger field reduces Sweden's chances slightly, while a weaker field helps. Expected to be neutral to slightly negative."
+}
+
+evidence fermi_evidence_1772752711 {
+    source: "Agent: fermi (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"Eurovision Song Contest winners (1956-2024)\",
+    \"historical_frequency\": 0.0147,
+    \"sample_size\": 68,
+    \"reasoning\": \"Sweden has won Eurovision 7 times out of 68 contests (1974, 1984, 1991, 1999, 2012, 2015, 2023), giving a base rate of 10.3%. However, for any single future year, we use 1/participating_countries. With ~37 typical participants, base rate ≈ 2.7%. Adjusting for Sweden's strong track record (7 wins, 2nd most after Ireland's 7), a reasonable base rate is 1.47% (approximately 1.5× the naive equal probability).\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"recent_performance_momentum\",
+      \"display_name\": \"Recent Performance Momentum\",
+      \"type\": \"continuous\",
+      \"p5\": 0.9,
+      \"p50\": 1.3,
+      \"p95\": 2.0,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Sweden won in 2023 (Loreen - 'Tattoo') and has strong recent form with 3 wins in the last 12 years (2012, 2015, 2023). Countries with recent wins often maintain competitive momentum through strong national selection processes (Melodifestivalen is highly professional). However, 2026 is 3 years after their last win, so momentum may moderate.\"
+    },
+    {
+      \"name\": \"melodifestivalen_quality\",
+      \"display_name\": \"Melodifestivalen Selection Quality\",
+      \"type\": \"continuous\",
+      \"p5\": 1.1,
+      \"p50\": 1.4,
+      \"p95\": 1.8,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Sweden's Melodifestivalen is widely regarded as the most professional and competitive national selection, consistently producing high-quality entries. It attracts top songwriters and performers, has high production values, and serves as a proving ground. This structural advantage is persistent and significant.\"
+    },
+    {
+      \"name\": \"voting_bloc_dynamics\",
+      \"display_name\": \"Nordic Voting Bloc Strength\",
+      \"type\": \"continuous\",
+      \"p5\": 0.95,
+      \"p50\": 1.15,
+      \"p95\": 1.35,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Sweden benefits from Nordic voting patterns (Norway, Denmark, Finland often exchange points) and general Western European support. However, voting has become more quality-focused with jury/televote split. The advantage exists but is moderate and depends on song quality.\"
+    },
+    {
+      \"name\": \"host_nation_effect\",
+      \"display_name\": \"2026 Host Nation Effect\",
+      \"type\": \"binary\",
+      \"probability\": 0.15,
+      \"impact_multiplier\": 0.6,
+      \"rationale\": \"If Sweden hosts Eurovision 2026 (possible if they won a 2025 contest or another scenario), host nations historically have a disadvantage (no host has won since 2017, and it's rare). However, probability Sweden hosts in 2026 is low (~15%) since Switzerland hosted 2025 after Nemo's 2024 win. If they don't host, this driver = 1.0.\"
+    },
+    {
+      \"name\": \"competition_strength\",
+      \"display_name\": \"Competitive Field Strength\",
+      \"type\": \"continuous\",
+      \"p5\": 0.7,
+      \"p50\": 0.95,
+      \"p95\": 1.1,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"The competitive landscape in 2026 is uncertain. Strong competitors like Italy, Ukraine, France, and UK have been investing heavily. Australia and other countries are improving. A stronger field reduces Sweden's chances slightly, while a weaker field helps. Expected to be neutral to slightly negative.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"Eurovision World - Historical Statistics\",
+      \"summary\": \"Sweden's Eurovision track record and performance patterns\",
+      \"key_findings\": [
+        \"Sweden has 7 wins (tied for 2nd most all-time with Ireland)\",
+        \"3 wins in last 12 years (2012, 2015, 2023) shows strong recent form\",
+        \"Melodifestivalen consistently produces top-10 finishes\",
+        \"Sweden has never won as host nation in modern era\"
+      ],
+      \"relevance\": 0.95
+    },
+    {
+      \"source\": \"Eurovision Betting Odds Analysis 2020-2024\",
+      \"summary\": \"Pre-contest favorite win rates and prediction accuracy\",
+      \"key_findings\": [
+        \"Countries with professional national selections (Sweden, Italy) have 2-3x higher win rates\",
+        \"Recent winners face 'winner's curse' - harder to repeat within 5 years\",
+        \"Jury/televote split since 2016 has increased quality-based outcomes\",
+        \"Nordic bloc voting exists but impact reduced by 40% since jury reintroduction\"
+      ],
+      \"relevance\": 0.85
+    },
+    {
+      \"source\": \"Melodifestivalen Production Analysis\",
+      \"summary\": \"Sweden's national selection competitive advantage\",
+      \"key_findings\": [
+        \"Melodifestivalen attracts international songwriters (Max Martin, others)\",
+        \"6-week format with multiple shows provides extensive testing\",
+        \"Production budget exceeds most countries' Eurovision entries\",
+        \"Acts are professionally coached and prepared\"
+      ],
+      \"relevance\": 0.80
+    }
+  ],
+  \"model_expression\": \"base_rate * recent_performance_momentum * melodifestivalen_quality * voting_bloc_dynamics * (host_nation_effect if hosting else 1.0) * competition_strength\",
+  \"confidence\": 0.75,
+  \"reasoning\": \"High confidence in historical data and structural factors (Melodifestivalen quality, voting patterns). Moderate uncertainty about 2026-specific factors (who will represent Sweden, song quality, competitive field, hosting status). The model captures key drivers but Eurovision has inherent unpredictability due to song-specific factors that can't be known 2+ years in advance. Base rate calculation is well-grounded in historical frequency adjusted for Sweden's above-average performance.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-05
+}
+
+evidence market_research_0 {
+    source: "Agent: market_research (Claude API)"
+    summary: "Sweden has been one of the most consistently successful countries in the Eurovision Song Contest over the past decade, with a track record of top-10 placements, high qualification rates for the final, and historical precedent for back-to-back strong performances. This success can be attributed to the country's robust Melodifestivalen selection process, its strong songwriter networks, and its innovative staging and production values. Based on the analysis, Sweden's competitive advantage in Eurovision is likely to continue in the near future."
+    relevance: 0.85p
+    date: 2026-03-05
+}
+
+model: recent_performance_momentum * melodifestivalen_quality * voting_bloc_dynamics * (if host_nation_effect then 0.6 else 1.0) * competition_strength
+
+simulate 10000 iterations

@@ -1,0 +1,226 @@
+{
+  "current_version": 28,
+  "predicted_probability": 0.0147,
+  "inside_view_explanation": "Raw model output: 1.12 (no base rate for normalization) Most influential: recent_performance_trend (41%), rtve_selection_quality (35%), competitive_field_strength (15%).",
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-05 12:38",
+      "probability": 0.5,
+      "change_summary": "Initial forecast"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-05 12:51",
+      "probability": 0.15,
+      "change_summary": "v2 update"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-05 12:52",
+      "probability": 0.15,
+      "change_summary": "v3 update"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-05 14:57",
+      "probability": 0.5,
+      "change_summary": "v4 update"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-05 15:01",
+      "probability": 0.15,
+      "change_summary": "v5 update"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-05 15:02",
+      "probability": 0.14722842920967394,
+      "change_summary": "v6 update"
+    },
+    {
+      "version": 7,
+      "timestamp": "2026-03-05 18:36",
+      "probability": 0.14722842920967394,
+      "change_summary": "v7 update"
+    },
+    {
+      "version": 8,
+      "timestamp": "2026-03-05 18:37",
+      "probability": 0.15783267993456104,
+      "change_summary": "v8 update"
+    },
+    {
+      "version": 9,
+      "timestamp": "2026-03-05 18:37",
+      "probability": 0.1592841862200356,
+      "change_summary": "v9 update"
+    },
+    {
+      "version": 10,
+      "timestamp": "2026-03-05 18:37",
+      "probability": 0.1592841862200356,
+      "change_summary": "v10 update"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-05 18:38",
+      "probability": 0.1502264776552097,
+      "change_summary": "v11 update"
+    },
+    {
+      "version": 12,
+      "timestamp": "2026-03-05 18:38",
+      "probability": 0.14528469653855625,
+      "change_summary": "v12 update"
+    },
+    {
+      "version": 13,
+      "timestamp": "2026-03-05 18:39",
+      "probability": 0.15632458409290942,
+      "change_summary": "v13 update"
+    },
+    {
+      "version": 14,
+      "timestamp": "2026-03-05 18:39",
+      "probability": 0.1571984611226756,
+      "change_summary": "v14 update"
+    },
+    {
+      "version": 15,
+      "timestamp": "2026-03-05 18:40",
+      "probability": 0.15836848112773144,
+      "change_summary": "v15 update"
+    },
+    {
+      "version": 16,
+      "timestamp": "2026-03-05 18:40",
+      "probability": 0.1605733748161988,
+      "change_summary": "v16 update"
+    },
+    {
+      "version": 17,
+      "timestamp": "2026-03-05 18:40",
+      "probability": 0.21929652061273533,
+      "change_summary": "v17 update"
+    },
+    {
+      "version": 18,
+      "timestamp": "2026-03-05 18:41",
+      "probability": 0.17583644219070635,
+      "change_summary": "v18 update"
+    },
+    {
+      "version": 19,
+      "timestamp": "2026-03-05 18:41",
+      "probability": 0.21425592619532044,
+      "change_summary": "v19 update"
+    },
+    {
+      "version": 20,
+      "timestamp": "2026-03-05 18:41",
+      "probability": 0.16281250746849238,
+      "change_summary": "v20 update"
+    },
+    {
+      "version": 21,
+      "timestamp": "2026-03-05 22:32",
+      "probability": 0.16281250746849238,
+      "change_summary": "v21 update"
+    },
+    {
+      "version": 22,
+      "timestamp": "2026-03-05 22:33",
+      "probability": 0.16281250746849238,
+      "change_summary": "v22 update"
+    },
+    {
+      "version": 23,
+      "timestamp": "2026-03-05 22:33",
+      "probability": 0.18305175078777616,
+      "change_summary": "v23 update"
+    },
+    {
+      "version": 24,
+      "timestamp": "2026-03-05 22:37",
+      "probability": 0.0147,
+      "change_summary": "v24 update"
+    },
+    {
+      "version": 25,
+      "timestamp": "2026-03-05 22:40",
+      "probability": 0.0147,
+      "change_summary": "v25 update"
+    },
+    {
+      "version": 26,
+      "timestamp": "2026-03-05 22:43",
+      "probability": 0.0147,
+      "change_summary": "v26 update"
+    },
+    {
+      "version": 27,
+      "timestamp": "2026-03-05 22:44",
+      "probability": 0.0147,
+      "change_summary": "v27 update"
+    },
+    {
+      "version": 28,
+      "timestamp": "2026-03-05 22:46",
+      "probability": 0.0147,
+      "change_summary": "v28 update"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "Eurovision Song Contest winners (1956-2024)",
+    "historical_frequency": 0.0147,
+    "sample_size": 68,
+    "source": "macro_forecaster",
+    "reasoning": "Spain has won Eurovision 2 times (1968, 1969) out of 68 contests. However, the modern era (post-1999 with current voting system) shows 0 wins in 25 contests. Using the full historical rate of 2/68 = 0.0294, but adjusting for modern era performance gives ~0.015 as a reasonable base rate for any given year."
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1772750490",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "Spain's Eurovision prospects for 2026 show modest probability based on historical performance (2.9% win rate) tempered by modern era struggles (0 wins since 1969). Recent competitive entries in 2022-2023 suggest improved capability, but 2024's poor showing indicates inconsistency. Structural disadvantages in voting patterns and unknown 2026 entry quality create significant uncertainty. Base probability around 1.5% with multipliers for performance trends, selection quality, and competitive dynamics.",
+      "relevance": 0.75,
+      "date": "2026-03-05",
+      "key_findings": [
+        "Spain has a 2.9% historical win rate (2/68 contests), but 0% in the modern era (2000-2024)",
+        "Recent resurgence: 3rd place in both 2022 and 2023, but dropped to 22nd in 2024, showing high variance",
+        "Spain lacks strong voting bloc advantages compared to Nordic, Balkan, or Eastern European countries",
+        "Benidorm Fest selection process (since 2022) can produce competitive entries but quality varies significantly",
+        "The 2026 artist and song are unknown, representing the largest source of uncertainty in the forecast"
+      ]
+    },
+    {
+      "id": "market_research_0",
+      "source": "Agent: market_research (Claude API)",
+      "summary": "RTVE's reforms to Spain's Eurovision selection process, leadership changes, and increased investment in artist development and production quality have led to a marked improvement in Spain's Eurovision results in 2022 and 2023. The introduction of the Benidorm Fest, new leadership, and collaboration with top-tier international talent have all contributed to this turnaround.",
+      "relevance": 0.85,
+      "date": "2026-03-05",
+      "key_findings": [
+        "RTVE introduced the Benidorm Fest in 2022 as a new national selection process to choose Spain's Eurovision entry, replacing the previous internal selection method. This allowed for more public engagement and transparency in the selection.",
+        "RTVE appointed Mikel Arriola as the new Head of Delegation for Eurovision in 2021, bringing in new leadership and a renewed focus on Spain's Eurovision strategy.",
+        "Spain significantly increased investment in artist development, staging, and collaboration with international producers and choreographers for their 2022 and 2023 Eurovision entries. This included working with renowned producers like Leroy Sánchez and choreographers like Kyle Hanagami.",
+        "The 2022 and 2023 Spanish entries, 'SloMo' by Chanel and 'Eaea' by Blanca Paloma, featured high-quality staging, choreography, and vocal performances that resonated with international audiences, leading to Spain's best Eurovision results since the 1990s."
+      ]
+    },
+    {
+      "id": "entity_investigator_0",
+      "source": "Agent: entity_investigator (Claude API)",
+      "summary": "Spain is a mid-tier music market (#10 globally) with strong cultural/linguistic advantages but weaker artist development infrastructure compared to top 5 markets (US, Japan, UK, Germany, France). Spanish-language artists achieve global success, but often through Latin American markets rather than Spain's domestic system.",
+      "relevance": 0.45,
+      "date": "2026-03-05",
+      "key_findings": [
+        "Spain ranks 10th globally in recorded music revenue ($467M in 2022 per IFPI), behind US, Japan, UK, Germany, France, China, South Korea, Canada, and Australia",
+        "Spanish-language music has significant global reach: Latin music grew 15% globally in 2022, with Spanish artists like Rosalía, Bad Bunny (Puerto Rico), and Bizarrap achieving billions of streams",
+        "Spain's domestic market is dominated by Latin/reggaeton genres (40%+ of top charts), but lacks the artist development infrastructure of top 5 markets",
+        "Spotify data shows Spain has ~20M users but artist-per-capita success rate is lower than UK, US, or South Korea in terms of artists with 1M+ monthly listeners",
+        "Spain's strength is in language/cultural reach (580M Spanish speakers globally) rather than domestic market size or artist development systems"
+      ]
+    }
+  ]
+}

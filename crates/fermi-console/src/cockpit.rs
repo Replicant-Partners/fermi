@@ -160,6 +160,7 @@ pub struct CockpitState {
     pub registry: Arc<AgentRegistry>,
     pub cached_fpl: String,
     pub inside_view_explanation: String,
+    pub forecast_confidence: f64,  // 0.0-1.0 overall confidence in the inside view
 }
 
 #[derive(Debug, Clone)]
@@ -278,6 +279,7 @@ impl CockpitState {
             registry,
             cached_fpl: String::new(),
             inside_view_explanation: String::new(),
+            forecast_confidence: 0.5,
         }
     }
 
@@ -1200,7 +1202,7 @@ impl CockpitState {
         };
 
         self.program.add_agent(AgentStmt {
-            name: agent_id.to_string(),
+            name: format!("{}_{}", agent_id, sanitize_name(driver_name)),
             agent_type: Some("research".into()),
             query: query.clone(),
             executor: Some(fermi::ast::ExecutorType::LLM),
@@ -1211,7 +1213,7 @@ impl CockpitState {
         });
 
         self.agent_runs.push(AgentExecution {
-            agent_name: agent_id.to_string(),
+            agent_name: format!("{}_{}", agent_id, sanitize_name(driver_name)),
             status: AgentRunStatus::Running,
             evidence_count: 0,
             confidence: None,
@@ -1724,6 +1726,24 @@ impl CockpitState {
                             top_names.join(", "),
                         );
                     }
+
+                // ── Compute forecast confidence (Tetlock methodology) ──
+                let total_drivers = self.program.drivers().len() as f64;
+                let evidenced_drivers = self.program.drivers().iter().filter(|d| {
+                    self.program.evidence_items().iter().any(|e| {
+                        e.id.contains(&d.name) ||
+                        self.program.agents().iter()
+                            .filter(|a| a.driver_refs.contains(&d.name))
+                            .any(|a| e.source.contains(&a.name))
+                    })
+                }).count() as f64;
+                let evidence_ratio = if total_drivers > 0.0 { evidenced_drivers / total_drivers } else { 0.0 };
+                let divergence_penalty = if divergence.abs() > 30.0 { 0.7 }
+                    else if divergence.abs() > 15.0 { 0.85 }
+                    else { 1.0 };
+                let base_confidence = 0.3 + (evidence_ratio * 0.5);
+                self.forecast_confidence = (base_confidence * divergence_penalty).clamp(0.1, 0.95);
+
                 }
                 // Build driver contribution summary
                 let driver_summary: Vec<String> = self.program.drivers().iter().map(|d| {
@@ -1956,6 +1976,47 @@ impl CockpitState {
                 });
             }
         }
+        cx.notify();
+    }
+
+    /// Archive a forecast — move files to forecasts/archive/
+    pub fn archive_forecast(&mut self, cx: &mut Context<Self>) {
+        let filename = self.program.question()
+            .map(|q| sanitize_name(&q.text))
+            .unwrap_or_else(|| "forecast".into());
+        
+        let _ = std::fs::create_dir_all("forecasts/archive");
+        
+        for ext in &["fpl", "evidence.md", "state.json"] {
+            let src = format!("forecasts/{}.{}", filename, ext);
+            let dst = format!("forecasts/archive/{}.{}", filename, ext);
+            let _ = std::fs::rename(&src, &dst);
+        }
+        
+        self.messages.push(AssistantMessage {
+            node: "save".into(),
+            kind: MessageKind::Info,
+            text: format!("Forecast '{}' archived.", filename),
+        });
+        cx.notify();
+    }
+
+    /// Delete a forecast permanently.
+    pub fn delete_forecast_files(&mut self, cx: &mut Context<Self>) {
+        let filename = self.program.question()
+            .map(|q| sanitize_name(&q.text))
+            .unwrap_or_else(|| "forecast".into());
+        
+        for ext in &["fpl", "evidence.md", "state.json"] {
+            let path = format!("forecasts/{}.{}", filename, ext);
+            let _ = std::fs::remove_file(&path);
+        }
+        
+        self.messages.push(AssistantMessage {
+            node: "save".into(),
+            kind: MessageKind::Info,
+            text: format!("Forecast '{}' deleted.", filename),
+        });
         cx.notify();
     }
 

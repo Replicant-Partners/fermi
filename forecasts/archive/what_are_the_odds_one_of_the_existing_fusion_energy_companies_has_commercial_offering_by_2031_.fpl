@@ -155,8 +155,22 @@ evidence fermi_evidence_1772722724 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "The research indicates that fusion energy technology is still in the early stages of development, with significant technical and engineering challenges remaining before it can be commercially viable. While recent advancements have been promising, the timeline for the commercialization of fusion energy is highly uncertain, and the development of the necessary supply chain will be a critical factor in determining the pace of its adoption."
-    relevance: 0.85p
+    summary: "The research indicates that the regulatory pathway for fusion energy companies to commercialize their technology is currently unclear, with no established regulatory framework or approval process in place. This regulatory uncertainty is a major barrier to commercialization and could delay or hinder the ability of fusion energy companies to bring commercial offerings to market by 2031."
+    relevance: 0.8p
+    date: 2026-03-05
+}
+
+evidence entity_investigator_0 {
+    source: "Agent: entity_investigator (Claude API)"
+    summary: "Technical milestones in fusion have genuinely accelerated 2021-2024, with multiple companies achieving plasma parameters previously thought years away. The most aggressive timeline is Helion's 2028 PPA with Microsoft, though this is for a demonstration plant, not full commercial offering. CFS's ARC timeline points to early 2030s. The key uncertainty is not plasma physics (where progress is real) but engineering integration - no company has demonstrated tritium self-sufficiency, continuous operation, or economic electricity production. A 2031 commercial offering would require everything going right on first attempt."
+    relevance: 0.75p
+    date: 2026-03-05
+}
+
+evidence macro_forecaster_evidence_1772749986 {
+    source: "Agent: macro_forecaster (Claude API)"
+    summary: "Technical milestone acceleration in fusion is real but nuanced. Three companies (CFS, Helion, TAE) have credible 2028-2031 commercial timelines based on: (1) breakthrough HTS magnet technology enabling smaller reactors, (2) alternative confinement approaches (spherical tokamaks, FRC, beam-driven), (3) massive capital influx ($6B+ raised 2021-2023), and (4) AI-accelerated optimization. However, 'commercial offering' is ambiguous - demonstration plants producing some electricity differ from economically viable grid-scale power. CFS/Helion target demonstration by 2025-2028, scaling to 'commercial' 2030-2033. Key risk: engineering challenges (tritium breeding, materials degradation, reliability) remain largely unproven at scale."
+    relevance: 0.72p
     date: 2026-03-05
 }
 

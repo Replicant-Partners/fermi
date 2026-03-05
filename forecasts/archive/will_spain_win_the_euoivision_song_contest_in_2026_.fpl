@@ -1,0 +1,56 @@
+question "will spain win the Euoivision song contest in 2026?"
+
+driver recent_performance_trend continuous {
+    distribution: triangular(0.6, 0.85, 1.2)
+    unit: "multiplier"
+    rationale: "Spain's recent Eurovision results: 2024 (22nd), 2023 (3rd - best in decades), 2022 (3rd), 2021 (24th), 2019 (22nd). The 2022-2023 resurgence suggests improved competitiveness, but inconsistency remains. Median suggests 15% reduction from base, with upside if trend continues."
+}
+
+driver artist_selection_quality continuous {
+    distribution: triangular(0.7, 1, 1.5)
+    unit: "multiplier"
+    rationale: "Unknown until early 2026. Spain uses Benidorm Fest (since 2022) which has produced competitive entries. Quality variance is high - could select a winner-caliber act (1.5x) or mediocre entry (0.7x). Neutral median until selection known."
+}
+
+driver voting_bloc_dynamics continuous {
+    distribution: triangular(0.8, 0.95, 1.1)
+    unit: "multiplier"
+    rationale: "Spain lacks strong voting blocs compared to Nordic, Balkan, or Eastern European countries. Limited diaspora voting advantage. Historical data shows Spain receives moderate but not exceptional neighbor votes (Portugal, France, Andorra when participating). Slight disadvantage."
+}
+
+driver host_country_advantage binary {
+    probability: 0.05p
+    impact_multiplier: 1.3
+    rationale: "Spain is unlikely to host 2026 (would need to win 2025 or have 2025 winner decline). If they did host, historical data shows modest advantage. Only 5% chance Spain hosts, but 30% boost if they do."
+}
+
+driver competitive_field_strength continuous {
+    distribution: triangular(0.85, 1, 1.15)
+    unit: "multiplier"
+    rationale: "Unknown composition of 2026 field. Strong competitors (Sweden, Italy, Ukraine, UK with recent investments) will participate. If traditional powerhouses have weak years, Spain's chances improve. Neutral median with slight upside variance."
+}
+
+evidence fermi_evidence_1772750490 {
+    source: "Agent: fermi (Claude API)"
+    summary: "Spain's Eurovision prospects for 2026 show modest probability based on historical performance (2.9% win rate) tempered by modern era struggles (0 wins since 1969). Recent competitive entries in 2022-2023 suggest improved capability, but 2024's poor showing indicates inconsistency. Structural disadvantages in voting patterns and unknown 2026 entry quality create significant uncertainty. Base probability around 1.5% with multipliers for performance trends, selection quality, and competitive dynamics."
+    relevance: 0.75p
+    date: 2026-03-05
+}
+
+evidence market_research_0 {
+    source: "Agent: market_research (Claude API)"
+    summary: "RTVE's reforms to Spain's Eurovision selection process, leadership changes, and increased investment in artist development and production quality have led to a marked improvement in Spain's Eurovision results in 2022 and 2023. The introduction of the Benidorm Fest, new leadership, and collaboration with top-tier international talent have all contributed to this turnaround."
+    relevance: 0.85p
+    date: 2026-03-05
+}
+
+evidence entity_investigator_0 {
+    source: "Agent: entity_investigator (Claude API)"
+    summary: "Spain is a mid-tier music market (#10 globally) with strong cultural/linguistic advantages but weaker artist development infrastructure compared to top 5 markets (US, Japan, UK, Germany, France). Spanish-language artists achieve global success, but often through Latin American markets rather than Spain's domestic system."
+    relevance: 0.45p
+    date: 2026-03-05
+}
+
+model: recent_performance_trend * artist_selection_quality * voting_bloc_dynamics * (if host_country_advantage then 1.3 else 1.0) * competitive_field_strength
+
+simulate 10000 iterations
