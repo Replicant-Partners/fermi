@@ -375,25 +375,34 @@ impl CockpitState {
             }
         }
 
-        // ── Phase 1: Fire macro_forecaster to build decomposition ──
-        // Only the lead agent fires initially. It creates the base rate
-        // and driver structure. Other agents get suggested per-driver
-        // after the decomposition is ready — this is the governance model.
+        // ── Phase 1: Fire Fermi to build probability decomposition ──
+        // Fermi is the meta-forecaster — it creates the decomposition with
+        // probability-compatible drivers. The model output should be in [0,1].
+        // Specialized agents research evidence per driver afterward.
         let structured_query = format!(
-            "You are co-authoring a Fermi forecast. Question: \"{}\"\n\n\
+            "You are Fermi, the meta-forecasting agent. Decompose this forecast question into a \
+             probabilistic model where the output is a PROBABILITY between 0 and 1.\n\n\
+             Question: \"{}\"\n\n\
+             IMPORTANT: All continuous drivers must be probability multipliers (values near 1.0). \
+             The model should be: base_rate × multiplier_1 × multiplier_2 × ... \
+             For example, a driver that increases probability by 20% has p50=1.2. \
+             A driver that decreases probability by 30% has p50=0.7.\n\n\
+             Binary drivers use probability (0-1) and impact_multiplier.\n\n\
              Provide a JSON response with:\n\
              - \"base_rate\": {{\"reference_class\": \"...\", \"historical_frequency\": 0.0-1.0, \"sample_size\": N, \"reasoning\": \"...\"}}\n\
-             - \"drivers\": [{{\"name\": \"...\", \"type\": \"continuous\"|\"binary\", \"p5\": N, \"p50\": N, \"p95\": N, \"unit\": \"...\", \"rationale\": \"...\"}}]\n\
+             - \"drivers\": [{{\"name\": \"snake_case\", \"display_name\": \"Human Name\", \"type\": \"continuous\"|\"binary\", \
+               \"p5\": 0.8, \"p50\": 1.0, \"p95\": 1.3, \"unit\": \"multiplier\", \"rationale\": \"...\"}}]\n\
              - \"evidence\": [{{\"source\": \"...\", \"summary\": \"...\", \"key_findings\": [...], \"relevance\": 0.0-1.0}}]\n\
-             - \"model_expression\": \"how drivers combine\"\n\
+             - \"model_expression\": \"base_rate * driver_a * driver_b * (if event then impact else 1.0)\"\n\
              - \"confidence\": 0.0-1.0\n\
              - \"reasoning\": \"your analysis\"\n\n\
+             The model_expression MUST start with the base_rate value and multiply by driver adjustments.\n\
              Return ONLY valid JSON.",
             question
         );
 
         self.agent_runs.push(AgentExecution {
-            agent_name: "macro_forecaster".into(),
+            agent_name: "fermi".into(),
             status: AgentRunStatus::Running,
             evidence_count: 0,
             confidence: None,
@@ -404,15 +413,14 @@ impl CockpitState {
         self.messages.push(AssistantMessage {
             node: "question".into(),
             kind: MessageKind::Info,
-            text: "⟳ macro_forecaster is building the forecast decomposition…".into(),
+            text: "⟳ Fermi is decomposing your question into a probability model…".into(),
         });
 
-        self.fire_agent("macro_forecaster", &structured_query, cx);
+        self.fire_agent("fermi", &structured_query, cx);
 
         self.focused_node = FocusedNode::Question;
         cx.notify();
     }
-    // Agent Result Processing
     // ═══════════════════════════════════════════════════════════════
 
     /// Process the macro_forecaster's structured response.
@@ -841,8 +849,24 @@ impl CockpitState {
                         // macro_forecaster gets special processing (base rate + drivers)
                         if aid == "macro_forecaster" {
                             state.process_macro_forecaster_result(&result_json);
-                        } else if aid == "fermi" {
-                            // Fermi meta-agent: parse recommendation
+                        } else if aid == "fermi" || aid == "macro_forecaster" {
+                            // Check if this is a decomposition (has base_rate/drivers)
+                            // or a recommendation (has recommended_agent)
+                            let reasoning = result_json.get("metadata")
+                                .and_then(|m| m.get("reasoning"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let clean = reasoning.trim()
+                                .strip_prefix("```json").or_else(|| reasoning.trim().strip_prefix("```"))
+                                .and_then(|s| s.strip_suffix("```"))
+                                .unwrap_or(reasoning).trim();
+                            let has_base_rate = clean.contains("base_rate") && clean.contains("drivers");
+
+                            if has_base_rate {
+                                state.process_macro_forecaster_result(&result_json);
+                            } else {
+                                state.process_fermi_recommendation(&result_json, cx);
+                            }
                             state.process_fermi_recommendation(&result_json, cx);
                         } else {
                             // Other agents: add evidence to AST
@@ -1490,7 +1514,47 @@ impl CockpitState {
 
 
                 // ── Update inside view from simulation ────────────
-                self.predicted_probability = results.mean;
+                // Update inside view from simulation
+                // If this is a probability forecast (has base rate), the model
+                // output needs to be interpreted as a probability.
+                let is_probability_forecast = self.program.question()
+                    .and_then(|q| q.base_rate.as_ref())
+                    .is_some();
+
+                if is_probability_forecast {
+                    // For probability forecasts, the model output may not be
+                    // in [0,1]. We need to normalize it. If the model produces
+                    // values >> 1, it's a raw multiplicative model and we need
+                    // to convert: P = base_rate * (model_output / baseline_output)
+                    // For now, clamp to [0, 1] and use the mean as probability.
+                    let base_rate = self.program.question()
+                        .and_then(|q| q.base_rate.as_ref())
+                        .map(|br| br.historical_frequency)
+                        .unwrap_or(0.5);
+
+                    // If mean is way outside [0,1], normalize relative to base rate
+                    if results.mean > 1.0 || results.mean < 0.0 {
+                        // The model output is a raw value, not a probability.
+                        // Use the ratio of p50 values to adjust base rate.
+                        // This is a heuristic — proper probability models should
+                        // output values in [0,1] directly.
+                        self.predicted_probability = base_rate;
+                        self.messages.push(AssistantMessage {
+                            node: "simulation".into(),
+                            kind: MessageKind::Warning,
+                            text: format!(
+                                "Model output ({:.1}) is not a probability. Inside view kept at base rate {:.1}%. \
+                                 Consider restructuring drivers as probability multipliers (values near 1.0).",
+                                results.mean, base_rate * 100.0
+                            ),
+                        });
+                    } else {
+                        self.predicted_probability = results.mean.clamp(0.01, 0.99);
+                    }
+                } else {
+                    // Value forecast — use raw mean
+                    self.predicted_probability = results.mean;
+                }
 
                 // ── Fermi interprets the result ───────────────────
                 let base_rate = self.program.question()
@@ -1501,20 +1565,48 @@ impl CockpitState {
                 let div_direction = if divergence > 0.0 { "above" } else { "below" };
 
                 // Build driver contribution summary
+
+                // ── Run sensitivity analysis ──────────────────────
+                let sensitivity = ::fermi::sensitivity::full_sensitivity_analysis(
+                    &parsed, 1000  // fewer iterations for speed
+                );
+
+                let sensitivity_summary = if let Ok(ref sa) = sensitivity {
+                    let top = sa.top_drivers(5);
+                    let parts: Vec<String> = top.iter().map(|ds| {
+                        format!("{} ({:.0}% influence)",
+                            ds.driver_name,
+                            ds.total_order_index * 100.0)
+                    }).collect();
+                    if parts.is_empty() {
+                        "No sensitivity data available.".to_string()
+                    } else {
+                        format!("Key drivers by influence: {}", parts.join(", "))
+                    }
+                } else {
+                    "Sensitivity analysis unavailable.".to_string()
+                };
+
+                // Build driver contribution summary
                 let driver_summary: Vec<String> = self.program.drivers().iter().map(|d| {
                     let display = d.display_name.as_deref().unwrap_or(&d.name);
+                    // Include sensitivity if available
+                    let influence = sensitivity.as_ref().ok()
+                        .and_then(|sa| sa.get_driver_sensitivity(&d.name))
+                        .map(|ds| format!(" [{:.0}%]", ds.total_order_index * 100.0))
+                        .unwrap_or_default();
                     match d.driver_type {
                         DriverType::Continuous => {
                             if let Some(Distribution::Triangular { ref p50, .. }) = d.distribution {
-                                format!("{} (p50={:.1})", display, expr_to_f64(p50))
+                                format!("{} (p50={:.2}){}", display, expr_to_f64(p50), influence)
                             } else {
-                                display.to_string()
+                                format!("{}{}", display, influence)
                             }
                         }
                         DriverType::Binary => {
-                            format!("{} ({:.0}%)", display, d.probability.unwrap_or(0.0) * 100.0)
+                            format!("{} ({:.0}%){}", display, d.probability.unwrap_or(0.0) * 100.0, influence)
                         }
-                        _ => display.to_string(),
+                        _ => format!("{}{}", display, influence),
                     }
                 }).collect();
 
@@ -1522,14 +1614,16 @@ impl CockpitState {
                     node: "simulation".into(),
                     kind: MessageKind::Tip,
                     text: format!(
-                        "🦊 Inside view: {:.1} (mean from {} drivers: {}). \
-                         This is {:.0}pp {} the outside view base rate of {:.1}%.",
-                        results.mean,
+                        "🦊 Inside view: {:.4} (mean from {} drivers: {}). \
+                         This is {:.0}pp {} the outside view base rate of {:.1}%.\n\
+                         {}",
+                        self.predicted_probability,
                         driver_summary.len(),
                         driver_summary.join(", "),
                         divergence.abs(),
                         div_direction,
                         base_rate * 100.0,
+                        sensitivity_summary,
                     ),
                 });
 
@@ -1544,7 +1638,6 @@ impl CockpitState {
                         ),
                     });
                 }
-
                 self.messages.push(AssistantMessage {
                     node: "simulation".into(),
                     kind: MessageKind::Info,

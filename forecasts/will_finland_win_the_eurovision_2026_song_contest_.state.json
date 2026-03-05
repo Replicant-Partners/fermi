@@ -1,0 +1,18 @@
+{
+  "current_version": 1,
+  "predicted_probability": 0.015,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-05 01:08",
+      "probability": 0.015,
+      "change_summary": "Initial forecast"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "Small Nordic countries (population <10M) winning Eurovision",
+    "historical_frequency": 0.015,
+    "sample_size": 68
+  }
+}
