@@ -237,6 +237,18 @@ impl Panel {
 
 // ─── Root Application View ────────────────────────────────────────────────────
 
+#[derive(Clone)]
+struct LocalForecast {
+    filename: String,
+    question: String,
+    timestamp: String,
+    probability: f64,
+    base_rate: f64,
+    version: u32,
+    driver_count: usize,
+    evidence_count: usize,
+}
+
 struct FermiConsole {
     active_panel: Panel,
     focus_handle: FocusHandle,
@@ -294,7 +306,7 @@ struct FermiConsole {
     leaderboard_loading: bool,
 
     // Local forecasts (from forecasts/ directory)
-    local_forecasts: Vec<(String, String, String)>, // (filename, question, timestamp)
+    local_forecasts: Vec<LocalForecast>,
 }
 
 #[derive(Clone)]
@@ -613,13 +625,11 @@ impl FermiConsole {
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown")
                             .to_string();
-                        // Extract question from first line
                         let question = content.lines()
                             .find(|l| l.starts_with("question"))
                             .and_then(|l| l.split('"').nth(1))
                             .unwrap_or(&filename)
                             .to_string();
-                        // Get file modification time
                         let timestamp = entry.metadata()
                             .and_then(|m| m.modified())
                             .map(|t| {
@@ -627,13 +637,34 @@ impl FermiConsole {
                                 dt.format("%Y-%m-%d %H:%M").to_string()
                             })
                             .unwrap_or_else(|_| "unknown".into());
-                        self.local_forecasts.push((filename, question, timestamp));
+                        let driver_count = content.lines()
+                            .filter(|l| l.starts_with("driver "))
+                            .count();
+
+                        // Load state.json for probability and version
+                        let state_path = path.with_extension("state.json");
+                        let (probability, base_rate, version, evidence_count) = 
+                            if let Ok(state_text) = std::fs::read_to_string(&state_path) {
+                                if let Ok(sj) = serde_json::from_str::<serde_json::Value>(&state_text) {
+                                    (
+                                        sj.get("predicted_probability").and_then(|v| v.as_f64()).unwrap_or(0.5),
+                                        sj.get("base_rate").and_then(|b| b.get("historical_frequency")).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                        sj.get("current_version").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                                        sj.get("evidence").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+                                    )
+                                } else { (0.5, 0.0, 0, 0) }
+                            } else { (0.5, 0.0, 0, 0) };
+
+                        self.local_forecasts.push(LocalForecast {
+                            filename, question, timestamp,
+                            probability, base_rate, version,
+                            driver_count, evidence_count,
+                        });
                     }
                 }
             }
         }
-        // Sort by timestamp descending
-        self.local_forecasts.sort_by(|a, b| b.2.cmp(&a.2));
+        self.local_forecasts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     }
 
     fn fetch_stats(&mut self, cx: &mut Context<Self>) {
@@ -1699,7 +1730,7 @@ impl FermiConsole {
                                         .child(
                                             div()
                                                 .text_size(px(13.0))
-                                                .text_color(rgb(theme::PURPLE))
+                                                .text_color(rgb(theme::CYAN))
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .child(format!("Local Forecasts ({})", self.local_forecasts.len())),
                                         ),
@@ -1708,11 +1739,11 @@ impl FermiConsole {
                                     div()
                                         .flex()
                                         .flex_col()
-                                        .children(self.local_forecasts.iter().map(|(filename, question, timestamp)| {
+                                        .children(self.local_forecasts.iter().map(|forecast| {
                                         {
-                                            let path = format!("forecasts/{}.fpl", filename);
+                                            let path = format!("forecasts/{}.fpl", forecast.filename);
                                             div()
-                                                .id(SharedString::from(format!("local-forecast-{}", filename)))
+                                                .id(SharedString::from(format!("local-forecast-{}", forecast.filename)))
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(move |this, _event, _window, cx| {
                                                     // Load forecast and switch to composer
@@ -1727,13 +1758,6 @@ impl FermiConsole {
                                                             cockpit.load_forecast(&p, cx);
                                                         });
                                                     }
-
-
-
-
-
-
-
                                                     this.active_panel = Panel::Composer;
                                                     cx.notify();
                                                 }))
@@ -1749,9 +1773,9 @@ impl FermiConsole {
                                                     div()
                                                         .w(px(48.0))
                                                         .text_size(px(14.0))
-                                                        .text_color(rgb(theme::PURPLE))
+                                                        .text_color(rgb(theme::CYAN))
                                                         .font_weight(FontWeight::BOLD)
-                                                        .child("📄"),
+                                                        .child(format!("{:.0}%", forecast.probability * 100.0)),
                                                 )
                                                 .child(
                                                     div()
@@ -1764,13 +1788,13 @@ impl FermiConsole {
                                                             div()
                                                                 .text_size(px(13.0))
                                                                 .text_color(theme::fg())
-                                                                .child(question.clone()),
+                                                                .child(forecast.question.clone()),
                                                         )
                                                         .child(
                                                             div()
                                                                 .text_size(px(10.0))
                                                                 .text_color(theme::fg_faint())
-                                                                .child(format!("{} · {}.fpl", timestamp, filename)),
+                                                                .child(format!("{} · v{} · {} drivers · {} evidence", forecast.timestamp, forecast.version, forecast.driver_count, forecast.evidence_count)),
                                                         ),
                                                 )
                                         }

@@ -1,55 +1,46 @@
 # Evidence Log: what are the odds one of the existing fusion energy companies has commercial offering by 2031?
 
-**Version:** v3 | **Probability:** 15.0% | **Updated:** 2026-03-05 12:52 UTC
+**Version:** v20 | **Probability:** 16.3% | **Updated:** 2026-03-05 18:41 UTC
 
 ---
 
 ## Outside View (Base Rate)
 
-- **Reference class:** Energy technology commercialization timelines (7-year horizon)
+- **Reference class:** Deep technology commercialization timelines (7-year horizon)
 - **Historical frequency:** 15.0%
-- **Sample size:** n=20
+- **Sample size:** n=40
 - **Source:** macro_forecaster
 
-> Looking at major energy technologies that reached commercial deployment: solar PV (1970s-1990s, ~20 years), wind turbines (1980s-2000s, ~15 years), lithium-ion batteries (1991-2010s, ~20 years), and advanced nuclear (still pending after 15+ years). For a 7-year timeline (2024-2031), technologies typically need to already be in pilot/demonstration phase. Of ~20 major energy innovations tracked since 1990, approximately 3 achieved commercial deployment within 7 years of their demonstration phase, yielding ~15% base rate.
+> Looking at deep tech sectors with similar characteristics (capital intensive, physics-based, regulatory complexity): commercial solar (1970s-1990s), LEDs (1960s-1990s), lithium batteries (1980s-2000s), and recent examples like quantum computing and advanced nuclear. For a 7-year commercialization window starting from 2024, historical base rate for technologies at fusion's current stage (demonstrated scientific feasibility, multiple well-funded companies, but no commercial deployment) achieving commercial offering is approximately 15%. This accounts for the fact that fusion has achieved net energy gain (NIF 2022) but faces enormous engineering and economic challenges.
 
 ---
 
-## technical_readiness_multiplier `continuous`
+## technical_milestone_acceleration `continuous`
 
 | p5 | p50 | p95 | unit |
 |---|---|---|---|
-| 0.6 | 1 | 1.8 | multiplier |
+| 0.3 | 0.5 | 0.8 | multiplier |
 
-> Current fusion companies (Commonwealth Fusion, TAE, Helion) are at TRL 5-7. Commercial offering requires TRL 9. Commonwealth's SPARC aims for net energy by 2025, which would accelerate timeline significantly (p95=1.8x). However, unexpected physics challenges or engineering delays could slow progress (p5=0.6x). Median assumes steady progress matching current projections.
+> Commonwealth Fusion Systems (CFS) aims for SPARC demonstration by 2026 and ARC pilot plant by early 2030s. Helion claims commercial delivery to Microsoft by 2028. TAE Technologies targeting 2030s. If multiple companies hit Q>1 milestones by 2027-2028, probability increases significantly. However, delays are common in fusion (ITER delayed decades). P50=1.0 assumes timeline slippage matches historical patterns. P95=1.8 if breakthrough acceleration occurs. P5=0.6 if major technical barriers emerge.
 
 ### Assigned Agents
 
-- **entity_investigator** (schedule: once)
-  - Query: _deepresearch into avalanche energy_
+- **market_research** (schedule: every 1 Day)
+  - Query: _evalaute through deep research the pace of relevant innovations and their maturity asit affects the _
 
 ### Evidence
 
-#### Agent: entity_investigator (Claude API) (relevance: 50%)
+#### Agent: market_research (Claude API) (relevance: 85%)
 
-```json
-{
-  "key_findings": [
-    "Avalanche Energy is a Seattle-based fusion energy startup founded in 2018 by Robin Langtry and Brian Riordan, focused on developing compact fusion reactors using electrostatic confinement technology called 'Orbitron' devices. The company has raised significant venture capital including a $5M seed round and a $40M Series A led by Prime Movers Lab in 2023.",
-    "The company's technical approach involves miniaturized electrostatic fusion devices that could theore...
+The research indicates that fusion energy technology is still in the early stages of development, with significant technical and engineering challenges remaining before it can be commercially viable. While recent advancements have been promising, the timeline for the commercialization of fusion energy is highly uncertain, and the development of the necessary supply chain will be a critical factor in determining the pace of its adoption.
 
 **Key findings:**
 
-- "key_findings": [
-- "Avalanche Energy is a Seattle-based fusion energy startup founded in 2018 by Robin Langtry and Brian Riordan, focused on developing compact fusion reactors using electrostatic confinement technology called 'Orbitron' devices. The company has raised significant venture capital including a $5M seed round and a $40M Series A led by Prime Movers Lab in 2023.",
-- "The company's technical approach involves miniaturized electrostatic fusion devices that could theoretically fit in shipping containers, targeting distributed power generation rather than grid-scale plants. They've published research showing ion confinement improvements and are working toward net energy gain demonstrations, though no commercial fusion has been achieved by any company globally as of 2024.",
-- "Avalanche Energy has connections to the broader fusion investment ecosystem: Prime Movers Lab (lead investor) also backs Commonwealth Fusion Systems and Type One Energy. Board/advisory connections include former ARPA-E officials and fusion physics researchers from University of Washington and national labs.",
-- "The company operates in a competitive landscape with 30+ private fusion ventures globally (Commonwealth Fusion, Helion Energy, TAE Technologies, etc.), most targeting 2030s for commercial demonstration. Avalanche's compact approach is higher-risk/higher-reward compared to tokamak or inertial confinement approaches with more established physics.",
-- "Regulatory and commercial risk factors: No clear regulatory pathway for commercial fusion reactors in the US yet (NRC developing framework), unknown manufacturing scalability for novel confinement geometries, and dependency on continued venture funding in a capital-intensive sector where no company has achieved breakeven."
-- "summary": "Avalanche Energy is a venture-backed fusion startup pursuing compact electrostatic confinement technology with notable investors and technical pedigree, but faces the fundamental challenge all fusion companies face: unproven commercial viability. The entity sits within a network of fusion-focused investors and technical advisors, with relationships to the Pacific Northwest research ecosystem and the broader fusion venture community.",
-- "sources": [
-- "Prime Movers Lab press release (2023) - Series A announcement",
-- "Company website and technical publications on Orbitron design",
+- Fusion energy technology is still in the research and development stage, with no commercially viable fusion power plants currently in operation. Significant technical and engineering challenges remain to be overcome before fusion can be a reliable and cost-effective energy source.
+- Recent advancements in fusion reactor designs, such as the development of stellarators and tokamaks, have shown promising progress in achieving the high temperatures and plasma confinement necessary for fusion reactions. However, these technologies are still years away from commercial deployment.
+- The timeline for the commercialization of fusion energy is highly uncertain, with estimates ranging from 20 to 50 years or more. The pace of innovation and the maturity of the technology will be critical factors in determining when fusion can be integrated into the energy supply chain.
+- The supply chain for fusion energy will need to be developed in parallel with the technological advancements. This will require significant investments in manufacturing, materials science, and logistics to ensure the reliable and cost-effective production and deployment of fusion power plants.
+- The impact of fusion energy on the broader energy supply chain is also uncertain, as it will depend on factors such as the cost-competitiveness of fusion compared to other energy sources, the scalability of fusion technology, and the integration of fusion into existing energy infrastructure.
 
 _Collected: 2026-03-05_
 
@@ -58,89 +49,90 @@ _Collected: 2026-03-05_
 - **Agent: fermi (Claude API)**: ```json
 {
   "base_rate": {
-    "reference_class": "Energy technology commercialization timelines (7-year horizon)",
+    "reference_class": "Deep technology commercialization timelines (7-year horizon)",
     "historical_frequency": 0.15,
-    "sample_size": 20,
-    "reasoning": "Looking a
+    "sample_size": 40,
+    "reasoning": "Looking at 
 
 ---
 
-## regulatory_pathway_multiplier `continuous`
+## funding_sustainability `continuous`
 
 | p5 | p50 | p95 | unit |
 |---|---|---|---|
-| 0.7 | 1.1 | 1.5 | multiplier |
+| 0.3 | 0.7 | 1 | multiplier |
 
-> NRC and DOE are developing fusion-specific regulatory frameworks (not treating fusion as fission). UK has established clearer pathways. Fast regulatory approval could accelerate by 50% (p95=1.5x). Regulatory confusion or safety concerns could slow by 30% (p5=0.7x). Current trajectory suggests modest acceleration (p50=1.1x).
+> Fusion industry raised $6B+ through 2023, with companies like CFS ($2B+), Helion ($500M+), TAE ($1.2B+) well-capitalized. However, path to commercial offering requires $10-20B more across the sector. P50=1.1 assumes continued strong investor interest given AI power demands and climate urgency. P95=1.5 if energy crisis or breakthrough sparks funding surge. P5=0.7 if economic downturn or competing technologies (SMRs, advanced geothermal) drain investment.
 
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
 {
   "base_rate": {
-    "reference_class": "Energy technology commercialization timelines (7-year horizon)",
+    "reference_class": "Deep technology commercialization timelines (7-year horizon)",
     "historical_frequency": 0.15,
-    "sample_size": 20,
-    "reasoning": "Looking a
+    "sample_size": 40,
+    "reasoning": "Looking at 
 
 ---
 
-## funding_sustainability_multiplier `continuous`
+## regulatory_pathway_clarity `continuous`
 
 | p5 | p50 | p95 | unit |
 |---|---|---|---|
-| 0.5 | 1 | 1.6 | multiplier |
+| 0.8 | 1.05 | 1.3 | multiplier |
 
-> Fusion companies have raised $6B+ (2021-2023). Commercial deployment requires $10-20B more. Strong continued investment (government + private) could accelerate by 60% (p95=1.6x). Funding drought due to economic conditions or failed milestones could cut probability in half (p5=0.5x). Median assumes current funding trajectory continues.
+> US NRC and UK regulators developing fusion-specific frameworks (not treating as fission). This is positive but untested. 'Commercial offering' could mean power purchase agreements before full grid deployment, lowering regulatory bar. P50=1.05 assumes moderate progress. P95=1.3 if streamlined approval processes emerge. P5=0.8 if unexpected safety concerns or regulatory delays emerge.
 
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
 {
   "base_rate": {
-    "reference_class": "Energy technology commercialization timelines (7-year horizon)",
+    "reference_class": "Deep technology commercialization timelines (7-year horizon)",
     "historical_frequency": 0.15,
-    "sample_size": 20,
-    "reasoning": "Looking a
+    "sample_size": 40,
+    "reasoning": "Looking at 
 
 ---
 
-## supply_chain_maturity_multiplier `continuous`
+## definition_flexibility `continuous`
 
 | p5 | p50 | p95 | unit |
 |---|---|---|---|
-| 0.4 | 0.7 | 1 | multiplier |
+| 1 | 1.3 | 1.8 | multiplier |
 
-> High-temperature superconductors, tritium breeding, specialized materials are bottlenecks. Supply chains are immature. Rapid scaling could provide 30% boost (p95=1.3x). Supply chain failures or material shortages likely reduce probability by 40% (p5=0.6x). Median expects supply chain to be a slight drag (p50=0.9x).
+> Critical ambiguity: 'commercial offering' could mean (1) signed power purchase agreement, (2) demonstration plant with customer, (3) actual electricity delivery, or (4) multiple deployed units. Helion's 2028 Microsoft agreement, if executed, would qualify under definitions 1-2. CFS's ARC timeline targets early 2030s for demonstration. P50=1.3 assumes looser definition (PPA or demonstration plant). P95=1.8 if PPAs or pilot customer agreements count. P5=1.0 if only actual sustained grid delivery counts.
 
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
 {
   "base_rate": {
-    "reference_class": "Energy technology commercialization timelines (7-year horizon)",
+    "reference_class": "Deep technology commercialization timelines (7-year horizon)",
     "historical_frequency": 0.15,
-    "sample_size": 20,
-    "reasoning": "Looking a
+    "sample_size": 40,
+    "reasoning": "Looking at 
 
 ---
 
-## first_mover_success `binary`
+## competing_technology_disruption `continuous`
 
-- **Probability:** 65%
-- **Impact multiplier:** 2.5x
+| p5 | p50 | p95 | unit |
+|---|---|---|---|
+| 0.5 | 0.7 | 1.2 | multiplier |
 
-> If Commonwealth Fusion's SPARC or similar achieves Q>1 by 2025-2026 (65% probability based on technical assessments), it dramatically increases commercial deployment odds by 2031 (2.5x multiplier due to proof-of-concept, investor confidence, and accelerated follow-on projects). Without this milestone, commercial deployment by 2031 becomes highly unlikely.
+> Small modular reactors (SMRs), advanced geothermal, long-duration storage could capture fusion's market opportunity before 2031. However, AI data center power demands may create market space for multiple solutions. P50=0.95 assumes modest competitive pressure. P5=0.7 if SMRs or other tech achieve rapid deployment, reducing fusion urgency. P95=1.1 if power shortage creates desperate demand for any new source.
 
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
 {
   "base_rate": {
-    "reference_class": "Energy technology commercialization timelines (7-year horizon)",
+    "reference_class": "Deep technology commercialization timelines (7-year horizon)",
     "historical_frequency": 0.15,
-    "sample_size": 20,
-    "reasoning": "Looking a
+    "sample_size": 40,
+    "reasoning": "Looking at 
 
 ---
 
@@ -151,19 +143,19 @@ _Collected: 2026-03-05_
 ```json
 {
   "base_rate": {
-    "reference_class": "Energy technology commercialization timelines (7-year horizon)",
+    "reference_class": "Deep technology commercialization timelines (7-year horizon)",
     "historical_frequency": 0.15,
-    "sample_size": 20,
-    "reasoning": "Looking at major energy technologies that reached commercial deployment: solar PV (1970s-1990s, ~20 years), wind turbines (1980s-2000s, ~15 years), lithium-ion batteries (1991-2010s, ~20 years), and advanced nuclear (still pending after 15+ years). For a 7-year timeline (2024-2031), technologies typically ne...
+    "sample_size": 40,
+    "reasoning": "Looking at deep tech sectors with similar characteristics (capital intensive, physics-based, regulatory complexity): commercial solar (1970s-1990s), LEDs (1960s-1990s), lithium batteries (1980s-2000s), and recent examples like quantum computing and advanced nuclear. For a 7-year commercialization window starti...
 
 - "base_rate": {
-- "reference_class": "Energy technology commercialization timelines (7-year horizon)",
+- "reference_class": "Deep technology commercialization timelines (7-year horizon)",
 - "historical_frequency": 0.15,
-- "sample_size": 20,
-- "reasoning": "Looking at major energy technologies that reached commercial deployment: solar PV (1970s-1990s, ~20 years), wind turbines (1980s-2000s, ~15 years), lithium-ion batteries (1991-2010s, ~20 years), and advanced nuclear (still pending after 15+ years). For a 7-year timeline (2024-2031), technologies typically need to already be in pilot/demonstration phase. Of ~20 major energy innovations tracked since 1990, approximately 3 achieved commercial deployment within 7 years of their demonstration phase, yielding ~15% base rate."
+- "sample_size": 40,
+- "reasoning": "Looking at deep tech sectors with similar characteristics (capital intensive, physics-based, regulatory complexity): commercial solar (1970s-1990s), LEDs (1960s-1990s), lithium batteries (1980s-2000s), and recent examples like quantum computing and advanced nuclear. For a 7-year commercialization window starting from 2024, historical base rate for technologies at fusion's current stage (demonstrated scientific feasibility, multiple well-funded companies, but no commercial deployment) achieving commercial offering is approximately 15%. This accounts for the fact that fusion has achieved net energy gain (NIF 2022) but faces enormous engineering and economic challenges."
 - "drivers": [
-- "name": "technical_readiness_multiplier",
-- "display_name": "Technical Readiness Level Progress",
+- "name": "technical_milestone_acceleration",
+- "display_name": "Technical Milestone Achievement Rate",
 - "type": "continuous",
 - "p5": 0.6,
 
