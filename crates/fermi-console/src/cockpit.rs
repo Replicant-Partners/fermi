@@ -3405,6 +3405,68 @@ fn render_simulation_section(state: &CockpitState) -> impl IntoElement {
                         sim.execution_time_ms
                     )),
             )
+            // Evidence treemap — drivers sized by impact
+            .child({
+                let drivers_viz: Vec<crate::charts::DriverViz> = state.program.drivers().iter().map(|d| {
+                    let display = d.display_name.as_deref().unwrap_or(&d.name);
+                    let impact = match d.driver_type {
+                        DriverType::Continuous => {
+                            if let Some(Distribution::Triangular { ref p5, ref p95, .. }) = d.distribution {
+                                (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.1)
+                            } else { 1.0 }
+                        }
+                        DriverType::Binary => {
+                            d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0) * 10.0
+                        }
+                        _ => 1.0,
+                    };
+                    let evidence_count = state.program.evidence_items().iter()
+                        .filter(|e| e.id.contains(&d.name) || 
+                            state.program.agents().iter()
+                                .filter(|a| a.driver_refs.contains(&d.name))
+                                .any(|a| e.source.contains(&a.name)))
+                        .count();
+                    let quality = if evidence_count > 2 { 0.8 } 
+                        else if evidence_count > 0 { 0.5 } 
+                        else { 0.2 };
+                    crate::charts::DriverViz {
+                        name: display.to_string(),
+                        impact,
+                        quality,
+                        evidence: state.program.evidence_items().iter()
+                            .filter(|e| e.id.contains(&d.name))
+                            .filter_map(|e| e.summary.as_ref().map(|s| s.chars().take(40).collect()))
+                            .take(2)
+                            .collect(),
+                    }
+                }).collect();
+
+                if !drivers_viz.is_empty() {
+                    let chart_w = 400u32;
+                    let chart_h = 120u32;
+                    let rgb_buf = crate::charts::render_treemap(&drivers_viz, chart_w, chart_h);
+                    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .mt(px(4.0))
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child("Driver Impact (size) × Evidence Quality (color)"),
+                        )
+                        .child(
+                            gpui::img(gpui::ImageSource::Render(render_img))
+                                .w(gpui::px(chart_w as f32))
+                                .h(gpui::px(chart_h as f32)),
+                        )
+                        .into_any_element()
+                } else {
+                    div().into_any_element()
+                }
+            })
         })
         .when(
             state.sim_results.is_none() && !state.sim_running && state.sim_error.is_none(),
