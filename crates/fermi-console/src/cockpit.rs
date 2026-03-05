@@ -2708,68 +2708,100 @@ fn render_driver_card(
                     .child(driver.rationale.as_deref().unwrap_or("").to_string()),
             )
         })
-        // Assigned agents
+        // Assigned agents — visible entities showing live state
         .child(
             div()
                 .flex()
-                .items_center()
-                .gap(px(6.0))
-                .mt(px(2.0))
+                .flex_col()
+                .gap(px(4.0))
+                .mt(px(4.0))
                 .children(assigned_agents.iter().map(|agent_name| {
-                    let status = agent_runs
-                        .iter()
-                        .find(|r| r.agent_name == *agent_name)
-                        .map(|r| &r.status);
-                    let status_icon = match status {
-                        Some(AgentRunStatus::Running) => "⟳",
-                        Some(AgentRunStatus::Completed) => "✓",
-                        Some(AgentRunStatus::Failed) => "✗",
-                        _ => "○",
+                    let run = agent_runs.iter().find(|r| r.agent_name == *agent_name);
+                    let status = run.map(|r| &r.status);
+                    let ev_count = run.map(|r| r.evidence_count).unwrap_or(0);
+                    let confidence = run.and_then(|r| r.confidence);
+
+                    let (status_icon, status_text, status_color, bg_color) = match status {
+                        Some(AgentRunStatus::Running) => ("⟳", "researching…", theme::GOLD, 0x2A2D3A),
+                        Some(AgentRunStatus::Completed) => ("✓", &format!("{} findings", ev_count) as &str, theme::GREEN, theme::BG),
+                        Some(AgentRunStatus::Failed) => ("✗", "failed", theme::RED, 0x3D1F1F),
+                        _ => ("○", "idle", theme::FG_DIM, theme::BG),
                     };
-                    let status_color = match status {
-                        Some(AgentRunStatus::Running) => theme::GOLD,
-                        Some(AgentRunStatus::Completed) => theme::GREEN,
-                        Some(AgentRunStatus::Failed) => theme::RED,
-                        _ => theme::FG_DIM,
-                    };
+
+                    // Extract the base agent name (before the _driver suffix)
+                    let display_name = agent_name.split('_').take(2).collect::<Vec<_>>().join("_");
+
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(3.0))
-                        .px(px(5.0))
-                        .py(px(1.0))
-                        .rounded(px(3.0))
-                        .bg(rgb(theme::BG))
+                        .gap(px(6.0))
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(bg_color))
+                        .border_1()
+                        .border_color(rgb(status_color))
                         .child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(px(14.0))
                                 .text_color(rgb(status_color))
+                                .w(px(18.0))
                                 .child(status_icon.to_string()),
                         )
                         .child(
                             div()
-                                .text_size(px(9.0))
-                                .text_color(rgb(theme::FG_DIM))
-                                .child(agent_name.clone()),
+                                .flex()
+                                .flex_col()
+                                .flex_grow()
+                                .min_w(px(0.0))
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(theme::FG))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(display_name),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(status_color))
+                                        .child(status_text.to_string()),
+                                ),
                         )
+                        .when(confidence.is_some(), |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child(format!("{:.0}%", confidence.unwrap_or(0.0) * 100.0)),
+                            )
+                        })
                 }))
                 // "Assign agent" button
                 .child({
                     let driver_name = name.to_string();
                     div()
                         .id(ElementId::Name(format!("assign-agent-{}", name).into()))
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::BLUE))
-                        .px(px(5.0))
-                        .py(px(1.0))
-                        .rounded(px(3.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .rounded(px(4.0))
                         .bg(rgb(theme::BG))
+                        .border_1()
+                        .border_color(rgb(theme::BLUE))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                         .on_click(cx.listener(move |this, _event, _window, cx| {
                             this.open_agent_picker(&driver_name, cx);
                         }))
-                        .child("+ agent")
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::BLUE))
+                                .child("+ Assign Agent"),
+                        )
                 }),
         )
         .into_any_element()
