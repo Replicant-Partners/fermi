@@ -1,36 +1,36 @@
 question "will ukraine win the eurovision song contest in 2026?"
 
-driver song_quality_performance continuous {
-    distribution: triangular(0.6, 1, 2)
+driver song_quality_competitive continuous {
+    distribution: triangular(0.6, 1, 1.8)
     unit: "multiplier"
-    rationale: "Ukraine has strong musical talent and Eurovision track record. Quality of song, staging, and performance can significantly boost or reduce chances. p50=1.0 assumes average quality; p95=2.5 represents exceptional entry like Kalush Orchestra (2022); p5=0.6 represents below-average entry."
+    rationale: "Ukraine has strong musical tradition and has produced competitive entries. Quality varies year-to-year. A strong song could increase chances by 80%, while a weak entry could reduce by 40%. Unknown in 2024 what 2026 entry will be."
 }
 
-driver geopolitical_sympathy_factor continuous {
-    distribution: triangular(0.7, 1.1, 1.5)
+driver sympathy_vote_factor continuous {
+    distribution: triangular(0.7, 1.3, 2)
     unit: "multiplier"
-    rationale: "By 2026, the Russia-Ukraine war will be 4 years old. Sympathy voting helped Ukraine win in 2022, but this effect diminishes over time. p50=1.1 assumes moderate residual sympathy; p95=1.8 if conflict still active and intense; p5=0.7 if war has ended or sympathy fatigue has set in."
+    rationale: "Ukraine won in 2022 with massive sympathy vote due to Russian invasion. By 2026 (4 years later), sympathy effect will likely diminish but may persist. Historical precedent: sympathy votes fade over time but Ukraine's situation may remain salient. Could boost chances 30% (p50) to 100% (p95) if conflict ongoing."
 }
 
-driver voting_bloc_support continuous {
-    distribution: triangular(0.8, 1.15, 1.5)
+driver participation_ability binary {
+    probability: 0.92p
+    impact_multiplier: 0
+    rationale: "Ukraine must be able to field an entry and participate. Given ongoing conflict, there's ~10% chance they cannot participate (financial, logistical, or security reasons). If they don't participate, probability is 0. EBU has been supportive, making participation likely."
+}
+
+driver voting_bloc_dynamics continuous {
+    distribution: triangular(0.8, 1.2, 1.6)
     unit: "multiplier"
-    rationale: "Ukraine historically receives strong support from neighboring countries and diaspora communities. This is relatively stable but can vary based on regional politics and song appeal. p50=1.15 represents typical bloc advantage."
+    rationale: "Ukraine benefits from Eastern European voting patterns and large diaspora across Europe (especially Poland, Germany, UK). This structural advantage typically adds 20-60% to their chances. Ukraine has historically performed well in televoting."
 }
 
 driver competition_strength continuous {
-    distribution: triangular(0.5, 0.95, 1.2)
+    distribution: triangular(0.5, 0.95, 1.3)
     unit: "multiplier"
-    rationale: "The quality of competing entries significantly affects any country's chances. p50=0.95 assumes slightly stronger than average competition (reducing Ukraine's chances); p5=0.5 represents exceptionally strong competition from multiple favorites; p95=1.2 represents weak competition field."
+    rationale: "Unknown who else will compete in 2026. Strong entries from Big 5 (UK, France, Germany, Italy, Spain) or traditional powerhouses (Sweden, Norway) could reduce Ukraine's chances. Weak competition year could increase chances. Slight negative bias (p50=0.95) as competition is typically strong."
 }
 
-driver ukraine_participates binary {
-    probability: 0.97p
-    impact_multiplier: 0
-    rationale: "Ukraine must participate to win. High probability (0.92) they will participate barring extreme circumstances (complete infrastructure collapse, EBU suspension). If they don't participate, win probability = 0."
-}
-
-evidence fermi_evidence_1772675385 {
+evidence fermi_evidence_1772721866 {
     source: "Agent: fermi (Claude API)"
     summary: "```json
 {
@@ -38,38 +38,46 @@ evidence fermi_evidence_1772675385 {
     \"reference_class\": \"Eurovision Song Contest winners (1956-2025)\",
     \"historical_frequency\": 0.015,
     \"sample_size\": 67,
-    \"reasoning\": \"Ukraine has won Eurovision 3 times (2004, 2016, 2022) out of ~67 contests. However, the relevant reference class is 'any single country winning in a given year' which is approximately 1/40 = 0.025 given ~40 participating countries in recent years. Using Ukraine's historical win rate of 3/67 ≈ 0.045 as a country-specific base rate, adjusted downward to 0.015 to account for the fact that 2026 is further from recent geopolitical sympathy factors.\"
+    \"reasoning\": \"Ukraine has won Eurovision 3 times (2004, 2016, 2022) out of approximately 67 contests. However, the more relevant reference class is 'any single country winning in a given year' which is roughly 1/40 = 0.025 given typical participant counts. Ukraine's historical win rate of 3/67 ≈ 0.045 suggests they perform above average. Using a conservative base rate of 0.025 (typical single-country probability) as the starting point.\"
   },
   \"drivers\": [
     {
-      \"name\": \"song_quality_performance\",
-      \"display_name\": \"Song Quality & Performance Excellence\",
+      \"name\": \"song_quality_competitive\",
+      \"display_name\": \"Song Quality & Competitiveness\",
       \"type\": \"continuous\",
       \"p5\": 0.6,
       \"p50\": 1.0,
-      \"p95\": 2.5,
-      \"unit\": \"multiplier\",
-      \"rationale\": \"Ukraine has strong musical talent and Eurovision track record. Quality of song, staging, and performance can significantly boost or reduce chances. p50=1.0 assumes average quality; p95=2.5 represents exceptional entry like Kalush Orchestra (2022); p5=0.6 represents below-average entry.\"
-    },
-    {
-      \"name\": \"geopolitical_sympathy_factor\",
-      \"display_name\": \"Geopolitical Sympathy & Solidarity\",
-      \"type\": \"continuous\",
-      \"p5\": 0.7,
-      \"p50\": 1.1,
       \"p95\": 1.8,
       \"unit\": \"multiplier\",
-      \"rationale\": \"By 2026, the Russia-Ukraine war will be 4 years old. Sympathy voting helped Ukraine win in 2022, but this effect diminishes over time. p50=1.1 assumes moderate residual sympathy; p95=1.8 if conflict still active and intense; p5=0.7 if war has ended or sympathy fatigue has set in.\"
+      \"rationale\": \"Ukraine has strong musical tradition and has produced competitive entries. Quality varies year-to-year. A strong song could increase chances by 80%, while a weak entry could reduce by 40%. Unknown in 2024 what 2026 entry will be.\"
     },
     {
-      \"name\": \"voting_bloc_support\",
-      \"display_name\": \"Eastern European Voting Bloc Support\",
+      \"name\": \"sympathy_vote_factor\",
+      \"display_name\": \"Geopolitical Sympathy Effect\",
+      \"type\": \"continuous\",
+      \"p5\": 0.7,
+      \"p50\": 1.3,
+      \"p95\": 2.0,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Ukraine won in 2022 with massive sympathy vote due to Russian invasion. By 2026 (4 years later), sympathy effect will likely diminish but may persist. Historical precedent: sympathy votes fade over time but Ukraine's situation may remain salient. Could boost chances 30% (p50) to 100% (p95) if conflict ongoing.\"
+    },
+    {
+      \"name\": \"participation_ability\",
+      \"display_name\": \"Ukraine's Ability to Participate\",
+      \"type\": \"binary\",
+      \"probability\": 0.90,
+      \"impact_multiplier\": 0.0,
+      \"rationale\": \"Ukraine must be able to field an entry and participate. Given ongoing conflict, there's ~10% chance they cannot participate (financial, logistical, or security reasons). If they don't participate, probability is 0. EBU has been supportive, making participation likely.\"
+    },
+    {
+      \"name\": \"voting_bloc_dynamics\",
+      \"display_name\": \"Voting Bloc & Diaspora Support\",
       \"type\": \"continuous\",
       \"p5\": 0.8,
-      \"p50\": 1.15,
-      \"p95\": 1.5,
+      \"p50\": 1.2,
+      \"p95\": 1.6,
       \"unit\": \"multiplier\",
-      \"rationale\": \"Ukraine historically receives strong support from neighboring countries and diaspora communities. This is relatively stable but can vary based on regional politics and song appeal. p50=1.15 represents typical bloc advantage.\"
+      \"rationale\": \"Ukraine benefits from Eastern European voting patterns and large diaspora across Europe (especially Poland, Germany, UK). This structural advantage typically adds 20-60% to their chances. Ukraine has historically performed well in televoting.\"
     },
     {
       \"name\": \"competition_strength\",
@@ -77,74 +85,71 @@ evidence fermi_evidence_1772675385 {
       \"type\": \"continuous\",
       \"p5\": 0.5,
       \"p50\": 0.95,
-      \"p95\": 1.2,
+      \"p95\": 1.3,
       \"unit\": \"multiplier\",
-      \"rationale\": \"The quality of competing entries significantly affects any country's chances. p50=0.95 assumes slightly stronger than average competition (reducing Ukraine's chances); p5=0.5 represents exceptionally strong competition from multiple favorites; p95=1.2 represents weak competition field.\"
-    },
-    {
-      \"name\": \"ukraine_participates\",
-      \"display_name\": \"Ukraine Participates in Contest\",
-      \"type\": \"binary\",
-      \"probability\": 0.92,
-      \"impact_multiplier\": 0.0,
-      \"rationale\": \"Ukraine must participate to win. High probability (0.92) they will participate barring extreme circumstances (complete infrastructure collapse, EBU suspension). If they don't participate, win probability = 0.\"
+      \"rationale\": \"Unknown who else will compete in 2026. Strong entries from Big 5 (UK, France, Germany, Italy, Spain) or traditional powerhouses (Sweden, Norway) could reduce Ukraine's chances. Weak competition year could increase chances. Slight negative bias (p50=0.95) as competition is typically strong.\"
     }
   ],
   \"evidence\": [
     {
-      \"source\": \"Eurovision Historical Data (1956-2024)\",
-      \"summary\": \"Ukraine has won Eurovision 3 times: 2004 (Ruslana), 2016 (Jamala), 2022 (Kalush Orchestra). They have participated consistently since 2003 with generally strong results.\",
+      \"source\": \"Eurovision Historical Data (1956-2023)\",
+      \"summary\": \"Ukraine's Eurovision performance history and win patterns\",
       \"key_findings\": [
-        \"Ukraine's win rate: 3/22 participations ≈ 13.6% (but includes 2022 sympathy vote)\",
-        \"Average placement when participating: Top 10 finish rate ~60%\",
-        \"Strong diaspora and regional voting support from Eastern Europe\"
+        \"Ukraine has won 3 times: 2004 (Ruslana), 2016 (Jamala), 2022 (Kalush Orchestra)\",
+        \"Ukraine's 2022 win received unprecedented public support with 439 televote points\",
+        \"Average participant count is 40-43 countries in recent years\",
+        \"Ukraine has finished in top 10 approximately 60% of times they've participated since 2003\"
       ],
       \"relevance\": 0.95
     },
     {
-      \"source\": \"Eurovision 2022 Analysis - Geopolitical Voting Patterns\",
-      \"summary\": \"Ukraine's 2022 victory was heavily influenced by the Russian invasion. Kalush Orchestra received massive public vote support (439 points, record-breaking) despite mid-table jury scores.\",
+      \"source\": \"2022 Eurovision Analysis & Geopolitical Context\",
+      \"summary\": \"Impact of Russia-Ukraine conflict on 2022 results\",
       \"key_findings\": [
-        \"2022 public vote was unprecedented, driven by solidarity\",
-        \"Historical precedent: sympathy voting diminishes over time (e.g., Bosnia 1993, Israel various years)\",
-        \"By 2026, sympathy effect likely reduced but not eliminated\"
+        \"2022 win was heavily influenced by sympathy vote - jury votes placed Ukraine 4th, public vote placed them 1st by large margin\",
+        \"Historical precedent: sympathy votes diminish over time (e.g., Bosnia 1993 post-war effect lasted 2-3 years)\",
+        \"By 2026, conflict will be 4+ years old, reducing but not eliminating sympathy factor\",
+        \"Ukraine's 2023 entry (Tvorchi) finished 6th, showing sustained but reduced support\"
       ],
       \"relevance\": 0.90
     },
     {
-      \"source\": \"EBU Participation Rules & Ukraine's Broadcasting Capacity\",
-      \"summary\": \"Ukraine's broadcaster UA:PBC has continued operations despite war. EBU has supported Ukrainian participation.\",
+      \"source\": \"EBU Participation Rules & Ukraine's Status\",
+      \"summary\": \"Ukraine's ability to continue participating\",
       \"key_findings\": [
-        \"Ukraine successfully participated in 2023 (6th place) and 2024 (TBD at time of forecast)\",
-        \"No indication of participation barriers for 2026\",
-        \"Financial and logistical support from EBU and international community likely to continue\"
+        \"EBU has explicitly supported Ukraine's participation during conflict\",
+        \"Ukraine successfully participated in 2023 and 2024 despite ongoing war\",
+        \"Financial and logistical support mechanisms exist for Ukraine\",
+        \"No indication of participation barriers for 2026\"
       ],
       \"relevance\": 0.85
     },
     {
-      \"source\": \"Eurovision Voting System Analysis\",
-      \"summary\": \"50/50 jury-public vote system means winning requires both professional appeal and popular support. Ukraine typically performs better with public than juries.\",
+      \"source\": \"Eurovision Voting Pattern Studies\",
+      \"summary\": \"Structural advantages in voting system\",
       \"key_findings\": [
-        \"Winning requires top-5 finish in both jury and public votes typically\",
-        \"Ukraine's strength is public vote; must improve jury appeal\",
-        \"Average winner receives 500-550 total points in recent years\"
+        \"Ukraine benefits from Eastern European voting bloc and large diaspora\",
+        \"Televoting reform (50/50 jury/public split) benefits countries with strong public appeal\",
+        \"Ukraine consistently performs better in televoting than jury voting\",
+        \"Diaspora voting is significant factor - Ukraine has 6-7 million diaspora in EU\"
       ],
       \"relevance\": 0.80
     },
     {
-      \"source\": \"Geopolitical Forecasting - Ukraine Conflict Timeline\",
-      \"summary\": \"By 2026, the Russia-Ukraine war will have evolved significantly. Multiple scenarios exist from resolution to frozen conflict.\",
+      \"source\": \"Eurovision 2024-2025 Competitive Landscape\",
+      \"summary\": \"Recent trends and future competition expectations\",
       \"key_findings\": [
-        \"Sympathy voting effect has half-life of approximately 2-3 years based on historical conflicts\",
-        \"If active conflict continues to 2026, some sympathy remains but 'fatigue' factor increases\",
-        \"If conflict resolved, Ukraine may benefit from 'recovery narrative' but lose sympathy multiplier\"
+        \"2024 contest won by Switzerland, showing sympathy vote not determinative\",
+        \"Big 5 countries investing more in competitive entries\",
+        \"Sweden remains consistent top performer (7 wins total)\",
+        \"Trend toward professional, polished productions increasing competition level\"
       ],
       \"relevance\": 0.75
     }
   ],
-  \"model_expression\": \"base_rate * song_quality_performance * geopolitical_sympathy_factor * voting_bloc_support * competition_strength * (ukraine_participates ? 1.0 : 0.0)\",
+  \"model_expression\": \"0.025 * song_quality_competitive * sympathy_vote_factor * (participation_ability ? 1.0 : 0.0) * voting_bloc_dynamics * competition_strength\",
   \"confidence\": 0.75,
-  \"reasoning\": \"This model captures the key drivers of Eurovision success for Ukraine in 2026. The base rate is well-established from historical data. The main uncertainties are: (1) the geopolitical situation in 2026 and its impact on voting, (2) the quality of Ukraine's specific entry (unknown), and (3) the strength of competition. The model structure is sound, using the base rate multiplied by adjustment factors. Confidence is 0.75 because while we have good historical data and understand the mechanisms, the 2-year forecast horizon introduces significant uncertainty around geopolitical factors and specific song quality. The binary participation driver is appropriate as Ukraine must participate to win, with high probability (0.92) based on their consistent participation despite ongoing conflict.\"
+  \"reasoning\": \"High confidence in historical data and base rates. Moderate confidence in driver estimates due to: (1) Unknown song quality for 2026 - major uncertainty factor, (2) Geopolitical situation evolution unpredictable, (3) Competition field unknown. The model structure is sound: base rate adjusted by known systematic factors. Key uncertainty is how sympathy vote evolves 2022→2026. Historical Eurovision data is reliable, but each contest has high variance. 2026 is far enough out that song selection and geopolitical context remain highly uncertain, limiting confidence to 0.75.\"
 }
 ```"
     relevance: 0.5p
@@ -153,25 +158,11 @@ evidence fermi_evidence_1772675385 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "Based on Ukraine's strong track record of success in the Eurovision Song Contest, the quality of their recent entries, and the continued strength of their music industry, there is a good chance that Ukraine could win the competition again in 2026. However, the unpredictable nature of the contest and the potential for other countries to produce high-quality entries means that the outcome is still uncertain."
+    summary: "The research indicates that European public sympathy and support for Ukraine in the Eurovision Song Contest has declined significantly over the 2022-2025 period, mirroring broader trends of decreasing media coverage, polling support, and social media sentiment. This is consistent with historical precedents of geopolitical sympathy voting effects diminishing over multi-year conflicts."
     relevance: 0.85p
     date: 2026-03-05
 }
 
-evidence sentiment_analyzer_0 {
-    source: "Agent: sentiment_analyzer (Claude API)"
-    summary: "Based on Ukraine's strong track record in the Eurovision Song Contest, the influence of political factors and voting blocs, and the potential boost from being the reigning champion, there is a reasonable probability that Ukraine could win the 2026 Eurovision Song Contest. However, the uncertain political and economic situation in the country introduces some uncertainty into this forecast."
-    relevance: 0.75p
-    date: 2026-03-05
-}
-
-evidence entity_investigator_0 {
-    source: "Agent: entity_investigator (Claude API)"
-    summary: "Ukraine demonstrates exceptional Eurovision consistency (92.9% qualification rate) with two wins driven by narrative resonance and jury-public alignment. Betting markets show 67% predictive accuracy for Ukraine's placements. Winning formula combines cultural authenticity, emotional storytelling, and balanced technical-popular appeal (35-45% jury, 55-65% public vote split). Quantitative benchmarks established across three performance tiers, with 'exceptional' entries requiring 500+ points and sub-5/1 closing odds."
-    relevance: 0.78p
-    date: 2026-03-05
-}
-
-model: ((((song_quality_performance * geopolitical_sympathy_factor) * voting_bloc_support) * competition_strength) * (if ukraine_participates then 0 else 1))
+model: song_quality_competitive * sympathy_vote_factor * (if participation_ability then 0 else 1.0) * voting_bloc_dynamics * competition_strength
 
 simulate 10000 iterations

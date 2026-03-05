@@ -1487,7 +1487,46 @@ impl CockpitState {
                 }
                 _ => {}
             }
+
+        // Fermi validates the saved driver
+        if let Some(driver) = self.program.driver(&name) {
+            match driver.driver_type {
+                DriverType::Continuous => {
+                    if let Some(Distribution::Triangular { ref p5, ref p50, ref p95 }) = driver.distribution {
+                        let v5 = expr_to_f64(p5);
+                        let v50 = expr_to_f64(p50);
+                        let v95 = expr_to_f64(p95);
+                        if v5 > v50 || v50 > v95 {
+                            self.messages.push(AssistantMessage {
+                                node: format!("driver:{}", name),
+                                kind: MessageKind::Warning,
+                                text: format!("🦊 Driver '{}': p5 ({:.2}) should be ≤ p50 ({:.2}) ≤ p95 ({:.2}). Distribution is backwards.", name, v5, v50, v95),
+                            });
+                        }
+                        if v5 == v50 && v50 == v95 {
+                            self.messages.push(AssistantMessage {
+                                node: format!("driver:{}", name),
+                                kind: MessageKind::Suggestion,
+                                text: format!("🦊 Driver '{}': all values are equal ({:.2}). This means no uncertainty — is that intended?", name, v50),
+                            });
+                        }
+                    }
+                }
+                DriverType::Binary => {
+                    if let Some(p) = driver.probability {
+                        if p <= 0.0 || p >= 1.0 {
+                            self.messages.push(AssistantMessage {
+                                node: format!("driver:{}", name),
+                                kind: MessageKind::Warning,
+                                text: format!("🦊 Driver '{}': probability {:.0}% is at an extreme. Consider whether this is truly certain.", name, p * 100.0),
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
+    }
     }
 
     // ═══════════════════════════════════════════════════════════════
