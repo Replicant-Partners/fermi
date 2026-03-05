@@ -862,7 +862,7 @@ impl CockpitState {
                                 .strip_prefix("```json").or_else(|| reasoning.trim().strip_prefix("```"))
                                 .and_then(|s| s.strip_suffix("```"))
                                 .unwrap_or(reasoning).trim();
-                            let has_base_rate = clean.contains("base_rate") && clean.contains("drivers");
+                            let has_base_rate = clean.contains("base_rate") && (clean.contains("drivers") || clean.contains("historical_frequency"));
 
                             if has_base_rate {
                                 state.process_macro_forecaster_result(&result_json);
