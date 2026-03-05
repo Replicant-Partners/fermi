@@ -2109,7 +2109,7 @@ impl Render for CockpitState {
                     .overflow_y_scroll()
                     // Question + Outside View section
                     .child(render_question_section(self))
-                    .child(render_outside_view(self))
+                    .child(render_outside_view(self, cx))
                     // Drivers section (the core of the forecast)
                     .child(
                         div()
@@ -2328,7 +2328,7 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
 
 /// Outside View — base rate, reference class, reasoning.
 /// Populated by the macro_forecaster's research.
-fn render_outside_view(state: &CockpitState) -> impl IntoElement {
+fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
     let base_rate = state.program.question().and_then(|q| q.base_rate.as_ref());
 
     div()
@@ -2398,6 +2398,23 @@ fn render_outside_view(state: &CockpitState) -> impl IntoElement {
                     .text_size(px(9.0))
                     .text_color(rgb(theme::FG_FAINT))
                     .child(format!("Source: {}", br.source)),
+            )
+            .child(
+                div()
+                    .id("update-base-rate")
+                    .mt(px(4.0))
+                    .px(px(8.0))
+                    .py(px(3.0))
+                    .rounded(px(3.0))
+                    .bg(rgb(theme::BG))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::GOLD))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.update_outside_rate(cx);
+                    }))
+                    .child("⟳ Update base rate"),
             )
         })
         .when(base_rate.is_none(), |el| {
