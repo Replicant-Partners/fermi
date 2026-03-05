@@ -1710,6 +1710,21 @@ impl CockpitState {
                     "Sensitivity analysis unavailable.".to_string()
                 };
 
+
+                // Enrich the narrative explanation with sensitivity data
+                if let Ok(ref sa) = sensitivity {
+                    let top = sa.top_drivers(3);
+                    if !top.is_empty() {
+                        let top_names: Vec<String> = top.iter()
+                            .map(|ds| format!("{} ({:.0}%)", ds.driver_name, ds.total_order_index * 100.0))
+                            .collect();
+                        self.inside_view_explanation = format!(
+                            "{} Most influential: {}.",
+                            self.inside_view_explanation,
+                            top_names.join(", "),
+                        );
+                    }
+                }
                 // Build driver contribution summary
                 let driver_summary: Vec<String> = self.program.drivers().iter().map(|d| {
                     let display = d.display_name.as_deref().unwrap_or(&d.name);

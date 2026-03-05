@@ -135,7 +135,7 @@ evidence entity_investigator_0 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "The analysis of Eurovision jury voting patterns from 2016-2025 indicates that contemporary pop/ballad styles, strong vocal performances, high production values, and emotive staging are key factors in achieving high jury scores. There is a noticeable gap between jury and public preferences, with Poland's entries tending to score better with the public than with juries, especially for more traditional or rock-oriented songs."
+    summary: "The research indicates that Poland has the potential to achieve strong results in Eurovision, particularly when leveraging the support of its diaspora communities in key voting markets and presenting acts that resonate with the European public. While past performance has been inconsistent, the overall trend suggests increasing public engagement and a positive sentiment toward Polish culture and music."
     relevance: 0.85p
     date: 2026-03-05
 }
