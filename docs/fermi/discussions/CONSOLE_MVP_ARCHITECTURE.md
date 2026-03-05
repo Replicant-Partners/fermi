@@ -261,3 +261,51 @@ DriverStmt {
 3. **Collaboration**: Defer for now. Start with git version-based merge. CRDT is aspirational but version-based is simpler and works.
 4. **Mobile/Rabble**: Separate product. No intertwining. Forecasting is desktop-only via the console.
 5. **Creature integration**: Deferred. Rabble is a separate world. Maybe a future experiment.
+
+---
+
+## Sprint Progress (as of 2026-03-05)
+
+### Sprint 1: Tabbed Right Panel ✅ COMPLETE
+- Edit / FPL / Wiki tabs
+- Assistant messages always visible below tabs
+
+### Sprint 2: Fermi Meta-Agent ✅ COMPLETE
+- Fermi agent card created
+- Seeds decomposition with probability-compatible prompt
+- Recommends agents per driver with suggested queries
+- Pre-fills query input
+- Validates driver edits (distribution warnings)
+- Interprets simulation results narratively
+
+### Sprint 3: Evidence Richness ⚠️ PARTIAL
+- ✅ Manual evidence entry (source + summary)
+- ✅ Evidence in Wiki tab organized by driver
+- ✅ Evidence persists in state.json
+- ❌ URL previews
+- ❌ Evidence hyperlinks
+- ❌ Evidence quality indicators (beyond treemap color)
+
+### Sprint 4: Live Index Dashboard ⚠️ PARTIAL
+- ✅ Plotters histogram (simulation distribution)
+- ✅ Plotters index chart (inside vs outside view over versions)
+- ✅ Plotters treemap (drivers by impact × evidence quality)
+- ✅ Deterministic probability normalization (base_rate × ratio)
+- ✅ Sensitivity analysis (Sobol indices, driver ranking)
+- ✅ Narrative inside view explanation with sensitivity data
+- ✅ Rich portfolio cards (probability, version, counts)
+- ❌ Version diff/comparison
+- ❌ Rollback semantics
+
+### Sprint 5: Agent Scheduling ❌ NOT STARTED
+- Schedules stored in AST but not executed
+
+### Sprint 6: Polish & Ship ❌ NOT STARTED
+
+### Key Metrics
+- 78 commits since March 1
+- ~13K lines of console code
+- 13 saved forecasts with evidence wikis
+- 5 fermi-orchestra agents
+- 3 plotters visualizations
+- Full state persistence (FPL + evidence.md + state.json)
