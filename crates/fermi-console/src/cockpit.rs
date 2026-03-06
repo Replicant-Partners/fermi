@@ -3980,6 +3980,74 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                 )
             }
         })
+        // Version history
+        .when(!state.versions.is_empty(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .pt(px(8.0))
+                    .border_t_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(theme::PURPLE))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("Version History ({})", state.versions.len())),
+                    )
+                    .children(state.versions.iter().rev().map(|v| {
+                        let prob_change = if v.version > 1 {
+                            state.versions.iter()
+                                .find(|prev| prev.version == v.version - 1)
+                                .map(|prev| {
+                                    let delta = (v.probability - prev.probability) * 100.0;
+                                    let sign = if delta > 0.0 { "+" } else { "" };
+                                    let color = if delta > 0.0 { theme::GREEN } else if delta < 0.0 { theme::RED } else { theme::FG_DIM };
+                                    (format!("{}{}pp", sign, delta as i64), color)
+                                })
+                        } else { None };
+
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .py(px(3.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .w(px(24.0))
+                                    .child(format!("v{}", v.version)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::CYAN))
+                                    .w(px(50.0))
+                                    .child(format!("{:.2}%", v.probability * 100.0)),
+                            )
+                            .when(prob_change.is_some(), |el| {
+                                let (text, color) = prob_change.unwrap();
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(color))
+                                        .child(text),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .min_w(px(0.0))
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child(format!("{} — {}", v.timestamp, v.change_summary)),
+                            )
+                    })),
+            )
+        })
 }
 
 fn render_fpl_source(fpl: &str) -> impl IntoElement {
