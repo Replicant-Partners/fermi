@@ -780,19 +780,23 @@ impl CockpitState {
 
     /// Fire a single agent in the background. Results flow back via cx.spawn.
     fn fire_agent(&self, agent_id: &str, query: &str, cx: &mut Context<Self>) {
+        // agent_id may be compound (market_research_song_quality)
+        // Registry knows the base name (market_research)
+        let base_id = base_agent_name(agent_id).to_string();
+        let tracking_id = agent_id.to_string();
         let registry = self.registry.clone();
-        let aid = agent_id.to_string();
         let q = query.to_string();
+        
 
         cx.spawn(async move |this, cx| {
-            log::info!("[composer] Firing {} (local registry)", aid);
+            log::info!("[composer] Firing {} (registry: {}) ", tracking_id, base_id);
 
-            let card = match registry.get(&aid) {
+            let card = match registry.get(&base_id) {
                 Ok(c) => c,
                 Err(e) => {
-                    log::error!("[composer] {} not found: {}", aid, e);
+                    log::error!("[composer] {} not found: {}", base_id, e);
                     this.update(cx, |state, cx| {
-                        state.mark_agent_failed(&aid, &format!("Not in registry: {}", e));
+                        state.mark_agent_failed(&tracking_id, &format!("Not in registry: {}", e));
                         cx.notify();
                     }).ok();
                     return;
@@ -800,7 +804,7 @@ impl CockpitState {
             };
 
             let agent_stmt = AgentStmt {
-                name: aid.clone(),
+                name: base_id.clone(),
                 agent_type: Some("research".into()),
                 query: q,
                 executor: Some(fermi::ast::ExecutorType::LLM),
@@ -822,7 +826,7 @@ impl CockpitState {
             match registry.execute_agent(&agent_stmt, &context).await {
                 Ok(output) => {
                     log::info!("[composer] {} completed: {} evidence, confidence={:.2}",
-                        aid, output.evidence.len(), output.confidence);
+                        tracking_id, output.evidence.len(), output.confidence);
 
                     let result_json = serde_json::json!({
                         "agent_id": output.agent_name,
@@ -851,9 +855,9 @@ impl CockpitState {
                     this.update(cx, |state, cx| {
                         // macro_forecaster gets special processing (base rate + drivers)
                         // macro_forecaster gets special processing (base rate + drivers)
-                        if aid == "macro_forecaster" {
+                        if base_id == "macro_forecaster" {
                             state.process_macro_forecaster_result(&result_json);
-                        } else if aid == "fermi" || aid == "macro_forecaster" {
+                        } else if base_id == "fermi" || base_id == "macro_forecaster" {
                             // Check if this is a decomposition (has base_rate/drivers)
                             // or a recommendation (has recommended_agent)
                             let reasoning = result_json.get("metadata")
@@ -874,15 +878,15 @@ impl CockpitState {
                             state.process_fermi_recommendation(&result_json, cx);
                         } else {
                             // Other agents: add evidence to AST
-                            state.process_agent_evidence(&aid, &result_json);
+                            state.process_agent_evidence(&tracking_id, &result_json);
                         }
 
                         if !findings.is_empty() {
                             state.messages.push(AssistantMessage {
-                                node: format!("agent:{}", aid),
+                                node: format!("agent:{}", tracking_id),
                                 kind: MessageKind::Tip,
                                 text: format!("🦊 {} findings:\n{}",
-                                    aid,
+                                    tracking_id,
                                     findings.iter()
                                         .map(|f| format!("• {}", f))
                                         .collect::<Vec<_>>()
@@ -891,9 +895,9 @@ impl CockpitState {
                         }
 
                         state.messages.push(AssistantMessage {
-                            node: format!("agent:{}", aid),
+                            node: format!("agent:{}", tracking_id),
                             kind: MessageKind::Info,
-                            text: format!("✓ {} complete", aid),
+                            text: format!("✓ {} complete", tracking_id),
                         });
 
                         // Check if all agents done
@@ -912,9 +916,9 @@ impl CockpitState {
                     }).ok();
                 }
                 Err(e) => {
-                    log::error!("[composer] {} failed: {}", aid, e);
+                    log::error!("[composer] {} failed: {}", tracking_id, e);
                     this.update(cx, |state, cx| {
-                        state.mark_agent_failed(&aid, &format!("{}", e));
+                        state.mark_agent_failed(&tracking_id, &format!("{}", e));
                         cx.notify();
                     }).ok();
                 }
@@ -2063,7 +2067,7 @@ impl CockpitState {
 
                 // Also save evidence wiki
                 let wiki_path = format!("forecasts/{}.evidence.md", filename);
-                let wiki = generate_evidence_wiki(&self.program, self.current_version, self.predicted_probability);
+                let wiki = generate_evidence_wiki(&self.program, self.current_version, self.predicted_probability, &self.inside_view_explanation, self.forecast_confidence);
                 match std::fs::write(&wiki_path, &wiki) {
                     Ok(_) => log::info!("[composer] Saved evidence wiki to {}", wiki_path),
                     Err(e) => log::warn!("[composer] Failed to save evidence wiki: {}", e),
@@ -4130,7 +4134,7 @@ fn generate_fpl_text(program: &Program) -> String {
 
 /// Generate an evidence wiki markdown file organized by driver.
 /// Each driver is a heading, with agent evidence entries as logs.
-fn generate_evidence_wiki(program: &Program, version: u32, probability: f64) -> String {
+fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, explanation: &str, confidence: f64) -> String {
     let mut md = String::new();
     let question = program.question().map(|q| q.text.as_str()).unwrap_or("Untitled Forecast");
     let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
@@ -4138,6 +4142,15 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64) -> 
     md.push_str(&format!("# Evidence Log: {}\n\n", question));
     md.push_str(&format!("**Version:** v{} | **Probability:** {:.1}% | **Updated:** {}\n\n", version, probability * 100.0, timestamp));
     md.push_str("---\n\n");
+    // Inside view section
+    if !explanation.is_empty() {
+        md.push_str("## Inside View\n\n");
+        md.push_str(&format!("**Probability:** {:.2}%\n\n", probability * 100.0));
+        md.push_str(&format!("{}\n\n", explanation));
+        let conf_label = if confidence > 0.7 { "High" } else if confidence > 0.4 { "Medium" } else { "Low" };
+        md.push_str(&format!("**Confidence:** {} ({:.0}%)\n\n", conf_label, confidence * 100.0));
+        md.push_str("---\n\n");
+    }
 
     // Base rate section
     if let Some(br) = program.question().and_then(|q| q.base_rate.as_ref()) {

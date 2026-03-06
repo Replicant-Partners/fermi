@@ -1,7 +1,7 @@
 question "will sweden win the eurovision in 2026?"
 
 driver recent_performance_momentum continuous {
-    distribution: triangular(0.8, 1.3, 2)
+    distribution: triangular(0.8, 1.3, 1.8)
     unit: "multiplier"
     rationale: "Sweden won in 2023 (Loreen - 'Tattoo') and has consistently placed in top 10 in recent years. Strong recent performance indicates sustained competitive advantage in production quality, artist selection, and public voting appeal. Historical pattern shows winners often have strong recent track records. Momentum effect typically provides 30-100% boost to base probability."
 }
@@ -145,9 +145,9 @@ evidence fermi_evidence_1772754862 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "The research indicates that Sweden has a strong institutional framework for Eurovision through Melodifestivalen, which has produced consistent top-10 finishes and multiple wins. However, there are signs that Sweden may face challenges maintaining their high level of success in the years immediately following a win. The quality of a country's national selection process also appears to be a key factor in Eurovision performance."
+    summary: "Sweden has been a consistent top performer in the Eurovision Song Contest in recent years, with multiple wins and top 10 finishes. This suggests the country has momentum and a strong chance of winning again in 2026 if they continue this trend."
     relevance: 0.85p
-    date: 2026-03-05
+    date: 2026-03-06
 }
 
 evidence sentiment_analyzer_0 {
@@ -159,11 +159,11 @@ evidence sentiment_analyzer_0 {
 
 evidence entity_investigator_0 {
     source: "Agent: entity_investigator (Claude API)"
-    summary: "Sweden's Melodifestivalen demonstrates a clear systematic advantage in Eurovision through superior win rates (24% vs. ~4% baseline), high-production multi-week format, deep songwriter networks, and massive domestic engagement. However, 2020-2024 results suggest potential weakening as competitors adopt similar methods and voter fatigue may be emerging. Italy's Sanremo shows that domestic success doesn't automatically translate to Eurovision wins, while France and UK's inconsistent approaches correlate with poor results. The advantage appears to be narrowing but remains substantial."
-    relevance: 0.75p
-    date: 2026-03-05
+    summary: "Sweden demonstrates structural Eurovision advantages through Melodifestivalen's rigorous selection process, consistent jury-favorable performance quality, and exceptional placement stability (9/10 top-10 finishes, 5.4 average). However, historical precedent shows no modern-era country has won twice within 5 years, suggesting systemic barriers to repeat victories despite Sweden's competitive infrastructure. Sweden's consistency derives from institutional factors (professional selection process, songwriter network, production expertise) rather than random variation."
+    relevance: 0.78p
+    date: 2026-03-06
 }
 
-model: recent_performance_momentum * melodifestivalen_quality * voting_system_favorability * geopolitical_sentiment * competition_strength
+model: ((((recent_performance_momentum * melodifestivalen_quality) * voting_system_favorability) * geopolitical_sentiment) * competition_strength)
 
 simulate 10000 iterations
