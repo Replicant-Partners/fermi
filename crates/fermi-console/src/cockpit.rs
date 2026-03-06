@@ -2690,6 +2690,25 @@ fn render_driver_card(
                     )
                 }),
         )
+        // Driver confidence dots (based on evidence coverage)
+        .child({
+            let ev_count = assigned_agents.iter()
+                .flat_map(|a| agent_runs.iter().filter(move |r| r.agent_name == *a))
+                .map(|r| r.evidence_count)
+                .sum::<usize>();
+            let (conf_label, conf_color) = if ev_count >= 3 {
+                ("Evidence: ●●● High", theme::GREEN)
+            } else if ev_count >= 1 {
+                ("Evidence: ●●○ Medium", theme::GOLD)
+            } else {
+                ("Evidence: ●○○ Low", theme::RED)
+            };
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(conf_color))
+                .px(px(4.0))
+                .child(conf_label)
+        })
         // Rationale (if present)
         .when(driver.rationale.is_some(), |el| {
             el.child(
