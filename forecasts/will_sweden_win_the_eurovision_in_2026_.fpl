@@ -7,7 +7,7 @@ driver recent_performance_momentum continuous {
 }
 
 driver melodifestivalen_quality continuous {
-    distribution: triangular(1.5, 2, 4)
+    distribution: triangular(1.7, 2.7, 4)
     unit: "multiplier"
     rationale: "Sweden's Melodifestivalen is widely regarded as the highest-quality national selection process, with professional production, strong songwriting, and rigorous competition. This systematic advantage has contributed to Sweden's overperformance. The 2026 Melodifestivalen will occur in early 2026, and quality can vary year-to-year, but the structural advantage remains consistent."
 }
@@ -25,7 +25,7 @@ driver geopolitical_sentiment continuous {
 }
 
 driver competition_strength continuous {
-    distribution: triangular(0.7, 0.95, 1.2)
+    distribution: triangular(0.7, 1, 1.5)
     unit: "multiplier"
     rationale: "The strength of competing entries varies significantly year-to-year. Strong years (multiple standout songs) reduce any single country's chances. 2026 competition quality is unknown, but historically, high-competition years reduce Sweden's probability by 5-30%, while weak years could increase it by up to 20%. Median slightly below 1.0 reflects that competition is typically strong."
 }
@@ -145,8 +145,8 @@ evidence fermi_evidence_1772754862 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "Sweden has demonstrated strong recent performance and momentum in the Eurovision Song Contest, winning the competition 6 times since 2000 and consistently placing in the top 10. This suggests Sweden has a good chance of winning again in 2026 if they continue their track record of selecting and supporting high-quality entries."
-    relevance: 0.85p
+    summary: "The leading private fusion companies have made progress on their respective technical approaches, but they have not yet achieved the key milestones necessary for commercial deployment by 2031. While the companies have attracted significant funding from sophisticated investors, their ambitious timelines appear to be driven more by marketing than by realistic assessments of the remaining technical hurdles."
+    relevance: 0.75p
     date: 2026-03-06
 }
 

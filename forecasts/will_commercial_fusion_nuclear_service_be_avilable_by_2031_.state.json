@@ -1,8 +1,8 @@
 {
-  "current_version": 20,
-  "predicted_probability": 0.12680403536665918,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 12.7%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (37%), regulatory_pathway_clarity (20%), private_funding_sustainability (16%).",
-  "forecast_confidence": 0.27999999999999997,
+  "current_version": 24,
+  "predicted_probability": 0.13563918578555792,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly decreases the probability to 13.6%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: private_funding_sustainability (30%), technical_readiness_acceleration (30%), regulatory_pathway_clarity (17%).",
+  "forecast_confidence": 0.42,
   "versions": [
     {
       "version": 1,
@@ -123,14 +123,38 @@
       "timestamp": "2026-03-06 23:14",
       "probability": 0.12680403536665918,
       "change_summary": "v20 update"
+    },
+    {
+      "version": 21,
+      "timestamp": "2026-03-06 23:20",
+      "probability": 0.12680403536665918,
+      "change_summary": "v21 update"
+    },
+    {
+      "version": 22,
+      "timestamp": "2026-03-06 23:20",
+      "probability": 0.12145866821042807,
+      "change_summary": "v22 update"
+    },
+    {
+      "version": 23,
+      "timestamp": "2026-03-06 23:20",
+      "probability": 0.1470551947210606,
+      "change_summary": "v23 update"
+    },
+    {
+      "version": 24,
+      "timestamp": "2026-03-06 23:21",
+      "probability": 0.13563918578555792,
+      "change_summary": "v24 update"
     }
   ],
   "sim_results": {
-    "mean": 4.622398068223775,
-    "median": 4.434433767235281,
-    "p5": 2.4305857001940194,
-    "p95": 7.477502777753634,
-    "std_dev": 1.5678182112243384,
+    "mean": 6.449304186138816,
+    "median": 6.065145554764013,
+    "p5": 3.176363481463669,
+    "p95": 11.097113270708416,
+    "std_dev": 2.4582441565929503,
     "iterations": 10000
   },
   "base_rate": {
@@ -152,10 +176,16 @@
     {
       "id": "entity_investigator_0",
       "source": "Agent: entity_investigator (Claude API)",
-      "summary": "Private fusion funding has reached unprecedented levels ($6B+ total) with several well-capitalized companies targeting late 2020s demonstrations. However, funding declined 63% in 2023, and the critical 2025-2030 period requires sustained multi-billion dollar commitments before any commercial revenue. The 2031 timeline is extremely aggressive given no private company has achieved sustained net gain, regulatory frameworks are immature, and historical fusion timelines slip significantly. Private funding sustainability is the key bottleneck—technical progress is necessary but insufficient without continued capital through the pre-commercial phase.",
+      "summary": "Commonwealth Fusion Systems shows the strongest technical credibility with peer-reviewed HTS magnet breakthroughs, $2B+ from sophisticated investors, MIT collaboration, and a validated tokamak approach targeting 2025-2027 for SPARC plasma experiments. Their early 2030s commercial timeline is aggressive but grounded in proven physics. TAE and Helion pursue alternative FRC approaches with less independent validation, minimal peer-reviewed publications on their core breakthroughs, and more speculative timelines. TAE's aneutronic fuel cycle faces extreme temperature barriers never demonstrated. Helion's pulsed approach and 2028 commercial claims lack scientific precedent. For Q>10 continuous operation by 2031, CFS has the most credible pathway, though even this faces significant engineering challenges beyond plasma physics.",
       "relevance": 0.78,
       "date": "2026-03-06",
-      "key_findings": []
+      "key_findings": [
+        "Commonwealth Fusion Systems (CFS) achieved a major validated milestone in September 2021 with their SPARC tokamak magnet system, demonstrating a 20-tesla high-temperature superconducting (HTS) magnet - the strongest fusion magnet ever built. This was peer-reviewed and published in multiple papers across Nature journals, with independent validation from MIT collaborators. CFS has raised $2+ billion including from Breakthrough Energy Ventures (Gates), Google, Temasek, and Tiger Global. Their SPARC device (Q~11 target) is under construction with ARC commercial pilot plant targeted for early 2030s. Technical leadership (Dennis Whyte, Bob Mumgaard) consistently emphasizes 2025-2027 for SPARC plasma experiments before commercial timelines.",
+        "TAE Technologies (formerly Tri Alpha Energy) uses a field-reversed configuration (FRC) approach and claims their Norman device achieved plasma temperatures of 75 million°C and confinement times >30ms in 2021. However, their path to net energy is less validated - they're pursuing aneutronic p-B11 fusion which requires ~3 billion°C and faces significantly higher technical barriers than D-T fusion. TAE has raised $1.2+ billion from Google, NEA, and Vulcan Capital, but has published fewer peer-reviewed papers in high-impact journals compared to CFS. Their timeline claims of early 2030s commercialization are viewed skeptically by mainstream fusion physicists given the temperature requirements and lack of demonstrated Q>1 in FRC configurations.",
+        "Helion Energy uses a pulsed, non-ignition FRC approach with direct electricity conversion, claiming their Polaris device (7th generation, under construction) will demonstrate net electricity by 2024 and their commercial Antares plant by 2028. They secured a notable 2021 power purchase agreement with Microsoft for 50MW by 2028. However, Helion has published minimal peer-reviewed research, their approach requires solving pulsed operation challenges (duty cycle, thermal/mechanical stress), and independent fusion experts note their timelines are extremely aggressive given they haven't yet demonstrated scientific breakeven. Funding includes $2.2+ billion from Sam Altman, Mithril Capital, and Capricorn Investment Group.",
+        "Engineering talent comparison: CFS has the strongest academic pedigree with MIT PSFC collaboration and advisory board including fusion luminaries (Cowley, Synakowski). TAE has attracted particle accelerator experts (Norman Rostoker legacy) but fewer tokamak specialists. Helion's team includes aerospace engineers focused on practical engineering over plasma physics publications. For Q>10 continuous operation by 2031: tokamaks (CFS approach) have 70+ years of experimental validation and ITER's design basis, while FRC approaches (TAE, Helion) have never demonstrated Q>1 and face unproven scaling laws.",
+        "Critical technical barriers assessment: CFS faces known engineering challenges (tritium breeding, materials damage, continuous operation) but benefits from validated physics. TAE must achieve temperatures 40x higher than demonstrated for their fuel cycle and prove FRC stability at those conditions - no peer-reviewed pathway exists. Helion must demonstrate their pulsed approach can achieve net gain (never shown in FRC), solve repetition-rate engineering, and validate direct conversion efficiency claims (published efficiency data is limited). Utility partnerships: CFS has agreements with Italian energy companies and Commonwealth Edison; TAE announced Google data center discussions; Helion has the Microsoft PPA but with significant performance penalties if unmet."
+      ]
     },
     {
       "id": "market_research_0",
@@ -163,11 +193,7 @@
       "summary": "The research indicates that significant technical progress is being made in the development of commercial fusion energy, with multiple companies and government agencies targeting the early 2030s for the first commercial fusion power plants. Key advancements in fusion reactor technologies, increased funding, and improvements in supporting technologies suggest that the technical readiness for commercial fusion is accelerating.",
       "relevance": 0.85,
       "date": "2026-03-06",
-      "key_findings": [
-        "Several major fusion energy companies, including Commonwealth Fusion Systems, Tokamak Energy, and TAE Technologies, have made significant progress in developing fusion reactor technologies and are aiming to achieve commercial fusion power by the early 2030s.",
-        "The US Department of Energy has increased funding for fusion energy research and development, with the goal of demonstrating a fusion power plant by 2035. This increased investment is expected to accelerate technical readiness for commercial fusion.",
-        "Advances in superconducting magnet technology, plasma physics understanding, and computational modeling have enabled fusion reactor designs to become more compact and feasible for commercial deployment."
-      ]
+      "key_findings": []
     }
   ],
   "agents": [
@@ -178,6 +204,24 @@
       "schedule": "Some(Once)",
       "driver_refs": [
         "technical_readiness_acceleration"
+      ]
+    },
+    {
+      "name": "entity_investigator_regulatory_pathway_clarity",
+      "agent_type": "research",
+      "query": "Investigate the technical credibility and progress of leading private fusion companies (Commonwealth Fusion Systems, TAE Technologies, Helion Energy) toward commercial deployment by 2031. Focus on: (1) specific technical milestones achieved vs claimed, (2) peer-reviewed publications and independent validation of breakthroughs, (3) engineering talent and advisory boards, (4) funding sources and amounts (especially from sophisticated technical investors), (5) partnerships with utilities or industrial customers, (6) realistic timelines from technical leadership vs marketing, (7) comparison of their approaches (tokamak, field-reversed configuration, inertial) and which face fewer engineering barriers to continuous operation and Q>10.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "regulatory_pathway_clarity"
+      ]
+    },
+    {
+      "name": "entity_investigator_private_funding_sustainability",
+      "agent_type": "research",
+      "query": "Investigate the technical credibility and progress of leading private fusion companies (Commonwealth Fusion Systems, TAE Technologies, Helion Energy) toward commercial deployment by 2031. Focus on: (1) specific technical milestones achieved vs claimed, (2) peer-reviewed publications and independent validation of breakthroughs, (3) engineering talent and advisory boards, (4) funding sources and amounts (especially from sophisticated technical investors), (5) partnerships with utilities or industrial customers, (6) realistic timelines from technical leadership vs marketing, (7) comparison of their approaches (tokamak, field-reversed configuration, inertial) and which face fewer engineering barriers to continuous operation and Q>10.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "private_funding_sustainability"
       ]
     }
   ]

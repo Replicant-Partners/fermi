@@ -1956,6 +1956,23 @@ impl CockpitState {
                         }
                     }
                     log::info!("[load] Restored {} agents", agent_arr.len());
+                    // Initialize agent_runs from restored agents
+                    for ag in agent_arr {
+                        let name = ag.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        if !name.is_empty() && !self.agent_runs.iter().any(|r| r.agent_name == name) {
+                            let ev_count = self.program.evidence_items().iter()
+                                .filter(|e| evidence_matches_agent(e, &name))
+                                .count();
+                            self.agent_runs.push(AgentExecution {
+                                agent_name: name,
+                                status: if ev_count > 0 { AgentRunStatus::Completed } else { AgentRunStatus::Idle },
+                                evidence_count: ev_count,
+                                confidence: None,
+                                error: None,
+                                credits_charged: None,
+                            });
+                        }
+                    }
                 }
                 // Restore evidence into AST (supplement what FPL parsing got)
                 log::info!("[load] Restoring evidence from state.json");

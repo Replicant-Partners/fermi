@@ -13,7 +13,7 @@ driver regulatory_pathway_clarity continuous {
 }
 
 driver private_funding_sustainability continuous {
-    distribution: triangular(0.8, 1.15, 1.6)
+    distribution: triangular(0.9, 1.5, 2.5)
     unit: "multiplier"
     rationale: "$5B+ invested in private fusion since 2021. Companies like Commonwealth Fusion (SPARC by 2025), Helion (2028 target), TAE Technologies well-funded. Sustained funding through 2020s critical for meeting 2031 timeline. Economic downturn or failed demonstrations could reduce funding. Success breeds more investment."
 }
@@ -163,7 +163,7 @@ evidence fermi_evidence_1772765105 {
 
 evidence entity_investigator_0 {
     source: "Agent: entity_investigator (Claude API)"
-    summary: "Private fusion funding has reached unprecedented levels ($6B+ total) with several well-capitalized companies targeting late 2020s demonstrations. However, funding declined 63% in 2023, and the critical 2025-2030 period requires sustained multi-billion dollar commitments before any commercial revenue. The 2031 timeline is extremely aggressive given no private company has achieved sustained net gain, regulatory frameworks are immature, and historical fusion timelines slip significantly. Private funding sustainability is the key bottleneck—technical progress is necessary but insufficient without continued capital through the pre-commercial phase."
+    summary: "Commonwealth Fusion Systems shows the strongest technical credibility with peer-reviewed HTS magnet breakthroughs, $2B+ from sophisticated investors, MIT collaboration, and a validated tokamak approach targeting 2025-2027 for SPARC plasma experiments. Their early 2030s commercial timeline is aggressive but grounded in proven physics. TAE and Helion pursue alternative FRC approaches with less independent validation, minimal peer-reviewed publications on their core breakthroughs, and more speculative timelines. TAE's aneutronic fuel cycle faces extreme temperature barriers never demonstrated. Helion's pulsed approach and 2028 commercial claims lack scientific precedent. For Q>10 continuous operation by 2031, CFS has the most credible pathway, though even this faces significant engineering challenges beyond plasma physics."
     relevance: 0.78p
     date: 2026-03-06
 }
