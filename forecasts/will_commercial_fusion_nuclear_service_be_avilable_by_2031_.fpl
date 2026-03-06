@@ -170,8 +170,8 @@ evidence entity_investigator_0 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "The research indicates that significant technical progress has been made in fusion energy in recent years, but major challenges remain before commercial fusion power could be available by 2031. While there is growing commercial interest and investment, the timeline for achieving a commercially viable fusion power plant is still highly uncertain."
-    relevance: 0.7p
+    summary: "The research indicates that significant technical progress is being made in the development of commercial fusion energy, with multiple companies and government agencies targeting the early 2030s for the first commercial fusion power plants. Key advancements in fusion reactor technologies, increased funding, and improvements in supporting technologies suggest that the technical readiness for commercial fusion is accelerating."
+    relevance: 0.85p
     date: 2026-03-06
 }
 

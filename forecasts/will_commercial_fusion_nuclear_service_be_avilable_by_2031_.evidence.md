@@ -1,16 +1,16 @@
 # Evidence Log: will commercial fusion nuclear service be avilable by 2031?
 
-**Version:** v17 | **Probability:** 12.7% | **Updated:** 2026-03-06 18:37 UTC
+**Version:** v20 | **Probability:** 12.7% | **Updated:** 2026-03-06 23:14 UTC
 
 ---
 
 ## Inside View
 
-**Probability:** 12.65%
+**Probability:** 12.68%
 
-Starting from a 15.0% base rate, our model moderately decreases the probability to 12.7%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (48%), private_funding_sustainability (21%), regulatory_pathway_clarity (20%).
+Starting from a 15.0% base rate, our model moderately decreases the probability to 12.7%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (37%), regulatory_pathway_clarity (20%), private_funding_sustainability (16%).
 
-**Confidence:** Low (21%)
+**Confidence:** Low (28%)
 
 ---
 
@@ -35,14 +35,20 @@ Starting from a 15.0% base rate, our model moderately decreases the probability 
 
 ### Assigned Agents
 
-- **entity_investigator_technical_readiness_acceleration** (schedule: once)
+- **market_research_technical_readiness_acceleration** (schedule: once)
   - Query: _Research evidence for the 'technical_readiness_acceleration' driver in the forecast: "will commercia_
 
 ### Evidence
 
-#### Agent: entity_investigator (Claude API) (relevance: 78%)
+#### Agent: market_research (Claude API) (relevance: 85%)
 
-Private fusion funding has reached unprecedented levels ($6B+ total) with several well-capitalized companies targeting late 2020s demonstrations. However, funding declined 63% in 2023, and the critical 2025-2030 period requires sustained multi-billion dollar commitments before any commercial revenue. The 2031 timeline is extremely aggressive given no private company has achieved sustained net gain, regulatory frameworks are immature, and historical fusion timelines slip significantly. Private fu...
+The research indicates that significant technical progress is being made in the development of commercial fusion energy, with multiple companies and government agencies targeting the early 2030s for the first commercial fusion power plants. Key advancements in fusion reactor technologies, increased funding, and improvements in supporting technologies suggest that the technical readiness for commercial fusion is accelerating.
+
+**Key findings:**
+
+- Several major fusion energy companies, including Commonwealth Fusion Systems, Tokamak Energy, and TAE Technologies, have made significant progress in developing fusion reactor technologies and are aiming to achieve commercial fusion power by the early 2030s.
+- The US Department of Energy has increased funding for fusion energy research and development, with the goal of demonstrating a fusion power plant by 2035. This increased investment is expected to accelerate technical readiness for commercial fusion.
+- Advances in superconducting magnet technology, plasma physics understanding, and computational modeling have enabled fusion reactor designs to become more compact and feasible for commercial deployment.
 
 _Collected: 2026-03-06_
 
@@ -149,7 +155,7 @@ _Collected: 2026-03-06_
     "sample_size": 20,
     "reasoning": "Looking at analogous transformative energy technologies: nuclear fission (1942 discovery to 1956 commercial), solar PV (1954 to 1980s commercial), wind turbines (1970s to 1990s commercial), fracking (1947 to 2000s commercial). Average time from breakthrough to commercial service is 25-40 years. Fusion has been 'decades...
 
-### Agent: market_research (Claude API) (relevance: 70%)
+### Agent: entity_investigator (Claude API) (relevance: 78%)
 
-The research indicates that significant technical progress has been made in fusion energy in recent years, but major challenges remain before commercial fusion power could be available by 2031. While there is growing commercial interest and investment, the timeline for achieving a commercially viable fusion power plant is still highly uncertain.
+Private fusion funding has reached unprecedented levels ($6B+ total) with several well-capitalized companies targeting late 2020s demonstrations. However, funding declined 63% in 2023, and the critical 2025-2030 period requires sustained multi-billion dollar commitments before any commercial revenue. The 2031 timeline is extremely aggressive given no private company has achieved sustained net gain, regulatory frameworks are immature, and historical fusion timelines slip significantly. Private fu...
 

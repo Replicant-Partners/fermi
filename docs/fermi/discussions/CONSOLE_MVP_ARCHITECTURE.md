@@ -309,3 +309,64 @@ DriverStmt {
 - 5 fermi-orchestra agents
 - 3 plotters visualizations
 - Full state persistence (FPL + evidence.md + state.json)
+
+---
+
+## Updated Roadmap (as of 2026-03-06, 98 commits)
+
+### COMPLETED
+- ✅ Sprint 1: Tabbed Right Panel (Edit/FPL/Wiki)
+- ✅ Sprint 2: Fermi Meta-Agent (decomposition, recommendations, validation)
+- ✅ Sprint 3 (partial): Evidence persistence, manual evidence, wiki
+- ✅ Sprint 4 (partial): Plotters charts (histogram, index, treemap, sparklines)
+- ✅ Deterministic probability normalization
+- ✅ Sensitivity analysis with Sobol indices
+- ✅ Confidence scoring (Tetlock methodology)
+- ✅ Full state persistence (FPL + state.json + evidence.md)
+- ✅ Agent assignments persist and restore
+- ✅ Portfolio with rich cards (probability, base rate, confidence, mini charts)
+- ✅ Version history with probability evolution
+- ✅ Distribution sparklines on driver cards
+- ✅ Per-driver evidence confidence dots
+
+### NEXT PRIORITIES (from user feedback)
+
+#### Agent Presence & Visibility (pixel-agents inspiration)
+- [ ] Agent state indicators that update in real-time (researching→found→idle)
+- [ ] Agent activity animation/pulse when working
+- [ ] Agent "speech bubbles" showing latest finding
+- [ ] Agent cards in fleet tab show current assignment and status
+- [ ] Visual feedback that complex work is happening (not just void)
+
+#### Evidence & Reporting Richness
+- [ ] Distribution curve explanation per driver (how evidence justifies the shape)
+- [ ] Confidence per driver is user-settable (not just derived)
+- [ ] Evidence hyperlinks with previews
+- [ ] URL auto-summarization when adding evidence
+- [ ] Inside/outside view comparison in portfolio cards with charts
+
+#### Agent Coordination & Scheduling
+- [ ] Execute scheduled agents (daily/weekly cron)
+- [ ] Agent coordination — Fermi suggests when to re-research
+- [ ] Trigger-based execution (divergence threshold → re-research)
+- [ ] Background agent execution with notifications
+
+#### Version Management
+- [ ] Version diff view (what changed between versions)
+- [ ] Rollback to previous version
+- [ ] Version comparison side-by-side
+- [ ] Git-based version control for FPL files
+
+#### Portfolio Management
+- [ ] Group forecasts into portfolios
+- [ ] Compare forecasts within a portfolio
+- [ ] Portfolio-level Brier scoring
+- [ ] Archive/mature/resolve forecast lifecycle
+
+#### Polish & Ship
+- [ ] Theme refinement (colors, typography, spacing)
+- [ ] Text wrapping improvements
+- [ ] Keyboard navigation
+- [ ] Error handling edge cases
+- [ ] Performance optimization
+- [ ] Release build + distribution

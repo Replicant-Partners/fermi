@@ -1,8 +1,8 @@
 {
-  "current_version": 17,
-  "predicted_probability": 0.12654026520218234,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 12.7%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (48%), private_funding_sustainability (21%), regulatory_pathway_clarity (20%).",
-  "forecast_confidence": 0.21,
+  "current_version": 20,
+  "predicted_probability": 0.12680403536665918,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 12.7%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (37%), regulatory_pathway_clarity (20%), private_funding_sustainability (16%).",
+  "forecast_confidence": 0.27999999999999997,
   "versions": [
     {
       "version": 1,
@@ -105,14 +105,32 @@
       "timestamp": "2026-03-06 18:37",
       "probability": 0.12654026520218234,
       "change_summary": "v17 update"
+    },
+    {
+      "version": 18,
+      "timestamp": "2026-03-06 23:14",
+      "probability": 0.12654026520218234,
+      "change_summary": "v18 update"
+    },
+    {
+      "version": 19,
+      "timestamp": "2026-03-06 23:14",
+      "probability": 0.12654026520218234,
+      "change_summary": "v19 update"
+    },
+    {
+      "version": 20,
+      "timestamp": "2026-03-06 23:14",
+      "probability": 0.12680403536665918,
+      "change_summary": "v20 update"
     }
   ],
   "sim_results": {
-    "mean": 4.6127828324372535,
-    "median": 4.393848544324079,
-    "p5": 2.409043045121348,
-    "p95": 7.5589932741559425,
-    "std_dev": 1.5854783330002826,
+    "mean": 4.622398068223775,
+    "median": 4.434433767235281,
+    "p5": 2.4305857001940194,
+    "p95": 7.477502777753634,
+    "std_dev": 1.5678182112243384,
     "iterations": 10000
   },
   "base_rate": {
@@ -142,10 +160,25 @@
     {
       "id": "market_research_0",
       "source": "Agent: market_research (Claude API)",
-      "summary": "The research indicates that significant technical progress has been made in fusion energy in recent years, but major challenges remain before commercial fusion power could be available by 2031. While there is growing commercial interest and investment, the timeline for achieving a commercially viable fusion power plant is still highly uncertain.",
-      "relevance": 0.7,
+      "summary": "The research indicates that significant technical progress is being made in the development of commercial fusion energy, with multiple companies and government agencies targeting the early 2030s for the first commercial fusion power plants. Key advancements in fusion reactor technologies, increased funding, and improvements in supporting technologies suggest that the technical readiness for commercial fusion is accelerating.",
+      "relevance": 0.85,
       "date": "2026-03-06",
-      "key_findings": []
+      "key_findings": [
+        "Several major fusion energy companies, including Commonwealth Fusion Systems, Tokamak Energy, and TAE Technologies, have made significant progress in developing fusion reactor technologies and are aiming to achieve commercial fusion power by the early 2030s.",
+        "The US Department of Energy has increased funding for fusion energy research and development, with the goal of demonstrating a fusion power plant by 2035. This increased investment is expected to accelerate technical readiness for commercial fusion.",
+        "Advances in superconducting magnet technology, plasma physics understanding, and computational modeling have enabled fusion reactor designs to become more compact and feasible for commercial deployment."
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "name": "market_research_technical_readiness_acceleration",
+      "agent_type": "research",
+      "query": "Research evidence for the 'technical_readiness_acceleration' driver in the forecast: \"will commercial fusion nuclear service be avilable by 2031?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "technical_readiness_acceleration"
+      ]
     }
   ]
 }
