@@ -1,8 +1,8 @@
 {
-  "current_version": 12,
-  "predicted_probability": 0.14569188129274577,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 14.6%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (57%), regulatory_pathway_clarity (19%), private_funding_sustainability (13%).",
-  "forecast_confidence": 0.35,
+  "current_version": 17,
+  "predicted_probability": 0.12654026520218234,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 12.7%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (48%), private_funding_sustainability (21%), regulatory_pathway_clarity (20%).",
+  "forecast_confidence": 0.21,
   "versions": [
     {
       "version": 1,
@@ -75,14 +75,44 @@
       "timestamp": "2026-03-06 03:01",
       "probability": 0.14569188129274577,
       "change_summary": "v12 update"
+    },
+    {
+      "version": 13,
+      "timestamp": "2026-03-06 13:31",
+      "probability": 0.14569188129274577,
+      "change_summary": "v13 update"
+    },
+    {
+      "version": 14,
+      "timestamp": "2026-03-06 13:32",
+      "probability": 0.11609966658427968,
+      "change_summary": "v14 update"
+    },
+    {
+      "version": 15,
+      "timestamp": "2026-03-06 13:33",
+      "probability": 0.12654026520218234,
+      "change_summary": "v15 update"
+    },
+    {
+      "version": 16,
+      "timestamp": "2026-03-06 13:53",
+      "probability": 0.12654026520218234,
+      "change_summary": "v16 update"
+    },
+    {
+      "version": 17,
+      "timestamp": "2026-03-06 18:37",
+      "probability": 0.12654026520218234,
+      "change_summary": "v17 update"
     }
   ],
   "sim_results": {
-    "mean": 2.276107838466244,
-    "median": 2.147845045363286,
-    "p5": 1.0828344026492032,
-    "p95": 3.9122179762810005,
-    "std_dev": 0.8802699800679852,
+    "mean": 4.6127828324372535,
+    "median": 4.393848544324079,
+    "p5": 2.409043045121348,
+    "p95": 7.5589932741559425,
+    "std_dev": 1.5854783330002826,
     "iterations": 10000
   },
   "base_rate": {
@@ -107,25 +137,15 @@
       "summary": "Private fusion funding has reached unprecedented levels ($6B+ total) with several well-capitalized companies targeting late 2020s demonstrations. However, funding declined 63% in 2023, and the critical 2025-2030 period requires sustained multi-billion dollar commitments before any commercial revenue. The 2031 timeline is extremely aggressive given no private company has achieved sustained net gain, regulatory frameworks are immature, and historical fusion timelines slip significantly. Private funding sustainability is the key bottleneck—technical progress is necessary but insufficient without continued capital through the pre-commercial phase.",
       "relevance": 0.78,
       "date": "2026-03-06",
-      "key_findings": [
-        "Commonwealth Fusion Systems (CFS) has raised over $2 billion in private funding as of 2024, the largest private fusion investment to date, with backing from Bill Gates, Google, and major energy companies. CFS aims for commercial operation of its SPARC demonstration plant by 2025 and grid power from ARC by early 2030s.",
-        "Total private fusion investment reached approximately $6.21 billion across 43+ companies by end of 2023 (per Fusion Industry Association), with $1.4 billion raised in 2023 alone despite broader venture capital downturn. However, this represents a 63% decline from 2022's record $2.83 billion, indicating potential funding volatility.",
-        "Private fusion companies face a 'valley of death' between 2025-2030 where demonstration plants must prove net energy gain at scale. Most private funding has focused on CAPEX for first facilities; sustained operations, regulatory approval processes, and scaling to commercial deployment require estimated $5-10 billion additional per major project.",
-        "Key private players beyond CFS include: Helion Energy ($2.2B raised, targeting 2028 for first electricity to Microsoft), TAE Technologies ($1.2B+ raised), and Type One Energy. However, none have yet achieved sustained net energy gain, and timelines have historically slipped 3-5 years from initial projections.",
-        "Private funding sustainability depends critically on: (1) ITER and National Ignition Facility results validating fusion physics (NIF achieved net gain Dec 2022, positive signal), (2) continued investor appetite through 2025-2028 demonstration phase without revenue, (3) regulatory pathway clarity (still undefined in most jurisdictions for fusion plants), and (4) competition from advancing renewable + storage cost curves."
-      ]
+      "key_findings": []
     },
     {
       "id": "market_research_0",
       "source": "Agent: market_research (Claude API)",
-      "summary": "The technical readiness of commercial fusion power has accelerated in recent years, with major projects like ITER making significant progress. However, substantial technical challenges remain, and further R&D and testing will be required before a commercial fusion power plant can be operational.",
-      "relevance": 0.75,
+      "summary": "The research indicates that significant technical progress has been made in fusion energy in recent years, but major challenges remain before commercial fusion power could be available by 2031. While there is growing commercial interest and investment, the timeline for achieving a commercially viable fusion power plant is still highly uncertain.",
+      "relevance": 0.7,
       "date": "2026-03-06",
-      "key_findings": [
-        "Several major fusion energy projects have made significant technical progress in recent years, including the ITER project in France which aims to demonstrate the feasibility of fusion power and is on track to begin operations in the late 2020s.",
-        "Advances in superconducting magnets, plasma confinement, and other key fusion technologies have accelerated the technical readiness of fusion power, with some experts predicting that a commercial fusion power plant could be operational by the early 2030s.",
-        "However, significant technical challenges remain, including achieving the necessary plasma temperatures and densities, handling the extreme heat and radiation, and developing reliable and cost-effective reactor designs. Further R&D and testing will be required to fully demonstrate the technical readiness of commercial fusion power."
-      ]
+      "key_findings": []
     }
   ]
 }

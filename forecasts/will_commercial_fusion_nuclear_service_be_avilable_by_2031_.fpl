@@ -1,7 +1,7 @@
 question "will commercial fusion nuclear service be avilable by 2031?"
 
 driver technical_readiness_acceleration continuous {
-    distribution: triangular(0.6, 1.5, 2.8)
+    distribution: triangular(1.5, 3.5, 5)
     unit: "multiplier"
     rationale: "NIF's Dec 2022 net energy gain was historic but used 300MJ input for 3.15MJ output (only the laser energy counted). Commercial viability requires Q>10 and continuous operation. Private companies (Commonwealth Fusion, TAE, Helion) claim breakthroughs in magnet technology, alternative confinement. If technical progress accelerates beyond current trajectory, probability increases significantly. If fundamental engineering challenges persist, decreases."
 }
@@ -170,8 +170,8 @@ evidence entity_investigator_0 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "The technical readiness of commercial fusion power has accelerated in recent years, with major projects like ITER making significant progress. However, substantial technical challenges remain, and further R&D and testing will be required before a commercial fusion power plant can be operational."
-    relevance: 0.75p
+    summary: "The research indicates that significant technical progress has been made in fusion energy in recent years, but major challenges remain before commercial fusion power could be available by 2031. While there is growing commercial interest and investment, the timeline for achieving a commercially viable fusion power plant is still highly uncertain."
+    relevance: 0.7p
     date: 2026-03-06
 }
 

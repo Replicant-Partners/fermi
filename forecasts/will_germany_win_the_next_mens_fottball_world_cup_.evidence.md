@@ -1,14 +1,14 @@
 # Evidence Log: will germany win the next mens fottball world cup?
 
-**Version:** v3 | **Probability:** 4.8% | **Updated:** 2026-03-06 10:42 UTC
+**Version:** v4 | **Probability:** 4.3% | **Updated:** 2026-03-06 11:39 UTC
 
 ---
 
 ## Inside View
 
-**Probability:** 4.80%
+**Probability:** 4.34%
 
-Starting from a 4.8% base rate, our model slightly confirms the probability to 4.8%. The key factors are: current_fifa_ranking_strength, squad_quality_trajectory, coaching_stability. Most influential: coaching_stability (87%), current_fifa_ranking_strength (9%), squad_quality_trajectory (5%).
+Starting from a 4.8% base rate, our model slightly decreases the probability to 4.3%. The key factors are: current_fifa_ranking_strength, squad_quality_trajectory, coaching_stability. Most influential: coaching_stability (59%), current_fifa_ranking_strength (26%), squad_quality_trajectory (15%).
 
 **Confidence:** Low (35%)
 

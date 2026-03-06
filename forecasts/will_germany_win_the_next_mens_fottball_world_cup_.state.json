@@ -1,7 +1,7 @@
 {
-  "current_version": 3,
-  "predicted_probability": 0.048,
-  "inside_view_explanation": "Starting from a 4.8% base rate, our model slightly confirms the probability to 4.8%. The key factors are: current_fifa_ranking_strength, squad_quality_trajectory, coaching_stability. Most influential: coaching_stability (87%), current_fifa_ranking_strength (9%), squad_quality_trajectory (5%).",
+  "current_version": 4,
+  "predicted_probability": 0.04336139873872988,
+  "inside_view_explanation": "Starting from a 4.8% base rate, our model slightly decreases the probability to 4.3%. The key factors are: current_fifa_ranking_strength, squad_quality_trajectory, coaching_stability. Most influential: coaching_stability (59%), current_fifa_ranking_strength (26%), squad_quality_trajectory (15%).",
   "forecast_confidence": 0.35,
   "versions": [
     {
@@ -21,14 +21,20 @@
       "timestamp": "2026-03-06 10:42",
       "probability": 0.048,
       "change_summary": "v3 update"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-06 11:39",
+      "probability": 0.04336139873872988,
+      "change_summary": "v4 update"
     }
   ],
   "sim_results": {
-    "mean": 0.8583455390409926,
-    "median": 0.8033052235513922,
-    "p5": 0.45381490645579226,
-    "p95": 1.448336277028257,
-    "std_dev": 0.31123346141113867,
+    "mean": 1.286776608446021,
+    "median": 1.2774999102068199,
+    "p5": 0.8739671930631987,
+    "p95": 1.7326314017554014,
+    "std_dev": 0.2600543636043424,
     "iterations": 10000
   },
   "base_rate": {

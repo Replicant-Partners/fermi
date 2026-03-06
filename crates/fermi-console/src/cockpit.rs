@@ -1934,7 +1934,31 @@ impl CockpitState {
                 if let Some(conf) = state_json.get("forecast_confidence").and_then(|v| v.as_f64()) {
                     self.forecast_confidence = conf;
                 }
+                // Restore agents into AST
+                if let Some(agent_arr) = state_json.get("agents").and_then(|v| v.as_array()) {
+                    for ag in agent_arr {
+                        let name = ag.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        if !name.is_empty() && self.program.agent(&name).is_none() {
+                            let driver_refs: Vec<String> = ag.get("driver_refs")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                .unwrap_or_default();
+                            self.program.add_agent(AgentStmt {
+                                name,
+                                agent_type: ag.get("agent_type").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                query: ag.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                executor: Some(fermi::ast::ExecutorType::LLM),
+                                schedule: Some(Schedule::Once),
+                                driver_refs,
+                                depends_on: vec![],
+                                confidence_threshold: None,
+                            });
+                        }
+                    }
+                    log::info!("[load] Restored {} agents", agent_arr.len());
+                }
                 // Restore evidence into AST (supplement what FPL parsing got)
+                log::info!("[load] Restoring evidence from state.json");
                 if let Some(ev_arr) = state_json.get("evidence").and_then(|v| v.as_array()) {
                     for ev in ev_arr {
                         let id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -1954,6 +1978,19 @@ impl CockpitState {
                             });
                         }
                     }
+                }
+                let ev_count_log = self.program.evidence_items().len();
+                log::info!("[load] After restore: {} evidence in AST", ev_count_log);
+                for ev in self.program.evidence_items() {
+                    log::info!("[load]   ev id={} source={}", ev.id, ev.source);
+                }
+                log::info!("[load] Drivers: {}", self.program.drivers().len());
+                for d in self.program.drivers() {
+                    log::info!("[load]   driver={}", d.name);
+                }
+                log::info!("[load] Agents: {}", self.program.agents().len());
+                for a in self.program.agents() {
+                    log::info!("[load]   agent={} refs={:?}", a.name, a.driver_refs);
                 }
                 self.messages.push(AssistantMessage {
                     node: "load".into(),
@@ -2059,6 +2096,13 @@ impl CockpitState {
                         "relevance": e.relevance,
                         "date": e.date,
                         "key_findings": e.key_findings,
+                    })).collect::<Vec<_>>(),
+                    "agents": self.program.agents().iter().map(|a| serde_json::json!({
+                        "name": a.name,
+                        "agent_type": a.agent_type,
+                        "query": a.query,
+                        "schedule": format!("{:?}", a.schedule),
+                        "driver_refs": a.driver_refs,
                     })).collect::<Vec<_>>(),
                 });
                 match std::fs::write(&state_path, serde_json::to_string_pretty(&state_json).unwrap_or_default()) {
