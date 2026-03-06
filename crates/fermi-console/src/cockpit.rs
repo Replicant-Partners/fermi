@@ -1734,7 +1734,7 @@ impl CockpitState {
                         e.id.contains(&d.name) ||
                         self.program.agents().iter()
                             .filter(|a| a.driver_refs.contains(&d.name))
-                            .any(|a| e.source.contains(&a.name))
+                            .any(|a| evidence_matches_agent(e, &a.name))
                     })
                 }).count() as f64;
                 let evidence_ratio = if total_drivers > 0.0 { evidenced_drivers / total_drivers } else { 0.0 };
@@ -3111,7 +3111,7 @@ fn render_driver_editor_and_evidence(
             // Evidence from agents assigned to this driver
             driver_agents
                 .iter()
-                .any(|agent_name| e.source.contains(agent_name))
+                .any(|agent_name| evidence_matches_agent(e, agent_name))
         })
         .collect();
 
@@ -3605,7 +3605,7 @@ fn render_simulation_section(state: &CockpitState) -> impl IntoElement {
                         .filter(|e| e.id.contains(&d.name) || 
                             state.program.agents().iter()
                                 .filter(|a| a.driver_refs.contains(&d.name))
-                                .any(|a| e.source.contains(&a.name)))
+                                .any(|a| evidence_matches_agent(e, &a.name)))
                         .count();
                     let quality = if evidence_count > 2 { 0.8 } 
                         else if evidence_count > 0 { 0.5 } 
@@ -3829,7 +3829,7 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                 .map(|a| a.name.as_str())
                 .collect();
             let driver_ev: Vec<_> = evidence.iter()
-                .filter(|e| driver_agents.iter().any(|a| e.source.contains(a)) || e.id.contains(&driver.name))
+                .filter(|e| driver_agents.iter().any(|a| evidence_matches_agent(e, a)) || e.id.contains(&driver.name))
                 .collect();
 
             div()
@@ -3945,7 +3945,7 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                 .map(|a| a.name.clone())
                 .collect();
             let unlinked: Vec<_> = evidence.iter()
-                .filter(|e| !all_agent_names.iter().any(|a| e.source.contains(a)))
+                .filter(|e| !all_agent_names.iter().any(|a| evidence_matches_agent(e, a)))
                 .collect();
             if unlinked.is_empty() {
                 el
@@ -4214,7 +4214,7 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64) -> 
 
         // Evidence linked to this driver (from its agents)
         let driver_evidence: Vec<_> = evidence_items.iter()
-            .filter(|e| driver_agents.iter().any(|a| e.source.contains(&a.name)) || e.id.contains(&driver.name))
+            .filter(|e| driver_agents.iter().any(|a| evidence_matches_agent(e, &a.name)) || e.id.contains(&driver.name))
             .collect();
 
         if !driver_evidence.is_empty() {
@@ -4273,7 +4273,7 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64) -> 
         .map(|a| a.name.clone())
         .collect();
     let unassigned: Vec<_> = evidence_items.iter()
-        .filter(|e| !all_driver_agents.iter().any(|a| e.source.contains(a)))
+        .filter(|e| !all_driver_agents.iter().any(|a| evidence_matches_agent(e, a)))
         .collect();
 
     if !unassigned.is_empty() {
@@ -4476,6 +4476,26 @@ fn make_binary_driver(
 
 /// Clean a string for safe embedding in FPL string literals.
 /// Removes/escapes characters that would break the parser.
+/// Extract the base agent name from a compound agent_driver name.
+/// e.g. "market_research_song_quality" → "market_research"
+fn base_agent_name(compound_name: &str) -> &str {
+    // Known agent base names
+    let known = ["macro_forecaster", "market_research", "sentiment_analyzer", 
+                  "entity_investigator", "monte_carlo_sim", "fermi"];
+    for base in &known {
+        if compound_name.starts_with(base) {
+            return base;
+        }
+    }
+    compound_name
+}
+
+/// Check if an evidence item is linked to an agent (by base name match).
+fn evidence_matches_agent(evidence: &EvidenceStmt, agent_name: &str) -> bool {
+    let base = base_agent_name(agent_name);
+    evidence.source.contains(base) || evidence.id.contains(agent_name)
+}
+
 fn clean_fpl_string(s: &str) -> String {
     s.replace('\\', "\\\\")
      .replace('"', "\\\"")
