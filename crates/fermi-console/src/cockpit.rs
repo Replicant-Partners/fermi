@@ -1837,196 +1837,145 @@ impl CockpitState {
     // Publish + Version
     // ═══════════════════════════════════════════════════════════════
 
-    /// Save the FPL program to disk and create a version snapshot.
-    /// Load a forecast from an FPL file on disk.
     pub fn load_forecast(&mut self, path: &str, cx: &mut Context<Self>) {
-        match std::fs::read_to_string(path) {
-            Ok(fpl_text) => {
-                // Parse the FPL
-                let tokens = match ::fermi::lexer::Lexer::new(&fpl_text).tokenize() {
-                    Ok(t) => t,
-                    Err(e) => {
-                        self.messages.push(AssistantMessage {
-                            node: "load".into(),
-                            kind: MessageKind::Error,
-                            text: format!("Failed to parse {}: {:?}", path, e),
-                        });
-                        cx.notify();
-                        return;
-                    }
-                };
-                match ::fermi::parser::Parser::new(tokens).parse() {
-                    Ok(program) => {
-                        self.program = program;
-                        self.cached_fpl = fpl_text;
-                        self.messages.clear();
-                        self.messages.push(AssistantMessage {
-                            node: "load".into(),
-                            kind: MessageKind::Info,
-                            text: format!("Loaded forecast from {}", path),
-                        });
-                        // Update question input
-                        if let Some(q) = self.program.question() {
-                            self.question_input.update(cx, |input, cx| {
-                                input.set_text(&q.text, cx);
-                            });
-                            if let Some(ref br) = q.base_rate {
-                                self.predicted_probability = br.historical_frequency;
-                            }
-                        }
-                        // Load state.json if it exists
-                        let state_path = path.replace(".fpl", ".state.json");
-                        if let Ok(state_text) = std::fs::read_to_string(&state_path) {
-                            if let Ok(state_json) = serde_json::from_str::<JsonValue>(&state_text) {
-                                // Restore probability
-                                if let Some(prob) = state_json.get("predicted_probability").and_then(|v| v.as_f64()) {
-                                    self.predicted_probability = prob;
-                                }
-                                // Restore version history
-                                if let Some(versions) = state_json.get("versions").and_then(|v| v.as_array()) {
-                                    self.versions = versions.iter().filter_map(|v| {
-                                        Some(ForecastVersion {
-                                            version: v.get("version")?.as_u64()? as u32,
-                                            timestamp: v.get("timestamp")?.as_str()?.to_string(),
-                                            fpl_text: String::new(), // not stored per version
-                                            probability: v.get("probability")?.as_f64()?,
-                                            change_summary: v.get("change_summary")?.as_str()?.to_string(),
-                                        })
-                                    }).collect();
-                                    self.current_version = self.versions.last()
-                                        .map(|v| v.version).unwrap_or(0);
-                                }
-                                // Restore sim results
-                                if let Some(sim) = state_json.get("sim_results").and_then(|v| v.as_object()) {
-                                    self.sim_results = Some(SimResults {
-                                        mean: sim.get("mean").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                        median: sim.get("median").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                        p5: sim.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                        p95: sim.get("p95").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                        std_dev: sim.get("std_dev").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                        iterations: sim.get("iterations").and_then(|v| v.as_u64()).unwrap_or(0),
-                                        execution_time_ms: 0,
-                                        histogram: vec![],
-                                    });
-                                // Restore base rate into AST
-                                if let Some(br) = state_json.get("base_rate").and_then(|v| v.as_object()) {
-                                    if let Some(q) = self.program.question_mut() {
-                                        q.base_rate = Some(BaseRate {
-                                            reference_class: br.get("reference_class")
-                                                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                            historical_frequency: br.get("historical_frequency")
-                                                .and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                            sample_size: br.get("sample_size")
-                                                .and_then(|v| v.as_u64()).map(|n| n as usize),
-                                            source: br.get("source")
-                                                .and_then(|v| v.as_str()).unwrap_or("restored").to_string(),
-                                            reasoning: br.get("reasoning")
-                                                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                            generated_by: GeneratedBy::Agent("fermi".into()),
-                                        });
-                                    }
-                                }
-                                // Restore inside view explanation
-                                if let Some(expl) = state_json.get("inside_view_explanation").and_then(|v| v.as_str()) {
-                                    self.inside_view_explanation = expl.to_string();
-                                }
-                                if let Some(conf) = state_json.get("forecast_confidence").and_then(|v| v.as_f64()) {
-                                    self.forecast_confidence = conf;
-                                }
-                                // Restore evidence into AST
-                                if let Some(ev_arr) = state_json.get("evidence").and_then(|v| v.as_array()) {
-                                    for ev in ev_arr {
-                                        let id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                        if !id.is_empty() && self.program.evidence_items().iter().all(|e| e.id != id) {
-                                            self.program.add_evidence(EvidenceStmt {
-                                                id,
-                                                source: ev.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                                summary: ev.get("summary").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                                url: None,
-                                                relevance: ev.get("relevance").and_then(|v| v.as_f64()),
-                                                date: ev.get("date").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                                strength: ev.get("relevance").and_then(|v| v.as_f64()),
-                                                key_findings: ev.get("key_findings")
-                                                    .and_then(|v| v.as_array())
-                                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                                                    .unwrap_or_default(),
-                                            });
-                                        }
-                                    }
-                                }
-                                }
-                                self.messages.push(AssistantMessage {
-                                    node: "load".into(),
-                                    kind: MessageKind::Info,
-                                    text: format!("Restored v{} state (probability: {:.1}%)",
-                                        self.current_version, self.predicted_probability * 100.0),
-                                });
-                            }
-                        }
-                        self.focused_node = FocusedNode::Question;
-                        self.right_tab = RightTab::Wiki;
-                    }
-                    Err(e) => {
-                        self.messages.push(AssistantMessage {
-                            node: "load".into(),
-                            kind: MessageKind::Error,
-                            text: format!("Parse error in {}: {}", path, e),
+        self.messages.clear();
+        let state_path = path.replace(".fpl", ".state.json");
+
+        // Try to parse FPL — may fail on old files with bad evidence strings
+        let mut fpl_parsed = false;
+        if let Ok(fpl_text) = std::fs::read_to_string(path) {
+            self.cached_fpl = fpl_text.clone();
+            if let Ok(tokens) = ::fermi::lexer::Lexer::new(&fpl_text).tokenize() {
+                if let Ok(program) = ::fermi::parser::Parser::new(tokens).parse() {
+                    self.program = program;
+                    fpl_parsed = true;
+                    self.messages.push(AssistantMessage {
+                        node: "load".into(),
+                        kind: MessageKind::Info,
+                        text: format!("Loaded FPL from {}", path),
+                    });
+                } else {
+                    self.messages.push(AssistantMessage {
+                        node: "load".into(),
+                        kind: MessageKind::Warning,
+                        text: "FPL parse had errors — loading state from backup.".into(),
+                    });
+                }
+            }
+        }
+
+        // Update question input from whatever we parsed
+        if let Some(q) = self.program.question() {
+            self.question_input.update(cx, |input, cx| {
+                input.set_text(&q.text, cx);
+            });
+            if let Some(ref br) = q.base_rate {
+                self.predicted_probability = br.historical_frequency;
+            }
+        }
+
+        // Always try state.json — it has evidence, versions, base rate
+        if let Ok(state_text) = std::fs::read_to_string(&state_path) {
+            if let Ok(state_json) = serde_json::from_str::<JsonValue>(&state_text) {
+                // Restore probability
+                if let Some(prob) = state_json.get("predicted_probability").and_then(|v| v.as_f64()) {
+                    self.predicted_probability = prob.clamp(0.01, 0.99);
+                }
+                // Restore version history
+                if let Some(versions) = state_json.get("versions").and_then(|v| v.as_array()) {
+                    self.versions = versions.iter().filter_map(|v| {
+                        Some(ForecastVersion {
+                            version: v.get("version")?.as_u64()? as u32,
+                            timestamp: v.get("timestamp")?.as_str()?.to_string(),
+                            fpl_text: String::new(),
+                            probability: v.get("probability")?.as_f64()?,
+                            change_summary: v.get("change_summary")?.as_str()?.to_string(),
+                        })
+                    }).collect();
+                    self.current_version = self.versions.last()
+                        .map(|v| v.version).unwrap_or(0);
+                }
+                // Restore sim results
+                if let Some(sim) = state_json.get("sim_results").and_then(|v| v.as_object()) {
+                    self.sim_results = Some(SimResults {
+                        mean: sim.get("mean").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        median: sim.get("median").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        p5: sim.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        p95: sim.get("p95").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        std_dev: sim.get("std_dev").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        iterations: sim.get("iterations").and_then(|v| v.as_u64()).unwrap_or(0),
+                        execution_time_ms: 0,
+                        histogram: vec![],
+                    });
+                }
+                // Restore base rate into AST
+                if let Some(br) = state_json.get("base_rate").and_then(|v| v.as_object()) {
+                    if let Some(q) = self.program.question_mut() {
+                        q.base_rate = Some(BaseRate {
+                            reference_class: br.get("reference_class")
+                                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            historical_frequency: br.get("historical_frequency")
+                                .and_then(|v| v.as_f64()).unwrap_or(0.0),
+                            sample_size: br.get("sample_size")
+                                .and_then(|v| v.as_u64()).map(|n| n as usize),
+                            source: br.get("source")
+                                .and_then(|v| v.as_str()).unwrap_or("restored").to_string(),
+                            reasoning: br.get("reasoning")
+                                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            generated_by: GeneratedBy::Agent("fermi".into()),
                         });
                     }
                 }
-            }
-            Err(e) => {
+                // Restore inside view explanation
+                if let Some(expl) = state_json.get("inside_view_explanation").and_then(|v| v.as_str()) {
+                    self.inside_view_explanation = expl.to_string();
+                }
+                // Restore confidence
+                if let Some(conf) = state_json.get("forecast_confidence").and_then(|v| v.as_f64()) {
+                    self.forecast_confidence = conf;
+                }
+                // Restore evidence into AST (supplement what FPL parsing got)
+                if let Some(ev_arr) = state_json.get("evidence").and_then(|v| v.as_array()) {
+                    for ev in ev_arr {
+                        let id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        if !id.is_empty() && self.program.evidence_items().iter().all(|e| e.id != id) {
+                            self.program.add_evidence(EvidenceStmt {
+                                id,
+                                source: ev.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                summary: ev.get("summary").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                url: None,
+                                relevance: ev.get("relevance").and_then(|v| v.as_f64()),
+                                date: ev.get("date").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                strength: ev.get("relevance").and_then(|v| v.as_f64()),
+                                key_findings: ev.get("key_findings")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                    .unwrap_or_default(),
+                            });
+                        }
+                    }
+                }
                 self.messages.push(AssistantMessage {
                     node: "load".into(),
-                    kind: MessageKind::Error,
-                    text: format!("Failed to read {}: {}", path, e),
+                    kind: MessageKind::Info,
+                    text: format!("Restored v{} — {:.2}% (confidence: {:.0}%)",
+                        self.current_version,
+                        self.predicted_probability * 100.0,
+                        self.forecast_confidence * 100.0),
                 });
             }
+        } else if !fpl_parsed {
+            self.messages.push(AssistantMessage {
+                node: "load".into(),
+                kind: MessageKind::Error,
+                text: format!("Failed to load {}", path),
+            });
         }
+
+        self.focused_node = FocusedNode::Question;
+        self.right_tab = RightTab::Wiki;
         cx.notify();
     }
-
-    /// Archive a forecast — move files to forecasts/archive/
-    pub fn archive_forecast(&mut self, cx: &mut Context<Self>) {
-        let filename = self.program.question()
-            .map(|q| sanitize_name(&q.text))
-            .unwrap_or_else(|| "forecast".into());
-        
-        let _ = std::fs::create_dir_all("forecasts/archive");
-        
-        for ext in &["fpl", "evidence.md", "state.json"] {
-            let src = format!("forecasts/{}.{}", filename, ext);
-            let dst = format!("forecasts/archive/{}.{}", filename, ext);
-            let _ = std::fs::rename(&src, &dst);
-        }
-        
-        self.messages.push(AssistantMessage {
-            node: "save".into(),
-            kind: MessageKind::Info,
-            text: format!("Forecast '{}' archived.", filename),
-        });
-        cx.notify();
-    }
-
-    /// Delete a forecast permanently.
-    pub fn delete_forecast_files(&mut self, cx: &mut Context<Self>) {
-        let filename = self.program.question()
-            .map(|q| sanitize_name(&q.text))
-            .unwrap_or_else(|| "forecast".into());
-        
-        for ext in &["fpl", "evidence.md", "state.json"] {
-            let path = format!("forecasts/{}.{}", filename, ext);
-            let _ = std::fs::remove_file(&path);
-        }
-        
-        self.messages.push(AssistantMessage {
-            node: "save".into(),
-            kind: MessageKind::Info,
-            text: format!("Forecast '{}' deleted.", filename),
-        });
-        cx.notify();
-    }
-
     pub fn save_forecast(&mut self, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.cached_fpl = generate_fpl_text(&self.program);

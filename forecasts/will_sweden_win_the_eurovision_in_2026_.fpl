@@ -7,7 +7,7 @@ driver recent_performance_momentum continuous {
 }
 
 driver melodifestivalen_quality continuous {
-    distribution: triangular(1, 1.7, 2.5)
+    distribution: triangular(1.5, 2, 4)
     unit: "multiplier"
     rationale: "Sweden's Melodifestivalen is widely regarded as the highest-quality national selection process, with professional production, strong songwriting, and rigorous competition. This systematic advantage has contributed to Sweden's overperformance. The 2026 Melodifestivalen will occur in early 2026, and quality can vary year-to-year, but the structural advantage remains consistent."
 }
@@ -145,7 +145,7 @@ evidence fermi_evidence_1772754862 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "Sweden has been one of the most successful and consistent performers in the Eurovision Song Contest over the past decade, winning the competition 6 times since 2000 and frequently placing in the top 5. This recent performance momentum suggests Sweden would be a strong contender to win the Eurovision in 2026 as well."
+    summary: "Sweden has demonstrated strong recent performance and momentum in the Eurovision Song Contest, winning the competition 6 times since 2000 and consistently placing in the top 10. This suggests Sweden has a good chance of winning again in 2026 if they continue their track record of selecting and supporting high-quality entries."
     relevance: 0.85p
     date: 2026-03-06
 }
@@ -159,8 +159,8 @@ evidence sentiment_analyzer_0 {
 
 evidence entity_investigator_0 {
     source: "Agent: entity_investigator (Claude API)"
-    summary: "Sweden's Eurovision trajectory 2015-2024 reveals a nation with strong institutional advantages (Melodifestivalen selection process, production expertise, historical success) experiencing recent volatility. The 2023 victory followed by 2024 non-qualification exemplifies the 'winner's curse' phenomenon observed across Eurovision history. While Sweden maintains structural advantages over most competitors, their momentum sustainability appears challenged by: (1) post-win selection pressure, (2) evolving musical trends requiring adaptation, and (3) voting fatigue. Comparative analysis suggests Sweden's infrastructure provides better rebound potential than Netherlands/Ukraine but faces stiffer competition from Italy's consistent quality pipeline."
-    relevance: 0.72p
+    summary: "Sweden demonstrates exceptional institutional consistency in Eurovision through Melodifestivalen's professionalized selection process, achieving 8 top-7 finishes in 9 contests (2015-2024). However, the 10-year gap since their last win (2015) and historical rarity of multiple wins within 5-year windows (only 2 instances since 1990) suggest that while Sweden remains a perennial contender, victory is not structurally predictable. Comparative analysis shows Sweden's institutional advantages (production continuity, budget, format stability) are unmatched, but recent voting patterns (2024's jury-televote split) indicate evolving competitive dynamics."
+    relevance: 0.78p
     date: 2026-03-06
 }
 
