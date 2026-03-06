@@ -2380,7 +2380,7 @@ pub fn render_cockpit(cockpit: &Entity<CockpitState>) -> impl IntoElement {
 // ═══════════════════════════════════════════════════════════════════
 
 fn render_question_section(state: &CockpitState) -> impl IntoElement {
-    let prob_pct = format!("{:.0}%", state.predicted_probability * 100.0);
+    let prob_pct = format!("{:.2}%", state.predicted_probability * 100.0);
 
     div()
         .bg(rgb(theme::BG_ELEVATED))
@@ -2511,7 +2511,7 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             .text_size(px(22.0))
                             .text_color(rgb(theme::GOLD))
                             .font_weight(FontWeight::BOLD)
-                            .child(format!("{:.0}%", br.historical_frequency * 100.0)),
+                            .child(format!("{:.2}%", br.historical_frequency * 100.0)),
                     )
                     .child(
                         div()
@@ -3808,7 +3808,7 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                             .text_size(px(11.0))
                             .text_color(rgb(theme::FG))
                             .min_w(px(0.0))
-                            .child(format!("{:.1}% — {}", br.historical_frequency * 100.0, br.reference_class)),
+                            .child(format!("{:.2}% — {}", br.historical_frequency * 100.0, br.reference_class)),
                     )
                     .when(br.reasoning.is_some(), |el| {
                         el.child(
@@ -4143,7 +4143,7 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64) -> 
     if let Some(br) = program.question().and_then(|q| q.base_rate.as_ref()) {
         md.push_str("## Outside View (Base Rate)\n\n");
         md.push_str(&format!("- **Reference class:** {}\n", br.reference_class));
-        md.push_str(&format!("- **Historical frequency:** {:.1}%\n", br.historical_frequency * 100.0));
+        md.push_str(&format!("- **Historical frequency:** {:.2}%\n", br.historical_frequency * 100.0));
         if let Some(n) = br.sample_size {
             md.push_str(&format!("- **Sample size:** n={}\n", n));
         }

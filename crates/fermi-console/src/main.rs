@@ -1775,7 +1775,7 @@ impl FermiConsole {
                                                         .text_size(px(14.0))
                                                         .text_color(rgb(theme::CYAN))
                                                         .font_weight(FontWeight::BOLD)
-                                                        .child(format!("{:.0}%", forecast.probability * 100.0)),
+                                                        .child(format!("{:.2}%", forecast.probability * 100.0)),
                                                 )
                                                 .child(
                                                     div()
