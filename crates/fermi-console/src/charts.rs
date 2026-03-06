@@ -190,3 +190,58 @@ pub fn rgb_to_render_image(rgb_buf: &[u8], width: u32, height: u32) -> Arc<gpui:
     let frame = image::Frame::new(img_buf);
     Arc::new(gpui::RenderImage::new(vec![frame]))
 }
+
+/// Render a mini triangular distribution sparkline.
+pub fn render_distribution_sparkline(
+    p5: f64, p50: f64, p95: f64,
+    width: u32, height: u32,
+) -> Vec<u8> {
+    let mut buf = vec![0u8; (width * height * 3) as usize];
+    {
+        let root = BitMapBackend::with_buffer(&mut buf, (width, height))
+            .into_drawing_area();
+        let _ = root.fill(&RGBColor(15, 23, 42));
+
+        if p95 > p5 {
+            let range = p95 - p5;
+            let steps = width as usize;
+            let points: Vec<(f64, f64)> = (0..=steps).map(|i| {
+                let x = p5 + (i as f64 / steps as f64) * range;
+                // Triangular PDF
+                let y = if x < p50 {
+                    2.0 * (x - p5) / (range * (p50 - p5).max(0.001))
+                } else {
+                    2.0 * (p95 - x) / (range * (p95 - p50).max(0.001))
+                };
+                (x, y.max(0.0))
+            }).collect();
+
+            let max_y = points.iter().map(|(_, y)| *y).fold(0.0_f64, f64::max);
+            if max_y > 0.0 {
+                if let Ok(mut chart) = ChartBuilder::on(&root)
+                    .margin(2)
+                    .build_cartesian_2d(p5..p95, 0.0..max_y * 1.1)
+                {
+                    let _ = chart.draw_series(AreaSeries::new(
+                        points.iter().cloned(),
+                        0.0,
+                        RGBAColor(59, 130, 246, 0.3),
+                    ));
+                    let _ = chart.draw_series(LineSeries::new(
+                        points.iter().cloned(),
+                        ShapeStyle::from(RGBColor(59, 130, 246)).stroke_width(1),
+                    ));
+                    // Mark p50
+                    let _ = chart.draw_series(std::iter::once(
+                        PathElement::new(
+                            vec![(p50, 0.0), (p50, max_y)],
+                            ShapeStyle::from(RGBColor(16, 185, 129)).stroke_width(1),
+                        )
+                    ));
+                }
+            }
+        }
+        let _ = root.present();
+    }
+    buf
+}

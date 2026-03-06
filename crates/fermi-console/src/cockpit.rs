@@ -2658,6 +2658,25 @@ fn render_driver_card(
                         .text_color(rgb(theme::FG_DIM))
                         .child(summary),
                 )
+        // Distribution sparkline for continuous drivers
+        .when(driver.driver_type == DriverType::Continuous, |el| {
+            if let Some(Distribution::Triangular { ref p5, ref p50, ref p95 }) = driver.distribution {
+                let v5 = expr_to_f64(p5);
+                let v50 = expr_to_f64(p50);
+                let v95 = expr_to_f64(p95);
+                if v95 > v5 {
+                    let chart_w = 120u32;
+                    let chart_h = 24u32;
+                    let rgb_buf = crate::charts::render_distribution_sparkline(v5, v50, v95, chart_w, chart_h);
+                    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                    el.child(
+                        gpui::img(gpui::ImageSource::Render(render_img))
+                            .w(gpui::px(chart_w as f32))
+                            .h(gpui::px(chart_h as f32)),
+                    )
+                } else { el }
+            } else { el }
+        })
                 .when(msg_count > 0, |el| {
                     el.child(
                         div()

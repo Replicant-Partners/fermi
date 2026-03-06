@@ -1,8 +1,8 @@
 {
-  "current_version": 9,
-  "predicted_probability": 0.14580638708546734,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 14.6%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (52%), regulatory_pathway_clarity (15%), private_funding_sustainability (12%).",
-  "forecast_confidence": 0.27999999999999997,
+  "current_version": 12,
+  "predicted_probability": 0.14569188129274577,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 14.6%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (57%), regulatory_pathway_clarity (19%), private_funding_sustainability (13%).",
+  "forecast_confidence": 0.35,
   "versions": [
     {
       "version": 1,
@@ -37,7 +37,7 @@
     {
       "version": 6,
       "timestamp": "2026-03-06 02:47",
-      "probability": 0.12386413198447971,
+      "probability": 0.12386413198447972,
       "change_summary": "v6 update"
     },
     {
@@ -57,14 +57,32 @@
       "timestamp": "2026-03-06 02:48",
       "probability": 0.14580638708546734,
       "change_summary": "v9 update"
+    },
+    {
+      "version": 10,
+      "timestamp": "2026-03-06 03:00",
+      "probability": 0.14580638708546734,
+      "change_summary": "v10 update"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-06 03:00",
+      "probability": 0.14580638708546734,
+      "change_summary": "v11 update"
+    },
+    {
+      "version": 12,
+      "timestamp": "2026-03-06 03:01",
+      "probability": 0.14569188129274577,
+      "change_summary": "v12 update"
     }
   ],
   "sim_results": {
-    "mean": 2.277896733839485,
-    "median": 2.126524032668065,
-    "p5": 1.0845191315761464,
-    "p95": 3.9304644101619863,
-    "std_dev": 0.893863063030713,
+    "mean": 2.276107838466244,
+    "median": 2.147845045363286,
+    "p5": 1.0828344026492032,
+    "p95": 3.9122179762810005,
+    "std_dev": 0.8802699800679852,
     "iterations": 10000
   },
   "base_rate": {
@@ -81,44 +99,32 @@
       "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"Major energy technology commercialization timelines\",\n    \"historical_frequency\": 0.15,\n    \"sample_size\": 20,\n    \"reasoning\": \"Looking at analogous transformative energy technologies: nuclear fission (1942 discovery to 1956 commercial), solar PV (1954 to 1980s commercial), wind turbines (1970s to 1990s commercial), fracking (1947 to 2000s commercial). Average time from breakthrough to commercial service is 25-40 years. Fusion has been 'decades away' since the 1950s. However, recent breakthroughs (NIF achieving net energy gain in Dec 2022, multiple private companies claiming 2030s timelines) suggest acceleration. Base rate of 15% reflects that while fusion has never been commercialized, we're in an unprecedented period of progress with ~7 years remaining.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"technical_readiness_acceleration\",\n      \"display_name\": \"Technical Readiness Acceleration\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.8,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"NIF's Dec 2022 net energy gain was historic but used 300MJ input for 3.15MJ output (only the laser energy counted). Commercial viability requires Q>10 and continuous operation. Private companies (Commonwealth Fusion, TAE, Helion) claim breakthroughs in magnet technology, alternative confinement. If technical progress accelerates beyond current trajectory, probability increases significantly. If fundamental engineering challenges persist, decreases.\"\n    },\n    {\n      \"name\": \"regulatory_pathway_clarity\",\n      \"display_name\": \"Regulatory Pathway Clarity\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 1.1,\n      \"p95\": 1.5,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"US NRC and UK regulators are developing fusion-specific frameworks (not treating as fission). Clear regulatory pathways could accelerate deployment by 2-3 years. However, first-of-kind licensing could face unexpected delays. UK's Fusion Energy Act 2021 and US bipartisan support are positive signals.\"\n    },\n    {\n      \"name\": \"private_funding_sustainability\",\n      \"display_name\": \"Private Funding Sustainability\",\n      \"type\": \"continuous\",\n      \"p5\": 0.8,\n      \"p50\": 1.15,\n      \"p95\": 1.6,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"$5B+ invested in private fusion since 2021. Companies like Commonwealth Fusion (SPARC by 2025), Helion (2028 target), TAE Technologies well-funded. Sustained funding through 2020s critical for meeting 2031 timeline. Economic downturn or failed demonstrations could reduce funding. Success breeds more investment.\"\n    },\n    {\n      \"name\": \"grid_integration_readiness\",\n      \"display_name\": \"Grid Integration Readiness\",\n      \"type\": \"continuous\",\n      \"p5\": 0.75,\n      \"p50\": 0.95,\n      \"p95\": 1.2,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"'Commercial service' requires actual grid connection and power delivery, not just demonstration. Grid interconnection queues, transmission infrastructure, utility contracts take 3-5 years. This is a downward pressure on probability as it's often overlooked. However, some companies planning industrial/data center direct supply which is faster.\"\n    },\n    {\n      \"name\": \"demonstration_success_by_2027\",\n      \"display_name\": \"Successful Net-Positive Demonstration by 2027\",\n      \"type\": \"binary\",\n      \"probability\": 0.35,\n      \"impact_if_true\": 2.5,\n      \"impact_if_false\": 0.3,\n      \"rationale\": \"For commercial service by 2031, a working net-positive reactor demonstration is needed by ~2027 to allow 4 years for scaling, regulatory approval, and deployment. Commonwealth Fusion's SPARC (2025 target), other projects targeting mid-2020s. If demonstration succeeds, dramatically increases probability. If all fail, commercial service by 2031 becomes highly unlikely.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"National Ignition Facility (Lawrence Livermore), December 2022\",\n      \"summary\": \"First controlled fusion reaction achieving net energy gain\",\n      \"key_findings\": [\n        \"Achieved 3.15 MJ output from 2.05 MJ laser energy input\",\n        \"Total facility energy input was ~300 MJ, so not net-positive at system level\",\n        \"Demonstrates scientific feasibility but engineering challenges remain enormous\",\n        \"Inertial confinement approach; different from magnetic confinement used by most commercial ventures\"\n      ],\n      \"relevance\": 0.95\n    },\n    {\n      \"source\": \"Commonwealth Fusion Systems announcements and SPARC project timeline\",\n      \"summary\": \"Leading private fusion company with aggressive timeline\",\n      \"key_findings\": [\n        \"Raised $1.8B, backed by Bill Gates, Google\",\n        \"SPARC demonstration reactor targeted for 2025\",\n        \"ARC commercial pilot plant planned for early 2030s\",\n        \"Uses high-temperature superconducting magnets (breakthrough technology)\",\n        \"Claims Q>10 achievable with tokamak design\"\n      ],\n      \"relevance\": 0.90\n    },\n    {\n      \"source\": \"Helion Energy and Microsoft power purchase agreement, May 2023\",\n      \"summary\": \"First commercial fusion power purchase agreement\",\n      \"key_findings\": [\n        \"Microsoft agreed to purchase fusion power by 2028\",\n        \"Helion uses pulsed non-ignition approach (different from tokamak)\",\n        \"Target: 50 MWe facility operational by 2028\",\n        \"Agreement includes penalties if power not delivered\",\n        \"Demonstrates commercial confidence but timeline is aggressive\"\n      ],\n      \"relevance\": 0.85\n    },\n    {\n      \"source\": \"Fusion Industry Association 'Global Fusion Industry in 2023' report\",\n      \"summary\": \"Industry-wide assessment of commercial fusion timeline\",\n      \"key_findings\": [\n        \"Over 40 private fusion companies globally\",\n        \"Cumulative private investment exceeds $5 billion\",\n        \"Most companies target 2030s for commercial operation\",\n        \"Median company timeline: demonstration by 2028, commercial by 2033\",\n        \"Wide variety of approaches: tokamak, stellarator, inertial, alternative concepts\"\n      ],\n      \"relevance\": 0.88\n    },\n    {\n      \"source\": \"ITER project status (international collaboration)\",\n      \"summary\": \"Largest fusion project, but timeline extends beyond 2031\",\n      \"key_findings\": [\n        \"First plasma now delayed to 2025\",\n        \"Deuterium-tritium operations not until 2035+\",\n        \"Demonstrates that even well-funded projects face major delays\",\n        \"ITER is research facility, not commercial plant\",\n        \"Private sector explicitly trying to move faster than ITER model\"\n      ],\n      \"relevance\": 0.70\n    }\n  ],\n  \"model_expression\": \"base_rate * technical_readiness_acceleration * regulatory_pathway_clarity * private_funding_sustainability * grid_integration_readiness * (demonstration_success_by_2027 ? 2.5 : 0.3)\",\n  \"confidence\": 0.75,\n  \"reasoning\": \"High confidence in the model structure because: (1) Recent concrete developments (NIF breakthrough, Microsoft PPA, major funding) provide solid data points; (2) Multiple independent sources confirm timeline claims and technical progress; (3) Clear reference class of energy technology commercialization. Confidence reduced from higher level because: (1) Fusion has historically missed timelines by decades; (2) 'Commercial service' definition ambiguous (could mean first kWh delivered vs. meaningful grid contribution); (3) Private company claims are optimistic and unverified; (4) Significant technical uncertainties remain in scaling from demonstration to commercial operation. The 15% base rate reflects genuine recent progress while acknowledging historical pattern of overpromising.\"\n}\n```",
       "relevance": 0.5,
       "date": "2026-03-06",
-      "key_findings": [
-        "\"base_rate\": {",
-        "\"reference_class\": \"Major energy technology commercialization timelines\",",
-        "\"historical_frequency\": 0.15,",
-        "\"sample_size\": 20,",
-        "\"reasoning\": \"Looking at analogous transformative energy technologies: nuclear fission (1942 discovery to 1956 commercial), solar PV (1954 to 1980s commercial), wind turbines (1970s to 1990s commercial), fracking (1947 to 2000s commercial). Average time from breakthrough to commercial service is 25-40 years. Fusion has been 'decades away' since the 1950s. However, recent breakthroughs (NIF achieving net energy gain in Dec 2022, multiple private companies claiming 2030s timelines) suggest acceleration. Base rate of 15% reflects that while fusion has never been commercialized, we're in an unprecedented period of progress with ~7 years remaining.\"",
-        "\"drivers\": [",
-        "\"name\": \"technical_readiness_acceleration\",",
-        "\"display_name\": \"Technical Readiness Acceleration\",",
-        "\"type\": \"continuous\",",
-        "\"p5\": 0.6,"
-      ]
+      "key_findings": []
     },
     {
       "id": "entity_investigator_0",
       "source": "Agent: entity_investigator (Claude API)",
-      "summary": "Melodifestivalen demonstrates superior competitive quality among Eurovision national selections based on: (1) 75% top-10 Eurovision placement rate 2020-2024 including one victory, (2) production budgets 5-10x higher than typical national selections enabling professional infrastructure, (3) consistent participation from international hit songwriters rather than amateur submissions, (4) viewership of 3-4 million per show indicating cultural significance that attracts top talent, and (5) expert consensus ranking it among top 3 global national selections. Format remains stable through 2026 with no major structural changes planned.",
+      "summary": "Private fusion funding has reached unprecedented levels ($6B+ total) with several well-capitalized companies targeting late 2020s demonstrations. However, funding declined 63% in 2023, and the critical 2025-2030 period requires sustained multi-billion dollar commitments before any commercial revenue. The 2031 timeline is extremely aggressive given no private company has achieved sustained net gain, regulatory frameworks are immature, and historical fusion timelines slip significantly. Private funding sustainability is the key bottleneck—technical progress is necessary but insufficient without continued capital through the pre-commercial phase.",
       "relevance": 0.78,
       "date": "2026-03-06",
       "key_findings": [
-        "Sweden's Melodifestivalen has demonstrated exceptional Eurovision success 2020-2025: Tusse (2021) placed 14th, Cornelia Jakobs (2022) placed 4th with strong jury support (jury 3rd, televote 9th), Loreen (2023) won Eurovision with 'Tattoo' achieving the second-highest point total in contest history (583 points), and Marcus & Martinus (2024) placed 7th. This represents a 75% top-10 finish rate in this period, significantly above the ~30% baseline for all competing countries.",
-        "Melodifestivalen operates with substantially higher production budgets than most national selections: SVT's annual Melodifestivalen budget is estimated at 100-150 million SEK ($9-14 million USD), supporting six live shows across multiple cities with arena-scale production. By comparison, most national selections operate on budgets under $2 million. The format attracts 3-4 million Swedish viewers per show (40%+ of population), making it Sweden's most-watched annual TV event and creating commercial viability that funds professional infrastructure including dedicated production teams, choreographers, and staging specialists.",
-        "Melodifestivalen attracts top-tier international songwriting talent: Analysis of 2020-2024 entries shows consistent participation from Eurovision-winning and internationally successful songwriters. Examples include: Joy Deb, Linnea Deb, and Jimmy Jansson (multiple Melodifestivalen winners), Thomas G:son (6 Eurovision entries for different countries), and international collaborators like David Kreuger. The 2023 winner 'Tattoo' was written by established hitmakers including Cazzi Opeia. This contrasts with many national selections that rely primarily on domestic amateur submissions.",
-        "Expert consensus from Eurovision analysts (Wiwibloggs, ESCToday, OGAE networks) consistently ranks Melodifestivalen in the top 3 national selections globally for quality, alongside Italy's Sanremo Festival and occasionally France's selection process. The 2024 Eurovision season saw multiple analyst articles citing Melodifestivalen's 'professional polish' and 'competitive depth' as benchmarks. However, some analysts note potential creative stagnation, with criticism that the 'Melodifestivalen sound' (schlager-pop production) may be becoming formulaic.",
-        "Structural format changes for 2024-2026: SVT announced in late 2023 that Melodifestivalen would maintain its traditional six-show format (4 heats, 1 second chance round, 1 final) through 2026, rejecting proposals to reduce shows or move to a single-night format. However, minor adjustments include increased emphasis on live vocals (reduced backing track allowances) and revised jury composition to include more international music industry professionals. No major budget cuts are planned, with SVT confirming continued multi-city touring format through 2026."
+        "Commonwealth Fusion Systems (CFS) has raised over $2 billion in private funding as of 2024, the largest private fusion investment to date, with backing from Bill Gates, Google, and major energy companies. CFS aims for commercial operation of its SPARC demonstration plant by 2025 and grid power from ARC by early 2030s.",
+        "Total private fusion investment reached approximately $6.21 billion across 43+ companies by end of 2023 (per Fusion Industry Association), with $1.4 billion raised in 2023 alone despite broader venture capital downturn. However, this represents a 63% decline from 2022's record $2.83 billion, indicating potential funding volatility.",
+        "Private fusion companies face a 'valley of death' between 2025-2030 where demonstration plants must prove net energy gain at scale. Most private funding has focused on CAPEX for first facilities; sustained operations, regulatory approval processes, and scaling to commercial deployment require estimated $5-10 billion additional per major project.",
+        "Key private players beyond CFS include: Helion Energy ($2.2B raised, targeting 2028 for first electricity to Microsoft), TAE Technologies ($1.2B+ raised), and Type One Energy. However, none have yet achieved sustained net energy gain, and timelines have historically slipped 3-5 years from initial projections.",
+        "Private funding sustainability depends critically on: (1) ITER and National Ignition Facility results validating fusion physics (NIF achieved net gain Dec 2022, positive signal), (2) continued investor appetite through 2025-2028 demonstration phase without revenue, (3) regulatory pathway clarity (still undefined in most jurisdictions for fusion plants), and (4) competition from advancing renewable + storage cost curves."
       ]
     },
     {
       "id": "market_research_0",
       "source": "Agent: market_research (Claude API)",
-      "summary": "The top private fusion companies have made significant technical progress in recent years, achieving important milestones such as high plasma temperatures and confinement times. However, they have not yet demonstrated net positive fusion energy or achieved their ambitious commercial timelines, which remain to be independently verified. Ongoing partnerships with national laboratories and universities provide some validation of their approaches, but more concrete demonstrations of their technologies will be needed to assess the credibility of their 2028-2031 commercial timeline claims.",
+      "summary": "The technical readiness of commercial fusion power has accelerated in recent years, with major projects like ITER making significant progress. However, substantial technical challenges remain, and further R&D and testing will be required before a commercial fusion power plant can be operational.",
       "relevance": 0.75,
       "date": "2026-03-06",
       "key_findings": [
-        "Commonwealth Fusion Systems (CFS) has achieved plasma temperatures of over 100 million degrees Celsius and confinement times of over 1 second in its SPARC tokamak experiment, which are important milestones towards demonstrating net positive fusion energy. However, they have not yet achieved a Q-factor (ratio of fusion power output to input power) greater than 1, which is required for commercial viability.",
-        "Helion Energy has demonstrated plasma temperatures of over 100 million degrees Celsius and confinement times of over 1 second in its Magneto-Inertial Fusion Demonstration (MIFED) experiment. They claim to be on track for a 50 MW fusion power demonstration by 2028, but this timeline has not been independently verified.",
-        "TAE Technologies has achieved plasma temperatures of over 50 million degrees Celsius and confinement times of over 1 second in its Norman experiment. They are currently constructing a larger facility called Copernicus, which they claim will demonstrate net positive fusion energy by 2030, but this timeline has not been independently verified.",
-        "General Fusion and Tokamak Energy have both made progress on their respective fusion reactor designs, but have not yet achieved the same level of verified technical milestones as the other companies in this analysis."
+        "Several major fusion energy projects have made significant technical progress in recent years, including the ITER project in France which aims to demonstrate the feasibility of fusion power and is on track to begin operations in the late 2020s.",
+        "Advances in superconducting magnets, plasma confinement, and other key fusion technologies have accelerated the technical readiness of fusion power, with some experts predicting that a commercial fusion power plant could be operational by the early 2030s.",
+        "However, significant technical challenges remain, including achieving the necessary plasma temperatures and densities, handling the extreme heat and radiation, and developing reliable and cost-effective reactor designs. Further R&D and testing will be required to fully demonstrate the technical readiness of commercial fusion power."
       ]
     }
   ]

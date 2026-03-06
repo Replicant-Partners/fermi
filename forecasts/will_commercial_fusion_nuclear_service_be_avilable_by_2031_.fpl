@@ -163,18 +163,18 @@ evidence fermi_evidence_1772765105 {
 
 evidence entity_investigator_0 {
     source: "Agent: entity_investigator (Claude API)"
-    summary: "Melodifestivalen demonstrates superior competitive quality among Eurovision national selections based on: (1) 75% top-10 Eurovision placement rate 2020-2024 including one victory, (2) production budgets 5-10x higher than typical national selections enabling professional infrastructure, (3) consistent participation from international hit songwriters rather than amateur submissions, (4) viewership of 3-4 million per show indicating cultural significance that attracts top talent, and (5) expert consensus ranking it among top 3 global national selections. Format remains stable through 2026 with no major structural changes planned."
+    summary: "Private fusion funding has reached unprecedented levels ($6B+ total) with several well-capitalized companies targeting late 2020s demonstrations. However, funding declined 63% in 2023, and the critical 2025-2030 period requires sustained multi-billion dollar commitments before any commercial revenue. The 2031 timeline is extremely aggressive given no private company has achieved sustained net gain, regulatory frameworks are immature, and historical fusion timelines slip significantly. Private funding sustainability is the key bottleneck—technical progress is necessary but insufficient without continued capital through the pre-commercial phase."
     relevance: 0.78p
     date: 2026-03-06
 }
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "The top private fusion companies have made significant technical progress in recent years, achieving important milestones such as high plasma temperatures and confinement times. However, they have not yet demonstrated net positive fusion energy or achieved their ambitious commercial timelines, which remain to be independently verified. Ongoing partnerships with national laboratories and universities provide some validation of their approaches, but more concrete demonstrations of their technologies will be needed to assess the credibility of their 2028-2031 commercial timeline claims."
+    summary: "The technical readiness of commercial fusion power has accelerated in recent years, with major projects like ITER making significant progress. However, substantial technical challenges remain, and further R&D and testing will be required before a commercial fusion power plant can be operational."
     relevance: 0.75p
     date: 2026-03-06
 }
 
-model: technical_readiness_acceleration * regulatory_pathway_clarity * private_funding_sustainability * grid_integration_readiness * (if demonstration_success_by_2027 then 1.3 else 1.0)
+model: ((((technical_readiness_acceleration * regulatory_pathway_clarity) * private_funding_sustainability) * grid_integration_readiness) * (if demonstration_success_by_2027 then 1.3 else 1))
 
 simulate 10000 iterations
