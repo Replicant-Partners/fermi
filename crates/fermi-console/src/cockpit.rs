@@ -1926,6 +1926,9 @@ impl CockpitState {
                                 if let Some(expl) = state_json.get("inside_view_explanation").and_then(|v| v.as_str()) {
                                     self.inside_view_explanation = expl.to_string();
                                 }
+                                if let Some(conf) = state_json.get("forecast_confidence").and_then(|v| v.as_f64()) {
+                                    self.forecast_confidence = conf;
+                                }
                                 // Restore evidence into AST
                                 if let Some(ev_arr) = state_json.get("evidence").and_then(|v| v.as_array()) {
                                     for ev in ev_arr {
@@ -2071,6 +2074,7 @@ impl CockpitState {
                     "current_version": self.current_version,
                     "predicted_probability": self.predicted_probability,
                     "inside_view_explanation": self.inside_view_explanation,
+                    "forecast_confidence": self.forecast_confidence,
                     "versions": self.versions.iter().map(|v| serde_json::json!({
                         "version": v.version,
                         "timestamp": v.timestamp,
@@ -2407,6 +2411,20 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                             .min_w(px(0.0))
                             .child(state.inside_view_explanation.clone()),
                     )
+                .when(state.forecast_confidence > 0.0, |el| {
+                    let conf_label = if state.forecast_confidence > 0.7 { "High" }
+                        else if state.forecast_confidence > 0.4 { "Medium" }
+                        else { "Low" };
+                    let conf_color = if state.forecast_confidence > 0.7 { theme::GREEN }
+                        else if state.forecast_confidence > 0.4 { theme::GOLD }
+                        else { theme::RED };
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(conf_color))
+                            .child(format!("Confidence: {} ({:.0}%)", conf_label, state.forecast_confidence * 100.0)),
+                    )
+                })
                 })
                 .when(state.orchestration_running, |el| {
                     el.child(
