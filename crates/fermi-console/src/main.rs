@@ -248,6 +248,7 @@ struct LocalForecast {
     driver_count: usize,
     evidence_count: usize,
     confidence: f64,
+    version_probs: Vec<f64>,
 }
 
 struct FermiConsole {
@@ -644,7 +645,7 @@ impl FermiConsole {
 
                         // Load state.json for probability and version
                         let state_path = path.with_extension("state.json");
-                        let (probability, base_rate, version, evidence_count, confidence) = 
+                        let (probability, base_rate, version, evidence_count, confidence, version_probs) = 
                             if let Ok(state_text) = std::fs::read_to_string(&state_path) {
                                 if let Ok(sj) = serde_json::from_str::<serde_json::Value>(&state_text) {
                                     (
@@ -653,14 +654,15 @@ impl FermiConsole {
                                         sj.get("current_version").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
                                         sj.get("evidence").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
                                         sj.get("forecast_confidence").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                        sj.get("versions").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.get("probability").and_then(|p| p.as_f64())).collect()).unwrap_or_default(),
                                     )
-                                } else { (0.5, 0.0, 0, 0, 0.0) }
-                            } else { (0.5, 0.0, 0, 0, 0.0) };
+                                } else { (0.5, 0.0, 0, 0, 0.0, vec![]) }
+                            } else { (0.5, 0.0, 0, 0, 0.0, vec![]) };
 
                         self.local_forecasts.push(LocalForecast {
                             filename, question, timestamp,
                             probability, base_rate, version,
-                            driver_count, evidence_count, confidence,
+                            driver_count, evidence_count, confidence, version_probs,
                         });
                     }
                 }
@@ -1840,6 +1842,27 @@ impl FermiConsole {
                                                             .rounded(px(3.0))
                                                             .bg(theme::bg())
                                                             .child(label),
+                                                    )
+                                                })
+                                                // Mini index sparkline
+                                                .when(forecast.version_probs.len() > 1, |el| {
+                                                    let history: Vec<crate::charts::IndexPoint> = forecast.version_probs.iter()
+                                                        .enumerate()
+                                                        .map(|(i, &p)| crate::charts::IndexPoint {
+                                                            label: format!("v{}", i + 1),
+                                                            inside_view: p * 100.0,
+                                                            outside_view: forecast.base_rate * 100.0,
+                                                        })
+                                                        .collect();
+                                                    let chart_w = 100u32;
+                                                    let chart_h = 28u32;
+                                                    let rgb_buf = crate::charts::render_index_chart(
+                                                        &history, history.len() - 1, chart_w, chart_h);
+                                                    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                                                    el.child(
+                                                        gpui::img(gpui::ImageSource::Render(render_img))
+                                                            .w(gpui::px(chart_w as f32))
+                                                            .h(gpui::px(chart_h as f32)),
                                                     )
                                                 })
                                         }

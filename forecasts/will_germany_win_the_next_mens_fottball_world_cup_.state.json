@@ -1,0 +1,90 @@
+{
+  "current_version": 3,
+  "predicted_probability": 0.048,
+  "inside_view_explanation": "Starting from a 4.8% base rate, our model slightly confirms the probability to 4.8%. The key factors are: current_fifa_ranking_strength, squad_quality_trajectory, coaching_stability. Most influential: coaching_stability (87%), current_fifa_ranking_strength (9%), squad_quality_trajectory (5%).",
+  "forecast_confidence": 0.35,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-06 10:41",
+      "probability": 0.048,
+      "change_summary": "Initial forecast"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-06 10:42",
+      "probability": 0.048,
+      "change_summary": "v2 update"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-06 10:42",
+      "probability": 0.048,
+      "change_summary": "v3 update"
+    }
+  ],
+  "sim_results": {
+    "mean": 0.8583455390409926,
+    "median": 0.8033052235513922,
+    "p5": 0.45381490645579226,
+    "p95": 1.448336277028257,
+    "std_dev": 0.31123346141113867,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "European teams winning FIFA Men's World Cup (1930-2022)",
+    "historical_frequency": 0.048,
+    "sample_size": 21,
+    "source": "macro_forecaster",
+    "reasoning": "Germany has won 4 of 21 World Cups (1954, 1974, 1990, 2014). However, using individual country frequency is too narrow. Better reference class: European teams win ~60% of World Cups (12/21), and among 8-10 competitive European nations, Germany's share is roughly 1/8 to 1/10 of European wins, yielding ~6-8% base rate. Adjusting for current competitive landscape with more parity, 4.8% (1/21) is reasonable baseline."
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1772792874",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"European teams winning FIFA Men's World Cup (1930-2022)\",\n    \"historical_frequency\": 0.048,\n    \"sample_size\": 21,\n    \"reasoning\": \"Germany has won 4 of 21 World Cups (1954, 1974, 1990, 2014). However, using individual country frequency is too narrow. Better reference class: European teams win ~60% of World Cups (12/21), and among 8-10 competitive European nations, Germany's share is roughly 1/8 to 1/10 of European wins, yielding ~6-8% base rate. Adjusting for current competitive landscape with more parity, 4.8% (1/21) is reasonable baseline.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"current_fifa_ranking_strength\",\n      \"display_name\": \"Current FIFA Ranking & Recent Performance\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 0.95,\n      \"p95\": 1.15,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Germany currently ranked 13th (FIFA, Dec 2024), down from traditional top-5 position. Recent performance: group stage exit 2018 WC, Round of 16 exit 2022 WC, quarterfinal Euro 2024. This suggests 5-30% reduction from historical strength, with median ~5% reduction.\"\n    },\n    {\n      \"name\": \"squad_quality_trajectory\",\n      \"display_name\": \"Squad Quality & Youth Development Trajectory\",\n      \"type\": \"continuous\",\n      \"p5\": 0.85,\n      \"p50\": 1.05,\n      \"p95\": 1.25,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Germany has strong youth development (U-21 Euro champions 2021). Emerging talents like Musiala, Wirtz, Havertz. However, transitional phase post-2014 golden generation. By 2026 WC, squad should be stronger; by 2030, potentially peak. Modest positive trajectory expected.\"\n    },\n    {\n      \"name\": \"coaching_stability\",\n      \"display_name\": \"Coaching Quality & Tactical System\",\n      \"type\": \"continuous\",\n      \"p5\": 0.9,\n      \"p50\": 1.1,\n      \"p95\": 1.3,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Julian Nagelsmann appointed 2023, well-regarded tactician. Stability and modern approach could provide 10-30% boost over previous coaching instability. Home advantage for Euro 2024 showed improved organization.\"\n    },\n    {\n      \"name\": \"competitive_parity_increase\",\n      \"display_name\": \"Global Competitive Parity Effect\",\n      \"type\": \"continuous\",\n      \"p5\": 0.75,\n      \"p50\": 0.85,\n      \"p95\": 0.95,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Increased global competition: South American teams strengthening, African teams improving, Asian confederation growing. More teams capable of upsets. Traditional powers' win probability compressed by 5-25%, median ~15% reduction.\"\n    },\n    {\n      \"name\": \"tournament_expansion_effect\",\n      \"display_name\": \"48-Team Format Impact (2026+)\",\n      \"type\": \"continuous\",\n      \"p5\": 0.95,\n      \"p50\": 1.05,\n      \"p95\": 1.15,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"2026 WC expands to 48 teams. More matches, potentially easier group stage for strong teams, but more fatigue. Net effect for top-tier European team: slight positive (easier path early) offset by increased randomness. Modest 5% boost likely.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"FIFA World Rankings (December 2024)\",\n      \"summary\": \"Germany ranked 13th globally, significant decline from historical top-5 status\",\n      \"key_findings\": [\n        \"Germany at 13th place, lowest ranking in decades\",\n        \"Behind Spain (1st), France (2nd), England (4th), Portugal (6th), Netherlands (7th)\",\n        \"Reflects poor 2022 WC and mixed recent results\"\n      ],\n      \"relevance\": 0.9\n    },\n    {\n      \"source\": \"Historical World Cup Results (FIFA archives)\",\n      \"summary\": \"Germany's World Cup performance history and European dominance patterns\",\n      \"key_findings\": [\n        \"4 World Cup wins (1954, 1974, 1990, 2014) - joint 2nd most\",\n        \"European teams won 12 of 21 World Cups (57%)\",\n        \"Recent trend: 2018 group exit, 2022 group exit - unprecedented consecutive failures\",\n        \"Average gap between German wins: 20 years (1954-74: 20y, 1974-90: 16y, 1990-2014: 24y)\"\n      ],\n      \"relevance\": 0.95\n    },\n    {\n      \"source\": \"UEFA Euro 2024 Performance Analysis\",\n      \"summary\": \"Germany's recent competitive performance as tournament hosts\",\n      \"key_findings\": [\n        \"Reached quarterfinals as hosts, lost to eventual winners Spain\",\n        \"Showed improved organization under Nagelsmann\",\n        \"Young core (Musiala, Wirtz) performed well\",\n        \"Defensive vulnerabilities remain\"\n      ],\n      \"relevance\": 0.85\n    },\n    {\n      \"source\": \"2026 & 2030 World Cup Format Changes\",\n      \"summary\": \"Tournament structure evolution affecting probability calculations\",\n      \"key_findings\": [\n        \"2026: 48 teams (up from 32), hosted by USA/Canada/Mexico\",\n        \"2030: Centenary edition, multi-continent hosting\",\n        \"More matches increases fatigue and upset potential\",\n        \"Group stage easier for strong teams, knockout rounds more unpredictable\"\n      ],\n      \"relevance\": 0.75\n    },\n    {\n      \"source\": \"Global Football Competitive Analysis (2020-2024)\",\n      \"summary\": \"Increasing parity in international football\",\n      \"key_findings\": [\n        \"More nations reaching knockout stages from diverse confederations\",\n        \"Traditional powers' win rates declining\",\n        \"Investment in football infrastructure globally increasing\",\n        \"Tactical knowledge dissemination reducing European advantage\"\n      ],\n      \"relevance\": 0.8\n    }\n  ],\n  \"model_expression\": \"base_rate * current_fifa_ranking_strength * squad_quality_trajectory * coaching_stability * competitive_parity_increase * tournament_expansion_effect\",\n  \"confidence\": 0.75,\n  \"reasoning\": \"High confidence in historical data and current rankings (objective metrics). Moderate confidence in trajectory projections - squad development and coaching impact are inherently uncertain over multi-year horizons. The 'next' World Cup is ambiguous (2026 or 2030?), adding uncertainty. Model assumes multiplicative independence of factors, which is reasonable but imperfect. Base rate calculation is robust, using appropriate reference class. Driver estimates are conservative and grounded in observable trends.\"\n}\n```",
+      "relevance": 0.5,
+      "date": "2026-03-06",
+      "key_findings": [
+        "\"base_rate\": {",
+        "\"reference_class\": \"European teams winning FIFA Men's World Cup (1930-2022)\",",
+        "\"historical_frequency\": 0.048,",
+        "\"sample_size\": 21,",
+        "\"reasoning\": \"Germany has won 4 of 21 World Cups (1954, 1974, 1990, 2014). However, using individual country frequency is too narrow. Better reference class: European teams win ~60% of World Cups (12/21), and among 8-10 competitive European nations, Germany's share is roughly 1/8 to 1/10 of European wins, yielding ~6-8% base rate. Adjusting for current competitive landscape with more parity, 4.8% (1/21) is reasonable baseline.\"",
+        "\"drivers\": [",
+        "\"name\": \"current_fifa_ranking_strength\",",
+        "\"display_name\": \"Current FIFA Ranking & Recent Performance\",",
+        "\"type\": \"continuous\",",
+        "\"p5\": 0.7,"
+      ]
+    },
+    {
+      "id": "entity_investigator_0",
+      "source": "Agent: entity_investigator (Claude API)",
+      "summary": "Germany's current FIFA ranking (11-16th as of late 2024) represents a significant decline from their historical dominance and places them outside the tier of favorites for World Cup victory. Historical data shows teams ranked outside the top-10 rarely win World Cups, with Germany's current position correlating to approximately 3-8% win probability based on ranking alone. However, rankings are dynamic and Germany has 18+ months to improve positioning before 2026.",
+      "relevance": 0.72,
+      "date": "2026-03-06",
+      "key_findings": [
+        "Germany's FIFA ranking has fluctuated significantly in recent years. As of late 2024, Germany ranked around 11-16th globally, down from their historical top-5 position. This represents a notable decline from their 2014 World Cup winning period when they were ranked 1st-2nd.",
+        "Historical analysis shows FIFA rankings have moderate predictive power for World Cup outcomes. Top-10 ranked teams win approximately 70-80% of World Cup matches, but only 40-50% of tournaments are won by the top-3 ranked teams at tournament start. Germany's current mid-table ranking (11-16) correlates with roughly 3-8% historical win probability.",
+        "Germany's ranking trajectory matters: they've shown volatility with poor performances in 2018 (group stage exit, ranked 15th afterward) and 2022 (group stage exit), but have periods of recovery. Their ranking strength is currently below traditional powerhouses like Argentina (1st), France (2nd-3rd), and Brazil (4th-6th).",
+        "FIFA ranking methodology changed in 2018 to use Elo-based system, making recent rankings more reflective of actual match results rather than confederation weighting. This means Germany's current ranking more accurately reflects competitive strength than pre-2018 rankings would have.",
+        "Ranking momentum analysis: Germany would need to climb 5-10 positions before the next World Cup (2026) to reach historically competitive range (top-6) associated with 12-18% win probability. Their recent Nations League and qualifying performances will be critical indicators."
+      ]
+    },
+    {
+      "id": "market_research_0",
+      "source": "Agent: market_research (Claude API)",
+      "summary": "The research indicates that Germany's current FIFA ranking of #13 and recent tournament performances suggest they have a lower probability of winning the 2026 World Cup compared to eventual champions historically. Their Elo rating decline, betting market odds, and expert consensus all point to Germany being outside the top tier of contenders for the 2026 title.",
+      "relevance": 0.85,
+      "date": "2026-03-06",
+      "key_findings": [
+        "Historical data shows teams ranked 10-15 in FIFA have a 30-40% chance of reaching the World Cup quarterfinals, based on analysis of the last 4 World Cups.",
+        "Germany's Elo rating has declined from 2054 in 2018 to 2029 in 2024, a 1.2% drop, which is below the historical baseline increase of 1.5% for eventual World Cup winners in the 4 years prior to the tournament.",
+        "Betting markets currently give Germany a 12% implied probability of winning the 2026 World Cup, which is lower than the 15-20% typical for eventual champions in the year before the World Cup.",
+        "Germany's recent tournament exits (2018 group stage, 2022 R16, Euro 2024 QF) are weaker than the pre-tournament form of eventual World Cup winners, who typically reach at least the semifinals in the major tournament immediately prior.",
+        "Expert analyst consensus is that Germany is currently the 5th or 6th strongest team globally, behind the likes of Brazil, France, England, and potentially Spain or Argentina, reducing their chances of winning the 2026 World Cup."
+      ]
+    }
+  ]
+}
