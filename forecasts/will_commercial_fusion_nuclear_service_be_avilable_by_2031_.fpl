@@ -1,0 +1,148 @@
+question "will commercial fusion nuclear service be avilable by 2031?"
+
+driver strength_factor continuous {
+    distribution: triangular(0.5, 1, 1.5)
+    unit: "multiplier"
+    rationale: "How strong is the case for this outcome? 1.0 = neutral"
+}
+
+driver conditions continuous {
+    distribution: triangular(0.7, 1, 1.3)
+    unit: "multiplier"
+    rationale: "Are conditions favorable (>1) or unfavorable (<1)?"
+}
+
+driver disruption binary {
+    probability: 0.15p
+    impact_multiplier: 1.5
+    rationale: "Probability of a disruptive event that amplifies the outcome"
+}
+
+evidence fermi_evidence_1772761823 {
+    source: "Agent: fermi (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"Major energy technology commercialization timelines\",
+    \"historical_frequency\": 0.15,
+    \"sample_size\": 20,
+    \"reasoning\": \"Looking at major energy technologies (nuclear fission, solar PV, wind, natural gas turbines, battery storage), the base rate for going from 'demonstration phase' to 'commercial service available' within a 7-year window is approximately 15%. Most energy technologies take 15-30 years from first demonstration to commercial availability. Fusion is currently in the demonstration phase (ITER under construction, NIF achieved ignition in 2022), making 2031 a very aggressive timeline.\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"technical_breakthrough_momentum\",
+      \"display_name\": \"Technical Breakthrough Momentum\",
+      \"type\": \"continuous\",
+      \"p5\": 0.6,
+      \"p50\": 1.0,
+      \"p95\": 2.5,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"NIF achieved fusion ignition (Q>1) in December 2022, repeated multiple times in 2023-2024. Multiple private companies (Commonwealth Fusion, TAE, Helion) claim 2030s timelines. However, 'ignition' is far from 'commercial service' - need sustained burn, tritium breeding, materials that survive neutron bombardment, and economic viability. P50=1.0 reflects these breakthroughs are necessary but not sufficient. P95=2.5 if multiple approaches succeed simultaneously. P5=0.6 if technical barriers prove harder than expected.\"
+    },
+    {
+      \"name\": \"regulatory_pathway_speed\",
+      \"display_name\": \"Regulatory Approval Speed\",
+      \"type\": \"continuous\",
+      \"p5\": 0.4,
+      \"p50\": 0.8,
+      \"p95\": 1.3,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Fusion has no regulatory framework yet. NRC and DOE are developing fusion-specific regulations. Unlike fission, fusion has inherent safety advantages (no meltdown risk, less radioactive waste), which could accelerate approval. However, establishing entirely new regulatory pathways typically takes 5-10 years. P50=0.8 reflects regulatory uncertainty as a drag. P95=1.3 if fast-track approval granted. P5=0.4 if regulatory delays are severe.\"
+    },
+    {
+      \"name\": \"private_investment_acceleration\",
+      \"display_name\": \"Private Investment Acceleration\",
+      \"type\": \"continuous\",
+      \"p5\": 0.7,
+      \"p50\": 1.2,
+      \"p95\": 2.0,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Private fusion investment exceeded $5B by 2023 (Fusion Industry Association data). Companies like Commonwealth Fusion (backed by Bill Gates, Google) targeting 2030-2033. This represents 10x increase in funding vs 2010s. P50=1.2 reflects this acceleration helps but doesn't guarantee success. P95=2.0 if funding doubles again and accelerates timelines. P5=0.7 if funding winter hits cleantech sector.\"
+    },
+    {
+      \"name\": \"definition_ambiguity\",
+      \"display_name\": \"Definition of 'Commercial Service Available'\",
+      \"type\": \"continuous\",
+      \"p5\": 0.5,
+      \"p50\": 1.1,
+      \"p95\": 2.5,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Critical definitional issue: Does 'available' mean (a) first kWh sold to grid, (b) utility-scale deployment, or (c) economically competitive? If (a), much more likely - a demonstration plant selling token power could qualify. If (c), nearly impossible by 2031. P50=1.1 assumes 'available' means at least one facility selling power commercially, even if subsidized/demonstration scale. P95=2.5 for very loose definition. P5=0.5 for strict economic competitiveness requirement.\"
+    },
+    {
+      \"name\": \"iter_delay_impact\",
+      \"display_name\": \"ITER Delay Spillover Effects\",
+      \"type\": \"binary\",
+      \"probability\": 0.7,
+      \"impact_multiplier_if_true\": 0.85,
+      \"impact_multiplier_if_false\": 1.0,
+      \"rationale\": \"ITER (international tokamak) now delayed to 2039 for full operation, originally 2025. 70% chance these delays reflect deeper technical challenges that also affect private ventures. If true, reduces probability by 15%. ITER delays have already dampened some investor enthusiasm and revealed materials/engineering challenges.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"National Ignition Facility (Lawrence Livermore National Laboratory), December 2022 & subsequent shots\",
+      \"summary\": \"First controlled fusion reaction achieving net energy gain (Q>1.5)\",
+      \"key_findings\": [
+        \"Ignition achieved with 2.05 MJ input, 3.15 MJ fusion output\",
+        \"Repeated successfully in 2023-2024, demonstrating reproducibility\",
+        \"Inertial confinement approach, different from tokamak designs\",
+        \"Still requires ~300 MJ of wall-plug power for lasers, so net energy negative overall\"
+      ],
+      \"relevance\": 0.95
+    },
+    {
+      \"source\": \"Commonwealth Fusion Systems (CFS) SPARC project announcements, 2023-2024\",
+      \"summary\": \"Private company targeting 2030s commercial fusion with high-temperature superconducting magnets\",
+      \"key_findings\": [
+        \"Raised $2B+ in funding, largest private fusion company\",
+        \"SPARC demonstration plant planned for 2026-2027\",
+        \"ARC commercial plant targeted for early 2030s\",
+        \"Uses tokamak design with breakthrough magnet technology (20+ tesla fields)\"
+      ],
+      \"relevance\": 0.90
+    },
+    {
+      \"source\": \"Fusion Industry Association 'Global Fusion Industry Report 2023'\",
+      \"summary\": \"Industry survey of 43 private fusion companies worldwide\",
+      \"key_findings\": [
+        \"70% of companies expect fusion electricity on grid by 2030s\",
+        \"Total private investment exceeded $5.9B by end of 2023\",
+        \"35+ different fusion approaches being pursued\",
+        \"Most aggressive timeline: Helion claims 2028 for first commercial plant\"
+      ],
+      \"relevance\": 0.85
+    },
+    {
+      \"source\": \"ITER project status updates, 2024\",
+      \"summary\": \"International government fusion project experiencing major delays\",
+      \"key_findings\": [
+        \"First plasma now expected 2034 (was 2025 originally)\",
+        \"Full deuterium-tritium operations pushed to 2039\",
+        \"Budget overruns exceeding €20B total\",
+        \"Technical challenges in vacuum vessel assembly, magnet systems, and tritium handling\"
+      ],
+      \"relevance\": 0.80
+    },
+    {
+      \"source\": \"US Nuclear Regulatory Commission fusion regulatory framework development, 2023-2024\",
+      \"summary\": \"NRC developing first-ever regulatory pathway for commercial fusion\",
+      \"key_findings\": [
+        \"Fusion classified separately from fission, potentially faster approval\",
+        \"Draft framework expected 2024-2025\",
+        \"First license applications could be submitted 2025-2026\",
+        \"Regulatory process still estimated 3-5 years minimum\"
+      ],
+      \"relevance\": 0.75
+    }
+  ],
+  \"model_expression\": \"0.15 * technical_breakthrough_momentum * regulatory_pathway_speed * private_investment_acceleration * definition_ambiguity * (iter_delay_impact ? 0.85 : 1.0)\",
+  \"confidence\": 0.75,
+  \"reasoning\": \"This forecast has moderate-high confidence because: (1) Recent technical breakthroughs (NIF ignition) are well-documented and represent genuine progress, (2) Private sector timelines and funding are publicly stated and verifiable, (3) ITER delays provide concrete evidence of technical challenges, (4) Historical base rates for energy technology commercialization are well-established. However, confidence is limited by: (1) Definitional ambiguity around 'commercial service available' - this could swing"
+    relevance: 0.5p
+    date: 2026-03-06
+}
+
+model: ((strength_factor * conditions) * (if disruption then 1.5 else 1))
+
+simulate 10000 iterations

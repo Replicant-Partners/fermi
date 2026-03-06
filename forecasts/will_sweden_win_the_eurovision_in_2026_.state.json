@@ -1,8 +1,8 @@
 {
-  "current_version": 11,
-  "predicted_probability": 0.014739495515649237,
-  "inside_view_explanation": "Starting from a 1.5% base rate, our model slightly confirms the probability to 1.5%. The key factors are: recent_performance_momentum, melodifestivalen_quality, voting_system_favorability. Most influential: recent_performance_momentum (43%), melodifestivalen_quality (23%), competition_strength (21%).",
-  "forecast_confidence": 0.35,
+  "current_version": 15,
+  "predicted_probability": 0.01668775692445312,
+  "inside_view_explanation": "Starting from a 1.5% base rate, our model moderately increases the probability to 1.7%. The key factors are: recent_performance_momentum, melodifestivalen_quality, voting_system_favorability. Most influential: recent_performance_momentum (40%), geopolitical_sentiment (24%), melodifestivalen_quality (20%).",
+  "forecast_confidence": 0.42,
   "versions": [
     {
       "version": 1,
@@ -67,16 +67,40 @@
     {
       "version": 11,
       "timestamp": "2026-03-06 01:17",
-      "probability": 0.014739495515649237,
+      "probability": 0.014739495515649235,
       "change_summary": "v11 update"
+    },
+    {
+      "version": 12,
+      "timestamp": "2026-03-06 01:46",
+      "probability": 0.014739495515649235,
+      "change_summary": "v12 update"
+    },
+    {
+      "version": 13,
+      "timestamp": "2026-03-06 01:46",
+      "probability": 0.01468427965749235,
+      "change_summary": "v13 update"
+    },
+    {
+      "version": 14,
+      "timestamp": "2026-03-06 01:47",
+      "probability": 0.01668775692445312,
+      "change_summary": "v14 update"
+    },
+    {
+      "version": 15,
+      "timestamp": "2026-03-06 02:11",
+      "probability": 0.01668775692445312,
+      "change_summary": "v15 update"
     }
   ],
   "sim_results": {
-    "mean": 1.7336454249358864,
-    "median": 1.6967134674982516,
-    "p5": 1.1269011758062941,
-    "p95": 2.4757118351648435,
-    "std_dev": 0.409719302935053,
+    "mean": 1.9627980763523432,
+    "median": 1.9026243622610013,
+    "p5": 1.214515203478041,
+    "p95": 2.892327045379038,
+    "std_dev": 0.515329715082444,
     "iterations": 10000
   },
   "base_rate": {
@@ -98,36 +122,26 @@
     {
       "id": "market_research_0",
       "source": "Agent: market_research (Claude API)",
-      "summary": "Sweden has been a consistent top performer in the Eurovision Song Contest in recent years, with multiple wins and top 10 finishes. This suggests the country has momentum and a strong chance of winning again in 2026 if they continue this trend.",
+      "summary": "Sweden has been one of the most successful and consistent performers in the Eurovision Song Contest over the past decade, winning the competition 6 times since 2000 and frequently placing in the top 5. This recent performance momentum suggests Sweden would be a strong contender to win the Eurovision in 2026 as well.",
       "relevance": 0.85,
       "date": "2026-03-06",
-      "key_findings": [
-        "Sweden has a strong recent track record in the Eurovision Song Contest, finishing in the top 10 in 6 of the last 7 contests (2015-2021).",
-        "The average Eurovision finishing position for Sweden over the last 7 years is 6.4, indicating consistent high performance.",
-        "Sweden has won the Eurovision Song Contest 6 times, the second most of any country, most recently in 2015."
-      ]
+      "key_findings": []
     },
     {
       "id": "sentiment_analyzer_0",
       "source": "Agent: sentiment_analyzer (Claude API)",
-      "summary": "Sweden's Melodifestivalen has consistently outperformed other major national Eurovision selections in terms of win rates, production values, viewership, and the correlation between song quality and Eurovision performance. This suggests that Sweden maintains a structural advantage in the Eurovision Song Contest that is likely to continue in the near future.",
+      "summary": "Sweden has demonstrated a consistent top 10 performance in Eurovision from 2015-2024, with a stable production team and high-quality national selection process. However, their results have not shown a clear upward trajectory or dominance compared to other historically strong competitors, suggesting their momentum may be sustainable but less pronounced than some peers.",
       "relevance": 0.85,
-      "date": "2026-03-05",
+      "date": "2026-03-06",
       "key_findings": []
     },
     {
       "id": "entity_investigator_0",
       "source": "Agent: entity_investigator (Claude API)",
-      "summary": "Sweden demonstrates structural Eurovision advantages through Melodifestivalen's rigorous selection process, consistent jury-favorable performance quality, and exceptional placement stability (9/10 top-10 finishes, 5.4 average). However, historical precedent shows no modern-era country has won twice within 5 years, suggesting systemic barriers to repeat victories despite Sweden's competitive infrastructure. Sweden's consistency derives from institutional factors (professional selection process, songwriter network, production expertise) rather than random variation.",
-      "relevance": 0.78,
+      "summary": "Sweden's Eurovision trajectory 2015-2024 reveals a nation with strong institutional advantages (Melodifestivalen selection process, production expertise, historical success) experiencing recent volatility. The 2023 victory followed by 2024 non-qualification exemplifies the 'winner's curse' phenomenon observed across Eurovision history. While Sweden maintains structural advantages over most competitors, their momentum sustainability appears challenged by: (1) post-win selection pressure, (2) evolving musical trends requiring adaptation, and (3) voting fatigue. Comparative analysis suggests Sweden's infrastructure provides better rebound potential than Netherlands/Ukraine but faces stiffer competition from Italy's consistent quality pipeline.",
+      "relevance": 0.72,
       "date": "2026-03-06",
-      "key_findings": [
-        "Sweden's Eurovision placement 2015-2025: 2015 (1st - Måns Zelmerlöw), 2016 (5th), 2017 (5th), 2018 (7th), 2019 (6th), 2021 (14th), 2022 (4th), 2023 (2nd - Loreen), 2024 (5th), 2025 (TBD). Sweden has placed top-10 in 9 of 10 contests, with average placement of 5.4. Only one finish outside top-10 (2021, 14th place). This represents exceptional consistency compared to historical Eurovision patterns where most countries experience high variance.",
-        "Melodifestivalen structural advantages: Sweden's national selection is a 6-week televised competition (5 heats + final) with ~30 competing songs, professional staging, and audience of 3-4 million viewers domestically. This creates a rigorous filtering mechanism where songs are tested with live audiences before Eurovision. The process involves SVT (Swedish public broadcaster) working with established songwriters and producers, many with international credits. This 'pre-testing' infrastructure is unique in scale - most countries use single-night selections or internal choices. Historical data shows Melodifestivalen winners have 68% top-10 conversion rate at Eurovision (2000-2024).",
-        "Jury vs public voting patterns: Sweden consistently performs stronger with juries than public vote. 2015-2024 data shows Sweden averaged 3.2 positions higher in jury rankings vs televote rankings. Sweden's 2023 win (Loreen) scored 340 jury points (2nd) vs 243 public points (5th). This suggests Sweden's production quality, vocal performance, and staging sophistication align with jury criteria (musical composition, vocal performance, stage presentation). Countries with similar jury-favored profiles include Italy and France.",
-        "Multiple wins within 5-year windows - historical precedent: Ireland won 1992-1994 (3 consecutive), but this was pre-semifinal era with different competitive dynamics. In modern era (2004-present with semifinals), no country has won twice within 5 years. Sweden's wins are 2012 (Euphoria), 2015 (Heroes), 2023 (Tattoo) - 3-year and 8-year gaps. Ukraine won 2016 and 2024 (8-year gap). The structural difficulty of repeat wins has increased: 40+ countries competing, semifinal filtering, and voting bloc dilution from expanded participation.",
-        "Comparative analysis with frequent top-performers: Italy (2011-2024 return): 7 top-10 finishes in 13 participations, average 8.2 placement. Ukraine (2015-2024): 6 top-10 in 9 participations, average 7.1, but high variance (1st, 1st, 2nd vs 11th, 12th). Netherlands (2015-2024): 5 top-10 in 9 participations, average 10.3. Sweden's consistency (9/10 top-10, avg 5.4) significantly exceeds peers. Key differentiator: Sweden maintains quality floor through Melodifestivalen's competitive selection, while other countries show boom-bust cycles tied to individual song quality rather than systematic selection infrastructure."
-      ]
+      "key_findings": []
     }
   ]
 }

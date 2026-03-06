@@ -1,13 +1,13 @@
 question "will sweden win the eurovision in 2026?"
 
 driver recent_performance_momentum continuous {
-    distribution: triangular(0.8, 1.3, 1.8)
+    distribution: triangular(0.8, 1.3, 1.7)
     unit: "multiplier"
     rationale: "Sweden won in 2023 (Loreen - 'Tattoo') and has consistently placed in top 10 in recent years. Strong recent performance indicates sustained competitive advantage in production quality, artist selection, and public voting appeal. Historical pattern shows winners often have strong recent track records. Momentum effect typically provides 30-100% boost to base probability."
 }
 
 driver melodifestivalen_quality continuous {
-    distribution: triangular(1, 1.4, 1.8)
+    distribution: triangular(1, 1.7, 2.5)
     unit: "multiplier"
     rationale: "Sweden's Melodifestivalen is widely regarded as the highest-quality national selection process, with professional production, strong songwriting, and rigorous competition. This systematic advantage has contributed to Sweden's overperformance. The 2026 Melodifestivalen will occur in early 2026, and quality can vary year-to-year, but the structural advantage remains consistent."
 }
@@ -19,7 +19,7 @@ driver voting_system_favorability continuous {
 }
 
 driver geopolitical_sentiment continuous {
-    distribution: triangular(0.9, 1, 1.1)
+    distribution: triangular(0.9, 1, 1.5)
     unit: "multiplier"
     rationale: "Eurovision voting can be influenced by geopolitical factors, regional alliances, and current events. Sweden generally maintains neutral to positive international perception. By 2026, unforeseen events could shift sentiment, but Sweden's stable position suggests minimal impact. Small uncertainty range reflects potential for minor shifts."
 }
@@ -145,22 +145,22 @@ evidence fermi_evidence_1772754862 {
 
 evidence market_research_0 {
     source: "Agent: market_research (Claude API)"
-    summary: "Sweden has been a consistent top performer in the Eurovision Song Contest in recent years, with multiple wins and top 10 finishes. This suggests the country has momentum and a strong chance of winning again in 2026 if they continue this trend."
+    summary: "Sweden has been one of the most successful and consistent performers in the Eurovision Song Contest over the past decade, winning the competition 6 times since 2000 and frequently placing in the top 5. This recent performance momentum suggests Sweden would be a strong contender to win the Eurovision in 2026 as well."
     relevance: 0.85p
     date: 2026-03-06
 }
 
 evidence sentiment_analyzer_0 {
     source: "Agent: sentiment_analyzer (Claude API)"
-    summary: "Sweden's Melodifestivalen has consistently outperformed other major national Eurovision selections in terms of win rates, production values, viewership, and the correlation between song quality and Eurovision performance. This suggests that Sweden maintains a structural advantage in the Eurovision Song Contest that is likely to continue in the near future."
+    summary: "Sweden has demonstrated a consistent top 10 performance in Eurovision from 2015-2024, with a stable production team and high-quality national selection process. However, their results have not shown a clear upward trajectory or dominance compared to other historically strong competitors, suggesting their momentum may be sustainable but less pronounced than some peers."
     relevance: 0.85p
-    date: 2026-03-05
+    date: 2026-03-06
 }
 
 evidence entity_investigator_0 {
     source: "Agent: entity_investigator (Claude API)"
-    summary: "Sweden demonstrates structural Eurovision advantages through Melodifestivalen's rigorous selection process, consistent jury-favorable performance quality, and exceptional placement stability (9/10 top-10 finishes, 5.4 average). However, historical precedent shows no modern-era country has won twice within 5 years, suggesting systemic barriers to repeat victories despite Sweden's competitive infrastructure. Sweden's consistency derives from institutional factors (professional selection process, songwriter network, production expertise) rather than random variation."
-    relevance: 0.78p
+    summary: "Sweden's Eurovision trajectory 2015-2024 reveals a nation with strong institutional advantages (Melodifestivalen selection process, production expertise, historical success) experiencing recent volatility. The 2023 victory followed by 2024 non-qualification exemplifies the 'winner's curse' phenomenon observed across Eurovision history. While Sweden maintains structural advantages over most competitors, their momentum sustainability appears challenged by: (1) post-win selection pressure, (2) evolving musical trends requiring adaptation, and (3) voting fatigue. Comparative analysis suggests Sweden's infrastructure provides better rebound potential than Netherlands/Ukraine but faces stiffer competition from Italy's consistent quality pipeline."
+    relevance: 0.72p
     date: 2026-03-06
 }
 

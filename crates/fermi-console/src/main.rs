@@ -247,6 +247,7 @@ struct LocalForecast {
     version: u32,
     driver_count: usize,
     evidence_count: usize,
+    confidence: f64,
 }
 
 struct FermiConsole {
@@ -643,7 +644,7 @@ impl FermiConsole {
 
                         // Load state.json for probability and version
                         let state_path = path.with_extension("state.json");
-                        let (probability, base_rate, version, evidence_count) = 
+                        let (probability, base_rate, version, evidence_count, confidence) = 
                             if let Ok(state_text) = std::fs::read_to_string(&state_path) {
                                 if let Ok(sj) = serde_json::from_str::<serde_json::Value>(&state_text) {
                                     (
@@ -651,14 +652,15 @@ impl FermiConsole {
                                         sj.get("base_rate").and_then(|b| b.get("historical_frequency")).and_then(|v| v.as_f64()).unwrap_or(0.0),
                                         sj.get("current_version").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
                                         sj.get("evidence").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+                                        sj.get("forecast_confidence").and_then(|v| v.as_f64()).unwrap_or(0.0),
                                     )
-                                } else { (0.5, 0.0, 0, 0) }
-                            } else { (0.5, 0.0, 0, 0) };
+                                } else { (0.5, 0.0, 0, 0, 0.0) }
+                            } else { (0.5, 0.0, 0, 0, 0.0) };
 
                         self.local_forecasts.push(LocalForecast {
                             filename, question, timestamp,
                             probability, base_rate, version,
-                            driver_count, evidence_count,
+                            driver_count, evidence_count, confidence,
                         });
                     }
                 }
@@ -1769,14 +1771,32 @@ impl FermiConsole {
                                                 .border_b_1()
                                                 .border_color(theme::fg_faint())
                                                 .hover(|s| s.bg(theme::bg_hover()))
+                                                // Inside view probability
                                                 .child(
                                                     div()
-                                                        .w(px(48.0))
-                                                        .text_size(px(14.0))
-                                                        .text_color(rgb(theme::CYAN))
-                                                        .font_weight(FontWeight::BOLD)
-                                                        .child(format!("{:.2}%", forecast.probability * 100.0)),
+                                                        .flex()
+                                                        .flex_col()
+                                                        .items_center()
+                                                        .w(px(70.0))
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(16.0))
+                                                                .text_color(rgb(theme::CYAN))
+                                                                .font_weight(FontWeight::BOLD)
+                                                                .child(format!("{:.2}%", forecast.probability * 100.0)),
+                                                        )
+                                                        .when(forecast.base_rate > 0.0, |el| {
+                                                            let div_pp = (forecast.probability - forecast.base_rate) * 100.0;
+                                                            let div_color = if div_pp > 0.0 { theme::GREEN } else { theme::RED };
+                                                            el.child(
+                                                                div()
+                                                                    .text_size(px(9.0))
+                                                                    .text_color(rgb(div_color))
+                                                                    .child(format!("vs {:.1}%", forecast.base_rate * 100.0)),
+                                                            )
+                                                        }),
                                                 )
+                                                // Question + metadata
                                                 .child(
                                                     div()
                                                         .flex_grow()
@@ -1792,11 +1812,36 @@ impl FermiConsole {
                                                         )
                                                         .child(
                                                             div()
+                                                                .flex()
+                                                                .gap(px(8.0))
                                                                 .text_size(px(10.0))
                                                                 .text_color(theme::fg_faint())
-                                                                .child(format!("{} · v{} · {} drivers · {} evidence", forecast.timestamp, forecast.version, forecast.driver_count, forecast.evidence_count)),
+                                                                .child(format!("v{}", forecast.version))
+                                                                .child(format!("{} drivers", forecast.driver_count))
+                                                                .child(format!("{} evidence", forecast.evidence_count))
+                                                                .child(forecast.timestamp.clone()),
                                                         ),
                                                 )
+                                                // Confidence badge
+                                                .when(forecast.confidence > 0.0, |el| {
+                                                    let (label, color) = if forecast.confidence > 0.7 {
+                                                        ("High", theme::GREEN)
+                                                    } else if forecast.confidence > 0.4 {
+                                                        ("Med", theme::GOLD)
+                                                    } else {
+                                                        ("Low", theme::RED)
+                                                    };
+                                                    el.child(
+                                                        div()
+                                                            .text_size(px(9.0))
+                                                            .text_color(rgb(color))
+                                                            .px(px(5.0))
+                                                            .py(px(2.0))
+                                                            .rounded(px(3.0))
+                                                            .bg(theme::bg())
+                                                            .child(label),
+                                                    )
+                                                })
                                         }
                                         })),
                                 ),
