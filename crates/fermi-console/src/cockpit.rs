@@ -2053,6 +2053,7 @@ impl CockpitState {
         match std::fs::write(&path, &self.cached_fpl) {
             Ok(_) => {
                 log::info!("[composer] Saved FPL to {}", path);
+                log::info!("[composer] Evidence in AST: {}, Drivers: {}", self.program.evidence_items().len(), self.program.drivers().len());
                 self.messages.push(AssistantMessage {
                     node: "save".into(),
                     kind: MessageKind::Info,
@@ -4075,7 +4076,7 @@ fn generate_fpl_text(program: &Program) -> String {
     // Evidence
     for ev in program.evidence_items() {
         lines.push(format!("evidence {} {{", sanitize_name(&ev.id)));
-        lines.push(format!("    source: \"{}\"", ev.source));
+        lines.push(format!("    source: \"{}\"", clean_fpl_string(&ev.source)));
         if let Some(ref summary) = ev.summary {
             lines.push(format!(
                 "    summary: \"{}\"",
@@ -4472,6 +4473,19 @@ fn make_binary_driver(
 // ═══════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
+
+/// Clean a string for safe embedding in FPL string literals.
+/// Removes/escapes characters that would break the parser.
+fn clean_fpl_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+     .replace('"', "\\\"")
+     .replace('\n', " ")
+     .replace('\r', "")
+     .replace('`', "'")
+     .chars()
+     .take(500) // truncate very long strings
+     .collect()
+}
 
 fn sanitize_name(name: &str) -> String {
     let s: String = name
