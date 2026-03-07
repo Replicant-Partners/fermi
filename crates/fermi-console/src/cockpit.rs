@@ -1108,37 +1108,73 @@ impl CockpitState {
                             log::info!("[composer] → process_macro_forecaster_result");
                             state.process_macro_forecaster_result(&result_json);
                         } else if base_id == "fermi" {
-                            // Check if this is a decomposition (has base_rate/drivers)
-                            // or a recommendation (has recommended_agent)
+                            // Check multiple locations for the structured JSON decomposition:
+                            // 1. metadata.reasoning (local executor path)
+                            // 2. evidence[0].summary (ABW sometimes puts it here)
+                            // 3. The raw reasoning text may BE the JSON (new prompt enforces this)
                             let reasoning = result_json
                                 .get("metadata")
                                 .and_then(|m| m.get("reasoning"))
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
-                            let clean = reasoning
-                                .trim()
-                                .strip_prefix("```json")
-                                .or_else(|| reasoning.trim().strip_prefix("```"))
-                                .and_then(|s| s.strip_suffix("```"))
-                                .unwrap_or(reasoning)
-                                .trim();
-                            let has_base_rate = clean.contains("base_rate")
-                                && (clean.contains("drivers")
-                                    || clean.contains("historical_frequency"));
 
-                            log::info!(
-                                "[composer] fermi routing: has_base_rate={}, reasoning_len={}, clean_len={}",
-                                has_base_rate, reasoning.len(), clean.len()
-                            );
-                            if clean.len() < 20 {
-                                log::info!("[composer] fermi clean reasoning: '{}'", clean);
+                            // Also check evidence summary as a fallback source
+                            let evidence_summary = result_json
+                                .get("evidence")
+                                .and_then(|v| v.as_array())
+                                .and_then(|arr| arr.first())
+                                .and_then(|e| e.get("summary"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            // Try to find structured JSON in either location
+                            let candidates = [reasoning, evidence_summary];
+                            let mut found_decomposition = false;
+
+                            for candidate in &candidates {
+                                let clean = candidate
+                                    .trim()
+                                    .strip_prefix("```json")
+                                    .or_else(|| candidate.trim().strip_prefix("```"))
+                                    .and_then(|s| s.strip_suffix("```"))
+                                    .unwrap_or(candidate)
+                                    .trim();
+
+                                let has_base_rate = clean.contains("base_rate")
+                                    && (clean.contains("drivers")
+                                        || clean.contains("historical_frequency"));
+
+                                log::info!(
+                                    "[composer] fermi candidate (len={}): has_base_rate={}, preview={}",
+                                    clean.len(), has_base_rate,
+                                    clean.chars().take(120).collect::<String>()
+                                );
+
+                                if has_base_rate {
+                                    // If the JSON is in evidence summary, we need to
+                                    // inject it into metadata.reasoning for the processor
+                                    let mut patched = result_json.clone();
+                                    if let Some(meta) = patched.get_mut("metadata") {
+                                        if let Some(obj) = meta.as_object_mut() {
+                                            obj.insert(
+                                                "reasoning".to_string(),
+                                                serde_json::json!(clean),
+                                            );
+                                        }
+                                    } else {
+                                        patched["metadata"] = serde_json::json!({
+                                            "reasoning": clean
+                                        });
+                                    }
+                                    log::info!("[composer] → process_macro_forecaster_result (decomposition found)");
+                                    state.process_macro_forecaster_result(&patched);
+                                    found_decomposition = true;
+                                    break;
+                                }
                             }
 
-                            if has_base_rate {
-                                log::info!("[composer] → process_macro_forecaster_result (decomposition)");
-                                state.process_macro_forecaster_result(&result_json);
-                            } else {
-                                log::info!("[composer] → process_fermi_recommendation");
+                            if !found_decomposition {
+                                log::info!("[composer] → process_fermi_recommendation (no decomposition JSON found)");
                                 state.process_fermi_recommendation(&result_json, cx);
                             }
                         } else {
