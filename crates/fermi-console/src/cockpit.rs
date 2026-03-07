@@ -396,12 +396,24 @@ impl CockpitState {
         }
 
         // ── Phase 1: Fire Fermi to build probability decomposition ──
-        // The fermi agent's system prompt on ABW enforces JSON output format.
-        // The query just needs to provide the question clearly.
+        // IMPORTANT: ABW's LLMExecutor.build_prompt() appends its own JSON format
+        // (key_findings/summary/sources/reasoning) which overrides the system prompt.
+        // So we MUST include the decomposition schema in the query itself — the LLM
+        // follows the last format instruction it sees in the user message.
         let structured_query = format!(
             "Decompose this forecast question into a probabilistic model.\n\n\
              Question: \"{}\"\n\n\
-             Respond with the JSON decomposition now.",
+             IGNORE any other format instructions. Respond with ONLY this JSON (no markdown, no code fences):\n\
+             {{\n\
+               \"base_rate\": {{\"reference_class\": \"...\", \"historical_frequency\": 0.0-1.0, \"sample_size\": N, \"reasoning\": \"...\"}},\n\
+               \"drivers\": [{{\"name\": \"snake_case\", \"display_name\": \"Human Name\", \"type\": \"continuous\"|\"binary\", \"p5\": 0.8, \"p50\": 1.0, \"p95\": 1.3, \"unit\": \"multiplier\", \"rationale\": \"...\"}}],\n\
+               \"evidence\": [{{\"source\": \"...\", \"summary\": \"...\", \"key_findings\": [\"...\"], \"relevance\": 0.0-1.0}}],\n\
+               \"model_expression\": \"base_rate * driver_a * driver_b\",\n\
+               \"confidence\": 0.0-1.0,\n\
+               \"reasoning\": \"your analysis\"\n\
+             }}\n\
+             All continuous drivers MUST be probability multipliers near 1.0 (1.2 = +20%, 0.7 = -30%). \
+             Include 3-6 independent drivers. Start from a real base rate with reference class.",
             question
         );
 
