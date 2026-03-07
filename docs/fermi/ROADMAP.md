@@ -103,12 +103,12 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 ### Known Issues (Critical)
 
-| Issue | Impact | Root Cause |
-|-------|--------|------------|
-| Evidence sometimes lost on reload | High | Agent-attributed evidence not always written to state.json in certain flows |
-| Agent state indicators out of sync | Medium | `Completed`/`Idle` derived from evidence count, not actual execution state |
-| Inside view not always at top of Wiki | Low | Wiki generation ordering inconsistent across save paths |
-| Confidence is derived/hidden | Medium | Should be user-settable per driver, not just computed |
+| Issue | Impact | Root Cause | Status |
+|-------|--------|------------|--------|
+| Evidence sometimes lost on reload | High | Agent-attributed evidence not always written to state.json in certain flows | ✅ Fixed |
+| Agent state indicators out of sync | Medium | `Completed`/`Idle` derived from evidence count, not actual execution state | ✅ Fixed — tracks `started_at`/`completed_at` |
+| Inside view not always at top of Wiki | Low | Wiki generation ordering inconsistent across save paths | Open |
+| Confidence is derived/hidden | Medium | Should be user-settable per driver, not just computed | ✅ Fixed — user-settable per driver |
 
 ---
 
@@ -120,26 +120,33 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 #### 7A: Agent Presence (pixel-agents inspiration)
 
-- [ ] Real-time agent state indicators (researching → found → idle → error)
+- [x] Real-time agent state indicators (researching → found → idle → error) — colored borders, status icons
 - [ ] Agent activity animation/pulse when working (subtle glow or spinner)
-- [ ] Agent "speech bubbles" showing latest finding (partially implemented)
+- [x] Agent "speech bubbles" showing latest finding — cached `latest_finding` field, falls back to evidence search
 - [ ] Agent cards in fleet tab show current assignment and live status
-- [ ] Visual feedback that complex work is happening (progress bar, elapsed time)
+- [x] Visual feedback that complex work is happening — elapsed time display (`12s…` while running, `8s` when done)
 - [ ] Agent completion notification (toast or sound)
+- [x] Retry/Re-run button on failed and completed agents
+- [x] Error details shown inline for failed agents (truncated to 120 chars)
+- [x] Credits charged display per agent (⚡ icon)
+- [x] Enhanced status bar — running/completed/failed counts, gap count, colored indicators
 
 #### 7B: Evidence Richness
 
 - [ ] Distribution curve explanation per driver (how evidence justifies the shape)
-- [ ] Confidence per driver is **user-settable** (slider, not just derived)
+- [x] Confidence per driver is **user-settable** — `editor_confidence` input (0–100%), `driver_confidence` HashMap, persisted in state.json
+- [x] Computed vs user-set confidence shown side-by-side with delta on driver cards
+- [x] Overall forecast confidence now averages per-driver user overrides
 - [ ] Evidence hyperlinks with URL previews
 - [ ] URL auto-summarization when adding evidence links
 - [ ] Inside/outside view comparison sparklines in portfolio cards
-- [ ] Evidence gap highlighting (drivers with no agent evidence)
+- [x] Evidence gap highlighting — drivers with no agents get red border + warning badge, "Awaiting evidence" for assigned-but-empty
+- [x] Running agents give driver card a gold border
 
 #### 7C: Critical Bug Fixes
 
-- [ ] Fix evidence persistence on all reload paths (agent-attributed evidence)
-- [ ] Fix agent state sync — track actual execution status, not inferred
+- [x] Fix evidence persistence on all reload paths (agent-attributed evidence) — fixed prior to this session
+- [x] Fix agent state sync — `AgentExecution` now tracks `started_at`, `completed_at`, `latest_finding`
 - [ ] Fix inside view ordering in Wiki tab
 - [ ] Clean up FPL string sanitization edge cases
 
