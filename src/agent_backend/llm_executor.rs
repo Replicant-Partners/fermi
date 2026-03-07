@@ -44,8 +44,33 @@ impl LLMExecutor {
         "You are a forecasting research agent helping to generate evidence for probabilistic forecasts.".to_string()
     }
 
-    /// Build the user message for the query
+    /// Build the user message for the query.
+    ///
+    /// If the agent has a custom system prompt, pass the query through as-is.
+    /// The system prompt already defines the response format — adding generic
+    /// format instructions here would override the agent's own format and
+    /// cause the LLM to ignore the system prompt's schema.
+    ///
+    /// The generic format wrapper is only used for agents WITHOUT a custom
+    /// system prompt (legacy agents, simple research queries).
     fn build_prompt(&self, agent: &AgentStmt, context: &ExecutionContext) -> String {
+        // If the agent has a custom system prompt, trust it to define the format.
+        // Just pass the query with minimal context.
+        if context.agent_card.system_prompt.is_some() {
+            let mut prompt = String::new();
+            prompt.push_str(&agent.query);
+
+            if !agent.driver_refs.is_empty() {
+                prompt.push_str("\n\nRelevant forecast drivers:\n");
+                for driver_ref in &agent.driver_refs {
+                    prompt.push_str(&format!("  - {}\n", driver_ref));
+                }
+            }
+
+            return prompt;
+        }
+
+        // Default format wrapper for agents without a custom system prompt.
         let mut prompt = String::new();
 
         prompt.push_str(&format!(
