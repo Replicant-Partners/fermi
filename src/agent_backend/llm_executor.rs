@@ -35,13 +35,26 @@ impl LLMExecutor {
         Ok(Self::new(api_key))
     }
 
-    /// Build the system prompt — use agent card's custom prompt if available
+    /// Build the system prompt — use agent card's custom prompt if available.
+    /// Treats empty strings as absent (Some("") → use default).
     fn build_system_prompt(&self, context: &ExecutionContext) -> String {
         if let Some(ref custom) = context.agent_card.system_prompt {
-            return custom.clone();
+            if !custom.trim().is_empty() {
+                return custom.clone();
+            }
         }
         // Default forecasting system prompt
         "You are a forecasting research agent helping to generate evidence for probabilistic forecasts.".to_string()
+    }
+
+    /// Returns true if the agent has a meaningful custom system prompt.
+    fn has_custom_prompt(context: &ExecutionContext) -> bool {
+        context
+            .agent_card
+            .system_prompt
+            .as_ref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
     }
 
     /// Build the user message for the query.
@@ -56,7 +69,7 @@ impl LLMExecutor {
     fn build_prompt(&self, agent: &AgentStmt, context: &ExecutionContext) -> String {
         // If the agent has a custom system prompt, trust it to define the format.
         // Just pass the query with minimal context.
-        if context.agent_card.system_prompt.is_some() {
+        if Self::has_custom_prompt(context) {
             let mut prompt = String::new();
             prompt.push_str(&agent.query);
 
@@ -226,9 +239,16 @@ impl AgentExecutor for LLMExecutor {
         let user_prompt = self.build_prompt(agent, context);
 
         // Prepare Claude API request
+        // Agents with custom system prompts (e.g., fermi decomposition) need more
+        // tokens for structured JSON output. Default agents use 2048.
+        let max_tokens = if Self::has_custom_prompt(context) {
+            4096
+        } else {
+            2048
+        };
         let request = ClaudeRequest {
             model: context.agent_card.capabilities.model.clone(),
-            max_tokens: 2048,
+            max_tokens,
             temperature: context.agent_card.capabilities.temperature,
             system: Some(system_prompt),
             messages: vec![Message {
