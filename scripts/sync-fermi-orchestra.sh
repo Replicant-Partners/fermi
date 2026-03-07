@@ -170,6 +170,16 @@ print(json.dumps(req))
     if [ "$CREATE_CODE" = "200" ] || [ "$CREATE_CODE" = "201" ]; then
         NEW_ID=$(echo "$CREATE_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('agent_id','?'))" 2>/dev/null || echo "?")
         echo "    ✓ Created (id: $NEW_ID)"
+
+        # Auto-publish (new agents are created as 'draft')
+        curl -sf -X PUT \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"status": "published"}' \
+            "${ABW_URL}/api/agents/${AGENT_ID}" > /dev/null 2>&1 && \
+            echo "    ✓ Published" || \
+            echo "    ⚠ Created but failed to publish — run: curl -X PUT ${ABW_URL}/api/agents/${AGENT_ID} -d '{\"status\":\"published\"}'"
+
         CREATED=$((CREATED + 1))
     else
         echo "    ✗ HTTP $CREATE_CODE"
