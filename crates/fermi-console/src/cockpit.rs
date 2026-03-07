@@ -54,7 +54,6 @@ pub enum FocusedNode {
     FplSource,
 }
 
-
 /// Which tab is active in the right panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RightTab {
@@ -72,6 +71,12 @@ pub struct AgentExecution {
     pub confidence: Option<f64>,
     pub error: Option<String>,
     pub credits_charged: Option<f64>,
+    /// When the agent started executing (epoch seconds).
+    pub started_at: Option<u64>,
+    /// When the agent finished executing (epoch seconds).
+    pub completed_at: Option<u64>,
+    /// The most recent finding snippet from this agent (truncated).
+    pub latest_finding: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -160,7 +165,7 @@ pub struct CockpitState {
     pub registry: Arc<AgentRegistry>,
     pub cached_fpl: String,
     pub inside_view_explanation: String,
-    pub forecast_confidence: f64,  // 0.0-1.0 overall confidence in the inside view
+    pub forecast_confidence: f64, // 0.0-1.0 overall confidence in the inside view
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +417,14 @@ impl CockpitState {
             confidence: None,
             error: None,
             credits_charged: None,
+            started_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            completed_at: None,
+            latest_finding: None,
         });
 
         self.messages.push(AssistantMessage {
@@ -432,22 +445,53 @@ impl CockpitState {
     /// decomposition with estimates that populate the FPL program.
     fn process_macro_forecaster_result(&mut self, result: &JsonValue) {
         // DEBUG: log what we received
-        log::info!("[composer] Processing result keys: {:?}", 
-            result.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+        log::info!(
+            "[composer] Processing result keys: {:?}",
+            result.as_object().map(|o| o.keys().collect::<Vec<_>>())
+        );
         if let Some(evidence) = result.get("evidence").and_then(|v| v.as_array()) {
             for (i, ev) in evidence.iter().enumerate() {
-                let summary_len = ev.get("summary").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
-                let findings_count = ev.get("key_findings").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-                log::info!("[composer] Evidence[{}]: summary_len={}, findings_count={}", i, summary_len, findings_count);
+                let summary_len = ev
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.len())
+                    .unwrap_or(0);
+                let findings_count = ev
+                    .get("key_findings")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                log::info!(
+                    "[composer] Evidence[{}]: summary_len={}, findings_count={}",
+                    i,
+                    summary_len,
+                    findings_count
+                );
                 if let Some(findings) = ev.get("key_findings").and_then(|v| v.as_array()) {
                     for (j, f) in findings.iter().enumerate().take(3) {
-                        log::info!("[composer]   finding[{}]: {}", j, f.as_str().unwrap_or("?").chars().take(100).collect::<String>());
+                        log::info!(
+                            "[composer]   finding[{}]: {}",
+                            j,
+                            f.as_str()
+                                .unwrap_or("?")
+                                .chars()
+                                .take(100)
+                                .collect::<String>()
+                        );
                     }
                 }
             }
         }
-        let reasoning = result.get("metadata").and_then(|m| m.get("reasoning")).and_then(|v| v.as_str()).unwrap_or("");
-        log::info!("[composer] Reasoning length: {}, starts with: {}", reasoning.len(), reasoning.chars().take(100).collect::<String>());
+        let reasoning = result
+            .get("metadata")
+            .and_then(|m| m.get("reasoning"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        log::info!(
+            "[composer] Reasoning length: {}, starts with: {}",
+            reasoning.len(),
+            reasoning.chars().take(100).collect::<String>()
+        );
 
         // Update agent status
         if let Some(run) = self
@@ -456,6 +500,12 @@ impl CockpitState {
             .find(|r| r.agent_name == "macro_forecaster")
         {
             run.status = AgentRunStatus::Completed;
+            run.completed_at = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
             run.confidence = result.get("confidence").and_then(|v| v.as_f64());
             run.credits_charged = result.get("credits_charged").and_then(|v| v.as_f64());
             if let Some(c) = run.credits_charged {
@@ -474,7 +524,8 @@ impl CockpitState {
         // Strip markdown code fences if present (agent often wraps JSON in ```json ... ```)
         let clean_reasoning = reasoning
             .trim()
-            .strip_prefix("```json").or_else(|| reasoning.trim().strip_prefix("```"))
+            .strip_prefix("```json")
+            .or_else(|| reasoning.trim().strip_prefix("```"))
             .and_then(|s| s.strip_suffix("```"))
             .unwrap_or(reasoning)
             .trim();
@@ -484,12 +535,14 @@ impl CockpitState {
         } else {
             None
         };
-        
+
         if structured.is_some() {
             log::info!("[composer] Parsed structured JSON from reasoning");
         } else {
-            log::info!("[composer] Agent returned text (not JSON) - using as evidence. First 80 chars: {}", 
-                &reasoning.chars().take(80).collect::<String>());
+            log::info!(
+                "[composer] Agent returned text (not JSON) - using as evidence. First 80 chars: {}",
+                &reasoning.chars().take(80).collect::<String>()
+            );
         }
 
         // ── Base Rate ─────────────────────────────────────────────
@@ -523,7 +576,11 @@ impl CockpitState {
                     });
                 }
                 self.predicted_probability = freq;
-                log::info!("[composer] BASE RATE SET: {:.0}% ref_class={}", freq * 100.0, ref_class);
+                log::info!(
+                    "[composer] BASE RATE SET: {:.0}% ref_class={}",
+                    freq * 100.0,
+                    ref_class
+                );
 
                 self.messages.push(AssistantMessage {
                     node: "question".into(),
@@ -542,14 +599,21 @@ impl CockpitState {
             // ── Drivers from structured response ──────────────────
             if let Some(drivers_arr) = data.get("drivers").and_then(|v| v.as_array()) {
                 // Clear template drivers — agent provides real ones
-                let template_names: Vec<String> = self.program.drivers()
-                    .iter().map(|d| d.name.clone()).collect();
+                let template_names: Vec<String> = self
+                    .program
+                    .drivers()
+                    .iter()
+                    .map(|d| d.name.clone())
+                    .collect();
                 for name in &template_names {
                     self.program.remove_driver(&name);
                 }
                 // Also clear the template model — agent may suggest a new one
                 let cleared_count = template_names.len();
-                log::info!("[composer] Cleared {} template drivers, replacing with agent suggestions", cleared_count);
+                log::info!(
+                    "[composer] Cleared {} template drivers, replacing with agent suggestions",
+                    cleared_count
+                );
                 for drv in drivers_arr {
                     let name = drv
                         .get("name")
@@ -616,7 +680,10 @@ impl CockpitState {
 
                     // Replace scaffold driver if it exists, otherwise add
                     self.program.add_driver(driver_stmt);
-                    log::info!("[composer] DRIVER ADDED from agent: {}", sanitize_name(name));
+                    log::info!(
+                        "[composer] DRIVER ADDED from agent: {}",
+                        sanitize_name(name)
+                    );
 
                     self.messages.push(AssistantMessage {
                         node: format!("driver:{}", sanitize_name(name)),
@@ -629,38 +696,44 @@ impl CockpitState {
             // ── Model expression ──────────────────────────────────
             // Regenerate model from the new driver names
             let new_drivers = self.program.drivers();
-            let model_parts: Vec<String> = new_drivers.iter().map(|d| {
-                match d.driver_type {
+            let model_parts: Vec<String> = new_drivers
+                .iter()
+                .map(|d| match d.driver_type {
                     DriverType::Binary => {
                         let m = d.impact_multiplier.unwrap_or(1.3);
                         format!("(if {} then {} else 1.0)", d.name, m)
                     }
                     _ => d.name.clone(),
-                }
-            }).collect();
+                })
+                .collect();
             if !model_parts.is_empty() {
                 // Try to use agent's suggested model expression if it references our drivers
-                let agent_model = data.get("model_expression").and_then(|v| v.as_str()).unwrap_or("");
-                let use_agent_model = !agent_model.is_empty() && 
-                    new_drivers.iter().any(|d| agent_model.contains(&d.name));
-                
+                let agent_model = data
+                    .get("model_expression")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let use_agent_model = !agent_model.is_empty()
+                    && new_drivers.iter().any(|d| agent_model.contains(&d.name));
+
                 let model_text = if use_agent_model {
                     agent_model.to_string()
                 } else {
                     model_parts.join(" * ")
                 };
-                
+
                 self.messages.push(AssistantMessage {
                     node: "model".into(),
                     kind: MessageKind::Info,
                     text: format!("Model: {}", model_text),
                 });
-                
+
                 // Note: we don't set the AST model here because it needs to be
                 // parsed as an Expression. The generate_fpl_text auto-generates
                 // the model from driver names if no ModelStmt exists.
                 // Clear the old template model so it gets regenerated
-                self.program.statements.retain(|s| !matches!(s, Statement::Model(_)));
+                self.program
+                    .statements
+                    .retain(|s| !matches!(s, Statement::Model(_)));
             }
         }
 
@@ -727,8 +800,12 @@ impl CockpitState {
         // Now that the decomposition is ready, suggest which research
         // agents would be good for each driver. User confirms via picker.
         let available = self.discover_research_agents();
-        let driver_names: Vec<String> = self.program.drivers()
-            .iter().map(|d| d.name.clone()).collect();
+        let driver_names: Vec<String> = self
+            .program
+            .drivers()
+            .iter()
+            .map(|d| d.name.clone())
+            .collect();
 
         if !driver_names.is_empty() && !available.is_empty() {
             self.messages.push(AssistantMessage {
@@ -743,11 +820,20 @@ impl CockpitState {
             // Suggest specific agents for drivers based on keywords
             for driver_name in &driver_names {
                 let dn_lower = driver_name.to_lowercase();
-                let suggested = if dn_lower.contains("sentiment") || dn_lower.contains("opinion") || dn_lower.contains("perception") {
+                let suggested = if dn_lower.contains("sentiment")
+                    || dn_lower.contains("opinion")
+                    || dn_lower.contains("perception")
+                {
                     Some("sentiment_analyzer")
-                } else if dn_lower.contains("market") || dn_lower.contains("competition") || dn_lower.contains("betting") {
+                } else if dn_lower.contains("market")
+                    || dn_lower.contains("competition")
+                    || dn_lower.contains("betting")
+                {
                     Some("market_research")
-                } else if dn_lower.contains("entity") || dn_lower.contains("company") || dn_lower.contains("ownership") {
+                } else if dn_lower.contains("entity")
+                    || dn_lower.contains("company")
+                    || dn_lower.contains("ownership")
+                {
                     Some("entity_investigator")
                 } else {
                     None
@@ -757,19 +843,22 @@ impl CockpitState {
                     self.messages.push(AssistantMessage {
                         node: format!("driver:{}", driver_name),
                         kind: MessageKind::Suggestion,
-                        text: format!("💡 Consider assigning '{}' to research '{}'", agent, driver_name),
+                        text: format!(
+                            "💡 Consider assigning '{}' to research '{}'",
+                            agent, driver_name
+                        ),
                     });
                 }
             }
         }
     }
 
-
     /// Discover research-relevant agents from the local registry.
     /// Filters by agent_type and tags to find agents suitable for forecasting.
     fn discover_research_agents(&self) -> Vec<(String, String)> {
         let cards = self.registry.list_cards().unwrap_or_default();
-        cards.iter()
+        cards
+            .iter()
             .filter(|card| {
                 // Only agents tagged for the Fermi forecasting orchestra
                 card.metadata.tags.iter().any(|t| t == "fermi-orchestra")
@@ -786,7 +875,6 @@ impl CockpitState {
         let tracking_id = agent_id.to_string();
         let registry = self.registry.clone();
         let q = query.to_string();
-        
 
         cx.spawn(async move |this, cx| {
             log::info!("[composer] Firing {} (registry: {}) ", tracking_id, base_id);
@@ -943,15 +1031,23 @@ impl CockpitState {
 
         let clean = reasoning
             .trim()
-            .strip_prefix("```json").or_else(|| reasoning.trim().strip_prefix("```"))
+            .strip_prefix("```json")
+            .or_else(|| reasoning.trim().strip_prefix("```"))
             .and_then(|s| s.strip_suffix("```"))
             .unwrap_or(reasoning)
             .trim();
 
         if let Ok(rec) = serde_json::from_str::<JsonValue>(clean) {
-            let agent = rec.get("recommended_agent").and_then(|v| v.as_str()).unwrap_or("market_research");
+            let agent = rec
+                .get("recommended_agent")
+                .and_then(|v| v.as_str())
+                .unwrap_or("market_research");
             let reason = rec.get("reasoning").and_then(|v| v.as_str()).unwrap_or("");
-            let query = rec.get("suggested_query").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let query = rec
+                .get("suggested_query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
 
             self.messages.push(AssistantMessage {
                 node: "agent_picker".into(),
@@ -979,22 +1075,65 @@ impl CockpitState {
     }
 
     fn process_agent_evidence(&mut self, agent_id: &str, result: &JsonValue) {
-        if let Some(run) = self.agent_runs.iter_mut().find(|r| r.agent_name == agent_id) {
+        // Extract the first key finding before borrowing agent_runs mutably
+        let first_finding: Option<String> = result
+            .get("evidence")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|ev| {
+                ev.get("key_findings")
+                    .and_then(|v| v.as_array())
+                    .and_then(|f| f.first())
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.chars().take(120).collect())
+            })
+            .or_else(|| {
+                result
+                    .get("evidence")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|ev| ev.get("summary"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.chars().take(120).collect())
+            });
+
+        if let Some(run) = self
+            .agent_runs
+            .iter_mut()
+            .find(|r| r.agent_name == agent_id)
+        {
             run.status = AgentRunStatus::Completed;
+            run.completed_at = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
             run.confidence = result.get("confidence").and_then(|v| v.as_f64());
             run.credits_charged = result.get("credits_charged").and_then(|v| v.as_f64());
-            if let Some(c) = run.credits_charged { self.session_cost += c; }
+            if let Some(c) = run.credits_charged {
+                self.session_cost += c;
+            }
+            run.latest_finding = first_finding;
         }
 
         if let Some(evidence_arr) = result.get("evidence").and_then(|v| v.as_array()) {
             let mut count = 0;
             for ev in evidence_arr {
-                let source = ev.get("source").and_then(|v| v.as_str()).unwrap_or(agent_id);
+                let source = ev
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(agent_id);
                 let summary = ev.get("summary").and_then(|v| v.as_str());
                 let relevance = ev.get("relevance").and_then(|v| v.as_f64());
-                let key_findings: Vec<String> = ev.get("key_findings")
+                let key_findings: Vec<String> = ev
+                    .get("key_findings")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 self.program.add_evidence(EvidenceStmt {
@@ -1009,7 +1148,11 @@ impl CockpitState {
                 });
                 count += 1;
             }
-            if let Some(run) = self.agent_runs.iter_mut().find(|r| r.agent_name == agent_id) {
+            if let Some(run) = self
+                .agent_runs
+                .iter_mut()
+                .find(|r| r.agent_name == agent_id)
+            {
                 run.evidence_count = count;
             }
         }
@@ -1021,6 +1164,12 @@ impl CockpitState {
             .find(|r| r.agent_name == agent_name)
         {
             run.status = AgentRunStatus::Failed;
+            run.completed_at = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
             run.error = Some(error.to_string());
         }
         self.messages.push(AssistantMessage {
@@ -1143,7 +1292,9 @@ impl CockpitState {
         let driver_type = driver
             .map(|d| format!("{:?}", d.driver_type))
             .unwrap_or_else(|| "unknown".into());
-        let question = self.program.question()
+        let question = self
+            .program
+            .question()
             .map(|q| q.text.clone())
             .unwrap_or_default();
 
@@ -1166,6 +1317,14 @@ impl CockpitState {
             confidence: None,
             error: None,
             credits_charged: None,
+            started_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            completed_at: None,
+            latest_finding: None,
         });
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", dn),
@@ -1223,19 +1382,93 @@ impl CockpitState {
             confidence: None,
             error: None,
             credits_charged: None,
+            started_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            completed_at: None,
+            latest_finding: None,
         });
 
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
             kind: MessageKind::Info,
-            text: format!("Agent '{}' assigned to '{}' (schedule: {}) — researching now.",
-                agent_id, driver_name, schedule_label),
+            text: format!(
+                "Agent '{}' assigned to '{}' (schedule: {}) — researching now.",
+                agent_id, driver_name, schedule_label
+            ),
         });
 
         self.fire_agent(agent_id, &query, cx);
 
         self.focused_node = FocusedNode::Driver(driver_name.to_string());
         self.populate_editor_from_driver(driver_name, cx);
+        cx.notify();
+    }
+
+    /// Re-run a previously completed or failed agent using its stored query.
+    pub fn retry_agent(&mut self, agent_name: &str, cx: &mut Context<Self>) {
+        // Look up the agent in the AST to get its query
+        let agent_stmt = self
+            .program
+            .agents()
+            .iter()
+            .find(|a| a.name == agent_name)
+            .cloned();
+        let query = match agent_stmt {
+            Some(ref a) => a.query.clone(),
+            None => {
+                log::warn!("[composer] retry_agent: {} not found in AST", agent_name);
+                return;
+            }
+        };
+
+        // Reset the execution state
+        if let Some(run) = self
+            .agent_runs
+            .iter_mut()
+            .find(|r| r.agent_name == agent_name)
+        {
+            run.status = AgentRunStatus::Running;
+            run.error = None;
+            run.started_at = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
+            run.completed_at = None;
+            run.latest_finding = None;
+        } else {
+            // No existing run — create one
+            self.agent_runs.push(AgentExecution {
+                agent_name: agent_name.to_string(),
+                status: AgentRunStatus::Running,
+                evidence_count: 0,
+                confidence: None,
+                error: None,
+                credits_charged: None,
+                started_at: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                ),
+                completed_at: None,
+                latest_finding: None,
+            });
+        }
+
+        self.messages.push(AssistantMessage {
+            node: format!("agent:{}", agent_name),
+            kind: MessageKind::Info,
+            text: format!("⟳ Re-running {}…", agent_name),
+        });
+
+        let base_id = base_agent_name(agent_name).to_string();
+        self.fire_agent(&base_id, &query, cx);
         cx.notify();
     }
 
@@ -1331,13 +1564,24 @@ impl CockpitState {
             return;
         }
 
-        let ev_id = format!("manual_{}_{}", sanitize_name(&driver_name),
-            self.program.evidence_items().len());
+        let ev_id = format!(
+            "manual_{}_{}",
+            sanitize_name(&driver_name),
+            self.program.evidence_items().len()
+        );
 
         self.program.add_evidence(EvidenceStmt {
             id: ev_id,
-            source: if source.is_empty() { "Manual entry".into() } else { source },
-            summary: if summary.is_empty() { None } else { Some(summary) },
+            source: if source.is_empty() {
+                "Manual entry".into()
+            } else {
+                source
+            },
+            summary: if summary.is_empty() {
+                None
+            } else {
+                Some(summary)
+            },
             url: None,
             relevance: Some(0.7),
             date: Some(chrono::Utc::now().format("%Y-%m-%d").to_string()),
@@ -1346,8 +1590,10 @@ impl CockpitState {
         });
 
         // Clear inputs
-        self.evidence_source_input.update(cx, |input, cx| input.set_text("", cx));
-        self.evidence_summary_input.update(cx, |input, cx| input.set_text("", cx));
+        self.evidence_source_input
+            .update(cx, |input, cx| input.set_text("", cx));
+        self.evidence_summary_input
+            .update(cx, |input, cx| input.set_text("", cx));
 
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
@@ -1360,10 +1606,14 @@ impl CockpitState {
     /// Update the outside rate (base rate) without resetting drivers.
     /// Fires Fermi to research the current base rate for the question.
     pub fn update_outside_rate(&mut self, cx: &mut Context<Self>) {
-        let question = self.program.question()
+        let question = self
+            .program
+            .question()
             .map(|q| q.text.clone())
             .unwrap_or_default();
-        if question.is_empty() { return; }
+        if question.is_empty() {
+            return;
+        }
 
         let query = format!(
             "What is the base rate for this forecast question? \
@@ -1381,6 +1631,14 @@ impl CockpitState {
             confidence: None,
             error: None,
             credits_charged: None,
+            started_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            completed_at: None,
+            latest_finding: None,
         });
 
         self.messages.push(AssistantMessage {
@@ -1413,22 +1671,39 @@ impl CockpitState {
     pub fn add_manual_driver(&mut self, binary: bool, cx: &mut Context<Self>) {
         let idx = self.program.drivers().len() + 1;
         let (name, driver) = if binary {
-            (format!("event_{}", idx), make_binary_driver(
-                &format!("event_{}", idx), &format!("Event {}", idx),
-                0.5, 1.3, "Describe this event and its impact",
-            ))
+            (
+                format!("event_{}", idx),
+                make_binary_driver(
+                    &format!("event_{}", idx),
+                    &format!("Event {}", idx),
+                    0.5,
+                    1.3,
+                    "Describe this event and its impact",
+                ),
+            )
         } else {
-            (format!("driver_{}", idx), make_continuous_driver(
-                &format!("driver_{}", idx), &format!("Driver {}", idx),
-                "", 0.0, 0.0, 0.0, "Describe this driver and set your estimates",
-            ))
+            (
+                format!("driver_{}", idx),
+                make_continuous_driver(
+                    &format!("driver_{}", idx),
+                    &format!("Driver {}", idx),
+                    "",
+                    0.0,
+                    0.0,
+                    0.0,
+                    "Describe this driver and set your estimates",
+                ),
+            )
         };
         self.program.add_driver(driver);
         self.focus_driver(&name, cx);
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", name),
             kind: MessageKind::Suggestion,
-            text: format!("New driver '{}' added. Set your estimates in the editor.", name),
+            text: format!(
+                "New driver '{}' added. Set your estimates in the editor.",
+                name
+            ),
         });
     }
 
@@ -1494,45 +1769,50 @@ impl CockpitState {
                 _ => {}
             }
 
-        // Fermi validates the saved driver
-        if let Some(driver) = self.program.driver(&name) {
-            match driver.driver_type {
-                DriverType::Continuous => {
-                    if let Some(Distribution::Triangular { ref p5, ref p50, ref p95 }) = driver.distribution {
-                        let v5 = expr_to_f64(p5);
-                        let v50 = expr_to_f64(p50);
-                        let v95 = expr_to_f64(p95);
-                        if v5 > v50 || v50 > v95 {
-                            self.messages.push(AssistantMessage {
+            // Fermi validates the saved driver
+            if let Some(driver) = self.program.driver(&name) {
+                match driver.driver_type {
+                    DriverType::Continuous => {
+                        if let Some(Distribution::Triangular {
+                            ref p5,
+                            ref p50,
+                            ref p95,
+                        }) = driver.distribution
+                        {
+                            let v5 = expr_to_f64(p5);
+                            let v50 = expr_to_f64(p50);
+                            let v95 = expr_to_f64(p95);
+                            if v5 > v50 || v50 > v95 {
+                                self.messages.push(AssistantMessage {
                                 node: format!("driver:{}", name),
                                 kind: MessageKind::Warning,
                                 text: format!("🦊 Driver '{}': p5 ({:.2}) should be ≤ p50 ({:.2}) ≤ p95 ({:.2}). Distribution is backwards.", name, v5, v50, v95),
                             });
-                        }
-                        if v5 == v50 && v50 == v95 {
-                            self.messages.push(AssistantMessage {
+                            }
+                            if v5 == v50 && v50 == v95 {
+                                self.messages.push(AssistantMessage {
                                 node: format!("driver:{}", name),
                                 kind: MessageKind::Suggestion,
                                 text: format!("🦊 Driver '{}': all values are equal ({:.2}). This means no uncertainty — is that intended?", name, v50),
                             });
+                            }
                         }
                     }
-                }
-                DriverType::Binary => {
-                    if let Some(p) = driver.probability {
-                        if p <= 0.0 || p >= 1.0 {
-                            self.messages.push(AssistantMessage {
+                    DriverType::Binary => {
+                        if let Some(p) = driver.probability {
+                            if p <= 0.0 || p >= 1.0 {
+                                self.messages.push(AssistantMessage {
                                 node: format!("driver:{}", name),
                                 kind: MessageKind::Warning,
                                 text: format!("🦊 Driver '{}': probability {:.0}% is at an extreme. Consider whether this is truly certain.", name, p * 100.0),
                             });
+                            }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
-    }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1595,7 +1875,6 @@ impl CockpitState {
                 });
                 self.sim_running = false;
 
-
                 // ── Update inside view from simulation ────────────
                 // Update inside view from simulation
                 // ── Normalize simulation output to probability ────
@@ -1607,7 +1886,9 @@ impl CockpitState {
                 // 3. P = base_rate × ratio, clamped to [0.01, 0.99]
                 //
                 // This uses the executor deterministically — no LLM involved.
-                let base_rate = self.program.question()
+                let base_rate = self
+                    .program
+                    .question()
                     .and_then(|q| q.base_rate.as_ref())
                     .map(|br| br.historical_frequency)
                     .unwrap_or(0.0);
@@ -1618,7 +1899,9 @@ impl CockpitState {
                     for driver in self.program.drivers() {
                         match driver.driver_type {
                             DriverType::Continuous => {
-                                if let Some(Distribution::Triangular { ref p50, .. }) = driver.distribution {
+                                if let Some(Distribution::Triangular { ref p50, .. }) =
+                                    driver.distribution
+                                {
                                     fixed_drivers.insert(driver.name.clone(), expr_to_f64(p50));
                                 }
                             }
@@ -1632,13 +1915,10 @@ impl CockpitState {
                         }
                     }
 
-                    let mut baseline_executor = ::fermi::executor::Executor::with_fixed_drivers(
-                        1, fixed_drivers
-                    );
+                    let mut baseline_executor =
+                        ::fermi::executor::Executor::with_fixed_drivers(1, fixed_drivers);
                     let baseline = baseline_executor.execute(&parsed);
-                    let baseline_mean = baseline.as_ref()
-                        .map(|r| r.mean)
-                        .unwrap_or(results.mean);
+                    let baseline_mean = baseline.as_ref().map(|r| r.mean).unwrap_or(results.mean);
 
                     // Normalize: P = base_rate × (sim_mean / baseline_mean)
                     let ratio = if baseline_mean.abs() > 0.001 {
@@ -1651,15 +1931,26 @@ impl CockpitState {
                     self.predicted_probability = (base_rate * ratio).clamp(0.01, 0.99);
 
                     // Build narrative explanation
-                    let direction = if ratio > 1.05 { "increases" }
-                        else if ratio < 0.95 { "decreases" }
-                        else { "confirms" };
-                    let strength = if (ratio - 1.0).abs() > 0.3 { "significantly" }
-                        else if (ratio - 1.0).abs() > 0.1 { "moderately" }
-                        else { "slightly" };
+                    let direction = if ratio > 1.05 {
+                        "increases"
+                    } else if ratio < 0.95 {
+                        "decreases"
+                    } else {
+                        "confirms"
+                    };
+                    let strength = if (ratio - 1.0).abs() > 0.3 {
+                        "significantly"
+                    } else if (ratio - 1.0).abs() > 0.1 {
+                        "moderately"
+                    } else {
+                        "slightly"
+                    };
 
                     // Find the most influential drivers from the sensitivity analysis
-                    let top_drivers: Vec<String> = self.program.drivers().iter()
+                    let top_drivers: Vec<String> = self
+                        .program
+                        .drivers()
+                        .iter()
                         .take(3)
                         .map(|d| d.display_name.as_deref().unwrap_or(&d.name).to_string())
                         .collect();
@@ -1686,7 +1977,9 @@ impl CockpitState {
                     );
                 }
                 // ── Fermi interprets the result ───────────────────
-                let base_rate = self.program.question()
+                let base_rate = self
+                    .program
+                    .question()
                     .and_then(|q| q.base_rate.as_ref())
                     .map(|br| br.historical_frequency)
                     .unwrap_or(0.0);
@@ -1697,16 +1990,21 @@ impl CockpitState {
 
                 // ── Run sensitivity analysis ──────────────────────
                 let sensitivity = ::fermi::sensitivity::full_sensitivity_analysis(
-                    &parsed, 1000  // fewer iterations for speed
+                    &parsed, 1000, // fewer iterations for speed
                 );
 
                 let sensitivity_summary = if let Ok(ref sa) = sensitivity {
                     let top = sa.top_drivers(5);
-                    let parts: Vec<String> = top.iter().map(|ds| {
-                        format!("{} ({:.0}% influence)",
-                            ds.driver_name,
-                            ds.total_order_index * 100.0)
-                    }).collect();
+                    let parts: Vec<String> = top
+                        .iter()
+                        .map(|ds| {
+                            format!(
+                                "{} ({:.0}% influence)",
+                                ds.driver_name,
+                                ds.total_order_index * 100.0
+                            )
+                        })
+                        .collect();
                     if parts.is_empty() {
                         "No sensitivity data available.".to_string()
                     } else {
@@ -1716,13 +2014,15 @@ impl CockpitState {
                     "Sensitivity analysis unavailable.".to_string()
                 };
 
-
                 // Enrich the narrative explanation with sensitivity data
                 if let Ok(ref sa) = sensitivity {
                     let top = sa.top_drivers(3);
                     if !top.is_empty() {
-                        let top_names: Vec<String> = top.iter()
-                            .map(|ds| format!("{} ({:.0}%)", ds.driver_name, ds.total_order_index * 100.0))
+                        let top_names: Vec<String> = top
+                            .iter()
+                            .map(|ds| {
+                                format!("{} ({:.0}%)", ds.driver_name, ds.total_order_index * 100.0)
+                            })
                             .collect();
                         self.inside_view_explanation = format!(
                             "{} Most influential: {}.",
@@ -1731,46 +2031,81 @@ impl CockpitState {
                         );
                     }
 
-                // ── Compute forecast confidence (Tetlock methodology) ──
-                let total_drivers = self.program.drivers().len() as f64;
-                let evidenced_drivers = self.program.drivers().iter().filter(|d| {
-                    self.program.evidence_items().iter().any(|e| {
-                        e.id.contains(&d.name) ||
-                        self.program.agents().iter()
-                            .filter(|a| a.driver_refs.contains(&d.name))
-                            .any(|a| evidence_matches_agent(e, &a.name))
-                    })
-                }).count() as f64;
-                let evidence_ratio = if total_drivers > 0.0 { evidenced_drivers / total_drivers } else { 0.0 };
-                let divergence_penalty = if divergence.abs() > 30.0 { 0.7 }
-                    else if divergence.abs() > 15.0 { 0.85 }
-                    else { 1.0 };
-                let base_confidence = 0.3 + (evidence_ratio * 0.5);
-                self.forecast_confidence = (base_confidence * divergence_penalty).clamp(0.1, 0.95);
-
+                    // ── Compute forecast confidence (Tetlock methodology) ──
+                    let total_drivers = self.program.drivers().len() as f64;
+                    let evidenced_drivers = self
+                        .program
+                        .drivers()
+                        .iter()
+                        .filter(|d| {
+                            self.program.evidence_items().iter().any(|e| {
+                                e.id.contains(&d.name)
+                                    || self
+                                        .program
+                                        .agents()
+                                        .iter()
+                                        .filter(|a| a.driver_refs.contains(&d.name))
+                                        .any(|a| evidence_matches_agent(e, &a.name))
+                            })
+                        })
+                        .count() as f64;
+                    let evidence_ratio = if total_drivers > 0.0 {
+                        evidenced_drivers / total_drivers
+                    } else {
+                        0.0
+                    };
+                    let divergence_penalty = if divergence.abs() > 30.0 {
+                        0.7
+                    } else if divergence.abs() > 15.0 {
+                        0.85
+                    } else {
+                        1.0
+                    };
+                    let base_confidence = 0.3 + (evidence_ratio * 0.5);
+                    self.forecast_confidence =
+                        (base_confidence * divergence_penalty).clamp(0.1, 0.95);
                 }
                 // Build driver contribution summary
-                let driver_summary: Vec<String> = self.program.drivers().iter().map(|d| {
-                    let display = d.display_name.as_deref().unwrap_or(&d.name);
-                    // Include sensitivity if available
-                    let influence = sensitivity.as_ref().ok()
-                        .and_then(|sa| sa.get_driver_sensitivity(&d.name))
-                        .map(|ds| format!(" [{:.0}%]", ds.total_order_index * 100.0))
-                        .unwrap_or_default();
-                    match d.driver_type {
-                        DriverType::Continuous => {
-                            if let Some(Distribution::Triangular { ref p50, .. }) = d.distribution {
-                                format!("{} (p50={:.2}){}", display, expr_to_f64(p50), influence)
-                            } else {
-                                format!("{}{}", display, influence)
+                let driver_summary: Vec<String> = self
+                    .program
+                    .drivers()
+                    .iter()
+                    .map(|d| {
+                        let display = d.display_name.as_deref().unwrap_or(&d.name);
+                        // Include sensitivity if available
+                        let influence = sensitivity
+                            .as_ref()
+                            .ok()
+                            .and_then(|sa| sa.get_driver_sensitivity(&d.name))
+                            .map(|ds| format!(" [{:.0}%]", ds.total_order_index * 100.0))
+                            .unwrap_or_default();
+                        match d.driver_type {
+                            DriverType::Continuous => {
+                                if let Some(Distribution::Triangular { ref p50, .. }) =
+                                    d.distribution
+                                {
+                                    format!(
+                                        "{} (p50={:.2}){}",
+                                        display,
+                                        expr_to_f64(p50),
+                                        influence
+                                    )
+                                } else {
+                                    format!("{}{}", display, influence)
+                                }
                             }
+                            DriverType::Binary => {
+                                format!(
+                                    "{} ({:.0}%){}",
+                                    display,
+                                    d.probability.unwrap_or(0.0) * 100.0,
+                                    influence
+                                )
+                            }
+                            _ => format!("{}{}", display, influence),
                         }
-                        DriverType::Binary => {
-                            format!("{} ({:.0}%){}", display, d.probability.unwrap_or(0.0) * 100.0, influence)
-                        }
-                        _ => format!("{}{}", display, influence),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 self.messages.push(AssistantMessage {
                     node: "simulation".into(),
@@ -1878,22 +2213,27 @@ impl CockpitState {
         if let Ok(state_text) = std::fs::read_to_string(&state_path) {
             if let Ok(state_json) = serde_json::from_str::<JsonValue>(&state_text) {
                 // Restore probability
-                if let Some(prob) = state_json.get("predicted_probability").and_then(|v| v.as_f64()) {
+                if let Some(prob) = state_json
+                    .get("predicted_probability")
+                    .and_then(|v| v.as_f64())
+                {
                     self.predicted_probability = prob.clamp(0.01, 0.99);
                 }
                 // Restore version history
                 if let Some(versions) = state_json.get("versions").and_then(|v| v.as_array()) {
-                    self.versions = versions.iter().filter_map(|v| {
-                        Some(ForecastVersion {
-                            version: v.get("version")?.as_u64()? as u32,
-                            timestamp: v.get("timestamp")?.as_str()?.to_string(),
-                            fpl_text: String::new(),
-                            probability: v.get("probability")?.as_f64()?,
-                            change_summary: v.get("change_summary")?.as_str()?.to_string(),
+                    self.versions = versions
+                        .iter()
+                        .filter_map(|v| {
+                            Some(ForecastVersion {
+                                version: v.get("version")?.as_u64()? as u32,
+                                timestamp: v.get("timestamp")?.as_str()?.to_string(),
+                                fpl_text: String::new(),
+                                probability: v.get("probability")?.as_f64()?,
+                                change_summary: v.get("change_summary")?.as_str()?.to_string(),
+                            })
                         })
-                    }).collect();
-                    self.current_version = self.versions.last()
-                        .map(|v| v.version).unwrap_or(0);
+                        .collect();
+                    self.current_version = self.versions.last().map(|v| v.version).unwrap_or(0);
                 }
                 // Restore sim results
                 if let Some(sim) = state_json.get("sim_results").and_then(|v| v.as_object()) {
@@ -1912,41 +2252,75 @@ impl CockpitState {
                 if let Some(br) = state_json.get("base_rate").and_then(|v| v.as_object()) {
                     if let Some(q) = self.program.question_mut() {
                         q.base_rate = Some(BaseRate {
-                            reference_class: br.get("reference_class")
-                                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                            historical_frequency: br.get("historical_frequency")
-                                .and_then(|v| v.as_f64()).unwrap_or(0.0),
-                            sample_size: br.get("sample_size")
-                                .and_then(|v| v.as_u64()).map(|n| n as usize),
-                            source: br.get("source")
-                                .and_then(|v| v.as_str()).unwrap_or("restored").to_string(),
-                            reasoning: br.get("reasoning")
-                                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            reference_class: br
+                                .get("reference_class")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            historical_frequency: br
+                                .get("historical_frequency")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0),
+                            sample_size: br
+                                .get("sample_size")
+                                .and_then(|v| v.as_u64())
+                                .map(|n| n as usize),
+                            source: br
+                                .get("source")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("restored")
+                                .to_string(),
+                            reasoning: br
+                                .get("reasoning")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
                             generated_by: GeneratedBy::Agent("fermi".into()),
                         });
                     }
                 }
                 // Restore inside view explanation
-                if let Some(expl) = state_json.get("inside_view_explanation").and_then(|v| v.as_str()) {
+                if let Some(expl) = state_json
+                    .get("inside_view_explanation")
+                    .and_then(|v| v.as_str())
+                {
                     self.inside_view_explanation = expl.to_string();
                 }
                 // Restore confidence
-                if let Some(conf) = state_json.get("forecast_confidence").and_then(|v| v.as_f64()) {
+                if let Some(conf) = state_json
+                    .get("forecast_confidence")
+                    .and_then(|v| v.as_f64())
+                {
                     self.forecast_confidence = conf;
                 }
                 // Restore agents into AST
                 if let Some(agent_arr) = state_json.get("agents").and_then(|v| v.as_array()) {
                     for ag in agent_arr {
-                        let name = ag.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let name = ag
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         if !name.is_empty() && self.program.agent(&name).is_none() {
-                            let driver_refs: Vec<String> = ag.get("driver_refs")
+                            let driver_refs: Vec<String> = ag
+                                .get("driver_refs")
                                 .and_then(|v| v.as_array())
-                                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect()
+                                })
                                 .unwrap_or_default();
                             self.program.add_agent(AgentStmt {
                                 name,
-                                agent_type: ag.get("agent_type").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                query: ag.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                agent_type: ag
+                                    .get("agent_type")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                query: ag
+                                    .get("query")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
                                 executor: Some(fermi::ast::ExecutorType::LLM),
                                 schedule: Some(Schedule::Once),
                                 driver_refs,
@@ -1958,18 +2332,33 @@ impl CockpitState {
                     log::info!("[load] Restored {} agents", agent_arr.len());
                     // Initialize agent_runs from restored agents
                     for ag in agent_arr {
-                        let name = ag.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        if !name.is_empty() && !self.agent_runs.iter().any(|r| r.agent_name == name) {
-                            let ev_count = self.program.evidence_items().iter()
+                        let name = ag
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if !name.is_empty() && !self.agent_runs.iter().any(|r| r.agent_name == name)
+                        {
+                            let ev_count = self
+                                .program
+                                .evidence_items()
+                                .iter()
                                 .filter(|e| evidence_matches_agent(e, &name))
                                 .count();
                             self.agent_runs.push(AgentExecution {
                                 agent_name: name,
-                                status: if ev_count > 0 { AgentRunStatus::Completed } else { AgentRunStatus::Idle },
+                                status: if ev_count > 0 {
+                                    AgentRunStatus::Completed
+                                } else {
+                                    AgentRunStatus::Idle
+                                },
                                 evidence_count: ev_count,
                                 confidence: None,
                                 error: None,
                                 credits_charged: None,
+                                started_at: None,
+                                completed_at: None,
+                                latest_finding: None,
                             });
                         }
                     }
@@ -1978,19 +2367,40 @@ impl CockpitState {
                 log::info!("[load] Restoring evidence from state.json");
                 if let Some(ev_arr) = state_json.get("evidence").and_then(|v| v.as_array()) {
                     for ev in ev_arr {
-                        let id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        if !id.is_empty() && self.program.evidence_items().iter().all(|e| e.id != id) {
+                        let id = ev
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if !id.is_empty()
+                            && self.program.evidence_items().iter().all(|e| e.id != id)
+                        {
                             self.program.add_evidence(EvidenceStmt {
                                 id,
-                                source: ev.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                summary: ev.get("summary").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                source: ev
+                                    .get("source")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                summary: ev
+                                    .get("summary")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
                                 url: None,
                                 relevance: ev.get("relevance").and_then(|v| v.as_f64()),
-                                date: ev.get("date").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                date: ev
+                                    .get("date")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
                                 strength: ev.get("relevance").and_then(|v| v.as_f64()),
-                                key_findings: ev.get("key_findings")
+                                key_findings: ev
+                                    .get("key_findings")
                                     .and_then(|v| v.as_array())
-                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                            .collect()
+                                    })
                                     .unwrap_or_default(),
                             });
                         }
@@ -2012,10 +2422,12 @@ impl CockpitState {
                 self.messages.push(AssistantMessage {
                     node: "load".into(),
                     kind: MessageKind::Info,
-                    text: format!("Restored v{} — {:.2}% (confidence: {:.0}%)",
+                    text: format!(
+                        "Restored v{} — {:.2}% (confidence: {:.0}%)",
                         self.current_version,
                         self.predicted_probability * 100.0,
-                        self.forecast_confidence * 100.0),
+                        self.forecast_confidence * 100.0
+                    ),
                 });
             }
         } else if !fpl_parsed {
@@ -2049,7 +2461,9 @@ impl CockpitState {
         });
 
         // Save to disk
-        let filename = self.program.question()
+        let filename = self
+            .program
+            .question()
             .map(|q| sanitize_name(&q.text))
             .unwrap_or_else(|| "forecast".into());
         let path = format!("forecasts/{}.fpl", filename);
@@ -2060,7 +2474,11 @@ impl CockpitState {
         match std::fs::write(&path, &self.cached_fpl) {
             Ok(_) => {
                 log::info!("[composer] Saved FPL to {}", path);
-                log::info!("[composer] Evidence in AST: {}, Drivers: {}", self.program.evidence_items().len(), self.program.drivers().len());
+                log::info!(
+                    "[composer] Evidence in AST: {}, Drivers: {}",
+                    self.program.evidence_items().len(),
+                    self.program.drivers().len()
+                );
                 self.messages.push(AssistantMessage {
                     node: "save".into(),
                     kind: MessageKind::Info,
@@ -2070,7 +2488,13 @@ impl CockpitState {
 
                 // Also save evidence wiki
                 let wiki_path = format!("forecasts/{}.evidence.md", filename);
-                let wiki = generate_evidence_wiki(&self.program, self.current_version, self.predicted_probability, &self.inside_view_explanation, self.forecast_confidence);
+                let wiki = generate_evidence_wiki(
+                    &self.program,
+                    self.current_version,
+                    self.predicted_probability,
+                    &self.inside_view_explanation,
+                    self.forecast_confidence,
+                );
                 match std::fs::write(&wiki_path, &wiki) {
                     Ok(_) => log::info!("[composer] Saved evidence wiki to {}", wiki_path),
                     Err(e) => log::warn!("[composer] Failed to save evidence wiki: {}", e),
@@ -2122,7 +2546,10 @@ impl CockpitState {
                         "driver_refs": a.driver_refs,
                     })).collect::<Vec<_>>(),
                 });
-                match std::fs::write(&state_path, serde_json::to_string_pretty(&state_json).unwrap_or_default()) {
+                match std::fs::write(
+                    &state_path,
+                    serde_json::to_string_pretty(&state_json).unwrap_or_default(),
+                ) {
                     Ok(_) => log::info!("[composer] Saved state to {}", state_path),
                     Err(e) => log::warn!("[composer] Failed to save state: {}", e),
                 }
@@ -2295,6 +2722,7 @@ impl Render for CockpitState {
                                     &assigned_agents,
                                     &self.agent_runs,
                                     &self.messages,
+                                    &self.program.evidence_items(),
                                     cx,
                                     &n,
                                 )
@@ -2377,12 +2805,12 @@ impl Render for CockpitState {
                                 RightTab::Edit => render_right_panel(self, &focused, cx),
                                 RightTab::Fpl => render_fpl_tab(self).into_any_element(),
                                 RightTab::Wiki => render_wiki_tab(self).into_any_element(),
-                            })
+                            }),
                     )
                     // Assistant messages (always visible below tabs)
-                    .child(render_assistant_panel(&self.messages))
+                    .child(render_assistant_panel(&self.messages)),
             )
-}
+    }
 }
 
 pub fn render_cockpit(cockpit: &Entity<CockpitState>) -> impl IntoElement {
@@ -2426,20 +2854,29 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                             .min_w(px(0.0))
                             .child(state.inside_view_explanation.clone()),
                     )
-                .when(state.forecast_confidence > 0.0, |el| {
-                    let conf_label = if state.forecast_confidence > 0.7 { "High" }
-                        else if state.forecast_confidence > 0.4 { "Medium" }
-                        else { "Low" };
-                    let conf_color = if state.forecast_confidence > 0.7 { theme::GREEN }
-                        else if state.forecast_confidence > 0.4 { theme::GOLD }
-                        else { theme::RED };
-                    el.child(
-                        div()
-                            .text_size(px(10.0))
-                            .text_color(rgb(conf_color))
-                            .child(format!("Confidence: {} ({:.0}%)", conf_label, state.forecast_confidence * 100.0)),
-                    )
-                })
+                    .when(state.forecast_confidence > 0.0, |el| {
+                        let conf_label = if state.forecast_confidence > 0.7 {
+                            "High"
+                        } else if state.forecast_confidence > 0.4 {
+                            "Medium"
+                        } else {
+                            "Low"
+                        };
+                        let conf_color = if state.forecast_confidence > 0.7 {
+                            theme::GREEN
+                        } else if state.forecast_confidence > 0.4 {
+                            theme::GOLD
+                        } else {
+                            theme::RED
+                        };
+                        el.child(div().text_size(px(10.0)).text_color(rgb(conf_color)).child(
+                            format!(
+                                "Confidence: {} ({:.0}%)",
+                                conf_label,
+                                state.forecast_confidence * 100.0
+                            ),
+                        ))
+                    })
                 })
                 .when(state.orchestration_running, |el| {
                     el.child(
@@ -2461,9 +2898,7 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                                 div()
                                     .text_size(px(12.0))
                                     .text_color(rgb(theme::GOLD))
-                                    .child(
-                                        "Researching… Fermi is decomposing your forecast",
-                                    ),
+                                    .child("Researching… Fermi is decomposing your forecast"),
                             ),
                     )
                 })
@@ -2485,7 +2920,10 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                 .child("Ctrl+Enter research")
                 .child("Ctrl+R simulate")
                 .child("Ctrl+P publish")
-                .child("Ctrl+N new").child("Ctrl+O import").child("Ctrl+S save").child("Ctrl+E tabs"),
+                .child("Ctrl+N new")
+                .child("Ctrl+O import")
+                .child("Ctrl+S save")
+                .child("Ctrl+E tabs"),
         )
 }
 
@@ -2601,6 +3039,7 @@ fn render_driver_card(
     assigned_agents: &[String],
     agent_runs: &[AgentExecution],
     messages: &[AssistantMessage],
+    evidence_items: &[&fermi::ast::EvidenceStmt],
     cx: &mut Context<CockpitState>,
     name: &str,
 ) -> AnyElement {
@@ -2654,8 +3093,20 @@ fn render_driver_card(
     // Agents bound to this driver
     // (In current AST, agents are top-level with driver_refs)
 
+    let has_evidence_gap =
+        assigned_agents.is_empty() && evidence_items.iter().all(|e| !e.id.contains(name));
+    let any_agent_running = assigned_agents.iter().any(|a| {
+        agent_runs
+            .iter()
+            .any(|r| r.agent_name == *a && r.status == AgentRunStatus::Running)
+    });
+
     let border_color = if is_focused {
         theme::CYAN
+    } else if has_evidence_gap {
+        theme::RED
+    } else if any_agent_running {
+        theme::GOLD
     } else {
         theme::FG_FAINT
     };
@@ -2719,25 +3170,37 @@ fn render_driver_card(
                         .text_color(rgb(theme::FG_DIM))
                         .child(summary),
                 )
-        // Distribution sparkline for continuous drivers
-        .when(driver.driver_type == DriverType::Continuous, |el| {
-            if let Some(Distribution::Triangular { ref p5, ref p50, ref p95 }) = driver.distribution {
-                let v5 = expr_to_f64(p5);
-                let v50 = expr_to_f64(p50);
-                let v95 = expr_to_f64(p95);
-                if v95 > v5 {
-                    let chart_w = 120u32;
-                    let chart_h = 24u32;
-                    let rgb_buf = crate::charts::render_distribution_sparkline(v5, v50, v95, chart_w, chart_h);
-                    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
-                    el.child(
-                        gpui::img(gpui::ImageSource::Render(render_img))
-                            .w(gpui::px(chart_w as f32))
-                            .h(gpui::px(chart_h as f32)),
-                    )
-                } else { el }
-            } else { el }
-        })
+                // Distribution sparkline for continuous drivers
+                .when(driver.driver_type == DriverType::Continuous, |el| {
+                    if let Some(Distribution::Triangular {
+                        ref p5,
+                        ref p50,
+                        ref p95,
+                    }) = driver.distribution
+                    {
+                        let v5 = expr_to_f64(p5);
+                        let v50 = expr_to_f64(p50);
+                        let v95 = expr_to_f64(p95);
+                        if v95 > v5 {
+                            let chart_w = 120u32;
+                            let chart_h = 24u32;
+                            let rgb_buf = crate::charts::render_distribution_sparkline(
+                                v5, v50, v95, chart_w, chart_h,
+                            );
+                            let render_img =
+                                crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                            el.child(
+                                gpui::img(gpui::ImageSource::Render(render_img))
+                                    .w(gpui::px(chart_w as f32))
+                                    .h(gpui::px(chart_h as f32)),
+                            )
+                        } else {
+                            el
+                        }
+                    } else {
+                        el
+                    }
+                })
                 .when(msg_count > 0, |el| {
                     el.child(
                         div()
@@ -2753,7 +3216,8 @@ fn render_driver_card(
         )
         // Driver confidence dots (based on evidence coverage)
         .child({
-            let ev_count = assigned_agents.iter()
+            let ev_count = assigned_agents
+                .iter()
                 .flat_map(|a| agent_runs.iter().filter(move |r| r.agent_name == *a))
                 .map(|r| r.evidence_count)
                 .sum::<usize>();
@@ -2765,10 +3229,40 @@ fn render_driver_card(
                 ("Evidence: ●○○ Low", theme::RED)
             };
             div()
-                .text_size(px(9.0))
-                .text_color(rgb(conf_color))
-                .px(px(4.0))
-                .child(conf_label)
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(conf_color))
+                        .px(px(4.0))
+                        .child(conf_label),
+                )
+                .when(has_evidence_gap, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::RED))
+                            .px(px(4.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(0x3D1F1F))
+                            .child("⚠ No agents — assign one to research this driver"),
+                    )
+                })
+                .when(
+                    !has_evidence_gap && ev_count == 0 && !any_agent_running,
+                    |el| {
+                        el.child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::GOLD))
+                                .px(px(4.0))
+                                .child("◌ Awaiting evidence"),
+                        )
+                    },
+                )
         })
         // Rationale (if present)
         .when(driver.rationale.is_some(), |el| {
@@ -2792,11 +3286,50 @@ fn render_driver_card(
                     let ev_count = run.map(|r| r.evidence_count).unwrap_or(0);
                     let confidence = run.and_then(|r| r.confidence);
 
+                    let elapsed_str: String = match (
+                        run.and_then(|r| r.started_at),
+                        run.and_then(|r| r.completed_at),
+                    ) {
+                        (Some(start), Some(end)) => {
+                            let secs = end.saturating_sub(start);
+                            if secs < 60 {
+                                format!(" ({secs}s)")
+                            } else {
+                                format!(" ({}m{}s)", secs / 60, secs % 60)
+                            }
+                        }
+                        (Some(start), None) => {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            let secs = now.saturating_sub(start);
+                            if secs < 60 {
+                                format!(" ({secs}s…)")
+                            } else {
+                                format!(" ({}m{}s…)", secs / 60, secs % 60)
+                            }
+                        }
+                        _ => String::new(),
+                    };
+
                     let (status_icon, status_text, status_color, bg_color) = match status {
-                        Some(AgentRunStatus::Running) => ("⟳", "researching…", theme::GOLD, 0x2A2D3A),
-                        Some(AgentRunStatus::Completed) => ("✓", &format!("{} findings", ev_count) as &str, theme::GREEN, theme::BG),
-                        Some(AgentRunStatus::Failed) => ("✗", "failed", theme::RED, 0x3D1F1F),
-                        _ => ("○", "idle", theme::FG_DIM, theme::BG),
+                        Some(AgentRunStatus::Running) => (
+                            "⟳",
+                            format!("researching…{}", elapsed_str),
+                            theme::GOLD,
+                            0x2A2D3A,
+                        ),
+                        Some(AgentRunStatus::Completed) => (
+                            "✓",
+                            format!("{} findings{}", ev_count, elapsed_str),
+                            theme::GREEN,
+                            theme::BG,
+                        ),
+                        Some(AgentRunStatus::Failed) => {
+                            ("✗", format!("failed{}", elapsed_str), theme::RED, 0x3D1F1F)
+                        }
+                        _ => ("○", "idle".to_string(), theme::FG_DIM, theme::BG),
                     };
 
                     // Extract the base agent name (before the _driver suffix)
@@ -2836,7 +3369,7 @@ fn render_driver_card(
                                     div()
                                         .text_size(px(9.0))
                                         .text_color(rgb(status_color))
-                                        .child(status_text.to_string()),
+                                        .child(status_text.clone()),
                                 ),
                         )
                         .when(confidence.is_some(), |el| {
@@ -2847,6 +3380,107 @@ fn render_driver_card(
                                     .child(format!("{:.0}%", confidence.unwrap_or(0.0) * 100.0)),
                             )
                         })
+                        // Credits charged
+                        .when(run.and_then(|r| r.credits_charged).is_some(), |el| {
+                            let credits = run.and_then(|r| r.credits_charged).unwrap_or(0.0);
+                            el.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child(format!("⚡{:.1}", credits)),
+                            )
+                        })
+                        // Error details for failed agents
+                        .when(matches!(status, Some(AgentRunStatus::Failed)), |el| {
+                            let err_msg: String = run
+                                .and_then(|r| r.error.as_ref())
+                                .map(|e| e.chars().take(120).collect())
+                                .unwrap_or_default();
+                            if !err_msg.is_empty() {
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::RED))
+                                        .mt(px(2.0))
+                                        .min_w(px(0.0))
+                                        .child(format!("⚠ {}", err_msg)),
+                                )
+                            } else {
+                                el
+                            }
+                        })
+                        // Speech bubble — latest finding from this agent
+                        .when(
+                            ev_count > 0 || run.and_then(|r| r.latest_finding.as_ref()).is_some(),
+                            |el| {
+                                // Prefer the cached latest_finding (set during execution),
+                                // fall back to searching evidence items
+                                let latest: String = run
+                                    .and_then(|r| r.latest_finding.as_ref())
+                                    .cloned()
+                                    .or_else(|| {
+                                        evidence_items
+                                            .iter()
+                                            .filter(|e| evidence_matches_agent(*e, agent_name))
+                                            .last()
+                                            .and_then(|e| e.summary.as_ref())
+                                            .map(|s| s.chars().take(100).collect())
+                                    })
+                                    .unwrap_or_default();
+                                if !latest.is_empty() {
+                                    el.child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .mt(px(2.0))
+                                            .min_w(px(0.0))
+                                            .child(format!(
+                                                "💬 {}",
+                                                if latest.len() > 100 {
+                                                    format!("{}…", &latest[..97])
+                                                } else {
+                                                    latest
+                                                }
+                                            )),
+                                    )
+                                } else {
+                                    el
+                                }
+                            },
+                        )
+                        // Retry / Re-run button for failed or completed agents
+                        .when(
+                            matches!(
+                                status,
+                                Some(AgentRunStatus::Failed) | Some(AgentRunStatus::Completed)
+                            ),
+                            |el| {
+                                let an = agent_name.clone();
+                                let btn_label = if matches!(status, Some(AgentRunStatus::Failed)) {
+                                    "↻ Retry"
+                                } else {
+                                    "↻ Re-run"
+                                };
+                                el.child(
+                                    div()
+                                        .id(ElementId::Name(format!("retry-{}", an).into()))
+                                        .px(px(6.0))
+                                        .py(px(2.0))
+                                        .rounded(px(3.0))
+                                        .bg(rgb(theme::BG_ELEVATED))
+                                        .border_1()
+                                        .border_color(rgb(theme::GOLD))
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::GOLD))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.retry_agent(&an, cx);
+                                        }))
+                                        .child(btn_label),
+                                )
+                            },
+                        )
                 }))
                 // "Assign agent" button
                 .child({
@@ -2920,9 +3554,7 @@ fn render_agent_picker(
         .list_cards()
         .unwrap_or_default()
         .iter()
-        .filter(|card| {
-            card.metadata.tags.iter().any(|t| t == "fermi-orchestra")
-        })
+        .filter(|card| card.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
         .map(|card| {
             (
                 card.agent_id.clone(),
@@ -3240,7 +3872,12 @@ fn render_driver_editor_and_evidence(
                 .flex()
                 .gap(px(8.0))
                 .child(div().w(px(140.0)).child(state.editor_name.clone()))
-                .child(div().flex_grow().min_w(px(0.0)).child(state.editor_rationale.clone())),
+                .child(
+                    div()
+                        .flex_grow()
+                        .min_w(px(0.0))
+                        .child(state.editor_rationale.clone()),
+                ),
         )
         .when(is_continuous, |el| {
             el.child(
@@ -3450,7 +4087,12 @@ fn render_editor_panel(
                         .flex()
                         .gap(px(8.0))
                         .child(div().w(px(140.0)).child(state.editor_name.clone()))
-                        .child(div().flex_grow().min_w(px(0.0)).child(state.editor_rationale.clone())),
+                        .child(
+                            div()
+                                .flex_grow()
+                                .min_w(px(0.0))
+                                .child(state.editor_rationale.clone()),
+                        ),
                 )
                 .when(is_continuous, |el| {
                     el.child(
@@ -3586,12 +4228,16 @@ fn render_simulation_section(state: &CockpitState) -> impl IntoElement {
             })
             // Index comparison chart (inside view vs outside view over versions)
             .when(state.versions.len() > 0, |el| {
-                let base_rate = state.program.question()
+                let base_rate = state
+                    .program
+                    .question()
                     .and_then(|q| q.base_rate.as_ref())
                     .map(|br| br.historical_frequency * 100.0)
                     .unwrap_or(50.0);
 
-                let history: Vec<crate::charts::IndexPoint> = state.versions.iter()
+                let history: Vec<crate::charts::IndexPoint> = state
+                    .versions
+                    .iter()
                     .map(|v| crate::charts::IndexPoint {
                         label: format!("v{}", v.version),
                         inside_view: v.probability * 100.0,
@@ -3640,39 +4286,68 @@ fn render_simulation_section(state: &CockpitState) -> impl IntoElement {
             )
             // Evidence treemap — drivers sized by impact
             .child({
-                let drivers_viz: Vec<crate::charts::DriverViz> = state.program.drivers().iter().map(|d| {
-                    let display = d.display_name.as_deref().unwrap_or(&d.name);
-                    let impact = match d.driver_type {
-                        DriverType::Continuous => {
-                            if let Some(Distribution::Triangular { ref p5, ref p95, .. }) = d.distribution {
-                                (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.1)
-                            } else { 1.0 }
+                let drivers_viz: Vec<crate::charts::DriverViz> = state
+                    .program
+                    .drivers()
+                    .iter()
+                    .map(|d| {
+                        let display = d.display_name.as_deref().unwrap_or(&d.name);
+                        let impact = match d.driver_type {
+                            DriverType::Continuous => {
+                                if let Some(Distribution::Triangular {
+                                    ref p5, ref p95, ..
+                                }) = d.distribution
+                                {
+                                    (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.1)
+                                } else {
+                                    1.0
+                                }
+                            }
+                            DriverType::Binary => {
+                                d.probability.unwrap_or(0.5)
+                                    * d.impact_multiplier.unwrap_or(1.0)
+                                    * 10.0
+                            }
+                            _ => 1.0,
+                        };
+                        let evidence_count = state
+                            .program
+                            .evidence_items()
+                            .iter()
+                            .filter(|e| {
+                                e.id.contains(&d.name)
+                                    || state
+                                        .program
+                                        .agents()
+                                        .iter()
+                                        .filter(|a| a.driver_refs.contains(&d.name))
+                                        .any(|a| evidence_matches_agent(e, &a.name))
+                            })
+                            .count();
+                        let quality = if evidence_count > 2 {
+                            0.8
+                        } else if evidence_count > 0 {
+                            0.5
+                        } else {
+                            0.2
+                        };
+                        crate::charts::DriverViz {
+                            name: display.to_string(),
+                            impact,
+                            quality,
+                            evidence: state
+                                .program
+                                .evidence_items()
+                                .iter()
+                                .filter(|e| e.id.contains(&d.name))
+                                .filter_map(|e| {
+                                    e.summary.as_ref().map(|s| s.chars().take(40).collect())
+                                })
+                                .take(2)
+                                .collect(),
                         }
-                        DriverType::Binary => {
-                            d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0) * 10.0
-                        }
-                        _ => 1.0,
-                    };
-                    let evidence_count = state.program.evidence_items().iter()
-                        .filter(|e| e.id.contains(&d.name) || 
-                            state.program.agents().iter()
-                                .filter(|a| a.driver_refs.contains(&d.name))
-                                .any(|a| evidence_matches_agent(e, &a.name)))
-                        .count();
-                    let quality = if evidence_count > 2 { 0.8 } 
-                        else if evidence_count > 0 { 0.5 } 
-                        else { 0.2 };
-                    crate::charts::DriverViz {
-                        name: display.to_string(),
-                        impact,
-                        quality,
-                        evidence: state.program.evidence_items().iter()
-                            .filter(|e| e.id.contains(&d.name))
-                            .filter_map(|e| e.summary.as_ref().map(|s| s.chars().take(40).collect()))
-                            .take(2)
-                            .collect(),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 if !drivers_viz.is_empty() {
                     let chart_w = 400u32;
@@ -3745,8 +4420,45 @@ fn render_histogram(bins: &[u32]) -> impl IntoElement {
         .h(gpui::px(chart_h as f32))
 }
 
-
 fn render_status_bar(state: &CockpitState) -> impl IntoElement {
+    let total_drivers = state.program.drivers().len();
+    let total_evidence = state.program.evidence_items().len();
+    let running_count = state
+        .agent_runs
+        .iter()
+        .filter(|r| r.status == AgentRunStatus::Running)
+        .count();
+    let completed_count = state
+        .agent_runs
+        .iter()
+        .filter(|r| r.status == AgentRunStatus::Completed)
+        .count();
+    let failed_count = state
+        .agent_runs
+        .iter()
+        .filter(|r| r.status == AgentRunStatus::Failed)
+        .count();
+
+    // Drivers with no agents and no evidence = gaps
+    let gap_count = state
+        .program
+        .drivers()
+        .iter()
+        .filter(|d| {
+            let has_agent = state
+                .program
+                .agents()
+                .iter()
+                .any(|a| a.driver_refs.contains(&d.name));
+            let has_ev = state
+                .program
+                .evidence_items()
+                .iter()
+                .any(|e| e.id.contains(&d.name));
+            !has_agent && !has_ev
+        })
+        .count();
+
     div()
         .h(px(32.0))
         .px(px(16.0))
@@ -3757,11 +4469,50 @@ fn render_status_bar(state: &CockpitState) -> impl IntoElement {
         .gap(px(12.0))
         .text_size(px(10.0))
         .text_color(rgb(theme::FG_FAINT))
-        .child(format!("{} drivers", state.program.drivers().len()))
-        .child(format!("{} evidence", state.program.evidence_items().len()))
-        .child(format!("{} agents", state.agent_runs.len()))
+        .child(format!("{} drivers", total_drivers))
+        .child(
+            div()
+                .text_color(if total_evidence > 0 {
+                    rgb(theme::GREEN)
+                } else {
+                    rgb(theme::FG_FAINT)
+                })
+                .child(format!("{} evidence", total_evidence)),
+        )
+        .when(running_count > 0, |el| {
+            el.child(
+                div()
+                    .text_color(rgb(theme::GOLD))
+                    .child(format!("⟳ {} running", running_count)),
+            )
+        })
+        .when(completed_count > 0, |el| {
+            el.child(
+                div()
+                    .text_color(rgb(theme::GREEN))
+                    .child(format!("✓ {} done", completed_count)),
+            )
+        })
+        .when(failed_count > 0, |el| {
+            el.child(
+                div()
+                    .text_color(rgb(theme::RED))
+                    .child(format!("✗ {} failed", failed_count)),
+            )
+        })
+        .when(gap_count > 0, |el| {
+            el.child(
+                div()
+                    .text_color(rgb(theme::RED))
+                    .child(format!("⚠ {} gaps", gap_count)),
+            )
+        })
         .when(state.session_cost > 0.0, |el| {
-            el.child(format!("{:.1} credits", state.session_cost))
+            el.child(
+                div()
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child(format!("⚡{:.1} credits", state.session_cost)),
+            )
         })
         .when(state.current_version > 0, |el| {
             el.child(format!("v{}", state.current_version))
@@ -3787,10 +4538,22 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                 .px(px(16.0))
                 .py(px(8.0))
                 .text_size(px(12.0))
-                .font_weight(if is_active { FontWeight::BOLD } else { FontWeight::NORMAL })
-                .text_color(if is_active { rgb(theme::CYAN) } else { rgb(theme::FG_DIM) })
+                .font_weight(if is_active {
+                    FontWeight::BOLD
+                } else {
+                    FontWeight::NORMAL
+                })
+                .text_color(if is_active {
+                    rgb(theme::CYAN)
+                } else {
+                    rgb(theme::FG_DIM)
+                })
                 .border_b_2()
-                .border_color(if is_active { rgb(theme::CYAN) } else { rgb(theme::BG_ELEVATED) })
+                .border_color(if is_active {
+                    rgb(theme::CYAN)
+                } else {
+                    rgb(theme::BG_ELEVATED)
+                })
                 .cursor_pointer()
                 .hover(|s| s.text_color(rgb(theme::FG)))
                 .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -3811,19 +4574,18 @@ fn render_fpl_tab(state: &CockpitState) -> impl IntoElement {
         state.cached_fpl.clone()
     };
 
-    div()
-        .p(px(12.0))
-        .flex()
-        .flex_col()
-        .gap(px(4.0))
-        .child(
-            div()
-                .text_size(px(11.0))
-                .text_color(rgb(theme::FG_DIM))
-                .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
-                .min_w(px(0.0))
-                .child(if fpl.is_empty() { "# Empty program".to_string() } else { fpl }),
-        )
+    div().p(px(12.0)).flex().flex_col().gap(px(4.0)).child(
+        div()
+            .text_size(px(11.0))
+            .text_color(rgb(theme::FG_DIM))
+            .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
+            .min_w(px(0.0))
+            .child(if fpl.is_empty() {
+                "# Empty program".to_string()
+            } else {
+                fpl
+            }),
+    )
 }
 
 fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
@@ -3838,50 +4600,72 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
         .gap(px(8.0))
         .min_w(px(0.0))
         // Base rate section
-        .when(state.program.question().and_then(|q| q.base_rate.as_ref()).is_some(), |el| {
-            let br = state.program.question().unwrap().base_rate.as_ref().unwrap();
-            el.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .pb(px(8.0))
-                    .border_b_1()
-                    .border_color(rgb(theme::FG_FAINT))
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(theme::GOLD))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Outside View (Base Rate)"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(theme::FG))
-                            .min_w(px(0.0))
-                            .child(format!("{:.2}% — {}", br.historical_frequency * 100.0, br.reference_class)),
-                    )
-                    .when(br.reasoning.is_some(), |el| {
-                        el.child(
+        .when(
+            state
+                .program
+                .question()
+                .and_then(|q| q.base_rate.as_ref())
+                .is_some(),
+            |el| {
+                let br = state
+                    .program
+                    .question()
+                    .unwrap()
+                    .base_rate
+                    .as_ref()
+                    .unwrap();
+                el.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .pb(px(8.0))
+                        .border_b_1()
+                        .border_color(rgb(theme::FG_FAINT))
+                        .child(
                             div()
-                                .text_size(px(10.0))
-                                .text_color(rgb(theme::FG_DIM))
-                                .min_w(px(0.0))
-                                .child(br.reasoning.as_deref().unwrap_or("").to_string()),
+                                .text_size(px(12.0))
+                                .text_color(rgb(theme::GOLD))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Outside View (Base Rate)"),
                         )
-                    }),
-            )
-        })
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::FG))
+                                .min_w(px(0.0))
+                                .child(format!(
+                                    "{:.2}% — {}",
+                                    br.historical_frequency * 100.0,
+                                    br.reference_class
+                                )),
+                        )
+                        .when(br.reasoning.is_some(), |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .min_w(px(0.0))
+                                    .child(br.reasoning.as_deref().unwrap_or("").to_string()),
+                            )
+                        }),
+                )
+            },
+        )
         // Per-driver evidence sections
         .children(drivers.iter().map(|driver| {
             let display = driver.display_name.as_deref().unwrap_or(&driver.name);
-            let driver_agents: Vec<&str> = agents.iter()
+            let driver_agents: Vec<&str> = agents
+                .iter()
                 .filter(|a| a.driver_refs.contains(&driver.name))
                 .map(|a| a.name.as_str())
                 .collect();
-            let driver_ev: Vec<_> = evidence.iter()
-                .filter(|e| driver_agents.iter().any(|a| evidence_matches_agent(e, a)) || e.id.contains(&driver.name))
+            let driver_ev: Vec<_> = evidence
+                .iter()
+                .filter(|e| {
+                    driver_agents.iter().any(|a| evidence_matches_agent(e, a))
+                        || e.id.contains(&driver.name)
+                })
                 .collect();
 
             div()
@@ -3951,7 +4735,10 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                                         div()
                                             .text_size(px(9.0))
                                             .text_color(rgb(theme::CYAN))
-                                            .child(format!("{:.0}%", ev.relevance.unwrap_or(0.0) * 100.0)),
+                                            .child(format!(
+                                                "{:.0}%",
+                                                ev.relevance.unwrap_or(0.0) * 100.0
+                                            )),
                                     )
                                 }),
                         )
@@ -3992,11 +4779,13 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
         }))
         // Unlinked evidence
         .when(!evidence.is_empty(), |el| {
-            let all_agent_names: Vec<String> = agents.iter()
+            let all_agent_names: Vec<String> = agents
+                .iter()
                 .filter(|a| !a.driver_refs.is_empty())
                 .map(|a| a.name.clone())
                 .collect();
-            let unlinked: Vec<_> = evidence.iter()
+            let unlinked: Vec<_> = evidence
+                .iter()
                 .filter(|e| !all_agent_names.iter().any(|a| evidence_matches_agent(e, a)))
                 .collect();
             if unlinked.is_empty() {
@@ -4020,9 +4809,15 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                                 .text_size(px(10.0))
                                 .text_color(rgb(theme::FG_DIM))
                                 .min_w(px(0.0))
-                                .child(format!("{}: {}",
+                                .child(format!(
+                                    "{}: {}",
                                     ev.source,
-                                    ev.summary.as_deref().unwrap_or("").chars().take(200).collect::<String>()
+                                    ev.summary
+                                        .as_deref()
+                                        .unwrap_or("")
+                                        .chars()
+                                        .take(200)
+                                        .collect::<String>()
                                 ))
                         })),
                 )
@@ -4047,15 +4842,25 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                     )
                     .children(state.versions.iter().rev().map(|v| {
                         let prob_change = if v.version > 1 {
-                            state.versions.iter()
+                            state
+                                .versions
+                                .iter()
                                 .find(|prev| prev.version == v.version - 1)
                                 .map(|prev| {
                                     let delta = (v.probability - prev.probability) * 100.0;
                                     let sign = if delta > 0.0 { "+" } else { "" };
-                                    let color = if delta > 0.0 { theme::GREEN } else if delta < 0.0 { theme::RED } else { theme::FG_DIM };
+                                    let color = if delta > 0.0 {
+                                        theme::GREEN
+                                    } else if delta < 0.0 {
+                                        theme::RED
+                                    } else {
+                                        theme::FG_DIM
+                                    };
                                     (format!("{}{}pp", sign, delta as i64), color)
                                 })
-                        } else { None };
+                        } else {
+                            None
+                        };
 
                         div()
                             .flex()
@@ -4079,10 +4884,7 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                             .when(prob_change.is_some(), |el| {
                                 let (text, color) = prob_change.unwrap();
                                 el.child(
-                                    div()
-                                        .text_size(px(9.0))
-                                        .text_color(rgb(color))
-                                        .child(text),
+                                    div().text_size(px(9.0)).text_color(rgb(color)).child(text),
                                 )
                             })
                             .child(
@@ -4250,21 +5052,45 @@ fn generate_fpl_text(program: &Program) -> String {
 
 /// Generate an evidence wiki markdown file organized by driver.
 /// Each driver is a heading, with agent evidence entries as logs.
-fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, explanation: &str, confidence: f64) -> String {
+fn generate_evidence_wiki(
+    program: &Program,
+    version: u32,
+    probability: f64,
+    explanation: &str,
+    confidence: f64,
+) -> String {
     let mut md = String::new();
-    let question = program.question().map(|q| q.text.as_str()).unwrap_or("Untitled Forecast");
+    let question = program
+        .question()
+        .map(|q| q.text.as_str())
+        .unwrap_or("Untitled Forecast");
     let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
 
     md.push_str(&format!("# Evidence Log: {}\n\n", question));
-    md.push_str(&format!("**Version:** v{} | **Probability:** {:.1}% | **Updated:** {}\n\n", version, probability * 100.0, timestamp));
+    md.push_str(&format!(
+        "**Version:** v{} | **Probability:** {:.1}% | **Updated:** {}\n\n",
+        version,
+        probability * 100.0,
+        timestamp
+    ));
     md.push_str("---\n\n");
     // Inside view section
     if !explanation.is_empty() {
         md.push_str("## Inside View\n\n");
         md.push_str(&format!("**Probability:** {:.2}%\n\n", probability * 100.0));
         md.push_str(&format!("{}\n\n", explanation));
-        let conf_label = if confidence > 0.7 { "High" } else if confidence > 0.4 { "Medium" } else { "Low" };
-        md.push_str(&format!("**Confidence:** {} ({:.0}%)\n\n", conf_label, confidence * 100.0));
+        let conf_label = if confidence > 0.7 {
+            "High"
+        } else if confidence > 0.4 {
+            "Medium"
+        } else {
+            "Low"
+        };
+        md.push_str(&format!(
+            "**Confidence:** {} ({:.0}%)\n\n",
+            conf_label,
+            confidence * 100.0
+        ));
         md.push_str("---\n\n");
     }
 
@@ -4272,7 +5098,10 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, exp
     if let Some(br) = program.question().and_then(|q| q.base_rate.as_ref()) {
         md.push_str("## Outside View (Base Rate)\n\n");
         md.push_str(&format!("- **Reference class:** {}\n", br.reference_class));
-        md.push_str(&format!("- **Historical frequency:** {:.2}%\n", br.historical_frequency * 100.0));
+        md.push_str(&format!(
+            "- **Historical frequency:** {:.2}%\n",
+            br.historical_frequency * 100.0
+        ));
         if let Some(n) = br.sample_size {
             md.push_str(&format!("- **Sample size:** n={}\n", n));
         }
@@ -4302,7 +5131,12 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, exp
         match driver.driver_type {
             DriverType::Continuous => {
                 if let Some(ref dist) = driver.distribution {
-                    if let Distribution::Triangular { ref p5, ref p50, ref p95 } = dist {
+                    if let Distribution::Triangular {
+                        ref p5,
+                        ref p50,
+                        ref p95,
+                    } = dist
+                    {
                         let unit = driver.unit.as_deref().unwrap_or("");
                         md.push_str(&format!("| p5 | p50 | p95 | unit |\n|---|---|---|---|\n| {} | {} | {} | {} |\n\n",
                             expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95), unit));
@@ -4310,8 +5144,14 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, exp
                 }
             }
             DriverType::Binary => {
-                md.push_str(&format!("- **Probability:** {:.0}%\n", driver.probability.unwrap_or(0.0) * 100.0));
-                md.push_str(&format!("- **Impact multiplier:** {:.1}x\n\n", driver.impact_multiplier.unwrap_or(1.0)));
+                md.push_str(&format!(
+                    "- **Probability:** {:.0}%\n",
+                    driver.probability.unwrap_or(0.0) * 100.0
+                ));
+                md.push_str(&format!(
+                    "- **Impact multiplier:** {:.1}x\n\n",
+                    driver.impact_multiplier.unwrap_or(1.0)
+                ));
             }
             _ => {}
         }
@@ -4321,7 +5161,8 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, exp
         }
 
         // Agents assigned to this driver
-        let driver_agents: Vec<_> = agents.iter()
+        let driver_agents: Vec<_> = agents
+            .iter()
             .filter(|a| a.driver_refs.contains(&driver.name))
             .collect();
 
@@ -4336,22 +5177,33 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, exp
                     _ => "on-demand",
                 };
                 md.push_str(&format!("- **{}** (schedule: {})\n", agent.name, schedule));
-                md.push_str(&format!("  - Query: _{}_\n", agent.query.chars().take(100).collect::<String>()));
+                md.push_str(&format!(
+                    "  - Query: _{}_\n",
+                    agent.query.chars().take(100).collect::<String>()
+                ));
             }
             md.push_str("\n");
         }
 
         // Evidence linked to this driver (from its agents)
-        let driver_evidence: Vec<_> = evidence_items.iter()
-            .filter(|e| driver_agents.iter().any(|a| evidence_matches_agent(e, &a.name)) || e.id.contains(&driver.name))
+        let driver_evidence: Vec<_> = evidence_items
+            .iter()
+            .filter(|e| {
+                driver_agents
+                    .iter()
+                    .any(|a| evidence_matches_agent(e, &a.name))
+                    || e.id.contains(&driver.name)
+            })
             .collect();
 
         if !driver_evidence.is_empty() {
             md.push_str("### Evidence\n\n");
             for ev in &driver_evidence {
-                md.push_str(&format!("#### {} (relevance: {:.0}%)\n\n",
+                md.push_str(&format!(
+                    "#### {} (relevance: {:.0}%)\n\n",
                     ev.source,
-                    ev.relevance.unwrap_or(0.0) * 100.0));
+                    ev.relevance.unwrap_or(0.0) * 100.0
+                ));
                 if let Some(ref summary) = ev.summary {
                     // Truncate very long summaries (like raw JSON dumps)
                     let clean = if summary.len() > 500 {
@@ -4375,20 +5227,35 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, exp
         }
 
         // Also show unlinked evidence that mentions this driver
-        let unlinked: Vec<_> = evidence_items.iter()
+        let unlinked: Vec<_> = evidence_items
+            .iter()
             .filter(|e| {
-                !driver_evidence.iter().any(|de| de.id == e.id) &&
-                (e.summary.as_deref().unwrap_or("").to_lowercase().contains(&driver.name.to_lowercase()) ||
-                 e.key_findings.iter().any(|f| f.to_lowercase().contains(&driver.name.to_lowercase())))
+                !driver_evidence.iter().any(|de| de.id == e.id)
+                    && (e
+                        .summary
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&driver.name.to_lowercase())
+                        || e.key_findings
+                            .iter()
+                            .any(|f| f.to_lowercase().contains(&driver.name.to_lowercase())))
             })
             .collect();
 
         if !unlinked.is_empty() {
             md.push_str("### Related Evidence\n\n");
             for ev in &unlinked {
-                md.push_str(&format!("- **{}**: {}\n",
+                md.push_str(&format!(
+                    "- **{}**: {}\n",
                     ev.source,
-                    ev.summary.as_deref().unwrap_or("").chars().take(200).collect::<String>()));
+                    ev.summary
+                        .as_deref()
+                        .unwrap_or("")
+                        .chars()
+                        .take(200)
+                        .collect::<String>()
+                ));
             }
             md.push_str("\n");
         }
@@ -4397,20 +5264,28 @@ fn generate_evidence_wiki(program: &Program, version: u32, probability: f64, exp
     }
 
     // Unassigned evidence (not linked to any driver)
-    let all_driver_agents: Vec<String> = agents.iter()
+    let all_driver_agents: Vec<String> = agents
+        .iter()
         .filter(|a| !a.driver_refs.is_empty())
         .map(|a| a.name.clone())
         .collect();
-    let unassigned: Vec<_> = evidence_items.iter()
-        .filter(|e| !all_driver_agents.iter().any(|a| evidence_matches_agent(e, a)))
+    let unassigned: Vec<_> = evidence_items
+        .iter()
+        .filter(|e| {
+            !all_driver_agents
+                .iter()
+                .any(|a| evidence_matches_agent(e, a))
+        })
         .collect();
 
     if !unassigned.is_empty() {
         md.push_str("## General Evidence\n\n");
         for ev in &unassigned {
-            md.push_str(&format!("### {} (relevance: {:.0}%)\n\n",
+            md.push_str(&format!(
+                "### {} (relevance: {:.0}%)\n\n",
                 ev.source,
-                ev.relevance.unwrap_or(0.0) * 100.0));
+                ev.relevance.unwrap_or(0.0) * 100.0
+            ));
             if let Some(ref summary) = ev.summary {
                 let clean = if summary.len() > 500 {
                     format!("{}...", &summary[..500])
@@ -4469,14 +5344,40 @@ fn generate_decomposition(_question: &str, domain: &str) -> (Vec<DriverStmt>, Op
     match domain {
         "finance" => {
             let drivers = vec![
-                make_continuous_driver("fundamentals", "Fundamentals Strength", "multiplier",
-                    0.7, 1.0, 1.4, "How strong are the fundamentals relative to expectations? 1.0 = neutral"),
-                make_continuous_driver("market_conditions", "Market Conditions", "multiplier",
-                    0.6, 1.0, 1.5, "Favorable (>1) or unfavorable (<1) market environment"),
-                make_continuous_driver("momentum", "Momentum Factor", "multiplier",
-                    0.8, 1.0, 1.3, "Recent trend direction and strength. 1.0 = no trend"),
-                make_binary_driver("catalyst_event", "Major Catalyst/Risk",
-                    0.20, 1.4, "Probability of a significant event that shifts the outcome"),
+                make_continuous_driver(
+                    "fundamentals",
+                    "Fundamentals Strength",
+                    "multiplier",
+                    0.7,
+                    1.0,
+                    1.4,
+                    "How strong are the fundamentals relative to expectations? 1.0 = neutral",
+                ),
+                make_continuous_driver(
+                    "market_conditions",
+                    "Market Conditions",
+                    "multiplier",
+                    0.6,
+                    1.0,
+                    1.5,
+                    "Favorable (>1) or unfavorable (<1) market environment",
+                ),
+                make_continuous_driver(
+                    "momentum",
+                    "Momentum Factor",
+                    "multiplier",
+                    0.8,
+                    1.0,
+                    1.3,
+                    "Recent trend direction and strength. 1.0 = no trend",
+                ),
+                make_binary_driver(
+                    "catalyst_event",
+                    "Major Catalyst/Risk",
+                    0.20,
+                    1.4,
+                    "Probability of a significant event that shifts the outcome",
+                ),
             ];
             let model = Expression::Multiply(
                 Box::new(Expression::Multiply(
@@ -4496,12 +5397,31 @@ fn generate_decomposition(_question: &str, domain: &str) -> (Vec<DriverStmt>, Op
         }
         "technology" => {
             let drivers = vec![
-                make_continuous_driver("feasibility", "Technical Feasibility", "multiplier",
-                    0.5, 1.0, 1.3, "How feasible is the technical achievement? 1.0 = expected"),
-                make_continuous_driver("adoption", "Adoption Likelihood", "multiplier",
-                    0.6, 1.0, 1.5, "Market readiness and adoption potential. 1.0 = baseline"),
-                make_binary_driver("regulatory_block", "Regulatory Blocker",
-                    0.25, 0.5, "Probability of regulatory action that halves the outcome"),
+                make_continuous_driver(
+                    "feasibility",
+                    "Technical Feasibility",
+                    "multiplier",
+                    0.5,
+                    1.0,
+                    1.3,
+                    "How feasible is the technical achievement? 1.0 = expected",
+                ),
+                make_continuous_driver(
+                    "adoption",
+                    "Adoption Likelihood",
+                    "multiplier",
+                    0.6,
+                    1.0,
+                    1.5,
+                    "Market readiness and adoption potential. 1.0 = baseline",
+                ),
+                make_binary_driver(
+                    "regulatory_block",
+                    "Regulatory Blocker",
+                    0.25,
+                    0.5,
+                    "Probability of regulatory action that halves the outcome",
+                ),
             ];
             let model = Expression::Multiply(
                 Box::new(Expression::Multiply(
@@ -4518,12 +5438,31 @@ fn generate_decomposition(_question: &str, domain: &str) -> (Vec<DriverStmt>, Op
         }
         _ => {
             let drivers = vec![
-                make_continuous_driver("strength_factor", "Strength of Case", "multiplier",
-                    0.5, 1.0, 1.5, "How strong is the case for this outcome? 1.0 = neutral"),
-                make_continuous_driver("conditions", "Favorable Conditions", "multiplier",
-                    0.7, 1.0, 1.3, "Are conditions favorable (>1) or unfavorable (<1)?"),
-                make_binary_driver("disruption", "Disruption Event",
-                    0.15, 1.5, "Probability of a disruptive event that amplifies the outcome"),
+                make_continuous_driver(
+                    "strength_factor",
+                    "Strength of Case",
+                    "multiplier",
+                    0.5,
+                    1.0,
+                    1.5,
+                    "How strong is the case for this outcome? 1.0 = neutral",
+                ),
+                make_continuous_driver(
+                    "conditions",
+                    "Favorable Conditions",
+                    "multiplier",
+                    0.7,
+                    1.0,
+                    1.3,
+                    "Are conditions favorable (>1) or unfavorable (<1)?",
+                ),
+                make_binary_driver(
+                    "disruption",
+                    "Disruption Event",
+                    0.15,
+                    1.5,
+                    "Probability of a disruptive event that amplifies the outcome",
+                ),
             ];
             let model = Expression::Multiply(
                 Box::new(Expression::Multiply(
@@ -4609,8 +5548,14 @@ fn make_binary_driver(
 /// e.g. "market_research_song_quality" → "market_research"
 fn base_agent_name(compound_name: &str) -> &str {
     // Known agent base names
-    let known = ["macro_forecaster", "market_research", "sentiment_analyzer", 
-                  "entity_investigator", "monte_carlo_sim", "fermi"];
+    let known = [
+        "macro_forecaster",
+        "market_research",
+        "sentiment_analyzer",
+        "entity_investigator",
+        "monte_carlo_sim",
+        "fermi",
+    ];
     for base in &known {
         if compound_name.starts_with(base) {
             return base;
@@ -4627,13 +5572,13 @@ fn evidence_matches_agent(evidence: &EvidenceStmt, agent_name: &str) -> bool {
 
 fn clean_fpl_string(s: &str) -> String {
     s.replace('\\', "\\\\")
-     .replace('"', "\\\"")
-     .replace('\n', " ")
-     .replace('\r', "")
-     .replace('`', "'")
-     .chars()
-     .take(500) // truncate very long strings
-     .collect()
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', "")
+        .replace('`', "'")
+        .chars()
+        .take(500) // truncate very long strings
+        .collect()
 }
 
 fn sanitize_name(name: &str) -> String {
