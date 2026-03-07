@@ -4920,13 +4920,136 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
     let evidence = state.program.evidence_items();
     let agents = state.program.agents();
 
+    let question_text = state
+        .program
+        .question()
+        .map(|q| q.text.clone())
+        .unwrap_or_else(|| "Untitled Forecast".into());
+
+    let total_evidence = evidence.len();
+    let total_drivers = drivers.len();
+    let total_agents = agents.iter().filter(|a| !a.driver_refs.is_empty()).count();
+
     div()
-        .p(px(12.0))
+        .p(px(16.0))
         .flex()
         .flex_col()
-        .gap(px(8.0))
+        .gap(px(12.0))
         .min_w(px(0.0))
-        // Base rate section
+        // ── Question Header ───────────────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .pb(px(12.0))
+                .border_b_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .child(
+                    div()
+                        .text_size(px(16.0))
+                        .text_color(rgb(theme::FG))
+                        .font_weight(FontWeight::BOLD)
+                        .min_w(px(0.0))
+                        .child(question_text),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(16.0))
+                        .text_size(px(11.0))
+                        .child(
+                            div()
+                                .text_color(rgb(theme::CYAN))
+                                .font_weight(FontWeight::BOLD)
+                                .child(format!("{:.1}%", state.predicted_probability * 100.0)),
+                        )
+                        .when(state.forecast_confidence > 0.0, |el| {
+                            let conf_label = if state.forecast_confidence > 0.7 {
+                                "High"
+                            } else if state.forecast_confidence > 0.4 {
+                                "Medium"
+                            } else {
+                                "Low"
+                            };
+                            let conf_color = if state.forecast_confidence > 0.7 {
+                                theme::GREEN
+                            } else if state.forecast_confidence > 0.4 {
+                                theme::GOLD
+                            } else {
+                                theme::RED
+                            };
+                            el.child(div().text_color(rgb(conf_color)).child(format!(
+                                "Confidence: {} ({:.0}%)",
+                                conf_label,
+                                state.forecast_confidence * 100.0
+                            )))
+                        })
+                        .child(div().text_color(rgb(theme::FG_FAINT)).child(format!(
+                            "{} drivers · {} evidence · {} agents",
+                            total_drivers, total_evidence, total_agents
+                        ))),
+                )
+                .when(state.current_version > 0, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .child(format!(
+                                "v{} · Last saved: {}",
+                                state.current_version,
+                                state
+                                    .versions
+                                    .last()
+                                    .map(|v| v.timestamp.as_str())
+                                    .unwrap_or("—")
+                            )),
+                    )
+                }),
+        )
+        // ── Inside View (always at top) ───────────────────────────
+        .when(!state.inside_view_explanation.is_empty(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .px(px(12.0))
+                    .py(px(10.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(0x1A2332))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(theme::CYAN))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Inside View"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .text_color(rgb(theme::CYAN))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(format!("{:.1}%", state.predicted_probability * 100.0)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::FG))
+                            .min_w(px(0.0))
+                            .child(state.inside_view_explanation.clone()),
+                    ),
+            )
+        })
+        // ── Outside View (Base Rate) ──────────────────────────────
         .when(
             state
                 .program
@@ -4941,20 +5064,51 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                     .base_rate
                     .as_ref()
                     .unwrap();
+                let divergence = (state.predicted_probability - br.historical_frequency) * 100.0;
+                let div_color = if divergence.abs() > 20.0 {
+                    theme::RED
+                } else if divergence.abs() > 10.0 {
+                    theme::GOLD
+                } else {
+                    theme::GREEN
+                };
                 el.child(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(4.0))
-                        .pb(px(8.0))
-                        .border_b_1()
-                        .border_color(rgb(theme::FG_FAINT))
+                        .gap(px(6.0))
+                        .px(px(12.0))
+                        .py(px(10.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(0x2A2210))
+                        .border_1()
+                        .border_color(rgb(theme::GOLD))
                         .child(
                             div()
-                                .text_size(px(12.0))
-                                .text_color(rgb(theme::GOLD))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("Outside View (Base Rate)"),
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(theme::GOLD))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child("Outside View (Base Rate)"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(14.0))
+                                        .text_color(rgb(theme::GOLD))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(format!("{:.1}%", br.historical_frequency * 100.0)),
+                                )
+                                .child(div().text_size(px(10.0)).text_color(rgb(div_color)).child(
+                                    format!(
+                                        "divergence: {}{:.0}pp",
+                                        if divergence > 0.0 { "+" } else { "" },
+                                        divergence
+                                    ),
+                                )),
                         )
                         .child(
                             div()
@@ -4962,15 +5116,17 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                                 .text_color(rgb(theme::FG))
                                 .min_w(px(0.0))
                                 .child(format!(
-                                    "{:.2}% — {}",
-                                    br.historical_frequency * 100.0,
-                                    br.reference_class
+                                    "Reference class: {}{}",
+                                    br.reference_class,
+                                    br.sample_size
+                                        .map(|n| format!(" (n={})", n))
+                                        .unwrap_or_default()
                                 )),
                         )
                         .when(br.reasoning.is_some(), |el| {
                             el.child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(px(11.0))
                                     .text_color(rgb(theme::FG_DIM))
                                     .min_w(px(0.0))
                                     .child(br.reasoning.as_deref().unwrap_or("").to_string()),
@@ -4979,7 +5135,7 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                 )
             },
         )
-        // Per-driver evidence sections
+        // ── Per-Driver Evidence Sections ──────────────────────────
         .children(drivers.iter().map(|driver| {
             let display = driver.display_name.as_deref().unwrap_or(&driver.name);
             let driver_agents: Vec<&str> = agents
@@ -4995,116 +5151,338 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                 })
                 .collect();
 
+            // Driver distribution summary
+            let dist_summary = match driver.driver_type {
+                DriverType::Continuous => {
+                    if let Some(Distribution::Triangular {
+                        ref p5,
+                        ref p50,
+                        ref p95,
+                    }) = driver.distribution
+                    {
+                        let unit = driver.unit.as_deref().unwrap_or("");
+                        format!(
+                            "p5={:.2}  p50={:.2}  p95={:.2} {}",
+                            expr_to_f64(p5),
+                            expr_to_f64(p50),
+                            expr_to_f64(p95),
+                            unit
+                        )
+                    } else {
+                        String::new()
+                    }
+                }
+                DriverType::Binary => format!(
+                    "P={:.0}%  impact=×{:.1}",
+                    driver.probability.unwrap_or(0.0) * 100.0,
+                    driver.impact_multiplier.unwrap_or(1.0)
+                ),
+                _ => String::new(),
+            };
+
+            // Evidence quality badge
+            let ev_count = driver_ev.len();
+            let (quality_label, quality_color) = if ev_count >= 3 {
+                ("Strong", theme::GREEN)
+            } else if ev_count >= 1 {
+                ("Partial", theme::GOLD)
+            } else {
+                ("None", theme::RED)
+            };
+
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
-                .pb(px(8.0))
-                .border_b_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .gap(px(6.0))
+                .px(px(8.0))
+                .py(px(10.0))
+                .rounded(px(6.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                // Driver header
                 .child(
                     div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(theme::GREEN))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(display.to_string()),
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .text_color(rgb(theme::GREEN))
+                                .font_weight(FontWeight::BOLD)
+                                .child(display.to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(match driver.driver_type {
+                                    DriverType::Continuous => theme::GREEN,
+                                    DriverType::Binary => theme::GOLD,
+                                    _ => theme::FG_DIM,
+                                }))
+                                .px(px(4.0))
+                                .py(px(1.0))
+                                .rounded(px(2.0))
+                                .bg(rgb(theme::BG))
+                                .child(match driver.driver_type {
+                                    DriverType::Continuous => "continuous",
+                                    DriverType::Binary => "binary",
+                                    _ => "discrete",
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(quality_color))
+                                .px(px(4.0))
+                                .py(px(1.0))
+                                .rounded(px(2.0))
+                                .bg(rgb(theme::BG))
+                                .child(format!("{} evidence ({})", quality_label, ev_count)),
+                        ),
                 )
-                .when(driver.rationale.is_some(), |el| {
+                // Distribution parameters
+                .when(!dist_summary.is_empty(), |el| {
                     el.child(
                         div()
                             .text_size(px(10.0))
+                            .text_color(rgb(theme::CYAN))
+                            .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
+                            .child(dist_summary),
+                    )
+                })
+                // Rationale
+                .when(driver.rationale.is_some(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(11.0))
                             .text_color(rgb(theme::FG_DIM))
                             .min_w(px(0.0))
                             .child(driver.rationale.as_deref().unwrap_or("").to_string()),
                     )
                 })
-                // Agent assignments
+                // Agent assignments with query info
                 .when(!driver_agents.is_empty(), |el| {
-                    el.child(
-                        div()
-                            .flex()
-                            .gap(px(4.0))
-                            .children(driver_agents.iter().map(|a| {
-                                div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::BLUE))
-                                    .px(px(4.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
-                                    .bg(rgb(theme::BG))
-                                    .child(a.to_string())
-                            })),
-                    )
-                })
-                // Evidence items
-                .children(driver_ev.iter().map(|ev| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .px(px(8.0))
-                        .py(px(4.0))
-                        .rounded(px(4.0))
-                        .bg(rgb(theme::BG))
-                        .mt(px(4.0))
-                        .child(
+                    el.child(div().flex().flex_col().gap(px(2.0)).mt(px(2.0)).children(
+                        driver_agents.iter().map(|agent_name| {
+                            let agent_stmt = agents.iter().find(|a| a.name == *agent_name);
+                            let query_preview = agent_stmt
+                                .map(|a| {
+                                    if a.query.len() > 80 {
+                                        format!("{}…", &a.query[..77])
+                                    } else {
+                                        a.query.clone()
+                                    }
+                                })
+                                .unwrap_or_default();
                             div()
                                 .flex()
+                                .items_center()
                                 .gap(px(6.0))
                                 .child(
                                     div()
                                         .text_size(px(9.0))
-                                        .text_color(rgb(theme::FG_FAINT))
-                                        .child(ev.source.clone()),
+                                        .text_color(rgb(theme::BLUE))
+                                        .px(px(4.0))
+                                        .py(px(1.0))
+                                        .rounded(px(2.0))
+                                        .bg(rgb(theme::BG))
+                                        .child(base_agent_name(agent_name).to_string()),
                                 )
-                                .when(ev.relevance.is_some(), |el| {
+                                .when(!query_preview.is_empty(), |el| {
                                     el.child(
                                         div()
                                             .text_size(px(9.0))
-                                            .text_color(rgb(theme::CYAN))
-                                            .child(format!(
-                                                "{:.0}%",
-                                                ev.relevance.unwrap_or(0.0) * 100.0
-                                            )),
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .flex_grow()
+                                            .min_w(px(0.0))
+                                            .child(format!("→ {}", query_preview)),
+                                    )
+                                })
+                        }),
+                    ))
+                })
+                // Evidence items — expanded, readable
+                .children(driver_ev.iter().map(|ev| {
+                    let summary = ev.summary.as_deref().unwrap_or("");
+                    // Show full summary up to 800 chars (was 300)
+                    let display_summary = if summary.len() > 800 {
+                        format!("{}…", &summary[..797])
+                    } else {
+                        summary.to_string()
+                    };
+
+                    // Detect URLs in summary for display
+                    let has_url = summary.contains("http://") || summary.contains("https://");
+
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .px(px(10.0))
+                        .py(px(8.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(theme::BG))
+                        .mt(px(4.0))
+                        .border_l_2()
+                        .border_color(rgb(if ev.relevance.unwrap_or(0.0) > 0.7 {
+                            theme::GREEN
+                        } else if ev.relevance.unwrap_or(0.0) > 0.4 {
+                            theme::GOLD
+                        } else {
+                            theme::FG_FAINT
+                        }))
+                        // Source + date + relevance header
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(theme::FG))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(ev.source.clone()),
+                                )
+                                .when(ev.date.is_some(), |el| {
+                                    el.child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .child(ev.date.as_deref().unwrap_or("").to_string()),
+                                    )
+                                })
+                                .when(ev.relevance.is_some(), |el| {
+                                    let r = ev.relevance.unwrap_or(0.0);
+                                    let r_color = if r > 0.7 {
+                                        theme::GREEN
+                                    } else if r > 0.4 {
+                                        theme::GOLD
+                                    } else {
+                                        theme::FG_FAINT
+                                    };
+                                    el.child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(r_color))
+                                            .px(px(4.0))
+                                            .py(px(1.0))
+                                            .rounded(px(2.0))
+                                            .bg(rgb(theme::BG_ELEVATED))
+                                            .child(format!("relevance {:.0}%", r * 100.0)),
                                     )
                                 }),
                         )
-                        .when(ev.summary.is_some(), |el| {
-                            let summary = ev.summary.as_deref().unwrap_or("");
-                            let display = if summary.len() > 300 {
-                                format!("{}…", &summary[..300])
-                            } else {
-                                summary.to_string()
-                            };
+                        // Summary — full text, readable size
+                        .when(!display_summary.is_empty(), |el| {
                             el.child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(px(11.0))
                                     .text_color(rgb(theme::FG))
                                     .min_w(px(0.0))
-                                    .child(display),
+                                    .child(display_summary),
                             )
                         })
+                        // Key findings — each as a proper bullet item
                         .when(!ev.key_findings.is_empty(), |el| {
-                            el.children(ev.key_findings.iter().take(4).map(|f| {
+                            el.child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_DIM))
-                                    .min_w(px(0.0))
-                                    .child(format!("• {}", f))
-                            }))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(3.0))
+                                    .mt(px(4.0))
+                                    .pt(px(4.0))
+                                    .border_t_1()
+                                    .border_color(rgb(theme::FG_FAINT))
+                                    .child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(format!(
+                                                "Key Findings ({})",
+                                                ev.key_findings.len()
+                                            )),
+                                    )
+                                    .children(ev.key_findings.iter().take(8).map(|f| {
+                                        div()
+                                            .flex()
+                                            .gap(px(6.0))
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(rgb(theme::CYAN))
+                                                    .w(px(12.0))
+                                                    .child("▸"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(rgb(theme::FG))
+                                                    .flex_grow()
+                                                    .min_w(px(0.0))
+                                                    .child(f.clone()),
+                                            )
+                                    })),
+                            )
+                        })
+                        // URL indicator
+                        .when(has_url, |el| {
+                            // Extract URLs from summary
+                            let urls: Vec<&str> = summary
+                                .split_whitespace()
+                                .filter(|w| w.starts_with("http://") || w.starts_with("https://"))
+                                .take(3)
+                                .collect();
+                            if urls.is_empty() {
+                                el
+                            } else {
+                                el.child(div().flex().flex_col().gap(px(2.0)).mt(px(4.0)).children(
+                                    urls.iter().map(|url| {
+                                        // Trim trailing punctuation
+                                        let clean = url.trim_end_matches(|c: char| {
+                                            c == ',' || c == '.' || c == ')' || c == ']' || c == '"'
+                                        });
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::BLUE))
+                                            .min_w(px(0.0))
+                                            .child(format!("🔗 {}", clean))
+                                    }),
+                                ))
+                            }
                         })
                 }))
                 // No evidence yet
                 .when(driver_ev.is_empty(), |el| {
                     el.child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(rgb(theme::FG_FAINT))
-                            .child("No evidence yet — assign an agent to research this driver"),
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .px(px(8.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(0x2D1F1F))
+                            .mt(px(4.0))
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::RED))
+                                    .child("⚠"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .child(
+                                        "No evidence yet — assign an agent to research this driver",
+                                    ),
+                            ),
                     )
                 })
         }))
-        // Unlinked evidence
+        // ── Unlinked Evidence ─────────────────────────────────────
         .when(!evidence.is_empty(), |el| {
             let all_agent_names: Vec<String> = agents
                 .iter()
@@ -5122,44 +5500,88 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(4.0))
-                        .pt(px(8.0))
+                        .gap(px(6.0))
+                        .px(px(8.0))
+                        .py(px(10.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(theme::BG_ELEVATED))
                         .child(
                             div()
                                 .text_size(px(12.0))
                                 .text_color(rgb(theme::FG_DIM))
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .child("General Evidence"),
+                                .child(format!("General Evidence ({})", unlinked.len())),
                         )
                         .children(unlinked.iter().map(|ev| {
                             div()
-                                .text_size(px(10.0))
-                                .text_color(rgb(theme::FG_DIM))
-                                .min_w(px(0.0))
-                                .child(format!(
-                                    "{}: {}",
-                                    ev.source,
-                                    ev.summary
-                                        .as_deref()
-                                        .unwrap_or("")
-                                        .chars()
-                                        .take(200)
-                                        .collect::<String>()
-                                ))
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.0))
+                                .px(px(10.0))
+                                .py(px(6.0))
+                                .rounded(px(4.0))
+                                .bg(rgb(theme::BG))
+                                .border_l_2()
+                                .border_color(rgb(theme::FG_FAINT))
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(theme::FG))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(ev.source.clone()),
+                                )
+                                .when(ev.summary.is_some(), |el| {
+                                    let s = ev.summary.as_deref().unwrap_or("");
+                                    let display = if s.len() > 500 {
+                                        format!("{}…", &s[..497])
+                                    } else {
+                                        s.to_string()
+                                    };
+                                    el.child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::FG_DIM))
+                                            .min_w(px(0.0))
+                                            .child(display),
+                                    )
+                                })
+                                .when(!ev.key_findings.is_empty(), |el| {
+                                    el.children(ev.key_findings.iter().take(4).map(|f| {
+                                        div()
+                                            .flex()
+                                            .gap(px(6.0))
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(rgb(theme::FG_FAINT))
+                                                    .w(px(12.0))
+                                                    .child("▸"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(rgb(theme::FG_DIM))
+                                                    .flex_grow()
+                                                    .min_w(px(0.0))
+                                                    .child(f.clone()),
+                                            )
+                                    }))
+                                })
                         })),
                 )
             }
         })
-        // Version history
+        // ── Version History ───────────────────────────────────────
         .when(!state.versions.is_empty(), |el| {
             el.child(
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(4.0))
-                    .pt(px(8.0))
-                    .border_t_1()
-                    .border_color(rgb(theme::FG_FAINT))
+                    .px(px(8.0))
+                    .py(px(10.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(theme::BG_ELEVATED))
                     .child(
                         div()
                             .text_size(px(12.0))
@@ -5193,25 +5615,30 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
                             .flex()
                             .items_center()
                             .gap(px(8.0))
-                            .py(px(3.0))
+                            .py(px(4.0))
                             .child(
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(rgb(theme::FG_DIM))
-                                    .w(px(24.0))
+                                    .w(px(28.0))
                                     .child(format!("v{}", v.version)),
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .text_color(rgb(theme::CYAN))
-                                    .w(px(50.0))
-                                    .child(format!("{:.2}%", v.probability * 100.0)),
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .w(px(55.0))
+                                    .child(format!("{:.1}%", v.probability * 100.0)),
                             )
                             .when(prob_change.is_some(), |el| {
                                 let (text, color) = prob_change.unwrap();
                                 el.child(
-                                    div().text_size(px(9.0)).text_color(rgb(color)).child(text),
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(color))
+                                        .w(px(50.0))
+                                        .child(text),
                                 )
                             })
                             .child(
@@ -5379,6 +5806,7 @@ fn generate_fpl_text(program: &Program) -> String {
 
 /// Generate an evidence wiki markdown file organized by driver.
 /// Each driver is a heading, with agent evidence entries as logs.
+/// This is the SHAREABLE REPORT — no truncation, full evidence, proper formatting.
 fn generate_evidence_wiki(
     program: &Program,
     version: u32,
@@ -5393,58 +5821,85 @@ fn generate_evidence_wiki(
         .unwrap_or("Untitled Forecast");
     let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
 
-    md.push_str(&format!("# Evidence Log: {}\n\n", question));
+    let drivers = program.drivers();
+    let evidence_items = program.evidence_items();
+    let agents = program.agents();
+    let total_evidence = evidence_items.len();
+    let total_drivers = drivers.len();
+    let total_agents = agents.iter().filter(|a| !a.driver_refs.is_empty()).count();
+
+    // ── Header ────────────────────────────────────────────────────
+    md.push_str(&format!("# {}\n\n", question));
     md.push_str(&format!(
-        "**Version:** v{} | **Probability:** {:.1}% | **Updated:** {}\n\n",
-        version,
+        "**Probability:** {:.1}% · **Version:** v{} · **Updated:** {}\n\n",
         probability * 100.0,
+        version,
         timestamp
     ));
+
+    let conf_label = if confidence > 0.7 {
+        "High"
+    } else if confidence > 0.4 {
+        "Medium"
+    } else {
+        "Low"
+    };
+    md.push_str(&format!(
+        "**Confidence:** {} ({:.0}%) · **Drivers:** {} · **Evidence:** {} · **Agents:** {}\n\n",
+        conf_label,
+        confidence * 100.0,
+        total_drivers,
+        total_evidence,
+        total_agents
+    ));
     md.push_str("---\n\n");
-    // Inside view section
+
+    // ── Inside View (FIRST — this is the main analysis) ───────────
     if !explanation.is_empty() {
         md.push_str("## Inside View\n\n");
-        md.push_str(&format!("**Probability:** {:.2}%\n\n", probability * 100.0));
+        md.push_str(&format!("**Probability: {:.1}%**\n\n", probability * 100.0));
         md.push_str(&format!("{}\n\n", explanation));
-        let conf_label = if confidence > 0.7 {
-            "High"
-        } else if confidence > 0.4 {
-            "Medium"
-        } else {
-            "Low"
-        };
         md.push_str(&format!(
-            "**Confidence:** {} ({:.0}%)\n\n",
+            "**Forecast Confidence:** {} ({:.0}%)\n\n",
             conf_label,
             confidence * 100.0
         ));
+
+        // Divergence from base rate
+        if let Some(br) = program.question().and_then(|q| q.base_rate.as_ref()) {
+            let divergence = (probability - br.historical_frequency) * 100.0;
+            let direction = if divergence > 0.0 { "above" } else { "below" };
+            md.push_str(&format!(
+                "**Divergence from base rate:** {:.0}pp {} ({:.1}% vs {:.1}%)\n\n",
+                divergence.abs(),
+                direction,
+                probability * 100.0,
+                br.historical_frequency * 100.0
+            ));
+        }
         md.push_str("---\n\n");
     }
 
-    // Base rate section
+    // ── Outside View (Base Rate) ──────────────────────────────────
     if let Some(br) = program.question().and_then(|q| q.base_rate.as_ref()) {
         md.push_str("## Outside View (Base Rate)\n\n");
-        md.push_str(&format!("- **Reference class:** {}\n", br.reference_class));
         md.push_str(&format!(
-            "- **Historical frequency:** {:.2}%\n",
-            br.historical_frequency * 100.0
+            "**{:.1}%** — {}\n\n",
+            br.historical_frequency * 100.0,
+            br.reference_class
         ));
         if let Some(n) = br.sample_size {
             md.push_str(&format!("- **Sample size:** n={}\n", n));
         }
         md.push_str(&format!("- **Source:** {}\n", br.source));
         if let Some(ref r) = br.reasoning {
-            md.push_str(&format!("\n> {}\n", r));
+            md.push_str(&format!("\n{}\n", r));
         }
         md.push_str("\n---\n\n");
     }
 
-    // Drivers with their evidence
-    let drivers = program.drivers();
-    let evidence_items = program.evidence_items();
-    let agents = program.agents();
-
-    for driver in &drivers {
+    // ── Drivers with Evidence ─────────────────────────────────────
+    for (i, driver) in drivers.iter().enumerate() {
         let display = driver.display_name.as_deref().unwrap_or(&driver.name);
         let type_label = match driver.driver_type {
             DriverType::Continuous => "continuous",
@@ -5452,7 +5907,7 @@ fn generate_evidence_wiki(
             _ => "discrete",
         };
 
-        md.push_str(&format!("## {} `{}`\n\n", display, type_label));
+        md.push_str(&format!("## {}. {} `{}`\n\n", i + 1, display, type_label));
 
         // Driver parameters
         match driver.driver_type {
@@ -5465,24 +5920,24 @@ fn generate_evidence_wiki(
                     } = dist
                     {
                         let unit = driver.unit.as_deref().unwrap_or("");
-                        md.push_str(&format!("| p5 | p50 | p95 | unit |\n|---|---|---|---|\n| {} | {} | {} | {} |\n\n",
-                            expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95), unit));
+                        md.push_str(&format!(
+                            "| p5 | p50 | p95 | unit |\n|---:|---:|---:|---|\n| {:.2} | {:.2} | {:.2} | {} |\n\n",
+                            expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95), unit
+                        ));
                     }
                 }
             }
             DriverType::Binary => {
                 md.push_str(&format!(
-                    "- **Probability:** {:.0}%\n",
-                    driver.probability.unwrap_or(0.0) * 100.0
-                ));
-                md.push_str(&format!(
-                    "- **Impact multiplier:** {:.1}x\n\n",
+                    "- **Probability:** {:.0}%\n- **Impact multiplier:** ×{:.1}\n\n",
+                    driver.probability.unwrap_or(0.0) * 100.0,
                     driver.impact_multiplier.unwrap_or(1.0)
                 ));
             }
             _ => {}
         }
 
+        // Rationale
         if let Some(ref rationale) = driver.rationale {
             md.push_str(&format!("> {}\n\n", rationale));
         }
@@ -5503,16 +5958,17 @@ fn generate_evidence_wiki(
                     }
                     _ => "on-demand",
                 };
-                md.push_str(&format!("- **{}** (schedule: {})\n", agent.name, schedule));
                 md.push_str(&format!(
-                    "  - Query: _{}_\n",
-                    agent.query.chars().take(100).collect::<String>()
+                    "- **{}** (schedule: {})  \n  Query: _{}_\n",
+                    base_agent_name(&agent.name),
+                    schedule,
+                    agent.query
                 ));
             }
             md.push_str("\n");
         }
 
-        // Evidence linked to this driver (from its agents)
+        // Evidence linked to this driver — FULL, no truncation
         let driver_evidence: Vec<_> = evidence_items
             .iter()
             .filter(|e| {
@@ -5524,22 +5980,25 @@ fn generate_evidence_wiki(
             .collect();
 
         if !driver_evidence.is_empty() {
-            md.push_str("### Evidence\n\n");
+            md.push_str(&format!("### Evidence ({})\n\n", driver_evidence.len()));
             for ev in &driver_evidence {
+                let relevance_pct = ev.relevance.unwrap_or(0.0) * 100.0;
+                let date_str = ev
+                    .date
+                    .as_deref()
+                    .map(|d| format!(" · {}", d))
+                    .unwrap_or_default();
                 md.push_str(&format!(
-                    "#### {} (relevance: {:.0}%)\n\n",
-                    ev.source,
-                    ev.relevance.unwrap_or(0.0) * 100.0
+                    "#### {} — relevance {:.0}%{}\n\n",
+                    ev.source, relevance_pct, date_str
                 ));
+
+                // Full summary — NO truncation
                 if let Some(ref summary) = ev.summary {
-                    // Truncate very long summaries (like raw JSON dumps)
-                    let clean = if summary.len() > 500 {
-                        format!("{}...", &summary[..500])
-                    } else {
-                        summary.clone()
-                    };
-                    md.push_str(&format!("{}\n\n", clean));
+                    md.push_str(&format!("{}\n\n", summary));
                 }
+
+                // All key findings
                 if !ev.key_findings.is_empty() {
                     md.push_str("**Key findings:**\n\n");
                     for f in &ev.key_findings {
@@ -5547,14 +6006,15 @@ fn generate_evidence_wiki(
                     }
                     md.push_str("\n");
                 }
-                if let Some(ref date) = ev.date {
-                    md.push_str(&format!("_Collected: {}_\n\n", date));
-                }
             }
+        } else {
+            md.push_str(
+                "_No evidence collected yet. Assign an agent to research this driver._\n\n",
+            );
         }
 
-        // Also show unlinked evidence that mentions this driver
-        let unlinked: Vec<_> = evidence_items
+        // Related evidence (mentions this driver but isn't directly linked)
+        let related: Vec<_> = evidence_items
             .iter()
             .filter(|e| {
                 !driver_evidence.iter().any(|de| de.id == e.id)
@@ -5570,18 +6030,13 @@ fn generate_evidence_wiki(
             })
             .collect();
 
-        if !unlinked.is_empty() {
+        if !related.is_empty() {
             md.push_str("### Related Evidence\n\n");
-            for ev in &unlinked {
+            for ev in &related {
                 md.push_str(&format!(
                     "- **{}**: {}\n",
                     ev.source,
-                    ev.summary
-                        .as_deref()
-                        .unwrap_or("")
-                        .chars()
-                        .take(200)
-                        .collect::<String>()
+                    ev.summary.as_deref().unwrap_or("")
                 ));
             }
             md.push_str("\n");
@@ -5590,7 +6045,7 @@ fn generate_evidence_wiki(
         md.push_str("---\n\n");
     }
 
-    // Unassigned evidence (not linked to any driver)
+    // ── General Evidence (not linked to any driver) ───────────────
     let all_driver_agents: Vec<String> = agents
         .iter()
         .filter(|a| !a.driver_refs.is_empty())
@@ -5606,29 +6061,86 @@ fn generate_evidence_wiki(
         .collect();
 
     if !unassigned.is_empty() {
-        md.push_str("## General Evidence\n\n");
+        md.push_str(&format!("## General Evidence ({})\n\n", unassigned.len()));
+        md.push_str("_Evidence not linked to a specific driver._\n\n");
         for ev in &unassigned {
             md.push_str(&format!(
-                "### {} (relevance: {:.0}%)\n\n",
+                "### {} — relevance {:.0}%\n\n",
                 ev.source,
                 ev.relevance.unwrap_or(0.0) * 100.0
             ));
+            // Full summary — NO truncation
             if let Some(ref summary) = ev.summary {
-                let clean = if summary.len() > 500 {
-                    format!("{}...", &summary[..500])
-                } else {
-                    summary.clone()
-                };
-                md.push_str(&format!("{}\n\n", clean));
+                md.push_str(&format!("{}\n\n", summary));
             }
             if !ev.key_findings.is_empty() {
+                md.push_str("**Key findings:**\n\n");
                 for f in &ev.key_findings {
                     md.push_str(&format!("- {}\n", f));
                 }
                 md.push_str("\n");
             }
         }
+        md.push_str("---\n\n");
     }
+
+    // ── Appendix: Model & Methodology ─────────────────────────────
+    md.push_str("## Methodology\n\n");
+    md.push_str("This forecast uses a **Fermi decomposition** approach based on Tetlock superforecasting methodology:\n\n");
+    md.push_str("1. **Outside view** — anchor to a base rate from a relevant reference class\n");
+    md.push_str("2. **Inside view** — decompose into independent drivers, each represented as a probability multiplier\n");
+    md.push_str("3. **Monte Carlo simulation** — run 10,000 iterations sampling from driver distributions\n");
+    md.push_str(&format!(
+        "4. **Normalization** — `P = base_rate × (simulation_mean / baseline_mean)` clamped to [1%, 99%]\n\n"
+    ));
+
+    // Model expression
+    md.push_str("### Model\n\n");
+    md.push_str("```\n");
+    let model_parts: Vec<String> = drivers
+        .iter()
+        .map(|d| match d.driver_type {
+            DriverType::Binary => {
+                format!(
+                    "(if {} then {:.1} else 1.0)",
+                    d.name,
+                    d.impact_multiplier.unwrap_or(1.3)
+                )
+            }
+            _ => d.name.clone(),
+        })
+        .collect();
+    if model_parts.is_empty() {
+        md.push_str("# No drivers defined\n");
+    } else {
+        md.push_str(&format!("model: {}\n", model_parts.join(" * ")));
+    }
+    md.push_str("```\n\n");
+
+    // Agent roster
+    let active_agents: Vec<_> = agents
+        .iter()
+        .filter(|a| !a.driver_refs.is_empty())
+        .collect();
+    if !active_agents.is_empty() {
+        md.push_str("### Research Agents\n\n");
+        md.push_str("| Agent | Driver | Query |\n|---|---|---|\n");
+        for a in &active_agents {
+            let driver_list = a.driver_refs.join(", ");
+            md.push_str(&format!(
+                "| {} | {} | {} |\n",
+                base_agent_name(&a.name),
+                driver_list,
+                a.query
+            ));
+        }
+        md.push_str("\n");
+    }
+
+    md.push_str(&format!(
+        "\n---\n\n_Generated by [Fermi Console](https://agent-bestiary.world) · v{} · {}_\n",
+        version, timestamp
+    ));
 
     md
 }
