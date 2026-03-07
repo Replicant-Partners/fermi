@@ -2064,13 +2064,17 @@ impl CockpitState {
                     }
 
                     // ── Compute forecast confidence (Tetlock methodology) ──
-                    let total_drivers = self.program.drivers().len() as f64;
-                    let evidenced_drivers = self
-                        .program
-                        .drivers()
-                        .iter()
-                        .filter(|d| {
-                            self.program.evidence_items().iter().any(|e| {
+                    // Per-driver confidence: use user override if set, else compute from evidence
+                    let drivers = self.program.drivers();
+                    let total_drivers = drivers.len() as f64;
+                    let mut driver_conf_sum = 0.0_f64;
+                    for d in &drivers {
+                        if let Some(&uc) = self.driver_confidence.get(&d.name) {
+                            // User explicitly set confidence for this driver
+                            driver_conf_sum += uc;
+                        } else {
+                            // Compute from evidence coverage
+                            let has_evidence = self.program.evidence_items().iter().any(|e| {
                                 e.id.contains(&d.name)
                                     || self
                                         .program
@@ -2078,13 +2082,14 @@ impl CockpitState {
                                         .iter()
                                         .filter(|a| a.driver_refs.contains(&d.name))
                                         .any(|a| evidence_matches_agent(e, &a.name))
-                            })
-                        })
-                        .count() as f64;
-                    let evidence_ratio = if total_drivers > 0.0 {
-                        evidenced_drivers / total_drivers
+                            });
+                            driver_conf_sum += if has_evidence { 0.7 } else { 0.2 };
+                        }
+                    }
+                    let avg_driver_conf = if total_drivers > 0.0 {
+                        driver_conf_sum / total_drivers
                     } else {
-                        0.0
+                        0.3
                     };
                     let divergence_penalty = if divergence.abs() > 30.0 {
                         0.7
@@ -2093,9 +2098,8 @@ impl CockpitState {
                     } else {
                         1.0
                     };
-                    let base_confidence = 0.3 + (evidence_ratio * 0.5);
                     self.forecast_confidence =
-                        (base_confidence * divergence_penalty).clamp(0.1, 0.95);
+                        (avg_driver_conf * divergence_penalty).clamp(0.1, 0.95);
                 }
                 // Build driver contribution summary
                 let driver_summary: Vec<String> = self
