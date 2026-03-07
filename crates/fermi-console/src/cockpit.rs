@@ -828,35 +828,78 @@ impl CockpitState {
                 ),
             });
 
-            // Suggest specific agents for drivers based on keywords
-            for driver_name in &driver_names {
-                let dn_lower = driver_name.to_lowercase();
-                let suggested = if dn_lower.contains("sentiment")
-                    || dn_lower.contains("opinion")
-                    || dn_lower.contains("perception")
-                {
-                    Some("sentiment_analyzer")
-                } else if dn_lower.contains("market")
-                    || dn_lower.contains("competition")
-                    || dn_lower.contains("betting")
-                {
-                    Some("market_research")
-                } else if dn_lower.contains("entity")
-                    || dn_lower.contains("company")
-                    || dn_lower.contains("ownership")
-                {
-                    Some("entity_investigator")
-                } else {
-                    None
-                };
+            // Suggest agents for drivers using data-driven skill/tag matching.
+            // Each agent card has skills and tags — we match those against
+            // driver name + rationale keywords. This works for ANY agent
+            // (including future domain agents like biotech_analyst) without
+            // hardcoding agent names.
+            let cards = self.registry.list_cards().unwrap_or_default();
+            let orchestra_cards: Vec<_> = cards
+                .iter()
+                .filter(|c| {
+                    c.metadata.tags.iter().any(|t| t == "fermi-orchestra") && c.agent_id != "fermi"
+                    // fermi is the orchestrator, not a research agent
+                })
+                .collect();
 
-                if let Some(agent) = suggested {
+            for driver_name in &driver_names {
+                let driver = self.program.driver(driver_name);
+                let rationale = driver.and_then(|d| d.rationale.as_deref()).unwrap_or("");
+                // Build a search string from driver name + rationale
+                let search_text = format!(
+                    "{} {}",
+                    driver_name.replace('_', " ").to_lowercase(),
+                    rationale.to_lowercase()
+                );
+
+                // Score each orchestra agent by how well its skills/tags match
+                let mut best_match: Option<(&str, usize)> = None;
+                for card in &orchestra_cards {
+                    let mut score = 0usize;
+                    // Check skills
+                    for skill in &card.capabilities.skills {
+                        let skill_words: Vec<&str> = skill.split('-').collect();
+                        for word in &skill_words {
+                            if word.len() > 2 && search_text.contains(word) {
+                                score += 2;
+                            }
+                        }
+                    }
+                    // Check tags
+                    for tag in &card.metadata.tags {
+                        if tag == "fermi-orchestra" {
+                            continue;
+                        }
+                        let tag_words: Vec<&str> = tag.split('-').collect();
+                        for word in &tag_words {
+                            if word.len() > 2 && search_text.contains(word) {
+                                score += 1;
+                            }
+                        }
+                    }
+                    // Check description keywords
+                    let desc_lower = card.metadata.description.to_lowercase();
+                    let driver_words: Vec<&str> = search_text.split_whitespace().collect();
+                    for word in &driver_words {
+                        if word.len() > 3 && desc_lower.contains(word) {
+                            score += 1;
+                        }
+                    }
+
+                    if score > 0 {
+                        if best_match.is_none() || score > best_match.unwrap().1 {
+                            best_match = Some((&card.agent_id, score));
+                        }
+                    }
+                }
+
+                if let Some((agent_id, _score)) = best_match {
                     self.messages.push(AssistantMessage {
                         node: format!("driver:{}", driver_name),
                         kind: MessageKind::Suggestion,
                         text: format!(
                             "💡 Consider assigning '{}' to research '{}'",
-                            agent, driver_name
+                            agent_id, driver_name
                         ),
                     });
                 }
