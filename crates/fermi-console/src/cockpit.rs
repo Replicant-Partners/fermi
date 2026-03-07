@@ -4266,6 +4266,48 @@ fn render_editor_panel(
                             .child(div().w(px(120.0)).child(state.editor_impact.clone())),
                     )
                 })
+                // Confidence override
+                .child({
+                    let user_conf = state.driver_confidence.get(name).copied();
+                    let ev_count = state
+                        .program
+                        .agents()
+                        .iter()
+                        .filter(|a| a.driver_refs.contains(&name.to_string()))
+                        .flat_map(|a| {
+                            state
+                                .agent_runs
+                                .iter()
+                                .filter(move |r| r.agent_name == a.name)
+                        })
+                        .map(|r| r.evidence_count)
+                        .sum::<usize>();
+                    let computed_conf = if ev_count >= 3 {
+                        0.8
+                    } else if ev_count >= 1 {
+                        0.5
+                    } else {
+                        0.2
+                    };
+
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(div().w(px(90.0)).child(state.editor_confidence.clone()))
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child(format!(
+                                    "Computed: {:.0}%{}",
+                                    computed_conf * 100.0,
+                                    user_conf
+                                        .map(|uc| format!(" → Override: {:.0}%", uc * 100.0))
+                                        .unwrap_or_default()
+                                )),
+                        )
+                })
                 .child(
                     div()
                         .text_size(px(10.0))
