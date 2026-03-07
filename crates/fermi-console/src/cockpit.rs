@@ -879,102 +879,163 @@ impl CockpitState {
     }
 
     /// Fire a single agent in the background. Results flow back via cx.spawn.
+    ///
+    /// Execution path:
+    ///   1. ABW API (primary) — user authenticated via OAuth, ABW handles LLM costs
+    ///   2. Local registry (dev fallback) — only if ANTHROPIC_API_KEY was set at startup
+    ///   3. Fail with "Sign in to run agents" if neither is available
     fn fire_agent(&self, agent_id: &str, query: &str, cx: &mut Context<Self>) {
         // agent_id may be compound (market_research_song_quality)
         // Registry knows the base name (market_research)
         let base_id = base_agent_name(agent_id).to_string();
         let tracking_id = agent_id.to_string();
+        let api = self.api.clone();
         let registry = self.registry.clone();
         let q = query.to_string();
 
         cx.spawn(async move |this, cx| {
-            log::info!("[composer] Firing {} (registry: {}) ", tracking_id, base_id);
+            log::info!("[composer] Firing {} (base: {})", tracking_id, base_id);
 
-            let card = match registry.get(&base_id) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::error!("[composer] {} not found: {}", base_id, e);
-                    this.update(cx, |state, cx| {
-                        state.mark_agent_failed(&tracking_id, &format!("Not in registry: {}", e));
-                        cx.notify();
-                    }).ok();
-                    return;
+            // ── Try ABW API first (primary path for all users) ────
+            let use_api = api.is_authenticated().await;
+            let result_json: Result<JsonValue, String> = if use_api {
+                log::info!("[composer] {} → ABW API execution", base_id);
+                match api.execute_agent(&base_id, &q).await {
+                    Ok(api_result) => {
+                        // Map AgentExecutionResult to the JSON shape our processors expect
+                        let evidence = api_result.evidence.unwrap_or_default();
+                        let metadata = api_result.metadata.unwrap_or_else(|| serde_json::json!({}));
+                        Ok(serde_json::json!({
+                            "agent_id": api_result.agent_id,
+                            "status": api_result.status,
+                            "confidence": api_result.confidence,
+                            "execution_time_ms": api_result.execution_time_ms,
+                            "tokens_used": api_result.tokens_used,
+                            "credits_charged": api_result.credits_charged,
+                            "evidence": evidence,
+                            "metadata": metadata,
+                        }))
+                    }
+                    Err(e) => Err(format!("ABW API: {}", e)),
+                }
+            } else {
+                // ── Fallback: local registry (dev mode with ANTHROPIC_API_KEY) ──
+                let executor_name = registry.executor_arc().name().to_string();
+                if executor_name == "mock" {
+                    Err("Sign in to ABW to run agents. Click Dashboard → Sign In with Google or GitHub.".to_string())
+                } else {
+                    log::info!("[composer] {} → local executor ({})", base_id, executor_name);
+                    let card = match registry.get(&base_id) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            return {
+                                this.update(cx, |state, cx| {
+                                    state.mark_agent_failed(
+                                        &tracking_id,
+                                        &format!("Not in registry: {}", e),
+                                    );
+                                    cx.notify();
+                                })
+                                .ok();
+                            };
+                        }
+                    };
+
+                    let agent_stmt = AgentStmt {
+                        name: base_id.clone(),
+                        agent_type: Some("research".into()),
+                        query: q.clone(),
+                        executor: Some(fermi::ast::ExecutorType::LLM),
+                        schedule: None,
+                        driver_refs: vec![],
+                        depends_on: vec![],
+                        confidence_threshold: None,
+                    };
+
+                    let program = Program {
+                        statements: vec![Statement::Agent(agent_stmt.clone())],
+                    };
+
+                    let context = ExecutionContext {
+                        program,
+                        agent_card: card.clone(),
+                    };
+
+                    match registry.execute_agent(&agent_stmt, &context).await {
+                        Ok(output) => Ok(serde_json::json!({
+                            "agent_id": output.agent_name,
+                            "status": format!("{:?}", output.status),
+                            "confidence": output.confidence,
+                            "execution_time_ms": output.execution_time_ms,
+                            "tokens_used": output.tokens_used,
+                            "evidence": output.evidence.iter().map(|e| serde_json::json!({
+                                "id": e.id,
+                                "source": e.source,
+                                "summary": e.summary.clone().unwrap_or_default(),
+                                "key_findings": e.key_findings,
+                                "relevance": e.relevance.unwrap_or(0.0),
+                            })).collect::<Vec<_>>(),
+                            "metadata": {
+                                "model_used": output.metadata.model_used,
+                                "reasoning": output.metadata.reasoning,
+                            }
+                        })),
+                        Err(e) => Err(format!("Local executor: {}", e)),
+                    }
                 }
             };
 
-            let agent_stmt = AgentStmt {
-                name: base_id.clone(),
-                agent_type: Some("research".into()),
-                query: q,
-                executor: Some(fermi::ast::ExecutorType::LLM),
-                schedule: None,
-                driver_refs: vec![],
-                depends_on: vec![],
-                confidence_threshold: None,
-            };
+            // ── Process result (same for both paths) ──────────────
+            match result_json {
+                Ok(result_json) => {
+                    log::info!("[composer] {} completed", tracking_id);
 
-            let program = Program {
-                statements: vec![Statement::Agent(agent_stmt.clone())],
-            };
-
-            let context = ExecutionContext {
-                program,
-                agent_card: card.clone(),
-            };
-
-            match registry.execute_agent(&agent_stmt, &context).await {
-                Ok(output) => {
-                    log::info!("[composer] {} completed: {} evidence, confidence={:.2}",
-                        tracking_id, output.evidence.len(), output.confidence);
-
-                    let result_json = serde_json::json!({
-                        "agent_id": output.agent_name,
-                        "status": format!("{:?}", output.status),
-                        "confidence": output.confidence,
-                        "execution_time_ms": output.execution_time_ms,
-                        "tokens_used": output.tokens_used,
-                        "evidence": output.evidence.iter().map(|e| serde_json::json!({
-                            "id": e.id,
-                            "source": e.source,
-                            "summary": e.summary.clone().unwrap_or_default(),
-                            "key_findings": e.key_findings,
-                            "relevance": e.relevance.unwrap_or(0.0),
-                        })).collect::<Vec<_>>(),
-                        "metadata": {
-                            "model_used": output.metadata.model_used,
-                            "reasoning": output.metadata.reasoning,
-                        }
-                    });
-
-                    let findings: Vec<String> = output.evidence.iter()
-                        .flat_map(|e| e.key_findings.iter().cloned())
-                        .take(5)
-                        .collect();
+                    // Extract findings for the tip message
+                    let findings: Vec<String> = result_json
+                        .get("evidence")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .flat_map(|e| {
+                                    e.get("key_findings")
+                                        .and_then(|v| v.as_array())
+                                        .into_iter()
+                                        .flatten()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                })
+                                .take(5)
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
                     this.update(cx, |state, cx| {
-                        // macro_forecaster gets special processing (base rate + drivers)
-                        // macro_forecaster gets special processing (base rate + drivers)
+                        // Route to the right processor based on agent type
                         if base_id == "macro_forecaster" {
                             state.process_macro_forecaster_result(&result_json);
-                        } else if base_id == "fermi" || base_id == "macro_forecaster" {
+                        } else if base_id == "fermi" {
                             // Check if this is a decomposition (has base_rate/drivers)
                             // or a recommendation (has recommended_agent)
-                            let reasoning = result_json.get("metadata")
+                            let reasoning = result_json
+                                .get("metadata")
                                 .and_then(|m| m.get("reasoning"))
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
-                            let clean = reasoning.trim()
-                                .strip_prefix("```json").or_else(|| reasoning.trim().strip_prefix("```"))
+                            let clean = reasoning
+                                .trim()
+                                .strip_prefix("```json")
+                                .or_else(|| reasoning.trim().strip_prefix("```"))
                                 .and_then(|s| s.strip_suffix("```"))
-                                .unwrap_or(reasoning).trim();
-                            let has_base_rate = clean.contains("base_rate") && (clean.contains("drivers") || clean.contains("historical_frequency"));
+                                .unwrap_or(reasoning)
+                                .trim();
+                            let has_base_rate = clean.contains("base_rate")
+                                && (clean.contains("drivers")
+                                    || clean.contains("historical_frequency"));
 
                             if has_base_rate {
                                 state.process_macro_forecaster_result(&result_json);
                             } else {
                                 state.process_fermi_recommendation(&result_json, cx);
                             }
-                            state.process_fermi_recommendation(&result_json, cx);
                         } else {
                             // Other agents: add evidence to AST
                             state.process_agent_evidence(&tracking_id, &result_json);
@@ -984,23 +1045,32 @@ impl CockpitState {
                             state.messages.push(AssistantMessage {
                                 node: format!("agent:{}", tracking_id),
                                 kind: MessageKind::Tip,
-                                text: format!("🦊 {} findings:\n{}",
+                                text: format!(
+                                    "🦊 {} findings:\n{}",
                                     tracking_id,
-                                    findings.iter()
+                                    findings
+                                        .iter()
                                         .map(|f| format!("• {}", f))
                                         .collect::<Vec<_>>()
-                                        .join("\n")),
+                                        .join("\n")
+                                ),
                             });
                         }
 
                         state.messages.push(AssistantMessage {
                             node: format!("agent:{}", tracking_id),
                             kind: MessageKind::Info,
-                            text: format!("✓ {} complete", tracking_id),
+                            text: format!(
+                                "✓ {} complete{}",
+                                tracking_id,
+                                if use_api { " (via ABW)" } else { " (local)" }
+                            ),
                         });
 
                         // Check if all agents done
-                        let all_done = state.agent_runs.iter()
+                        let all_done = state
+                            .agent_runs
+                            .iter()
                             .all(|r| r.status != AgentRunStatus::Running);
                         if all_done {
                             state.orchestration_running = false;
@@ -1012,14 +1082,16 @@ impl CockpitState {
                         }
 
                         cx.notify();
-                    }).ok();
+                    })
+                    .ok();
                 }
                 Err(e) => {
                     log::error!("[composer] {} failed: {}", tracking_id, e);
                     this.update(cx, |state, cx| {
-                        state.mark_agent_failed(&tracking_id, &format!("{}", e));
+                        state.mark_agent_failed(&tracking_id, &e);
                         cx.notify();
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
         })

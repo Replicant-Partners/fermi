@@ -126,30 +126,20 @@ sudo apt-get install -y \
     libfontconfig1 libfreetype6 libvulkan1
 ```
 
-### 2. Set your Anthropic API key
-
-Agents need this to do research. Without it the app runs but agents use a mock executor.
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-your-key-here"
-```
-
-### 3. Run
+### 2. Run
 
 ```bash
 cd fermi-console-*        # this directory
 ./fermi-console
 ```
 
-### 4. (Optional) Connect to ABW platform
+### 3. Sign in to ABW (required for agents)
 
-For cloud features (publish, portfolio sync, leaderboard), set:
+When the app opens, go to the **Dashboard** panel and click **Sign In with Google** or **Sign In with GitHub**.
 
-```bash
-export FERMI_API_KEY="your-abw-api-key"
-```
+This authenticates you with the Agent Bestiary World (ABW) platform. All agent execution (AI research) runs through ABW — you do **not** need your own API keys. ABW handles LLM costs.
 
-Or sign in via Google/GitHub in the app's Dashboard panel.
+Without signing in, the app still works for editing forecasts, running simulations, and viewing saved forecasts — but agents won't be able to research.
 
 ## Keyboard Shortcuts
 
@@ -166,20 +156,22 @@ Or sign in via Google/GitHub in the app's Dashboard panel.
 
 ## Workflow
 
-1. **Type a question** in the Question Hub (e.g., "Will AMD reach $200 by 2026-12-31?")
-2. **Press Ctrl+Enter** — Fermi decomposes into drivers with a base rate
-3. **Review drivers** — click each to edit parameters (p5/p50/p95)
-4. **Assign agents** — click "+ Assign Agent" on drivers for evidence
-5. **Set confidence** — type 0-100 in the Confidence % field per driver
-6. **Simulate** — Ctrl+R runs 10K Monte Carlo iterations
-7. **Save** — Ctrl+S writes `.fpl`, `.evidence.md`, `.state.json`
+1. **Sign in** via Dashboard → Google or GitHub (required for agent research)
+2. **Type a question** in the Question Hub (e.g., "Will AMD reach $200 by 2026-12-31?")
+3. **Press Ctrl+Enter** — Fermi decomposes into drivers with a base rate
+4. **Review drivers** — click each to edit parameters (p5/p50/p95)
+5. **Assign agents** — click "+ Assign Agent" on drivers for evidence
+6. **Set confidence** — type 0-100 in the Confidence % field per driver
+7. **Simulate** — Ctrl+R runs 10K Monte Carlo iterations
+8. **Save** — Ctrl+S writes `.fpl`, `.evidence.md`, `.state.json`
 
 ## Troubleshooting
 
 - **Black screen / crash on launch:** Check GPU drivers. GPUI requires Vulkan support.
-- **"No ANTHROPIC_API_KEY" warning:** Agents won't research. Set the env var.
+- **Agents fail with "Sign in to ABW":** You need to sign in first. Go to Dashboard → Sign In.
 - **"Failed to load agents":** Make sure `agents/curated/` is next to the binary.
 - **Window doesn't appear:** Try `RUST_LOG=info ./fermi-console` for debug output.
+- **Agent research returns empty/mock data:** Confirm you're signed in (Dashboard shows your name).
 
 ## Feedback
 
@@ -198,14 +190,12 @@ cat > "$STAGE_DIR/run.sh" << 'RUNEOF'
 # Convenience launcher for Fermi Console
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "⚠  ANTHROPIC_API_KEY not set — agents will use mock executor."
-    echo "   Set it with: export ANTHROPIC_API_KEY=sk-ant-..."
-    echo ""
-fi
-
 export AGENTS_DIR="${AGENTS_DIR:-./agents/curated}"
 export RUST_LOG="${RUST_LOG:-warn,fermi_console=info}"
+
+echo "Fermi Console starting…"
+echo "  Sign in via Dashboard → Google/GitHub to enable agent research."
+echo ""
 
 exec ./fermi-console "$@"
 RUNEOF
@@ -214,17 +204,17 @@ echo "  ✓ run.sh launcher"
 
 # ── Step 5: Create .env.example ───────────────────────────────
 cat > "$STAGE_DIR/.env.example" << 'ENVEOF'
-# Required for AI agent research (Claude Haiku)
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-
-# Optional: ABW platform connectivity (publish, leaderboard, portfolio sync)
-FERMI_API_KEY=your-abw-api-key
+# Agent research runs through ABW — sign in via Google/GitHub in the app.
+# No API keys needed for normal usage.
 
 # Optional: Override agent card directory
 # AGENTS_DIR=./agents/curated
 
 # Optional: Logging level
 # RUST_LOG=warn,fermi_console=info
+
+# Dev only: Local agent execution (bypass ABW, use your own Anthropic key)
+# ANTHROPIC_API_KEY=sk-ant-your-key-here
 ENVEOF
 echo "  ✓ .env.example"
 
@@ -245,9 +235,7 @@ echo "  Send to tester. They unpack and run:"
 echo ""
 echo "    tar xzf ${BUNDLE_NAME}.tar.gz"
 echo "    cd ${BUNDLE_NAME}"
-echo "    export ANTHROPIC_API_KEY=sk-ant-..."
 echo "    ./run.sh"
 echo ""
-echo "  Or on macOS (if built there):"
-echo "    open ./fermi-console"
+echo "  Then sign in via Dashboard → Google/GitHub to enable agents."
 echo "═══════════════════════════════════════════════════════════"
