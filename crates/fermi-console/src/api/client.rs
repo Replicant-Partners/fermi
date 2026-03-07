@@ -512,7 +512,9 @@ impl ApiClient {
     /// Create a new API client with the given configuration.
     pub fn new(config: ApiConfig) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(120))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
             .user_agent("fermi-console/0.1.0")
             .build()
             .expect("Failed to create HTTP client");
@@ -578,6 +580,7 @@ impl ApiClient {
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
         let url = self.url(path).await;
         let headers = self.headers().await?;
+        log::debug!("[api] GET {}", url);
 
         let response = self.http.get(&url).headers(headers).send().await?;
 
@@ -625,15 +628,27 @@ impl ApiClient {
         let url = self.url(path).await;
         let headers = self.headers().await?;
 
+        log::debug!("[api] POST {}", url);
         let response = self
             .http
             .post(&url)
             .headers(headers)
             .json(body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                log::error!("[api] POST {} network error: {}", url, e);
+                if e.is_timeout() {
+                    ApiError::Server(format!("Request timed out after 120s: {}", url))
+                } else if e.is_connect() {
+                    ApiError::Server(format!("Connection failed to {}: {}", url, e))
+                } else {
+                    ApiError::Network(e)
+                }
+            })?;
 
         let status = response.status().as_u16();
+        log::debug!("[api] POST {} → {}", url, status);
         if !response.status().is_success() {
             let body = response.text().await.unwrap_or_default();
             return Err(ApiError::from_status(status, &body));

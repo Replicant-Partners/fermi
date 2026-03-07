@@ -896,13 +896,25 @@ impl CockpitState {
         cx.spawn(async move |this, cx| {
             log::info!("[composer] Firing {} (base: {})", tracking_id, base_id);
 
-            // ── Try ABW API first (primary path for all users) ────
+            // ── Determine execution path ──────────────────────────
             let use_api = api.is_authenticated().await;
+
+            // ── Execute via tokio::spawn to ensure proper reactor context ──
+            // GPUI's async executor doesn't drive tokio's I/O reactor,
+            // so reqwest hangs on long-running HTTP calls. We spawn onto
+            // the tokio runtime (entered in main()) for the actual network I/O.
+            let api_clone = api.clone();
+            let base_id_clone = base_id.clone();
+            let q_clone = q.clone();
+            let registry_clone = registry.clone();
+
             let result_json: Result<JsonValue, String> = if use_api {
-                log::info!("[composer] {} → ABW API execution", base_id);
-                match api.execute_agent(&base_id, &q).await {
-                    Ok(api_result) => {
-                        // Map AgentExecutionResult to the JSON shape our processors expect
+                log::info!("[composer] {} → ABW API execution (via tokio)", base_id);
+                let handle = tokio::spawn(async move {
+                    api_clone.execute_agent(&base_id_clone, &q_clone).await
+                });
+                match handle.await {
+                    Ok(Ok(api_result)) => {
                         let evidence = api_result.evidence.unwrap_or_default();
                         let metadata = api_result.metadata.unwrap_or_else(|| serde_json::json!({}));
                         Ok(serde_json::json!({
@@ -916,7 +928,8 @@ impl CockpitState {
                             "metadata": metadata,
                         }))
                     }
-                    Err(e) => Err(format!("ABW API: {}", e)),
+                    Ok(Err(e)) => Err(format!("ABW API: {}", e)),
+                    Err(e) => Err(format!("Agent task panicked: {}", e)),
                 }
             } else {
                 // ── Fallback: local registry (dev mode with ANTHROPIC_API_KEY) ──
@@ -961,8 +974,12 @@ impl CockpitState {
                         agent_card: card.clone(),
                     };
 
-                    match registry.execute_agent(&agent_stmt, &context).await {
-                        Ok(output) => Ok(serde_json::json!({
+                    // Also use tokio::spawn for local execution (it uses reqwest too)
+                    let handle = tokio::spawn(async move {
+                        registry_clone.execute_agent(&agent_stmt, &context).await
+                    });
+                    match handle.await {
+                        Ok(Ok(output)) => Ok(serde_json::json!({
                             "agent_id": output.agent_name,
                             "status": format!("{:?}", output.status),
                             "confidence": output.confidence,
@@ -980,7 +997,8 @@ impl CockpitState {
                                 "reasoning": output.metadata.reasoning,
                             }
                         })),
-                        Err(e) => Err(format!("Local executor: {}", e)),
+                        Ok(Err(e)) => Err(format!("Local executor: {}", e)),
+                        Err(e) => Err(format!("Agent task panicked: {}", e)),
                     }
                 }
             };
