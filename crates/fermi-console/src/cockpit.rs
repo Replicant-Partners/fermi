@@ -1170,8 +1170,44 @@ impl CockpitState {
                             }
 
                             if !found_decomposition {
-                                log::info!("[composer] → process_fermi_recommendation (no decomposition JSON found)");
-                                state.process_fermi_recommendation(&result_json, cx);
+                                // Last resort: parse narrative text for base rate + drivers
+                                // The LLM consistently mentions "base rate of X%" and driver
+                                // descriptions even when it doesn't return JSON.
+                                let narrative = result_json
+                                    .get("metadata")
+                                    .and_then(|m| m.get("reasoning"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+
+                                if let Some(synthetic) = parse_narrative_decomposition(narrative) {
+                                    log::info!(
+                                        "[composer] → process_macro_forecaster_result (parsed from narrative: base_rate={:.1}%, {} drivers)",
+                                        synthetic.get("base_rate")
+                                            .and_then(|b| b.get("historical_frequency"))
+                                            .and_then(|v| v.as_f64())
+                                            .unwrap_or(0.0) * 100.0,
+                                        synthetic.get("drivers")
+                                            .and_then(|d| d.as_array())
+                                            .map(|a| a.len())
+                                            .unwrap_or(0)
+                                    );
+                                    // Wrap in the same shape process_macro_forecaster_result expects
+                                    let patched = serde_json::json!({
+                                        "evidence": result_json.get("evidence").cloned().unwrap_or(serde_json::json!([])),
+                                        "confidence": result_json.get("confidence").cloned().unwrap_or(serde_json::json!(0.5)),
+                                        "metadata": {
+                                            "reasoning": synthetic.to_string(),
+                                            "model_used": result_json.get("metadata")
+                                                .and_then(|m| m.get("model_used"))
+                                                .cloned()
+                                                .unwrap_or(serde_json::json!("unknown"))
+                                        }
+                                    });
+                                    state.process_macro_forecaster_result(&patched);
+                                } else {
+                                    log::info!("[composer] → process_fermi_recommendation (no decomposition found, even from narrative)");
+                                    state.process_fermi_recommendation(&result_json, cx);
+                                }
                             }
                         } else {
                             // Other agents: add evidence to AST
@@ -6538,6 +6574,336 @@ fn make_binary_driver(
 /// Removes/escapes characters that would break the parser.
 /// Extract the base agent name from a compound agent_driver name.
 /// e.g. "market_research_song_quality" → "market_research"
+/// Parse a narrative LLM response to extract base rate and driver decomposition.
+///
+/// ABW's LLMExecutor.build_prompt() wraps queries with its own JSON format,
+/// causing the LLM to return narrative text like "The base rate of 35% from
+/// NBA home games..." instead of structured JSON. This function extracts
+/// the structured data from that narrative.
+///
+/// Returns a synthetic JSON value matching the decomposition schema if
+/// a base rate can be extracted, or None if the text isn't parseable.
+fn parse_narrative_decomposition(text: &str) -> Option<serde_json::Value> {
+    if text.len() < 50 {
+        return None;
+    }
+
+    // ── Extract base rate ─────────────────────────────────────────
+    // Look for patterns like:
+    //   "base rate of 35%"
+    //   "base rate: 0.35"
+    //   "35% base rate"
+    //   "historical frequency of 42%"
+    //   "base rate of 17.1% from last season"
+    let text_lower = text.to_lowercase();
+    let mut base_rate: Option<f64> = None;
+    let mut reference_class = String::new();
+
+    // Pattern 1: "base rate of X%" or "base rate of 0.X"
+    for pattern in &[
+        "base rate of ",
+        "base rate: ",
+        "base_rate: ",
+        "historical frequency of ",
+    ] {
+        if let Some(pos) = text_lower.find(pattern) {
+            let after = &text[pos + pattern.len()..];
+            if let Some(val) = extract_percentage_or_decimal(after) {
+                base_rate = Some(val);
+                // Try to get context as reference class
+                let start = pos.saturating_sub(80);
+                let context = &text[start..pos + pattern.len() + 20.min(after.len())];
+                reference_class = context.trim().to_string();
+                break;
+            }
+        }
+    }
+
+    // Pattern 2: "X% base rate" or "X% from"
+    if base_rate.is_none() {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        for (i, word) in words.iter().enumerate() {
+            if word.ends_with('%') {
+                if let Ok(pct) = word.trim_end_matches('%').parse::<f64>() {
+                    // Check if next words are "base rate" or if this is near "base rate"
+                    let window = words[i.saturating_sub(3)..words.len().min(i + 5)]
+                        .join(" ")
+                        .to_lowercase();
+                    if window.contains("base rate")
+                        || window.contains("base_rate")
+                        || window.contains("historical")
+                        || window.contains("win rate")
+                        || window.contains("success rate")
+                        || window.contains("approval rate")
+                    {
+                        base_rate = Some(pct / 100.0);
+                        reference_class = window;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // If no base rate found, can't decompose
+    let freq = base_rate?;
+    if freq <= 0.0 || freq >= 1.0 {
+        // Try to recover — maybe it was given as percentage > 1
+        if freq > 1.0 && freq <= 100.0 {
+            // was given as 35 not 0.35
+        } else {
+            return None;
+        }
+    }
+    let freq = if freq > 1.0 { freq / 100.0 } else { freq };
+
+    // ── Extract reasoning (use full narrative) ────────────────────
+    let reasoning_text = text.to_string();
+
+    // ── Build synthetic drivers from narrative ────────────────────
+    // Look for driver-like mentions: "X factor", "X advantage", multiplier values
+    let mut drivers = Vec::new();
+
+    // Common driver patterns in sports/general forecasting narratives
+    let driver_patterns = [
+        (
+            "home",
+            "home_court",
+            "Home Court Advantage",
+            "Home vs away impact on outcome",
+        ),
+        (
+            "opponent",
+            "opponent_strength",
+            "Opponent Strength",
+            "Quality of the opposing side",
+        ),
+        (
+            "momentum",
+            "recent_form",
+            "Recent Form/Momentum",
+            "Recent performance trend",
+        ),
+        (
+            "injury",
+            "injury_impact",
+            "Injury Impact",
+            "Effect of injuries on key players",
+        ),
+        (
+            "rest",
+            "schedule_fatigue",
+            "Schedule/Fatigue",
+            "Days of rest, back-to-back games",
+        ),
+        (
+            "market",
+            "market_conditions",
+            "Market Conditions",
+            "Overall market environment",
+        ),
+        (
+            "regulatory",
+            "regulatory_risk",
+            "Regulatory Risk",
+            "Regulatory approvals or blocks",
+        ),
+        (
+            "competition",
+            "competitive_pressure",
+            "Competitive Pressure",
+            "Intensity of competition",
+        ),
+        (
+            "technical",
+            "technical_feasibility",
+            "Technical Feasibility",
+            "Technical readiness",
+        ),
+        (
+            "funding",
+            "funding_availability",
+            "Funding Availability",
+            "Capital access and investment",
+        ),
+        (
+            "sentiment",
+            "public_sentiment",
+            "Public Sentiment",
+            "Public opinion and perception",
+        ),
+        (
+            "demand",
+            "demand_strength",
+            "Demand Strength",
+            "Market demand level",
+        ),
+        (
+            "clinical",
+            "clinical_success",
+            "Clinical Trial Success",
+            "Clinical trial outcome probability",
+        ),
+        (
+            "pipeline",
+            "pipeline_progress",
+            "Pipeline Progress",
+            "Drug/product pipeline advancement",
+        ),
+    ];
+
+    for (keyword, name, display, rationale) in &driver_patterns {
+        if text_lower.contains(keyword) {
+            // Try to extract a multiplier value near this keyword
+            let multiplier = extract_multiplier_near_keyword(&text_lower, keyword);
+            let (p5, p50, p95) = match multiplier {
+                Some(m) => (m * 0.85, m, m * 1.15),
+                None => (0.85, 1.0, 1.15), // neutral default
+            };
+            drivers.push(serde_json::json!({
+                "name": name,
+                "display_name": display,
+                "type": "continuous",
+                "p5": (p5 * 100.0).round() / 100.0,
+                "p50": (p50 * 100.0).round() / 100.0,
+                "p95": (p95 * 100.0).round() / 100.0,
+                "unit": "multiplier",
+                "rationale": rationale,
+            }));
+            if drivers.len() >= 5 {
+                break;
+            }
+        }
+    }
+
+    // If we didn't find enough keyword-based drivers, add generic ones
+    if drivers.len() < 3 {
+        let generic = [
+            (
+                "strength_factor",
+                "Strength of Case",
+                "How strong is the case for this outcome",
+            ),
+            (
+                "conditions",
+                "Favorable Conditions",
+                "Are external conditions favorable or unfavorable",
+            ),
+            (
+                "disruption",
+                "Disruption Risk",
+                "Probability of an unexpected disruptive event",
+            ),
+        ];
+        for (name, display, rationale) in &generic {
+            if !drivers
+                .iter()
+                .any(|d| d.get("name").and_then(|v| v.as_str()) == Some(name))
+            {
+                drivers.push(serde_json::json!({
+                    "name": name,
+                    "display_name": display,
+                    "type": "continuous",
+                    "p5": 0.8,
+                    "p50": 1.0,
+                    "p95": 1.2,
+                    "unit": "multiplier",
+                    "rationale": rationale,
+                }));
+            }
+            if drivers.len() >= 4 {
+                break;
+            }
+        }
+    }
+
+    // Build model expression
+    let model_parts: Vec<String> = drivers
+        .iter()
+        .filter_map(|d| {
+            d.get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+    let model_expr = if model_parts.is_empty() {
+        format!("{}", freq)
+    } else {
+        model_parts.join(" * ")
+    };
+
+    Some(serde_json::json!({
+        "base_rate": {
+            "reference_class": reference_class,
+            "historical_frequency": freq,
+            "sample_size": null,
+            "reasoning": reasoning_text.chars().take(500).collect::<String>(),
+        },
+        "drivers": drivers,
+        "evidence": [{
+            "source": "Fermi decomposition (parsed from narrative)",
+            "summary": reasoning_text,
+            "key_findings": [],
+            "relevance": 0.7,
+        }],
+        "model_expression": model_expr,
+        "confidence": 0.5,
+        "reasoning": reasoning_text,
+    }))
+}
+
+/// Extract a percentage (e.g., "35%") or decimal (e.g., "0.35") from the start of a string.
+fn extract_percentage_or_decimal(s: &str) -> Option<f64> {
+    let s = s.trim();
+    // Try "35%" or "35.7%"
+    if let Some(pct_pos) = s.find('%') {
+        let num_str: String = s[..pct_pos]
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        if let Ok(pct) = num_str.parse::<f64>() {
+            return Some(pct / 100.0);
+        }
+    }
+    // Try "0.35" or ".35"
+    let num_str: String = s
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    if let Ok(val) = num_str.parse::<f64>() {
+        if val > 0.0 && val < 1.0 {
+            return Some(val);
+        }
+        if val >= 1.0 && val <= 100.0 {
+            return Some(val / 100.0);
+        }
+    }
+    None
+}
+
+/// Try to extract a multiplier value near a keyword in the text.
+/// Looks for patterns like "0.85x", "×0.9", "1.2x", "(0.85)" near the keyword.
+fn extract_multiplier_near_keyword(text: &str, keyword: &str) -> Option<f64> {
+    if let Some(pos) = text.find(keyword) {
+        // Search in a window around the keyword
+        let start = pos.saturating_sub(40);
+        let end = (pos + keyword.len() + 60).min(text.len());
+        let window = &text[start..end];
+
+        // Look for multiplier patterns: 0.85, 1.2, ×1.1, (0.9)
+        for word in window.split_whitespace() {
+            let clean = word
+                .trim_matches(|c: char| c == '(' || c == ')' || c == '×' || c == 'x' || c == ',');
+            if let Ok(val) = clean.parse::<f64>() {
+                if val > 0.3 && val < 3.0 && val != 1.0 {
+                    return Some(val);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn base_agent_name(compound_name: &str) -> &str {
     // Known agent base names
     let known = [
