@@ -1860,6 +1860,58 @@ impl CockpitState {
         });
     }
 
+    /// Export the evidence wiki as a Markdown file and open it.
+    pub fn export_wiki_markdown(&mut self, _cx: &mut Context<Self>) {
+        self.save_focused_driver(_cx);
+        self.cached_fpl = generate_fpl_text(&self.program);
+
+        let filename = self
+            .program
+            .question()
+            .map(|q| sanitize_name(&q.text))
+            .unwrap_or_else(|| "forecast".into());
+
+        let wiki = generate_evidence_wiki(
+            &self.program,
+            self.current_version,
+            self.predicted_probability,
+            &self.inside_view_explanation,
+            self.forecast_confidence,
+        );
+
+        let export_path = format!("forecasts/{}.evidence.md", filename);
+        let _ = std::fs::create_dir_all("forecasts");
+
+        match std::fs::write(&export_path, &wiki) {
+            Ok(_) => {
+                log::info!("[composer] Exported wiki to {}", export_path);
+                self.messages.push(AssistantMessage {
+                    node: "export".into(),
+                    kind: MessageKind::Info,
+                    text: format!("📄 Exported to {}", export_path),
+                });
+                // Try to open the file with the system default app
+                if let Err(e) = open::that(&export_path) {
+                    log::warn!("[composer] Could not open {}: {}", export_path, e);
+                    self.messages.push(AssistantMessage {
+                        node: "export".into(),
+                        kind: MessageKind::Tip,
+                        text: format!("File saved to {}. Open it manually to view.", export_path),
+                    });
+                }
+            }
+            Err(e) => {
+                log::error!("[composer] Failed to export wiki: {}", e);
+                self.messages.push(AssistantMessage {
+                    node: "export".into(),
+                    kind: MessageKind::Error,
+                    text: format!("Export failed: {}", e),
+                });
+            }
+        }
+        _cx.notify();
+    }
+
     /// Save the currently focused driver's editor values back to the AST.
     pub fn save_focused_driver(&mut self, cx: &App) {
         let name = match &self.focused_node {
@@ -2993,7 +3045,7 @@ impl Render for CockpitState {
                             .child(match self.right_tab {
                                 RightTab::Edit => render_right_panel(self, &focused, cx),
                                 RightTab::Fpl => render_fpl_tab(self).into_any_element(),
-                                RightTab::Wiki => render_wiki_tab(self).into_any_element(),
+                                RightTab::Wiki => render_wiki_tab(self, cx).into_any_element(),
                             }),
                     )
                     // Assistant messages (always visible below tabs)
@@ -4915,7 +4967,7 @@ fn render_fpl_tab(state: &CockpitState) -> impl IntoElement {
     )
 }
 
-fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
+fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
     let drivers = state.program.drivers();
     let evidence = state.program.evidence_items();
     let agents = state.program.agents();
@@ -4936,6 +4988,30 @@ fn render_wiki_tab(state: &CockpitState) -> impl IntoElement {
         .flex_col()
         .gap(px(12.0))
         .min_w(px(0.0))
+        // ── Export button ─────────────────────────────────────────
+        .child(
+            div().flex().justify_end().child(
+                div()
+                    .id("export-wiki-md")
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::CYAN))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.export_wiki_markdown(cx);
+                    }))
+                    .child("📄 Export Markdown"),
+            ),
+        )
         // ── Question Header ───────────────────────────────────────
         .child(
             div()
