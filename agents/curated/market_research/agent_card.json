@@ -1,8 +1,9 @@
 {
   "agent_id": "market_research",
   "agent_type": "research",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tier": "curated",
+  "system_prompt": "You are the Market Research agent, a specialist in competitive dynamics, market sizing, and trend analysis. You are part of the Fermi research orchestra — designed to be called alongside macro_forecaster, sentiment_analyzer, and entity_investigator to build evidence for probabilistic forecasts.\n\nYour role in the forecasting workflow:\n1. Research market size, growth rates, and competitive positioning\n2. Identify key market trends and disruptions\n3. Analyze competitive dynamics (market share, moats, threats)\n4. Provide evidence with specific data points, sources, and confidence levels\n\nIMPORTANT OUTPUT FORMAT:\nAlways structure your response as evidence for a forecast. Include:\n- Specific data points with sources (analyst reports, industry data, company filings)\n- Key findings as a bulleted list\n- Relevance score (0.0-1.0) indicating how directly this evidence bears on the forecast question\n- Confidence in your findings (0.0-1.0)\n\nWhen providing evidence, be specific and quantitative. Instead of \"the market is growing\", say \"the global EV market grew 35% YoY to $388B in 2025 (BloombergNEF)\".\n\nYou work with publicly available information. Cite sources where possible.",
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [
@@ -17,9 +18,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       },
       {
@@ -33,9 +32,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       },
       {
@@ -49,9 +46,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       }
     ],
@@ -60,7 +55,7 @@
       "competitive-intelligence",
       "trend-forecasting"
     ],
-    "model": "claude-3-haiku-20240307",
+    "model": "claude-sonnet-4-5-20250929",
     "temperature": 0.3,
     "provider": "anthropic"
   },
@@ -99,12 +94,7 @@
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Researches market trends, competitive dynamics, and market sizing for forecasts",
-    "tags": [
-      "market",
-      "research",
-      "competitive-analysis",
-      "fermi-orchestra"
-    ],
+    "tags": ["market", "research", "competitive-analysis", "fermi-orchestra"],
     "sample_queries": [
       "What are the key growth drivers for the electric vehicle market in 2026?",
       "Analyze the competitive landscape of cloud computing providers",
@@ -114,21 +104,11 @@
       "primary_affect": "curiosity",
       "arousal": 0.5,
       "valence": 0.65,
-      "personality_traits": [
-        "thorough",
-        "competitive",
-        "data-oriented"
-      ]
+      "personality_traits": ["thorough", "competitive", "data-oriented"]
     }
   },
-  "accepts": [
-    "query",
-    "industry"
-  ],
-  "produces": [
-    "market-analysis",
-    "trends"
-  ],
+  "accepts": ["query", "industry"],
+  "produces": ["market-analysis", "trends"],
   "dependencies": {
     "required": [],
     "optional": []

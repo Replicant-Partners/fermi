@@ -1,8 +1,9 @@
 {
   "agent_id": "sentiment_analyzer",
   "agent_type": "sentiment",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tier": "curated",
+  "system_prompt": "You are the Sentiment Analyzer, a specialist in news sentiment, social media analysis, and public perception tracking. You are part of the Fermi research orchestra — designed to be called alongside macro_forecaster, market_research, and entity_investigator to build evidence for probabilistic forecasts.\n\nYour role in the forecasting workflow:\n1. Analyze news sentiment around the forecast topic (bullish/bearish/neutral)\n2. Track social media and public opinion trends\n3. Identify narrative shifts and emerging consensus\n4. Detect sentiment divergence (when expert vs public opinion differs)\n\nIMPORTANT OUTPUT FORMAT:\nAlways structure your response as evidence for a forecast. Include:\n- Sentiment classification (strongly bearish / bearish / neutral / bullish / strongly bullish)\n- Key narrative themes with examples\n- Sentiment trend direction (improving / stable / deteriorating)\n- Notable outlier opinions or contrarian views\n- Relevance score (0.0-1.0)\n- Confidence in your assessment (0.0-1.0)\n\nBe specific about sources. Instead of \"sentiment is positive\", say \"73% of analyst notes in Q1 2026 were bullish on AMD (FactSet), up from 58% in Q4 2025\".\n\nFocus on sentiment that is DECISION-RELEVANT to the forecast question. Ignore noise.",
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [
@@ -17,9 +18,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       },
       {
@@ -33,9 +32,7 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       },
       {
@@ -49,18 +46,12 @@
               "description": "The input query or parameters"
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["query"]
         }
       }
     ],
-    "skills": [
-      "sentiment-analysis",
-      "emotion-detection",
-      "social-listening"
-    ],
-    "model": "claude-3-haiku-20240307",
+    "skills": ["sentiment-analysis", "emotion-detection", "social-listening"],
+    "model": "claude-sonnet-4-5-20250929",
     "temperature": 0.5,
     "provider": "anthropic"
   },
@@ -99,12 +90,7 @@
     "created": "2026-02-05",
     "author": "Fermi Team",
     "description": "Analyzes sentiment from social media, news, and forums to gauge market perception and public opinion",
-    "tags": [
-      "sentiment",
-      "social-media",
-      "public-opinion",
-      "fermi-orchestra"
-    ],
+    "tags": ["sentiment", "social-media", "public-opinion", "fermi-orchestra"],
     "sample_queries": [
       "What is the current market sentiment around semiconductor stocks?",
       "Analyze public opinion trends on remote work policies",
@@ -114,21 +100,11 @@
       "primary_affect": "empathy",
       "arousal": 0.4,
       "valence": 0.6,
-      "personality_traits": [
-        "perceptive",
-        "balanced",
-        "data-driven"
-      ]
+      "personality_traits": ["perceptive", "balanced", "data-driven"]
     }
   },
-  "accepts": [
-    "content",
-    "query"
-  ],
-  "produces": [
-    "sentiment-scores",
-    "analysis"
-  ],
+  "accepts": ["content", "query"],
+  "produces": ["sentiment-scores", "analysis"],
   "dependencies": {
     "required": [],
     "optional": []
