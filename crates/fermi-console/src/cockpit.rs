@@ -1555,14 +1555,41 @@ impl CockpitState {
             .map(|q| q.text.clone())
             .unwrap_or_default();
 
+        // Build agent list dynamically from the registry
+        let available_agents: Vec<String> = self
+            .registry
+            .list_cards()
+            .unwrap_or_default()
+            .iter()
+            .filter(|c| {
+                c.metadata.tags.iter().any(|t| t == "fermi-orchestra") && c.agent_id != "fermi"
+            })
+            .map(|c| {
+                format!(
+                    "- {}: {}",
+                    c.agent_id,
+                    c.metadata.description.chars().take(100).collect::<String>()
+                )
+            })
+            .collect();
+        let agent_list = if available_agents.is_empty() {
+            "- macro_forecaster, market_research, sentiment_analyzer, entity_investigator"
+                .to_string()
+        } else {
+            available_agents.join("\n")
+        };
+
         let query = format!(
             "I'm building a forecast for: \"{}\"\n\n\
              I need to assign a research agent to the driver '{}' (type: {}).\n\
              Driver rationale: {}\n\n\
-             Available agents: macro_forecaster, market_research, sentiment_analyzer, entity_investigator.\n\n\
+             Available agents:\n{}\n\n\
+             IMPORTANT: Choose the most domain-specific agent. For NBA/basketball, use nba_analyst. \
+             For biotech/pharma, use biotech_analyst. Only use general agents (market_research, \
+             sentiment_analyzer, entity_investigator) when no domain agent fits.\n\n\
              Which agent is best for this driver? Suggest a specific research query.\n\
              Respond with JSON: {{\"recommended_agent\": \"...\", \"reasoning\": \"...\", \"suggested_query\": \"...\"}}",
-            question, driver_name, driver_type, driver_rationale
+            question, driver_name, driver_type, driver_rationale, agent_list
         );
 
         let dn = driver_name.to_string();
