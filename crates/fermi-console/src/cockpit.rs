@@ -19,6 +19,7 @@
 use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use fermi::agent_backend::{
@@ -135,6 +136,7 @@ pub struct CockpitState {
     pub editor_impact: Entity<TextInput>,
     pub editor_rationale: Entity<TextInput>,
     pub agent_query_input: Entity<TextInput>,
+    pub editor_confidence: Entity<TextInput>,
     pub evidence_source_input: Entity<TextInput>,
     pub evidence_summary_input: Entity<TextInput>,
 
@@ -166,6 +168,8 @@ pub struct CockpitState {
     pub cached_fpl: String,
     pub inside_view_explanation: String,
     pub forecast_confidence: f64, // 0.0-1.0 overall confidence in the inside view
+    /// User-set confidence per driver (driver_name → 0.0-1.0). Overrides computed confidence.
+    pub driver_confidence: HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +240,11 @@ impl CockpitState {
                 .with_placeholder("What should this agent research for this driver?")
                 .with_label("Agent Query")
         });
+        let editor_confidence = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("0–100")
+                .with_label("Confidence %")
+        });
 
         let evidence_source_input = cx.new(|cx| {
             TextInput::new(cx)
@@ -262,6 +271,7 @@ impl CockpitState {
             editor_impact,
             editor_rationale,
             agent_query_input,
+            editor_confidence,
             evidence_source_input,
             evidence_summary_input,
             agent_runs: Vec::new(),
@@ -285,6 +295,7 @@ impl CockpitState {
             cached_fpl: String::new(),
             inside_view_explanation: String::new(),
             forecast_confidence: 0.5,
+            driver_confidence: HashMap::new(),
         }
     }
 
@@ -1530,6 +1541,15 @@ impl CockpitState {
                 }
                 _ => {}
             }
+
+            // Populate confidence from user-set value (or empty if not set)
+            let conf_text = self
+                .driver_confidence
+                .get(&driver.name)
+                .map(|c| format!("{:.0}", c * 100.0))
+                .unwrap_or_default();
+            self.editor_confidence
+                .update(cx, |input, cx| input.set_text(conf_text, cx));
         }
     }
 
@@ -1767,6 +1787,18 @@ impl CockpitState {
                     driver.impact_multiplier = Some(impact);
                 }
                 _ => {}
+            }
+
+            // Save user-set confidence for this driver
+            let conf_text = self.editor_confidence.read(cx).text().to_string();
+            if !conf_text.trim().is_empty() {
+                if let Ok(pct) = conf_text.trim().parse::<f64>() {
+                    let clamped = (pct / 100.0).clamp(0.0, 1.0);
+                    self.driver_confidence.insert(name.clone(), clamped);
+                }
+            } else {
+                // Empty means "use computed" — remove override
+                self.driver_confidence.remove(&name);
             }
 
             // Fermi validates the saved driver
@@ -2292,6 +2324,21 @@ impl CockpitState {
                 {
                     self.forecast_confidence = conf;
                 }
+                // Restore per-driver confidence overrides
+                if let Some(dc) = state_json
+                    .get("driver_confidence")
+                    .and_then(|v| v.as_object())
+                {
+                    for (driver_name, val) in dc {
+                        if let Some(c) = val.as_f64() {
+                            self.driver_confidence.insert(driver_name.clone(), c);
+                        }
+                    }
+                    log::info!(
+                        "[load] Restored {} driver confidence overrides",
+                        self.driver_confidence.len()
+                    );
+                }
                 // Restore agents into AST
                 if let Some(agent_arr) = state_json.get("agents").and_then(|v| v.as_array()) {
                     for ag in agent_arr {
@@ -2545,6 +2592,9 @@ impl CockpitState {
                         "schedule": format!("{:?}", a.schedule),
                         "driver_refs": a.driver_refs,
                     })).collect::<Vec<_>>(),
+                    "driver_confidence": self.driver_confidence.iter()
+                        .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+                        .collect::<serde_json::Map<String, JsonValue>>(),
                 });
                 match std::fs::write(
                     &state_path,
@@ -2715,6 +2765,7 @@ impl Render for CockpitState {
                                     .map(|a| a.name.clone())
                                     .collect();
                                 let n = name.clone();
+                                let uc = self.driver_confidence.get(name).copied();
                                 render_driver_card(
                                     i,
                                     driver,
@@ -2723,6 +2774,7 @@ impl Render for CockpitState {
                                     &self.agent_runs,
                                     &self.messages,
                                     &self.program.evidence_items(),
+                                    uc,
                                     cx,
                                     &n,
                                 )
@@ -3040,6 +3092,7 @@ fn render_driver_card(
     agent_runs: &[AgentExecution],
     messages: &[AssistantMessage],
     evidence_items: &[&fermi::ast::EvidenceStmt],
+    user_confidence: Option<f64>,
     cx: &mut Context<CockpitState>,
     name: &str,
 ) -> AnyElement {
@@ -3214,19 +3267,32 @@ fn render_driver_card(
                     )
                 }),
         )
-        // Driver confidence dots (based on evidence coverage)
+        // Driver confidence dots (based on evidence coverage or user override)
         .child({
             let ev_count = assigned_agents
                 .iter()
                 .flat_map(|a| agent_runs.iter().filter(move |r| r.agent_name == *a))
                 .map(|r| r.evidence_count)
                 .sum::<usize>();
-            let (conf_label, conf_color) = if ev_count >= 3 {
-                ("Evidence: ●●● High", theme::GREEN)
+            let computed_conf = if ev_count >= 3 {
+                0.8
             } else if ev_count >= 1 {
-                ("Evidence: ●●○ Medium", theme::GOLD)
+                0.5
             } else {
-                ("Evidence: ●○○ Low", theme::RED)
+                0.2
+            };
+            let effective_conf = user_confidence.unwrap_or(computed_conf);
+            let (conf_label, conf_color) = if effective_conf >= 0.7 {
+                ("●●● High", theme::GREEN)
+            } else if effective_conf >= 0.4 {
+                ("●●○ Medium", theme::GOLD)
+            } else {
+                ("●○○ Low", theme::RED)
+            };
+            let label_prefix = if user_confidence.is_some() {
+                "Confidence"
+            } else {
+                "Evidence"
             };
             div()
                 .flex()
@@ -3237,7 +3303,24 @@ fn render_driver_card(
                         .text_size(px(9.0))
                         .text_color(rgb(conf_color))
                         .px(px(4.0))
-                        .child(conf_label),
+                        .child(format!(
+                            "{}: {} {:.0}%",
+                            label_prefix,
+                            conf_label,
+                            effective_conf * 100.0
+                        )),
+                )
+                .when(
+                    user_confidence.is_some()
+                        && (user_confidence.unwrap() - computed_conf).abs() > 0.05,
+                    |el| {
+                        el.child(
+                            div()
+                                .text_size(px(8.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child(format!("(computed: {:.0}%)", computed_conf * 100.0)),
+                        )
+                    },
                 )
                 .when(has_evidence_gap, |el| {
                     el.child(
@@ -3898,6 +3981,71 @@ fn render_driver_editor_and_evidence(
                     .child(div().w(px(120.0)).child(state.editor_prob.clone()))
                     .child(div().w(px(120.0)).child(state.editor_impact.clone())),
             )
+        })
+        // Confidence override (user-settable per driver)
+        .child({
+            let user_conf = state.driver_confidence.get(name).copied();
+            // Compute evidence-based confidence for this driver
+            let ev_count = state
+                .program
+                .agents()
+                .iter()
+                .filter(|a| a.driver_refs.contains(&name.to_string()))
+                .flat_map(|a| {
+                    state
+                        .agent_runs
+                        .iter()
+                        .filter(move |r| r.agent_name == a.name)
+                })
+                .map(|r| r.evidence_count)
+                .sum::<usize>();
+            let computed_conf = if ev_count >= 3 {
+                0.8
+            } else if ev_count >= 1 {
+                0.5
+            } else {
+                0.2
+            };
+
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(div().w(px(90.0)).child(state.editor_confidence.clone()))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child(format!("Computed: {:.0}%", computed_conf * 100.0)),
+                        )
+                        .when(user_conf.is_some(), |el| {
+                            let uc = user_conf.unwrap();
+                            let delta = ((uc - computed_conf) * 100.0) as i64;
+                            let (sign, color) = if delta > 0 {
+                                ("+", theme::GREEN)
+                            } else if delta < 0 {
+                                ("", theme::RED)
+                            } else {
+                                ("±", theme::FG_DIM)
+                            };
+                            el.child(div().text_size(px(9.0)).text_color(rgb(color)).child(
+                                format!("Override: {:.0}% ({}{}pp)", uc * 100.0, sign, delta),
+                            ))
+                        })
+                        .when(user_conf.is_none(), |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child("Leave empty to use computed confidence"),
+                            )
+                        }),
+                )
         })
         .child(
             div()
