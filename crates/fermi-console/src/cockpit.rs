@@ -1051,6 +1051,38 @@ impl CockpitState {
                 Ok(result_json) => {
                     log::info!("[composer] {} completed", tracking_id);
 
+                    // Debug: log the response shape so we can diagnose routing
+                    let evidence_count = result_json.get("evidence")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    let has_metadata = result_json.get("metadata").is_some();
+                    let reasoning_len = result_json.get("metadata")
+                        .and_then(|m| m.get("reasoning"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.len())
+                        .unwrap_or(0);
+                    let reasoning_preview = result_json.get("metadata")
+                        .and_then(|m| m.get("reasoning"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.chars().take(200).collect::<String>())
+                        .unwrap_or_else(|| "NO REASONING".into());
+                    log::info!(
+                        "[composer] {} response: evidence={}, has_metadata={}, reasoning_len={}, preview: {}",
+                        tracking_id, evidence_count, has_metadata, reasoning_len, reasoning_preview
+                    );
+
+                    // Also log metadata keys if present
+                    if let Some(meta) = result_json.get("metadata") {
+                        if let Some(obj) = meta.as_object() {
+                            let keys: Vec<&String> = obj.keys().collect();
+                            log::info!("[composer] {} metadata keys: {:?}", tracking_id, keys);
+                        } else if let Some(s) = meta.as_str() {
+                            log::info!("[composer] {} metadata is a string (len {}): {}...",
+                                tracking_id, s.len(), s.chars().take(200).collect::<String>());
+                        }
+                    }
+
                     // Extract findings for the tip message
                     let findings: Vec<String> = result_json
                         .get("evidence")
@@ -1071,7 +1103,9 @@ impl CockpitState {
 
                     this.update(cx, |state, cx| {
                         // Route to the right processor based on agent type
+                        log::info!("[composer] Routing {} to processor (base_id={})", tracking_id, base_id);
                         if base_id == "macro_forecaster" {
+                            log::info!("[composer] → process_macro_forecaster_result");
                             state.process_macro_forecaster_result(&result_json);
                         } else if base_id == "fermi" {
                             // Check if this is a decomposition (has base_rate/drivers)
@@ -1092,13 +1126,24 @@ impl CockpitState {
                                 && (clean.contains("drivers")
                                     || clean.contains("historical_frequency"));
 
+                            log::info!(
+                                "[composer] fermi routing: has_base_rate={}, reasoning_len={}, clean_len={}",
+                                has_base_rate, reasoning.len(), clean.len()
+                            );
+                            if clean.len() < 20 {
+                                log::info!("[composer] fermi clean reasoning: '{}'", clean);
+                            }
+
                             if has_base_rate {
+                                log::info!("[composer] → process_macro_forecaster_result (decomposition)");
                                 state.process_macro_forecaster_result(&result_json);
                             } else {
+                                log::info!("[composer] → process_fermi_recommendation");
                                 state.process_fermi_recommendation(&result_json, cx);
                             }
                         } else {
                             // Other agents: add evidence to AST
+                            log::info!("[composer] → process_agent_evidence({})", tracking_id);
                             state.process_agent_evidence(&tracking_id, &result_json);
                         }
 
