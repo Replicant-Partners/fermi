@@ -8,25 +8,26 @@ use std::sync::Arc;
 // Ayu Mirage Theme Palette
 // ═══════════════════════════════════════════════════════════════════
 
-const BG_DEEP: RGBColor = RGBColor(13, 18, 30); // #0D121E
-const BG: RGBColor = RGBColor(20, 27, 43); // #141B2B
-const BG_ELEVATED: RGBColor = RGBColor(28, 37, 54); // #1C2536
-const GRID_LINE: RGBColor = RGBColor(35, 46, 65); // #232E41
-const AXIS: RGBColor = RGBColor(50, 63, 85); // #323F55
-const TEXT_DIM: RGBColor = RGBColor(90, 105, 130); // #5A6982
-const TEXT: RGBColor = RGBColor(140, 155, 175); // #8C9BAF
+// Exact matches from main.rs theme module (Ayu Mirage)
+const BG_DEEP: RGBColor = RGBColor(23, 27, 36); // 0x171B24 — sidebar/chart bg
+const BG: RGBColor = RGBColor(31, 36, 48); // 0x1F2430 — primary bg
+const BG_ELEVATED: RGBColor = RGBColor(39, 45, 56); // 0x272D38 — panels, cards
+const GRID_LINE: RGBColor = RGBColor(62, 75, 89); // 0x3E4B59 — FG_FAINT
+const AXIS: RGBColor = RGBColor(62, 75, 89); // 0x3E4B59 — same as grid
+const TEXT_DIM: RGBColor = RGBColor(92, 103, 115); // 0x5C6773 — FG_DIM
+const TEXT: RGBColor = RGBColor(203, 204, 198); // 0xCBCCC6 — FG
 
-// Accent colors
-const CYAN: RGBColor = RGBColor(54, 215, 183); // #36D7B7 — inside view, primary
-const CYAN_DIM: RGBColor = RGBColor(30, 120, 100); // muted cyan for fills
-const GOLD: RGBColor = RGBColor(245, 166, 35); // #F5A623 — outside view, warnings
-const GOLD_DIM: RGBColor = RGBColor(140, 95, 20); // muted gold for fills
-const GREEN: RGBColor = RGBColor(16, 185, 129); // #10B981 — good/high
-const GREEN_DIM: RGBColor = RGBColor(10, 100, 70); // muted green
-const RED: RGBColor = RGBColor(239, 68, 68); // #EF4444 — bad/low
-const RED_DIM: RGBColor = RGBColor(130, 35, 35); // muted red
-const BLUE: RGBColor = RGBColor(96, 165, 250); // #60A5FA — secondary accent
-const PURPLE: RGBColor = RGBColor(167, 139, 250); // #A78BFA — tertiary
+// Accent colors — exact Ayu Mirage values
+const CYAN: RGBColor = RGBColor(92, 207, 230); // 0x5CCFE6 — inside view, primary
+const CYAN_DIM: RGBColor = RGBColor(46, 103, 115); // muted cyan for fills
+const GOLD: RGBColor = RGBColor(255, 204, 102); // 0xFFCC66 — outside view, warnings
+const GOLD_DIM: RGBColor = RGBColor(128, 102, 51); // muted gold for fills
+const GREEN: RGBColor = RGBColor(186, 230, 126); // 0xBAE67E — good/high
+const GREEN_DIM: RGBColor = RGBColor(93, 115, 63); // muted green
+const RED: RGBColor = RGBColor(255, 102, 102); // 0xFF6666 — bad/low
+const RED_DIM: RGBColor = RGBColor(128, 51, 51); // muted red
+const BLUE: RGBColor = RGBColor(115, 208, 255); // 0x73D0FF — secondary accent
+const PURPLE: RGBColor = RGBColor(212, 191, 255); // 0xD4BFFF — tertiary
 
 // ═══════════════════════════════════════════════════════════════════
 // Data Types
