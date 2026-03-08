@@ -170,6 +170,8 @@ pub struct CockpitState {
     pub forecast_confidence: f64, // 0.0-1.0 overall confidence in the inside view
     /// User-set confidence per driver (driver_name → 0.0-1.0). Overrides computed confidence.
     pub driver_confidence: HashMap<String, f64>,
+    /// Which version is selected for viewing/diff (None = current)
+    pub selected_version: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -296,6 +298,7 @@ impl CockpitState {
             inside_view_explanation: String::new(),
             forecast_confidence: 0.5,
             driver_confidence: HashMap::new(),
+            selected_version: None,
         }
     }
 
@@ -6358,6 +6361,233 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 )
             }
         })
+        // ── Version Diff Panel (shown when a version is selected) ─
+        .when(state.selected_version.is_some(), |el| {
+            let sel_v = state.selected_version.unwrap();
+            let sel = state.versions.iter().find(|v| v.version == sel_v);
+            let current_fpl = &state.cached_fpl;
+            let current_prob = state.predicted_probability;
+
+            if let Some(ver) = sel {
+                let prob_delta = (current_prob - ver.probability) * 100.0;
+                let old_fpl = &ver.fpl_text;
+
+                // Simple line diff: find added/removed lines
+                let old_lines: Vec<&str> = old_fpl.lines().collect();
+                let new_lines: Vec<&str> = current_fpl.lines().collect();
+                let mut diff_lines: Vec<(char, String)> = Vec::new();
+
+                // Mark lines only in old as removed, only in new as added
+                for line in &old_lines {
+                    if !new_lines.contains(line) && !line.trim().is_empty() {
+                        diff_lines.push(('-', line.to_string()));
+                    }
+                }
+                for line in &new_lines {
+                    if !old_lines.contains(line) && !line.trim().is_empty() {
+                        diff_lines.push(('+', line.to_string()));
+                    }
+                }
+
+                let ver_num = ver.version;
+                el.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .px(px(8.0))
+                        .py(px(10.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(0x1A1E2E))
+                        .border_1()
+                        .border_color(rgb(theme::PURPLE))
+                        // Header with close button
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(theme::PURPLE))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(format!(
+                                            "v{} → current: {:.1}% → {:.1}% ({}pp)",
+                                            ver.version,
+                                            ver.probability * 100.0,
+                                            current_prob * 100.0,
+                                            if prob_delta > 0.0 {
+                                                format!("+{:.0}", prob_delta)
+                                            } else {
+                                                format!("{:.0}", prob_delta)
+                                            }
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(6.0))
+                                        // Restore button
+                                        .child(
+                                            div()
+                                                .id(ElementId::Name(
+                                                    format!("restore-v{}", ver.version).into(),
+                                                ))
+                                                .px(px(8.0))
+                                                .py(px(3.0))
+                                                .rounded(px(4.0))
+                                                .bg(rgb(theme::BG))
+                                                .border_1()
+                                                .border_color(rgb(theme::GOLD))
+                                                .text_size(px(9.0))
+                                                .text_color(rgb(theme::GOLD))
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    // Restore: parse the old FPL and load it
+                                                    let old_fpl_text = this
+                                                        .versions
+                                                        .iter()
+                                                        .find(|v| v.version == ver_num)
+                                                        .map(|v| v.fpl_text.clone())
+                                                        .unwrap_or_default();
+                                                    if !old_fpl_text.is_empty() {
+                                                        if let Ok(tokens) =
+                                                            ::fermi::lexer::Lexer::new(&old_fpl_text)
+                                                                .tokenize()
+                                                        {
+                                                            if let Ok(program) =
+                                                                ::fermi::parser::Parser::new(tokens)
+                                                                    .parse()
+                                                            {
+                                                                this.program = program;
+                                                                this.predicted_probability =
+                                                                    this.versions
+                                                                        .iter()
+                                                                        .find(|v| {
+                                                                            v.version == ver_num
+                                                                        })
+                                                                        .map(|v| v.probability)
+                                                                        .unwrap_or(0.5);
+                                                                this.messages.push(
+                                                                    AssistantMessage {
+                                                                        node: "version".into(),
+                                                                        kind: MessageKind::Info,
+                                                                        text: format!(
+                                                                        "Restored v{}. Save to create a new version.",
+                                                                        ver_num
+                                                                    ),
+                                                                    },
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                    this.selected_version = None;
+                                                    cx.notify();
+                                                }))
+                                                .child("↩ Restore"),
+                                        )
+                                        // Close button
+                                        .child(
+                                            div()
+                                                .id("close-version-diff")
+                                                .px(px(8.0))
+                                                .py(px(3.0))
+                                                .rounded(px(4.0))
+                                                .text_size(px(9.0))
+                                                .text_color(rgb(theme::FG_DIM))
+                                                .cursor_pointer()
+                                                .hover(|s| s.text_color(rgb(theme::FG)))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.selected_version = None;
+                                                    cx.notify();
+                                                }))
+                                                .child("✕"),
+                                        ),
+                                ),
+                        )
+                        // Version metadata
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child(format!(
+                                    "{} — {}",
+                                    ver.timestamp, ver.change_summary
+                                )),
+                        )
+                        // FPL diff
+                        .when(!diff_lines.is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(1.0))
+                                    .mt(px(4.0))
+                                    .px(px(8.0))
+                                    .py(px(6.0))
+                                    .rounded(px(4.0))
+                                    .bg(rgb(theme::BG))
+                                    .max_h(px(200.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_DIM))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(format!(
+                                                "Changes ({} lines)",
+                                                diff_lines.len()
+                                            )),
+                                    )
+                                    .children(diff_lines.iter().take(30).map(|(sign, line)| {
+                                        let (prefix, color, bg) = match sign {
+                                            '+' => ("+", theme::GREEN, 0x1A2E1A),
+                                            '-' => ("-", theme::RED, 0x2E1A1A),
+                                            _ => (" ", theme::FG_DIM, theme::BG),
+                                        };
+                                        div()
+                                            .flex()
+                                            .gap(px(4.0))
+                                            .px(px(4.0))
+                                            .py(px(1.0))
+                                            .bg(rgb(bg))
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(rgb(color))
+                                                    .w(px(10.0))
+                                                    .font_family(
+                                                        "Ubuntu Mono, DejaVu Sans Mono, monospace",
+                                                    )
+                                                    .child(prefix.to_string()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(rgb(color))
+                                                    .min_w(px(0.0))
+                                                    .font_family(
+                                                        "Ubuntu Mono, DejaVu Sans Mono, monospace",
+                                                    )
+                                                    .child(line.clone()),
+                                            )
+                                    })),
+                            )
+                        })
+                        .when(diff_lines.is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child("No FPL changes between this version and current"),
+                            )
+                        }),
+                )
+            } else {
+                el
+            }
+        })
         // ── Version History ───────────────────────────────────────
         .when(!state.versions.is_empty(), |el| {
             el.child(
@@ -6398,15 +6628,40 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             None
                         };
 
+                        let is_selected = state.selected_version == Some(v.version);
+                        let ver_num = v.version;
+
                         div()
+                            .id(ElementId::Name(format!("version-{}", v.version).into()))
                             .flex()
                             .items_center()
                             .gap(px(8.0))
                             .py(px(4.0))
+                            .px(px(4.0))
+                            .rounded(px(3.0))
+                            .cursor_pointer()
+                            .bg(if is_selected {
+                                rgb(theme::BG_ACTIVE)
+                            } else {
+                                rgb(theme::BG_ELEVATED)
+                            })
+                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if this.selected_version == Some(ver_num) {
+                                    this.selected_version = None;
+                                } else {
+                                    this.selected_version = Some(ver_num);
+                                }
+                                cx.notify();
+                            }))
                             .child(
                                 div()
                                     .text_size(px(11.0))
-                                    .text_color(rgb(theme::FG_DIM))
+                                    .text_color(if is_selected {
+                                        rgb(theme::PURPLE)
+                                    } else {
+                                        rgb(theme::FG_DIM)
+                                    })
                                     .w(px(28.0))
                                     .child(format!("v{}", v.version)),
                             )
@@ -6436,6 +6691,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     .text_color(rgb(theme::FG_FAINT))
                                     .child(format!("{} — {}", v.timestamp, v.change_summary)),
                             )
+                            .when(is_selected, |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::PURPLE))
+                                        .child("▾"),
+                                )
+                            })
                     })),
             )
         })
