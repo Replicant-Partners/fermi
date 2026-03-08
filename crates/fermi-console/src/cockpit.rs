@@ -5125,7 +5125,7 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
 
             if !drivers_viz.is_empty() {
                 let chart_w = 400u32;
-                let chart_h = 100u32;
+                let chart_h = 140u32;
                 let rgb_buf = crate::charts::render_treemap(&drivers_viz, chart_w, chart_h);
                 let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
                 el.child(
@@ -5612,6 +5612,192 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             )
                         }),
                 )
+            },
+        )
+        // ── Forecast Index Charts (same as left panel) ────────────
+        .when(
+            state.sim_results.is_some() || !state.program.drivers().is_empty(),
+            |el| {
+                let mut chart_children: Vec<gpui::AnyElement> = Vec::new();
+
+                // Histogram
+                if let Some(ref sim) = state.sim_results {
+                    if !sim.histogram.is_empty() {
+                        let chart_w = 500u32;
+                        let chart_h = 100u32;
+                        let rgb_buf =
+                            crate::charts::render_histogram_chart(&sim.histogram, chart_w, chart_h);
+                        let render_img =
+                            crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                        chart_children.push(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::FG_FAINT))
+                                        .child(format!(
+                                            "Simulation Distribution ({}k iterations)",
+                                            sim.iterations / 1000
+                                        )),
+                                )
+                                .child(
+                                    gpui::img(gpui::ImageSource::Render(render_img))
+                                        .w(gpui::px(chart_w as f32))
+                                        .h(gpui::px(chart_h as f32)),
+                                )
+                                .into_any_element(),
+                        );
+                    }
+                }
+
+                // Index comparison chart
+                if state.versions.len() > 1 {
+                    let base_rate = state
+                        .program
+                        .question()
+                        .and_then(|q| q.base_rate.as_ref())
+                        .map(|br| br.historical_frequency * 100.0)
+                        .unwrap_or(50.0);
+                    let history: Vec<crate::charts::IndexPoint> = state
+                        .versions
+                        .iter()
+                        .map(|v| crate::charts::IndexPoint {
+                            label: format!("v{}", v.version),
+                            inside_view: v.probability * 100.0,
+                            outside_view: base_rate,
+                        })
+                        .collect();
+                    let chart_w = 500u32;
+                    let chart_h = 80u32;
+                    let rgb_buf = crate::charts::render_index_chart(
+                        &history,
+                        history.len().saturating_sub(1),
+                        chart_w,
+                        chart_h,
+                    );
+                    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                    chart_children.push(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child("Inside (cyan) vs Outside (gold) over versions"),
+                            )
+                            .child(
+                                gpui::img(gpui::ImageSource::Render(render_img))
+                                    .w(gpui::px(chart_w as f32))
+                                    .h(gpui::px(chart_h as f32)),
+                            )
+                            .into_any_element(),
+                    );
+                }
+
+                // Evidence treemap
+                if !drivers.is_empty() {
+                    let drivers_viz: Vec<crate::charts::DriverViz> = drivers
+                        .iter()
+                        .map(|d| {
+                            let display = d.display_name.as_deref().unwrap_or(&d.name);
+                            let impact = match d.driver_type {
+                                DriverType::Continuous => {
+                                    if let Some(Distribution::Triangular {
+                                        ref p5, ref p95, ..
+                                    }) = d.distribution
+                                    {
+                                        (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.1)
+                                    } else {
+                                        1.0
+                                    }
+                                }
+                                DriverType::Binary => {
+                                    d.probability.unwrap_or(0.5)
+                                        * d.impact_multiplier.unwrap_or(1.0)
+                                        * 10.0
+                                }
+                                _ => 1.0,
+                            };
+                            let ev_count = evidence
+                                .iter()
+                                .filter(|e| {
+                                    e.id.contains(&d.name)
+                                        || agents
+                                            .iter()
+                                            .filter(|a| a.driver_refs.contains(&d.name))
+                                            .any(|a| evidence_matches_agent(e, &a.name))
+                                })
+                                .count();
+                            let quality = if ev_count > 2 {
+                                0.8
+                            } else if ev_count > 0 {
+                                0.5
+                            } else {
+                                0.2
+                            };
+                            crate::charts::DriverViz {
+                                name: display.to_string(),
+                                impact,
+                                quality,
+                                evidence: evidence
+                                    .iter()
+                                    .filter(|e| e.id.contains(&d.name))
+                                    .filter_map(|e| {
+                                        e.summary.as_ref().map(|s| s.chars().take(40).collect())
+                                    })
+                                    .take(3)
+                                    .collect(),
+                            }
+                        })
+                        .collect();
+
+                    if !drivers_viz.is_empty() {
+                        let chart_w = 500u32;
+                        let chart_h = 160u32;
+                        let rgb_buf = crate::charts::render_treemap(&drivers_viz, chart_w, chart_h);
+                        let render_img =
+                            crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                        chart_children.push(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::FG_FAINT))
+                                        .child("Driver Impact (size) × Evidence Quality (color)"),
+                                )
+                                .child(
+                                    gpui::img(gpui::ImageSource::Render(render_img))
+                                        .w(gpui::px(chart_w as f32))
+                                        .h(gpui::px(chart_h as f32)),
+                                )
+                                .into_any_element(),
+                        );
+                    }
+                }
+
+                if chart_children.is_empty() {
+                    el
+                } else {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .px(px(8.0))
+                            .py(px(10.0))
+                            .rounded(px(6.0))
+                            .bg(rgb(theme::BG_ELEVATED))
+                            .children(chart_children),
+                    )
+                }
             },
         )
         // ── Per-Driver Evidence Sections ──────────────────────────
