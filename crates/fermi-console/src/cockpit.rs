@@ -4823,7 +4823,13 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
         })
         // ── Inside vs Outside divergence bar ──────────────────────
         .when(has_base_rate, |el| {
-            let br = state.program.question().unwrap().base_rate.as_ref().unwrap();
+            let br = state
+                .program
+                .question()
+                .unwrap()
+                .base_rate
+                .as_ref()
+                .unwrap();
             let outside = br.historical_frequency;
             let inside = state.predicted_probability;
             let divergence = (inside - outside) * 100.0;
@@ -4863,27 +4869,26 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                                         div()
                                             .text_size(px(10.0))
                                             .text_color(rgb(theme::GOLD))
-                                            .child(format!("Outside {:.1}%", outside * 100.0)),
+                                            .child(format!("Out {:.1}%", outside * 100.0)),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(10.0))
                                             .text_color(rgb(theme::CYAN))
                                             .font_weight(FontWeight::BOLD)
-                                            .child(format!("Inside {:.1}%", inside * 100.0)),
+                                            .child(format!("In {:.1}%", inside * 100.0)),
                                     )
                                     .child(
-                                        div()
-                                            .text_size(px(10.0))
-                                            .text_color(rgb(div_color))
-                                            .child(format!(
-                                                "{}pp divergence",
+                                        div().text_size(px(10.0)).text_color(rgb(div_color)).child(
+                                            format!(
+                                                "{}pp",
                                                 if divergence > 0.0 {
                                                     format!("+{:.0}", divergence)
                                                 } else {
                                                     format!("{:.0}", divergence)
                                                 }
-                                            )),
+                                            ),
+                                        ),
                                     ),
                             )
                             .when(state.forecast_confidence > 0.0, |el| {
@@ -4905,7 +4910,7 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                     // Divergence bar
                     .child(
                         div()
-                            .h(px(8.0))
+                            .h(px(6.0))
                             .w(gpui::px(bar_w))
                             .rounded(px(4.0))
                             .bg(rgb(theme::BG))
@@ -4917,8 +4922,8 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                                     .top(px(0.0))
                                     .left(gpui::px(outside_x - 2.0))
                                     .w(px(4.0))
-                                    .h(px(8.0))
-                                    .rounded(px(2.0))
+                                    .h(px(6.0))
+                                    .rounded(px(1.0))
                                     .bg(rgb(theme::GOLD)),
                             )
                             // Inside view marker (cyan)
@@ -4928,50 +4933,40 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                                     .top(px(0.0))
                                     .left(gpui::px(inside_x - 2.0))
                                     .w(px(4.0))
-                                    .h(px(8.0))
-                                    .rounded(px(2.0))
+                                    .h(px(6.0))
+                                    .rounded(px(1.0))
                                     .bg(rgb(theme::CYAN)),
                             )
                             // Fill between the two markers
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(2.0))
+                                    .top(px(1.0))
                                     .left(gpui::px(outside_x.min(inside_x)))
                                     .w(gpui::px((outside_x - inside_x).abs()))
                                     .h(px(4.0))
                                     .bg(rgb(div_color)),
                             ),
-                    )
-                    // 0% and 100% scale labels
-                    .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .w(gpui::px(bar_w))
-                            .child(div().text_size(px(8.0)).text_color(rgb(theme::FG_FAINT)).child("0%"))
-                            .child(div().text_size(px(8.0)).text_color(rgb(theme::FG_FAINT)).child("50%"))
-                            .child(div().text_size(px(8.0)).text_color(rgb(theme::FG_FAINT)).child("100%")),
                     ),
             )
         })
-        // ── Simulation results ────────────────────────────────────
+        // ── Simulation results (condensed) ────────────────────────
         .when(state.sim_running, |el| {
             el.child(
                 div()
                     .px(px(12.0))
-                    .py(px(6.0))
-                    .text_size(px(11.0))
+                    .py(px(4.0))
+                    .text_size(px(10.0))
                     .text_color(rgb(theme::GOLD))
-                    .child("⟳ Running Monte Carlo simulation…"),
+                    .child("⟳ Simulating…"),
             )
         })
         .when(state.sim_error.is_some(), |el| {
             el.child(
                 div()
                     .px(px(12.0))
-                    .py(px(6.0))
-                    .text_size(px(11.0))
+                    .py(px(4.0))
+                    .text_size(px(10.0))
                     .text_color(rgb(theme::RED))
                     .child(format!("✗ {}", state.sim_error.as_deref().unwrap_or(""))),
             )
@@ -4979,13 +4974,13 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
         .when(has_sim, |el| {
             let sim = state.sim_results.as_ref().unwrap();
             el
-                // Stats row
+                // Stats row (compact)
                 .child(
                     div()
                         .px(px(12.0))
                         .flex()
-                        .gap(px(16.0))
-                        .text_size(px(11.0))
+                        .gap(px(10.0))
+                        .text_size(px(10.0))
                         .child(render_stat("mean", sim.mean, theme::FG))
                         .child(render_stat("p5", sim.p5, theme::FG_DIM))
                         .child(render_stat("p50", sim.median, theme::CYAN))
@@ -4993,72 +4988,96 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                         .child(render_stat("σ", sim.std_dev, theme::FG_FAINT))
                         .child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(px(8.0))
                                 .text_color(rgb(theme::FG_FAINT))
                                 .child(format!(
-                                    "{}k iters · {}ms",
+                                    "{}k·{}ms",
                                     sim.iterations / 1000,
                                     sim.execution_time_ms
                                 )),
                         ),
                 )
-                // Histogram
-                .when(!sim.histogram.is_empty(), |el| {
-                    el.child(
-                        div().px(px(12.0)).child(render_histogram(&sim.histogram)),
-                    )
-                })
-                // Index comparison chart
-                .when(state.versions.len() > 0, |el| {
-                    let base_rate = state
-                        .program
-                        .question()
-                        .and_then(|q| q.base_rate.as_ref())
-                        .map(|br| br.historical_frequency * 100.0)
-                        .unwrap_or(50.0);
-
-                    let history: Vec<crate::charts::IndexPoint> = state
-                        .versions
-                        .iter()
-                        .map(|v| crate::charts::IndexPoint {
-                            label: format!("v{}", v.version),
-                            inside_view: v.probability * 100.0,
-                            outside_view: base_rate,
-                        })
-                        .collect();
-
-                    let chart_w = 400u32;
-                    let chart_h = 100u32;
-                    let rgb_buf = crate::charts::render_index_chart(
-                        &history,
-                        history.len().saturating_sub(1),
-                        chart_w,
-                        chart_h,
-                    );
-                    let render_img =
-                        crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
-
-                    el.child(
-                        div()
-                            .px(px(12.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .child(
+                // Histogram + Index chart SIDE BY SIDE
+                .child(
+                    div()
+                        .px(px(12.0))
+                        .flex()
+                        .gap(px(8.0))
+                        // Histogram (left)
+                        .when(!sim.histogram.is_empty(), |el| {
+                            let chart_w = 200u32;
+                            let chart_h = 70u32;
+                            let rgb_buf = crate::charts::render_histogram_chart(
+                                &sim.histogram,
+                                chart_w,
+                                chart_h,
+                            );
+                            let render_img =
+                                crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                            el.child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
-                                    .child("Inside (blue) vs Outside (gold) over versions"),
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(8.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .child("Distribution"),
+                                    )
+                                    .child(
+                                        gpui::img(gpui::ImageSource::Render(render_img))
+                                            .w(gpui::px(chart_w as f32))
+                                            .h(gpui::px(chart_h as f32)),
+                                    ),
                             )
-                            .child(
-                                gpui::img(gpui::ImageSource::Render(render_img))
-                                    .w(gpui::px(chart_w as f32))
-                                    .h(gpui::px(chart_h as f32)),
-                            ),
-                    )
-                })
+                        })
+                        // Index chart (right) — only if versions exist
+                        .when(state.versions.len() > 0, |el| {
+                            let base_rate = state
+                                .program
+                                .question()
+                                .and_then(|q| q.base_rate.as_ref())
+                                .map(|br| br.historical_frequency * 100.0)
+                                .unwrap_or(50.0);
+                            let history: Vec<crate::charts::IndexPoint> = state
+                                .versions
+                                .iter()
+                                .map(|v| crate::charts::IndexPoint {
+                                    label: format!("v{}", v.version),
+                                    inside_view: v.probability * 100.0,
+                                    outside_view: base_rate,
+                                })
+                                .collect();
+                            let chart_w = 200u32;
+                            let chart_h = 70u32;
+                            let rgb_buf = crate::charts::render_index_chart(
+                                &history,
+                                history.len().saturating_sub(1),
+                                chart_w,
+                                chart_h,
+                            );
+                            let render_img =
+                                crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                            el.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(8.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .child("In vs Out"),
+                                    )
+                                    .child(
+                                        gpui::img(gpui::ImageSource::Render(render_img))
+                                            .w(gpui::px(chart_w as f32))
+                                            .h(gpui::px(chart_h as f32)),
+                                    ),
+                            )
+                        }),
+                )
         })
-        // ── Evidence Treemap — always show if drivers exist ───────
+        // ── Evidence Treemap (compact) ────────────────────────────
         .when(has_drivers, |el| {
             let drivers_viz: Vec<crate::charts::DriverViz> = state
                 .program
@@ -5078,9 +5097,7 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                             }
                         }
                         DriverType::Binary => {
-                            d.probability.unwrap_or(0.5)
-                                * d.impact_multiplier.unwrap_or(1.0)
-                                * 10.0
+                            d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0) * 10.0
                         }
                         _ => 1.0,
                     };
@@ -5124,8 +5141,8 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                 .collect();
 
             if !drivers_viz.is_empty() {
-                let chart_w = 400u32;
-                let chart_h = 140u32;
+                let chart_w = 420u32;
+                let chart_h = 80u32;
                 let rgb_buf = crate::charts::render_treemap(&drivers_viz, chart_w, chart_h);
                 let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
                 el.child(
@@ -5133,12 +5150,11 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                         .px(px(12.0))
                         .flex()
                         .flex_col()
-                        .gap(px(2.0))
                         .child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(px(8.0))
                                 .text_color(rgb(theme::FG_FAINT))
-                                .child("Driver Impact (size) × Evidence Quality (color: green=strong, gold=partial, red=none)"),
+                                .child("Impact × Evidence (green=strong, gold=partial, red=none)"),
                         )
                         .child(
                             gpui::img(gpui::ImageSource::Render(render_img))
@@ -5157,10 +5173,10 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                 el.child(
                     div()
                         .px(px(12.0))
-                        .py(px(4.0))
-                        .text_size(px(10.0))
+                        .py(px(2.0))
+                        .text_size(px(9.0))
                         .text_color(rgb(theme::FG_FAINT))
-                        .child("Ctrl+R to run Monte Carlo simulation"),
+                        .child("Ctrl+R to simulate"),
                 )
             },
         )
