@@ -1,6 +1,6 @@
 # ─── Stage 1: Chef prepare (generate dependency recipe) ────────────
 FROM rust:1.86 AS chef
-RUN cargo install cargo-chef --locked
+RUN cargo install cargo-chef@0.1.68 --locked
 WORKDIR /app
 
 # Copy manifests and source structure for recipe generation
@@ -16,7 +16,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # ─── Stage 2: Chef cook (build dependencies only — cached) ────────
 FROM rust:1.86 AS deps
-RUN cargo install cargo-chef --locked
+RUN cargo install cargo-chef@0.1.68 --locked
 WORKDIR /app
 
 COPY --from=chef /app/recipe.json recipe.json
