@@ -85,7 +85,7 @@ impl ToolAwareExecutor {
 
             let request = ClaudeRequest {
                 model: context.agent_card.capabilities.model.clone(),
-                max_tokens: 2048,
+                max_tokens: 4096,
                 temperature: context.agent_card.capabilities.temperature,
                 system: Some(system_prompt.clone()),
                 messages: messages.clone(),
@@ -438,6 +438,21 @@ impl AgentExecutor for ToolAwareExecutor {
         // Check if tools are available — if not, delegate to inner (single turn)
         let has_tools = !self.tool_registry.to_claude_tools().is_empty();
         if !has_tools {
+            return self.inner.execute(agent, context).await;
+        }
+
+        // Agents with custom system prompts that demand specific output formats
+        // (e.g., fermi's JSON decomposition) must NOT go through the tool loop.
+        // The tool loop sends all platform tools (search_knowledge, etc.) which
+        // confuses the LLM into calling tools and returning narrative instead of
+        // following the system prompt's JSON schema. Delegate to inner executor.
+        let prompt_demands_format = context
+            .agent_card
+            .system_prompt
+            .as_ref()
+            .map(|p| p.contains("ONLY") || p.contains("raw JSON"))
+            .unwrap_or(false);
+        if prompt_demands_format {
             return self.inner.execute(agent, context).await;
         }
 
