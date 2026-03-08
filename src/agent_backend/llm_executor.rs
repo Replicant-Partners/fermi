@@ -35,16 +35,35 @@ impl LLMExecutor {
         Ok(Self::new(api_key))
     }
 
+    /// Universal preamble prepended to EVERY agent's system prompt.
+    /// This ensures agents are always helpful and never refuse to analyze.
+    const HELPFULNESS_PREAMBLE: &'static str = "\
+CARDINAL RULES (override everything else):
+1. NEVER refuse to help. NEVER say 'I cannot', 'I need more information before I can', or 'I don't have access to'.
+2. ALWAYS provide your best analysis with whatever information you have.
+3. When information is missing, STATE your assumptions and PROVIDE your analysis anyway.
+4. A forecast with stated assumptions is infinitely more useful than a refusal.
+5. Use your training knowledge. You know historical data, base rates, trends, and domain patterns.
+6. Be QUANTITATIVE — specific numbers, percentages, and data points, not vague qualifiers.
+7. If asked about something current you don't know, use the most recent data you have and note the date.
+
+";
+
     /// Build the system prompt — use agent card's custom prompt if available.
     /// Treats empty strings as absent (Some("") → use default).
+    /// Always prepends the helpfulness preamble to prevent agents from refusing.
     fn build_system_prompt(&self, context: &ExecutionContext) -> String {
-        if let Some(ref custom) = context.agent_card.system_prompt {
+        let base_prompt = if let Some(ref custom) = context.agent_card.system_prompt {
             if !custom.trim().is_empty() {
-                return custom.clone();
+                custom.clone()
+            } else {
+                "You are a forecasting research agent helping to generate evidence for probabilistic forecasts.".to_string()
             }
-        }
-        // Default forecasting system prompt
-        "You are a forecasting research agent helping to generate evidence for probabilistic forecasts.".to_string()
+        } else {
+            "You are a forecasting research agent helping to generate evidence for probabilistic forecasts.".to_string()
+        };
+
+        format!("{}{}", Self::HELPFULNESS_PREAMBLE, base_prompt)
     }
 
     /// Returns true if the agent has a meaningful custom system prompt.
