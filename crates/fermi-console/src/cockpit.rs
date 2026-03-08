@@ -3065,6 +3065,96 @@ impl Render for CockpitState {
                     // Question + Outside View section
                     .child(render_question_section(self))
                     .child(render_outside_view(self, cx))
+                    // Orchestration loading banner
+                    .when(self.orchestration_running, |el| {
+                        let agent_count = self.agent_runs.len();
+                        let done_count = self.agent_runs.iter()
+                            .filter(|r| r.status != AgentRunStatus::Running)
+                            .count();
+                        let running_names: Vec<String> = self.agent_runs.iter()
+                            .filter(|r| r.status == AgentRunStatus::Running)
+                            .map(|r| base_agent_name(&r.agent_name).to_string())
+                            .collect();
+                        el.child(
+                            div()
+                                .mx(px(8.0))
+                                .my(px(6.0))
+                                .px(px(16.0))
+                                .py(px(12.0))
+                                .rounded(px(8.0))
+                                .bg(rgb(0x1A2332))
+                                .border_1()
+                                .border_color(rgb(theme::GOLD))
+                                .flex()
+                                .flex_col()
+                                .gap(px(6.0))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .child(
+                                            div()
+                                                .text_size(px(14.0))
+                                                .text_color(rgb(theme::GOLD))
+                                                .child("⟳"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(13.0))
+                                                .text_color(rgb(theme::GOLD))
+                                                .font_weight(FontWeight::BOLD)
+                                                .child("Fermi is decomposing your forecast…"),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(theme::FG_DIM))
+                                        .child("Researching base rates, identifying drivers, gathering initial evidence. This takes 20–30 seconds."),
+                                )
+                                // Progress bar
+                                .child(
+                                    div()
+                                        .h(px(4.0))
+                                        .w_full()
+                                        .rounded(px(2.0))
+                                        .bg(rgb(theme::BG))
+                                        .child(
+                                            div()
+                                                .h(px(4.0))
+                                                .rounded(px(2.0))
+                                                .bg(rgb(theme::GOLD))
+                                                .w(gpui::px(
+                                                    if agent_count > 0 {
+                                                        (done_count as f32 / agent_count as f32) * 400.0
+                                                    } else {
+                                                        100.0
+                                                    }
+                                                )),
+                                        ),
+                                )
+                                .when(!running_names.is_empty(), |el| {
+                                    el.child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .child(format!(
+                                                "Running: {} ({}/{})",
+                                                running_names.join(", "),
+                                                done_count,
+                                                agent_count,
+                                            )),
+                                    )
+                                }),
+                        )
+                    })
+                    // ── Forecast Index (visualizations) — ABOVE drivers ──
+                    // These are the key visuals that justify the 30-credit
+                    // decomposition cost. Inside/outside divergence, driver
+                    // impact treemap, and simulation histogram are shown
+                    // immediately after the base rate so the user sees value.
+                    .child(render_forecast_index(self))
                     // Drivers section (the core of the forecast)
                     .child(
                         div()
@@ -3152,8 +3242,6 @@ impl Render for CockpitState {
                                             .child("+ Binary event"),
                                     ),
                             )
-                            // Simulation results
-                            .child(render_simulation_section(self))
                             // Status bar
                             .child(render_status_bar(self)),
                     ),
@@ -4704,87 +4792,353 @@ fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
         }))
 }
 
-fn render_simulation_section(state: &CockpitState) -> impl IntoElement {
+/// Forecast Index — the key visualization section shown above drivers.
+/// Displays inside/outside divergence, simulation stats, histogram,
+/// index comparison chart, and evidence treemap.
+fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
+    let has_base_rate = state
+        .program
+        .question()
+        .and_then(|q| q.base_rate.as_ref())
+        .is_some();
+    let has_sim = state.sim_results.is_some();
+    let has_drivers = !state.program.drivers().is_empty();
+
     div()
-        .px(px(16.0))
-        .py(px(8.0))
-        .border_t_1()
-        .border_color(rgb(theme::FG_FAINT))
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(px(6.0))
+        .mx(px(8.0))
+        .my(px(4.0))
+        // Only show if we have something to visualize
+        .when(!has_base_rate && !has_sim && !has_drivers, |el| {
+            el.child(
+                div()
+                    .px(px(16.0))
+                    .py(px(8.0))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child("Ctrl+Enter to research · Ctrl+R to simulate"),
+            )
+        })
+        // ── Inside vs Outside divergence bar ──────────────────────
+        .when(has_base_rate, |el| {
+            let br = state.program.question().unwrap().base_rate.as_ref().unwrap();
+            let outside = br.historical_frequency;
+            let inside = state.predicted_probability;
+            let divergence = (inside - outside) * 100.0;
+            let div_color = if divergence.abs() > 20.0 {
+                theme::RED
+            } else if divergence.abs() > 10.0 {
+                theme::GOLD
+            } else {
+                theme::GREEN
+            };
+
+            // Visual bar showing both probabilities
+            let bar_w = 400.0_f32;
+            let outside_x = (outside as f32 * bar_w).clamp(0.0, bar_w);
+            let inside_x = (inside as f32 * bar_w).clamp(0.0, bar_w);
+
+            el.child(
+                div()
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    // Labels row
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(12.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::GOLD))
+                                            .child(format!("Outside {:.1}%", outside * 100.0)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::CYAN))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(format!("Inside {:.1}%", inside * 100.0)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(div_color))
+                                            .child(format!(
+                                                "{}pp divergence",
+                                                if divergence > 0.0 {
+                                                    format!("+{:.0}", divergence)
+                                                } else {
+                                                    format!("{:.0}", divergence)
+                                                }
+                                            )),
+                                    ),
+                            )
+                            .when(state.forecast_confidence > 0.0, |el| {
+                                let (label, color) = if state.forecast_confidence > 0.7 {
+                                    ("High", theme::GREEN)
+                                } else if state.forecast_confidence > 0.4 {
+                                    ("Medium", theme::GOLD)
+                                } else {
+                                    ("Low", theme::RED)
+                                };
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(color))
+                                        .child(format!("{} confidence", label)),
+                                )
+                            }),
+                    )
+                    // Divergence bar
+                    .child(
+                        div()
+                            .h(px(8.0))
+                            .w(gpui::px(bar_w))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG))
+                            .relative()
+                            // Outside view marker (gold)
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(0.0))
+                                    .left(gpui::px(outside_x - 2.0))
+                                    .w(px(4.0))
+                                    .h(px(8.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::GOLD)),
+                            )
+                            // Inside view marker (cyan)
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(0.0))
+                                    .left(gpui::px(inside_x - 2.0))
+                                    .w(px(4.0))
+                                    .h(px(8.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::CYAN)),
+                            )
+                            // Fill between the two markers
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(2.0))
+                                    .left(gpui::px(outside_x.min(inside_x)))
+                                    .w(gpui::px((outside_x - inside_x).abs()))
+                                    .h(px(4.0))
+                                    .bg(rgb(div_color)),
+                            ),
+                    )
+                    // 0% and 100% scale labels
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .w(gpui::px(bar_w))
+                            .child(div().text_size(px(8.0)).text_color(rgb(theme::FG_FAINT)).child("0%"))
+                            .child(div().text_size(px(8.0)).text_color(rgb(theme::FG_FAINT)).child("50%"))
+                            .child(div().text_size(px(8.0)).text_color(rgb(theme::FG_FAINT)).child("100%")),
+                    ),
+            )
+        })
+        // ── Simulation results ────────────────────────────────────
         .when(state.sim_running, |el| {
             el.child(
                 div()
+                    .px(px(12.0))
+                    .py(px(6.0))
                     .text_size(px(11.0))
                     .text_color(rgb(theme::GOLD))
-                    .child("⟳ Simulating…"),
+                    .child("⟳ Running Monte Carlo simulation…"),
             )
         })
         .when(state.sim_error.is_some(), |el| {
             el.child(
                 div()
+                    .px(px(12.0))
+                    .py(px(6.0))
                     .text_size(px(11.0))
                     .text_color(rgb(theme::RED))
                     .child(format!("✗ {}", state.sim_error.as_deref().unwrap_or(""))),
             )
         })
-        .when(state.sim_results.is_some(), |el| {
+        .when(has_sim, |el| {
             let sim = state.sim_results.as_ref().unwrap();
-            el.child(
-                div()
-                    .flex()
-                    .gap(px(16.0))
-                    .text_size(px(11.0))
-                    .child(render_stat("mean", sim.mean, theme::FG))
-                    .child(render_stat("p5", sim.p5, theme::FG_DIM))
-                    .child(render_stat("p50", sim.median, theme::CYAN))
-                    .child(render_stat("p95", sim.p95, theme::FG_DIM))
-                    .child(render_stat("σ", sim.std_dev, theme::FG_FAINT)),
-            )
-            .when(!sim.histogram.is_empty(), |el| {
-                el.child(render_histogram(&sim.histogram))
-            })
-            // Index comparison chart (inside view vs outside view over versions)
-            .when(state.versions.len() > 0, |el| {
-                let base_rate = state
-                    .program
-                    .question()
-                    .and_then(|q| q.base_rate.as_ref())
-                    .map(|br| br.historical_frequency * 100.0)
-                    .unwrap_or(50.0);
-
-                let history: Vec<crate::charts::IndexPoint> = state
-                    .versions
-                    .iter()
-                    .map(|v| crate::charts::IndexPoint {
-                        label: format!("v{}", v.version),
-                        inside_view: v.probability * 100.0,
-                        outside_view: base_rate,
-                    })
-                    .collect();
-
-                let chart_w = 400u32;
-                let chart_h = 120u32;
-                let rgb_buf = crate::charts::render_index_chart(
-                    &history,
-                    history.len().saturating_sub(1),
-                    chart_w,
-                    chart_h,
-                );
-                let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
-
-                el.child(
+            el
+                // Stats row
+                .child(
                     div()
+                        .px(px(12.0))
                         .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .mt(px(4.0))
+                        .gap(px(16.0))
+                        .text_size(px(11.0))
+                        .child(render_stat("mean", sim.mean, theme::FG))
+                        .child(render_stat("p5", sim.p5, theme::FG_DIM))
+                        .child(render_stat("p50", sim.median, theme::CYAN))
+                        .child(render_stat("p95", sim.p95, theme::FG_DIM))
+                        .child(render_stat("σ", sim.std_dev, theme::FG_FAINT))
                         .child(
                             div()
                                 .text_size(px(9.0))
                                 .text_color(rgb(theme::FG_FAINT))
-                                .child("Inside View (blue) vs Outside View (gold)"),
+                                .child(format!(
+                                    "{}k iters · {}ms",
+                                    sim.iterations / 1000,
+                                    sim.execution_time_ms
+                                )),
+                        ),
+                )
+                // Histogram
+                .when(!sim.histogram.is_empty(), |el| {
+                    el.child(
+                        div().px(px(12.0)).child(render_histogram(&sim.histogram)),
+                    )
+                })
+                // Index comparison chart
+                .when(state.versions.len() > 0, |el| {
+                    let base_rate = state
+                        .program
+                        .question()
+                        .and_then(|q| q.base_rate.as_ref())
+                        .map(|br| br.historical_frequency * 100.0)
+                        .unwrap_or(50.0);
+
+                    let history: Vec<crate::charts::IndexPoint> = state
+                        .versions
+                        .iter()
+                        .map(|v| crate::charts::IndexPoint {
+                            label: format!("v{}", v.version),
+                            inside_view: v.probability * 100.0,
+                            outside_view: base_rate,
+                        })
+                        .collect();
+
+                    let chart_w = 400u32;
+                    let chart_h = 100u32;
+                    let rgb_buf = crate::charts::render_index_chart(
+                        &history,
+                        history.len().saturating_sub(1),
+                        chart_w,
+                        chart_h,
+                    );
+                    let render_img =
+                        crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+
+                    el.child(
+                        div()
+                            .px(px(12.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child("Inside (blue) vs Outside (gold) over versions"),
+                            )
+                            .child(
+                                gpui::img(gpui::ImageSource::Render(render_img))
+                                    .w(gpui::px(chart_w as f32))
+                                    .h(gpui::px(chart_h as f32)),
+                            ),
+                    )
+                })
+        })
+        // ── Evidence Treemap — always show if drivers exist ───────
+        .when(has_drivers, |el| {
+            let drivers_viz: Vec<crate::charts::DriverViz> = state
+                .program
+                .drivers()
+                .iter()
+                .map(|d| {
+                    let display = d.display_name.as_deref().unwrap_or(&d.name);
+                    let impact = match d.driver_type {
+                        DriverType::Continuous => {
+                            if let Some(Distribution::Triangular {
+                                ref p5, ref p95, ..
+                            }) = d.distribution
+                            {
+                                (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.1)
+                            } else {
+                                1.0
+                            }
+                        }
+                        DriverType::Binary => {
+                            d.probability.unwrap_or(0.5)
+                                * d.impact_multiplier.unwrap_or(1.0)
+                                * 10.0
+                        }
+                        _ => 1.0,
+                    };
+                    let evidence_count = state
+                        .program
+                        .evidence_items()
+                        .iter()
+                        .filter(|e| {
+                            e.id.contains(&d.name)
+                                || state
+                                    .program
+                                    .agents()
+                                    .iter()
+                                    .filter(|a| a.driver_refs.contains(&d.name))
+                                    .any(|a| evidence_matches_agent(e, &a.name))
+                        })
+                        .count();
+                    let quality = if evidence_count > 2 {
+                        0.8
+                    } else if evidence_count > 0 {
+                        0.5
+                    } else {
+                        0.2
+                    };
+                    crate::charts::DriverViz {
+                        name: display.to_string(),
+                        impact,
+                        quality,
+                        evidence: state
+                            .program
+                            .evidence_items()
+                            .iter()
+                            .filter(|e| e.id.contains(&d.name))
+                            .filter_map(|e| {
+                                e.summary.as_ref().map(|s| s.chars().take(40).collect())
+                            })
+                            .take(3)
+                            .collect(),
+                    }
+                })
+                .collect();
+
+            if !drivers_viz.is_empty() {
+                let chart_w = 400u32;
+                let chart_h = 100u32;
+                let rgb_buf = crate::charts::render_treemap(&drivers_viz, chart_w, chart_h);
+                let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                el.child(
+                    div()
+                        .px(px(12.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child("Driver Impact (size) × Evidence Quality (color: green=strong, gold=partial, red=none)"),
                         )
                         .child(
                             gpui::img(gpui::ImageSource::Render(render_img))
@@ -4792,120 +5146,29 @@ fn render_simulation_section(state: &CockpitState) -> impl IntoElement {
                                 .h(gpui::px(chart_h as f32)),
                         ),
                 )
-            })
-            .child(
-                div()
-                    .text_size(px(9.0))
-                    .text_color(rgb(theme::FG_FAINT))
-                    .child(format!(
-                        "{}k iterations in {}ms",
-                        sim.iterations / 1000,
-                        sim.execution_time_ms
-                    )),
-            )
-            // Evidence treemap — drivers sized by impact
-            .child({
-                let drivers_viz: Vec<crate::charts::DriverViz> = state
-                    .program
-                    .drivers()
-                    .iter()
-                    .map(|d| {
-                        let display = d.display_name.as_deref().unwrap_or(&d.name);
-                        let impact = match d.driver_type {
-                            DriverType::Continuous => {
-                                if let Some(Distribution::Triangular {
-                                    ref p5, ref p95, ..
-                                }) = d.distribution
-                                {
-                                    (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.1)
-                                } else {
-                                    1.0
-                                }
-                            }
-                            DriverType::Binary => {
-                                d.probability.unwrap_or(0.5)
-                                    * d.impact_multiplier.unwrap_or(1.0)
-                                    * 10.0
-                            }
-                            _ => 1.0,
-                        };
-                        let evidence_count = state
-                            .program
-                            .evidence_items()
-                            .iter()
-                            .filter(|e| {
-                                e.id.contains(&d.name)
-                                    || state
-                                        .program
-                                        .agents()
-                                        .iter()
-                                        .filter(|a| a.driver_refs.contains(&d.name))
-                                        .any(|a| evidence_matches_agent(e, &a.name))
-                            })
-                            .count();
-                        let quality = if evidence_count > 2 {
-                            0.8
-                        } else if evidence_count > 0 {
-                            0.5
-                        } else {
-                            0.2
-                        };
-                        crate::charts::DriverViz {
-                            name: display.to_string(),
-                            impact,
-                            quality,
-                            evidence: state
-                                .program
-                                .evidence_items()
-                                .iter()
-                                .filter(|e| e.id.contains(&d.name))
-                                .filter_map(|e| {
-                                    e.summary.as_ref().map(|s| s.chars().take(40).collect())
-                                })
-                                .take(2)
-                                .collect(),
-                        }
-                    })
-                    .collect();
-
-                if !drivers_viz.is_empty() {
-                    let chart_w = 400u32;
-                    let chart_h = 120u32;
-                    let rgb_buf = crate::charts::render_treemap(&drivers_viz, chart_w, chart_h);
-                    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .mt(px(4.0))
-                        .child(
-                            div()
-                                .text_size(px(9.0))
-                                .text_color(rgb(theme::FG_FAINT))
-                                .child("Driver Impact (size) × Evidence Quality (color)"),
-                        )
-                        .child(
-                            gpui::img(gpui::ImageSource::Render(render_img))
-                                .w(gpui::px(chart_w as f32))
-                                .h(gpui::px(chart_h as f32)),
-                        )
-                        .into_any_element()
-                } else {
-                    div().into_any_element()
-                }
-            })
+            } else {
+                el
+            }
         })
+        // Ctrl+R hint if no sim yet
         .when(
-            state.sim_results.is_none() && !state.sim_running && state.sim_error.is_none(),
+            !has_sim && !state.sim_running && state.sim_error.is_none() && has_drivers,
             |el| {
                 el.child(
                     div()
-                        .text_size(px(11.0))
+                        .px(px(12.0))
+                        .py(px(4.0))
+                        .text_size(px(10.0))
                         .text_color(rgb(theme::FG_FAINT))
                         .child("Ctrl+R to run Monte Carlo simulation"),
                 )
             },
         )
+}
+
+fn render_simulation_section(_state: &CockpitState) -> impl IntoElement {
+    // Simulation results now rendered in render_forecast_index above drivers
+    div()
 }
 
 fn render_stat(label: &str, value: f64, color: u32) -> impl IntoElement {

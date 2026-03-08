@@ -1,9 +1,9 @@
 # Fermi Forecasting Platform — Master Roadmap
 
 **Project:** Fermi — Probabilistic Forecasting IDE + Agent Platform  
-**Version:** 0.9.0  
-**Last Updated:** 2026-03-07  
-**Current Focus:** Console Polish & Agent Presence  
+**Version:** 0.10.0  
+**Last Updated:** 2026-03-08  
+**Current Focus:** Console UX Polish & Portfolio Management  
 
 ---
 
@@ -103,74 +103,123 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 ### Known Issues (Critical)
 
-| Issue | Impact | Root Cause | Status |
-|-------|--------|------------|--------|
-| Evidence sometimes lost on reload | High | Agent-attributed evidence not always written to state.json in certain flows | ✅ Fixed |
-| Agent state indicators out of sync | Medium | `Completed`/`Idle` derived from evidence count, not actual execution state | ✅ Fixed — tracks `started_at`/`completed_at` |
-| Inside view not always at top of Wiki | Low | Wiki generation ordering inconsistent across save paths | Open |
-| Confidence is derived/hidden | Medium | Should be user-settable per driver, not just computed | ✅ Fixed — user-settable per driver |
+| Issue | Impact | Status |
+|-------|--------|--------|
+| Evidence sometimes lost on reload | High | ✅ Fixed |
+| Agent state indicators out of sync | Medium | ✅ Fixed — tracks `started_at`/`completed_at` |
+| Inside view not always at top of Wiki | Low | ✅ Fixed — Wiki tab rewrite |
+| Confidence is derived/hidden | Medium | ✅ Fixed — user-settable per driver |
+| ABW agent execution via ToolAwareExecutor | Critical | ✅ Fixed — delegates JSON agents to LLMExecutor |
+| Generic driver names from narrative parser | High | ✅ Fixed — extracts actual names from LLM enumeration |
+| Agent refusals ("I cannot help") | High | ✅ Fixed — CARDINAL RULES preamble for research agents |
 
 ---
 
 ## Forward Roadmap
 
-### Phase 7: Agent Presence & Evidence Richness (Current — Weeks 1–2)
+### ✅ Phase 7: Agent Presence & Evidence Richness — COMPLETE
 
-*Goal: Make agents feel alive and make evidence the centerpiece of the workflow.*
-
-#### 7A: Agent Presence (pixel-agents inspiration)
-
-- [x] Real-time agent state indicators (researching → found → idle → error) — colored borders, status icons
-- [ ] Agent activity animation/pulse when working (subtle glow or spinner)
-- [x] Agent "speech bubbles" showing latest finding — cached `latest_finding` field, falls back to evidence search
-- [ ] Agent cards in fleet tab show current assignment and live status
-- [x] Visual feedback that complex work is happening — elapsed time display (`12s…` while running, `8s` when done)
-- [ ] Agent completion notification (toast or sound)
+#### 7A: Agent Presence
+- [x] Real-time agent state indicators (researching → found → idle → error)
+- [x] Agent "speech bubbles" showing latest finding
+- [x] Elapsed time display while running
 - [x] Retry/Re-run button on failed and completed agents
-- [x] Error details shown inline for failed agents (truncated to 120 chars)
-- [x] Credits charged display per agent (⚡ icon)
-- [x] Enhanced status bar — running/completed/failed counts, gap count, colored indicators
+- [x] Error details inline for failed agents
+- [x] Credits charged per agent (⚡ icon)
+- [x] Enhanced status bar with running/completed/failed/gap counts
 
 #### 7B: Evidence Richness
+- [x] User-settable confidence per driver (persisted in state.json)
+- [x] Computed vs user-set confidence shown side-by-side
+- [x] Evidence gap highlighting (red border + warning badge)
+- [x] Running agents give driver card gold border
+- [x] Wiki tab rewrite — question header, inside view first, full evidence, no truncation
+- [x] 📄 Export Markdown button in Wiki tab
+- [x] evidence.md is a complete shareable report (methodology appendix, agent roster table)
 
-- [ ] Distribution curve explanation per driver (how evidence justifies the shape)
-- [x] Confidence per driver is **user-settable** — `editor_confidence` input (0–100%), `driver_confidence` HashMap, persisted in state.json
-- [x] Computed vs user-set confidence shown side-by-side with delta on driver cards
-- [x] Overall forecast confidence now averages per-driver user overrides
-- [ ] Evidence hyperlinks with URL previews
-- [ ] URL auto-summarization when adding evidence links
-- [ ] Inside/outside view comparison sparklines in portfolio cards
-- [x] Evidence gap highlighting — drivers with no agents get red border + warning badge, "Awaiting evidence" for assigned-but-empty
-- [x] Running agents give driver card a gold border
+#### 7C: Bug Fixes
+- [x] Evidence persistence on all reload paths
+- [x] Agent state sync with started_at/completed_at/latest_finding
+- [x] Inside view ordering in Wiki tab (always first)
+- [x] FPL string sanitization (clean_fpl_string)
 
-#### 7C: Critical Bug Fixes
+### ✅ Phase 7.5: ABW Integration & Agent Pipeline — COMPLETE
 
-- [x] Fix evidence persistence on all reload paths (agent-attributed evidence) — fixed prior to this session
-- [x] Fix agent state sync — `AgentExecution` now tracks `started_at`, `completed_at`, `latest_finding`
-- [ ] Fix inside view ordering in Wiki tab
-- [ ] Clean up FPL string sanitization edge cases
+*Unplanned but critical — wiring all agent execution through ABW backend.*
 
-**Deliverable:** Agents feel present. Evidence is rich and trustworthy. No data loss.
+- [x] Agent execution via ABW API (no Anthropic key needed for testers)
+- [x] tokio::spawn fix for reqwest in GPUI async executor
+- [x] Server-side `build_prompt` passthrough for agents with custom system prompts
+- [x] Server-side `max_tokens: 4096` for structured JSON output
+- [x] ROOT CAUSE fix: ToolAwareExecutor delegates JSON agents to LLMExecutor
+- [x] Universal helpfulness preamble (CARDINAL RULES) for research agents
+- [x] Skip preamble for JSON-format agents (fermi decomposition)
+- [x] Narrative parser extracts actual driver names from LLM enumerated lists
+- [x] Data-driven agent recommendation (skills/tags scoring, not hardcoded)
+- [x] Dynamic agent list in open_agent_picker (from registry, not hardcoded)
+- [x] Fermi system prompt enforces concise JSON (681 chars, word limits)
+- [x] Agent seeding preserves DB system_prompt on deploy
+- [x] Dockerfile simplified (no cargo-chef, rust:1.85, 2-stage build)
+- [x] ABW sync script for fermi-orchestra agents
+- [x] Agent Development Guide (docs/fermi/guides/AGENT_DEVELOPMENT.md)
+- [x] Tester distribution packaging script
+
+#### New Agents Registered on ABW
+- [x] `fermi` — meta-forecasting decomposition (JSON output)
+- [x] `biotech_analyst` — clinical trials, drug pipelines, BioPortal ontologies
+- [x] `nba_analyst` — Elo ratings, advanced stats, injury models, schedule analysis
+- [x] All orchestra agents upgraded to Sonnet with proper system prompts
 
 ---
 
-### Phase 8: Agent Scheduling & Coordination (Weeks 3–4)
+### Phase 8: Console UX Polish (Current — Weeks 3–4)
+
+*Goal: Make the console feel polished and production-ready for the core workflow.*
+
+#### 8A: Interaction Flow Polish
+- [ ] Prevent double Ctrl+Enter (debounce orchestration, show "already researching")
+- [ ] Loading skeleton while Fermi decomposes (pulsing driver placeholders)
+- [ ] Auto-scroll to new drivers when they populate
+- [ ] Ctrl+R simulation should show progress indicator
+- [ ] Clear visual transition from "researching" to "ready to simulate"
+
+#### 8B: Evidence & Wiki Polish
+- [ ] Evidence hyperlinks — detect URLs, make clickable
+- [ ] Evidence expandable/collapsible per driver (long evidence collapses by default)
+- [ ] Distribution curve explanation per driver (how evidence justifies the shape)
+- [ ] Inside/outside view comparison sparklines in portfolio cards
+
+#### 8C: Agent Fleet Tab
+- [ ] Fleet tab shows current assignment and live status per agent
+- [ ] Agent execution history (last 5 runs with timestamps)
+- [ ] Agent credit cost summary per forecast
+
+#### 8D: Quality of Life
+- [ ] Agent completion notification (toast/banner)
+- [ ] Keyboard navigation between drivers (arrow keys)
+- [ ] Text wrapping fixes throughout (GPUI min_w pattern)
+- [ ] Theme refinement (consistent spacing, colors)
+
+**Deliverable:** Smooth, intuitive core workflow. No rough edges.
+
+---
+
+### Phase 9: Agent Scheduling & Coordination (Weeks 5–6)
 
 *Goal: Agents work autonomously on schedules, not just on-demand.*
 
 - [ ] Execute scheduled agents (daily/weekly cron loop in background)
 - [ ] Trigger-based execution (divergence threshold → re-research)
-- [ ] Fermi suggests when to re-research based on evidence staleness
+- [ ] Batch agent execution (run all assigned agents at once)
 - [ ] Background agent execution with desktop notifications
 - [ ] Auto-update evidence wiki when agents complete
 - [ ] Agent cost tracking per forecast (total credits consumed)
-- [ ] Batch agent execution (run all assigned agents at once)
 
 **Deliverable:** Agents maintain forecasts autonomously. Evidence stays fresh.
 
 ---
 
-### Phase 9: Version Management & Diff (Weeks 5–6)
+### Phase 10: Version Management & Diff (Weeks 7–8)
 
 *Goal: Full version control for forecasts with visual diffs.*
 
@@ -185,7 +234,7 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 ---
 
-### Phase 10: Portfolio Management & Scoring (Weeks 7–8)
+### Phase 11: Portfolio Management & Scoring (Weeks 9–10)
 
 *Goal: Organize forecasts into portfolios with calibration tracking.*
 
@@ -202,7 +251,7 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 ---
 
-### Phase 11: Collaboration Foundation (Weeks 9–12)
+### Phase 12: Collaboration Foundation (Weeks 11–14)
 
 *Goal: Shared forecasts and team forecasting.*
 
@@ -219,7 +268,7 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 ---
 
-### Phase 12: Intelligence Features (Weeks 13–16)
+### Phase 13: Intelligence Features (Weeks 15–18)
 
 *Goal: The system actively improves forecast quality.*
 
@@ -236,7 +285,7 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 ---
 
-### Phase 13: Polish, Performance & Distribution (Weeks 17–18)
+### Phase 14: Polish, Performance & Distribution (Weeks 19–20)
 
 *Goal: Ship-quality application.*
 
@@ -255,7 +304,7 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 ---
 
-### Phase 14: Advanced Visualization (Weeks 19–20)
+### Phase 15: Advanced Visualization (Weeks 21–22)
 
 *Goal: Bloomberg-terminal-grade information density.*
 
@@ -272,7 +321,7 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 
 ---
 
-### Phase 15: Active Dreaming Memory Integration (Weeks 21–24)
+### Phase 16: Active Dreaming Memory Integration (Weeks 23–26)
 
 *Goal: Agents learn from past forecasts and improve over time.*
 
@@ -290,7 +339,7 @@ The ADM system (Phases 0–5 complete) needs to be wired into the console workfl
 
 ---
 
-### Phase 16: Mobile & Multi-Platform (Future — TBD)
+### Phase 17: Mobile & Multi-Platform (Future — TBD)
 
 *Goal: Forecasting on the go.*
 
@@ -430,12 +479,12 @@ The ADM system (Phases 0–5 complete) needs to be wired into the console workfl
 |--------|--------|---------|
 | FPL tests passing | 59 | ✅ 59 |
 | ADM tests passing | 25 | ✅ 25 |
-| Console code | — | ~13,500 lines |
-| Agents available | 53 | ✅ 53 (5 fermi-orchestra) |
+| Console code | — | ~15,000 lines |
+| Agents available | 56 | ✅ 56 (7 fermi-orchestra) |
 | Simulation speed (10K iterations) | <100ms | ✅ <100ms |
 | LSP diagnostics | <50ms | ✅ ~40ms |
 | Saved forecasts (test) | — | 13 with evidence wikis |
-| Commits (console sprint) | — | 98 |
+| Commits (console + ABW sprint) | — | 130+ |
 
 ---
 
@@ -449,10 +498,12 @@ The ADM system (Phases 0–5 complete) needs to be wired into the console workfl
 | v0.7.0 | Active Dreaming Memory (Phases 0–5) | ✅ Complete |
 | v0.8.0 | ABW API Sprint 1 | ✅ Complete |
 | v0.9.0 | Fermi Console (Research Cockpit) | ✅ Complete |
-| v0.10.0 | Agent Presence & Evidence Richness | 🔄 Next |
-| v0.11.0 | Scheduling & Coordination | Planned |
-| v0.12.0 | Version Management | Planned |
-| v0.13.0 | Portfolio Management & Scoring | Planned |
+| v0.10.0 | Agent Presence & Evidence Richness | ✅ Complete |
+| v0.10.1 | ABW Integration & Agent Pipeline | ✅ Complete |
+| v0.11.0 | Console UX Polish | 🔄 Current |
+| v0.12.0 | Scheduling & Coordination | Planned |
+| v0.13.0 | Version Management | Planned |
+| v0.14.0 | Portfolio Management & Scoring | Planned |
 | v1.0.0 | Polish & Public Release | Planned |
 | v1.1.0 | Collaboration & Tournaments | Planned |
 | v2.0.0 | Intelligence Features | Planned |
@@ -466,12 +517,14 @@ The ADM system (Phases 0–5 complete) needs to be wired into the console workfl
 | GPUI over egui/Clay | 2026-02-27 | Zed's framework, GPU-accelerated, CRDT potential |
 | FPL stays as backbone | 2026-02-27 | Console is a visual FPL editor, not a replacement |
 | Outside view first | 2026-02-28 | Tetlock discipline: anchor to base rate before inside view |
-| Local agent execution | 2026-03-01 | Same as MCP server; ABW API only for cloud features |
+| ABW for all agent execution | 2026-03-07 | Users sign in via OAuth; ABW handles LLM costs, credits, tools |
 | Plotters for charts | 2026-03-03 | Renders to pixel buffers; no WebView dependency |
 | Three artifacts per forecast | 2026-03-03 | .fpl (program) + .evidence.md (wiki) + .state.json (state) |
 | Governance model (user assigns agents) | 2026-03-03 | Controls costs; only Fermi auto-fires |
 | Deterministic normalization | 2026-03-04 | `P = base_rate × (sim_mean / baseline_mean)` is stable and interpretable |
-| No creature integration (yet) | 2026-03-05 | Rabble is a separate world; forecasting is desktop-only |
+| JSON agents bypass ToolAwareExecutor | 2026-03-08 | Agents with JSON schema prompts delegate to LLMExecutor directly |
+| Short fermi prompt (681 chars) | 2026-03-08 | Long prompts cause token overflow; word limits on reasoning/evidence |
+| CARDINAL RULES preamble for research agents | 2026-03-08 | Prevents agent refusals; skipped for JSON-format agents |
 
 ---
 
@@ -479,11 +532,13 @@ The ADM system (Phases 0–5 complete) needs to be wired into the console workfl
 
 | Risk | Impact | Probability | Mitigation |
 |------|--------|-------------|------------|
-| Evidence persistence bugs | High | Medium | Hardened state.json writes; add integration tests |
+| Evidence persistence bugs | High | Low | ✅ Hardened state.json writes; agent evidence survives reload |
 | GPUI limitations (no file dialogs, text wrapping) | Medium | Known | Use `rfd` crate; `min_w(px(0.0))` pattern |
-| Agent response parsing fragility | Medium | Medium | `clean_fpl_string()` + markdown fence stripping |
-| LLM costs at scale | Medium | Low | Governance model; user controls agent assignments |
-| Single-developer bus factor | High | High | Comprehensive documentation; clean architecture |
+| ABW deploy overwrites DB prompts on seed | Medium | Known | Local card is source of truth; keep prompts short |
+| ToolAwareExecutor bypasses LLMExecutor | Critical | Resolved | JSON agents now delegate to inner executor |
+| LLM costs at scale | Medium | Low | ABW credit system; user controls agent assignments |
+| Railway build fragility | Medium | Medium | Simplified Dockerfile; no cargo-chef |
+| Agent prompt quality drift | Medium | Medium | Agent Development Guide; prompt testing checklist |
 | GPUI breaking changes (Zed upstream) | Medium | Low | Pin GPUI version; track Zed releases |
 
 ---
@@ -553,6 +608,6 @@ export FERMI_API_KEY=...               # For ABW API access
 
 ---
 
-**Next Review:** After Phase 7 completion  
+**Next Review:** After Phase 8 completion  
 **Contact:** Replicant Partners  
 **Repository:** https://github.com/Replicant-Partners/fermi
