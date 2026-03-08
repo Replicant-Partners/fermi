@@ -2822,18 +2822,66 @@ impl CockpitState {
         self.save_focused_driver(cx);
         self.cached_fpl = generate_fpl_text(&self.program);
 
-        // Create version snapshot
+        // Create version snapshot with descriptive change summary
         self.current_version += 1;
+        let change_summary = if self.current_version == 1 {
+            let driver_count = self.program.drivers().len();
+            let ev_count = self.program.evidence_items().len();
+            let base_rate = self
+                .program
+                .question()
+                .and_then(|q| q.base_rate.as_ref())
+                .map(|br| format!(" base={:.0}%", br.historical_frequency * 100.0))
+                .unwrap_or_default();
+            format!(
+                "Initial: {:.1}%{}, {} drivers, {} evidence",
+                self.predicted_probability * 100.0,
+                base_rate,
+                driver_count,
+                ev_count
+            )
+        } else {
+            let prev = self.versions.last();
+            let prev_prob = prev
+                .map(|v| v.probability)
+                .unwrap_or(self.predicted_probability);
+            let delta = (self.predicted_probability - prev_prob) * 100.0;
+            let delta_str = if delta.abs() < 0.5 {
+                "→".to_string()
+            } else if delta > 0.0 {
+                format!("+{:.0}pp", delta)
+            } else {
+                format!("{:.0}pp", delta)
+            };
+            let driver_count = self.program.drivers().len();
+            let ev_count = self.program.evidence_items().len();
+            let agent_count = self
+                .agent_runs
+                .iter()
+                .filter(|r| r.status == AgentRunStatus::Completed)
+                .count();
+            let mut parts = vec![format!(
+                "{:.1}% ({})",
+                self.predicted_probability * 100.0,
+                delta_str
+            )];
+            if driver_count > 0 {
+                parts.push(format!("{} drivers", driver_count));
+            }
+            if ev_count > 0 {
+                parts.push(format!("{} evidence", ev_count));
+            }
+            if agent_count > 0 {
+                parts.push(format!("{} agents", agent_count));
+            }
+            parts.join(", ")
+        };
         self.versions.push(ForecastVersion {
             version: self.current_version,
             timestamp: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
             fpl_text: self.cached_fpl.clone(),
             probability: self.predicted_probability,
-            change_summary: if self.current_version == 1 {
-                "Initial forecast".into()
-            } else {
-                format!("v{} update", self.current_version)
-            },
+            change_summary,
         });
 
         // Save to disk
@@ -2931,6 +2979,64 @@ impl CockpitState {
                 ) {
                     Ok(_) => log::info!("[composer] Saved state to {}", state_path),
                     Err(e) => log::warn!("[composer] Failed to save state: {}", e),
+                }
+
+                // ── Git auto-commit: atomic version of all three artifacts ──
+                // The .fpl, .evidence.md, and .state.json are committed together
+                // as one version snapshot. The commit message includes the
+                // probability change so `git log` reads as a version history.
+                let prev_prob = if self.versions.len() >= 2 {
+                    self.versions[self.versions.len() - 2].probability
+                } else {
+                    self.predicted_probability
+                };
+                let delta = (self.predicted_probability - prev_prob) * 100.0;
+                let delta_str = if delta.abs() < 0.5 {
+                    "no change".to_string()
+                } else if delta > 0.0 {
+                    format!("+{:.0}pp", delta)
+                } else {
+                    format!("{:.0}pp", delta)
+                };
+                let commit_msg = format!(
+                    "v{}: {:.1}% ({}) — {}",
+                    self.current_version,
+                    self.predicted_probability * 100.0,
+                    delta_str,
+                    self.program
+                        .question()
+                        .map(|q| q.text.chars().take(60).collect::<String>())
+                        .unwrap_or_else(|| "forecast".into()),
+                );
+
+                // git add all three files + git commit
+                // Paths are already relative to repo root (e.g., "forecasts/name.fpl")
+                match std::process::Command::new("git")
+                    .args(&["add", &path, &wiki_path, &state_path])
+                    .output()
+                {
+                    Ok(_) => {
+                        match std::process::Command::new("git")
+                            .args(&["commit", "-m", &commit_msg, "--allow-empty"])
+                            .output()
+                        {
+                            Ok(output) => {
+                                if output.status.success() {
+                                    log::info!("[composer] Git committed: {}", commit_msg);
+                                    self.messages.push(AssistantMessage {
+                                        node: "save".into(),
+                                        kind: MessageKind::Info,
+                                        text: format!("📦 Committed: {}", commit_msg),
+                                    });
+                                } else {
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                    log::warn!("[composer] Git commit warning: {}", stderr);
+                                }
+                            }
+                            Err(e) => log::warn!("[composer] Git commit failed: {}", e),
+                        }
+                    }
+                    Err(e) => log::warn!("[composer] Git add failed: {}", e),
                 }
             }
             Err(e) => {
