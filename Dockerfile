@@ -1,5 +1,5 @@
 # ─── Stage 1: Chef prepare (generate dependency recipe) ────────────
-FROM rust:1.85 AS chef
+FROM rust:1.86 AS chef
 RUN cargo install cargo-chef
 WORKDIR /app
 
@@ -15,7 +15,7 @@ COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ─── Stage 2: Chef cook (build dependencies only — cached) ────────
-FROM rust:1.85 AS deps
+FROM rust:1.86 AS deps
 RUN cargo install cargo-chef
 WORKDIR /app
 
