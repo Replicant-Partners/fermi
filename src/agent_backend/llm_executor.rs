@@ -51,7 +51,10 @@ CARDINAL RULES (override everything else):
 
     /// Build the system prompt — use agent card's custom prompt if available.
     /// Treats empty strings as absent (Some("") → use default).
-    /// Always prepends the helpfulness preamble to prevent agents from refusing.
+    /// Prepends helpfulness preamble for research agents, but SKIPS it for
+    /// agents that demand a specific output format (JSON schema agents like fermi).
+    /// The preamble's "ALWAYS provide analysis" instruction causes the LLM to
+    /// ignore JSON format requirements and return narrative text instead.
     fn build_system_prompt(&self, context: &ExecutionContext) -> String {
         let base_prompt = if let Some(ref custom) = context.agent_card.system_prompt {
             if !custom.trim().is_empty() {
@@ -63,7 +66,19 @@ CARDINAL RULES (override everything else):
             "You are a forecasting research agent helping to generate evidence for probabilistic forecasts.".to_string()
         };
 
-        format!("{}{}", Self::HELPFULNESS_PREAMBLE, base_prompt)
+        // Skip the preamble for agents that enforce a specific output format.
+        // The preamble's "ALWAYS provide your best analysis" causes the LLM to
+        // return helpful narrative text instead of following the JSON schema.
+        let demands_format = base_prompt.contains("ONLY")
+            || base_prompt.contains("JSON")
+            || base_prompt.contains("raw JSON")
+            || base_prompt.contains("ONLY valid JSON");
+
+        if demands_format {
+            base_prompt
+        } else {
+            format!("{}{}", Self::HELPFULNESS_PREAMBLE, base_prompt)
+        }
     }
 
     /// Returns true if the agent has a meaningful custom system prompt.
