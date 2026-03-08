@@ -10,6 +10,7 @@ COPY agent-bestiary ./agent-bestiary
 COPY fermi-memory ./fermi-memory
 COPY fermi-auth ./fermi-auth
 COPY fermi-lsp ./fermi-lsp
+COPY crates ./crates
 
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -34,6 +35,7 @@ COPY agent-bestiary ./agent-bestiary
 COPY fermi-memory ./fermi-memory
 COPY fermi-auth ./fermi-auth
 COPY fermi-lsp ./fermi-lsp
+COPY crates ./crates
 
 # Build the api-server binary (dependencies already compiled in stage 2)
 RUN cargo build --release --bin api-server && \
