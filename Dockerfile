@@ -1,9 +1,8 @@
-# ─── Stage 1: Chef prepare (generate dependency recipe) ────────────
-FROM rust:1.86 AS chef
-RUN cargo install cargo-chef@0.1.68 --locked
+# ─── Stage 1: Build the api-server binary ──────────────────────────
+FROM rust:1.85 AS builder
 WORKDIR /app
 
-# Copy manifests and source structure for recipe generation
+# Copy everything needed for the build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src ./src
 COPY agent-bestiary ./agent-bestiary
@@ -12,36 +11,11 @@ COPY fermi-auth ./fermi-auth
 COPY fermi-lsp ./fermi-lsp
 COPY crates ./crates
 
-RUN cargo chef prepare --recipe-path recipe.json
-
-# ─── Stage 2: Chef cook (build dependencies only — cached) ────────
-FROM rust:1.86 AS deps
-RUN cargo install cargo-chef@0.1.68 --locked
-WORKDIR /app
-
-COPY --from=chef /app/recipe.json recipe.json
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-
-# Cook: builds all dependencies but NOT our source code
-# This layer is cached until Cargo.toml/Cargo.lock change
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# ─── Stage 3: Build our source code (fast — deps already compiled) ─
-FROM deps AS builder
-
-# Copy actual source code
-COPY src ./src
-COPY agent-bestiary ./agent-bestiary
-COPY fermi-memory ./fermi-memory
-COPY fermi-auth ./fermi-auth
-COPY fermi-lsp ./fermi-lsp
-COPY crates ./crates
-
-# Build the api-server binary (dependencies already compiled in stage 2)
+# Build only the api-server binary in release mode
 RUN cargo build --release --bin api-server && \
     ls -la /app/target/release/ | grep api-server
 
-# Runtime stage
+# ─── Stage 2: Minimal runtime image ───────────────────────────────
 FROM debian:bookworm-slim
 
 WORKDIR /app
