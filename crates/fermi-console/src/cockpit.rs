@@ -6687,160 +6687,169 @@ fn parse_narrative_decomposition(text: &str) -> Option<serde_json::Value> {
     // ── Extract reasoning (use full narrative) ────────────────────
     let reasoning_text = text.to_string();
 
-    // ── Build synthetic drivers from narrative ────────────────────
-    // Look for driver-like mentions: "X factor", "X advantage", multiplier values
+    // ── Build drivers by parsing the LLM's actual text ────────────
+    // The LLM consistently enumerates drivers in patterns like:
+    //   "(1) current form, (2) squad quality, (3) tactical approach"
+    //   "drivers: injury impact, competitive pressure, draw luck"
+    //   "six independent drivers capture: form, quality, tactics..."
     let mut drivers = Vec::new();
+    let mut extracted_names: Vec<String> = Vec::new();
 
-    // Common driver patterns in sports/general forecasting narratives
-    let driver_patterns = [
-        (
-            "home",
-            "home_court",
-            "Home Court Advantage",
-            "Home vs away impact on outcome",
-        ),
-        (
-            "opponent",
-            "opponent_strength",
-            "Opponent Strength",
-            "Quality of the opposing side",
-        ),
-        (
-            "momentum",
-            "recent_form",
-            "Recent Form/Momentum",
-            "Recent performance trend",
-        ),
-        (
-            "injury",
-            "injury_impact",
-            "Injury Impact",
-            "Effect of injuries on key players",
-        ),
-        (
-            "rest",
-            "schedule_fatigue",
-            "Schedule/Fatigue",
-            "Days of rest, back-to-back games",
-        ),
-        (
-            "market",
-            "market_conditions",
-            "Market Conditions",
-            "Overall market environment",
-        ),
-        (
-            "regulatory",
-            "regulatory_risk",
-            "Regulatory Risk",
-            "Regulatory approvals or blocks",
-        ),
-        (
-            "competition",
-            "competitive_pressure",
-            "Competitive Pressure",
-            "Intensity of competition",
-        ),
-        (
-            "technical",
-            "technical_feasibility",
-            "Technical Feasibility",
-            "Technical readiness",
-        ),
-        (
-            "funding",
-            "funding_availability",
-            "Funding Availability",
-            "Capital access and investment",
-        ),
-        (
-            "sentiment",
-            "public_sentiment",
-            "Public Sentiment",
-            "Public opinion and perception",
-        ),
-        (
-            "demand",
-            "demand_strength",
-            "Demand Strength",
-            "Market demand level",
-        ),
-        (
-            "clinical",
-            "clinical_success",
-            "Clinical Trial Success",
-            "Clinical trial outcome probability",
-        ),
-        (
-            "pipeline",
-            "pipeline_progress",
-            "Pipeline Progress",
-            "Drug/product pipeline advancement",
-        ),
-    ];
+    // Strategy 1: Look for numbered items "(1) phrase" or "(2) phrase"
+    {
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        while i < chars.len().saturating_sub(4) {
+            let is_paren_num = chars[i] == '('
+                && chars
+                    .get(i + 1)
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false);
+            if is_paren_num {
+                if let Some(close) = chars[i..].iter().position(|&c| c == ')') {
+                    let after_idx = i + close + 1;
+                    let rest: String = chars[after_idx..].iter().collect();
+                    let rest = rest.trim_start();
+                    let phrase: String = rest
+                        .chars()
+                        .take_while(|&c| c != ',' && c != ';' && c != '(' && c != '\n')
+                        .collect();
+                    let phrase = phrase.trim().trim_end_matches('.').trim();
+                    if phrase.len() > 2 && phrase.len() < 60 {
+                        extracted_names.push(phrase.to_string());
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
 
-    for (keyword, name, display, rationale) in &driver_patterns {
-        if text_lower.contains(keyword) {
-            // Try to extract a multiplier value near this keyword
-            let multiplier = extract_multiplier_near_keyword(&text_lower, keyword);
-            let (p5, p50, p95) = match multiplier {
-                Some(m) => (m * 0.85, m, m * 1.15),
-                None => (0.85, 1.0, 1.15), // neutral default
-            };
-            drivers.push(serde_json::json!({
-                "name": name,
-                "display_name": display,
-                "type": "continuous",
-                "p5": (p5 * 100.0).round() / 100.0,
-                "p50": (p50 * 100.0).round() / 100.0,
-                "p95": (p95 * 100.0).round() / 100.0,
-                "unit": "multiplier",
-                "rationale": rationale,
-            }));
-            if drivers.len() >= 5 {
-                break;
+    // Strategy 2: Look for "drivers:" or "factors:" followed by comma list
+    if extracted_names.len() < 3 {
+        let triggers = [
+            "drivers:",
+            "factors:",
+            "drivers capture",
+            "adjusted for:",
+            "adjustments:",
+            "key uncertainties:",
+            "key drivers:",
+            "independent drivers",
+            "five drivers",
+            "four drivers",
+            "three drivers",
+            "six drivers",
+        ];
+        for trigger in &triggers {
+            if let Some(pos) = text_lower.find(trigger) {
+                let after = &text[pos + trigger.len()..];
+                let chunk: String = after.chars().take(300).collect();
+                for part in chunk.split(|c: char| c == ',' || c == ';') {
+                    let clean = part
+                        .trim()
+                        .trim_start_matches("and ")
+                        .trim_start_matches('(')
+                        .trim_end_matches(')')
+                        .trim_end_matches('.')
+                        .trim();
+                    if clean.len() > 2
+                        && clean.len() < 60
+                        && !clean.contains("base rate")
+                        && !clean.starts_with("The ")
+                        && !clean.starts_with("which ")
+                    {
+                        // Avoid duplicates
+                        if !extracted_names
+                            .iter()
+                            .any(|e| e.to_lowercase() == clean.to_lowercase())
+                        {
+                            extracted_names.push(clean.to_string());
+                        }
+                    }
+                }
+                if extracted_names.len() >= 3 {
+                    break;
+                }
             }
         }
     }
 
-    // If we didn't find enough keyword-based drivers, add generic ones
-    if drivers.len() < 3 {
+    // Convert extracted phrases to driver structs
+    for phrase in extracted_names.iter().take(6) {
+        let snake: String = phrase
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+            .split('_')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<&str>>()
+            .join("_");
+
+        if snake.len() < 3 {
+            continue;
+        }
+        if drivers
+            .iter()
+            .any(|d: &serde_json::Value| d.get("name").and_then(|v| v.as_str()) == Some(&snake))
+        {
+            continue;
+        }
+
+        // Try to find a multiplier value near this phrase
+        let multiplier = extract_multiplier_near_keyword(&text_lower, &phrase.to_lowercase());
+        let (p5, p50, p95) = match multiplier {
+            Some(m) => (
+                (m * 0.85 * 100.0).round() / 100.0,
+                (m * 100.0).round() / 100.0,
+                (m * 1.15 * 100.0).round() / 100.0,
+            ),
+            None => (0.85, 1.0, 1.15),
+        };
+
+        // Title-case display name
+        let display_name: String = phrase
+            .split_whitespace()
+            .map(|w| {
+                let mut c = w.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().to_string() + c.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        drivers.push(serde_json::json!({
+            "name": snake,
+            "display_name": display_name,
+            "type": "continuous",
+            "p5": p5,
+            "p50": p50,
+            "p95": p95,
+            "unit": "multiplier",
+            "rationale": phrase,
+        }));
+    }
+
+    // Only add generic fallbacks if we truly found nothing
+    if drivers.is_empty() {
         let generic = [
-            (
-                "strength_factor",
-                "Strength of Case",
-                "How strong is the case for this outcome",
-            ),
-            (
-                "conditions",
-                "Favorable Conditions",
-                "Are external conditions favorable or unfavorable",
-            ),
-            (
-                "disruption",
-                "Disruption Risk",
-                "Probability of an unexpected disruptive event",
-            ),
+            ("factor_1", "Primary Factor", "Main driver of the outcome"),
+            ("factor_2", "Secondary Factor", "Supporting factor"),
+            ("factor_3", "Risk Factor", "Key risk or uncertainty"),
         ];
         for (name, display, rationale) in &generic {
-            if !drivers
-                .iter()
-                .any(|d| d.get("name").and_then(|v| v.as_str()) == Some(name))
-            {
-                drivers.push(serde_json::json!({
-                    "name": name,
-                    "display_name": display,
-                    "type": "continuous",
-                    "p5": 0.8,
-                    "p50": 1.0,
-                    "p95": 1.2,
-                    "unit": "multiplier",
-                    "rationale": rationale,
-                }));
-            }
-            if drivers.len() >= 4 {
-                break;
-            }
+            drivers.push(serde_json::json!({
+                "name": name,
+                "display_name": display,
+                "type": "continuous",
+                "p5": 0.8,
+                "p50": 1.0,
+                "p95": 1.2,
+                "unit": "multiplier",
+                "rationale": rationale,
+            }));
         }
     }
 
