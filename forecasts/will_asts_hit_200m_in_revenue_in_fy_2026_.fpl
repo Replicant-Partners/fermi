@@ -19,7 +19,7 @@ driver regulatory_approval_speed continuous {
 }
 
 driver market_adoption_rate continuous {
-    distribution: triangular(0.6, 1, 1.6)
+    distribution: triangular(0.6, 0.8, 1.6)
     unit: "multiplier"
     rationale: "Consumer and enterprise adoption of satellite-to-phone connectivity is unproven at scale. Demand could exceed or fall short of projections."
 }
