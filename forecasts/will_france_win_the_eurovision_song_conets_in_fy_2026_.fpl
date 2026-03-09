@@ -1,7 +1,7 @@
 question "will france win the eurovision song conets in fy 2026?"
 
 driver recent_performance_trend continuous {
-    distribution: triangular(0.3, 1.1, 1.7)
+    distribution: triangular(0.3, 1.4, 1.7)
     unit: "multiplier"
     rationale: "France has underperformed recently with multiple bottom-5 finishes in the 2010s-2020s, though showed improvement with 2nd place in 2021. Recent trajectory suggests below-average prospects."
 }

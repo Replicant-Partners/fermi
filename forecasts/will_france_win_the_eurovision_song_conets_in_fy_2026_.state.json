@@ -1,8 +1,8 @@
 {
-  "current_version": 4,
-  "predicted_probability": 0.07320955457840415,
-  "inside_view_explanation": "Starting from a 7.4% base rate, our model slightly confirms the probability to 7.3%. The key factors are: recent_performance_trend, voting_bloc_strength, song_quality_variance. Most influential: recent_performance_trend (66%), competition_field_strength (17%), song_quality_variance (14%).",
-  "forecast_confidence": 0.14,
+  "current_version": 5,
+  "predicted_probability": 0.07469206496002147,
+  "inside_view_explanation": "Starting from a 7.4% base rate, our model slightly confirms the probability to 7.5%. The key factors are: recent_performance_trend, voting_bloc_strength, song_quality_variance. Most influential: recent_performance_trend (64%), competition_field_strength (15%), song_quality_variance (12%).",
+  "forecast_confidence": 0.22749999999999995,
   "versions": [
     {
       "version": 1,
@@ -27,14 +27,20 @@
       "timestamp": "2026-03-09 16:59",
       "probability": 0.07320955457840415,
       "change_summary": "7.3% (→), 4 drivers, 3 evidence, 5 agents"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-09 16:59",
+      "probability": 0.07469206496002147,
+      "change_summary": "7.5% (→), 4 drivers, 3 evidence, 5 agents"
     }
   ],
   "sim_results": {
-    "mean": 0.8458671508721022,
-    "median": 0.8242760126573329,
-    "p5": 0.4330611658157797,
-    "p95": 1.3331064633205931,
-    "std_dev": 0.27247120349008386,
+    "mean": 1.054773079503006,
+    "median": 1.0269713407567078,
+    "p5": 0.5008324020915512,
+    "p95": 1.7040550518989146,
+    "std_dev": 0.36799691917407384,
     "iterations": 10000
   },
   "base_rate": {
