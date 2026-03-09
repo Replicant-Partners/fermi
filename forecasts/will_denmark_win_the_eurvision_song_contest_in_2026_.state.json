@@ -1,7 +1,7 @@
 {
-  "current_version": 4,
-  "predicted_probability": 0.016449309413911452,
-  "inside_view_explanation": "Starting from a 1.5% base rate, our model slightly increases the probability to 1.6%. The key factors are: denmark_recent_performance, song_quality_variance, voting_bloc_dynamics. Most influential: song_quality_variance (34%), competition_field_strength (31%), denmark_recent_performance (23%).",
+  "current_version": 5,
+  "predicted_probability": 0.013761905619597073,
+  "inside_view_explanation": "Starting from a 1.5% base rate, our model slightly decreases the probability to 1.4%. The key factors are: denmark_recent_performance, song_quality_variance, voting_bloc_dynamics. Most influential: song_quality_variance (33%), denmark_recent_performance (27%), competition_field_strength (26%).",
   "forecast_confidence": 0.40249999999999997,
   "versions": [
     {
@@ -27,14 +27,20 @@
       "timestamp": "2026-03-09 13:33",
       "probability": 0.016449309413911452,
       "change_summary": "1.6% (→), 4 drivers, 2 evidence, 1 agents"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-09 13:33",
+      "probability": 0.013761905619597073,
+      "change_summary": "1.4% (→), 4 drivers, 2 evidence, 1 agents"
     }
   ],
   "sim_results": {
-    "mean": 1.5681674974595587,
-    "median": 1.4688057348340735,
-    "p5": 0.7524360864062374,
-    "p95": 2.7138081171484596,
-    "std_dev": 0.6090320850048223,
+    "mean": 1.7055588364553975,
+    "median": 1.6161069579581562,
+    "p5": 0.8210807580574689,
+    "p95": 2.918009849180572,
+    "std_dev": 0.6484571708022284,
     "iterations": 10000
   },
   "base_rate": {
