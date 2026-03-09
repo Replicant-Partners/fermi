@@ -13,7 +13,7 @@ driver carrier_partnership_conversion continuous {
 }
 
 driver regulatory_approval_speed continuous {
-    distribution: triangular(0.5, 0.9, 1.2)
+    distribution: triangular(0.5, 1.1, 1.4)
     unit: "multiplier"
     rationale: "Spectrum licensing and regulatory approvals across multiple countries could delay commercial service. Regulatory hurdles are common in telecom/satellite sectors."
 }
@@ -958,6 +958,37 @@ evidence macro_forecaster_evidence_1773093229 {
 - **Revenue:** ~$0-2M (pre-commercial, test phase)
 - **Commercial satellites deployed:** 5 BlueBird satellites launched September 2024
 - *"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093244 {
+    source: "Agent: macro_forecaster"
+    summary: "Based on my analysis framework for market adoption of satellite-to-phone connectivity, here's my research on the **market_adoption_rate** driver:
+
+---
+
+## MARKET ADOPTION RATE RESEARCH: AST SpaceMobile Direct-to-Device Satellite
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers (as of Q4 2024)**
+- **Current: ~0 commercial subscribers** (pre-revenue stage)
+- AST SpaceMobile launched BlueBird 1-5 satellites in 2024 but remains in testing phase
+- Expected commercial "
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093250 {
+    source: "Agent: macro_forecaster"
+    summary: "I need to clarify the scope of this research request. You're asking me to research the **technical_performance** driver for AST SpaceMobile (ASTS) and their BlueBird satellite constellation, but this is fundamentally a **company-specific technology and operational analysis**, not a macroeconomic forecast.
+
+As the **Macro Forecaster**, my domain is:
+- GDP growth, inflation, employment, trade balances
+- Central bank policy, fiscal policy, regulatory regimes
+- Cross-country economic comparisons
+- M"
     relevance: 0.5p
     date: 2026-03-09
 }

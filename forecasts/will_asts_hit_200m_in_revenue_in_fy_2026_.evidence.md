@@ -1,20 +1,20 @@
 # will asts hit 200M in revenue in fy 2026?
 
-**Probability:** 14.7% · **Version:** v14 · **Updated:** 2026-03-09 21:53 UTC
+**Probability:** 13.1% · **Version:** v15 · **Updated:** 2026-03-09 21:54 UTC
 
-**Confidence:** Medium (49%) · **Drivers:** 5 · **Evidence:** 48 · **Agents:** 7
+**Confidence:** Medium (49%) · **Drivers:** 5 · **Evidence:** 50 · **Agents:** 7
 
 ---
 
 ## Inside View
 
-**Probability: 14.7%**
+**Probability: 13.1%**
 
-Starting from a 15.0% base rate, our model slightly confirms the probability to 14.7%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, regulatory_approval_speed. Most influential: market_adoption_rate (26%), satellite_deployment_pace (22%), technical_performance (19%).
+Starting from a 15.0% base rate, our model moderately decreases the probability to 13.1%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, regulatory_approval_speed. Most influential: market_adoption_rate (25%), satellite_deployment_pace (23%), technical_performance (21%).
 
 **Forecast Confidence:** Medium (49%)
 
-**Divergence from base rate:** 0pp below (14.7% vs 15.0%)
+**Divergence from base rate:** 2pp below (13.1% vs 15.0%)
 
 ---
 
@@ -55,7 +55,7 @@ PROVIDE:
 Context: AST SpaceMobile needs to deploy Block 1 satellites on schedule. Delays in launches or technical issues would significantly impact revenue timeline.
 Be specific — include named sources, dates, dollar figures._
 
-### Evidence (45)
+### Evidence (47)
 
 #### Agent: macro_forecaster — relevance 50% · 2026-03-09
 
@@ -717,6 +717,31 @@ Based on my analysis framework for satellite-to-phone market adoption, here's my
 - **Revenue:** ~$0-2M (pre-commercial, test phase)
 - **Commercial satellites deployed:** 5 BlueBird satellites launched September 2024
 - *
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for market adoption of satellite-to-phone connectivity, here's my research on the **market_adoption_rate** driver:
+
+---
+
+## MARKET ADOPTION RATE RESEARCH: AST SpaceMobile Direct-to-Device Satellite
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers (as of Q4 2024)**
+- **Current: ~0 commercial subscribers** (pre-revenue stage)
+- AST SpaceMobile launched BlueBird 1-5 satellites in 2024 but remains in testing phase
+- Expected commercial 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I need to clarify the scope of this research request. You're asking me to research the **technical_performance** driver for AST SpaceMobile (ASTS) and their BlueBird satellite constellation, but this is fundamentally a **company-specific technology and operational analysis**, not a macroeconomic forecast.
+
+As the **Macro Forecaster**, my domain is:
+- GDP growth, inflation, employment, trade balances
+- Central bank policy, fiscal policy, regulatory regimes
+- Cross-country economic comparisons
+- M
 
 ### Related Evidence
 
@@ -834,7 +859,7 @@ Based on my analysis framework for satellite-to-phone market adoption, here's my
   Query: _For the forecast: "will asts hit 200M in revenue in fy 2026?"
 
 Research the 'carrier_partnership_conversion' driver.
-Current estimate: p5=0.70, p50=1.00, p95=1.50
+Current estimate: p5=0.70, p50=1.20, p95=1.50
 
 PROVIDE:
 1. Current value of the key metric for this driver
@@ -846,7 +871,7 @@ PROVIDE:
 Context: Converting MoUs with AT&T, Verizon, Vodafone into paying contracts is critical. Better-than-expected terms or additional partnerships boost revenue potential.
 Be specific — include named sources, dates, dollar figures._
 
-### Evidence (45)
+### Evidence (47)
 
 #### Agent: macro_forecaster — relevance 50% · 2026-03-09
 
@@ -1508,6 +1533,31 @@ Based on my analysis framework for satellite-to-phone market adoption, here's my
 - **Revenue:** ~$0-2M (pre-commercial, test phase)
 - **Commercial satellites deployed:** 5 BlueBird satellites launched September 2024
 - *
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for market adoption of satellite-to-phone connectivity, here's my research on the **market_adoption_rate** driver:
+
+---
+
+## MARKET ADOPTION RATE RESEARCH: AST SpaceMobile Direct-to-Device Satellite
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers (as of Q4 2024)**
+- **Current: ~0 commercial subscribers** (pre-revenue stage)
+- AST SpaceMobile launched BlueBird 1-5 satellites in 2024 but remains in testing phase
+- Expected commercial 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I need to clarify the scope of this research request. You're asking me to research the **technical_performance** driver for AST SpaceMobile (ASTS) and their BlueBird satellite constellation, but this is fundamentally a **company-specific technology and operational analysis**, not a macroeconomic forecast.
+
+As the **Macro Forecaster**, my domain is:
+- GDP growth, inflation, employment, trade balances
+- Central bank policy, fiscal policy, regulatory regimes
+- Cross-country economic comparisons
+- M
 
 ### Related Evidence
 
@@ -1615,7 +1665,7 @@ Based on my analysis framework for satellite-to-phone market adoption, here's my
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.50 | 0.90 | 1.20 | multiplier |
+| 0.50 | 1.10 | 1.40 | multiplier |
 
 > Spectrum licensing and regulatory approvals across multiple countries could delay commercial service. Regulatory hurdles are common in telecom/satellite sectors.
 
@@ -1637,7 +1687,7 @@ PROVIDE:
 Context: Spectrum licensing and regulatory approvals across multiple countries could delay commercial service. Regulatory hurdles are common in telecom/satellite sectors.
 Be specific — include named sources, dates, dollar figures._
 
-### Evidence (45)
+### Evidence (47)
 
 #### Agent: macro_forecaster — relevance 50% · 2026-03-09
 
@@ -2299,6 +2349,31 @@ Based on my analysis framework for satellite-to-phone market adoption, here's my
 - **Revenue:** ~$0-2M (pre-commercial, test phase)
 - **Commercial satellites deployed:** 5 BlueBird satellites launched September 2024
 - *
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for market adoption of satellite-to-phone connectivity, here's my research on the **market_adoption_rate** driver:
+
+---
+
+## MARKET ADOPTION RATE RESEARCH: AST SpaceMobile Direct-to-Device Satellite
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers (as of Q4 2024)**
+- **Current: ~0 commercial subscribers** (pre-revenue stage)
+- AST SpaceMobile launched BlueBird 1-5 satellites in 2024 but remains in testing phase
+- Expected commercial 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I need to clarify the scope of this research request. You're asking me to research the **technical_performance** driver for AST SpaceMobile (ASTS) and their BlueBird satellite constellation, but this is fundamentally a **company-specific technology and operational analysis**, not a macroeconomic forecast.
+
+As the **Macro Forecaster**, my domain is:
+- GDP growth, inflation, employment, trade balances
+- Central bank policy, fiscal policy, regulatory regimes
+- Cross-country economic comparisons
+- M
 
 ### Related Evidence
 
@@ -2430,7 +2505,7 @@ Be specific — include named sources, dates, dollar figures._
 - **market_research** (schedule: once)  
   Query: _Research evidence for the 'market_adoption_rate' driver in the forecast: "will asts hit 200M in revenue in fy 2026?"_
 
-### Evidence (46)
+### Evidence (48)
 
 #### Agent: macro_forecaster — relevance 50% · 2026-03-09
 
@@ -3105,6 +3180,31 @@ Based on my analysis framework for satellite-to-phone market adoption, here's my
 - **Commercial satellites deployed:** 5 BlueBird satellites launched September 2024
 - *
 
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for market adoption of satellite-to-phone connectivity, here's my research on the **market_adoption_rate** driver:
+
+---
+
+## MARKET ADOPTION RATE RESEARCH: AST SpaceMobile Direct-to-Device Satellite
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers (as of Q4 2024)**
+- **Current: ~0 commercial subscribers** (pre-revenue stage)
+- AST SpaceMobile launched BlueBird 1-5 satellites in 2024 but remains in testing phase
+- Expected commercial 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I need to clarify the scope of this research request. You're asking me to research the **technical_performance** driver for AST SpaceMobile (ASTS) and their BlueBird satellite constellation, but this is fundamentally a **company-specific technology and operational analysis**, not a macroeconomic forecast.
+
+As the **Macro Forecaster**, my domain is:
+- GDP growth, inflation, employment, trade balances
+- Central bank policy, fiscal policy, regulatory regimes
+- Cross-country economic comparisons
+- M
+
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
@@ -3240,7 +3340,7 @@ Context: BlueBird satellites must perform as designed. Technical issues with ban
 
 Provide: sentiment classification (bearish→bullish), key narrative themes, trend direction, and how sentiment should adjust the probability._
 
-### Evidence (46)
+### Evidence (48)
 
 #### Agent: sentiment_analyzer — relevance 50% · 2026-03-09
 
@@ -3918,6 +4018,31 @@ Based on my analysis framework for satellite-to-phone market adoption, here's my
 - **Commercial satellites deployed:** 5 BlueBird satellites launched September 2024
 - *
 
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for market adoption of satellite-to-phone connectivity, here's my research on the **market_adoption_rate** driver:
+
+---
+
+## MARKET ADOPTION RATE RESEARCH: AST SpaceMobile Direct-to-Device Satellite
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers (as of Q4 2024)**
+- **Current: ~0 commercial subscribers** (pre-revenue stage)
+- AST SpaceMobile launched BlueBird 1-5 satellites in 2024 but remains in testing phase
+- Expected commercial 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I need to clarify the scope of this research request. You're asking me to research the **technical_performance** driver for AST SpaceMobile (ASTS) and their BlueBird satellite constellation, but this is fundamentally a **company-specific technology and operational analysis**, not a macroeconomic forecast.
+
+As the **Macro Forecaster**, my domain is:
+- GDP growth, inflation, employment, trade balances
+- Central bank policy, fiscal policy, regulatory regimes
+- Cross-country economic comparisons
+- M
+
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
@@ -4175,7 +4300,7 @@ Be specific — include named sources, dates, dollar figures. |
 | macro_forecaster | carrier_partnership_conversion | For the forecast: "will asts hit 200M in revenue in fy 2026?"
 
 Research the 'carrier_partnership_conversion' driver.
-Current estimate: p5=0.70, p50=1.00, p95=1.50
+Current estimate: p5=0.70, p50=1.20, p95=1.50
 
 PROVIDE:
 1. Current value of the key metric for this driver
@@ -4239,4 +4364,4 @@ Provide: sentiment classification (bearish→bullish), key narrative themes, tre
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v14 · 2026-03-09 21:53 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v15 · 2026-03-09 21:54 UTC_
