@@ -1,7 +1,7 @@
 {
-  "current_version": 16,
-  "predicted_probability": 0.12250700678054414,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 12.3%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, regulatory_approval_speed. Most influential: market_adoption_rate (25%), regulatory_approval_speed (24%), technical_performance (22%).",
+  "current_version": 17,
+  "predicted_probability": 0.1421123505626008,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly decreases the probability to 14.2%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, regulatory_approval_speed. Most influential: market_adoption_rate (26%), regulatory_approval_speed (19%), technical_performance (19%).",
   "forecast_confidence": 0.48999999999999994,
   "versions": [
     {
@@ -99,14 +99,20 @@
       "timestamp": "2026-03-09 21:54",
       "probability": 0.12250700678054414,
       "change_summary": "12.3% (-1pp), 5 drivers, 50 evidence, 1 agents"
+    },
+    {
+      "version": 17,
+      "timestamp": "2026-03-09 21:54",
+      "probability": 0.1421123505626008,
+      "change_summary": "14.2% (+2pp), 5 drivers, 50 evidence, 1 agents"
     }
   ],
   "sim_results": {
-    "mean": 1.331406149690954,
-    "median": 1.2499519634826988,
-    "p5": 0.5846625240356045,
-    "p95": 2.3572905417254297,
-    "std_dev": 0.5503689385816898,
+    "mean": 1.2355816207314767,
+    "median": 1.1435247346613933,
+    "p5": 0.5476495317315119,
+    "p95": 2.241803137709788,
+    "std_dev": 0.528659543370643,
     "iterations": 10000
   },
   "base_rate": {
@@ -139,7 +145,7 @@
     {
       "id": "sentiment_analyzer_0",
       "source": "Agent: sentiment_analyzer",
-      "summary": "I'm unable to access real-time sentiment data or my knowledge base in this environment. However, I can provide you with a structured framework for how technical performance sentiment should be analyzed for the ASTS revenue forecast:\n\n## SENTIMENT ANALYSIS: AST SpaceMobile Technical Performance Driver\n\n### **Sentiment Classification: CONDITIONAL BULLISH** ⚠️\n*(High variance - binary outcome dependency)*\n\n---\n\n### **Key Narrative Themes to Monitor:**\n\n**1. BlueBird-1 Demonstration Results (Critica",
+      "summary": "Based on my knowledge of AST SpaceMobile and the space communications sector, here's my sentiment analysis for the technical performance driver:\n\n---\n\n## SENTIMENT ANALYSIS: AST SpaceMobile Technical Performance Driver\n\n### **Sentiment Classification: CAUTIOUSLY BULLISH** (6/10)\n\n### **Key Narrative Themes**\n\n**1. Successful Initial Testing (Bullish)**\n- **Theme**: BlueBird-1 (BW3) demonstrated successful voice calls and data connectivity in late 2023/early 2024\n- **Narrative**: \"Proof of concep",
       "relevance": 0.5,
       "date": "2026-03-09",
       "key_findings": []
