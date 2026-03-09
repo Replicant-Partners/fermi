@@ -1,7 +1,7 @@
 {
-  "current_version": 10,
-  "predicted_probability": 0.09993755632619844,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model significantly decreases the probability to 10.0%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, technology_performance. Most influential: satellite_deployment_pace (30%), capital_availability (26%), technology_performance (24%).",
+  "current_version": 11,
+  "predicted_probability": 0.09519435179965753,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model significantly decreases the probability to 9.5%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, technology_performance. Most influential: satellite_deployment_pace (28%), technology_performance (27%), capital_availability (23%).",
   "forecast_confidence": 0.42,
   "versions": [
     {
@@ -63,14 +63,20 @@
       "timestamp": "2026-03-09 17:01",
       "probability": 0.09993755632619844,
       "change_summary": "10.0% (+2pp), 5 drivers, 3 evidence, 9 agents"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-09 17:03",
+      "probability": 0.09519435179965753,
+      "change_summary": "9.5% (→), 5 drivers, 3 evidence, 8 agents"
     }
   ],
   "sim_results": {
-    "mean": 1.068972077487549,
-    "median": 0.963246481058184,
-    "p5": 0.3638787609591516,
-    "p95": 2.1221742820752785,
-    "std_dev": 0.554625038488988,
+    "mean": 1.0781331507422016,
+    "median": 0.984514974293051,
+    "p5": 0.3628258228102876,
+    "p95": 2.1273044158146877,
+    "std_dev": 0.5494109636993594,
     "iterations": 10000
   },
   "base_rate": {
@@ -100,9 +106,9 @@
     {
       "id": "market_research_0",
       "source": "Agent: market_research",
-      "summary": "Based on my knowledge of the space industry and LEO satellite deployment dynamics, I can provide you with a comprehensive market research analysis on AST SpaceMobile's Block 1 deployment schedule:\n\n---\n\n## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Deployment Timeline (2024-2026)**\n\n### **Key Findings**\n\n**AST SpaceMobile Block 1 Satellite Program:**\n- **Total Block 1 satellites planned**: 20 BlueBird satellites for initial commercial service\n- **First commercial satellites (BW1-5)**: L",
+      "summary": "Based on my expertise in satellite market dynamics and LEO constellation deployment patterns, I'll provide a comprehensive analysis of AST SpaceMobile's Block 1 deployment schedule and the factors affecting their timeline.\n\n---\n\n## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Satellite Deployment (2024-2026)**\n\n### **Key Findings**\n\n**AST SpaceMobile Deployment Schedule:**\n- **First 5 Block 1 BlueBird satellites**: Launched September 2024 on SpaceX Falcon 9\n- **Planned constellation**: 16",
       "relevance": 0.5,
-      "date": "2026-03-08",
+      "date": "2026-03-09",
       "key_findings": []
     }
   ],

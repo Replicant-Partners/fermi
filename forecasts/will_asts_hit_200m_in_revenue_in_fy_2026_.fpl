@@ -1,7 +1,7 @@
 question "will asts hit 200M in revenue in fy 2026?"
 
 driver satellite_deployment_pace continuous {
-    distribution: triangular(0.3, 1.2, 1.6)
+    distribution: triangular(0.3, 1.3, 1.6)
     unit: "multiplier"
     rationale: "AST SpaceMobile needs to deploy Block 1 satellites on schedule. Delays in launches or manufacturing would significantly impact revenue timeline, while faster deployment enables earlier service."
 }
@@ -142,19 +142,19 @@ evidence entity_investigator_0 {
 
 evidence market_research_0 {
     source: "Agent: market_research"
-    summary: "Based on my knowledge of the space industry and LEO satellite deployment dynamics, I can provide you with a comprehensive market research analysis on AST SpaceMobile's Block 1 deployment schedule:
+    summary: "Based on my expertise in satellite market dynamics and LEO constellation deployment patterns, I'll provide a comprehensive analysis of AST SpaceMobile's Block 1 deployment schedule and the factors affecting their timeline.
 
 ---
 
-## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Deployment Timeline (2024-2026)**
+## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Satellite Deployment (2024-2026)**
 
 ### **Key Findings**
 
-**AST SpaceMobile Block 1 Satellite Program:**
-- **Total Block 1 satellites planned**: 20 BlueBird satellites for initial commercial service
-- **First commercial satellites (BW1-5)**: L"
+**AST SpaceMobile Deployment Schedule:**
+- **First 5 Block 1 BlueBird satellites**: Launched September 2024 on SpaceX Falcon 9
+- **Planned constellation**: 16"
     relevance: 0.5p
-    date: 2026-03-08
+    date: 2026-03-09
 }
 
 model: ((((satellite_deployment_pace * carrier_partnership_conversion) * technology_performance) * regulatory_approval_speed) * capital_availability)

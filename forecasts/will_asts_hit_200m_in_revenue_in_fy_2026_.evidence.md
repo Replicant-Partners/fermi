@@ -1,6 +1,6 @@
 # will asts hit 200M in revenue in fy 2026?
 
-**Probability:** 10.0% · **Version:** v10 · **Updated:** 2026-03-09 17:01 UTC
+**Probability:** 9.5% · **Version:** v11 · **Updated:** 2026-03-09 17:03 UTC
 
 **Confidence:** Medium (42%) · **Drivers:** 5 · **Evidence:** 3 · **Agents:** 6
 
@@ -8,13 +8,13 @@
 
 ## Inside View
 
-**Probability: 10.0%**
+**Probability: 9.5%**
 
-Starting from a 15.0% base rate, our model significantly decreases the probability to 10.0%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, technology_performance. Most influential: satellite_deployment_pace (30%), capital_availability (26%), technology_performance (24%).
+Starting from a 15.0% base rate, our model significantly decreases the probability to 9.5%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, technology_performance. Most influential: satellite_deployment_pace (28%), technology_performance (27%), capital_availability (23%).
 
 **Forecast Confidence:** Medium (42%)
 
-**Divergence from base rate:** 5pp below (10.0% vs 15.0%)
+**Divergence from base rate:** 5pp below (9.5% vs 15.0%)
 
 ---
 
@@ -33,7 +33,7 @@ Most satellite startups fail to scale quickly. Companies like Planet Labs, Spire
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.30 | 1.20 | 1.60 | multiplier |
+| 0.30 | 1.30 | 1.60 | multiplier |
 
 > AST SpaceMobile needs to deploy Block 1 satellites on schedule. Delays in launches or manufacturing would significantly impact revenue timeline, while faster deployment enables earlier service.
 
@@ -50,19 +50,19 @@ Most satellite startups fail to scale quickly. Companies like Planet Labs, Spire
 
 
 
-#### Agent: market_research — relevance 50% · 2026-03-08
+#### Agent: market_research — relevance 50% · 2026-03-09
 
-Based on my knowledge of the space industry and LEO satellite deployment dynamics, I can provide you with a comprehensive market research analysis on AST SpaceMobile's Block 1 deployment schedule:
+Based on my expertise in satellite market dynamics and LEO constellation deployment patterns, I'll provide a comprehensive analysis of AST SpaceMobile's Block 1 deployment schedule and the factors affecting their timeline.
 
 ---
 
-## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Deployment Timeline (2024-2026)**
+## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Satellite Deployment (2024-2026)**
 
 ### **Key Findings**
 
-**AST SpaceMobile Block 1 Satellite Program:**
-- **Total Block 1 satellites planned**: 20 BlueBird satellites for initial commercial service
-- **First commercial satellites (BW1-5)**: L
+**AST SpaceMobile Deployment Schedule:**
+- **First 5 Block 1 BlueBird satellites**: Launched September 2024 on SpaceX Falcon 9
+- **Planned constellation**: 16
 
 ### Related Evidence
 
@@ -181,19 +181,19 @@ Based on my knowledge of the space industry and LEO satellite deployment dynamic
 
 ### Evidence (1)
 
-#### Agent: market_research — relevance 50% · 2026-03-08
+#### Agent: market_research — relevance 50% · 2026-03-09
 
-Based on my knowledge of the space industry and LEO satellite deployment dynamics, I can provide you with a comprehensive market research analysis on AST SpaceMobile's Block 1 deployment schedule:
+Based on my expertise in satellite market dynamics and LEO constellation deployment patterns, I'll provide a comprehensive analysis of AST SpaceMobile's Block 1 deployment schedule and the factors affecting their timeline.
 
 ---
 
-## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Deployment Timeline (2024-2026)**
+## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Satellite Deployment (2024-2026)**
 
 ### **Key Findings**
 
-**AST SpaceMobile Block 1 Satellite Program:**
-- **Total Block 1 satellites planned**: 20 BlueBird satellites for initial commercial service
-- **First commercial satellites (BW1-5)**: L
+**AST SpaceMobile Deployment Schedule:**
+- **First 5 Block 1 BlueBird satellites**: Launched September 2024 on SpaceX Falcon 9
+- **Planned constellation**: 16
 
 ### Related Evidence
 
@@ -312,19 +312,19 @@ Based on my knowledge of the space industry and LEO satellite deployment dynamic
 
 ### Evidence (1)
 
-#### Agent: market_research — relevance 50% · 2026-03-08
+#### Agent: market_research — relevance 50% · 2026-03-09
 
-Based on my knowledge of the space industry and LEO satellite deployment dynamics, I can provide you with a comprehensive market research analysis on AST SpaceMobile's Block 1 deployment schedule:
+Based on my expertise in satellite market dynamics and LEO constellation deployment patterns, I'll provide a comprehensive analysis of AST SpaceMobile's Block 1 deployment schedule and the factors affecting their timeline.
 
 ---
 
-## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Deployment Timeline (2024-2026)**
+## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Satellite Deployment (2024-2026)**
 
 ### **Key Findings**
 
-**AST SpaceMobile Block 1 Satellite Program:**
-- **Total Block 1 satellites planned**: 20 BlueBird satellites for initial commercial service
-- **First commercial satellites (BW1-5)**: L
+**AST SpaceMobile Deployment Schedule:**
+- **First 5 Block 1 BlueBird satellites**: Launched September 2024 on SpaceX Falcon 9
+- **Planned constellation**: 16
 
 ### Related Evidence
 
@@ -443,19 +443,19 @@ Based on my knowledge of the space industry and LEO satellite deployment dynamic
 
 ### Evidence (1)
 
-#### Agent: market_research — relevance 50% · 2026-03-08
+#### Agent: market_research — relevance 50% · 2026-03-09
 
-Based on my knowledge of the space industry and LEO satellite deployment dynamics, I can provide you with a comprehensive market research analysis on AST SpaceMobile's Block 1 deployment schedule:
+Based on my expertise in satellite market dynamics and LEO constellation deployment patterns, I'll provide a comprehensive analysis of AST SpaceMobile's Block 1 deployment schedule and the factors affecting their timeline.
 
 ---
 
-## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Deployment Timeline (2024-2026)**
+## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Satellite Deployment (2024-2026)**
 
 ### **Key Findings**
 
-**AST SpaceMobile Block 1 Satellite Program:**
-- **Total Block 1 satellites planned**: 20 BlueBird satellites for initial commercial service
-- **First commercial satellites (BW1-5)**: L
+**AST SpaceMobile Deployment Schedule:**
+- **First 5 Block 1 BlueBird satellites**: Launched September 2024 on SpaceX Falcon 9
+- **Planned constellation**: 16
 
 ### Related Evidence
 
@@ -811,4 +811,4 @@ model: satellite_deployment_pace * carrier_partnership_conversion * technology_p
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v10 · 2026-03-09 17:01 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v11 · 2026-03-09 17:03 UTC_
