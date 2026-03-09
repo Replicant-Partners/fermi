@@ -141,6 +141,6 @@ evidence sentiment_analyzer_0 {
     date: 2026-03-09
 }
 
-model: denmark_recent_performance * song_quality_variance * voting_bloc_dynamics * competition_field_strength
+model: (((denmark_recent_performance * song_quality_variance) * voting_bloc_dynamics) * competition_field_strength)
 
 simulate 10000 iterations
