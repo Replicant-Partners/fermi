@@ -551,7 +551,7 @@ impl CockpitState {
     /// Process the macro_forecaster's structured response.
     /// This is the main co-authoring step — the agent returns a complete
     /// decomposition with estimates that populate the FPL program.
-    fn process_macro_forecaster_result(&mut self, result: &JsonValue) {
+    fn process_macro_forecaster_result(&mut self, result: &JsonValue, cx: &mut Context<Self>) {
         // DEBUG: log what we received
         log::info!(
             "[composer] Processing result keys: {:?}",
@@ -904,10 +904,17 @@ impl CockpitState {
         self.run_validation_hints();
         self.orchestration_running = false;
 
-        // ── Suggest agent assignments for new drivers ─────────────
-        // Now that the decomposition is ready, suggest which research
-        // agents would be good for each driver. User confirms via picker.
-        let available = self.discover_research_agents();
+        // ── Auto-assign + auto-fire agents for all drivers ────────
+        // Domain-first routing: detect domain from question, assign the
+        // best domain-specific agent to every driver, fire all in parallel.
+        // The user sees evidence streaming in within seconds — no manual
+        // agent assignment needed. They can override later.
+        let question_text = self
+            .program
+            .question()
+            .map(|q| q.text.clone())
+            .unwrap_or_default();
+        let domain = detect_domain(&question_text);
         let driver_names: Vec<String> = self
             .program
             .drivers()
@@ -915,90 +922,160 @@ impl CockpitState {
             .map(|d| d.name.clone())
             .collect();
 
-        if !driver_names.is_empty() && !available.is_empty() {
-            self.messages.push(AssistantMessage {
-                node: "question".into(),
-                kind: MessageKind::Suggestion,
-                text: format!(
-                    "Decomposition ready with {} drivers. Click '+ agent' on each driver to assign research agents with specific queries.",
-                    driver_names.len()
-                ),
-            });
+        if !driver_names.is_empty() {
+            // Pick domain-specific primary agent
+            let primary_agent = match domain.as_str() {
+                "sports_nba" | "basketball" => "nba_analyst",
+                "biotech" | "pharma" | "clinical" => "biotech_analyst",
+                "finance" | "stocks" | "crypto" => "macro_forecaster",
+                "geopolitics" | "politics" | "policy" => "macro_forecaster",
+                _ => "macro_forecaster", // general-purpose fallback
+            };
 
-            // Suggest agents for drivers using data-driven skill/tag matching.
-            // Each agent card has skills and tags — we match those against
-            // driver name + rationale keywords. This works for ANY agent
-            // (including future domain agents like biotech_analyst) without
-            // hardcoding agent names.
-            let cards = self.registry.list_cards().unwrap_or_default();
-            let orchestra_cards: Vec<_> = cards
-                .iter()
-                .filter(|c| {
-                    c.metadata.tags.iter().any(|t| t == "fermi-orchestra") && c.agent_id != "fermi"
-                    // fermi is the orchestrator, not a research agent
-                })
-                .collect();
+            // Verify primary agent exists in registry
+            let has_primary = self.registry.get(primary_agent).is_ok();
+            let agent_to_use = if has_primary {
+                primary_agent
+            } else {
+                "macro_forecaster"
+            };
+
+            let mut assigned_count = 0;
 
             for driver_name in &driver_names {
                 let driver = self.program.driver(driver_name);
-                let rationale = driver.and_then(|d| d.rationale.as_deref()).unwrap_or("");
-                // Build a search string from driver name + rationale
-                let search_text = format!(
-                    "{} {}",
-                    driver_name.replace('_', " ").to_lowercase(),
-                    rationale.to_lowercase()
+                let rationale = driver
+                    .and_then(|d| d.rationale.as_deref())
+                    .unwrap_or("")
+                    .to_string();
+                let driver_display = driver
+                    .and_then(|d| d.display_name.as_deref())
+                    .unwrap_or(driver_name)
+                    .to_string();
+
+                // Extract current driver parameters for the query
+                let (p5, p50, p95) = driver
+                    .and_then(|d| d.distribution.as_ref())
+                    .map(|dist| match dist {
+                        Distribution::Triangular { p5, p50, p95 } => {
+                            (expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95))
+                        }
+                        _ => (0.8, 1.0, 1.2),
+                    })
+                    .unwrap_or((0.8, 1.0, 1.2));
+
+                // Formulate a domain-specific query
+                let query = formulate_research_query(
+                    &question_text,
+                    &driver_display,
+                    &rationale,
+                    agent_to_use,
+                    &domain,
+                    p5,
+                    p50,
+                    p95,
                 );
 
-                // Score each orchestra agent by how well its skills/tags match
-                let mut best_match: Option<(&str, usize)> = None;
-                for card in &orchestra_cards {
-                    let mut score = 0usize;
-                    // Check skills
-                    for skill in &card.capabilities.skills {
-                        let skill_words: Vec<&str> = skill.split('-').collect();
-                        for word in &skill_words {
-                            if word.len() > 2 && search_text.contains(word) {
-                                score += 2;
-                            }
-                        }
-                    }
-                    // Check tags
-                    for tag in &card.metadata.tags {
-                        if tag == "fermi-orchestra" {
-                            continue;
-                        }
-                        let tag_words: Vec<&str> = tag.split('-').collect();
-                        for word in &tag_words {
-                            if word.len() > 2 && search_text.contains(word) {
-                                score += 1;
-                            }
-                        }
-                    }
-                    // Check description keywords
-                    let desc_lower = card.metadata.description.to_lowercase();
-                    let driver_words: Vec<&str> = search_text.split_whitespace().collect();
-                    for word in &driver_words {
-                        if word.len() > 3 && desc_lower.contains(word) {
-                            score += 1;
-                        }
-                    }
+                // Create compound agent name for this driver
+                let compound_name = format!("{}_{}", agent_to_use, sanitize_name(driver_name));
 
-                    if score > 0 {
-                        if best_match.is_none() || score > best_match.unwrap().1 {
-                            best_match = Some((&card.agent_id, score));
-                        }
-                    }
-                }
+                // Add agent to AST
+                self.program.add_agent(AgentStmt {
+                    name: compound_name.clone(),
+                    agent_type: Some("research".into()),
+                    query: query.clone(),
+                    executor: Some(fermi::ast::ExecutorType::LLM),
+                    schedule: Some(Schedule::Once),
+                    driver_refs: vec![driver_name.clone()],
+                    depends_on: vec![],
+                    confidence_threshold: None,
+                });
 
-                if let Some((agent_id, _score)) = best_match {
-                    self.messages.push(AssistantMessage {
-                        node: format!("driver:{}", driver_name),
-                        kind: MessageKind::Suggestion,
-                        text: format!(
-                            "💡 Consider assigning '{}' to research '{}'",
-                            agent_id, driver_name
-                        ),
+                // Track execution
+                self.agent_runs.push(AgentExecution {
+                    agent_name: compound_name,
+                    status: AgentRunStatus::Running,
+                    evidence_count: 0,
+                    confidence: None,
+                    error: None,
+                    credits_charged: None,
+                    started_at: Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    ),
+                    completed_at: None,
+                    latest_finding: None,
+                });
+
+                // Fire agent immediately
+                self.fire_agent(agent_to_use, &query, cx);
+                assigned_count += 1;
+            }
+
+            self.messages.push(AssistantMessage {
+                node: "question".into(),
+                kind: MessageKind::Info,
+                text: format!(
+                    "🔬 Auto-assigned {} to {} drivers — researching in parallel. Evidence will stream in as agents work.",
+                    agent_to_use, assigned_count
+                ),
+            });
+
+            // For cross-domain coverage, also assign sentiment_analyzer
+            // to the most opinion-sensitive driver if one exists
+            let sentiment_driver = driver_names.iter().find(|d| {
+                let dl = d.to_lowercase();
+                dl.contains("sentiment")
+                    || dl.contains("opinion")
+                    || dl.contains("perception")
+                    || dl.contains("momentum")
+                    || dl.contains("form")
+            });
+            if let Some(sd) = sentiment_driver {
+                if agent_to_use != "sentiment_analyzer" {
+                    let driver = self.program.driver(sd);
+                    let rationale = driver.and_then(|d| d.rationale.as_deref()).unwrap_or("");
+                    let query = format!(
+                        "For the forecast: \"{}\"\n\n\
+                         Analyze sentiment around the '{}' driver.\n\
+                         Context: {}\n\n\
+                         Provide: sentiment classification (bearish→bullish), \
+                         key narrative themes, trend direction, \
+                         and how sentiment should adjust the probability.",
+                        question_text,
+                        sd.replace('_', " "),
+                        rationale
+                    );
+                    let compound = format!("sentiment_analyzer_{}", sanitize_name(sd));
+                    self.program.add_agent(AgentStmt {
+                        name: compound.clone(),
+                        agent_type: Some("research".into()),
+                        query: query.clone(),
+                        executor: Some(fermi::ast::ExecutorType::LLM),
+                        schedule: Some(Schedule::Once),
+                        driver_refs: vec![sd.clone()],
+                        depends_on: vec![],
+                        confidence_threshold: None,
                     });
+                    self.agent_runs.push(AgentExecution {
+                        agent_name: compound,
+                        status: AgentRunStatus::Running,
+                        evidence_count: 0,
+                        confidence: None,
+                        error: None,
+                        credits_charged: None,
+                        started_at: Some(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
+                        completed_at: None,
+                        latest_finding: None,
+                    });
+                    self.fire_agent("sentiment_analyzer", &query, cx);
                 }
             }
         }
@@ -1350,7 +1427,7 @@ impl CockpitState {
                         log::info!("[composer] Routing {} to processor (base_id={})", tracking_id, base_id);
                         if base_id == "macro_forecaster" {
                             log::info!("[composer] → process_macro_forecaster_result");
-                            state.process_macro_forecaster_result(&result_json);
+                            state.process_macro_forecaster_result(&result_json, cx);
                         } else if base_id == "fermi" {
                             // Check multiple locations for the structured JSON decomposition:
                             // 1. metadata.reasoning (local executor path)
@@ -1411,7 +1488,7 @@ impl CockpitState {
                                         });
                                     }
                                     log::info!("[composer] → process_macro_forecaster_result (decomposition found)");
-                                    state.process_macro_forecaster_result(&patched);
+                                    state.process_macro_forecaster_result(&patched, cx);
                                     found_decomposition = true;
                                     break;
                                 }
@@ -1451,7 +1528,7 @@ impl CockpitState {
                                                 .unwrap_or(serde_json::json!("unknown"))
                                         }
                                     });
-                                    state.process_macro_forecaster_result(&patched);
+                                    state.process_macro_forecaster_result(&patched, cx);
                                 } else {
                                     log::info!("[composer] → process_fermi_recommendation (no decomposition found, even from narrative)");
                                     state.process_fermi_recommendation(&result_json, cx);
@@ -7642,6 +7719,103 @@ fn generate_evidence_wiki(
     ));
 
     md
+}
+
+/// Formulate a domain-specific research query for an agent+driver combination.
+/// The query tells the agent exactly what data points to look for, includes the
+/// current driver parameters (p50), and asks for a specific parameter adjustment.
+fn formulate_research_query(
+    question: &str,
+    driver_display: &str,
+    rationale: &str,
+    agent_id: &str,
+    domain: &str,
+    p5: f64,
+    p50: f64,
+    p95: f64,
+) -> String {
+    let params = format!(
+        "Current estimate: p5={:.2}, p50={:.2}, p95={:.2}",
+        p5, p50, p95
+    );
+
+    match (domain, agent_id) {
+        (d, "nba_analyst") if d.contains("nba") || d.contains("basketball") => format!(
+            "For the forecast: \"{question}\"\n\n\
+             Analyze the '{driver_display}' driver.\n{params}\n\n\
+             PROVIDE SPECIFIC DATA:\n\
+             1. Current relevant stats (NetRtg, record, splits, trends)\n\
+             2. Historical base rate for this factor (with sample size)\n\
+             3. Elo-based adjustment or statistical impact estimate\n\
+             4. Suggested p50 multiplier based on your findings\n\
+             5. Confidence (0.0-1.0)\n\n\
+             Context: {rationale}\n\n\
+             Be quantitative — specific numbers, win rates, percentages."
+        ),
+
+        (_, "biotech_analyst") => format!(
+            "For the forecast: \"{question}\"\n\n\
+             Research the '{driver_display}' driver.\n{params}\n\n\
+             PROVIDE:\n\
+             1. Clinical trial phase and historical success rate for this indication\n\
+             2. Key upcoming data readouts or regulatory milestones\n\
+             3. Competitive landscape (similar therapies in development)\n\
+             4. Suggested p50 multiplier based on findings\n\
+             5. Confidence (0.0-1.0)\n\n\
+             Context: {rationale}\n\
+             Use standard ontology terms where applicable."
+        ),
+
+        (d, "macro_forecaster") if d.contains("finance") || d.contains("stock") => format!(
+            "For the forecast: \"{question}\"\n\n\
+             Research the '{driver_display}' driver.\n{params}\n\n\
+             PROVIDE:\n\
+             1. Current value of the key metric for this driver\n\
+             2. Historical trend (3-month, 12-month, relevant cycle)\n\
+             3. Analyst consensus or market expectations\n\
+             4. Comparable precedents with outcomes\n\
+             5. Suggested p50 multiplier based on findings\n\n\
+             Context: {rationale}\n\
+             Be specific — include named sources, dates, dollar figures."
+        ),
+
+        (_, "sentiment_analyzer") => format!(
+            "For the forecast: \"{question}\"\n\n\
+             Analyze sentiment around '{driver_display}'.\n\n\
+             PROVIDE:\n\
+             1. Sentiment classification (strongly bearish → strongly bullish)\n\
+             2. Key narrative themes in recent coverage\n\
+             3. Sentiment trend (improving/stable/deteriorating)\n\
+             4. Expert vs public opinion divergence\n\
+             5. How sentiment should adjust the probability\n\n\
+             Context: {rationale}"
+        ),
+
+        (_, "entity_investigator") => format!(
+            "For the forecast: \"{question}\"\n\n\
+             Investigate entities relevant to '{driver_display}'.\n\n\
+             PROVIDE:\n\
+             1. Key decision-makers and their positions\n\
+             2. Organizational dynamics (strategy, leadership, M&A)\n\
+             3. Financial health or resource position\n\
+             4. Relationships and dependencies\n\
+             5. How findings should adjust the probability\n\n\
+             Context: {rationale}"
+        ),
+
+        // General fallback — works for any agent
+        _ => format!(
+            "For the forecast: \"{question}\"\n\n\
+             Research evidence for the '{driver_display}' driver.\n{params}\n\n\
+             PROVIDE:\n\
+             1. Key data points relevant to this driver (with sources and dates)\n\
+             2. Historical base rate or comparable precedent\n\
+             3. Suggested p50 multiplier adjustment based on your findings\n\
+             4. Confidence (0.0-1.0) in your assessment\n\n\
+             Context: {rationale}\n\n\
+             Be specific and quantitative — numbers, percentages, named sources."
+        ),
+    }
 }
 
 fn detect_domain(question: &str) -> String {
