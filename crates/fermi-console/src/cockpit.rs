@@ -6365,28 +6365,163 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
         .when(state.selected_version.is_some(), |el| {
             let sel_v = state.selected_version.unwrap();
             let sel = state.versions.iter().find(|v| v.version == sel_v);
-            let current_fpl = &state.cached_fpl;
             let current_prob = state.predicted_probability;
 
             if let Some(ver) = sel {
                 let prob_delta = (current_prob - ver.probability) * 100.0;
                 let old_fpl = &ver.fpl_text;
 
-                // Simple line diff: find added/removed lines
-                let old_lines: Vec<&str> = old_fpl.lines().collect();
-                let new_lines: Vec<&str> = current_fpl.lines().collect();
-                let mut diff_lines: Vec<(char, String)> = Vec::new();
+                // ── Semantic diff: parse both FPL versions and compare ──
+                let mut changes: Vec<(u32, String)> = Vec::new(); // (color, text)
 
-                // Mark lines only in old as removed, only in new as added
-                for line in &old_lines {
-                    if !new_lines.contains(line) && !line.trim().is_empty() {
-                        diff_lines.push(('-', line.to_string()));
+                // 1. Probability change
+                if prob_delta.abs() > 0.1 {
+                    let dir = if prob_delta > 0.0 { "▲" } else { "▼" };
+                    changes.push((
+                        if prob_delta > 0.0 { theme::GREEN } else { theme::RED },
+                        format!(
+                            "{} Probability: {:.1}% → {:.1}% ({}pp)",
+                            dir,
+                            ver.probability * 100.0,
+                            current_prob * 100.0,
+                            if prob_delta > 0.0 { format!("+{:.0}", prob_delta) } else { format!("{:.0}", prob_delta) }
+                        ),
+                    ));
+                } else {
+                    changes.push((theme::FG_DIM, "→ Probability unchanged".to_string()));
+                }
+
+                // 2. Parse old FPL for driver names
+                let old_drivers: Vec<String> = old_fpl
+                    .lines()
+                    .filter(|l| l.trim().starts_with("driver "))
+                    .filter_map(|l| {
+                        l.trim()
+                            .strip_prefix("driver ")
+                            .and_then(|rest| rest.split_whitespace().next())
+                            .map(|s| s.to_string())
+                    })
+                    .collect();
+                let current_drivers: Vec<String> = state
+                    .program
+                    .drivers()
+                    .iter()
+                    .map(|d| d.name.clone())
+                    .collect();
+
+                // Drivers added
+                for d in &current_drivers {
+                    if !old_drivers.contains(d) {
+                        let display = state.program.driver(d)
+                            .and_then(|dr| dr.display_name.as_deref())
+                            .unwrap_or(d);
+                        changes.push((theme::GREEN, format!("+ Driver: {}", display)));
                     }
                 }
-                for line in &new_lines {
-                    if !old_lines.contains(line) && !line.trim().is_empty() {
-                        diff_lines.push(('+', line.to_string()));
+                // Drivers removed
+                for d in &old_drivers {
+                    if !current_drivers.contains(d) {
+                        changes.push((theme::RED, format!("- Driver: {}", d)));
                     }
+                }
+
+                // 3. Evidence count change
+                let old_ev_count = old_fpl
+                    .lines()
+                    .filter(|l| l.trim().starts_with("evidence "))
+                    .count();
+                let new_ev_count = state.program.evidence_items().len();
+                if new_ev_count != old_ev_count {
+                    let delta = new_ev_count as i64 - old_ev_count as i64;
+                    changes.push((
+                        if delta > 0 { theme::GREEN } else { theme::GOLD },
+                        format!(
+                            "{} Evidence: {} → {} ({})",
+                            if delta > 0 { "+" } else { "−" },
+                            old_ev_count,
+                            new_ev_count,
+                            if delta > 0 { format!("+{}", delta) } else { format!("{}", delta) }
+                        ),
+                    ));
+                }
+
+                // 4. Agent count change
+                let old_agent_count = old_fpl
+                    .lines()
+                    .filter(|l| l.trim().starts_with("agent "))
+                    .count();
+                let new_agent_count = state.program.agents().len();
+                if new_agent_count != old_agent_count {
+                    let delta = new_agent_count as i64 - old_agent_count as i64;
+                    changes.push((
+                        theme::BLUE,
+                        format!(
+                            "{} Agents: {} → {}",
+                            if delta > 0 { "+" } else { "−" },
+                            old_agent_count,
+                            new_agent_count,
+                        ),
+                    ));
+                }
+
+                // 5. Base rate change
+                let old_base = old_fpl
+                    .lines()
+                    .find(|l| l.contains("historical_frequency"))
+                    .and_then(|l| {
+                        l.split_whitespace()
+                            .filter_map(|w| w.trim_end_matches('%').parse::<f64>().ok())
+                            .next()
+                    });
+                let new_base = state
+                    .program
+                    .question()
+                    .and_then(|q| q.base_rate.as_ref())
+                    .map(|br| br.historical_frequency);
+                if let (Some(ob), Some(nb)) = (old_base, new_base) {
+                    if (ob - nb).abs() > 0.001 {
+                        changes.push((
+                            theme::GOLD,
+                            format!("⟳ Base rate: {:.1}% → {:.1}%", ob * 100.0, nb * 100.0),
+                        ));
+                    }
+                }
+
+                // 6. Driver parameter changes (p50 values)
+                for d in &current_drivers {
+                    if old_drivers.contains(d) {
+                        // Find old p50 from FPL text
+                        let old_p50: Option<f64> = old_fpl.lines()
+                            .skip_while(|l| !l.contains(&format!("driver {}", d)))
+                            .skip(1)
+                            .take(5)
+                            .find(|l| l.contains("distribution"))
+                            .and_then(|l| {
+                                // Extract middle number from triangular(a, b, c)
+                                l.split(',').nth(1).and_then(|s| s.trim().parse().ok())
+                            });
+                        let new_p50 = state.program.driver(d).and_then(|dr| {
+                            dr.distribution.as_ref().map(|dist| match dist {
+                                Distribution::Triangular { p50, .. } => expr_to_f64(p50),
+                                _ => 0.0,
+                            })
+                        });
+                        if let (Some(op), Some(np)) = (old_p50, new_p50) {
+                            if (op - np).abs() > 0.01 {
+                                let display = state.program.driver(d)
+                                    .and_then(|dr| dr.display_name.as_deref())
+                                    .unwrap_or(d);
+                                changes.push((
+                                    theme::CYAN,
+                                    format!("~ {}: p50 {:.2} → {:.2}", display, op, np),
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                if changes.len() <= 1 {
+                    changes.push((theme::FG_FAINT, "No structural changes detected".to_string()));
                 }
 
                 let ver_num = ver.version;
@@ -6517,72 +6652,31 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     ver.timestamp, ver.change_summary
                                 )),
                         )
-                        // FPL diff
-                        .when(!diff_lines.is_empty(), |el| {
-                            el.child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(1.0))
-                                    .mt(px(4.0))
-                                    .px(px(8.0))
-                                    .py(px(6.0))
-                                    .rounded(px(4.0))
-                                    .bg(rgb(theme::BG))
-                                    .max_h(px(200.0))
-                                    .child(
-                                        div()
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::FG_DIM))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(format!(
-                                                "Changes ({} lines)",
-                                                diff_lines.len()
-                                            )),
-                                    )
-                                    .children(diff_lines.iter().take(30).map(|(sign, line)| {
-                                        let (prefix, color, bg) = match sign {
-                                            '+' => ("+", theme::GREEN, 0x1A2E1A),
-                                            '-' => ("-", theme::RED, 0x2E1A1A),
-                                            _ => (" ", theme::FG_DIM, theme::BG),
-                                        };
-                                        div()
-                                            .flex()
-                                            .gap(px(4.0))
-                                            .px(px(4.0))
-                                            .py(px(1.0))
-                                            .bg(rgb(bg))
-                                            .child(
-                                                div()
-                                                    .text_size(px(9.0))
-                                                    .text_color(rgb(color))
-                                                    .w(px(10.0))
-                                                    .font_family(
-                                                        "Ubuntu Mono, DejaVu Sans Mono, monospace",
-                                                    )
-                                                    .child(prefix.to_string()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(9.0))
-                                                    .text_color(rgb(color))
-                                                    .min_w(px(0.0))
-                                                    .font_family(
-                                                        "Ubuntu Mono, DejaVu Sans Mono, monospace",
-                                                    )
-                                                    .child(line.clone()),
-                                            )
-                                    })),
-                            )
-                        })
-                        .when(diff_lines.is_empty(), |el| {
-                            el.child(
-                                div()
-                                    .text_size(px(10.0))
-                                    .text_color(rgb(theme::FG_FAINT))
-                                    .child("No FPL changes between this version and current"),
-                            )
-                        }),
+                        // Semantic changes list
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.0))
+                                .mt(px(4.0))
+                                .children(changes.iter().map(|(color, text)| {
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .px(px(6.0))
+                                        .py(px(3.0))
+                                        .rounded(px(3.0))
+                                        .bg(rgb(theme::BG))
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(rgb(*color))
+                                                .min_w(px(0.0))
+                                                .child(text.clone()),
+                                        )
+                                })),
+                        ),
                 )
             } else {
                 el
