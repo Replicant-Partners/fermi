@@ -1060,6 +1060,11 @@ async fn main() {
             "/api/agents/:agent_id/execute",
             post(handlers::execution::execute_agent_handler),
         )
+        // Streaming execution (SSE — real-time progress events)
+        .route(
+            "/api/agents/:agent_id/execute/stream",
+            post(handlers::execution_stream::execute_agent_stream_handler),
+        )
         // Dreaming budget
         .route(
             "/api/agents/:agent_id/dreaming/budget",
