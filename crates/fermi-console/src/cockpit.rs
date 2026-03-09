@@ -20,6 +20,7 @@ use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -62,6 +63,20 @@ pub enum RightTab {
     Edit,
     Fpl,
     Wiki,
+}
+
+/// A live event from an SSE agent execution stream.
+/// Sent from the tokio background task to the GPUI render loop.
+#[derive(Debug, Clone)]
+pub enum SseEvent {
+    /// Agent execution has started
+    Started { agent_id: String },
+    /// A key finding was extracted during execution
+    Finding { agent_id: String, text: String },
+    /// Agent execution completed — full result attached
+    Complete { agent_id: String, result: JsonValue },
+    /// Agent execution failed
+    Failed { agent_id: String, error: String },
 }
 
 /// Status of an agent execution within a driver context.
@@ -173,6 +188,11 @@ pub struct CockpitState {
     pub driver_confidence: HashMap<String, f64>,
     /// Which version is selected for viewing/diff (None = current)
     pub selected_version: Option<u32>,
+    /// Receiver for live SSE events from background agent tasks.
+    /// Drained on every render frame for progressive UI updates.
+    pub sse_rx: std_mpsc::Receiver<SseEvent>,
+    /// Sender cloned into each fire_agent background task.
+    pub sse_tx: std_mpsc::Sender<SseEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -259,7 +279,8 @@ impl CockpitState {
                 .with_placeholder("What does this evidence say?")
                 .with_label("Summary")
         });
-        Self {
+        let (tx, rx) = std_mpsc::channel::<SseEvent>();
+        let s = Self {
             program: Program::empty(),
             focused_node: FocusedNode::Question,
             right_tab: RightTab::Edit,
@@ -300,7 +321,83 @@ impl CockpitState {
             forecast_confidence: 0.5,
             driver_confidence: HashMap::new(),
             selected_version: None,
+            sse_rx: rx,
+            sse_tx: tx,
+        };
+
+        // Start SSE polling timer — periodically triggers re-renders
+        // so drain_sse_events() picks up live findings from background agents.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            let should_poll = this
+                .update(cx, |state, _cx| {
+                    state.orchestration_running
+                        || state
+                            .agent_runs
+                            .iter()
+                            .any(|r| r.status == AgentRunStatus::Running)
+                })
+                .unwrap_or(false);
+            if should_poll {
+                this.update(cx, |_state, cx| {
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+
+        s
+    }
+
+    /// Drain pending SSE events from background agent tasks.
+    /// Called at the start of every render frame for live updates.
+    /// Each event updates the UI immediately — findings pop in one by one.
+    fn drain_sse_events(&mut self) {
+        let mut changed = false;
+        while let Ok(event) = self.sse_rx.try_recv() {
+            match event {
+                SseEvent::Started { ref agent_id } => {
+                    log::info!("[sse] {} started", agent_id);
+                    self.messages.push(AssistantMessage {
+                        node: format!("agent:{}", agent_id),
+                        kind: MessageKind::Info,
+                        text: format!("⟳ {} started researching…", agent_id),
+                    });
+                    changed = true;
+                }
+                SseEvent::Finding {
+                    ref agent_id,
+                    ref text,
+                } => {
+                    log::info!(
+                        "[sse] {} finding: {}",
+                        agent_id,
+                        &text[..text.len().min(60)]
+                    );
+                    // Update the agent's latest_finding for the speech bubble
+                    if let Some(run) = self.agent_runs.iter_mut().find(|r| {
+                        r.agent_name == *agent_id
+                            || base_agent_name(&r.agent_name) == agent_id.as_str()
+                    }) {
+                        run.latest_finding = Some(text.chars().take(120).collect());
+                    }
+                    self.messages.push(AssistantMessage {
+                        node: format!("agent:{}", agent_id),
+                        kind: MessageKind::Tip,
+                        text: format!("🔍 {}", text),
+                    });
+                    changed = true;
+                }
+                SseEvent::Complete { .. } | SseEvent::Failed { .. } => {
+                    // Complete/Failed are handled in fire_agent's result processing
+                    // (they carry the full result JSON which needs the routing logic)
+                }
+            }
         }
+        let _ = changed; // cx.notify() called by render
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -935,6 +1032,7 @@ impl CockpitState {
         let api = self.api.clone();
         let registry = self.registry.clone();
         let q = query.to_string();
+        let sse_tx = self.sse_tx.clone();
 
         cx.spawn(async move |this, cx| {
             log::info!("[composer] Firing {} (base: {})", tracking_id, base_id);
@@ -965,8 +1063,10 @@ impl CockpitState {
                 );
                 let body = serde_json::json!({ "query": q_clone }).to_string();
 
-                // Channel for SSE events from tokio → GPUI
+                // Channel for SSE line events from HTTP stream → event processor
                 let (tx, mut rx) = mpsc::channel::<(String, String)>(32);
+                let sse_tx_clone = sse_tx.clone();
+                let tracking_for_sse = tracking_id.clone();
 
                 // Spawn the HTTP streaming request on tokio runtime
                 tokio::spawn(async move {
@@ -1038,13 +1138,14 @@ impl CockpitState {
                 let mut final_result: Option<JsonValue> = None;
                 let mut stream_error: Option<String> = None;
 
-                // Collect SSE events — process all at end with single this.update
-                let mut evidence_findings: Vec<String> = Vec::new();
-
+                // Process SSE events — push live updates through the GPUI channel
                 while let Some((event_type, data)) = rx.recv().await {
                     match event_type.as_str() {
                         "started" => {
                             log::info!("[composer] {} SSE: started", tracking_id);
+                            let _ = sse_tx_clone.send(SseEvent::Started {
+                                agent_id: tracking_for_sse.clone(),
+                            });
                         }
                         "progress" => {
                             if let Ok(d) = serde_json::from_str::<JsonValue>(&data) {
@@ -1058,7 +1159,10 @@ impl CockpitState {
                                 if let Some(finding) = d.get("finding").and_then(|v| v.as_str()) {
                                     if !finding.is_empty() {
                                         log::info!("[composer] {} SSE evidence: {}", tracking_id, &finding[..finding.len().min(80)]);
-                                        evidence_findings.push(finding.to_string());
+                                        let _ = sse_tx_clone.send(SseEvent::Finding {
+                                            agent_id: tracking_for_sse.clone(),
+                                            text: finding.to_string(),
+                                        });
                                     }
                                 }
                             }
@@ -3291,6 +3395,10 @@ impl CockpitState {
 
 impl Render for CockpitState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Drain live SSE events from background agent tasks.
+        // This runs every frame — findings pop in one by one.
+        self.drain_sse_events();
+
         let driver_names: Vec<String> = self
             .program
             .drivers()
