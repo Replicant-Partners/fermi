@@ -1,7 +1,7 @@
 {
-  "current_version": 9,
-  "predicted_probability": 0.08412319148641113,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model significantly decreases the probability to 8.4%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, technology_performance. Most influential: satellite_deployment_pace (32%), technology_performance (24%), capital_availability (19%).",
+  "current_version": 10,
+  "predicted_probability": 0.09993755632619844,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model significantly decreases the probability to 10.0%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, technology_performance. Most influential: satellite_deployment_pace (30%), capital_availability (26%), technology_performance (24%).",
   "forecast_confidence": 0.42,
   "versions": [
     {
@@ -57,14 +57,20 @@
       "timestamp": "2026-03-09 17:01",
       "probability": 0.08412319148641113,
       "change_summary": "8.4% (→), 5 drivers, 3 evidence, 9 agents"
+    },
+    {
+      "version": 10,
+      "timestamp": "2026-03-09 17:01",
+      "probability": 0.09993755632619844,
+      "change_summary": "10.0% (+2pp), 5 drivers, 3 evidence, 9 agents"
     }
   ],
   "sim_results": {
-    "mean": 1.164466865831498,
-    "median": 1.0689978042113637,
-    "p5": 0.400453243399818,
-    "p95": 2.270365829839109,
-    "std_dev": 0.5847566962714266,
+    "mean": 1.068972077487549,
+    "median": 0.963246481058184,
+    "p5": 0.3638787609591516,
+    "p95": 2.1221742820752785,
+    "std_dev": 0.554625038488988,
     "iterations": 10000
   },
   "base_rate": {
