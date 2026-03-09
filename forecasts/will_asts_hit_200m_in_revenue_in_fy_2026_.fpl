@@ -7,7 +7,7 @@ driver satellite_deployment_pace continuous {
 }
 
 driver carrier_partnership_conversion continuous {
-    distribution: triangular(0.7, 1, 1.5)
+    distribution: triangular(0.7, 1.2, 1.5)
     unit: "multiplier"
     rationale: "Converting MoUs with AT&T, Verizon, Vodafone into paying contracts is critical. Better-than-expected terms or additional partnerships boost revenue potential."
 }
@@ -884,6 +884,80 @@ evidence macro_forecaster_evidence_1773093176 {
 |---------|-----------|--------|-----------------|---------------|
 | **AT&T** | US | Commercial agreement signed (Sept 2024) | ~240M | Revenue-sharing |
 | **Veriz"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093221 {
+    source: "Agent: macro_forecaster"
+    summary: "Based on my analysis framework for satellite deployment pace as a revenue driver for ASTS hitting $200M in FY2026, here's the research:
+
+---
+
+## SATELLITE_DEPLOYMENT_PACE DRIVER ANALYSIS
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Block 1 Satellite Deployment Status (as of Q4 2024):**
+
+- **Operational satellites**: 5 BlueBird satellites launched (September 2024)
+- **Target constellation for commercial service**: 60-100 Block 1 satellites needed for continuous coverage
+- **Current deployment rate**: ~"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093222 {
+    source: "Agent: macro_forecaster"
+    summary: "# CARRIER PARTNERSHIP CONVERSION DRIVER RESEARCH
+**Target:** AST SpaceMobile (ASTS) FY2026 Revenue Forecast  
+**Driver:** Carrier Partnership Conversion (MoU → Paying Contracts)
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Active MoU Partners (as of Q3 2024):**
+- **AT&T** (US) - MoU signed March 2023, expanded April 2024
+- **Verizon** (US) - MoU signed May 2024
+- **Vodafone** (Global) - MoU signed April 2022, expanded multiple times
+- **Rakuten** (Japan) - Strategic partnership with equity stake
+-"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093223 {
+    source: "Agent: macro_forecaster"
+    summary: "Based on my analysis of the satellite-to-cellular regulatory landscape, here's my assessment:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Primary Metric: Regulatory Approval Completion Rate**
+- **Current Status (as of Q4 2024)**: ~40-50% of target markets approved
+- **FCC (United States)**: ✅ **APPROVED** - September 2024, AST received FCC authorization for supplemental coverage from space (SCS) using 850 MHz spectrum
+- **Key International Markets**: 🟡 **IN PROGRESS** - Japan, Europe, and other M"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093229 {
+    source: "Agent: macro_forecaster"
+    summary: "Based on my analysis framework for satellite-to-phone market adoption, here's my research on the 'market_adoption_rate' driver for AST SpaceMobile's FY2026 revenue forecast:
+
+---
+
+## MARKET ADOPTION RATE DRIVER ANALYSIS
+**Target Question:** Will ASTS hit $200M revenue in FY2026?
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**AST SpaceMobile Current State (Q3 2024):**
+- **Revenue:** ~$0-2M (pre-commercial, test phase)
+- **Commercial satellites deployed:** 5 BlueBird satellites launched September 2024
+- *"
     relevance: 0.5p
     date: 2026-03-09
 }
