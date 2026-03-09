@@ -1,0 +1,160 @@
+{
+  "current_version": 9,
+  "predicted_probability": 0.08412319148641113,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model significantly decreases the probability to 8.4%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, technology_performance. Most influential: satellite_deployment_pace (32%), technology_performance (24%), capital_availability (19%).",
+  "forecast_confidence": 0.42,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-07 19:47",
+      "probability": 0.5,
+      "change_summary": "Initial forecast"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-08 11:13",
+      "probability": 0.15,
+      "change_summary": "v2 update"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-08 11:13",
+      "probability": 0.12020407784904846,
+      "change_summary": "v3 update"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-08 11:13",
+      "probability": 0.758372446339514,
+      "change_summary": "v4 update"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-08 11:13",
+      "probability": 0.11183474788552152,
+      "change_summary": "v5 update"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-08 11:13",
+      "probability": 0.1056428809861682,
+      "change_summary": "v6 update"
+    },
+    {
+      "version": 7,
+      "timestamp": "2026-03-08 11:14",
+      "probability": 0.09295346405667912,
+      "change_summary": "v7 update"
+    },
+    {
+      "version": 8,
+      "timestamp": "2026-03-08 11:15",
+      "probability": 0.08412319148641113,
+      "change_summary": "v8 update"
+    },
+    {
+      "version": 9,
+      "timestamp": "2026-03-09 17:01",
+      "probability": 0.08412319148641113,
+      "change_summary": "8.4% (→), 5 drivers, 3 evidence, 9 agents"
+    }
+  ],
+  "sim_results": {
+    "mean": 1.164466865831498,
+    "median": 1.0689978042113637,
+    "p5": 0.400453243399818,
+    "p95": 2.270365829839109,
+    "std_dev": 0.5847566962714266,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "Early-stage satellite/space communications companies reaching $200M revenue within 3-4 years of commercial operations",
+    "historical_frequency": 0.15,
+    "sample_size": 20,
+    "source": "macro_forecaster",
+    "reasoning": "Most satellite startups fail to scale quickly. Companies like Planet Labs, Spire took 5-7 years. Only exceptional cases like SpaceX scaled faster with unique advantages."
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1772968299",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"Early-stage satellite/space communications companies reaching $200M revenue within 3-4 years of commercial operations\",\n    \"historical_frequency\": 0.15,\n    \"sample_size\": 20,\n    \"reasoning\": \"Most satellite startups fail to scale quickly. Companies like Planet Labs, Spire took 5-7 years. Only exceptional cases like SpaceX scaled faster with unique advantages.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"satellite_deployment_pace\",\n      \"display_name\": \"Satellite Deployment Pace\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.4,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"AST SpaceMobile needs to deploy Block 1 satellites on schedule. Delays in launches or manufacturing would significantly impact revenue timeline, while faster deployment enables earlier service.\"\n    },\n    {\n      \"name\": \"carrier_partnership_conversion\",\n      \"display_name\": \"Carrier Partnership Conversion\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 1.1,\n      \"p95\": 1.6,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Converting MOUs with AT&T, Verizon, Vodafone into paying contracts is critical. Strong conversion with premium pricing boosts revenue; weak conversion or delayed agreements reduces it.\"\n    },\n    {\n      \"name\": \"technology_performance\",\n      \"display_name\": \"Technology Performance\",\n      \"type\": \"continuous\",\n      \"p5\": 0.5,\n      \"p50\": 0.95,\n      \"p95\": 1.3,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"BlueWalker 3 showed proof of concept, but commercial satellites must deliver reliable bandwidth and coverage. Technical issues could delay commercialization; exceeding specs accelerates adoption.\"\n    },\n    {\n      \"name\": \"regulatory_approval_speed\",\n      \"display_name\": \"Regulatory Approval Speed\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 1.0,\n      \"p95\": 1.2,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"FCC and international spectrum approvals are required for commercial operations. Faster approvals enable earlier revenue; delays in key markets reduce addressable opportunity in FY2026.\"\n    },\n    {\n      \"name\": \"capital_availability\",\n      \"display_name\": \"Capital Availability\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.3,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"AST needs significant capital to build and launch constellation. Funding constraints slow deployment; abundant capital or strategic investments accelerate buildout and revenue potential.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"AST SpaceMobile Q3 2023 Earnings\",\n      \"summary\": \"Company reported successful BlueWalker 3 tests achieving 4G/5G connections. Targeting commercial service launch in 2024-2025 with Block 1 satellites.\",\n      \"key_findings\": [\n        \"BlueWalker 3 achieved direct smartphone connectivity\",\n        \"20+ carrier agreements signed globally\",\n        \"Block 1 satellites in manufacturing\"\n      ],\n      \"relevance\": 0.95\n    },\n    {\n      \"source\": \"Space industry analyst reports 2023\",\n      \"summary\": \"Satellite communications market growing but capital-intensive with long deployment cycles. Most startups take 5-8 years to reach $200M revenue.\",\n      \"key_findings\": [\n        \"Average time to $200M revenue: 6-7 years\",\n        \"High failure rate in satellite sector\",\n        \"First-mover advantage critical\"\n      ],\n      \"relevance\": 0.8\n    },\n    {\n      \"source\": \"AST SpaceMobile investor presentations 2023\",\n      \"summary\": \"Company projects commercial service beginning 2024 with revenue ramp through 2026. Targeting global coverage with 95+ satellites.\",\n      \"key_findings\": [\n        \"Revenue projections show steep growth 2025-2027\",\n        \"Dependent on successful Block 1 deployment\",\n        \"Premium pricing model with carriers\"\n      ],\n      \"relevance\": 0.9\n    }\n  ],\n  \"model_expression\": \"base_rate * satellite_deployment_pace * carrier_partnership_conversion * technology_performance * regulatory_approval_speed * capital_availability\",\n  \"confidence\": 0.4,\n  \"reasoning\": \"AST SpaceMobile faces significant execution risk typical of early-stage space companies. While technology proof-of-concept succeeded and partnerships exist, reaching $200M by FY2026 requires flawless satellite deployment, rapid carrier conversion, and sustained capital access. The aggressive timeline makes this unlikely despite potential upside scenarios.\"\n}\n```",
+      "relevance": 0.5,
+      "date": "2026-03-08",
+      "key_findings": []
+    },
+    {
+      "id": "entity_investigator_0",
+      "source": "Agent: entity_investigator",
+      "summary": "",
+      "relevance": 0.5,
+      "date": "2026-03-08",
+      "key_findings": []
+    },
+    {
+      "id": "market_research_0",
+      "source": "Agent: market_research",
+      "summary": "Based on my knowledge of the space industry and LEO satellite deployment dynamics, I can provide you with a comprehensive market research analysis on AST SpaceMobile's Block 1 deployment schedule:\n\n---\n\n## **MARKET RESEARCH EVIDENCE: AST SpaceMobile Block 1 Deployment Timeline (2024-2026)**\n\n### **Key Findings**\n\n**AST SpaceMobile Block 1 Satellite Program:**\n- **Total Block 1 satellites planned**: 20 BlueBird satellites for initial commercial service\n- **First commercial satellites (BW1-5)**: L",
+      "relevance": 0.5,
+      "date": "2026-03-08",
+      "key_findings": []
+    }
+  ],
+  "agents": [
+    {
+      "name": "entity_investigator_satellite_deployment_pace",
+      "agent_type": "research",
+      "query": "Research evidence for the 'satellite_deployment_pace' driver in the forecast: \"will asts hit 200M in revenue in fy 2026?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "satellite_deployment_pace"
+      ]
+    },
+    {
+      "name": "market_research_carrier_partnership_conversion",
+      "agent_type": "research",
+      "query": "AST SpaceMobile Block 1 satellite deployment schedule and launch timeline for 2024-2026, including manufacturing capacity, launch provider agreements, historical deployment rates for LEO satellite constellations, and factors affecting satellite production and launch cadence",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "carrier_partnership_conversion"
+      ]
+    },
+    {
+      "name": "market_research_technology_performance",
+      "agent_type": "research",
+      "query": "AST SpaceMobile BlueWalker 3 and Block 1 BlueBird satellite technical performance specifications, bandwidth capacity, coverage reliability, and comparison to competing direct-to-device satellite systems from Starlink, Lynk Global, and traditional mobile networks for 2024-2026",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "technology_performance"
+      ]
+    },
+    {
+      "name": "market_research_satellite_deployment_pace",
+      "agent_type": "research",
+      "query": "AST SpaceMobile BlueWalker 3 and Block 1 BlueBird satellite technical performance specifications, bandwidth capacity, coverage reliability, and comparison to competing direct-to-device satellite systems from Starlink, Lynk Global, and traditional mobile networks for 2024-2026",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "satellite_deployment_pace"
+      ]
+    },
+    {
+      "name": "market_research_regulatory_approval_speed",
+      "agent_type": "research",
+      "query": "AST SpaceMobile Block 1 satellite deployment schedule and launch timeline for 2024-2026, including SpaceX Falcon 9 launch capacity, satellite manufacturing progress, regulatory approvals, and historical deployment rates for comparable LEO satellite constellations",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "regulatory_approval_speed"
+      ]
+    },
+    {
+      "name": "sentiment_analyzer_capital_availability",
+      "agent_type": "research",
+      "query": "What is the typical timeline and approval speed for FCC spectrum licenses and international spectrum regulatory approvals for satellite communications companies? Analyze recent AST SpaceMobile regulatory filings, FCC approval patterns for LEO satellite operators (2020-2024), and international spectrum coordination processes that could impact commercial launch timelines for space-based cellular services by FY2026.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "capital_availability"
+      ]
+    }
+  ],
+  "driver_confidence": {}
+}
