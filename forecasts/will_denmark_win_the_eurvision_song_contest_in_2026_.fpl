@@ -13,7 +13,7 @@ driver song_quality_variance continuous {
 }
 
 driver voting_bloc_dynamics continuous {
-    distribution: triangular(0.9, 1.1, 1.3)
+    distribution: triangular(0.7, 1.3, 1.6)
     unit: "multiplier"
     rationale: "Nordic countries (Sweden, Norway, Finland, Iceland) often exchange votes. Denmark benefits moderately from this, though bloc voting has diminished with jury voting reforms."
 }
