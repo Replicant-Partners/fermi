@@ -1,7 +1,7 @@
 {
-  "current_version": 5,
-  "predicted_probability": 0.013761905619597073,
-  "inside_view_explanation": "Starting from a 1.5% base rate, our model slightly decreases the probability to 1.4%. The key factors are: denmark_recent_performance, song_quality_variance, voting_bloc_dynamics. Most influential: song_quality_variance (33%), denmark_recent_performance (27%), competition_field_strength (26%).",
+  "current_version": 6,
+  "predicted_probability": 0.012788969311968318,
+  "inside_view_explanation": "Starting from a 1.5% base rate, our model moderately decreases the probability to 1.3%. The key factors are: denmark_recent_performance, song_quality_variance, voting_bloc_dynamics. Most influential: competition_field_strength (39%), song_quality_variance (34%), denmark_recent_performance (24%).",
   "forecast_confidence": 0.40249999999999997,
   "versions": [
     {
@@ -33,14 +33,20 @@
       "timestamp": "2026-03-09 13:33",
       "probability": 0.013761905619597073,
       "change_summary": "1.4% (→), 4 drivers, 2 evidence, 1 agents"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-09 13:33",
+      "probability": 0.012788969311968318,
+      "change_summary": "1.3% (→), 4 drivers, 3 evidence, 1 agents"
     }
   ],
   "sim_results": {
-    "mean": 1.7055588364553975,
-    "median": 1.6161069579581562,
-    "p5": 0.8210807580574689,
-    "p95": 2.918009849180572,
-    "std_dev": 0.6484571708022284,
+    "mean": 1.5849795967299405,
+    "median": 1.4864715962359245,
+    "p5": 0.674306264432811,
+    "p95": 2.855130200286513,
+    "std_dev": 0.6682271269435485,
     "iterations": 10000
   },
   "base_rate": {
@@ -74,6 +80,14 @@
       "id": "market_research_0",
       "source": "Agent: market_research",
       "summary": "Based on my knowledge of Eurovision history and Danish entries, I can provide a comprehensive analysis of sentiment patterns and predictive signals:\n\n## DANISH EUROVISION SENTIMENT ANALYSIS (2010-2024)\n\n### Historical Performance Overview\n\n**Danish Eurovision Results 2010-2024:**\n\n| Year | Artist | Song | Final Position | Semi Result |\n|------|--------|------|----------------|-------------|\n| 2010 | Chanée & N'evergreen | \"In a Moment Like This\" | 4th | Qualified |\n| 2011 | A Friend in London | ",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": []
+    },
+    {
+      "id": "sentiment_analyzer_0",
+      "source": "Agent: sentiment_analyzer",
+      "summary": "I see the sentiment analysis tools aren't available in this environment. Let me provide a comprehensive analysis based on my knowledge of Danish Eurovision entries and historical sentiment patterns from 2010-2024.\n\n## SENTIMENT ANALYSIS: Danish Eurovision Entries 2010-2024\n\n### Executive Summary\n**Overall Pattern**: Denmark shows high sentiment variance correlated with song quality and staging. The 2013 winner represents a clear outlier in pre-contest buzz and expert consensus.\n\n---\n\n## YEAR-BY-",
       "relevance": 0.5,
       "date": "2026-03-09",
       "key_findings": []
