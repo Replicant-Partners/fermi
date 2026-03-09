@@ -1,0 +1,72 @@
+{
+  "current_version": 1,
+  "predicted_probability": 0.015,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-09 13:32",
+      "probability": 0.015,
+      "change_summary": "Initial: 1.5% base=2%, 4 drivers, 2 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "Any country winning Eurovision in a given year (68 contests, 1956-2024)",
+    "historical_frequency": 0.015,
+    "sample_size": 68,
+    "source": "macro_forecaster",
+    "reasoning": "Denmark has won Eurovision 3 times (1963, 2000, 2013) out of approximately 40+ participations. Base rate uses 1/68 as neutral country probability, adjusted by Denmark's historical performance of ~7.5% win rate over participations."
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1773063073",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"Any country winning Eurovision in a given year (68 contests, 1956-2024)\",\n    \"historical_frequency\": 0.015,\n    \"sample_size\": 68,\n    \"reasoning\": \"Denmark has won Eurovision 3 times (1963, 2000, 2013) out of approximately 40+ participations. Base rate uses 1/68 as neutral country probability, adjusted by Denmark's historical performance of ~7.5% win rate over participations.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"denmark_recent_performance\",\n      \"display_name\": \"Recent Denmark Performance Trend\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 1.0,\n      \"p95\": 1.4,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Denmark's recent results: 2024 (didn't qualify), 2023 (didn't qualify), 2022 (23rd), 2021 (11th). Recent underperformance suggests lower probability, but 2026 allows time for recovery.\"\n    },\n    {\n      \"name\": \"song_quality_variance\",\n      \"display_name\": \"Song Quality Variance\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.8,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Eurovision outcomes heavily depend on song quality, which varies significantly year-to-year. Denmark has proven capable of producing winning entries but consistency is low across all countries.\"\n    },\n    {\n      \"name\": \"voting_bloc_dynamics\",\n      \"display_name\": \"Nordic Voting Bloc Strength\",\n      \"type\": \"continuous\",\n      \"p5\": 0.9,\n      \"p50\": 1.1,\n      \"p95\": 1.3,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Nordic countries (Sweden, Norway, Finland, Iceland) often exchange votes. Denmark benefits moderately from this, though bloc voting has diminished with jury voting reforms.\"\n    },\n    {\n      \"name\": \"competition_field_strength\",\n      \"display_name\": \"Competition Field Strength\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 1.0,\n      \"p95\": 1.3,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Number and strength of competing countries varies. Approximately 40 countries typically compete. Strong entries from traditional powerhouses (Sweden, Italy, Ukraine) can reduce Denmark's chances.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"Eurovision historical results database\",\n      \"summary\": \"Denmark has won 3 times in 68 contests, with wins in 1963, 2000, and 2013. Recent performance shows decline with non-qualifications in 2023-2024.\",\n      \"key_findings\": [\n        \"3 wins in ~40+ participations (7.5% historical win rate)\",\n        \"Failed to qualify for finals in 2023 and 2024\",\n        \"Last win was 2013 (13 years ago)\"\n      ],\n      \"relevance\": 0.95\n    },\n    {\n      \"source\": \"Eurovision voting pattern analysis\",\n      \"summary\": \"Nordic countries show moderate voting correlation, but jury voting introduction has reduced bloc voting impact significantly since 2009.\",\n      \"key_findings\": [\n        \"Nordic bloc provides modest advantage\",\n        \"Jury voting reduces predictability\",\n        \"Song quality remains primary determinant\"\n      ],\n      \"relevance\": 0.7\n    }\n  ],\n  \"model_expression\": \"base_rate * denmark_recent_performance * song_quality_variance * voting_bloc_dynamics * competition_field_strength\",\n  \"confidence\": 0.6,\n  \"reasoning\": \"Model uses Denmark's historical 7.5% win rate as adjusted base rate (5x the neutral 1.5%). Recent poor performance and high variance in song quality are key uncertainties. Eurovision outcomes are notoriously difficult to predict due to subjective artistic merit and complex voting dynamics. 2026 timeline allows recovery from recent slump but provides limited predictive information.\"\n}\n```",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": [
+        "\"base_rate\": {",
+        "\"reference_class\": \"Any country winning Eurovision in a given year (68 contests, 1956-2024)\",",
+        "\"historical_frequency\": 0.015,",
+        "\"sample_size\": 68,",
+        "\"reasoning\": \"Denmark has won Eurovision 3 times (1963, 2000, 2013) out of approximately 40+ participations. Base rate uses 1/68 as neutral country probability, adjusted by Denmark's historical performance of ~7.5% win rate over participations.\"",
+        "\"drivers\": [",
+        "\"name\": \"denmark_recent_performance\",",
+        "\"display_name\": \"Recent Denmark Performance Trend\",",
+        "\"type\": \"continuous\",",
+        "\"p5\": 0.7,"
+      ]
+    },
+    {
+      "id": "market_research_0",
+      "source": "Agent: market_research",
+      "summary": "I apologize, but I don't have access to the web search or data analysis tools needed to retrieve current Eurovision performance data. However, I can provide you with a structured evidence framework based on publicly known Eurovision statistics:\n\n## Evidence Report: Denmark's Recent Eurovision Performance\n\n### Key Findings\n\nBased on publicly available Eurovision data:\n\n**Recent Performance (2020-2024):**\n- **2024**: Denmark participated with \"Sand\" by Saba - **Did not qualify** from Semi-Final 1\n",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": []
+    }
+  ],
+  "agents": [
+    {
+      "name": "market_research_denmark_recent_performance",
+      "agent_type": "research",
+      "query": "Research evidence for the 'denmark_recent_performance' driver in the forecast: \"will denmark win the eurvision song contest in 2026?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "denmark_recent_performance"
+      ]
+    },
+    {
+      "name": "market_research_song_quality_variance",
+      "agent_type": "research",
+      "query": "Analyze historical sentiment patterns and reception for Danish Eurovision entries 2010-2024, including pre-contest buzz, expert reviews, and social media engagement. Compare successful entries (2013 winner) versus unsuccessful years to identify quality variance patterns and predictive signals for song competitiveness.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "song_quality_variance"
+      ]
+    }
+  ],
+  "driver_confidence": {}
+}
