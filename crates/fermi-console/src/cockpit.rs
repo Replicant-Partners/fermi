@@ -21,6 +21,7 @@ use gpui::*;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use fermi::agent_backend::{
     llm_executor::LLMExecutor, registry::AgentRegistry, AgentOutput, ExecutionContext,
@@ -951,27 +952,167 @@ impl CockpitState {
             let registry_clone = registry.clone();
 
             let result_json: Result<JsonValue, String> = if use_api {
-                log::info!("[composer] {} → ABW API execution (via tokio)", base_id);
-                let handle = tokio::spawn(async move {
-                    api_clone.execute_agent(&base_id_clone, &q_clone).await
-                });
-                match handle.await {
-                    Ok(Ok(api_result)) => {
-                        let evidence = api_result.evidence.unwrap_or_default();
-                        let metadata = api_result.metadata.unwrap_or_else(|| serde_json::json!({}));
-                        Ok(serde_json::json!({
-                            "agent_id": api_result.agent_id,
-                            "status": api_result.status,
-                            "confidence": api_result.confidence,
-                            "execution_time_ms": api_result.execution_time_ms,
-                            "tokens_used": api_result.tokens_used,
-                            "credits_charged": api_result.credits_charged,
-                            "evidence": evidence,
-                            "metadata": metadata,
-                        }))
+                // ── ABW SSE streaming path ────────────────────────
+                // Uses POST /api/agents/:id/execute/stream for real-time
+                // progress events instead of waiting 25-30s for full response.
+                log::info!("[composer] {} → ABW SSE stream", base_id);
+
+                let base_url = api.base_url().await;
+                let api_key = api.api_key().unwrap_or_default();
+                let sse_url = format!(
+                    "{}/api/agents/{}/execute/stream",
+                    base_url, base_id_clone
+                );
+                let body = serde_json::json!({ "query": q_clone }).to_string();
+
+                // Channel for SSE events from tokio → GPUI
+                let (tx, mut rx) = mpsc::channel::<(String, String)>(32);
+
+                // Spawn the HTTP streaming request on tokio runtime
+                tokio::spawn(async move {
+                    let client = reqwest::Client::new();
+                    let resp = client
+                        .post(&sse_url)
+                        .header("Authorization", format!("Bearer {}", api_key))
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "text/event-stream")
+                        .body(body)
+                        .timeout(std::time::Duration::from_secs(120))
+                        .send()
+                        .await;
+
+                    match resp {
+                        Ok(response) => {
+                            if !response.status().is_success() {
+                                let status = response.status().as_u16();
+                                let body = response.text().await.unwrap_or_default();
+                                let _ = tx.send(("error".into(), format!("HTTP {}: {}", status, body))).await;
+                                return;
+                            }
+                            // Read SSE stream line by line
+                            use futures::StreamExt;
+                            let mut stream = response.bytes_stream();
+                            let mut buffer = String::new();
+                            let mut current_event = String::new();
+
+                            while let Some(chunk) = stream.next().await {
+                                match chunk {
+                                    Ok(bytes) => {
+                                        buffer.push_str(&String::from_utf8_lossy(&bytes));
+                                        // Process complete lines
+                                        while let Some(newline_pos) = buffer.find('\n') {
+                                            let line = buffer[..newline_pos].trim_end().to_string();
+                                            buffer = buffer[newline_pos + 1..].to_string();
+
+                                            if line.starts_with("event: ") {
+                                                current_event = line[7..].to_string();
+                                            } else if line.starts_with("data: ") {
+                                                let data = line[6..].to_string();
+                                                let evt = if current_event.is_empty() {
+                                                    "message".to_string()
+                                                } else {
+                                                    current_event.clone()
+                                                };
+                                                if tx.send((evt, data)).await.is_err() {
+                                                    return; // receiver dropped
+                                                }
+                                            } else if line.is_empty() {
+                                                current_event.clear();
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let _ = tx.send(("error".into(), format!("Stream: {}", e))).await;
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(("error".into(), format!("Connection: {}", e))).await;
+                        }
                     }
-                    Ok(Err(e)) => Err(format!("ABW API: {}", e)),
-                    Err(e) => Err(format!("Agent task panicked: {}", e)),
+                });
+
+                // Receive SSE events and update UI progressively
+                let mut final_result: Option<JsonValue> = None;
+                let mut stream_error: Option<String> = None;
+
+                // Collect SSE events — process all at end with single this.update
+                let mut evidence_findings: Vec<String> = Vec::new();
+
+                while let Some((event_type, data)) = rx.recv().await {
+                    match event_type.as_str() {
+                        "started" => {
+                            log::info!("[composer] {} SSE: started", tracking_id);
+                        }
+                        "progress" => {
+                            if let Ok(d) = serde_json::from_str::<JsonValue>(&data) {
+                                let msg = d.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                                let elapsed = d.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                                log::info!("[composer] {} SSE: {} ({}ms)", tracking_id, msg, elapsed);
+                            }
+                        }
+                        "evidence" => {
+                            if let Ok(d) = serde_json::from_str::<JsonValue>(&data) {
+                                if let Some(finding) = d.get("finding").and_then(|v| v.as_str()) {
+                                    if !finding.is_empty() {
+                                        log::info!("[composer] {} SSE evidence: {}", tracking_id, &finding[..finding.len().min(80)]);
+                                        evidence_findings.push(finding.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        "complete" => {
+                            log::info!("[composer] {} SSE: complete", tracking_id);
+                            if let Ok(result) = serde_json::from_str::<JsonValue>(&data) {
+                                final_result = Some(result);
+                            } else {
+                                stream_error = Some("Failed to parse complete event".into());
+                            }
+                            break;
+                        }
+                        "error" => {
+                            log::error!("[composer] {} SSE error: {}", tracking_id, data);
+                            stream_error = Some(data);
+                            break;
+                        }
+                        _ => {} // keepalive, unknown events
+                    }
+                }
+
+                // If SSE stream failed, fall back to non-streaming
+                if let Some(result) = final_result {
+                    Ok(result)
+                } else if let Some(err) = stream_error {
+                    // Try non-streaming fallback
+                    log::warn!("[composer] {} SSE failed, trying non-streaming: {}", tracking_id, err);
+                    let api_fb = api.clone();
+                    let bid = base_id.clone();
+                    let qfb = q.clone();
+                    let handle = tokio::spawn(async move {
+                        api_fb.execute_agent(&bid, &qfb).await
+                    });
+                    match handle.await {
+                        Ok(Ok(api_result)) => {
+                            let evidence = api_result.evidence.unwrap_or_default();
+                            let metadata = api_result.metadata.unwrap_or_else(|| serde_json::json!({}));
+                            Ok(serde_json::json!({
+                                "agent_id": api_result.agent_id,
+                                "status": api_result.status,
+                                "confidence": api_result.confidence,
+                                "execution_time_ms": api_result.execution_time_ms,
+                                "tokens_used": api_result.tokens_used,
+                                "credits_charged": api_result.credits_charged,
+                                "evidence": evidence,
+                                "metadata": metadata,
+                            }))
+                        }
+                        Ok(Err(e)) => Err(format!("ABW API: {}", e)),
+                        Err(e) => Err(format!("Agent task panicked: {}", e)),
+                    }
+                } else {
+                    Err("SSE stream ended without complete event".into())
                 }
             } else {
                 // ── Fallback: local registry (dev mode with ANTHROPIC_API_KEY) ──

@@ -548,6 +548,12 @@ impl ApiClient {
         config.api_key.is_some()
     }
 
+    /// Get the current API key (for SSE stream authentication).
+    pub fn api_key(&self) -> Option<String> {
+        let config = self.config.read().unwrap();
+        config.api_key.clone()
+    }
+
     /// Get the current base URL.
     pub async fn base_url(&self) -> String {
         let config = self.config.read().unwrap();
