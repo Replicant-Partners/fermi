@@ -4,8 +4,8 @@
 //! Sprint 2: real API integration, portfolio panel with live data.
 
 mod api;
-mod cockpit;
 mod charts;
+mod cockpit;
 mod composer;
 mod text_input;
 
@@ -15,7 +15,9 @@ use api::client::{
 };
 use cockpit::CockpitState;
 use composer::ComposerState;
-use fermi::agent_backend::{agent_card::AgentCard, llm_executor::LLMExecutor, registry::AgentRegistry};
+use fermi::agent_backend::{
+    agent_card::AgentCard, llm_executor::LLMExecutor, registry::AgentRegistry,
+};
 use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
@@ -247,8 +249,18 @@ struct LocalForecast {
     version: u32,
     driver_count: usize,
     evidence_count: usize,
+    agent_count: usize,
     confidence: f64,
     version_probs: Vec<f64>,
+    /// Tags for grouping into portfolios (e.g., "nba", "tech", "biotech")
+    tags: Vec<String>,
+    /// Forecast lifecycle status: draft, active, resolved, archived
+    status: String,
+    /// Auto-detected domain (e.g., "finance", "sports", "technology")
+    domain: String,
+    /// If resolved: the actual outcome (true/false) and Brier score
+    resolved_outcome: Option<bool>,
+    brier_score: Option<f64>,
 }
 
 struct FermiConsole {
@@ -623,52 +635,205 @@ impl FermiConsole {
                 let path = entry.path();
                 if path.extension().map(|e| e == "fpl").unwrap_or(false) {
                     if let Ok(content) = std::fs::read_to_string(&path) {
-                        let filename = path.file_stem()
+                        let filename = path
+                            .file_stem()
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown")
                             .to_string();
-                        let question = content.lines()
+                        let question = content
+                            .lines()
                             .find(|l| l.starts_with("question"))
                             .and_then(|l| l.split('"').nth(1))
                             .unwrap_or(&filename)
                             .to_string();
-                        let timestamp = entry.metadata()
+                        let timestamp = entry
+                            .metadata()
                             .and_then(|m| m.modified())
                             .map(|t| {
                                 let dt: chrono::DateTime<chrono::Utc> = t.into();
                                 dt.format("%Y-%m-%d %H:%M").to_string()
                             })
                             .unwrap_or_else(|_| "unknown".into());
-                        let driver_count = content.lines()
-                            .filter(|l| l.starts_with("driver "))
-                            .count();
+                        let driver_count =
+                            content.lines().filter(|l| l.starts_with("driver ")).count();
 
                         // Load state.json for probability and version
                         let state_path = path.with_extension("state.json");
-                        let (probability, base_rate, version, evidence_count, confidence, version_probs) = 
-                            if let Ok(state_text) = std::fs::read_to_string(&state_path) {
-                                if let Ok(sj) = serde_json::from_str::<serde_json::Value>(&state_text) {
-                                    (
-                                        sj.get("predicted_probability").and_then(|v| v.as_f64()).unwrap_or(0.5),
-                                        sj.get("base_rate").and_then(|b| b.get("historical_frequency")).and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                        sj.get("current_version").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                                        sj.get("evidence").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
-                                        sj.get("forecast_confidence").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                        sj.get("versions").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.get("probability").and_then(|p| p.as_f64())).collect()).unwrap_or_default(),
-                                    )
-                                } else { (0.5, 0.0, 0, 0, 0.0, vec![]) }
-                            } else { (0.5, 0.0, 0, 0, 0.0, vec![]) };
+                        let (
+                            probability,
+                            base_rate,
+                            version,
+                            evidence_count,
+                            agent_count,
+                            confidence,
+                            version_probs,
+                            tags,
+                            status,
+                            resolved_outcome,
+                            brier_score,
+                        ) = if let Ok(state_text) = std::fs::read_to_string(&state_path) {
+                            if let Ok(sj) = serde_json::from_str::<serde_json::Value>(&state_text) {
+                                (
+                                    sj.get("predicted_probability")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.5),
+                                    sj.get("base_rate")
+                                        .and_then(|b| b.get("historical_frequency"))
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0),
+                                    sj.get("current_version")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as u32,
+                                    sj.get("evidence")
+                                        .and_then(|v| v.as_array())
+                                        .map(|a| a.len())
+                                        .unwrap_or(0),
+                                    sj.get("agents")
+                                        .and_then(|v| v.as_array())
+                                        .map(|a| a.len())
+                                        .unwrap_or(0),
+                                    sj.get("forecast_confidence")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0),
+                                    sj.get("versions")
+                                        .and_then(|v| v.as_array())
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .filter_map(|v| {
+                                                    v.get("probability").and_then(|p| p.as_f64())
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                    sj.get("tags")
+                                        .and_then(|v| v.as_array())
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                    sj.get("status")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("active")
+                                        .to_string(),
+                                    sj.get("resolved_outcome").and_then(|v| v.as_bool()),
+                                    sj.get("brier_score").and_then(|v| v.as_f64()),
+                                )
+                            } else {
+                                (
+                                    0.5,
+                                    0.0,
+                                    0,
+                                    0,
+                                    0,
+                                    0.0,
+                                    vec![],
+                                    vec![],
+                                    "draft".into(),
+                                    None,
+                                    None,
+                                )
+                            }
+                        } else {
+                            (
+                                0.5,
+                                0.0,
+                                0,
+                                0,
+                                0,
+                                0.0,
+                                vec![],
+                                vec![],
+                                "draft".into(),
+                                None,
+                                None,
+                            )
+                        };
+
+                        // Auto-detect domain from question keywords
+                        let q_lower = question.to_lowercase();
+                        let domain = if q_lower.contains("nba")
+                            || q_lower.contains("lakers")
+                            || q_lower.contains("knicks")
+                            || q_lower.contains("celtics")
+                            || q_lower.contains("basketball")
+                        {
+                            "sports_nba"
+                        } else if q_lower.contains("nfl")
+                            || q_lower.contains("football") && !q_lower.contains("soccer")
+                        {
+                            "sports_nfl"
+                        } else if q_lower.contains("world cup")
+                            || q_lower.contains("euro")
+                            || q_lower.contains("premier league")
+                            || q_lower.contains("soccer")
+                            || q_lower.contains("uefa")
+                        {
+                            "sports_football"
+                        } else if q_lower.contains("stock")
+                            || q_lower.contains("share price")
+                            || q_lower.contains("revenue")
+                            || q_lower.contains("ipo")
+                            || q_lower.contains("nasdaq")
+                            || q_lower.contains("earnings")
+                        {
+                            "finance"
+                        } else if q_lower.contains("fda")
+                            || q_lower.contains("trial")
+                            || q_lower.contains("drug")
+                            || q_lower.contains("biotech")
+                            || q_lower.contains("pharma")
+                        {
+                            "biotech"
+                        } else if q_lower.contains("ai")
+                            || q_lower.contains("technology")
+                            || q_lower.contains("software")
+                            || q_lower.contains("chip")
+                            || q_lower.contains("semiconductor")
+                        {
+                            "technology"
+                        } else if q_lower.contains("election")
+                            || q_lower.contains("president")
+                            || q_lower.contains("congress")
+                            || q_lower.contains("vote")
+                        {
+                            "politics"
+                        } else if q_lower.contains("war")
+                            || q_lower.contains("conflict")
+                            || q_lower.contains("treaty")
+                            || q_lower.contains("nato")
+                        {
+                            "geopolitics"
+                        } else {
+                            "general"
+                        }
+                        .to_string();
 
                         self.local_forecasts.push(LocalForecast {
-                            filename, question, timestamp,
-                            probability, base_rate, version,
-                            driver_count, evidence_count, confidence, version_probs,
+                            filename,
+                            question,
+                            timestamp,
+                            probability,
+                            base_rate,
+                            version,
+                            driver_count,
+                            evidence_count,
+                            agent_count,
+                            confidence,
+                            version_probs,
+                            tags,
+                            status,
+                            domain,
+                            resolved_outcome,
+                            brier_score,
                         });
                     }
                 }
             }
         }
-        self.local_forecasts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        self.local_forecasts
+            .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     }
 
     fn fetch_stats(&mut self, cx: &mut Context<Self>) {
@@ -806,7 +971,10 @@ impl FermiConsole {
         if changed && self.connected {
             match panel {
                 Panel::Dashboard => self.fetch_stats(cx),
-                Panel::Portfolio => { self.fetch_forecasts(cx); self.load_local_forecasts(); }
+                Panel::Portfolio => {
+                    self.fetch_forecasts(cx);
+                    self.load_local_forecasts();
+                }
                 _ => {}
             }
         }
@@ -863,7 +1031,12 @@ impl FermiConsole {
     }
 
     /// Ctrl+S — Save FPL to disk with version snapshot.
-    fn on_import_forecast(&mut self, _: &ImportForecast, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_import_forecast(
+        &mut self,
+        _: &ImportForecast,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         cx.spawn(async move |this, cx| {
             let file = rfd::AsyncFileDialog::new()
                 .add_filter("FPL Forecasts", &["fpl"])
@@ -875,7 +1048,8 @@ impl FermiConsole {
                 this.update(cx, |this, cx| {
                     if this.cockpit.is_none() {
                         let api = this.api.clone();
-                        this.cockpit = Some(cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx)));
+                        this.cockpit =
+                            Some(cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx)));
                     }
                     if let Some(ref cockpit) = this.cockpit {
                         let cockpit = cockpit.clone();
@@ -885,17 +1059,14 @@ impl FermiConsole {
                     }
                     this.active_panel = Panel::Composer;
                     cx.notify();
-                }).ok();
+                })
+                .ok();
             }
-        }).detach();
+        })
+        .detach();
     }
 
-    fn on_save_forecast(
-        &mut self,
-        _: &SaveForecast,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_save_forecast(&mut self, _: &SaveForecast, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ref cockpit) = self.cockpit {
             let cockpit = cockpit.clone();
             cockpit.update(cx, |cockpit, cx| {
@@ -954,11 +1125,6 @@ impl FermiConsole {
                     crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Wiki,
                     crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Edit,
                 };
-
-
-
-
-
             });
             cx.notify();
         }
@@ -1736,35 +1902,47 @@ impl FermiConsole {
                                                 .text_size(px(13.0))
                                                 .text_color(rgb(theme::CYAN))
                                                 .font_weight(FontWeight::SEMIBOLD)
-                                                .child(format!("Local Forecasts ({})", self.local_forecasts.len())),
+                                                .child(format!(
+                                                    "Local Forecasts ({})",
+                                                    self.local_forecasts.len()
+                                                )),
                                         ),
                                 )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .children(self.local_forecasts.iter().map(|forecast| {
+                                .child(div().flex().flex_col().children(
+                                    self.local_forecasts.iter().map(|forecast| {
                                         {
-                                            let path = format!("forecasts/{}.fpl", forecast.filename);
+                                            let path =
+                                                format!("forecasts/{}.fpl", forecast.filename);
                                             div()
-                                                .id(SharedString::from(format!("local-forecast-{}", forecast.filename)))
+                                                .id(SharedString::from(format!(
+                                                    "local-forecast-{}",
+                                                    forecast.filename
+                                                )))
                                                 .cursor_pointer()
-                                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                    // Load forecast and switch to composer
-                                                    if this.cockpit.is_none() {
-                                                        let api = this.api.clone();
-                                                        this.cockpit = Some(cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx)));
-                                                    }
-                                                    if let Some(ref cockpit) = this.cockpit {
-                                                        let cockpit = cockpit.clone();
-                                                        let p = path.clone();
-                                                        cockpit.update(cx, |cockpit, cx| {
-                                                            cockpit.load_forecast(&p, cx);
-                                                        });
-                                                    }
-                                                    this.active_panel = Panel::Composer;
-                                                    cx.notify();
-                                                }))
+                                                .on_click(cx.listener(
+                                                    move |this, _event, _window, cx| {
+                                                        // Load forecast and switch to composer
+                                                        if this.cockpit.is_none() {
+                                                            let api = this.api.clone();
+                                                            this.cockpit = Some(cx.new(|cx| {
+                                                                CockpitState::new(
+                                                                    api,
+                                                                    this.registry.clone(),
+                                                                    cx,
+                                                                )
+                                                            }));
+                                                        }
+                                                        if let Some(ref cockpit) = this.cockpit {
+                                                            let cockpit = cockpit.clone();
+                                                            let p = path.clone();
+                                                            cockpit.update(cx, |cockpit, cx| {
+                                                                cockpit.load_forecast(&p, cx);
+                                                            });
+                                                        }
+                                                        this.active_panel = Panel::Composer;
+                                                        cx.notify();
+                                                    },
+                                                ))
                                                 .flex()
                                                 .items_center()
                                                 .gap(px(12.0))
@@ -1785,16 +1963,28 @@ impl FermiConsole {
                                                                 .text_size(px(16.0))
                                                                 .text_color(rgb(theme::CYAN))
                                                                 .font_weight(FontWeight::BOLD)
-                                                                .child(format!("{:.2}%", forecast.probability * 100.0)),
+                                                                .child(format!(
+                                                                    "{:.2}%",
+                                                                    forecast.probability * 100.0
+                                                                )),
                                                         )
                                                         .when(forecast.base_rate > 0.0, |el| {
-                                                            let div_pp = (forecast.probability - forecast.base_rate) * 100.0;
-                                                            let div_color = if div_pp > 0.0 { theme::GREEN } else { theme::RED };
+                                                            let div_pp = (forecast.probability
+                                                                - forecast.base_rate)
+                                                                * 100.0;
+                                                            let div_color = if div_pp > 0.0 {
+                                                                theme::GREEN
+                                                            } else {
+                                                                theme::RED
+                                                            };
                                                             el.child(
                                                                 div()
                                                                     .text_size(px(9.0))
                                                                     .text_color(rgb(div_color))
-                                                                    .child(format!("vs {:.1}%", forecast.base_rate * 100.0)),
+                                                                    .child(format!(
+                                                                        "vs {:.1}%",
+                                                                        forecast.base_rate * 100.0
+                                                                    )),
                                                             )
                                                         }),
                                                 )
@@ -1818,21 +2008,31 @@ impl FermiConsole {
                                                                 .gap(px(8.0))
                                                                 .text_size(px(10.0))
                                                                 .text_color(theme::fg_faint())
-                                                                .child(format!("v{}", forecast.version))
-                                                                .child(format!("{} drivers", forecast.driver_count))
-                                                                .child(format!("{} evidence", forecast.evidence_count))
+                                                                .child(format!(
+                                                                    "v{}",
+                                                                    forecast.version
+                                                                ))
+                                                                .child(format!(
+                                                                    "{} drivers",
+                                                                    forecast.driver_count
+                                                                ))
+                                                                .child(format!(
+                                                                    "{} evidence",
+                                                                    forecast.evidence_count
+                                                                ))
                                                                 .child(forecast.timestamp.clone()),
                                                         ),
                                                 )
                                                 // Confidence badge
                                                 .when(forecast.confidence > 0.0, |el| {
-                                                    let (label, color) = if forecast.confidence > 0.7 {
-                                                        ("High", theme::GREEN)
-                                                    } else if forecast.confidence > 0.4 {
-                                                        ("Med", theme::GOLD)
-                                                    } else {
-                                                        ("Low", theme::RED)
-                                                    };
+                                                    let (label, color) =
+                                                        if forecast.confidence > 0.7 {
+                                                            ("High", theme::GREEN)
+                                                        } else if forecast.confidence > 0.4 {
+                                                            ("Med", theme::GOLD)
+                                                        } else {
+                                                            ("Low", theme::RED)
+                                                        };
                                                     el.child(
                                                         div()
                                                             .text_size(px(9.0))
@@ -1846,28 +2046,44 @@ impl FermiConsole {
                                                 })
                                                 // Mini index sparkline
                                                 .when(forecast.version_probs.len() > 1, |el| {
-                                                    let history: Vec<crate::charts::IndexPoint> = forecast.version_probs.iter()
-                                                        .enumerate()
-                                                        .map(|(i, &p)| crate::charts::IndexPoint {
-                                                            label: format!("v{}", i + 1),
-                                                            inside_view: p * 100.0,
-                                                            outside_view: forecast.base_rate * 100.0,
-                                                        })
-                                                        .collect();
+                                                    let history: Vec<crate::charts::IndexPoint> =
+                                                        forecast
+                                                            .version_probs
+                                                            .iter()
+                                                            .enumerate()
+                                                            .map(|(i, &p)| {
+                                                                crate::charts::IndexPoint {
+                                                                    label: format!("v{}", i + 1),
+                                                                    inside_view: p * 100.0,
+                                                                    outside_view: forecast
+                                                                        .base_rate
+                                                                        * 100.0,
+                                                                }
+                                                            })
+                                                            .collect();
                                                     let chart_w = 100u32;
                                                     let chart_h = 28u32;
                                                     let rgb_buf = crate::charts::render_index_chart(
-                                                        &history, history.len() - 1, chart_w, chart_h);
-                                                    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                                                        &history,
+                                                        history.len() - 1,
+                                                        chart_w,
+                                                        chart_h,
+                                                    );
+                                                    let render_img =
+                                                        crate::charts::rgb_to_render_image(
+                                                            &rgb_buf, chart_w, chart_h,
+                                                        );
                                                     el.child(
-                                                        gpui::img(gpui::ImageSource::Render(render_img))
-                                                            .w(gpui::px(chart_w as f32))
-                                                            .h(gpui::px(chart_h as f32)),
+                                                        gpui::img(gpui::ImageSource::Render(
+                                                            render_img,
+                                                        ))
+                                                        .w(gpui::px(chart_w as f32))
+                                                        .h(gpui::px(chart_h as f32)),
                                                     )
                                                 })
                                         }
-                                        })),
-                                ),
+                                    }),
+                                )),
                         )
                     })
                     // Empty state
@@ -2074,7 +2290,8 @@ impl FermiConsole {
 
     fn render_agent_fleet_panel(&self) -> impl IntoElement {
         let cards = self.registry.list_cards().unwrap_or_default();
-        let fermi_agents: Vec<_> = cards.iter()
+        let fermi_agents: Vec<_> = cards
+            .iter()
             .filter(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
             .collect();
 
@@ -2113,9 +2330,11 @@ impl FermiConsole {
                     .flex_wrap()
                     .gap(px(12.0))
                     .p(px(16.0))
-                    .children(fermi_agents.iter().map(|card| {
-                        render_local_agent_card(card)
-                    }))
+                    .children(
+                        fermi_agents
+                            .iter()
+                            .map(|card| render_local_agent_card(card)),
+                    )
                     .when(fermi_agents.is_empty(), |el| {
                         el.child(
                             div()
@@ -2687,22 +2906,18 @@ fn render_local_agent_card(card: &AgentCard) -> impl IntoElement {
                 .child(card.metadata.description.clone()),
         )
         .when(!card.capabilities.skills.is_empty(), |el| {
-            el.child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(4.0))
-                    .children(card.capabilities.skills.iter().take(4).map(|s| {
-                        div()
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::CYAN))
-                            .px(px(4.0))
-                            .py(px(1.0))
-                            .rounded(px(2.0))
-                            .bg(theme::bg())
-                            .child(s.clone())
-                    })),
-            )
+            el.child(div().flex().flex_wrap().gap(px(4.0)).children(
+                card.capabilities.skills.iter().take(4).map(|s| {
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::CYAN))
+                        .px(px(4.0))
+                        .py(px(1.0))
+                        .rounded(px(2.0))
+                        .bg(theme::bg())
+                        .child(s.clone())
+                }),
+            ))
         })
         .child(
             div()
