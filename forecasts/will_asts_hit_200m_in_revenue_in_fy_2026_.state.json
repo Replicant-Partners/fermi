@@ -1,7 +1,7 @@
 {
-  "current_version": 18,
-  "predicted_probability": 0.18721353319426315,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately increases the probability to 18.7%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, regulatory_approval_speed. Most influential: market_adoption_rate (24%), technical_performance (23%), regulatory_approval_speed (21%).",
+  "current_version": 19,
+  "predicted_probability": 0.13087787358301517,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 13.1%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, regulatory_approval_speed. Most influential: market_adoption_rate (28%), regulatory_approval_speed (21%), satellite_deployment_pace (21%).",
   "forecast_confidence": 0.48999999999999994,
   "versions": [
     {
@@ -111,14 +111,20 @@
       "timestamp": "2026-03-09 21:54",
       "probability": 0.18721353319426315,
       "change_summary": "18.7% (+5pp), 5 drivers, 50 evidence, 1 agents"
+    },
+    {
+      "version": 19,
+      "timestamp": "2026-03-09 21:55",
+      "probability": 0.13087787358301517,
+      "change_summary": "13.1% (-6pp), 5 drivers, 54 evidence, 1 agents"
     }
   ],
   "sim_results": {
-    "mean": 1.113695866266033,
-    "median": 1.0214917611391026,
-    "p5": 0.4899084046349803,
-    "p95": 2.051760638549324,
-    "std_dev": 0.492109824157189,
+    "mean": 1.3175737289349307,
+    "median": 1.219813894899626,
+    "p5": 0.5896751409773986,
+    "p95": 2.365683396135173,
+    "std_dev": 0.5540889156483286,
     "iterations": 10000
   },
   "base_rate": {
@@ -539,6 +545,38 @@
       "relevance": 0.5,
       "date": "2026-03-09",
       "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1773093293",
+      "source": "Agent: macro_forecaster",
+      "summary": "I don't have access to real-time regulatory databases, but I can provide a structured macroeconomic and regulatory framework analysis based on the satellite-to-cellular sector dynamics:\n\n---\n\n## 1. CURRENT VALUE OF KEY METRIC\n\n**Regulatory Approval Completion Rate (as of Q4 2024):**\n\nFor AST SpaceMobile specifically:\n- **FCC (United States)**: Experimental license granted; commercial license applications in process\n- **Key metric**: ~30-40% of target market regulatory approvals secured for comme",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1773093300",
+      "source": "Agent: macro_forecaster",
+      "summary": "# SATELLITE_DEPLOYMENT_PACE DRIVER RESEARCH\n\n## EXECUTIVE SUMMARY\nAST SpaceMobile (ASTS) is deploying its Block 1 BlueBird satellites to enable space-based cellular broadband. Revenue realization in FY2026 depends critically on launch cadence and operational readiness. Current deployment is **behind initial timelines but accelerating**.\n\n---\n\n## 1. CURRENT VALUE OF KEY METRIC\n\n**Operational Satellites (as of January 2025):**\n- **5 Block 1 BlueBirds operational** (launched September 2024)\n- Targe",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1773093303",
+      "source": "Agent: macro_forecaster",
+      "summary": "I see the specialized macro tools aren't available in this environment. Let me provide the carrier partnership conversion analysis using my knowledge base and the available research framework:\n\n---\n\n## CARRIER_PARTNERSHIP_CONVERSION DRIVER ANALYSIS\n**AST SpaceMobile (ASTS) - FY2026 Revenue Forecast**\n\n### 1. CURRENT VALUE OF KEY METRIC\n\n**Contracted vs MoU Status (as of Q3 2024):**\n\n- **AT&T**: MoU signed March 2023, expanded collaboration announced. **No binding commercial contract disclosed** ",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1773093307",
+      "source": "Agent: macro_forecaster",
+      "summary": "Based on my analysis framework for satellite-to-phone market adoption, here's my research on the **market_adoption_rate** driver for AST SpaceMobile:\n\n---\n\n## 1. CURRENT VALUE OF KEY METRIC\n\n**Key Metric: Commercial Service Subscribers & Revenue per User**\n\n**As of Q4 2024:**\n- **Commercial service status**: NOT YET LAUNCHED (as of December 2024)\n- **BlueBird satellites operational**: 5 satellites launched (Sept 2024 batch)\n- **Contracted partnerships**: ~45 MNO agreements covering ~2.8 billion ",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": []
     }
   ],
   "agents": [
@@ -563,7 +601,7 @@
     {
       "name": "macro_forecaster_regulatory_approval_speed",
       "agent_type": "research",
-      "query": "For the forecast: \"will asts hit 200M in revenue in fy 2026?\"\n\nResearch the 'regulatory_approval_speed' driver.\nCurrent estimate: p5=0.50, p50=0.90, p95=1.20\n\nPROVIDE:\n1. Current value of the key metric for this driver\n2. Historical trend (3-month, 12-month, relevant cycle)\n3. Analyst consensus or market expectations\n4. Comparable precedents with outcomes\n5. Suggested p50 multiplier based on findings\n\nContext: Spectrum licensing and regulatory approvals across multiple countries could delay commercial service. Regulatory hurdles are common in telecom/satellite sectors.\nBe specific — include named sources, dates, dollar figures.",
+      "query": "For the forecast: \"will asts hit 200M in revenue in fy 2026?\"\n\nResearch the 'regulatory_approval_speed' driver.\nCurrent estimate: p5=0.50, p50=1.10, p95=1.40\n\nPROVIDE:\n1. Current value of the key metric for this driver\n2. Historical trend (3-month, 12-month, relevant cycle)\n3. Analyst consensus or market expectations\n4. Comparable precedents with outcomes\n5. Suggested p50 multiplier based on findings\n\nContext: Spectrum licensing and regulatory approvals across multiple countries could delay commercial service. Regulatory hurdles are common in telecom/satellite sectors.\nBe specific — include named sources, dates, dollar figures.",
       "schedule": "Some(Once)",
       "driver_refs": [
         "regulatory_approval_speed"
@@ -572,7 +610,7 @@
     {
       "name": "macro_forecaster_market_adoption_rate",
       "agent_type": "research",
-      "query": "For the forecast: \"will asts hit 200M in revenue in fy 2026?\"\n\nResearch the 'market_adoption_rate' driver.\nCurrent estimate: p5=0.60, p50=1.00, p95=1.60\n\nPROVIDE:\n1. Current value of the key metric for this driver\n2. Historical trend (3-month, 12-month, relevant cycle)\n3. Analyst consensus or market expectations\n4. Comparable precedents with outcomes\n5. Suggested p50 multiplier based on findings\n\nContext: Consumer and enterprise adoption of satellite-to-phone connectivity is unproven at scale. Demand could exceed or fall short of projections.\nBe specific — include named sources, dates, dollar figures.",
+      "query": "For the forecast: \"will asts hit 200M in revenue in fy 2026?\"\n\nResearch the 'market_adoption_rate' driver.\nCurrent estimate: p5=0.60, p50=0.80, p95=1.60\n\nPROVIDE:\n1. Current value of the key metric for this driver\n2. Historical trend (3-month, 12-month, relevant cycle)\n3. Analyst consensus or market expectations\n4. Comparable precedents with outcomes\n5. Suggested p50 multiplier based on findings\n\nContext: Consumer and enterprise adoption of satellite-to-phone connectivity is unproven at scale. Demand could exceed or fall short of projections.\nBe specific — include named sources, dates, dollar figures.",
       "schedule": "Some(Once)",
       "driver_refs": [
         "market_adoption_rate"
@@ -581,7 +619,7 @@
     {
       "name": "macro_forecaster_technical_performance",
       "agent_type": "research",
-      "query": "For the forecast: \"will asts hit 200M in revenue in fy 2026?\"\n\nResearch the 'technical_performance' driver.\nCurrent estimate: p5=0.50, p50=0.95, p95=1.30\n\nPROVIDE:\n1. Current value of the key metric for this driver\n2. Historical trend (3-month, 12-month, relevant cycle)\n3. Analyst consensus or market expectations\n4. Comparable precedents with outcomes\n5. Suggested p50 multiplier based on findings\n\nContext: BlueBird satellites must perform as designed. Technical issues with bandwidth, latency, or coverage would reduce revenue potential significantly.\nBe specific — include named sources, dates, dollar figures.",
+      "query": "For the forecast: \"will asts hit 200M in revenue in fy 2026?\"\n\nResearch the 'technical_performance' driver.\nCurrent estimate: p5=0.50, p50=1.10, p95=1.30\n\nPROVIDE:\n1. Current value of the key metric for this driver\n2. Historical trend (3-month, 12-month, relevant cycle)\n3. Analyst consensus or market expectations\n4. Comparable precedents with outcomes\n5. Suggested p50 multiplier based on findings\n\nContext: BlueBird satellites must perform as designed. Technical issues with bandwidth, latency, or coverage would reduce revenue potential significantly.\nBe specific — include named sources, dates, dollar figures.",
       "schedule": "Some(Once)",
       "driver_refs": [
         "technical_performance"

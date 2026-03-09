@@ -1,20 +1,20 @@
 # will asts hit 200M in revenue in fy 2026?
 
-**Probability:** 18.7% · **Version:** v18 · **Updated:** 2026-03-09 21:54 UTC
+**Probability:** 13.1% · **Version:** v19 · **Updated:** 2026-03-09 21:55 UTC
 
-**Confidence:** Medium (49%) · **Drivers:** 5 · **Evidence:** 50 · **Agents:** 7
+**Confidence:** Medium (49%) · **Drivers:** 5 · **Evidence:** 54 · **Agents:** 7
 
 ---
 
 ## Inside View
 
-**Probability: 18.7%**
+**Probability: 13.1%**
 
-Starting from a 15.0% base rate, our model moderately increases the probability to 18.7%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, regulatory_approval_speed. Most influential: market_adoption_rate (24%), technical_performance (23%), regulatory_approval_speed (21%).
+Starting from a 15.0% base rate, our model moderately decreases the probability to 13.1%. The key factors are: satellite_deployment_pace, carrier_partnership_conversion, regulatory_approval_speed. Most influential: market_adoption_rate (28%), regulatory_approval_speed (21%), satellite_deployment_pace (21%).
 
 **Forecast Confidence:** Medium (49%)
 
-**Divergence from base rate:** 4pp above (18.7% vs 15.0%)
+**Divergence from base rate:** 2pp below (13.1% vs 15.0%)
 
 ---
 
@@ -55,7 +55,7 @@ PROVIDE:
 Context: AST SpaceMobile needs to deploy Block 1 satellites on schedule. Delays in launches or technical issues would significantly impact revenue timeline.
 Be specific — include named sources, dates, dollar figures._
 
-### Evidence (47)
+### Evidence (51)
 
 #### Agent: macro_forecaster — relevance 50% · 2026-03-09
 
@@ -742,6 +742,65 @@ As the **Macro Forecaster**, my domain is:
 - Central bank policy, fiscal policy, regulatory regimes
 - Cross-country economic comparisons
 - M
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I don't have access to real-time regulatory databases, but I can provide a structured macroeconomic and regulatory framework analysis based on the satellite-to-cellular sector dynamics:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Regulatory Approval Completion Rate (as of Q4 2024):**
+
+For AST SpaceMobile specifically:
+- **FCC (United States)**: Experimental license granted; commercial license applications in process
+- **Key metric**: ~30-40% of target market regulatory approvals secured for comme
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+# SATELLITE_DEPLOYMENT_PACE DRIVER RESEARCH
+
+## EXECUTIVE SUMMARY
+AST SpaceMobile (ASTS) is deploying its Block 1 BlueBird satellites to enable space-based cellular broadband. Revenue realization in FY2026 depends critically on launch cadence and operational readiness. Current deployment is **behind initial timelines but accelerating**.
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Operational Satellites (as of January 2025):**
+- **5 Block 1 BlueBirds operational** (launched September 2024)
+- Targe
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I see the specialized macro tools aren't available in this environment. Let me provide the carrier partnership conversion analysis using my knowledge base and the available research framework:
+
+---
+
+## CARRIER_PARTNERSHIP_CONVERSION DRIVER ANALYSIS
+**AST SpaceMobile (ASTS) - FY2026 Revenue Forecast**
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Contracted vs MoU Status (as of Q3 2024):**
+
+- **AT&T**: MoU signed March 2023, expanded collaboration announced. **No binding commercial contract disclosed** 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for satellite-to-phone market adoption, here's my research on the **market_adoption_rate** driver for AST SpaceMobile:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers & Revenue per User**
+
+**As of Q4 2024:**
+- **Commercial service status**: NOT YET LAUNCHED (as of December 2024)
+- **BlueBird satellites operational**: 5 satellites launched (Sept 2024 batch)
+- **Contracted partnerships**: ~45 MNO agreements covering ~2.8 billion 
 
 ### Related Evidence
 
@@ -871,7 +930,7 @@ PROVIDE:
 Context: Converting MoUs with AT&T, Verizon, Vodafone into paying contracts is critical. Better-than-expected terms or additional partnerships boost revenue potential.
 Be specific — include named sources, dates, dollar figures._
 
-### Evidence (47)
+### Evidence (51)
 
 #### Agent: macro_forecaster — relevance 50% · 2026-03-09
 
@@ -1558,6 +1617,65 @@ As the **Macro Forecaster**, my domain is:
 - Central bank policy, fiscal policy, regulatory regimes
 - Cross-country economic comparisons
 - M
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I don't have access to real-time regulatory databases, but I can provide a structured macroeconomic and regulatory framework analysis based on the satellite-to-cellular sector dynamics:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Regulatory Approval Completion Rate (as of Q4 2024):**
+
+For AST SpaceMobile specifically:
+- **FCC (United States)**: Experimental license granted; commercial license applications in process
+- **Key metric**: ~30-40% of target market regulatory approvals secured for comme
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+# SATELLITE_DEPLOYMENT_PACE DRIVER RESEARCH
+
+## EXECUTIVE SUMMARY
+AST SpaceMobile (ASTS) is deploying its Block 1 BlueBird satellites to enable space-based cellular broadband. Revenue realization in FY2026 depends critically on launch cadence and operational readiness. Current deployment is **behind initial timelines but accelerating**.
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Operational Satellites (as of January 2025):**
+- **5 Block 1 BlueBirds operational** (launched September 2024)
+- Targe
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I see the specialized macro tools aren't available in this environment. Let me provide the carrier partnership conversion analysis using my knowledge base and the available research framework:
+
+---
+
+## CARRIER_PARTNERSHIP_CONVERSION DRIVER ANALYSIS
+**AST SpaceMobile (ASTS) - FY2026 Revenue Forecast**
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Contracted vs MoU Status (as of Q3 2024):**
+
+- **AT&T**: MoU signed March 2023, expanded collaboration announced. **No binding commercial contract disclosed** 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for satellite-to-phone market adoption, here's my research on the **market_adoption_rate** driver for AST SpaceMobile:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers & Revenue per User**
+
+**As of Q4 2024:**
+- **Commercial service status**: NOT YET LAUNCHED (as of December 2024)
+- **BlueBird satellites operational**: 5 satellites launched (Sept 2024 batch)
+- **Contracted partnerships**: ~45 MNO agreements covering ~2.8 billion 
 
 ### Related Evidence
 
@@ -1675,7 +1793,7 @@ As the **Macro Forecaster**, my domain is:
   Query: _For the forecast: "will asts hit 200M in revenue in fy 2026?"
 
 Research the 'regulatory_approval_speed' driver.
-Current estimate: p5=0.50, p50=0.90, p95=1.20
+Current estimate: p5=0.50, p50=1.10, p95=1.40
 
 PROVIDE:
 1. Current value of the key metric for this driver
@@ -1687,7 +1805,7 @@ PROVIDE:
 Context: Spectrum licensing and regulatory approvals across multiple countries could delay commercial service. Regulatory hurdles are common in telecom/satellite sectors.
 Be specific — include named sources, dates, dollar figures._
 
-### Evidence (47)
+### Evidence (51)
 
 #### Agent: macro_forecaster — relevance 50% · 2026-03-09
 
@@ -2375,6 +2493,65 @@ As the **Macro Forecaster**, my domain is:
 - Cross-country economic comparisons
 - M
 
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I don't have access to real-time regulatory databases, but I can provide a structured macroeconomic and regulatory framework analysis based on the satellite-to-cellular sector dynamics:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Regulatory Approval Completion Rate (as of Q4 2024):**
+
+For AST SpaceMobile specifically:
+- **FCC (United States)**: Experimental license granted; commercial license applications in process
+- **Key metric**: ~30-40% of target market regulatory approvals secured for comme
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+# SATELLITE_DEPLOYMENT_PACE DRIVER RESEARCH
+
+## EXECUTIVE SUMMARY
+AST SpaceMobile (ASTS) is deploying its Block 1 BlueBird satellites to enable space-based cellular broadband. Revenue realization in FY2026 depends critically on launch cadence and operational readiness. Current deployment is **behind initial timelines but accelerating**.
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Operational Satellites (as of January 2025):**
+- **5 Block 1 BlueBirds operational** (launched September 2024)
+- Targe
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I see the specialized macro tools aren't available in this environment. Let me provide the carrier partnership conversion analysis using my knowledge base and the available research framework:
+
+---
+
+## CARRIER_PARTNERSHIP_CONVERSION DRIVER ANALYSIS
+**AST SpaceMobile (ASTS) - FY2026 Revenue Forecast**
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Contracted vs MoU Status (as of Q3 2024):**
+
+- **AT&T**: MoU signed March 2023, expanded collaboration announced. **No binding commercial contract disclosed** 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for satellite-to-phone market adoption, here's my research on the **market_adoption_rate** driver for AST SpaceMobile:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers & Revenue per User**
+
+**As of Q4 2024:**
+- **Commercial service status**: NOT YET LAUNCHED (as of December 2024)
+- **BlueBird satellites operational**: 5 satellites launched (Sept 2024 batch)
+- **Contracted partnerships**: ~45 MNO agreements covering ~2.8 billion 
+
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
@@ -2481,7 +2658,7 @@ As the **Macro Forecaster**, my domain is:
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.60 | 0.80 | 1.60 | multiplier |
+| 0.60 | 1.20 | 1.60 | multiplier |
 
 > Consumer and enterprise adoption of satellite-to-phone connectivity is unproven at scale. Demand could exceed or fall short of projections.
 
@@ -2491,7 +2668,7 @@ As the **Macro Forecaster**, my domain is:
   Query: _For the forecast: "will asts hit 200M in revenue in fy 2026?"
 
 Research the 'market_adoption_rate' driver.
-Current estimate: p5=0.60, p50=1.00, p95=1.60
+Current estimate: p5=0.60, p50=0.80, p95=1.60
 
 PROVIDE:
 1. Current value of the key metric for this driver
@@ -2505,7 +2682,7 @@ Be specific — include named sources, dates, dollar figures._
 - **market_research** (schedule: once)  
   Query: _Research evidence for the 'market_adoption_rate' driver in the forecast: "will asts hit 200M in revenue in fy 2026?"_
 
-### Evidence (48)
+### Evidence (52)
 
 #### Agent: macro_forecaster — relevance 50% · 2026-03-09
 
@@ -3205,6 +3382,65 @@ As the **Macro Forecaster**, my domain is:
 - Cross-country economic comparisons
 - M
 
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I don't have access to real-time regulatory databases, but I can provide a structured macroeconomic and regulatory framework analysis based on the satellite-to-cellular sector dynamics:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Regulatory Approval Completion Rate (as of Q4 2024):**
+
+For AST SpaceMobile specifically:
+- **FCC (United States)**: Experimental license granted; commercial license applications in process
+- **Key metric**: ~30-40% of target market regulatory approvals secured for comme
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+# SATELLITE_DEPLOYMENT_PACE DRIVER RESEARCH
+
+## EXECUTIVE SUMMARY
+AST SpaceMobile (ASTS) is deploying its Block 1 BlueBird satellites to enable space-based cellular broadband. Revenue realization in FY2026 depends critically on launch cadence and operational readiness. Current deployment is **behind initial timelines but accelerating**.
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Operational Satellites (as of January 2025):**
+- **5 Block 1 BlueBirds operational** (launched September 2024)
+- Targe
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I see the specialized macro tools aren't available in this environment. Let me provide the carrier partnership conversion analysis using my knowledge base and the available research framework:
+
+---
+
+## CARRIER_PARTNERSHIP_CONVERSION DRIVER ANALYSIS
+**AST SpaceMobile (ASTS) - FY2026 Revenue Forecast**
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Contracted vs MoU Status (as of Q3 2024):**
+
+- **AT&T**: MoU signed March 2023, expanded collaboration announced. **No binding commercial contract disclosed** 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for satellite-to-phone market adoption, here's my research on the **market_adoption_rate** driver for AST SpaceMobile:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers & Revenue per User**
+
+**As of Q4 2024:**
+- **Commercial service status**: NOT YET LAUNCHED (as of December 2024)
+- **BlueBird satellites operational**: 5 satellites launched (Sept 2024 batch)
+- **Contracted partnerships**: ~45 MNO agreements covering ~2.8 billion 
+
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
@@ -3321,7 +3557,7 @@ As the **Macro Forecaster**, my domain is:
   Query: _For the forecast: "will asts hit 200M in revenue in fy 2026?"
 
 Research the 'technical_performance' driver.
-Current estimate: p5=0.50, p50=0.95, p95=1.30
+Current estimate: p5=0.50, p50=1.10, p95=1.30
 
 PROVIDE:
 1. Current value of the key metric for this driver
@@ -3340,7 +3576,7 @@ Context: BlueBird satellites must perform as designed. Technical issues with ban
 
 Provide: sentiment classification (bearish→bullish), key narrative themes, trend direction, and how sentiment should adjust the probability._
 
-### Evidence (48)
+### Evidence (52)
 
 #### Agent: sentiment_analyzer — relevance 50% · 2026-03-09
 
@@ -4044,6 +4280,65 @@ As the **Macro Forecaster**, my domain is:
 - Cross-country economic comparisons
 - M
 
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I don't have access to real-time regulatory databases, but I can provide a structured macroeconomic and regulatory framework analysis based on the satellite-to-cellular sector dynamics:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Regulatory Approval Completion Rate (as of Q4 2024):**
+
+For AST SpaceMobile specifically:
+- **FCC (United States)**: Experimental license granted; commercial license applications in process
+- **Key metric**: ~30-40% of target market regulatory approvals secured for comme
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+# SATELLITE_DEPLOYMENT_PACE DRIVER RESEARCH
+
+## EXECUTIVE SUMMARY
+AST SpaceMobile (ASTS) is deploying its Block 1 BlueBird satellites to enable space-based cellular broadband. Revenue realization in FY2026 depends critically on launch cadence and operational readiness. Current deployment is **behind initial timelines but accelerating**.
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Operational Satellites (as of January 2025):**
+- **5 Block 1 BlueBirds operational** (launched September 2024)
+- Targe
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+I see the specialized macro tools aren't available in this environment. Let me provide the carrier partnership conversion analysis using my knowledge base and the available research framework:
+
+---
+
+## CARRIER_PARTNERSHIP_CONVERSION DRIVER ANALYSIS
+**AST SpaceMobile (ASTS) - FY2026 Revenue Forecast**
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Contracted vs MoU Status (as of Q3 2024):**
+
+- **AT&T**: MoU signed March 2023, expanded collaboration announced. **No binding commercial contract disclosed** 
+
+#### Agent: macro_forecaster — relevance 50% · 2026-03-09
+
+Based on my analysis framework for satellite-to-phone market adoption, here's my research on the **market_adoption_rate** driver for AST SpaceMobile:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers & Revenue per User**
+
+**As of Q4 2024:**
+- **Commercial service status**: NOT YET LAUNCHED (as of December 2024)
+- **BlueBird satellites operational**: 5 satellites launched (Sept 2024 batch)
+- **Contracted partnerships**: ~45 MNO agreements covering ~2.8 billion 
+
 ### Related Evidence
 
 - **Agent: fermi (Claude API)**: ```json
@@ -4315,7 +4610,7 @@ Be specific — include named sources, dates, dollar figures. |
 | macro_forecaster | regulatory_approval_speed | For the forecast: "will asts hit 200M in revenue in fy 2026?"
 
 Research the 'regulatory_approval_speed' driver.
-Current estimate: p5=0.50, p50=0.90, p95=1.20
+Current estimate: p5=0.50, p50=1.10, p95=1.40
 
 PROVIDE:
 1. Current value of the key metric for this driver
@@ -4329,7 +4624,7 @@ Be specific — include named sources, dates, dollar figures. |
 | macro_forecaster | market_adoption_rate | For the forecast: "will asts hit 200M in revenue in fy 2026?"
 
 Research the 'market_adoption_rate' driver.
-Current estimate: p5=0.60, p50=1.00, p95=1.60
+Current estimate: p5=0.60, p50=0.80, p95=1.60
 
 PROVIDE:
 1. Current value of the key metric for this driver
@@ -4343,7 +4638,7 @@ Be specific — include named sources, dates, dollar figures. |
 | macro_forecaster | technical_performance | For the forecast: "will asts hit 200M in revenue in fy 2026?"
 
 Research the 'technical_performance' driver.
-Current estimate: p5=0.50, p50=0.95, p95=1.30
+Current estimate: p5=0.50, p50=1.10, p95=1.30
 
 PROVIDE:
 1. Current value of the key metric for this driver
@@ -4365,4 +4660,4 @@ Provide: sentiment classification (bearish→bullish), key narrative themes, tre
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v18 · 2026-03-09 21:54 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v19 · 2026-03-09 21:55 UTC_

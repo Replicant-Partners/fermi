@@ -19,7 +19,7 @@ driver regulatory_approval_speed continuous {
 }
 
 driver market_adoption_rate continuous {
-    distribution: triangular(0.6, 0.8, 1.6)
+    distribution: triangular(0.6, 1.2, 1.6)
     unit: "multiplier"
     rationale: "Consumer and enterprise adoption of satellite-to-phone connectivity is unproven at scale. Demand could exceed or fall short of projections."
 }
@@ -990,6 +990,77 @@ As the **Macro Forecaster**, my domain is:
 - Central bank policy, fiscal policy, regulatory regimes
 - Cross-country economic comparisons
 - M"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093293 {
+    source: "Agent: macro_forecaster"
+    summary: "I don't have access to real-time regulatory databases, but I can provide a structured macroeconomic and regulatory framework analysis based on the satellite-to-cellular sector dynamics:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Regulatory Approval Completion Rate (as of Q4 2024):**
+
+For AST SpaceMobile specifically:
+- **FCC (United States)**: Experimental license granted; commercial license applications in process
+- **Key metric**: ~30-40% of target market regulatory approvals secured for comme"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093300 {
+    source: "Agent: macro_forecaster"
+    summary: "# SATELLITE_DEPLOYMENT_PACE DRIVER RESEARCH
+
+## EXECUTIVE SUMMARY
+AST SpaceMobile (ASTS) is deploying its Block 1 BlueBird satellites to enable space-based cellular broadband. Revenue realization in FY2026 depends critically on launch cadence and operational readiness. Current deployment is **behind initial timelines but accelerating**.
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Operational Satellites (as of January 2025):**
+- **5 Block 1 BlueBirds operational** (launched September 2024)
+- Targe"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093303 {
+    source: "Agent: macro_forecaster"
+    summary: "I see the specialized macro tools aren't available in this environment. Let me provide the carrier partnership conversion analysis using my knowledge base and the available research framework:
+
+---
+
+## CARRIER_PARTNERSHIP_CONVERSION DRIVER ANALYSIS
+**AST SpaceMobile (ASTS) - FY2026 Revenue Forecast**
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Contracted vs MoU Status (as of Q3 2024):**
+
+- **AT&T**: MoU signed March 2023, expanded collaboration announced. **No binding commercial contract disclosed** "
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence macro_forecaster_evidence_1773093307 {
+    source: "Agent: macro_forecaster"
+    summary: "Based on my analysis framework for satellite-to-phone market adoption, here's my research on the **market_adoption_rate** driver for AST SpaceMobile:
+
+---
+
+## 1. CURRENT VALUE OF KEY METRIC
+
+**Key Metric: Commercial Service Subscribers & Revenue per User**
+
+**As of Q4 2024:**
+- **Commercial service status**: NOT YET LAUNCHED (as of December 2024)
+- **BlueBird satellites operational**: 5 satellites launched (Sept 2024 batch)
+- **Contracted partnerships**: ~45 MNO agreements covering ~2.8 billion "
     relevance: 0.5p
     date: 2026-03-09
 }
