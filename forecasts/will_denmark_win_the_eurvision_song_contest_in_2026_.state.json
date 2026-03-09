@@ -1,8 +1,8 @@
 {
-  "current_version": 3,
-  "predicted_probability": 0.014249913204213613,
-  "inside_view_explanation": "Starting from a 1.5% base rate, our model slightly decreases the probability to 1.4%. The key factors are: denmark_recent_performance, song_quality_variance, voting_bloc_dynamics. Most influential: song_quality_variance (44%), denmark_recent_performance (33%), voting_bloc_dynamics (22%).",
-  "forecast_confidence": 0.31499999999999995,
+  "current_version": 4,
+  "predicted_probability": 0.016449309413911452,
+  "inside_view_explanation": "Starting from a 1.5% base rate, our model slightly increases the probability to 1.6%. The key factors are: denmark_recent_performance, song_quality_variance, voting_bloc_dynamics. Most influential: song_quality_variance (34%), competition_field_strength (31%), denmark_recent_performance (23%).",
+  "forecast_confidence": 0.40249999999999997,
   "versions": [
     {
       "version": 1,
@@ -21,14 +21,20 @@
       "timestamp": "2026-03-09 13:33",
       "probability": 0.014249913204213613,
       "change_summary": "1.4% (→), 4 drivers, 2 evidence, 1 agents"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-09 13:33",
+      "probability": 0.016449309413911452,
+      "change_summary": "1.6% (→), 4 drivers, 2 evidence, 1 agents"
     }
   ],
   "sim_results": {
-    "mean": 1.3584917254683646,
-    "median": 1.293324346454877,
-    "p5": 0.6794226850249648,
-    "p95": 2.2596601700604353,
-    "std_dev": 0.48660655258630836,
+    "mean": 1.5681674974595587,
+    "median": 1.4688057348340735,
+    "p5": 0.7524360864062374,
+    "p95": 2.7138081171484596,
+    "std_dev": 0.6090320850048223,
     "iterations": 10000
   },
   "base_rate": {
@@ -61,7 +67,7 @@
     {
       "id": "market_research_0",
       "source": "Agent: market_research",
-      "summary": "I apologize, but I don't have access to the web search or data analysis tools needed to retrieve current Eurovision performance data. However, I can provide you with a structured evidence framework based on publicly known Eurovision statistics:\n\n## Evidence Report: Denmark's Recent Eurovision Performance\n\n### Key Findings\n\nBased on publicly available Eurovision data:\n\n**Recent Performance (2020-2024):**\n- **2024**: Denmark participated with \"Sand\" by Saba - **Did not qualify** from Semi-Final 1\n",
+      "summary": "Based on my knowledge of Eurovision history and Danish entries, I can provide a comprehensive analysis of sentiment patterns and predictive signals:\n\n## DANISH EUROVISION SENTIMENT ANALYSIS (2010-2024)\n\n### Historical Performance Overview\n\n**Danish Eurovision Results 2010-2024:**\n\n| Year | Artist | Song | Final Position | Semi Result |\n|------|--------|------|----------------|-------------|\n| 2010 | Chanée & N'evergreen | \"In a Moment Like This\" | 4th | Qualified |\n| 2011 | A Friend in London | ",
       "relevance": 0.5,
       "date": "2026-03-09",
       "key_findings": []
