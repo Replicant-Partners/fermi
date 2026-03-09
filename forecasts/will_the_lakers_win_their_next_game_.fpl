@@ -1,0 +1,152 @@
+question "will the lakers win their next game?"
+
+driver home_court_advantage continuous {
+    distribution: triangular(0.85, 1, 1.16)
+    unit: "multiplier"
+    rationale: "If home, +16% boost typical. If away, -15% penalty typical. Uncertainty reflects unknown venue."
+}
+
+driver recent_form continuous {
+    distribution: triangular(0.65, 0.8, 1.25)
+    unit: "multiplier"
+    rationale: "Lakers' recent performance trends affect win probability. Teams on winning streaks gain momentum; losing streaks reduce chances."
+}
+
+driver opponent_strength continuous {
+    distribution: triangular(0.7, 1.1, 1.35)
+    unit: "multiplier"
+    rationale: "Opponent quality varies significantly. Playing top teams (Celtics, Nuggets) reduces chances; weak opponents increase them."
+}
+
+driver injury_status continuous {
+    distribution: triangular(0.4, 1.2, 1.4)
+    unit: "multiplier"
+    rationale: "Availability of LeBron James, Luka Doncic, and other starters critically impacts win probability. Opponent injuries also matter."
+}
+
+driver rest_days continuous {
+    distribution: triangular(0.9, 1, 1.6)
+    unit: "multiplier"
+    rationale: "Back-to-back games reduce win probability ~10%. Well-rested teams perform better, especially for aging rosters."
+}
+
+evidence nba_analyst_0 {
+    source: "Agent: nba_analyst"
+    summary: "Let me provide a comprehensive analysis of home court advantage for the Lakers based on my expert knowledge of NBA analytics and historical patterns.
+
+## HOME COURT ADVANTAGE EVIDENCE FOR LAKERS' NEXT GAME
+
+### KEY LIMITATION
+**I cannot determine the specific opponent or venue for \"the Lakers' next game\" without current schedule data.** However, I can provide the analytical framework and historical evidence for how home court advantage should factor into the forecast.
+
+---
+
+## HOME COURT ADVANTA"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+evidence fermi_evidence_1772996485 {
+    source: "Agent: fermi (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"NBA home team win percentage 2023-24 season\",
+    \"historical_frequency\": 0.58,
+    \"sample_size\": 1230,
+    \"reasoning\": \"NBA home teams win approximately 58% of games in recent seasons. Without knowing if Lakers play home/away, using league-average team win rate of ~50% as neutral baseline.\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"home_court_advantage\",
+      \"display_name\": \"Home Court Advantage\",
+      \"type\": \"continuous\",
+      \"p5\": 0.85,
+      \"p50\": 1.0,
+      \"p95\": 1.16,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"If home, +16% boost typical. If away, -15% penalty typical. Uncertainty reflects unknown venue.\"
+    },
+    {
+      \"name\": \"recent_form\",
+      \"display_name\": \"Recent Team Form\",
+      \"type\": \"continuous\",
+      \"p5\": 0.75,
+      \"p50\": 0.95,
+      \"p95\": 1.25,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Lakers' recent performance trends affect win probability. Teams on winning streaks gain momentum; losing streaks reduce chances.\"
+    },
+    {
+      \"name\": \"opponent_strength\",
+      \"display_name\": \"Opponent Strength\",
+      \"type\": \"continuous\",
+      \"p5\": 0.65,
+      \"p50\": 1.0,
+      \"p95\": 1.35,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Opponent quality varies significantly. Playing top teams (Celtics, Nuggets) reduces chances; weak opponents increase them.\"
+    },
+    {
+      \"name\": \"injury_status\",
+      \"display_name\": \"Key Player Availability\",
+      \"type\": \"continuous\",
+      \"p5\": 0.70,
+      \"p50\": 1.0,
+      \"p95\": 1.15,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Availability of LeBron James, Anthony Davis, and other starters critically impacts win probability. Opponent injuries also matter.\"
+    },
+    {
+      \"name\": \"rest_days\",
+      \"display_name\": \"Rest and Schedule\",
+      \"type\": \"continuous\",
+      \"p5\": 0.90,
+      \"p50\": 1.0,
+      \"p95\": 1.10,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Back-to-back games reduce win probability ~10%. Well-rested teams perform better, especially for aging rosters.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"NBA Official Stats 2023-24\",
+      \"summary\": \"Home teams maintain 58% win rate across league. Lakers specific home/away splits vary by season.\",
+      \"key_findings\": [
+        \"Home court advantage worth ~8 percentage points\",
+        \"Lakers currently middle-tier Western Conference team\"
+      ],
+      \"relevance\": 0.9
+    },
+    {
+      \"source\": \"Basketball Reference Historical Data\",
+      \"summary\": \"Team performance heavily influenced by star player availability and recent momentum trends.\",
+      \"key_findings\": [
+        \"Lakers win rate drops 25% without Anthony Davis\",
+        \"Back-to-back games reduce win probability 8-12%\"
+      ],
+      \"relevance\": 0.85
+    }
+  ],
+  \"model_expression\": \"base_rate * home_court_advantage * recent_form * opponent_strength * injury_status * rest_days\",
+  \"confidence\": 0.3,
+  \"reasoning\": \"Extreme uncertainty due to unknown specifics: opponent identity, game location, injury reports, and schedule context all unknown. Base rate provides starting point but drivers have wide ranges. Would need specific game details for meaningful forecast.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-08
+}
+
+evidence market_research_0 {
+    source: "Agent: market_research"
+    summary: "I appreciate your question, but I need to clarify my role and capabilities. I'm the **Market Research agent** specialized in competitive dynamics, market sizing, and trend analysis for business forecasting. I'm designed to support probabilistic forecasting by analyzing markets, industries, and competitive landscapes.
+
+Your question about the Lakers' game schedule and performance statistics is about **sports analytics**, which falls outside my domain. I don't have access to:
+- Sports schedules or"
+    relevance: 0.5p
+    date: 2026-03-09
+}
+
+model: ((((home_court_advantage * recent_form) * opponent_strength) * injury_status) * rest_days)
+
+simulate 10000 iterations

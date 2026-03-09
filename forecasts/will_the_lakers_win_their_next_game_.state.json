@@ -1,0 +1,223 @@
+{
+  "current_version": 21,
+  "predicted_probability": 0.5403240112777379,
+  "inside_view_explanation": "Starting from a 58.0% base rate, our model slightly decreases the probability to 54.0%. The key factors are: home_court_advantage, recent_form, opponent_strength. Most influential: injury_status (41%), opponent_strength (17%), recent_form (17%).",
+  "forecast_confidence": 0.14,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-08 17:17",
+      "probability": 0.58,
+      "change_summary": "Initial forecast"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-08 17:17",
+      "probability": 0.58,
+      "change_summary": "v2 update"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-08 17:31",
+      "probability": 0.58,
+      "change_summary": "v3 update"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-08 17:32",
+      "probability": 0.5,
+      "change_summary": "v4 update"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-08 17:32",
+      "probability": 0.5001911874679101,
+      "change_summary": "v5 update"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-08 19:01",
+      "probability": 0.58,
+      "change_summary": "v6 update"
+    },
+    {
+      "version": 7,
+      "timestamp": "2026-03-08 19:02",
+      "probability": 0.666578611070427,
+      "change_summary": "v7 update"
+    },
+    {
+      "version": 8,
+      "timestamp": "2026-03-08 19:02",
+      "probability": 0.641228345581714,
+      "change_summary": "v8 update"
+    },
+    {
+      "version": 9,
+      "timestamp": "2026-03-08 19:02",
+      "probability": 0.6148055051464537,
+      "change_summary": "v9 update"
+    },
+    {
+      "version": 10,
+      "timestamp": "2026-03-08 19:02",
+      "probability": 0.5712942587330374,
+      "change_summary": "v10 update"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-08 19:03",
+      "probability": 0.5517233539868334,
+      "change_summary": "v11 update"
+    },
+    {
+      "version": 12,
+      "timestamp": "2026-03-08 19:08",
+      "probability": 0.5640757086488549,
+      "change_summary": "v12 update"
+    },
+    {
+      "version": 13,
+      "timestamp": "2026-03-08 19:08",
+      "probability": 0.5528542589054753,
+      "change_summary": "v13 update"
+    },
+    {
+      "version": 14,
+      "timestamp": "2026-03-08 19:09",
+      "probability": 0.49564929438178135,
+      "change_summary": "v14 update"
+    },
+    {
+      "version": 15,
+      "timestamp": "2026-03-08 19:09",
+      "probability": 0.4788148894615129,
+      "change_summary": "v15 update"
+    },
+    {
+      "version": 16,
+      "timestamp": "2026-03-08 19:09",
+      "probability": 0.5432463546303177,
+      "change_summary": "v16 update"
+    },
+    {
+      "version": 17,
+      "timestamp": "2026-03-08 19:09",
+      "probability": 0.5738860518377847,
+      "change_summary": "v17 update"
+    },
+    {
+      "version": 18,
+      "timestamp": "2026-03-08 19:09",
+      "probability": 0.5074510605757195,
+      "change_summary": "v18 update"
+    },
+    {
+      "version": 19,
+      "timestamp": "2026-03-08 19:09",
+      "probability": 0.5768406142840113,
+      "change_summary": "v19 update"
+    },
+    {
+      "version": 20,
+      "timestamp": "2026-03-08 19:10",
+      "probability": 0.5403240112777379,
+      "change_summary": "v20 update"
+    },
+    {
+      "version": 21,
+      "timestamp": "2026-03-09 14:07",
+      "probability": 0.5403240112777379,
+      "change_summary": "54.0% (→), 5 drivers, 3 evidence, 1 agents"
+    }
+  ],
+  "sim_results": {
+    "mean": 1.1682177761073849,
+    "median": 1.1324741196579384,
+    "p5": 0.6124758599432667,
+    "p95": 1.8433860584619512,
+    "std_dev": 0.378210123061997,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "NBA home team win percentage 2023-24 season",
+    "historical_frequency": 0.58,
+    "sample_size": 1230,
+    "source": "macro_forecaster",
+    "reasoning": "NBA home teams win approximately 58% of games in recent seasons. Without knowing if Lakers play home/away, using league-average team win rate of ~50% as neutral baseline."
+  },
+  "evidence": [
+    {
+      "id": "nba_analyst_0",
+      "source": "Agent: nba_analyst",
+      "summary": "Let me provide a comprehensive analysis of home court advantage for the Lakers based on my expert knowledge of NBA analytics and historical patterns.\n\n## HOME COURT ADVANTAGE EVIDENCE FOR LAKERS' NEXT GAME\n\n### KEY LIMITATION\n**I cannot determine the specific opponent or venue for \"the Lakers' next game\" without current schedule data.** However, I can provide the analytical framework and historical evidence for how home court advantage should factor into the forecast.\n\n---\n\n## HOME COURT ADVANTA",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": []
+    },
+    {
+      "id": "fermi_evidence_1772996485",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"NBA home team win percentage 2023-24 season\",\n    \"historical_frequency\": 0.58,\n    \"sample_size\": 1230,\n    \"reasoning\": \"NBA home teams win approximately 58% of games in recent seasons. Without knowing if Lakers play home/away, using league-average team win rate of ~50% as neutral baseline.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"home_court_advantage\",\n      \"display_name\": \"Home Court Advantage\",\n      \"type\": \"continuous\",\n      \"p5\": 0.85,\n      \"p50\": 1.0,\n      \"p95\": 1.16,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"If home, +16% boost typical. If away, -15% penalty typical. Uncertainty reflects unknown venue.\"\n    },\n    {\n      \"name\": \"recent_form\",\n      \"display_name\": \"Recent Team Form\",\n      \"type\": \"continuous\",\n      \"p5\": 0.75,\n      \"p50\": 0.95,\n      \"p95\": 1.25,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Lakers' recent performance trends affect win probability. Teams on winning streaks gain momentum; losing streaks reduce chances.\"\n    },\n    {\n      \"name\": \"opponent_strength\",\n      \"display_name\": \"Opponent Strength\",\n      \"type\": \"continuous\",\n      \"p5\": 0.65,\n      \"p50\": 1.0,\n      \"p95\": 1.35,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Opponent quality varies significantly. Playing top teams (Celtics, Nuggets) reduces chances; weak opponents increase them.\"\n    },\n    {\n      \"name\": \"injury_status\",\n      \"display_name\": \"Key Player Availability\",\n      \"type\": \"continuous\",\n      \"p5\": 0.70,\n      \"p50\": 1.0,\n      \"p95\": 1.15,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Availability of LeBron James, Anthony Davis, and other starters critically impacts win probability. Opponent injuries also matter.\"\n    },\n    {\n      \"name\": \"rest_days\",\n      \"display_name\": \"Rest and Schedule\",\n      \"type\": \"continuous\",\n      \"p5\": 0.90,\n      \"p50\": 1.0,\n      \"p95\": 1.10,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Back-to-back games reduce win probability ~10%. Well-rested teams perform better, especially for aging rosters.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"NBA Official Stats 2023-24\",\n      \"summary\": \"Home teams maintain 58% win rate across league. Lakers specific home/away splits vary by season.\",\n      \"key_findings\": [\n        \"Home court advantage worth ~8 percentage points\",\n        \"Lakers currently middle-tier Western Conference team\"\n      ],\n      \"relevance\": 0.9\n    },\n    {\n      \"source\": \"Basketball Reference Historical Data\",\n      \"summary\": \"Team performance heavily influenced by star player availability and recent momentum trends.\",\n      \"key_findings\": [\n        \"Lakers win rate drops 25% without Anthony Davis\",\n        \"Back-to-back games reduce win probability 8-12%\"\n      ],\n      \"relevance\": 0.85\n    }\n  ],\n  \"model_expression\": \"base_rate * home_court_advantage * recent_form * opponent_strength * injury_status * rest_days\",\n  \"confidence\": 0.3,\n  \"reasoning\": \"Extreme uncertainty due to unknown specifics: opponent identity, game location, injury reports, and schedule context all unknown. Base rate provides starting point but drivers have wide ranges. Would need specific game details for meaningful forecast.\"\n}\n```",
+      "relevance": 0.5,
+      "date": "2026-03-08",
+      "key_findings": []
+    },
+    {
+      "id": "market_research_0",
+      "source": "Agent: market_research",
+      "summary": "I appreciate your question, but I need to clarify my role and capabilities. I'm the **Market Research agent** specialized in competitive dynamics, market sizing, and trend analysis for business forecasting. I'm designed to support probabilistic forecasting by analyzing markets, industries, and competitive landscapes.\n\nYour question about the Lakers' game schedule and performance statistics is about **sports analytics**, which falls outside my domain. I don't have access to:\n- Sports schedules or",
+      "relevance": 0.5,
+      "date": "2026-03-09",
+      "key_findings": []
+    }
+  ],
+  "agents": [
+    {
+      "name": "nba_analyst_home_court_advantage",
+      "agent_type": "research",
+      "query": "Research evidence for the 'home_court_advantage' driver in the forecast: \"will the lakers win their next game?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "home_court_advantage"
+      ]
+    },
+    {
+      "name": "nba_analyst_recent_form",
+      "agent_type": "research",
+      "query": "What is the Lakers' next game venue (home vs away), and what is their historical win rate differential between home and away games this season and over the past 3 seasons?",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "recent_form"
+      ]
+    },
+    {
+      "name": "nba_analyst_injury_status",
+      "agent_type": "research",
+      "query": "What is the Lakers' recent form over their last 10 games? Include win-loss record, point differential, offensive and defensive ratings, key player performance metrics, injury status, and any notable trends in their play quality.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "injury_status"
+      ]
+    },
+    {
+      "name": "nba_analyst_rest_days",
+      "agent_type": "research",
+      "query": "What is the current injury status for the Lakers (LeBron James, Anthony Davis, key rotation players) and their next opponent? Quantify the impact on win probability based on which players are available vs. out/questionable.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "rest_days"
+      ]
+    },
+    {
+      "name": "market_research_home_court_advantage",
+      "agent_type": "research",
+      "query": "What is the Lakers' next game venue (home or away), and what is their home vs away win rate and net rating differential this season? Include league-average home court advantage for context.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "home_court_advantage"
+      ]
+    }
+  ],
+  "driver_confidence": {}
+}
