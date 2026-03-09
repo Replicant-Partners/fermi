@@ -3409,8 +3409,17 @@ impl Render for CockpitState {
 
         div()
             .flex()
+            .flex_col()
             .size_full()
             .bg(rgb(theme::BG))
+            // ── Fermi Banner (top, always visible) ────────────────
+            .child(render_fermi_banner(&self.messages, &self.agent_runs))
+            // ── Main content (left + right panels) ────────────────
+            .child(
+                div()
+                    .flex()
+                    .flex_grow()
+                    .overflow_hidden()
             // ── Left: Program Tree ────────────────────────────────
             .child(
                 div()
@@ -3634,9 +3643,8 @@ impl Render for CockpitState {
                                 RightTab::Wiki => render_wiki_tab(self, cx).into_any_element(),
                             }),
                     )
-                    // Assistant messages (always visible below tabs)
-                    .child(render_assistant_panel(&self.messages)),
             )
+            ) // close main content horizontal div
     }
 }
 
@@ -5105,49 +5113,147 @@ fn render_editor_panel(
 // render_editor_panel is used as fallback within render_right_panel.
 
 fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
+    // Legacy — kept for compatibility but Fermi banner is now the primary display.
     div()
+}
+
+/// Fermi Banner — persistent top strip showing live agent activity.
+/// Always visible, shows the most recent messages + latest finding.
+/// Replaces the buried "FPL Assistant" panel.
+fn render_fermi_banner(
+    messages: &[AssistantMessage],
+    agent_runs: &[AgentExecution],
+) -> impl IntoElement {
+    let running_count = agent_runs
+        .iter()
+        .filter(|r| r.status == AgentRunStatus::Running)
+        .count();
+    let running_names: Vec<String> = agent_runs
+        .iter()
+        .filter(|r| r.status == AgentRunStatus::Running)
+        .map(|r| base_agent_name(&r.agent_name).to_string())
+        .collect();
+
+    // Get the 2 most recent non-info messages (findings, suggestions, warnings)
+    let recent: Vec<&AssistantMessage> = messages
+        .iter()
+        .rev()
+        .filter(|m| m.kind != MessageKind::Info)
+        .take(2)
+        .collect();
+
+    // Latest finding (from SSE stream or evidence)
+    let latest_finding: Option<&AssistantMessage> =
+        messages.iter().rev().find(|m| m.kind == MessageKind::Tip);
+
+    // Status indicator
+    let (status_icon, status_text, status_color) = if running_count > 0 {
+        (
+            "⟳",
+            format!("Researching: {}", running_names.join(", ")),
+            theme::GOLD,
+        )
+    } else if !messages.is_empty() {
+        let last = messages.last().unwrap();
+        let (icon, color) = match last.kind {
+            MessageKind::Suggestion => ("💡", theme::CYAN),
+            MessageKind::Warning => ("⚠", theme::GOLD),
+            MessageKind::Info => ("✓", theme::FG_DIM),
+            MessageKind::Error => ("✗", theme::RED),
+            MessageKind::Tip => ("🦊", theme::GREEN),
+        };
+        (icon, last.text.chars().take(120).collect(), color)
+    } else {
+        (
+            "🦊",
+            "Ready — type a question and press Ctrl+Enter".to_string(),
+            theme::FG_DIM,
+        )
+    };
+
+    div()
+        .id("fermi-banner")
+        .w_full()
+        .px(px(16.0))
+        .py(px(6.0))
+        .bg(rgb(0x171D2A))
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
         .flex()
         .flex_col()
-        .max_h(px(200.0))
-        .overflow_hidden()
-        .border_t_1()
-        .border_color(rgb(theme::FG_FAINT))
-        .p(px(12.0))
-        .gap(px(6.0))
+        .gap(px(3.0))
+        // Top line: Fermi label + status + running agents
         .child(
             div()
-                .text_size(px(11.0))
-                .text_color(rgb(theme::CYAN))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child("FPL Assistant"),
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::CYAN))
+                        .font_weight(FontWeight::BOLD)
+                        .child("🦊 Fermi"),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(status_color))
+                        .child(format!("{} {}", status_icon, status_text)),
+                ),
         )
-        .children(messages.iter().rev().take(15).map(|msg| {
+        // Bottom line: latest finding or recent suggestion
+        .when(!recent.is_empty(), |el| {
+            let msg = recent[0];
             let (icon, color) = match msg.kind {
                 MessageKind::Suggestion => ("💡", theme::CYAN),
                 MessageKind::Warning => ("⚠", theme::GOLD),
-                MessageKind::Info => ("ℹ", theme::FG_DIM),
                 MessageKind::Error => ("✗", theme::RED),
-                MessageKind::Tip => ("🦊", theme::GREEN),
+                MessageKind::Tip => ("🔍", theme::GREEN),
+                _ => ("ℹ", theme::FG_DIM),
             };
-            div()
-                .flex()
-                .gap(px(6.0))
-                .py(px(3.0))
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .w(px(16.0))
-                        .child(icon.to_string()),
-                )
-                .child(
-                    div()
-                        .flex_grow()
-                        .min_w(px(0.0))
-                        .text_size(px(11.0))
-                        .text_color(rgb(color))
-                        .child(msg.text.clone()),
-                )
-        }))
+            el.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(div().text_size(px(9.0)).w(px(14.0)).child(icon.to_string()))
+                    .child(
+                        div()
+                            .flex_grow()
+                            .min_w(px(0.0))
+                            .text_size(px(10.0))
+                            .text_color(rgb(color))
+                            .child(msg.text.chars().take(150).collect::<String>()),
+                    ),
+            )
+        })
+        // Second recent message if different from first
+        .when(recent.len() > 1, |el| {
+            let msg = recent[1];
+            let (icon, color) = match msg.kind {
+                MessageKind::Suggestion => ("💡", theme::CYAN),
+                MessageKind::Warning => ("⚠", theme::GOLD),
+                MessageKind::Error => ("✗", theme::RED),
+                MessageKind::Tip => ("🔍", theme::GREEN),
+                _ => ("ℹ", theme::FG_DIM),
+            };
+            el.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(div().text_size(px(9.0)).w(px(14.0)).child(icon.to_string()))
+                    .child(
+                        div()
+                            .flex_grow()
+                            .min_w(px(0.0))
+                            .text_size(px(9.0))
+                            .text_color(rgb(color))
+                            .child(msg.text.chars().take(120).collect::<String>()),
+                    ),
+            )
+        })
 }
 
 /// Forecast Index — the key visualization section shown above drivers.
