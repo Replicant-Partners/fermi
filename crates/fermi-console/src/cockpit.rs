@@ -905,10 +905,18 @@ impl CockpitState {
         self.orchestration_running = false;
 
         // ── Auto-assign + auto-fire agents for all drivers ────────
-        // Domain-first routing: detect domain from question, assign the
-        // best domain-specific agent to every driver, fire all in parallel.
-        // The user sees evidence streaming in within seconds — no manual
-        // agent assignment needed. They can override later.
+        // ONLY on initial decomposition — skip if drivers already have agents.
+        // This prevents the cascade: agent completes → process_macro_forecaster_result
+        // → auto-assigns MORE agents → rate limit → failure loop.
+        let drivers_already_have_agents = self
+            .program
+            .agents()
+            .iter()
+            .any(|a| !a.driver_refs.is_empty() && a.name != "fermi");
+        if drivers_already_have_agents {
+            return;
+        }
+
         let question_text = self
             .program
             .question()
@@ -923,21 +931,11 @@ impl CockpitState {
             .collect();
 
         if !driver_names.is_empty() {
-            // Pick domain-specific primary agent
-            let primary_agent = match domain.as_str() {
+            // Domain-specific primary agent (used as default when no better match)
+            let domain_agent = match domain.as_str() {
                 "sports_nba" | "basketball" => "nba_analyst",
                 "biotech" | "pharma" | "clinical" => "biotech_analyst",
-                "finance" | "stocks" | "crypto" => "macro_forecaster",
-                "geopolitics" | "politics" | "policy" => "macro_forecaster",
-                _ => "macro_forecaster", // general-purpose fallback
-            };
-
-            // Verify primary agent exists in registry
-            let has_primary = self.registry.get(primary_agent).is_ok();
-            let agent_to_use = if has_primary {
-                primary_agent
-            } else {
-                "macro_forecaster"
+                _ => "macro_forecaster",
             };
 
             let mut assigned_count = 0;
@@ -963,6 +961,87 @@ impl CockpitState {
                         _ => (0.8, 1.0, 1.2),
                     })
                     .unwrap_or((0.8, 1.0, 1.2));
+
+                // ── Per-driver agent selection ────────────────────
+                // Pick the BEST agent for THIS driver based on driver name,
+                // rationale, and forecast domain. Not one-size-fits-all.
+                let dl = driver_name.to_lowercase();
+                let rl = rationale.to_lowercase();
+                let combined = format!("{} {}", dl, rl);
+
+                let agent_to_use = if combined.contains("sentiment")
+                    || combined.contains("opinion")
+                    || combined.contains("perception")
+                    || combined.contains("buzz")
+                    || combined.contains("narrative")
+                {
+                    "sentiment_analyzer"
+                } else if combined.contains("entity")
+                    || combined.contains("ownership")
+                    || combined.contains("leadership")
+                    || combined.contains("management")
+                    || combined.contains("regulatory")
+                    || combined.contains("legal")
+                    || combined.contains("compliance")
+                    || combined.contains("investigation")
+                {
+                    "entity_investigator"
+                } else if combined.contains("market")
+                    || combined.contains("competition")
+                    || combined.contains("competitor")
+                    || combined.contains("partnership")
+                    || combined.contains("revenue")
+                    || combined.contains("pricing")
+                    || combined.contains("demand")
+                    || combined.contains("adoption")
+                    || combined.contains("customer")
+                    || combined.contains("commercial")
+                    || combined.contains("sales")
+                {
+                    "market_research"
+                } else if combined.contains("macro")
+                    || combined.contains("economic")
+                    || combined.contains("gdp")
+                    || combined.contains("inflation")
+                    || combined.contains("interest rate")
+                    || combined.contains("fed")
+                    || combined.contains("policy")
+                    || combined.contains("recession")
+                    || combined.contains("valuation")
+                {
+                    "macro_forecaster"
+                } else if combined.contains("clinical")
+                    || combined.contains("trial")
+                    || combined.contains("fda")
+                    || combined.contains("drug")
+                    || combined.contains("pipeline")
+                    || combined.contains("approval")
+                {
+                    "biotech_analyst"
+                } else if combined.contains("nba")
+                    || combined.contains("basketball")
+                    || combined.contains("elo")
+                    || combined.contains("home court")
+                    || combined.contains("injury")
+                        && (domain.contains("nba") || domain.contains("basketball"))
+                {
+                    "nba_analyst"
+                } else {
+                    // Fall back to domain agent, or macro_forecaster
+                    let has_domain = self.registry.get(domain_agent).is_ok();
+                    if has_domain {
+                        domain_agent
+                    } else {
+                        "macro_forecaster"
+                    }
+                };
+
+                // Verify agent exists
+                let agent_to_use = if self.registry.get(agent_to_use).is_ok() {
+                    agent_to_use
+                } else {
+                    "macro_forecaster"
+                };
 
                 // Formulate a domain-specific query
                 let query = formulate_research_query(
@@ -1014,70 +1093,32 @@ impl CockpitState {
                 assigned_count += 1;
             }
 
+            // Summarize what was assigned
+            let mut agent_counts: HashMap<String, usize> = HashMap::new();
+            for a in self
+                .program
+                .agents()
+                .iter()
+                .filter(|a| a.name != "fermi" && !a.driver_refs.is_empty())
+            {
+                let base = base_agent_name(&a.name).to_string();
+                *agent_counts.entry(base).or_insert(0) += 1;
+            }
+            let summary: Vec<String> = agent_counts
+                .iter()
+                .map(|(agent, count)| format!("{} ({})", agent, count))
+                .collect();
+
             self.messages.push(AssistantMessage {
                 node: "question".into(),
                 kind: MessageKind::Info,
                 text: format!(
-                    "🔬 Auto-assigned {} to {} drivers — researching in parallel. Evidence will stream in as agents work.",
-                    agent_to_use, assigned_count
+                    "🔬 Auto-assigned {} agents to {} drivers: {}. Evidence streaming in…",
+                    assigned_count,
+                    driver_names.len(),
+                    summary.join(", ")
                 ),
             });
-
-            // For cross-domain coverage, also assign sentiment_analyzer
-            // to the most opinion-sensitive driver if one exists
-            let sentiment_driver = driver_names.iter().find(|d| {
-                let dl = d.to_lowercase();
-                dl.contains("sentiment")
-                    || dl.contains("opinion")
-                    || dl.contains("perception")
-                    || dl.contains("momentum")
-                    || dl.contains("form")
-            });
-            if let Some(sd) = sentiment_driver {
-                if agent_to_use != "sentiment_analyzer" {
-                    let driver = self.program.driver(sd);
-                    let rationale = driver.and_then(|d| d.rationale.as_deref()).unwrap_or("");
-                    let query = format!(
-                        "For the forecast: \"{}\"\n\n\
-                         Analyze sentiment around the '{}' driver.\n\
-                         Context: {}\n\n\
-                         Provide: sentiment classification (bearish→bullish), \
-                         key narrative themes, trend direction, \
-                         and how sentiment should adjust the probability.",
-                        question_text,
-                        sd.replace('_', " "),
-                        rationale
-                    );
-                    let compound = format!("sentiment_analyzer_{}", sanitize_name(sd));
-                    self.program.add_agent(AgentStmt {
-                        name: compound.clone(),
-                        agent_type: Some("research".into()),
-                        query: query.clone(),
-                        executor: Some(fermi::ast::ExecutorType::LLM),
-                        schedule: Some(Schedule::Once),
-                        driver_refs: vec![sd.clone()],
-                        depends_on: vec![],
-                        confidence_threshold: None,
-                    });
-                    self.agent_runs.push(AgentExecution {
-                        agent_name: compound,
-                        status: AgentRunStatus::Running,
-                        evidence_count: 0,
-                        confidence: None,
-                        error: None,
-                        credits_charged: None,
-                        started_at: Some(
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                        ),
-                        completed_at: None,
-                        latest_finding: None,
-                    });
-                    self.fire_agent("sentiment_analyzer", &query, cx);
-                }
-            }
         }
     }
 
@@ -1858,87 +1899,98 @@ impl CockpitState {
     // Driver Editing
     // ═══════════════════════════════════════════════════════════════
 
-    /// Open the agent picker for a specific driver.
+    /// Open the research panel for a specific driver.
+    /// Pre-fills the query input with a domain-specific suggested query
+    /// based on the driver name, rationale, and forecast domain.
+    /// No Fermi LLM call needed — the routing is deterministic.
     pub fn open_agent_picker(&mut self, driver_name: &str, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.agent_search_query.clear();
         self.focused_node = FocusedNode::AgentPicker(driver_name.to_string());
         self.right_tab = RightTab::Edit;
 
-        // Ask Fermi for agent recommendation in the background
+        // Pre-fill the query input with a domain-specific suggested query
         let driver = self.program.driver(driver_name);
-        let driver_rationale = driver
+        let driver_display = driver
+            .and_then(|d| d.display_name.as_deref())
+            .unwrap_or(driver_name)
+            .to_string();
+        let rationale = driver
             .and_then(|d| d.rationale.as_deref())
             .unwrap_or("")
             .to_string();
-        let driver_type = driver
-            .map(|d| format!("{:?}", d.driver_type))
-            .unwrap_or_else(|| "unknown".into());
         let question = self
             .program
             .question()
             .map(|q| q.text.clone())
             .unwrap_or_default();
+        let domain = detect_domain(&question);
 
-        // Build agent list dynamically from the registry
-        let available_agents: Vec<String> = self
-            .registry
-            .list_cards()
-            .unwrap_or_default()
-            .iter()
-            .filter(|c| {
-                c.metadata.tags.iter().any(|t| t == "fermi-orchestra") && c.agent_id != "fermi"
+        let (p5, p50, p95) = driver
+            .and_then(|d| d.distribution.as_ref())
+            .map(|dist| match dist {
+                Distribution::Triangular { p5, p50, p95 } => {
+                    (expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95))
+                }
+                _ => (0.8, 1.0, 1.2),
             })
-            .map(|c| {
-                format!(
-                    "- {}: {}",
-                    c.agent_id,
-                    c.metadata.description.chars().take(100).collect::<String>()
-                )
-            })
-            .collect();
-        let agent_list = if available_agents.is_empty() {
-            "- macro_forecaster, market_research, sentiment_analyzer, entity_investigator"
-                .to_string()
+            .unwrap_or((0.8, 1.0, 1.2));
+
+        // Determine the recommended agent for this driver
+        let dl = driver_name.to_lowercase();
+        let rl = rationale.to_lowercase();
+        let combined = format!("{} {}", dl, rl);
+        let recommended = if combined.contains("sentiment") || combined.contains("opinion") {
+            "sentiment_analyzer"
+        } else if combined.contains("regulatory")
+            || combined.contains("legal")
+            || combined.contains("entity")
+        {
+            "entity_investigator"
+        } else if combined.contains("market")
+            || combined.contains("competition")
+            || combined.contains("revenue")
+            || combined.contains("commercial")
+        {
+            "market_research"
+        } else if combined.contains("clinical")
+            || combined.contains("trial")
+            || combined.contains("fda")
+        {
+            "biotech_analyst"
+        } else if combined.contains("nba") || combined.contains("basketball") {
+            "nba_analyst"
         } else {
-            available_agents.join("\n")
+            match domain.as_str() {
+                "sports_nba" | "basketball" => "nba_analyst",
+                "biotech" | "pharma" => "biotech_analyst",
+                _ => "macro_forecaster",
+            }
         };
 
-        let query = format!(
-            "I'm building a forecast for: \"{}\"\n\n\
-             I need to assign a research agent to the driver '{}' (type: {}).\n\
-             Driver rationale: {}\n\n\
-             Available agents:\n{}\n\n\
-             IMPORTANT: Choose the most domain-specific agent. For NBA/basketball, use nba_analyst. \
-             For biotech/pharma, use biotech_analyst. Only use general agents (market_research, \
-             sentiment_analyzer, entity_investigator) when no domain agent fits.\n\n\
-             Which agent is best for this driver? Suggest a specific research query.\n\
-             Respond with JSON: {{\"recommended_agent\": \"...\", \"reasoning\": \"...\", \"suggested_query\": \"...\"}}",
-            question, driver_name, driver_type, driver_rationale, agent_list
+        // Generate the suggested query
+        let suggested_query = formulate_research_query(
+            &question,
+            &driver_display,
+            &rationale,
+            recommended,
+            &domain,
+            p5,
+            p50,
+            p95,
         );
 
-        let dn = driver_name.to_string();
-        self.fire_agent("fermi", &query, cx);
-        self.agent_runs.push(AgentExecution {
-            agent_name: "fermi".into(),
-            status: AgentRunStatus::Running,
-            evidence_count: 0,
-            confidence: None,
-            error: None,
-            credits_charged: None,
-            started_at: Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            ),
-            completed_at: None,
-            latest_finding: None,
-        });
+        // Pre-fill the query input so the user sees what will be asked
+        self.agent_query_input
+            .update(cx, |input, cx| input.set_text(&suggested_query, cx));
+
         self.messages.push(AssistantMessage {
-            node: format!("driver:{}", dn),
+            node: format!("driver:{}", driver_name),
             kind: MessageKind::Info,
-            text: format!("🦊 Fermi is analyzing which agent is best for '{}'…", dn),
+            text: format!(
+                "🔬 Research panel for '{}' — recommended: {} (edit query below to customize)",
+                driver_display, recommended
+            ),
         });
 
         cx.notify();
@@ -4491,33 +4543,137 @@ fn render_agent_picker(
     driver_name: &str,
     cx: &mut Context<CockpitState>,
 ) -> impl IntoElement {
-    // Get fermi-orchestra agents from the registry
-    let available_agents: Vec<(String, String, String, Vec<String>)> = state
+    // ── Driver context ────────────────────────────────────────────
+    let driver = state.program.driver(driver_name);
+    let driver_display = driver
+        .and_then(|d| d.display_name.as_deref())
+        .unwrap_or(driver_name)
+        .to_string();
+    let rationale = driver
+        .and_then(|d| d.rationale.as_deref())
+        .unwrap_or("")
+        .to_string();
+    let (p5, p50, p95) = driver
+        .and_then(|d| d.distribution.as_ref())
+        .map(|dist| match dist {
+            Distribution::Triangular { p5, p50, p95 } => {
+                (expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95))
+            }
+            _ => (0.8, 1.0, 1.2),
+        })
+        .unwrap_or((0.8, 1.0, 1.2));
+
+    // ── Existing evidence for this driver ─────────────────────────
+    let driver_agents: Vec<String> = state
+        .program
+        .agents()
+        .iter()
+        .filter(|a| a.driver_refs.contains(&driver_name.to_string()))
+        .map(|a| a.name.clone())
+        .collect();
+    let existing_evidence: Vec<_> = state
+        .program
+        .evidence_items()
+        .into_iter()
+        .filter(|e| {
+            driver_agents.iter().any(|a| evidence_matches_agent(e, a)) || e.id.contains(driver_name)
+        })
+        .collect();
+
+    // ── Recommended agent (domain-first routing) ──────────────────
+    let question_text = state
+        .program
+        .question()
+        .map(|q| q.text.clone())
+        .unwrap_or_default();
+    let domain = detect_domain(&question_text);
+    let dl = driver_name.to_lowercase();
+    let rl = rationale.to_lowercase();
+    let combined = format!("{} {}", dl, rl);
+
+    let recommended = if combined.contains("sentiment")
+        || combined.contains("opinion")
+        || combined.contains("perception")
+    {
+        "sentiment_analyzer"
+    } else if combined.contains("entity")
+        || combined.contains("regulatory")
+        || combined.contains("legal")
+        || combined.contains("ownership")
+    {
+        "entity_investigator"
+    } else if combined.contains("market")
+        || combined.contains("competition")
+        || combined.contains("partnership")
+        || combined.contains("revenue")
+        || combined.contains("commercial")
+    {
+        "market_research"
+    } else if combined.contains("clinical")
+        || combined.contains("trial")
+        || combined.contains("fda")
+        || combined.contains("drug")
+    {
+        "biotech_analyst"
+    } else if combined.contains("nba")
+        || combined.contains("basketball")
+        || combined.contains("elo")
+    {
+        "nba_analyst"
+    } else {
+        match domain.as_str() {
+            "sports_nba" | "basketball" => "nba_analyst",
+            "biotech" | "pharma" => "biotech_analyst",
+            _ => "macro_forecaster",
+        }
+    };
+
+    // Pre-fill the query with a domain-specific formulation
+    let suggested_query = formulate_research_query(
+        &question_text,
+        &driver_display,
+        &rationale,
+        recommended,
+        &domain,
+        p5,
+        p50,
+        p95,
+    );
+
+    // Get all available agents for the "Other agents" section
+    let available_agents: Vec<(String, String, Vec<String>)> = state
         .registry
         .list_cards()
         .unwrap_or_default()
         .iter()
-        .filter(|card| card.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
+        .filter(|card| {
+            card.metadata.tags.iter().any(|t| t == "fermi-orchestra")
+                && card.agent_id != "fermi"
+                && card.agent_id != recommended
+        })
         .map(|card| {
             (
                 card.agent_id.clone(),
                 card.metadata.description.clone(),
-                card.capabilities.model.clone(),
                 card.capabilities.skills.clone(),
             )
         })
         .collect();
+
+    let recommended_desc = state
+        .registry
+        .get(recommended)
+        .map(|c| c.metadata.description.clone())
+        .unwrap_or_default();
 
     let dn = driver_name.to_string();
 
     div()
         .flex()
         .flex_col()
-        .gap(px(8.0))
+        .gap(px(10.0))
         .p(px(16.0))
-        .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
-        // Header
+        // ── Header with driver context ────────────────────────────
         .child(
             div()
                 .flex()
@@ -4526,18 +4682,18 @@ fn render_agent_picker(
                 .child(
                     div()
                         .text_size(px(14.0))
-                        .text_color(rgb(theme::BLUE))
+                        .text_color(rgb(theme::CYAN))
                         .font_weight(FontWeight::BOLD)
-                        .child(format!("Assign Agent → {}", driver_name)),
+                        .child(format!("🔬 Research: {}", driver_display)),
                 )
                 .child({
                     let dn2 = dn.clone();
                     div()
                         .id("close-agent-picker")
-                        .text_size(px(12.0))
+                        .text_size(px(11.0))
                         .text_color(rgb(theme::FG_DIM))
                         .px(px(8.0))
-                        .py(px(2.0))
+                        .py(px(3.0))
                         .rounded(px(4.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
@@ -4546,155 +4702,322 @@ fn render_agent_picker(
                             this.populate_editor_from_driver(&dn2, cx);
                             cx.notify();
                         }))
-                        .child("✕ Cancel")
+                        .child("✕")
                 }),
         )
+        // ── Driver context card ───────────────────────────────────
         .child(
             div()
-                .text_size(px(11.0))
-                .text_color(rgb(theme::FG_DIM))
-                .child("Recommended research agents:"),
-        )
-        // Custom query input
-        .child(state.agent_query_input.clone())
-        .child(
-            div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
-                .child("Define what this agent should research for this driver, or leave blank for default."),
-        )
-        // Agent list
-        .children(
-            available_agents
-                .iter()
-                .map(|(agent_id, description, model, skills)| {
-                    let aid = agent_id.clone();
-                    let dn3 = dn.clone();
+                .px(px(10.0))
+                .py(px(8.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG))
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .when(!rationale.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::FG_DIM))
+                            .min_w(px(0.0))
+                            .child(rationale.clone()),
+                    )
+                })
+                .child(
                     div()
-                        .id(ElementId::Name(format!("pick-agent-{}", agent_id).into()))
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::CYAN))
+                        .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
+                        .child(format!("p5={:.2}  p50={:.2}  p95={:.2}", p5, p50, p95)),
+                )
+                .when(!existing_evidence.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::GREEN))
+                            .child(format!(
+                                "✓ {} evidence items already collected",
+                                existing_evidence.len()
+                            )),
+                    )
+                })
+                .when(existing_evidence.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::RED))
+                            .child("⚠ No evidence yet — research needed"),
+                    )
+                }),
+        )
+        // ── Recommended agent (highlighted) ───────────────────────
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("Recommended for this driver:"),
+        )
+        .child({
+            let rec_id = recommended.to_string();
+            let dn_rec = dn.clone();
+            div()
+                .px(px(10.0))
+                .py(px(10.0))
+                .rounded(px(6.0))
+                .bg(rgb(0x1A2332))
+                .border_1()
+                .border_color(rgb(theme::CYAN))
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .text_color(rgb(theme::CYAN))
+                                .font_weight(FontWeight::BOLD)
+                                .child(recommended.to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::GREEN))
+                                .px(px(4.0))
+                                .py(px(1.0))
+                                .rounded(px(2.0))
+                                .bg(rgb(theme::BG))
+                                .child("★ best match"),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .min_w(px(0.0))
+                        .child(recommended_desc),
+                )
+                // Query preview
+                .child(
+                    div()
                         .flex()
                         .flex_col()
                         .gap(px(3.0))
-                        .px(px(10.0))
-                        .py(px(8.0))
-                        .rounded(px(4.0))
-                        .bg(rgb(theme::BG))
-                        .border_1()
+                        .mt(px(4.0))
+                        .pt(px(6.0))
+                        .border_t_1()
                         .border_color(rgb(theme::FG_FAINT))
-                        .cursor_pointer()
-                        .hover(|s| s.border_color(rgb(theme::BLUE)).bg(rgb(theme::BG_HOVER)))
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            // Card click does nothing — use schedule buttons below
-                        }))
                         .child(
                             div()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .text_color(rgb(theme::FG))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(agent_id.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(9.0))
-                                        .text_color(rgb(theme::FG_FAINT))
-                                        .child(model.clone()),
-                                ),
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child("Research query (edit below to customize):"),
                         )
                         .child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(px(9.0))
                                 .text_color(rgb(theme::FG_DIM))
                                 .min_w(px(0.0))
-                                .child(description.clone()),
+                                .child(
+                                    suggested_query
+                                        .chars()
+                                        .take(200)
+                                        .collect::<String>()
+                                        + if suggested_query.len() > 200 { "…" } else { "" },
+                                ),
+                        ),
+                )
+                // Action buttons — prominent
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(6.0))
+                        .mt(px(4.0))
+                        .child(
+                            div()
+                                .id(ElementId::Name(
+                                    format!("research-now-{}", recommended).into(),
+                                ))
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::BG))
+                                .font_weight(FontWeight::BOLD)
+                                .px(px(14.0))
+                                .py(px(5.0))
+                                .rounded(px(4.0))
+                                .bg(rgb(theme::CYAN))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme::GREEN)))
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    this.assign_agent_to_driver(
+                                        &dn_rec,
+                                        &rec_id,
+                                        Schedule::Once,
+                                        cx,
+                                    );
+                                }))
+                                .child("▶ Research Now"),
                         )
-                        .when(!skills.is_empty(), |el| {
-                            el.child(
-                                div()
-                                    .flex()
-                                    .flex_wrap()
-                                    .gap(px(4.0))
-                                    .children(skills.iter().take(4).map(|s| {
-                                        div()
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::CYAN))
-                                            .px(px(4.0))
-                                            .py(px(1.0))
-                                            .rounded(px(2.0))
-                                            .bg(rgb(theme::BG_ACTIVE))
-                                            .child(s.clone())
-                                    })),
-                            )
-                        })
-                        // Schedule buttons
                         .child({
-                            let aid_once = agent_id.clone();
-                            let aid_daily = agent_id.clone();
-                            let aid_weekly = agent_id.clone();
-                            let dn_once = dn.clone();
+                            let rec_id2 = recommended.to_string();
                             let dn_daily = dn.clone();
+                            div()
+                                .id(ElementId::Name(
+                                    format!("research-daily-{}", recommended).into(),
+                                ))
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::GREEN))
+                                .px(px(10.0))
+                                .py(px(5.0))
+                                .rounded(px(4.0))
+                                .bg(rgb(theme::BG))
+                                .border_1()
+                                .border_color(rgb(theme::GREEN))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    this.assign_agent_to_driver(
+                                        &dn_daily,
+                                        &rec_id2,
+                                        Schedule::Every {
+                                            interval: 1,
+                                            unit: fermi::ast::TimeUnit::Day,
+                                        },
+                                        cx,
+                                    );
+                                }))
+                                .child("📅 Daily")
+                        })
+                        .child({
+                            let rec_id3 = recommended.to_string();
                             let dn_weekly = dn.clone();
                             div()
-                                .flex()
-                                .gap(px(4.0))
-                                .mt(px(4.0))
-                                .child(
-                                    div()
-                                        .id(ElementId::Name(format!("sched-once-{}", agent_id).into()))
-                                        .text_size(px(10.0))
-                                        .text_color(rgb(theme::CYAN))
-                                        .px(px(8.0))
-                                        .py(px(3.0))
-                                        .rounded(px(3.0))
-                                        .bg(rgb(theme::BG_ACTIVE))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                                            this.assign_agent_to_driver(&dn_once, &aid_once, Schedule::Once, cx);
-                                        }))
-                                        .child("Run once"),
-                                )
-                                .child(
-                                    div()
-                                        .id(ElementId::Name(format!("sched-daily-{}", agent_id).into()))
-                                        .text_size(px(10.0))
-                                        .text_color(rgb(theme::GREEN))
-                                        .px(px(8.0))
-                                        .py(px(3.0))
-                                        .rounded(px(3.0))
-                                        .bg(rgb(theme::BG_ACTIVE))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                                            this.assign_agent_to_driver(&dn_daily, &aid_daily,
-                                                Schedule::Every { interval: 1, unit: fermi::ast::TimeUnit::Day }, cx);
-                                        }))
-                                        .child("Daily"),
-                                )
-                                .child(
-                                    div()
-                                        .id(ElementId::Name(format!("sched-weekly-{}", agent_id).into()))
-                                        .text_size(px(10.0))
-                                        .text_color(rgb(theme::GOLD))
-                                        .px(px(8.0))
-                                        .py(px(3.0))
-                                        .rounded(px(3.0))
-                                        .bg(rgb(theme::BG_ACTIVE))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                                            this.assign_agent_to_driver(&dn_weekly, &aid_weekly,
-                                                Schedule::Every { interval: 1, unit: fermi::ast::TimeUnit::Week }, cx);
-                                        }))
-                                        .child("Weekly"),
-                                )
-                        })
-                }),
+                                .id(ElementId::Name(
+                                    format!("research-weekly-{}", recommended).into(),
+                                ))
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::GOLD))
+                                .px(px(10.0))
+                                .py(px(5.0))
+                                .rounded(px(4.0))
+                                .bg(rgb(theme::BG))
+                                .border_1()
+                                .border_color(rgb(theme::GOLD))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    this.assign_agent_to_driver(
+                                        &dn_weekly,
+                                        &rec_id3,
+                                        Schedule::Every {
+                                            interval: 1,
+                                            unit: fermi::ast::TimeUnit::Week,
+                                        },
+                                        cx,
+                                    );
+                                }))
+                                .child("📅 Weekly")
+                        }),
+                )
+        })
+        // ── Custom query editor ───────────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("Customize the research query:"),
+                )
+                .child(state.agent_query_input.clone())
+                .child(
+                    div()
+                        .text_size(px(8.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("Leave empty to use the suggested query above. Edit to ask for specific data."),
+                ),
         )
+        // ── Other available agents ────────────────────────────────
+        .when(!available_agents.is_empty(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .pt(px(6.0))
+                    .border_t_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .child("Or choose a different agent:"),
+                    )
+                    .children(available_agents.iter().map(|(agent_id, description, skills)| {
+                        let aid = agent_id.clone();
+                        let dn3 = dn.clone();
+                        div()
+                            .id(ElementId::Name(format!("pick-alt-{}", agent_id).into()))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .px(px(8.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(rgb(theme::FG_FAINT))
+                            .cursor_pointer()
+                            .hover(|s| s.border_color(rgb(theme::BLUE)).bg(rgb(theme::BG_HOVER)))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.assign_agent_to_driver(&dn3, &aid, Schedule::Once, cx);
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_grow()
+                                    .min_w(px(0.0))
+                                    .gap(px(2.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::FG))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(agent_id.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_DIM))
+                                            .min_w(px(0.0))
+                                            .child(
+                                                description
+                                                    .chars()
+                                                    .take(100)
+                                                    .collect::<String>(),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::BLUE))
+                                    .px(px(8.0))
+                                    .py(px(3.0))
+                                    .rounded(px(3.0))
+                                    .bg(rgb(theme::BG_ACTIVE))
+                                    .child("Run ▶"),
+                            )
+                    })),
+            )
+        })
         .when(available_agents.is_empty(), |el| {
             el.child(
                 div()
