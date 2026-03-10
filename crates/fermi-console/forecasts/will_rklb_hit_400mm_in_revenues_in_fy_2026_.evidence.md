@@ -1,8 +1,20 @@
 # will rklb hit 400MM in revenues in fy 2026?
 
-**Probability:** 15.0% · **Version:** v1 · **Updated:** 2026-03-10 20:54 UTC
+**Probability:** 14.6% · **Version:** v2 · **Updated:** 2026-03-10 20:55 UTC
 
-**Confidence:** Medium (50%) · **Drivers:** 5 · **Evidence:** 6 · **Agents:** 7
+**Confidence:** Medium (49%) · **Drivers:** 5 · **Evidence:** 8 · **Agents:** 7
+
+---
+
+## Inside View
+
+**Probability: 14.6%**
+
+Starting from a 15.0% base rate, our model slightly confirms the probability to 14.6%. The key factors are: launch_cadence_growth, neutron_revenue_contribution, space_systems_growth. Most influential: neutron_revenue_contribution (41%), launch_cadence_growth (26%), operational_execution (14%).
+
+**Forecast Confidence:** Medium (49%)
+
+**Divergence from base rate:** 0pp below (14.6% vs 15.0%)
 
 ---
 
@@ -45,7 +57,7 @@ Be specific — include named sources, dates, dollar figures._
 - **market_research** (schedule: once)  
   Query: _For the forecast: "will rklb hit 400MM in revenues in fy 2026?" Research the 'launch_cadence_growth' driver. Current estimate: p5=0.70, p50=1.10, p95=1.40 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: RKLB's ability to scale Electron launches and begin Neutron operations. Current ~10 launches/year needs significant increase. Neutron delays or production issues reduce probability; successful ramp increases it. Be specific — include named sources, dates, dollar figures._
 
-### Evidence (5) — Partial quality (46%)
+### Evidence (6) — Partial quality (46%)
 
 #### Agent: market_research — relevance 50% · quality ●●○ Med (55%) · 2026-03-10
 
@@ -117,6 +129,21 @@ Based on my domain expertise in aerospace market analysis, I'll provide a compre
 **Launch Track Record:**
 - **Electron success rate: 47/52 launches successful = 90.4% success rate** (as of Q1 2025, company disclosures)
 - **2024 launch cadence: 10-11 Electron launches** vs. target of 12-15 (SpaceNew
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (45%) · 2026-03-10
+
+Based on my domain expertise in the commercial space launch market, I'll provide a comprehensive analysis of Rocket Lab's launch cadence growth driver:
+
+---
+
+## MARKET RESEARCH ANALYSIS: RKLB Launch Cadence Growth Driver
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Launch Cadence (as of Q4 2024/Q1 2025):**
+- **Electron launches 2024**: 10-11 missions (estimated based on typical annual performance)
+- **Current run rate**: ~0.8-1.0 launches per month
+- **Revenue per Electron launch**: ~$7-8M (standard c
 
 ### Related Evidence
 
@@ -246,7 +273,7 @@ Context: Neutron's first flight targeted for 2025, with commercial operations in
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (4) — Partial quality (51%)
+### Evidence (5) — Partial quality (50%)
 
 #### Agent: market_research — relevance 50% · quality ●●○ Med (55%) · 2026-03-10
 
@@ -304,6 +331,21 @@ Based on my domain expertise in aerospace market analysis, I'll provide a compre
 **Launch Track Record:**
 - **Electron success rate: 47/52 launches successful = 90.4% success rate** (as of Q1 2025, company disclosures)
 - **2024 launch cadence: 10-11 Electron launches** vs. target of 12-15 (SpaceNew
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (45%) · 2026-03-10
+
+Based on my domain expertise in the commercial space launch market, I'll provide a comprehensive analysis of Rocket Lab's launch cadence growth driver:
+
+---
+
+## MARKET RESEARCH ANALYSIS: RKLB Launch Cadence Growth Driver
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Launch Cadence (as of Q4 2024/Q1 2025):**
+- **Electron launches 2024**: 10-11 missions (estimated based on typical annual performance)
+- **Current run rate**: ~0.8-1.0 launches per month
+- **Revenue per Electron launch**: ~$7-8M (standard c
 
 ### Related Evidence
 
@@ -433,7 +475,7 @@ Context: RKLB's satellite components and space systems division growth. Governme
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (4) — Partial quality (51%)
+### Evidence (5) — Partial quality (50%)
 
 #### Agent: market_research — relevance 50% · quality ●●○ Med (55%) · 2026-03-10
 
@@ -491,6 +533,21 @@ Based on my domain expertise in aerospace market analysis, I'll provide a compre
 **Launch Track Record:**
 - **Electron success rate: 47/52 launches successful = 90.4% success rate** (as of Q1 2025, company disclosures)
 - **2024 launch cadence: 10-11 Electron launches** vs. target of 12-15 (SpaceNew
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (45%) · 2026-03-10
+
+Based on my domain expertise in the commercial space launch market, I'll provide a comprehensive analysis of Rocket Lab's launch cadence growth driver:
+
+---
+
+## MARKET RESEARCH ANALYSIS: RKLB Launch Cadence Growth Driver
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Launch Cadence (as of Q4 2024/Q1 2025):**
+- **Electron launches 2024**: 10-11 missions (estimated based on typical annual performance)
+- **Current run rate**: ~0.8-1.0 launches per month
+- **Revenue per Electron launch**: ~$7-8M (standard c
 
 ### Related Evidence
 
@@ -620,7 +677,7 @@ Context: Overall small-sat launch market conditions, government spending on spac
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (4) — Partial quality (51%)
+### Evidence (5) — Partial quality (50%)
 
 #### Agent: market_research — relevance 50% · quality ●●○ Med (55%) · 2026-03-10
 
@@ -678,6 +735,21 @@ Based on my domain expertise in aerospace market analysis, I'll provide a compre
 **Launch Track Record:**
 - **Electron success rate: 47/52 launches successful = 90.4% success rate** (as of Q1 2025, company disclosures)
 - **2024 launch cadence: 10-11 Electron launches** vs. target of 12-15 (SpaceNew
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (45%) · 2026-03-10
+
+Based on my domain expertise in the commercial space launch market, I'll provide a comprehensive analysis of Rocket Lab's launch cadence growth driver:
+
+---
+
+## MARKET RESEARCH ANALYSIS: RKLB Launch Cadence Growth Driver
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Launch Cadence (as of Q4 2024/Q1 2025):**
+- **Electron launches 2024**: 10-11 missions (estimated based on typical annual performance)
+- **Current run rate**: ~0.8-1.0 launches per month
+- **Revenue per Electron launch**: ~$7-8M (standard c
 
 ### Related Evidence
 
@@ -809,7 +881,7 @@ Be specific and quantitative — numbers, percentages, named sources._
 - **equity_analyst_operational_execution** (schedule: once)  
   Query: _For the forecast: "will rklb hit 400MM in revenues in fy 2026?" Research evidence for the 'operational_execution' driver. Current estimate: p5=0.70, p50=1.00, p95=1.15 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: RKLB's ability to execute on backlog, avoid launch failures, maintain production schedules, and manage costs. Launch failures or significant delays would impact revenue recognition and customer confidence. Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (4) — Partial quality (51%)
+### Evidence (5) — Partial quality (50%)
 
 #### Agent: market_research — relevance 50% · quality ●●○ Med (55%) · 2026-03-10
 
@@ -867,6 +939,21 @@ Based on my domain expertise in aerospace market analysis, I'll provide a compre
 **Launch Track Record:**
 - **Electron success rate: 47/52 launches successful = 90.4% success rate** (as of Q1 2025, company disclosures)
 - **2024 launch cadence: 10-11 Electron launches** vs. target of 12-15 (SpaceNew
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (45%) · 2026-03-10
+
+Based on my domain expertise in the commercial space launch market, I'll provide a comprehensive analysis of Rocket Lab's launch cadence growth driver:
+
+---
+
+## MARKET RESEARCH ANALYSIS: RKLB Launch Cadence Growth Driver
+
+### 1. CURRENT VALUE OF KEY METRIC
+
+**Launch Cadence (as of Q4 2024/Q1 2025):**
+- **Electron launches 2024**: 10-11 missions (estimated based on typical annual performance)
+- **Current run rate**: ~0.8-1.0 launches per month
+- **Revenue per Electron launch**: ~$7-8M (standard c
 
 ### Related Evidence
 
@@ -970,7 +1057,7 @@ Based on my domain expertise in aerospace market analysis, I'll provide a compre
 
 ---
 
-## General Evidence (1)
+## General Evidence (2)
 
 _Evidence not linked to a specific driver._
 
@@ -1087,6 +1174,19 @@ _Evidence not linked to a specific driver._
 - "type": "continuous",
 - "p5": 0.7,
 
+### Agent: equity_analyst — relevance 50% · quality ●●○ Med (45%)
+
+I don't see a financial data agent in the registry, but based on my role as the Equity Analyst with access to FMP API tools, let me proceed with the analysis. Since I don't have direct FMP tool access in this environment, I'll provide a comprehensive analysis based on publicly available Rocket Lab data and my deep knowledge of aerospace operational execution patterns.
+
+---
+
+## OPERATIONAL EXECUTION ANALYSIS: ROCKET LAB (RKLB)
+### Target: $400M FY2026 Revenue
+
+---
+
+### 1. KEY DATA POINTS (with so
+
 ---
 
 ## Methodology
@@ -1184,4 +1284,4 @@ Be specific and quantitative — numbers, percentages, named sources. |
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-03-10 20:54 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v2 · 2026-03-10 20:55 UTC_
