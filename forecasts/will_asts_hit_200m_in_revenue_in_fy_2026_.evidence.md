@@ -1,20 +1,20 @@
 # will asts hit 200M in revenue in fy 2026?
 
-**Probability:** 13.1% · **Version:** v5 · **Updated:** 2026-03-10 15:41 UTC
+**Probability:** 10.9% · **Version:** v6 · **Updated:** 2026-03-10 15:50 UTC
 
-**Confidence:** Medium (49%) · **Drivers:** 5 · **Evidence:** 3 · **Agents:** 5
+**Confidence:** Medium (49%) · **Drivers:** 5 · **Evidence:** 4 · **Agents:** 5
 
 ---
 
 ## Inside View
 
-**Probability: 13.1%**
+**Probability: 10.9%**
 
-Starting from a 15.0% base rate, our model moderately decreases the probability to 13.1%. The key factors are: satellite_deployment, carrier_partnerships, market_adoption. Most influential: regulatory_approval (35%), market_adoption (25%), carrier_partnerships (19%).
+Starting from a 15.0% base rate, our model moderately decreases the probability to 10.9%. The key factors are: satellite_deployment, carrier_partnerships, market_adoption. Most influential: regulatory_approval (31%), satellite_deployment (22%), market_adoption (21%).
 
 **Forecast Confidence:** Medium (49%)
 
-**Divergence from base rate:** 2pp below (13.1% vs 15.0%)
+**Divergence from base rate:** 4pp below (10.9% vs 15.0%)
 
 ---
 
@@ -44,7 +44,7 @@ Most satellite startups fail to scale rapidly. Companies like Planet Labs, Spire
 Driver: 'satellite_deployment' (current p50=1.00)
 Context: ASTS needs operational satellites for revenue. Delays in Block 1 BlueBirds deployment would severely impact 2026 revenue. Faster deployment enables earlier commercial service.
 
-The user has provided this URL as evidence: https://ast-science.com/partners/
+The user has provided this URL as evidence: https://spacenews.com/satellite-industry-debates-size-of-direct-to-device-market/
 
 TASKS:
 1. Analyze the content at this URL (use your knowledge of what this source typically contains)
@@ -57,16 +57,18 @@ TASKS:
 
 #### Agent: market_research — relevance 50% · 2026-03-10
 
-Based on my knowledge of AST SpaceMobile's partners page and the satellite deployment context, let me provide my analysis:
+Based on my knowledge of SpaceNews as a source and the direct-to-device satellite market context, let me provide analysis:
 
-## EVIDENCE ANALYSIS: AST SpaceMobile Partners Page
+## EVIDENCE ANALYSIS: SpaceNews Direct-to-Device Market Article
 
-### 1. KEY FINDINGS FROM PARTNERS PAGE
+### Source Assessment
+**Source:** SpaceNews (spacenews.com)
+**Reliability:** 0.85/1.0 - SpaceNews is a highly credible industry publication covering space business and policy
+**Article Type:** Industry analysis/market sizing debate
 
-The AST SpaceMobile partners page (https://ast-science.com/partners/) typically showcases their **commercial agreements with mobile network operators (MNOs)**. Based on publicly available information, ASTS has announced partnerships with:
+### Key Findings Relevant to Satellite Deployment Driver
 
-**Major MNO Partners:**
-- **AT&T** (United 
+Based on typical Spa
 
 ### Related Evidence
 
@@ -200,16 +202,18 @@ Be specific and quantitative — numbers, percentages, named sources._
 
 #### Agent: market_research — relevance 50% · 2026-03-10
 
-Based on my knowledge of AST SpaceMobile's partners page and the satellite deployment context, let me provide my analysis:
+Based on my knowledge of SpaceNews as a source and the direct-to-device satellite market context, let me provide analysis:
 
-## EVIDENCE ANALYSIS: AST SpaceMobile Partners Page
+## EVIDENCE ANALYSIS: SpaceNews Direct-to-Device Market Article
 
-### 1. KEY FINDINGS FROM PARTNERS PAGE
+### Source Assessment
+**Source:** SpaceNews (spacenews.com)
+**Reliability:** 0.85/1.0 - SpaceNews is a highly credible industry publication covering space business and policy
+**Article Type:** Industry analysis/market sizing debate
 
-The AST SpaceMobile partners page (https://ast-science.com/partners/) typically showcases their **commercial agreements with mobile network operators (MNOs)**. Based on publicly available information, ASTS has announced partnerships with:
+### Key Findings Relevant to Satellite Deployment Driver
 
-**Major MNO Partners:**
-- **AT&T** (United 
+Based on typical Spa
 
 ### Related Evidence
 
@@ -339,20 +343,26 @@ Context: Space-based cellular is unproven at scale. Consumer adoption, pricing a
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (1)
+### Evidence (2)
 
 #### Agent: market_research — relevance 50% · 2026-03-10
 
-Based on my knowledge of AST SpaceMobile's partners page and the satellite deployment context, let me provide my analysis:
+Based on my knowledge of SpaceNews as a source and the direct-to-device satellite market context, let me provide analysis:
 
-## EVIDENCE ANALYSIS: AST SpaceMobile Partners Page
+## EVIDENCE ANALYSIS: SpaceNews Direct-to-Device Market Article
 
-### 1. KEY FINDINGS FROM PARTNERS PAGE
+### Source Assessment
+**Source:** SpaceNews (spacenews.com)
+**Reliability:** 0.85/1.0 - SpaceNews is a highly credible industry publication covering space business and policy
+**Article Type:** Industry analysis/market sizing debate
 
-The AST SpaceMobile partners page (https://ast-science.com/partners/) typically showcases their **commercial agreements with mobile network operators (MNOs)**. Based on publicly available information, ASTS has announced partnerships with:
+### Key Findings Relevant to Satellite Deployment Driver
 
-**Major MNO Partners:**
-- **AT&T** (United 
+Based on typical Spa
+
+#### https://spacenews.com/satellite-industry-debates-size-of-direct-to-device-market/ — relevance 70% · 2026-03-10
+
+ market sizing article
 
 ### Related Evidence
 
@@ -486,16 +496,18 @@ Be specific and quantitative — numbers, percentages, named sources._
 
 #### Agent: market_research — relevance 50% · 2026-03-10
 
-Based on my knowledge of AST SpaceMobile's partners page and the satellite deployment context, let me provide my analysis:
+Based on my knowledge of SpaceNews as a source and the direct-to-device satellite market context, let me provide analysis:
 
-## EVIDENCE ANALYSIS: AST SpaceMobile Partners Page
+## EVIDENCE ANALYSIS: SpaceNews Direct-to-Device Market Article
 
-### 1. KEY FINDINGS FROM PARTNERS PAGE
+### Source Assessment
+**Source:** SpaceNews (spacenews.com)
+**Reliability:** 0.85/1.0 - SpaceNews is a highly credible industry publication covering space business and policy
+**Article Type:** Industry analysis/market sizing debate
 
-The AST SpaceMobile partners page (https://ast-science.com/partners/) typically showcases their **commercial agreements with mobile network operators (MNOs)**. Based on publicly available information, ASTS has announced partnerships with:
+### Key Findings Relevant to Satellite Deployment Driver
 
-**Major MNO Partners:**
-- **AT&T** (United 
+Based on typical Spa
 
 ### Related Evidence
 
@@ -731,7 +743,7 @@ Context: International spectrum rights and regulatory approvals across multiple 
 
 ---
 
-## General Evidence (1)
+## General Evidence (2)
 
 _Evidence not linked to a specific driver._
 
@@ -835,6 +847,10 @@ _Evidence not linked to a specific driver._
 }
 ```
 
+### https://spacenews.com/satellite-industry-debates-size-of-direct-to-device-market/ — relevance 70%
+
+ market sizing article
+
 ---
 
 ## Methodology
@@ -860,7 +876,7 @@ model: satellite_deployment * carrier_partnerships * market_adoption * technical
 Driver: 'satellite_deployment' (current p50=1.00)
 Context: ASTS needs operational satellites for revenue. Delays in Block 1 BlueBirds deployment would severely impact 2026 revenue. Faster deployment enables earlier commercial service.
 
-The user has provided this URL as evidence: https://ast-science.com/partners/
+The user has provided this URL as evidence: https://spacenews.com/satellite-industry-debates-size-of-direct-to-device-market/
 
 TASKS:
 1. Analyze the content at this URL (use your knowledge of what this source typically contains)
@@ -926,4 +942,4 @@ Context: International spectrum rights and regulatory approvals across multiple 
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v5 · 2026-03-10 15:41 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v6 · 2026-03-10 15:50 UTC_

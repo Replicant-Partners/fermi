@@ -1,7 +1,7 @@
 {
-  "current_version": 5,
-  "predicted_probability": 0.1311358704887739,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 13.1%. The key factors are: satellite_deployment, carrier_partnerships, market_adoption. Most influential: regulatory_approval (35%), market_adoption (25%), carrier_partnerships (19%).",
+  "current_version": 6,
+  "predicted_probability": 0.10914392734223399,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 10.9%. The key factors are: satellite_deployment, carrier_partnerships, market_adoption. Most influential: regulatory_approval (31%), satellite_deployment (22%), market_adoption (21%).",
   "forecast_confidence": 0.48999999999999994,
   "versions": [
     {
@@ -33,14 +33,20 @@
       "timestamp": "2026-03-10 15:41",
       "probability": 0.1311358704887739,
       "change_summary": "13.1% (-1pp), 5 drivers, 3 evidence, 5 agents"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-10 15:50",
+      "probability": 0.10914392734223399,
+      "change_summary": "10.9% (-2pp), 5 drivers, 4 evidence, 5 agents"
     }
   ],
   "sim_results": {
-    "mean": 0.8654967452259078,
-    "median": 0.8174806318192238,
-    "p5": 0.4003768994149207,
-    "p95": 1.5044876346879192,
-    "std_dev": 0.34051456622487447,
+    "mean": 0.9604665606116592,
+    "median": 0.907974017595967,
+    "p5": 0.44135858314859516,
+    "p95": 1.6582425769176972,
+    "std_dev": 0.37523171267236705,
     "iterations": 10000
   },
   "base_rate": {
@@ -62,7 +68,7 @@
     {
       "id": "market_research_0",
       "source": "Agent: market_research",
-      "summary": "Based on my knowledge of AST SpaceMobile's partners page and the satellite deployment context, let me provide my analysis:\n\n## EVIDENCE ANALYSIS: AST SpaceMobile Partners Page\n\n### 1. KEY FINDINGS FROM PARTNERS PAGE\n\nThe AST SpaceMobile partners page (https://ast-science.com/partners/) typically showcases their **commercial agreements with mobile network operators (MNOs)**. Based on publicly available information, ASTS has announced partnerships with:\n\n**Major MNO Partners:**\n- **AT&T** (United ",
+      "summary": "Based on my knowledge of SpaceNews as a source and the direct-to-device satellite market context, let me provide analysis:\n\n## EVIDENCE ANALYSIS: SpaceNews Direct-to-Device Market Article\n\n### Source Assessment\n**Source:** SpaceNews (spacenews.com)\n**Reliability:** 0.85/1.0 - SpaceNews is a highly credible industry publication covering space business and policy\n**Article Type:** Industry analysis/market sizing debate\n\n### Key Findings Relevant to Satellite Deployment Driver\n\nBased on typical Spa",
       "relevance": 0.5,
       "date": "2026-03-10",
       "key_findings": []
@@ -74,13 +80,21 @@
       "relevance": 0.5,
       "date": "2026-03-10",
       "key_findings": []
+    },
+    {
+      "id": "manual_market_adoption_3",
+      "source": "https://spacenews.com/satellite-industry-debates-size-of-direct-to-device-market/",
+      "summary": " market sizing article",
+      "relevance": 0.7,
+      "date": "2026-03-10",
+      "key_findings": []
     }
   ],
   "agents": [
     {
       "name": "market_research_satellite_deployment",
       "agent_type": "research",
-      "query": "For the forecast: \"will asts hit 200M in revenue in fy 2026?\"\nDriver: 'satellite_deployment' (current p50=1.00)\nContext: ASTS needs operational satellites for revenue. Delays in Block 1 BlueBirds deployment would severely impact 2026 revenue. Faster deployment enables earlier commercial service.\n\nThe user has provided this URL as evidence: https://ast-science.com/partners/\n\nTASKS:\n1. Analyze the content at this URL (use your knowledge of what this source typically contains)\n2. Summarize the key findings relevant to the 'satellite_deployment' driver\n3. Assess how this evidence should adjust the p50 multiplier\n4. Provide a suggested new p50 value with reasoning\n5. Rate the evidence quality (0.0-1.0) based on source reliability and relevance",
+      "query": "For the forecast: \"will asts hit 200M in revenue in fy 2026?\"\nDriver: 'satellite_deployment' (current p50=1.00)\nContext: ASTS needs operational satellites for revenue. Delays in Block 1 BlueBirds deployment would severely impact 2026 revenue. Faster deployment enables earlier commercial service.\n\nThe user has provided this URL as evidence: https://spacenews.com/satellite-industry-debates-size-of-direct-to-device-market/\n\nTASKS:\n1. Analyze the content at this URL (use your knowledge of what this source typically contains)\n2. Summarize the key findings relevant to the 'satellite_deployment' driver\n3. Assess how this evidence should adjust the p50 multiplier\n4. Provide a suggested new p50 value with reasoning\n5. Rate the evidence quality (0.0-1.0) based on source reliability and relevance",
       "schedule": "Some(Once)",
       "driver_refs": [
         "satellite_deployment"

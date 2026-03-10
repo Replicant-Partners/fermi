@@ -135,16 +135,18 @@ evidence fermi_evidence_1773155976 {
 
 evidence market_research_0 {
     source: "Agent: market_research"
-    summary: "Based on my knowledge of AST SpaceMobile's partners page and the satellite deployment context, let me provide my analysis:
+    summary: "Based on my knowledge of SpaceNews as a source and the direct-to-device satellite market context, let me provide analysis:
 
-## EVIDENCE ANALYSIS: AST SpaceMobile Partners Page
+## EVIDENCE ANALYSIS: SpaceNews Direct-to-Device Market Article
 
-### 1. KEY FINDINGS FROM PARTNERS PAGE
+### Source Assessment
+**Source:** SpaceNews (spacenews.com)
+**Reliability:** 0.85/1.0 - SpaceNews is a highly credible industry publication covering space business and policy
+**Article Type:** Industry analysis/market sizing debate
 
-The AST SpaceMobile partners page (https://ast-science.com/partners/) typically showcases their **commercial agreements with mobile network operators (MNOs)**. Based on publicly available information, ASTS has announced partnerships with:
+### Key Findings Relevant to Satellite Deployment Driver
 
-**Major MNO Partners:**
-- **AT&T** (United "
+Based on typical Spa"
     relevance: 0.5p
     date: 2026-03-10
 }
@@ -153,6 +155,13 @@ evidence entity_investigator_0 {
     source: "Agent: entity_investigator"
     summary: ""
     relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence manual_market_adoption_3 {
+    source: "https://spacenews.com/satellite-industry-debates-size-of-direct-to-device-market/"
+    summary: " market sizing article"
+    relevance: 0.7p
     date: 2026-03-10
 }
 
