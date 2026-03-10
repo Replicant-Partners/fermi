@@ -1,8 +1,8 @@
 {
-  "current_version": 2,
+  "current_version": 3,
   "predicted_probability": 0.15,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 15.0%. The key factors are: satellite_deployment_success, carrier_partnership_expansion, pricing_power_realization. Most influential: satellite_deployment_success (0%), capital_availability (0%), carrier_partnership_expansion (0%).",
+  "forecast_confidence": 0.6166666666666667,
   "versions": [
     {
       "version": 1,
@@ -15,9 +15,22 @@
       "timestamp": "2026-03-10 19:50",
       "probability": 0.15,
       "change_summary": "15.0% (→), 6 drivers, 6 evidence, 4 agents"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-10 19:51",
+      "probability": 0.15,
+      "change_summary": "15.0% (→), 6 drivers, 6 evidence, 4 agents"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.0,
+    "median": 0.0,
+    "p5": 0.0,
+    "p95": 0.0,
+    "std_dev": 0.0,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "Pre-revenue satellite communications companies reaching $200M revenue within 6 years of commercial launch",
     "historical_frequency": 0.15,
