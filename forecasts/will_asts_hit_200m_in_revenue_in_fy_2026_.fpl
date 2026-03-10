@@ -13,7 +13,7 @@ driver carrier_partnerships continuous {
 }
 
 driver market_adoption continuous {
-    distribution: triangular(0.5, 0.9, 1.3)
+    distribution: triangular(0.5, 1.2, 1.3)
     unit: "multiplier"
     rationale: "Space-based cellular is unproven at scale. Consumer adoption, pricing acceptance, and competitive dynamics with Starlink/Apple create uncertainty. Market may develop slower than projected."
 }
