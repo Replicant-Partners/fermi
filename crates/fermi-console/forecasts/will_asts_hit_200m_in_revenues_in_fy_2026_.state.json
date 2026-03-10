@@ -1,5 +1,5 @@
 {
-  "current_version": 10,
+  "current_version": 11,
   "predicted_probability": 0.15,
   "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 15.0%. The key factors are: satellite_deployment_success, carrier_partnership_expansion, pricing_power_realization. Most influential: carrier_partnership_expansion (0%), satellite_deployment_success (0%), pricing_power_realization (0%).",
   "forecast_confidence": 0.7000000000000001,
@@ -63,6 +63,12 @@
       "timestamp": "2026-03-10 20:04",
       "probability": 0.15,
       "change_summary": "15.0% (→), 6 drivers, 7 evidence, 5 agents"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-10 20:35",
+      "probability": 0.15,
+      "change_summary": "15.0% (→), 6 drivers, 7 evidence, 6 agents"
     }
   ],
   "sim_results": {
@@ -187,7 +193,7 @@
     {
       "name": "equity_analyst_company_fundementals",
       "agent_type": "research",
-      "query": "For the forecast: \"will ASTS hit 200m in revenues in fy 2026?\" Research the 'company_fundementals' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures.",
+      "query": "For the forecast: \"will ASTS hit 200m in revenues in fy 2026?\" Research the 'company_fundementals' driver. Current estimate: p5=0.50, p50=0.80, p95=1.20 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures.",
       "schedule": "Some(Once)",
       "driver_refs": [
         "company_fundementals"
