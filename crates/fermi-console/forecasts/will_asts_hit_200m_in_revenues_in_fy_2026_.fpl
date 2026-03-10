@@ -7,7 +7,7 @@ driver satellite_deployment_success continuous {
 }
 
 driver carrier_partnership_expansion continuous {
-    distribution: triangular(0.6, 1.4, 1.8)
+    distribution: triangular(0.6, 1.1, 1.8)
     unit: "multiplier"
     rationale: "Current partnerships with AT&T, Vodafone, Rakuten. Need 15+ major carriers globally paying subscription fees to hit $200M target."
 }
