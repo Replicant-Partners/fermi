@@ -31,7 +31,7 @@ driver capital_availability continuous {
 }
 
 driver company_fundementals continuous {
-    distribution: triangular(0, 0, 0)
+    distribution: triangular(0.5, 0.8, 1.2)
     rationale: "Ananlysis of the companies core finanical strength and previous perfromance"
 }
 
@@ -203,6 +203,13 @@ evidence entity_investigator_satellite_deployment_success_0 {
 }
 
 evidence entity_investigator_market_adoption_rate_0 {
+    source: "Agent: entity_investigator"
+    summary: ""
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence entity_investigator_0 {
     source: "Agent: entity_investigator"
     summary: ""
     relevance: 0.5p
