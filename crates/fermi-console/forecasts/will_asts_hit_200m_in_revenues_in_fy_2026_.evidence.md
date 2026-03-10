@@ -1,8 +1,8 @@
 # will ASTS hit 200m in revenues in fy 2026?
 
-**Probability:** 15.0% · **Version:** v1 · **Updated:** 2026-03-10 19:47 UTC
+**Probability:** 15.0% · **Version:** v2 · **Updated:** 2026-03-10 19:50 UTC
 
-**Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 2 · **Agents:** 5
+**Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 6 · **Agents:** 6
 
 ---
 
@@ -41,7 +41,15 @@ PROVIDE:
 
 Context: ASTS needs 60+ satellites operational by 2026. Launch delays, technical failures, or regulatory issues could severely limit revenue capacity._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (2) — Weak quality (25%)
+
+#### Agent: entity_investigator — relevance 50% · quality ●○○ Low (25%) · 2026-03-10
+
+
+
+#### Agent: entity_investigator — relevance 50% · quality ●○○ Low (25%) · 2026-03-10
+
+
 
 ### Related Evidence
 
@@ -171,7 +179,7 @@ Context: Current partnerships with AT&T, Vodafone, Rakuten. Need 15+ major carri
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (1) — Partial quality (40%)
+### Evidence (2) — Partial quality (43%)
 
 #### Agent: market_research — relevance 50% · quality ●●○ Med (40%) · 2026-03-10
 
@@ -186,6 +194,21 @@ Based on my domain knowledge of AST SpaceMobile and the satellite-to-cellular ma
 
 **Current Partnership Status (as of Q4 2024/Q1 2025):**
 - **Confirmed strategic partners:** AT&T (US), Vodafone (Europe/Africa), Rakuten (Japan) - 3 anchor partn
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (45%) · 2026-03-10
+
+Based on my analysis of publicly available information on AST SpaceMobile's pricing power dynamics:
+
+---
+
+## PRICING POWER REALIZATION EVIDENCE
+
+### 1. KEY DATA POINTS (with sources and dates)
+
+**AST SpaceMobile Disclosed Pricing Model:**
+- **Target ARPU: $2-5 per subscriber per month** (AST investor presentations, 2023-2024)
+- **Premium tier potential: Up to $8-10/subscriber/month** for enhanced coverage (analyst estimates based on company guidance)
+- **Wholesale model**: ASTS sells to carriers
 
 ### Related Evidence
 
@@ -293,7 +316,7 @@ Based on my domain knowledge of AST SpaceMobile and the satellite-to-cellular ma
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.70 | 1.00 | 1.40 | multiplier |
+| 0.50 | 1.20 | 1.60 | multiplier |
 
 > Revenue depends on per-subscriber fees from carriers. Competitive pressure from Starlink, terrestrial 5G could compress pricing below projections.
 
@@ -315,7 +338,7 @@ Context: Revenue depends on per-subscriber fees from carriers. Competitive press
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (1) — Partial quality (40%)
+### Evidence (2) — Partial quality (43%)
 
 #### Agent: market_research — relevance 50% · quality ●●○ Med (40%) · 2026-03-10
 
@@ -330,6 +353,21 @@ Based on my domain knowledge of AST SpaceMobile and the satellite-to-cellular ma
 
 **Current Partnership Status (as of Q4 2024/Q1 2025):**
 - **Confirmed strategic partners:** AT&T (US), Vodafone (Europe/Africa), Rakuten (Japan) - 3 anchor partn
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (45%) · 2026-03-10
+
+Based on my analysis of publicly available information on AST SpaceMobile's pricing power dynamics:
+
+---
+
+## PRICING POWER REALIZATION EVIDENCE
+
+### 1. KEY DATA POINTS (with sources and dates)
+
+**AST SpaceMobile Disclosed Pricing Model:**
+- **Target ARPU: $2-5 per subscriber per month** (AST investor presentations, 2023-2024)
+- **Premium tier potential: Up to $8-10/subscriber/month** for enhanced coverage (analyst estimates based on company guidance)
+- **Wholesale model**: ASTS sells to carriers
 
 ### Related Evidence
 
@@ -457,7 +495,15 @@ PROVIDE:
 
 Context: Consumer demand for satellite-to-phone connectivity uncertain. Enterprise/IoT adoption may lag. Regulatory approval in key markets critical._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (2) — Weak quality (25%)
+
+#### Agent: entity_investigator — relevance 50% · quality ●○○ Low (25%) · 2026-03-10
+
+
+
+#### Agent: entity_investigator — relevance 50% · quality ●○○ Low (25%) · 2026-03-10
+
+
 
 ### Related Evidence
 
@@ -587,7 +633,26 @@ PROVIDE:
 Context: ASTS needs $500M+ for constellation buildout. Funding constraints could delay launches and limit 2026 operational capacity.
 Be specific — include named sources, dates, dollar figures._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (1) — Partial quality (45%)
+
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (45%) · 2026-03-10
+
+Based on my analysis framework for ASTS capital availability as a driver for their FY2026 $200M revenue target:
+
+---
+
+## CAPITAL AVAILABILITY DRIVER ANALYSIS: ASTS
+
+### 1. CURRENT KEY METRICS (Q4 2024 baseline)
+
+**Cash Position:**
+- Cash & equivalents: ~$130-160M (estimated Q3 2024)
+- Quarterly burn rate: $40-60M
+- Runway: 2-3 quarters without additional funding
+- **Funding gap to $500M constellation target: $340-370M**
+
+**Capital Structure:**
+- Market cap: ~$1.5-2.5B (volatile, SPAC de-SPAC sur
 
 ### Related Evidence
 
@@ -698,6 +763,11 @@ _No evidence collected yet. Assign an agent to research this driver._
 | 0.00 | 0.00 | 0.00 |  |
 
 > Ananlysis of the companies core finanical strength and previous perfromance
+
+### Assigned Agents
+
+- **equity_analyst_company_fundementals** (schedule: once)  
+  Query: _For the forecast: "will ASTS hit 200m in revenues in fy 2026?" Research the 'Driver 6' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures._
 
 _No evidence collected yet. Assign an agent to research this driver._
 
@@ -907,8 +977,9 @@ PROVIDE:
 
 Context: ASTS needs $500M+ for constellation buildout. Funding constraints could delay launches and limit 2026 operational capacity.
 Be specific — include named sources, dates, dollar figures. |
+| equity_analyst_company_fundementals | company_fundementals | For the forecast: "will ASTS hit 200m in revenues in fy 2026?" Research the 'Driver 6' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures. |
 
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-03-10 19:47 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v2 · 2026-03-10 19:50 UTC_

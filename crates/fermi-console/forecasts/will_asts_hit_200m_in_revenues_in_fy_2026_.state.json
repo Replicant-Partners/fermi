@@ -1,5 +1,5 @@
 {
-  "current_version": 1,
+  "current_version": 2,
   "predicted_probability": 0.15,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -9,6 +9,12 @@
       "timestamp": "2026-03-10 19:47",
       "probability": 0.15,
       "change_summary": "Initial: 15.0% base=15%, 6 drivers, 2 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-10 19:50",
+      "probability": 0.15,
+      "change_summary": "15.0% (→), 6 drivers, 6 evidence, 4 agents"
     }
   ],
   "sim_results": null,
@@ -43,6 +49,38 @@
       "id": "market_research_carrier_partnership_expansion_0",
       "source": "Agent: market_research",
       "summary": "Based on my domain knowledge of AST SpaceMobile and the satellite-to-cellular market, I'll provide a structured evidence assessment for the carrier partnership expansion driver:\n\n---\n\n## EVIDENCE ASSESSMENT: Carrier Partnership Expansion Driver\n**Target:** 15+ major carriers by FY 2026 (from current 3 confirmed)\n\n### 1. KEY DATA POINTS\n\n**Current Partnership Status (as of Q4 2024/Q1 2025):**\n- **Confirmed strategic partners:** AT&T (US), Vodafone (Europe/Africa), Rakuten (Japan) - 3 anchor partn",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
+    },
+    {
+      "id": "market_research_pricing_power_realization_0",
+      "source": "Agent: market_research",
+      "summary": "Based on my analysis of publicly available information on AST SpaceMobile's pricing power dynamics:\n\n---\n\n## PRICING POWER REALIZATION EVIDENCE\n\n### 1. KEY DATA POINTS (with sources and dates)\n\n**AST SpaceMobile Disclosed Pricing Model:**\n- **Target ARPU: $2-5 per subscriber per month** (AST investor presentations, 2023-2024)\n- **Premium tier potential: Up to $8-10/subscriber/month** for enhanced coverage (analyst estimates based on company guidance)\n- **Wholesale model**: ASTS sells to carriers",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1773172057",
+      "source": "Agent: macro_forecaster",
+      "summary": "Based on my analysis framework for ASTS capital availability as a driver for their FY2026 $200M revenue target:\n\n---\n\n## CAPITAL AVAILABILITY DRIVER ANALYSIS: ASTS\n\n### 1. CURRENT KEY METRICS (Q4 2024 baseline)\n\n**Cash Position:**\n- Cash & equivalents: ~$130-160M (estimated Q3 2024)\n- Quarterly burn rate: $40-60M\n- Runway: 2-3 quarters without additional funding\n- **Funding gap to $500M constellation target: $340-370M**\n\n**Capital Structure:**\n- Market cap: ~$1.5-2.5B (volatile, SPAC de-SPAC sur",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
+    },
+    {
+      "id": "entity_investigator_satellite_deployment_success_0",
+      "source": "Agent: entity_investigator",
+      "summary": "",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
+    },
+    {
+      "id": "entity_investigator_market_adoption_rate_0",
+      "source": "Agent: entity_investigator",
+      "summary": "",
       "relevance": 0.5,
       "date": "2026-03-10",
       "key_findings": []
@@ -92,6 +130,15 @@
       "schedule": "Some(Once)",
       "driver_refs": [
         "capital_availability"
+      ]
+    },
+    {
+      "name": "equity_analyst_company_fundementals",
+      "agent_type": "research",
+      "query": "For the forecast: \"will ASTS hit 200m in revenues in fy 2026?\" Research the 'Driver 6' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "company_fundementals"
       ]
     }
   ],

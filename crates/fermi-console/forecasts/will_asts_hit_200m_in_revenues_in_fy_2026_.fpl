@@ -13,7 +13,7 @@ driver carrier_partnership_expansion continuous {
 }
 
 driver pricing_power_realization continuous {
-    distribution: triangular(0.7, 1, 1.4)
+    distribution: triangular(0.5, 1.2, 1.6)
     unit: "multiplier"
     rationale: "Revenue depends on per-subscriber fees from carriers. Competitive pressure from Starlink, terrestrial 5G could compress pricing below projections."
 }
@@ -151,6 +151,60 @@ evidence market_research_carrier_partnership_expansion_0 {
 
 **Current Partnership Status (as of Q4 2024/Q1 2025):**
 - **Confirmed strategic partners:** AT&T (US), Vodafone (Europe/Africa), Rakuten (Japan) - 3 anchor partn"
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence market_research_pricing_power_realization_0 {
+    source: "Agent: market_research"
+    summary: "Based on my analysis of publicly available information on AST SpaceMobile's pricing power dynamics:
+
+---
+
+## PRICING POWER REALIZATION EVIDENCE
+
+### 1. KEY DATA POINTS (with sources and dates)
+
+**AST SpaceMobile Disclosed Pricing Model:**
+- **Target ARPU: $2-5 per subscriber per month** (AST investor presentations, 2023-2024)
+- **Premium tier potential: Up to $8-10/subscriber/month** for enhanced coverage (analyst estimates based on company guidance)
+- **Wholesale model**: ASTS sells to carriers"
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence macro_forecaster_evidence_1773172057 {
+    source: "Agent: macro_forecaster"
+    summary: "Based on my analysis framework for ASTS capital availability as a driver for their FY2026 $200M revenue target:
+
+---
+
+## CAPITAL AVAILABILITY DRIVER ANALYSIS: ASTS
+
+### 1. CURRENT KEY METRICS (Q4 2024 baseline)
+
+**Cash Position:**
+- Cash & equivalents: ~$130-160M (estimated Q3 2024)
+- Quarterly burn rate: $40-60M
+- Runway: 2-3 quarters without additional funding
+- **Funding gap to $500M constellation target: $340-370M**
+
+**Capital Structure:**
+- Market cap: ~$1.5-2.5B (volatile, SPAC de-SPAC sur"
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence entity_investigator_satellite_deployment_success_0 {
+    source: "Agent: entity_investigator"
+    summary: ""
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence entity_investigator_market_adoption_rate_0 {
+    source: "Agent: entity_investigator"
+    summary: ""
     relevance: 0.5p
     date: 2026-03-10
 }
