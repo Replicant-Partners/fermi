@@ -935,6 +935,11 @@ impl CockpitState {
             let domain_agent = match domain.as_str() {
                 "sports_nba" | "basketball" => "nba_analyst",
                 "biotech" | "pharma" | "clinical" => "biotech_analyst",
+                "sports_football" | "sports_nfl" | "sports_other" => "market_research",
+                "finance" | "stocks" => "macro_forecaster",
+                "politics" | "geopolitics" => "macro_forecaster",
+                "technology" => "market_research",
+                "climate" => "macro_forecaster",
                 _ => "macro_forecaster",
             };
 
@@ -1681,7 +1686,7 @@ impl CockpitState {
             if !query.is_empty() {
                 // Pre-fill the query input with Fermi's suggestion
                 self.agent_query_input.update(cx, |input, cx| {
-                    input.set_text(query, cx);
+                    input.set_text(query.replace('\n', " ").replace("  ", " "), cx);
                 });
             }
         } else {
@@ -1964,6 +1969,9 @@ impl CockpitState {
             match domain.as_str() {
                 "sports_nba" | "basketball" => "nba_analyst",
                 "biotech" | "pharma" => "biotech_analyst",
+                "sports_football" | "sports_nfl" | "sports_other" => "market_research",
+                "finance" | "stocks" => "macro_forecaster",
+                "technology" => "market_research",
                 _ => "macro_forecaster",
             }
         };
@@ -1981,8 +1989,9 @@ impl CockpitState {
         );
 
         // Pre-fill the query input so the user sees what will be asked
-        self.agent_query_input
-            .update(cx, |input, cx| input.set_text(&suggested_query, cx));
+        self.agent_query_input.update(cx, |input, cx| {
+            input.set_text(&suggested_query.replace('\n', " ").replace("  ", " "), cx)
+        });
 
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
@@ -4624,6 +4633,9 @@ fn render_agent_picker(
         match domain.as_str() {
             "sports_nba" | "basketball" => "nba_analyst",
             "biotech" | "pharma" => "biotech_analyst",
+            "sports_football" | "sports_nfl" | "sports_other" => "market_research",
+            "finance" | "stocks" => "macro_forecaster",
+            "technology" => "market_research",
             _ => "macro_forecaster",
         }
     };
@@ -8143,30 +8155,149 @@ fn formulate_research_query(
 
 fn detect_domain(question: &str) -> String {
     let q = question.to_lowercase();
-    if q.contains("stock")
-        || q.contains("price")
-        || q.contains("market")
-        || q.contains("revenue")
-        || q.contains("valuation")
+
+    // Sports — NBA / basketball (check BEFORE general sports)
+    if q.contains("nba")
+        || q.contains("lakers")
+        || q.contains("celtics")
+        || q.contains("knicks")
+        || q.contains("warriors")
+        || q.contains("nuggets")
+        || q.contains("bucks")
+        || q.contains("76ers")
+        || q.contains("basketball")
+        || (q.contains("playoff") && (q.contains("game") || q.contains("series")))
     {
-        "finance".into()
-    } else if q.contains("election")
+        return "sports_nba".into();
+    }
+
+    // Sports — football / soccer
+    if q.contains("champions league")
+        || q.contains("premier league")
+        || q.contains("world cup")
+        || q.contains("euro 20")
+        || q.contains("europa league")
+        || q.contains("la liga")
+        || q.contains("bundesliga")
+        || q.contains("serie a")
+        || q.contains("ligue 1")
+        || q.contains("uefa")
+        || q.contains("fifa")
+        || q.contains("bayern")
+        || q.contains("barcelona")
+        || q.contains("real madrid")
+        || q.contains("manchester")
+        || q.contains("liverpool")
+        || q.contains("arsenal")
+        || q.contains("psg")
+        || q.contains("juventus")
+        || q.contains("inter milan")
+        || q.contains("soccer")
+        || q.contains("football") && !q.contains("nfl")
+    {
+        return "sports_football".into();
+    }
+
+    // Sports — NFL
+    if q.contains("nfl")
+        || q.contains("super bowl")
+        || q.contains("touchdown")
+        || q.contains("quarterback")
+    {
+        return "sports_nfl".into();
+    }
+
+    // Sports — general / other
+    if q.contains("olympics")
+        || q.contains("tennis")
+        || q.contains("f1")
+        || q.contains("formula 1")
+        || q.contains("eurovision")
+    {
+        return "sports_other".into();
+    }
+
+    // Biotech / pharma
+    if q.contains("fda")
+        || q.contains("clinical trial")
+        || q.contains("drug")
+        || q.contains("pharma")
+        || q.contains("biotech")
+        || q.contains("approval")
+            && (q.contains("drug") || q.contains("therapy") || q.contains("treatment"))
+        || q.contains("phase 1")
+        || q.contains("phase 2")
+        || q.contains("phase 3")
+        || q.contains("oncology")
+        || q.contains("crispr")
+        || q.contains("mrna")
+    {
+        return "biotech".into();
+    }
+
+    // Finance / stocks
+    if q.contains("stock")
+        || q.contains("share price")
+        || q.contains("revenue")
+        || q.contains("earnings")
+        || q.contains("valuation")
+        || q.contains("ipo")
+        || q.contains("nasdaq")
+        || q.contains("s&p")
+        || q.contains("dow")
+        || q.contains("market cap")
+        || q.contains("dividend")
+        || q.contains("quarterly")
+    {
+        return "finance".into();
+    }
+
+    // Politics / geopolitics
+    if q.contains("election")
         || q.contains("vote")
         || q.contains("president")
         || q.contains("congress")
+        || q.contains("senate")
+        || q.contains("parliament")
+        || q.contains("referendum")
+        || q.contains("war")
+        || q.contains("conflict")
+        || q.contains("nato")
+        || q.contains("sanctions")
+        || q.contains("treaty")
     {
-        "politics".into()
-    } else if q.contains("ai")
-        || q.contains("tech")
-        || q.contains("software")
-        || q.contains("launch")
-    {
-        "technology".into()
-    } else if q.contains("climate") || q.contains("temperature") || q.contains("carbon") {
-        "climate".into()
-    } else {
-        "general".into()
+        return "politics".into();
     }
+
+    // Technology
+    if q.contains(" ai ")
+        || q.contains("artificial intelligence")
+        || q.contains("software")
+        || q.contains("chip")
+        || q.contains("semiconductor")
+        || q.contains("quantum")
+        || q.contains("spacex")
+        || q.contains("satellite")
+        || q.contains("autonomous")
+        || q.contains("robotics")
+    {
+        return "technology".into();
+    }
+
+    // Climate / energy
+    if q.contains("climate")
+        || q.contains("carbon")
+        || q.contains("emission")
+        || q.contains("renewable")
+        || q.contains("solar")
+        || q.contains("wind power")
+        || q.contains("nuclear") && q.contains("energy")
+        || q.contains("fusion")
+    {
+        return "climate".into();
+    }
+
+    "general".into()
 }
 
 /// Generate a Fermi decomposition template for the given domain.
