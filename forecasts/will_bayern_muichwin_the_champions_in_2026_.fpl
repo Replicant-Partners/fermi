@@ -133,6 +133,39 @@ evidence fermi_evidence_1773134564 {
     date: 2026-03-10
 }
 
+evidence macro_forecaster_evidence_1773134580 {
+    source: "Agent: macro_forecaster"
+    summary: "I appreciate the request, but I need to clarify an important scope limitation:
+
+**I am the Macro Forecaster** — I specialize in **macroeconomic analysis**: GDP growth, inflation, central bank policy, fiscal dynamics, trade flows, and cross-country economic comparisons.
+
+The question about Bayern Munich winning the Champions League in 2026, and specifically the 'coaching_stability' driver, falls under **sports analytics and organizational performance forecasting** — outside my domain expertise.
+
+"
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence macro_forecaster_evidence_1773134585 {
+    source: "Agent: macro_forecaster"
+    summary: "I appreciate the question, but I need to clarify my role and limitations here.
+
+**ROLE MISMATCH ALERT**
+
+I am the **Macro Forecaster** — I specialize in:
+- GDP growth, inflation, employment, trade balances
+- Central bank policy (Fed, ECB, BoJ rate decisions)
+- Fiscal policy and sovereign debt dynamics
+- Cross-country economic comparisons
+- Macroeconomic scenario forecasting
+
+**Your question is about:**
+- Bayern Munich's Champions League prospects (sports forecasting)
+- Tournament draw mechanics "
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
 model: squad_strength_trajectory * bundesliga_competition_level * coaching_stability * financial_advantage * draw_luck
 
 simulate 10000 iterations

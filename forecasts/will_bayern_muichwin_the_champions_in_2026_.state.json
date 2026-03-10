@@ -1,5 +1,5 @@
 {
-  "current_version": 1,
+  "current_version": 2,
   "predicted_probability": 0.031,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -9,6 +9,12 @@
       "timestamp": "2026-03-10 09:22",
       "probability": 0.031,
       "change_summary": "Initial: 3.1% base=3%, 5 drivers, 1 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-10 09:23",
+      "probability": 0.031,
+      "change_summary": "3.1% (→), 5 drivers, 3 evidence"
     }
   ],
   "sim_results": null,
@@ -38,6 +44,22 @@
         "\"type\": \"continuous\",",
         "\"p5\": 0.85,"
       ]
+    },
+    {
+      "id": "macro_forecaster_evidence_1773134580",
+      "source": "Agent: macro_forecaster",
+      "summary": "I appreciate the request, but I need to clarify an important scope limitation:\n\n**I am the Macro Forecaster** — I specialize in **macroeconomic analysis**: GDP growth, inflation, central bank policy, fiscal dynamics, trade flows, and cross-country economic comparisons.\n\nThe question about Bayern Munich winning the Champions League in 2026, and specifically the 'coaching_stability' driver, falls under **sports analytics and organizational performance forecasting** — outside my domain expertise.\n\n",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1773134585",
+      "source": "Agent: macro_forecaster",
+      "summary": "I appreciate the question, but I need to clarify my role and limitations here.\n\n**ROLE MISMATCH ALERT**\n\nI am the **Macro Forecaster** — I specialize in:\n- GDP growth, inflation, employment, trade balances\n- Central bank policy (Fed, ECB, BoJ rate decisions)\n- Fiscal policy and sovereign debt dynamics\n- Cross-country economic comparisons\n- Macroeconomic scenario forecasting\n\n**Your question is about:**\n- Bayern Munich's Champions League prospects (sports forecasting)\n- Tournament draw mechanics ",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
     }
   ],
   "agents": [
