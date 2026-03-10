@@ -1,17 +1,30 @@
 {
-  "current_version": 1,
-  "predicted_probability": 0.088,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "current_version": 2,
+  "predicted_probability": 0.07816074195580817,
+  "inside_view_explanation": "Starting from a 8.8% base rate, our model moderately decreases the probability to 7.8%. The key factors are: recent_performance_trend, competitive_field_strength, voting_system_favorability. Most influential: recent_performance_trend (56%), song_quality_variance (31%), competitive_field_strength (8%).",
+  "forecast_confidence": 0.13999999999999999,
   "versions": [
     {
       "version": 1,
       "timestamp": "2026-03-10 21:31",
       "probability": 0.088,
       "change_summary": "Initial: 8.8% base=9%, 4 drivers, 1 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-10 21:33",
+      "probability": 0.07816074195580817,
+      "change_summary": "7.8% (-1pp), 4 drivers, 4 evidence, 3 agents"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 1.0631637286488906,
+    "median": 1.043389273976267,
+    "p5": 0.50180004036116,
+    "p95": 1.7066000471027822,
+    "std_dev": 0.3639171363859769,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "Sweden's Eurovision wins since contest began in 1956",
     "historical_frequency": 0.088,
@@ -38,6 +51,30 @@
         "\"type\": \"continuous\",",
         "\"p5\": 0.85,"
       ]
+    },
+    {
+      "id": "market_research_voting_system_favorability_0",
+      "source": "Agent: market_research",
+      "summary": "Based on my domain expertise in Eurovision voting dynamics and market research methodology, I'll provide a comprehensive analysis of the 'voting_system_favorability' driver for Sweden's 2026 Eurovision prospects.\n\n## MARKET RESEARCH EVIDENCE: VOTING_SYSTEM_FAVORABILITY\n\n### 1. KEY DATA POINTS (with sources and dates)\n\n**Sweden's Historical Performance Under Current Voting System (2016-2025):**\n\n- **2023: Loreen - \"Tattoo\"** - **WON**\n  - Jury vote: 340 points (1st place)\n  - Public vote: 243 poi",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
+    },
+    {
+      "id": "market_research_competitive_field_strength_0",
+      "source": "Agent: market_research",
+      "summary": "Based on my domain expertise in competitive market analysis applied to Eurovision dynamics, I'll provide a structured assessment of the competitive field strength driver:\n\n---\n\n## COMPETITIVE FIELD STRENGTH ANALYSIS: EUROVISION 2026\n\n### 1. KEY DATA POINTS (Historical & Recent Trends)\n\n**Sweden's Historical Performance (2000-2024):**\n- **Win rate: 12% (3 wins in 25 contests)** - 2012 (Loreen), 2015 (Måns Zelmerlöw), 2023 (Loreen)\n- **Top 5 finish rate: ~44%** (11 of 25 contests)\n- **Average fina",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
+    },
+    {
+      "id": "sentiment_analyzer_0",
+      "source": "Agent: sentiment_analyzer",
+      "summary": "I don't have access to real-time sentiment scraping tools, but I can provide a comprehensive sentiment analysis based on my knowledge of Eurovision dynamics, historical data, and the narrative landscape as of my training cutoff. Let me structure this as decision-relevant evidence for your forecast.\n\n---\n\n## SENTIMENT ANALYSIS: Sweden Eurovision 2026 Recent Performance Trend Driver\n\n### SENTIMENT CLASSIFICATION: **BULLISH** (with emerging caution signals)\n\n---\n\n### KEY DATA POINTS & NARRATIVE THE",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": []
     }
   ],
   "agents": [

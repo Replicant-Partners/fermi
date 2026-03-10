@@ -1,8 +1,20 @@
 # Will sweden win the eurovision in 2026?
 
-**Probability:** 8.8% · **Version:** v1 · **Updated:** 2026-03-10 21:31 UTC
+**Probability:** 7.8% · **Version:** v2 · **Updated:** 2026-03-10 21:33 UTC
 
-**Confidence:** Medium (50%) · **Drivers:** 4 · **Evidence:** 1 · **Agents:** 5
+**Confidence:** Low (14%) · **Drivers:** 4 · **Evidence:** 4 · **Agents:** 5
+
+---
+
+## Inside View
+
+**Probability: 7.8%**
+
+Starting from a 8.8% base rate, our model moderately decreases the probability to 7.8%. The key factors are: recent_performance_trend, competitive_field_strength, voting_system_favorability. Most influential: recent_performance_trend (56%), song_quality_variance (31%), competitive_field_strength (8%).
+
+**Forecast Confidence:** Low (14%)
+
+**Divergence from base rate:** 1pp below (7.8% vs 8.8%)
 
 ---
 
@@ -45,7 +57,21 @@ Be specific and quantitative — numbers, percentages, named sources._
 - **sentiment_analyzer** (schedule: once)  
   Query: _For the forecast: "Will sweden win the eurovision in 2026?" Research evidence for the 'recent_performance_trend' driver. Current estimate: p5=0.85, p50=1.10, p95=1.40 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Sweden consistently places in top 10, won 2023, and has strong track record 2010s-2020s. Melodifestivalen produces high-quality entries, suggesting above-average prospects. Be specific and quantitative — numbers, percentages, named sources._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (1) — Partial quality (40%)
+
+#### Agent: sentiment_analyzer — relevance 50% · quality ●●○ Med (40%) · 2026-03-10
+
+I don't have access to real-time sentiment scraping tools, but I can provide a comprehensive sentiment analysis based on my knowledge of Eurovision dynamics, historical data, and the narrative landscape as of my training cutoff. Let me structure this as decision-relevant evidence for your forecast.
+
+---
+
+## SENTIMENT ANALYSIS: Sweden Eurovision 2026 Recent Performance Trend Driver
+
+### SENTIMENT CLASSIFICATION: **BULLISH** (with emerging caution signals)
+
+---
+
+### KEY DATA POINTS & NARRATIVE THE
 
 ### Related Evidence
 
@@ -165,7 +191,36 @@ Context: Eurovision competition has intensified with more professional entries f
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (2) — Partial quality (45%)
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (40%) · 2026-03-10
+
+Based on my domain expertise in Eurovision voting dynamics and market research methodology, I'll provide a comprehensive analysis of the 'voting_system_favorability' driver for Sweden's 2026 Eurovision prospects.
+
+## MARKET RESEARCH EVIDENCE: VOTING_SYSTEM_FAVORABILITY
+
+### 1. KEY DATA POINTS (with sources and dates)
+
+**Sweden's Historical Performance Under Current Voting System (2016-2025):**
+
+- **2023: Loreen - "Tattoo"** - **WON**
+  - Jury vote: 340 points (1st place)
+  - Public vote: 243 poi
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (50%) · 2026-03-10
+
+Based on my domain expertise in competitive market analysis applied to Eurovision dynamics, I'll provide a structured assessment of the competitive field strength driver:
+
+---
+
+## COMPETITIVE FIELD STRENGTH ANALYSIS: EUROVISION 2026
+
+### 1. KEY DATA POINTS (Historical & Recent Trends)
+
+**Sweden's Historical Performance (2000-2024):**
+- **Win rate: 12% (3 wins in 25 contests)** - 2012 (Loreen), 2015 (Måns Zelmerlöw), 2023 (Loreen)
+- **Top 5 finish rate: ~44%** (11 of 25 contests)
+- **Average fina
 
 ### Related Evidence
 
@@ -263,7 +318,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.90 | 1.05 | 1.25 | multiplier |
+| 0.40 | 1.20 | 1.50 | multiplier |
 
 > Current jury-public split voting system favors polished, radio-friendly pop that Sweden excels at producing. Sweden benefits from broad appeal across both voting mechanisms.
 
@@ -285,7 +340,36 @@ Context: Current jury-public split voting system favors polished, radio-friendly
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (2) — Partial quality (45%)
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (40%) · 2026-03-10
+
+Based on my domain expertise in Eurovision voting dynamics and market research methodology, I'll provide a comprehensive analysis of the 'voting_system_favorability' driver for Sweden's 2026 Eurovision prospects.
+
+## MARKET RESEARCH EVIDENCE: VOTING_SYSTEM_FAVORABILITY
+
+### 1. KEY DATA POINTS (with sources and dates)
+
+**Sweden's Historical Performance Under Current Voting System (2016-2025):**
+
+- **2023: Loreen - "Tattoo"** - **WON**
+  - Jury vote: 340 points (1st place)
+  - Public vote: 243 poi
+
+#### Agent: market_research — relevance 50% · quality ●●○ Med (50%) · 2026-03-10
+
+Based on my domain expertise in competitive market analysis applied to Eurovision dynamics, I'll provide a structured assessment of the competitive field strength driver:
+
+---
+
+## COMPETITIVE FIELD STRENGTH ANALYSIS: EUROVISION 2026
+
+### 1. KEY DATA POINTS (Historical & Recent Trends)
+
+**Sweden's Historical Performance (2000-2024):**
+- **Win rate: 12% (3 wins in 25 contests)** - 2012 (Loreen), 2015 (Måns Zelmerlöw), 2023 (Loreen)
+- **Top 5 finish rate: ~44%** (11 of 25 contests)
+- **Average fina
 
 ### Related Evidence
 
@@ -688,4 +772,4 @@ Be specific and quantitative — numbers, percentages, named sources. |
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-03-10 21:31 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v2 · 2026-03-10 21:33 UTC_

@@ -13,7 +13,7 @@ driver competitive_field_strength continuous {
 }
 
 driver voting_system_favorability continuous {
-    distribution: triangular(0.9, 1.05, 1.25)
+    distribution: triangular(0.4, 1.2, 1.5)
     unit: "multiplier"
     rationale: "Current jury-public split voting system favors polished, radio-friendly pop that Sweden excels at producing. Sweden benefits from broad appeal across both voting mechanisms."
 }
@@ -113,6 +113,58 @@ evidence fermi_evidence_1773178257 {
   \"reasoning\": \"Base rate of 8.8% reflects Sweden's strong historical performance. Recent success and institutional advantages (Melodifestivalen) justify positive adjustment, but increased competition and inherent song quality uncertainty temper expectations. Model estimates ~9-10% probability, acknowledging Sweden as perennial contender but not overwhelming favorite given competitive field.\"
 }
 ```"
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence market_research_voting_system_favorability_0 {
+    source: "Agent: market_research"
+    summary: "Based on my domain expertise in Eurovision voting dynamics and market research methodology, I'll provide a comprehensive analysis of the 'voting_system_favorability' driver for Sweden's 2026 Eurovision prospects.
+
+## MARKET RESEARCH EVIDENCE: VOTING_SYSTEM_FAVORABILITY
+
+### 1. KEY DATA POINTS (with sources and dates)
+
+**Sweden's Historical Performance Under Current Voting System (2016-2025):**
+
+- **2023: Loreen - \"Tattoo\"** - **WON**
+  - Jury vote: 340 points (1st place)
+  - Public vote: 243 poi"
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence market_research_competitive_field_strength_0 {
+    source: "Agent: market_research"
+    summary: "Based on my domain expertise in competitive market analysis applied to Eurovision dynamics, I'll provide a structured assessment of the competitive field strength driver:
+
+---
+
+## COMPETITIVE FIELD STRENGTH ANALYSIS: EUROVISION 2026
+
+### 1. KEY DATA POINTS (Historical & Recent Trends)
+
+**Sweden's Historical Performance (2000-2024):**
+- **Win rate: 12% (3 wins in 25 contests)** - 2012 (Loreen), 2015 (Måns Zelmerlöw), 2023 (Loreen)
+- **Top 5 finish rate: ~44%** (11 of 25 contests)
+- **Average fina"
+    relevance: 0.5p
+    date: 2026-03-10
+}
+
+evidence sentiment_analyzer_0 {
+    source: "Agent: sentiment_analyzer"
+    summary: "I don't have access to real-time sentiment scraping tools, but I can provide a comprehensive sentiment analysis based on my knowledge of Eurovision dynamics, historical data, and the narrative landscape as of my training cutoff. Let me structure this as decision-relevant evidence for your forecast.
+
+---
+
+## SENTIMENT ANALYSIS: Sweden Eurovision 2026 Recent Performance Trend Driver
+
+### SENTIMENT CLASSIFICATION: **BULLISH** (with emerging caution signals)
+
+---
+
+### KEY DATA POINTS & NARRATIVE THE"
     relevance: 0.5p
     date: 2026-03-10
 }
