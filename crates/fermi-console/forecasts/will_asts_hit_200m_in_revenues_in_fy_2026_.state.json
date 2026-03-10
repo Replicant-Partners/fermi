@@ -1,5 +1,5 @@
 {
-  "current_version": 5,
+  "current_version": 6,
   "predicted_probability": 0.15,
   "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 15.0%. The key factors are: satellite_deployment_success, carrier_partnership_expansion, pricing_power_realization. Most influential: pricing_power_realization (0%), market_adoption_rate (0%), satellite_deployment_success (0%).",
   "forecast_confidence": 0.6166666666666667,
@@ -33,6 +33,12 @@
       "timestamp": "2026-03-10 19:51",
       "probability": 0.15,
       "change_summary": "15.0% (→), 6 drivers, 6 evidence, 4 agents"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-10 20:02",
+      "probability": 0.15,
+      "change_summary": "15.0% (→), 6 drivers, 6 evidence, 5 agents"
     }
   ],
   "sim_results": {
@@ -57,18 +63,7 @@
       "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"Pre-revenue satellite communications companies reaching $200M revenue within 6 years of commercial launch\",\n    \"historical_frequency\": 0.15,\n    \"sample_size\": 20,\n    \"reasoning\": \"Most satellite startups fail to scale quickly. Iridium, Globalstar took 8-12 years. Only SpaceX-tier execution achieves this timeline.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"satellite_deployment_success\",\n      \"display_name\": \"Satellite Deployment Success\",\n      \"type\": \"continuous\",\n      \"p5\": 0.4,\n      \"p50\": 0.9,\n      \"p95\": 1.2,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"ASTS needs 60+ satellites operational by 2026. Launch delays, technical failures, or regulatory issues could severely limit revenue capacity.\"\n    },\n    {\n      \"name\": \"carrier_partnership_expansion\",\n      \"display_name\": \"Carrier Partnership Expansion\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.1,\n      \"p95\": 1.8,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Current partnerships with AT&T, Vodafone, Rakuten. Need 15+ major carriers globally paying subscription fees to hit $200M target.\"\n    },\n    {\n      \"name\": \"pricing_power_realization\",\n      \"display_name\": \"Pricing Power Realization\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 1.0,\n      \"p95\": 1.4,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Revenue depends on per-subscriber fees from carriers. Competitive pressure from Starlink, terrestrial 5G could compress pricing below projections.\"\n    },\n    {\n      \"name\": \"market_adoption_rate\",\n      \"display_name\": \"Market Adoption Rate\",\n      \"type\": \"continuous\",\n      \"p5\": 0.5,\n      \"p50\": 0.95,\n      \"p95\": 1.5,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Consumer demand for satellite-to-phone connectivity uncertain. Enterprise/IoT adoption may lag. Regulatory approval in key markets critical.\"\n    },\n    {\n      \"name\": \"capital_availability\",\n      \"display_name\": \"Capital Availability\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.2,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"ASTS needs $500M+ for constellation buildout. Funding constraints could delay launches and limit 2026 operational capacity.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"ASTS investor presentations 2023-2024\",\n      \"summary\": \"Company projects commercial service 2024-2025 with global coverage by 2026-2027 requiring 168 satellites\",\n      \"key_findings\": [\n        \"BlueWalker 3 successful test in 2023\",\n        \"Block 1 satellites planned for 2024-2025 launches\",\n        \"Revenue guidance not yet provided for 2026\"\n      ],\n      \"relevance\": 0.9\n    },\n    {\n      \"source\": \"Satellite industry revenue benchmarks\",\n      \"summary\": \"Comparable LEO constellations show 5-10 year ramp to $200M. Iridium reached $200M in year 8 post-relaunch\",\n      \"key_findings\": [\n        \"Globalstar: 12 years to $200M\",\n        \"OneWeb targeting $200M+ by 2025 (year 6)\",\n        \"High capital intensity delays profitability\"\n      ],\n      \"relevance\": 0.8\n    },\n    {\n      \"source\": \"SpaceX Starlink growth trajectory\",\n      \"summary\": \"Starlink reached $1.4B revenue in year 3 but had unique advantages: vertical integration, reusable rockets, direct-to-consumer\",\n      \"key_findings\": [\n        \"Exceptional case with Musk execution\",\n        \"ASTS model is B2B2C, slower adoption\",\n        \"Demonstrates market exists for satellite connectivity\"\n      ],\n      \"relevance\": 0.6\n    }\n  ],\n  \"model_expression\": \"base_rate * satellite_deployment_success * carrier_partnership_expansion * pricing_power_realization * market_adoption_rate * capital_availability\",\n  \"confidence\": 0.4,\n  \"reasoning\": \"ASTS faces extreme execution risk with unproven technology at scale. $200M by FY2026 requires flawless satellite deployment, rapid carrier adoption, and sustained funding. Base rate reflects satellite industry's poor track record of fast scaling. Most likely outcome is 2027-2028 timeframe if successful at all.\"\n}\n```",
       "relevance": 0.5,
       "date": "2026-03-10",
-      "key_findings": [
-        "\"base_rate\": {",
-        "\"reference_class\": \"Pre-revenue satellite communications companies reaching $200M revenue within 6 years of commercial launch\",",
-        "\"historical_frequency\": 0.15,",
-        "\"sample_size\": 20,",
-        "\"reasoning\": \"Most satellite startups fail to scale quickly. Iridium, Globalstar took 8-12 years. Only SpaceX-tier execution achieves this timeline.\"",
-        "\"drivers\": [",
-        "\"name\": \"satellite_deployment_success\",",
-        "\"display_name\": \"Satellite Deployment Success\",",
-        "\"type\": \"continuous\",",
-        "\"p5\": 0.4,"
-      ]
+      "key_findings": []
     },
     {
       "id": "market_research_carrier_partnership_expansion_0",
@@ -160,7 +155,16 @@
     {
       "name": "equity_analyst_company_fundementals",
       "agent_type": "research",
-      "query": "For the forecast: \"will ASTS hit 200m in revenues in fy 2026?\" Research the 'Driver 6' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures.",
+      "query": "For the forecast: \"will ASTS hit 200m in revenues in fy 2026?\" Research the 'company_fundementals' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "company_fundementals"
+      ]
+    },
+    {
+      "name": "entity_investigator_company_fundementals",
+      "agent_type": "research",
+      "query": "For the forecast: \"will ASTS hit 200m in revenues in fy 2026?\" Research the 'company_fundementals' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures.",
       "schedule": "Some(Once)",
       "driver_refs": [
         "company_fundementals"

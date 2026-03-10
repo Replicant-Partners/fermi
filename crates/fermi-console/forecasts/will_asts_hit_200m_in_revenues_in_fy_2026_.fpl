@@ -209,6 +209,6 @@ evidence entity_investigator_market_adoption_rate_0 {
     date: 2026-03-10
 }
 
-model: satellite_deployment_success * carrier_partnership_expansion * pricing_power_realization * market_adoption_rate * capital_availability * company_fundementals
+model: (((((satellite_deployment_success * carrier_partnership_expansion) * pricing_power_realization) * market_adoption_rate) * capital_availability) * company_fundementals)
 
 simulate 10000 iterations

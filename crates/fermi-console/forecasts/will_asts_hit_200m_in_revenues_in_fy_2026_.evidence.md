@@ -1,8 +1,8 @@
 # will ASTS hit 200m in revenues in fy 2026?
 
-**Probability:** 15.0% · **Version:** v5 · **Updated:** 2026-03-10 19:51 UTC
+**Probability:** 15.0% · **Version:** v6 · **Updated:** 2026-03-10 20:02 UTC
 
-**Confidence:** Medium (62%) · **Drivers:** 6 · **Evidence:** 6 · **Agents:** 6
+**Confidence:** Medium (62%) · **Drivers:** 6 · **Evidence:** 6 · **Agents:** 7
 
 ---
 
@@ -768,7 +768,7 @@ Based on my analysis framework for ASTS capital availability as a driver for the
 
 ---
 
-## 6. Driver 6 `continuous`
+## 6. company_fundementals `continuous`
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
@@ -779,9 +779,19 @@ Based on my analysis framework for ASTS capital availability as a driver for the
 ### Assigned Agents
 
 - **equity_analyst_company_fundementals** (schedule: once)  
-  Query: _For the forecast: "will ASTS hit 200m in revenues in fy 2026?" Research the 'Driver 6' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures._
+  Query: _For the forecast: "will ASTS hit 200m in revenues in fy 2026?" Research the 'company_fundementals' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures._
+- **entity_investigator** (schedule: once)  
+  Query: _For the forecast: "will ASTS hit 200m in revenues in fy 2026?" Research the 'company_fundementals' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (2) — Weak quality (25%)
+
+#### Agent: entity_investigator — relevance 50% · quality ●○○ Low (25%) · 2026-03-10
+
+
+
+#### Agent: entity_investigator — relevance 50% · quality ●○○ Low (25%) · 2026-03-10
+
+
 
 ---
 
@@ -789,7 +799,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 _Evidence not linked to a specific driver._
 
-### Agent: fermi (Claude API) — relevance 50% · quality ●●● High (75%)
+### Agent: fermi (Claude API) — relevance 50% · quality ●●○ Med (55%)
 
 ```json
 {
@@ -889,19 +899,6 @@ _Evidence not linked to a specific driver._
 }
 ```
 
-**Key findings:**
-
-- "base_rate": {
-- "reference_class": "Pre-revenue satellite communications companies reaching $200M revenue within 6 years of commercial launch",
-- "historical_frequency": 0.15,
-- "sample_size": 20,
-- "reasoning": "Most satellite startups fail to scale quickly. Iridium, Globalstar took 8-12 years. Only SpaceX-tier execution achieves this timeline."
-- "drivers": [
-- "name": "satellite_deployment_success",
-- "display_name": "Satellite Deployment Success",
-- "type": "continuous",
-- "p5": 0.4,
-
 ---
 
 ## Methodology
@@ -989,9 +986,10 @@ PROVIDE:
 
 Context: ASTS needs $500M+ for constellation buildout. Funding constraints could delay launches and limit 2026 operational capacity.
 Be specific — include named sources, dates, dollar figures. |
-| equity_analyst_company_fundementals | company_fundementals | For the forecast: "will ASTS hit 200m in revenues in fy 2026?" Research the 'Driver 6' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures. |
+| equity_analyst_company_fundementals | company_fundementals | For the forecast: "will ASTS hit 200m in revenues in fy 2026?" Research the 'company_fundementals' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures. |
+| entity_investigator | company_fundementals | For the forecast: "will ASTS hit 200m in revenues in fy 2026?" Research the 'company_fundementals' driver. Current estimate: p5=0.00, p50=0.00, p95=0.00 PROVIDE: 1. Current value of the key metric for this driver 2. Historical trend (3-month, 12-month, relevant cycle) 3. Analyst consensus or market expectations 4. Comparable precedents with outcomes 5. Suggested p50 multiplier based on findings Context: Ananlysis of the companies core finanical strength and previous perfromance Be specific — include named sources, dates, dollar figures. |
 
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v5 · 2026-03-10 19:51 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v6 · 2026-03-10 20:02 UTC_
