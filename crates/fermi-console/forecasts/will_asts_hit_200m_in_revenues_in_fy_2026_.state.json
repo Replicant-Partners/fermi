@@ -1,7 +1,7 @@
 {
-  "current_version": 4,
+  "current_version": 5,
   "predicted_probability": 0.15,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 15.0%. The key factors are: satellite_deployment_success, carrier_partnership_expansion, pricing_power_realization. Most influential: market_adoption_rate (0%), company_fundementals (0%), carrier_partnership_expansion (0%).",
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 15.0%. The key factors are: satellite_deployment_success, carrier_partnership_expansion, pricing_power_realization. Most influential: pricing_power_realization (0%), market_adoption_rate (0%), satellite_deployment_success (0%).",
   "forecast_confidence": 0.6166666666666667,
   "versions": [
     {
@@ -24,6 +24,12 @@
     },
     {
       "version": 4,
+      "timestamp": "2026-03-10 19:51",
+      "probability": 0.15,
+      "change_summary": "15.0% (→), 6 drivers, 6 evidence, 4 agents"
+    },
+    {
+      "version": 5,
       "timestamp": "2026-03-10 19:51",
       "probability": 0.15,
       "change_summary": "15.0% (→), 6 drivers, 6 evidence, 4 agents"

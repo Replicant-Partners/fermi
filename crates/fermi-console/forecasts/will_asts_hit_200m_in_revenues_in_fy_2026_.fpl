@@ -19,7 +19,7 @@ driver pricing_power_realization continuous {
 }
 
 driver market_adoption_rate continuous {
-    distribution: triangular(0.5, 0.95, 1.5)
+    distribution: triangular(0.5, 1.3, 1.5)
     unit: "multiplier"
     rationale: "Consumer demand for satellite-to-phone connectivity uncertain. Enterprise/IoT adoption may lag. Regulatory approval in key markets critical."
 }
