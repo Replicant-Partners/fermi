@@ -1,5 +1,5 @@
 {
-  "current_version": 1,
+  "current_version": 2,
   "predicted_probability": 0.15,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -9,6 +9,12 @@
       "timestamp": "2026-03-10 15:26",
       "probability": 0.15,
       "change_summary": "Initial: 15.0% base=15%, 5 drivers, 3 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-10 15:29",
+      "probability": 0.15,
+      "change_summary": "15.0% (→), 5 drivers, 3 evidence"
     }
   ],
   "sim_results": null,
