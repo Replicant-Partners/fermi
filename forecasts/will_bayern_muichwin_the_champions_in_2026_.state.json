@@ -1,0 +1,91 @@
+{
+  "current_version": 1,
+  "predicted_probability": 0.031,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-10 09:22",
+      "probability": 0.031,
+      "change_summary": "Initial: 3.1% base=3%, 5 drivers, 1 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "Top European clubs winning Champions League in specific future season",
+    "historical_frequency": 0.031,
+    "sample_size": 32,
+    "source": "macro_forecaster",
+    "reasoning": "Since Champions League expansion to 32 teams (1999-2024), elite clubs like Bayern have won approximately 1 in 32 times per season. Bayern has won 2 titles in last 25 years (2013, 2020), giving them ~8% historical rate, but using broader elite club baseline of ~3%."
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1773134564",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "```json\n{\n\"base_rate\": {\n\"reference_class\": \"Top European clubs winning Champions League in specific future season\",\n\"historical_frequency\": 0.031,\n\"sample_size\": 32,\n\"reasoning\": \"Since Champions League expansion to 32 teams (1999-2024), elite clubs like Bayern have won approximately 1 in 32 times per season. Bayern has won 2 titles in last 25 years (2013, 2020), giving them ~8% historical rate, but using broader elite club baseline of ~3%.\"\n},\n\"drivers\": [\n{\n\"name\": \"squad_strength_trajectory\",\n\"display_name\": \"Squad Strength Trajectory\",\n\"type\": \"continuous\",\n\"p5\": 0.85,\n\"p50\": 1.1,\n\"p95\": 1.4,\n\"unit\": \"multiplier\",\n\"rationale\": \"Bayern's squad quality by 2025-26 season depends on transfers, aging stars (Neuer, Müller retiring), and youth development. Current strong Bundesliga dominance suggests positive trajectory.\"\n},\n{\n\"name\": \"bundesliga_competition_level\",\n\"display_name\": \"Bundesliga Competition Level\",\n\"type\": \"continuous\",\n\"p5\": 0.9,\n\"p50\": 1.15,\n\"p95\": 1.35,\n\"unit\": \"multiplier\",\n\"rationale\": \"Weaker domestic competition allows Bayern to rest players and avoid injuries before Champions League matches. Current Bundesliga weakness favors Bayern's European performance.\"\n},\n{\n\"name\": \"coaching_stability\",\n\"display_name\": \"Coaching Stability\",\n\"type\": \"continuous\",\n\"p5\": 0.75,\n\"p50\": 1.0,\n\"p95\": 1.25,\n\"unit\": \"multiplier\",\n\"rationale\": \"Coaching changes at Bayern have been frequent. Stability and tactical fit by 2026 uncertain. Current manager Vincent Kompany is unproven at elite level.\"\n},\n{\n\"name\": \"financial_advantage\",\n\"display_name\": \"Financial Advantage\",\n\"type\": \"continuous\",\n\"p5\": 0.95,\n\"p50\": 1.05,\n\"p95\": 1.2,\n\"unit\": \"multiplier\",\n\"rationale\": \"Bayern maintains strong finances but faces wealthier Premier League and PSG competition. Moderate financial advantage in recruitment but not dominant like 2010s.\"\n},\n{\n\"name\": \"draw_luck\",\n\"display_name\": \"Draw Luck\",\n\"type\": \"continuous\",\n\"p5\": 0.6,\n\"p50\": 1.0,\n\"p95\": 1.5,\n\"unit\": \"multiplier\",\n\"rationale\": \"Tournament draw significantly impacts Champions League success. Avoiding top teams until later rounds increases probability. This is largely random but impactful.\"\n}\n],\n\"evidence\": [\n{\n\"source\": \"UEFA Champions League Historical Records\",\n\"summary\": \"Bayern Munich won Champions League in 2020, reached finals 2023, but lost. Consistent quarter-final appearances show elite status.\",\n\"key_findings\": [\n\"2 titles since 2000 (2001, 2013, 2020)\",\n\"11 semi-final appearances in 25 years\",\n\"Most successful German club in competition\"\n],\n\"relevance\": 0.9\n},\n{\n\"source\": \"Bundesliga Performance 2023-24\",\n\"summary\": \"Bayern won Bundesliga 2023-24 after one-year gap. Domestic dominance continues with limited serious challengers.\",\n\"key_findings\": [\n\"32 Bundesliga titles total\",\n\"Won 11 consecutive titles 2013-2023\",\n\"Financial gap over German rivals remains large\"\n],\n\"relevance\": 0.7\n},\n{\n\"source\": \"European Club Rankings 2024\",\n\"summary\": \"Bayern consistently ranked top 5 European clubs by UEFA coefficient and squad value metrics.\",\n\"key_findings\": [\n\"Top 5 UEFA club coefficient\",\n\"Squad value €800M+ range\",\n\"Competes with Man City, Real Madrid, PSG tier\"\n],\n\"relevance\": 0.85\n}\n],\n\"model_expression\": \"base_rate * squad_strength_trajectory * bundesliga_competition_level * coaching_stability * financial_advantage * draw_luck\",\n\"confidence\": 0.5,\n\"reasoning\": \"Bayern is perennial contender but faces intense competition from Premier League clubs and Real Madrid. 2026 is far enough that squad composition uncertain. Base rate of ~3% for elite clubs, adjusted upward by Bayern's structural advantages (domestic dominance, finances) but tempered by coaching uncertainty and strong European competition. Estimated probability: 3.1% * 1.1 * 1.15 * 1.0 * 1.05 * 1.0 ≈ 4-5%.\"\n}\n```",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": [
+        "\"base_rate\": {",
+        "\"reference_class\": \"Top European clubs winning Champions League in specific future season\",",
+        "\"historical_frequency\": 0.031,",
+        "\"sample_size\": 32,",
+        "\"reasoning\": \"Since Champions League expansion to 32 teams (1999-2024), elite clubs like Bayern have won approximately 1 in 32 times per season. Bayern has won 2 titles in last 25 years (2013, 2020), giving them ~8% historical rate, but using broader elite club baseline of ~3%.\"",
+        "\"drivers\": [",
+        "\"name\": \"squad_strength_trajectory\",",
+        "\"display_name\": \"Squad Strength Trajectory\",",
+        "\"type\": \"continuous\",",
+        "\"p5\": 0.85,"
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "name": "nba_analyst_squad_strength_trajectory",
+      "agent_type": "research",
+      "query": "For the forecast: \"will bayern Muichwin the champions in 2026?\"\n\nResearch evidence for the 'squad_strength_trajectory' driver.\nCurrent estimate: p5=0.85, p50=1.10, p95=1.40\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Bayern's squad quality by 2025-26 season depends on transfers, aging stars (Neuer, Müller retiring), and youth development. Current strong Bundesliga dominance suggests positive trajectory.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "squad_strength_trajectory"
+      ]
+    },
+    {
+      "name": "market_research_bundesliga_competition_level",
+      "agent_type": "research",
+      "query": "For the forecast: \"will bayern Muichwin the champions in 2026?\"\n\nResearch evidence for the 'bundesliga_competition_level' driver.\nCurrent estimate: p5=0.90, p50=1.15, p95=1.35\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Weaker domestic competition allows Bayern to rest players and avoid injuries before Champions League matches. Current Bundesliga weakness favors Bayern's European performance.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "bundesliga_competition_level"
+      ]
+    },
+    {
+      "name": "macro_forecaster_coaching_stability",
+      "agent_type": "research",
+      "query": "For the forecast: \"will bayern Muichwin the champions in 2026?\"\n\nResearch evidence for the 'coaching_stability' driver.\nCurrent estimate: p5=0.75, p50=1.00, p95=1.25\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Coaching changes at Bayern have been frequent. Stability and tactical fit by 2026 uncertain. Current manager Vincent Kompany is unproven at elite level.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "coaching_stability"
+      ]
+    },
+    {
+      "name": "market_research_financial_advantage",
+      "agent_type": "research",
+      "query": "For the forecast: \"will bayern Muichwin the champions in 2026?\"\n\nResearch evidence for the 'financial_advantage' driver.\nCurrent estimate: p5=0.95, p50=1.05, p95=1.20\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Bayern maintains strong finances but faces wealthier Premier League and PSG competition. Moderate financial advantage in recruitment but not dominant like 2010s.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "financial_advantage"
+      ]
+    },
+    {
+      "name": "macro_forecaster_draw_luck",
+      "agent_type": "research",
+      "query": "For the forecast: \"will bayern Muichwin the champions in 2026?\"\n\nResearch evidence for the 'draw_luck' driver.\nCurrent estimate: p5=0.60, p50=1.00, p95=1.50\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Tournament draw significantly impacts Champions League success. Avoiding top teams until later rounds increases probability. This is largely random but impactful.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "draw_luck"
+      ]
+    }
+  ],
+  "driver_confidence": {}
+}
