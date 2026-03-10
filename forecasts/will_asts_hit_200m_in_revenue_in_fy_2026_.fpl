@@ -156,6 +156,6 @@ evidence entity_investigator_0 {
     date: 2026-03-10
 }
 
-model: satellite_deployment * carrier_partnerships * market_adoption * technical_execution * regulatory_approval
+model: ((((satellite_deployment * carrier_partnerships) * market_adoption) * technical_execution) * regulatory_approval)
 
 simulate 10000 iterations

@@ -1,8 +1,8 @@
 {
-  "current_version": 2,
-  "predicted_probability": 0.15,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "current_version": 3,
+  "predicted_probability": 0.1453721151859428,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 14.5%. The key factors are: satellite_deployment, carrier_partnerships, market_adoption. Most influential: market_adoption (33%), satellite_deployment (26%), carrier_partnerships (24%).",
+  "forecast_confidence": 0.48999999999999994,
   "versions": [
     {
       "version": 1,
@@ -15,9 +15,22 @@
       "timestamp": "2026-03-10 15:29",
       "probability": 0.15,
       "change_summary": "15.0% (→), 5 drivers, 3 evidence"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-10 15:30",
+      "probability": 0.1453721151859428,
+      "change_summary": "14.5% (→), 5 drivers, 3 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.8722326911156568,
+    "median": 0.8328876837899579,
+    "p5": 0.4668815888855416,
+    "p95": 1.4127151861265361,
+    "std_dev": 0.2920058564253613,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "Early-stage satellite/space communications companies reaching $200M revenue within 3-4 years of commercial operations",
     "historical_frequency": 0.15,
@@ -32,18 +45,7 @@
       "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"Early-stage satellite/space communications companies reaching $200M revenue within 3-4 years of commercial operations\",\n    \"historical_frequency\": 0.15,\n    \"sample_size\": 20,\n    \"reasoning\": \"Most satellite startups fail to scale rapidly. Companies like Planet Labs, Spire took 5-7 years. Only ~15% of space tech startups achieve $200M within similar timeframes.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"satellite_deployment\",\n      \"display_name\": \"Satellite Deployment Progress\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.4,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"ASTS needs operational satellites for revenue. Delays in Block 1 BlueBirds deployment would severely impact 2026 revenue. Faster deployment enables earlier commercial service.\"\n    },\n    {\n      \"name\": \"carrier_partnerships\",\n      \"display_name\": \"Mobile Carrier Partnership Expansion\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 1.0,\n      \"p95\": 1.5,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Revenue depends on partnerships with AT&T, Verizon, Vodafone, Rakuten. More partnerships or deeper integration with existing partners drives revenue upside.\"\n    },\n    {\n      \"name\": \"market_adoption\",\n      \"display_name\": \"Direct-to-Device Market Adoption\",\n      \"type\": \"continuous\",\n      \"p5\": 0.5,\n      \"p50\": 0.9,\n      \"p95\": 1.3,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Space-based cellular is unproven at scale. Consumer adoption, pricing acceptance, and competitive dynamics with Starlink/Apple create uncertainty. Market may develop slower than projected.\"\n    },\n    {\n      \"name\": \"technical_execution\",\n      \"display_name\": \"Technical Performance and Reliability\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.2,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"BlueBird satellites must perform as designed with adequate bandwidth and coverage. Technical issues could delay commercial rollout. Strong performance enables faster scaling.\"\n    },\n    {\n      \"name\": \"regulatory_approval\",\n      \"display_name\": \"Regulatory and Spectrum Clearance\",\n      \"type\": \"continuous\",\n      \"p5\": 0.8,\n      \"p50\": 1.0,\n      \"p95\": 1.1,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"International spectrum rights and regulatory approvals across multiple countries needed for global revenue. Delays possible but ASTS has made progress with FCC and international bodies.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"ASTS Q3 2024 Earnings and Public Filings\",\n      \"summary\": \"ASTS reported minimal revenue in 2023-2024, still in pre-commercial phase. First five BlueBird satellites launched September 2024.\",\n      \"key_findings\": [\n        \"FY2023 revenue under $2M\",\n        \"Commercial service target 2025-2026\",\n        \"Block 1 constellation: 95+ satellites planned\"\n      ],\n      \"relevance\": 0.95\n    },\n    {\n      \"source\": \"Space industry analyst reports on satellite communications scaling\",\n      \"summary\": \"Historical satellite companies show 4-6 year path to $200M. Capital intensity and deployment timelines are key constraints.\",\n      \"key_findings\": [\n        \"Average time to $200M: 6-8 years from first launch\",\n        \"High failure rate in satellite startups\",\n        \"Partnership models accelerate revenue vs direct-to-consumer\"\n      ],\n      \"relevance\": 0.75\n    },\n    {\n      \"source\": \"ASTS partnership announcements with AT&T, Verizon, Vodafone, Rakuten\",\n      \"summary\": \"Multiple tier-1 carrier partnerships announced but commercial terms not fully disclosed. Revenue sharing models unclear.\",\n      \"key_findings\": [\n        \"AT&T and Verizon partnerships confirmed\",\n        \"Global reach through Vodafone partnership\",\n        \"Commercial launch timing dependent on satellite deployment\"\n      ],\n      \"relevance\": 0.85\n    }\n  ],\n  \"model_expression\": \"base_rate * satellite_deployment * carrier_partnerships * market_adoption * technical_execution * regulatory_approval\",\n  \"confidence\": 0.4,\n  \"reasoning\": \"ASTS faces significant execution risk scaling from near-zero to $200M in ~2 years. Base rate is low for such rapid growth in capital-intensive space sector. Success requires flawless satellite deployment, strong carrier adoption, and market validation of unproven technology. High uncertainty across all drivers.\"\n}\n```",
       "relevance": 0.5,
       "date": "2026-03-10",
-      "key_findings": [
-        "\"base_rate\": {",
-        "\"reference_class\": \"Early-stage satellite/space communications companies reaching $200M revenue within 3-4 years of commercial operations\",",
-        "\"historical_frequency\": 0.15,",
-        "\"sample_size\": 20,",
-        "\"reasoning\": \"Most satellite startups fail to scale rapidly. Companies like Planet Labs, Spire took 5-7 years. Only ~15% of space tech startups achieve $200M within similar timeframes.\"",
-        "\"drivers\": [",
-        "\"name\": \"satellite_deployment\",",
-        "\"display_name\": \"Satellite Deployment Progress\",",
-        "\"type\": \"continuous\",",
-        "\"p5\": 0.6,"
-      ]
+      "key_findings": []
     },
     {
       "id": "market_research_0",
