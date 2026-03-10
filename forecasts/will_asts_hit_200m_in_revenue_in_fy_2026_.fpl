@@ -30,6 +30,16 @@ driver regulatory_approval continuous {
     rationale: "International spectrum rights and regulatory approvals across multiple countries needed for global revenue. Delays possible but ASTS has made progress with FCC and international bodies."
 }
 
+driver compaany_fundementals continuous {
+    distribution: triangular(0, 0, 0)
+    rationale: "evaluates th ecompany fundmentals in tradiotnal financial terms (valuation, etc)"
+}
+
+driver driver_7 continuous {
+    distribution: triangular(0, 0, 0)
+    rationale: "Describe this driver and set your estimates"
+}
+
 evidence fermi_evidence_1773155976 {
     source: "Agent: fermi (Claude API)"
     summary: "```json
