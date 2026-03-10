@@ -1,5 +1,5 @@
 {
-  "current_version": 6,
+  "current_version": 7,
   "predicted_probability": 0.10914392734223399,
   "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 10.9%. The key factors are: satellite_deployment, carrier_partnerships, market_adoption. Most influential: regulatory_approval (31%), satellite_deployment (22%), market_adoption (21%).",
   "forecast_confidence": 0.48999999999999994,
@@ -39,6 +39,12 @@
       "timestamp": "2026-03-10 15:50",
       "probability": 0.10914392734223399,
       "change_summary": "10.9% (-2pp), 5 drivers, 4 evidence, 5 agents"
+    },
+    {
+      "version": 7,
+      "timestamp": "2026-03-10 15:51",
+      "probability": 0.10914392734223399,
+      "change_summary": "10.9% (→), 5 drivers, 4 evidence, 5 agents"
     }
   ],
   "sim_results": {
