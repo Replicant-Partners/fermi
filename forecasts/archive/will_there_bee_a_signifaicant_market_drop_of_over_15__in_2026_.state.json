@@ -1,0 +1,641 @@
+{
+  "current_version": 76,
+  "predicted_probability": 0.06438260220667738,
+  "inside_view_explanation": "Starting from a 12.0% base rate, our model significantly decreases the probability to 6.4%. The key factors are: valuation_pressure, interest_rate_regime, recession_probability. Most influential: recession_probability (51%), valuation_pressure (37%), ai_bubble_dynamics (30%).",
+  "forecast_confidence": 0.5599999999999999,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-07 10:52",
+      "probability": 0.18,
+      "change_summary": "Initial forecast"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-07 10:53",
+      "probability": 0.1268474655751839,
+      "change_summary": "v2 update"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-07 10:53",
+      "probability": 0.11960050064982496,
+      "change_summary": "v3 update"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-07 10:53",
+      "probability": 0.1303073122102637,
+      "change_summary": "v4 update"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-07 10:54",
+      "probability": 0.12991633471741745,
+      "change_summary": "v5 update"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-07 10:55",
+      "probability": 0.12991633471741745,
+      "change_summary": "v6 update"
+    },
+    {
+      "version": 7,
+      "timestamp": "2026-03-07 10:55",
+      "probability": 0.12028369320085291,
+      "change_summary": "v7 update"
+    },
+    {
+      "version": 8,
+      "timestamp": "2026-03-07 10:55",
+      "probability": 0.1266182898579582,
+      "change_summary": "v8 update"
+    },
+    {
+      "version": 9,
+      "timestamp": "2026-03-07 10:56",
+      "probability": 0.1266182898579582,
+      "change_summary": "v9 update"
+    },
+    {
+      "version": 10,
+      "timestamp": "2026-03-07 10:56",
+      "probability": 0.201062396314266,
+      "change_summary": "v10 update"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-07 10:57",
+      "probability": 0.22091495524316673,
+      "change_summary": "v11 update"
+    },
+    {
+      "version": 12,
+      "timestamp": "2026-03-07 10:57",
+      "probability": 0.23866455523539745,
+      "change_summary": "v12 update"
+    },
+    {
+      "version": 13,
+      "timestamp": "2026-03-07 10:57",
+      "probability": 0.21423422618246385,
+      "change_summary": "v13 update"
+    },
+    {
+      "version": 14,
+      "timestamp": "2026-03-07 10:58",
+      "probability": 0.21423422618246385,
+      "change_summary": "v14 update"
+    },
+    {
+      "version": 15,
+      "timestamp": "2026-03-07 11:17",
+      "probability": 0.19951972549723873,
+      "change_summary": "v15 update"
+    },
+    {
+      "version": 16,
+      "timestamp": "2026-03-07 11:17",
+      "probability": 0.20187492690601655,
+      "change_summary": "v16 update"
+    },
+    {
+      "version": 17,
+      "timestamp": "2026-03-07 11:17",
+      "probability": 0.1956334201580386,
+      "change_summary": "v17 update"
+    },
+    {
+      "version": 18,
+      "timestamp": "2026-03-07 11:17",
+      "probability": 0.22111828589219443,
+      "change_summary": "v18 update"
+    },
+    {
+      "version": 19,
+      "timestamp": "2026-03-07 11:18",
+      "probability": 0.1967051690841682,
+      "change_summary": "v19 update"
+    },
+    {
+      "version": 20,
+      "timestamp": "2026-03-07 11:18",
+      "probability": 0.1967051690841682,
+      "change_summary": "v20 update"
+    },
+    {
+      "version": 21,
+      "timestamp": "2026-03-07 11:19",
+      "probability": 0.1929106843184523,
+      "change_summary": "v21 update"
+    },
+    {
+      "version": 22,
+      "timestamp": "2026-03-07 11:19",
+      "probability": 0.1929106843184523,
+      "change_summary": "v22 update"
+    },
+    {
+      "version": 23,
+      "timestamp": "2026-03-07 11:28",
+      "probability": 0.12,
+      "change_summary": "v23 update"
+    },
+    {
+      "version": 24,
+      "timestamp": "2026-03-07 11:28",
+      "probability": 0.03325227618459965,
+      "change_summary": "v24 update"
+    },
+    {
+      "version": 25,
+      "timestamp": "2026-03-07 11:29",
+      "probability": 0.036661930526020195,
+      "change_summary": "v25 update"
+    },
+    {
+      "version": 26,
+      "timestamp": "2026-03-07 11:29",
+      "probability": 0.03602182669254365,
+      "change_summary": "v26 update"
+    },
+    {
+      "version": 27,
+      "timestamp": "2026-03-07 11:29",
+      "probability": 0.03824765516242688,
+      "change_summary": "v27 update"
+    },
+    {
+      "version": 28,
+      "timestamp": "2026-03-07 11:29",
+      "probability": 0.037618851757286145,
+      "change_summary": "v28 update"
+    },
+    {
+      "version": 29,
+      "timestamp": "2026-03-07 11:29",
+      "probability": 0.03726497554196057,
+      "change_summary": "v29 update"
+    },
+    {
+      "version": 30,
+      "timestamp": "2026-03-07 11:30",
+      "probability": 0.03898545677959131,
+      "change_summary": "v30 update"
+    },
+    {
+      "version": 31,
+      "timestamp": "2026-03-07 11:30",
+      "probability": 0.02475664498784434,
+      "change_summary": "v31 update"
+    },
+    {
+      "version": 32,
+      "timestamp": "2026-03-07 11:30",
+      "probability": 0.03711993021320349,
+      "change_summary": "v32 update"
+    },
+    {
+      "version": 33,
+      "timestamp": "2026-03-07 11:31",
+      "probability": 0.042095284866255266,
+      "change_summary": "v33 update"
+    },
+    {
+      "version": 34,
+      "timestamp": "2026-03-07 11:31",
+      "probability": 0.0512879947969592,
+      "change_summary": "v34 update"
+    },
+    {
+      "version": 35,
+      "timestamp": "2026-03-07 11:31",
+      "probability": 0.047061565058817784,
+      "change_summary": "v35 update"
+    },
+    {
+      "version": 36,
+      "timestamp": "2026-03-07 11:31",
+      "probability": 0.044580851460807966,
+      "change_summary": "v36 update"
+    },
+    {
+      "version": 37,
+      "timestamp": "2026-03-07 11:31",
+      "probability": 0.051958348796564545,
+      "change_summary": "v37 update"
+    },
+    {
+      "version": 38,
+      "timestamp": "2026-03-07 11:31",
+      "probability": 0.056114875926761336,
+      "change_summary": "v38 update"
+    },
+    {
+      "version": 39,
+      "timestamp": "2026-03-07 11:32",
+      "probability": 0.058776424689008656,
+      "change_summary": "v39 update"
+    },
+    {
+      "version": 40,
+      "timestamp": "2026-03-07 11:32",
+      "probability": 0.05687547986916631,
+      "change_summary": "v40 update"
+    },
+    {
+      "version": 41,
+      "timestamp": "2026-03-07 11:32",
+      "probability": 0.0552267408454564,
+      "change_summary": "v41 update"
+    },
+    {
+      "version": 42,
+      "timestamp": "2026-03-07 11:33",
+      "probability": 0.0552267408454564,
+      "change_summary": "v42 update"
+    },
+    {
+      "version": 43,
+      "timestamp": "2026-03-07 11:34",
+      "probability": 0.06477014972060452,
+      "change_summary": "v43 update"
+    },
+    {
+      "version": 44,
+      "timestamp": "2026-03-07 11:34",
+      "probability": 0.07248332280047579,
+      "change_summary": "v44 update"
+    },
+    {
+      "version": 45,
+      "timestamp": "2026-03-07 11:35",
+      "probability": 0.05689329574521255,
+      "change_summary": "v45 update"
+    },
+    {
+      "version": 46,
+      "timestamp": "2026-03-07 11:35",
+      "probability": 0.08500016298099526,
+      "change_summary": "v46 update"
+    },
+    {
+      "version": 47,
+      "timestamp": "2026-03-07 11:35",
+      "probability": 0.08002831803702393,
+      "change_summary": "v47 update"
+    },
+    {
+      "version": 48,
+      "timestamp": "2026-03-07 11:35",
+      "probability": 0.07113633989999708,
+      "change_summary": "v48 update"
+    },
+    {
+      "version": 49,
+      "timestamp": "2026-03-07 11:36",
+      "probability": 0.11156803053164216,
+      "change_summary": "v49 update"
+    },
+    {
+      "version": 50,
+      "timestamp": "2026-03-07 11:36",
+      "probability": 0.1374044201073194,
+      "change_summary": "v50 update"
+    },
+    {
+      "version": 51,
+      "timestamp": "2026-03-07 11:37",
+      "probability": 0.19114771255946925,
+      "change_summary": "v51 update"
+    },
+    {
+      "version": 52,
+      "timestamp": "2026-03-07 11:38",
+      "probability": 0.14410772836695637,
+      "change_summary": "v52 update"
+    },
+    {
+      "version": 53,
+      "timestamp": "2026-03-07 11:41",
+      "probability": 0.14410772836695637,
+      "change_summary": "v53 update"
+    },
+    {
+      "version": 54,
+      "timestamp": "2026-03-07 11:41",
+      "probability": 0.1319319657773904,
+      "change_summary": "v54 update"
+    },
+    {
+      "version": 55,
+      "timestamp": "2026-03-07 11:41",
+      "probability": 0.1211308194931114,
+      "change_summary": "v55 update"
+    },
+    {
+      "version": 56,
+      "timestamp": "2026-03-07 11:42",
+      "probability": 0.10256291719973744,
+      "change_summary": "v56 update"
+    },
+    {
+      "version": 57,
+      "timestamp": "2026-03-07 11:43",
+      "probability": 0.12246855953589549,
+      "change_summary": "v57 update"
+    },
+    {
+      "version": 58,
+      "timestamp": "2026-03-07 11:49",
+      "probability": 0.12246855953589549,
+      "change_summary": "v58 update"
+    },
+    {
+      "version": 59,
+      "timestamp": "2026-03-07 11:56",
+      "probability": 0.12246855953589549,
+      "change_summary": "v59 update"
+    },
+    {
+      "version": 60,
+      "timestamp": "2026-03-07 11:56",
+      "probability": 0.1274726230444329,
+      "change_summary": "v60 update"
+    },
+    {
+      "version": 61,
+      "timestamp": "2026-03-07 11:56",
+      "probability": 0.12644345407016547,
+      "change_summary": "v61 update"
+    },
+    {
+      "version": 62,
+      "timestamp": "2026-03-07 13:53",
+      "probability": 0.12644345407016547,
+      "change_summary": "v62 update"
+    },
+    {
+      "version": 63,
+      "timestamp": "2026-03-07 13:53",
+      "probability": 0.11116802886856704,
+      "change_summary": "v63 update"
+    },
+    {
+      "version": 64,
+      "timestamp": "2026-03-07 13:53",
+      "probability": 0.14208187123503593,
+      "change_summary": "v64 update"
+    },
+    {
+      "version": 65,
+      "timestamp": "2026-03-07 13:54",
+      "probability": 0.11659511814459966,
+      "change_summary": "v65 update"
+    },
+    {
+      "version": 66,
+      "timestamp": "2026-03-07 13:54",
+      "probability": 0.09810176568371164,
+      "change_summary": "v66 update"
+    },
+    {
+      "version": 67,
+      "timestamp": "2026-03-07 13:54",
+      "probability": 0.1171843254390546,
+      "change_summary": "v67 update"
+    },
+    {
+      "version": 68,
+      "timestamp": "2026-03-07 13:55",
+      "probability": 0.1171843254390546,
+      "change_summary": "v68 update"
+    },
+    {
+      "version": 69,
+      "timestamp": "2026-03-07 13:55",
+      "probability": 0.10872565255354502,
+      "change_summary": "v69 update"
+    },
+    {
+      "version": 70,
+      "timestamp": "2026-03-07 13:55",
+      "probability": 0.10872565255354502,
+      "change_summary": "v70 update"
+    },
+    {
+      "version": 71,
+      "timestamp": "2026-03-07 13:55",
+      "probability": 0.10922992976530366,
+      "change_summary": "v71 update"
+    },
+    {
+      "version": 72,
+      "timestamp": "2026-03-07 13:55",
+      "probability": 0.10718068494302724,
+      "change_summary": "v72 update"
+    },
+    {
+      "version": 73,
+      "timestamp": "2026-03-07 13:55",
+      "probability": 0.06438260220667738,
+      "change_summary": "v73 update"
+    },
+    {
+      "version": 74,
+      "timestamp": "2026-03-07 14:00",
+      "probability": 0.06438260220667738,
+      "change_summary": "v74 update"
+    },
+    {
+      "version": 75,
+      "timestamp": "2026-03-07 14:03",
+      "probability": 0.06438260220667738,
+      "change_summary": "v75 update"
+    },
+    {
+      "version": 76,
+      "timestamp": "2026-03-07 16:45",
+      "probability": 0.06438260220667738,
+      "change_summary": "v76 update"
+    }
+  ],
+  "sim_results": {
+    "mean": 21.09174048290751,
+    "median": 15.430950927459351,
+    "p5": 3.8908485919471434,
+    "p95": 55.910609107069845,
+    "std_dev": 17.075018579417222,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "Annual 15%+ market corrections in S&P 500",
+    "historical_frequency": 0.12,
+    "sample_size": 95,
+    "source": "macro_forecaster",
+    "reasoning": "From 1928-2023 (95 years), the S&P 500 experienced approximately 11-12 calendar years with peak-to-trough declines of 15% or more. This includes major crashes (1929-1932, 2000-2002, 2008, 2020, 2022) and significant corrections. Base rate ~12% per year."
+  },
+  "evidence": [
+    {
+      "id": "market_research_0",
+      "source": "Mock Executor",
+      "summary": "Generated by mock executor for testing purposes",
+      "relevance": 0.75,
+      "date": "2026-03-07",
+      "key_findings": []
+    },
+    {
+      "id": "fermi_evidence_1772880659",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"Annual 15%+ market corrections in S&P 500\",\n    \"historical_frequency\": 0.18,\n    \"sample_size\": 95,\n    \"reasoning\": \"From 1928-2023, the S&P 500 experienced 17 calendar years with declines of 15% or more (peak-to-trough within the year), out of approximately 95 years. This yields roughly 18% base rate. Notable examples: 1929 (-24%), 1930 (-25%), 1931 (-43%), 1937 (-35%), 1974 (-27%), 2002 (-22%), 2008 (-37%), 2022 (-18%). The frequency has been somewhat lower in recent decades (post-1950: ~15%) but we use the fuller historical record for robustness.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"valuation_pressure\",\n      \"display_name\": \"Valuation Pressure from Elevated Multiples\",\n      \"type\": \"continuous\",\n      \"p5\": 0.9,\n      \"p50\": 1.15,\n      \"p95\": 1.4,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"As of late 2024, S&P 500 forward P/E ratios are around 21-22x, above the 20-year average of ~16-17x. Elevated valuations historically increase correction risk. The Shiller CAPE ratio is around 30-35, well above historical median of 16. High valuations don't predict timing but increase vulnerability to negative catalysts. A multiplier of 1.15 reflects moderately elevated risk; could range from 0.9 (if valuations normalize lower by 2026) to 1.4 (if valuations remain stretched and become a trigger).\"\n    },\n    {\n      \"name\": \"monetary_policy_tightness\",\n      \"display_name\": \"Monetary Policy Stance and Rate Environment\",\n      \"type\": \"continuous\",\n      \"p5\": 0.85,\n      \"p50\": 1.1,\n      \"p95\": 1.35,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Federal Reserve policy in 2026 will depend on inflation trajectory. If rates remain elevated (4-5%) or need to rise again, this increases recession risk and market stress. Historical pattern: aggressive tightening cycles often precede corrections (2000, 2007-08, 2022). By 2026, we'll be 3-4 years into the current cycle. P50 of 1.1 assumes moderately restrictive policy; P95 of 1.35 reflects scenario of renewed tightening; P5 of 0.85 reflects accommodative pivot reducing risk.\"\n    },\n    {\n      \"name\": \"recession_probability\",\n      \"display_name\": \"Economic Recession in 2026\",\n      \"type\": \"continuous\",\n      \"p5\": 0.95,\n      \"p50\": 1.25,\n      \"p95\": 1.6,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Recessions strongly correlate with 15%+ market drops. Historical data shows ~70% of recessions coincide with significant market corrections. Base recession probability for any given year is ~15-20%. For 2026 specifically, we're far enough from 2023-24 that cycle risks accumulate. If recession occurs, market drop probability increases substantially (multiplier 1.5-2.0). If no recession, multiplier near 1.0. P50 of 1.25 reflects elevated but not extreme recession risk.\"\n    },\n    {\n      \"name\": \"geopolitical_shock\",\n      \"display_name\": \"Major Geopolitical Crisis or Shock\",\n      \"type\": \"binary\",\n      \"probability\": 0.25,\n      \"impact_multiplier\": 1.8,\n      \"rationale\": \"Major geopolitical events (wars, trade conflicts, energy crises) can trigger sharp market corrections. Examples: Ukraine invasion 2022, COVID-19 2020, 9/11 2001. Estimating ~25% probability of a significant geopolitical shock in 2026 (Taiwan tensions, Middle East escalation, major cyber attack, trade war escalation). If occurs, increases correction probability by ~80% (multiplier 1.8). This is conservative given current global tensions.\"\n    },\n    {\n      \"name\": \"ai_bubble_dynamics\",\n      \"display_name\": \"AI/Tech Sector Bubble Correction\",\n      \"type\": \"continuous\",\n      \"p5\": 0.95,\n      \"p50\": 1.1,\n      \"p95\": 1.4,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"As of 2024, AI-related stocks have seen massive appreciation with concentration risk (Magnificent 7 = ~30% of S&P 500). If AI investment thesis disappoints or regulatory pressure increases by 2026, concentrated selling could trigger broader correction. P50 of 1.1 reflects moderate additional risk from sector concentration; P95 of 1.4 reflects bubble-pop scenario; P5 of 0.95 reflects successful AI monetization reducing risk.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"Yale Shiller CAPE Ratio Database & S&P 500 Historical Returns\",\n      \"summary\": \"Historical analysis of market corrections and valuation metrics\",\n      \"key_findings\": [\n        \"17 calendar years with 15%+ declines from 1928-2023 (18% frequency)\",\n        \"CAPE ratios above 30 have historically preceded major corrections within 1-5 years\",\n        \"Post-1950 frequency of 15%+ corrections is approximately 15%\",\n        \"Average peak-to-trough decline in correction years: -24%\"\n      ],\n      \"relevance\": 0.95\n    },\n    {\n      \"source\": \"Federal Reserve Economic Data (FRED) & BLS recession dating\",\n      \"summary\": \"Relationship between recessions and market corrections\",\n      \"key_findings\": [\n        \"12 recessions since 1945; 9 accompanied by 15%+ market declines (75% correlation)\",\n        \"Average lead time of market decline before recession: 6 months\",\n        \"Markets declined average 30% during recession-linked corrections\",\n        \"Non-recession corrections typically milder (average -18%)\"\n      ],\n      \"relevance\": 0.90\n    },\n    {\n      \"source\": \"Goldman Sachs, JP Morgan 2024 Market Outlook Reports\",\n      \"summary\": \"Current market conditions and forward-looking risk assessments\",\n      \"key_findings\": [\n        \"Forward P/E ratios at 21-22x vs historical average of 16-17x\",\n        \"Market concentration at highest levels since 2000 tech bubble\",\n        \"Consensus 2026 recession probability: 20-30% range\",\n        \"Rate cuts expected but terminal rate uncertainty remains high\"\n      ],\n      \"relevance\": 0.85\n    },\n    {\n      \"source\": \"IMF World Economic Outlook & Geopolitical Risk Index\",\n      \"summary\": \"Global risk factors and geopolitical tensions\",\n      \"key_findings\": [\n        \"Geopolitical Risk Index elevated above historical average\",\n        \"Multiple flashpoints: Taiwan, Middle East, Ukraine, trade tensions\",\n        \"Historical frequency of market-moving geopolitical events: ~20-30% per year\",\n        \"Energy price volatility remains elevated risk factor\"\n      ],\n      \"relevance\": 0.80\n    }\n  ],\n  \"model_expression\": \"base_rate * valuation_pressure * monetary_policy_tightness * recession_probability * (geopolitical_shock ? 1.8 : 1.0) * ai_bubble_dynamics\",\n  \"confidence\": 0.75,\n  \"reasoning\": \"High confidence in base rate calculation (extensive historical data). Moderate confidence in driver parameterization due to: (1) inherent uncertainty in 2026 economic conditions, (2) difficulty predicting policy responses, (3) unknown geopolitical developments. The model captures major risk factors but 2-year forecasts have significant uncertainty. Historical patterns are reliable but each cycle has unique characteristics. Confidence reduced by current unprecedented factors: AI disruption, post-pandemic economic dynamics, high government debt levels globally.\"\n}\n```",
+      "relevance": 0.5,
+      "date": "2026-03-07",
+      "key_findings": []
+    },
+    {
+      "id": "entity_investigator_0",
+      "source": "Agent: entity_investigator (Claude API)",
+      "summary": "Current market fundamentals show elevated valuations (P/E ~21x vs historical ~16.5x), compressed risk premiums, and profit margins at cyclical highs—conditions historically associated with increased correction risk. While earnings growth expectations remain robust for 2025, sustainability is questionable given margin mean reversion patterns and concentration in mega-cap tech. Interest rate levels (10-year at 4.5%+) create valuation headwinds absent from the 2010s. Leading indicators show stabilization but not strength, with credit markets pricing minimal distress. Base rate analysis suggests 55-65% probability of 15%+ correction within 24 months when fundamentals match current levels, with typical triggers being earnings disappointments, monetary surprises, or exogenous shocks. The probability distribution skews toward fundamental weakness emerging in H2 2025 or 2026 as margin compression and growth deceleration materialize.",
+      "relevance": 0.72,
+      "date": "2026-03-07",
+      "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1772881045",
+      "source": "Agent: macro_forecaster (Claude API)",
+      "summary": "AI sector concentration in 2024 exhibits warning signs comparable to historical bubbles (28-30% of S&P 500, elevated valuations, high correlations) but with critical differences: current leaders are highly profitable with strong cash flows, unlike 2000 dot-com. The key vulnerability is the monetization gap—$200B+ annual AI capex generating only $40-60B in attributable revenue currently. Analyst consensus assumes this gap closes by 2026, but if capex fatigue sets in during 2025 without clear ROI, historical precedents suggest 35-55% drawdowns are possible over 12-30 months. The 'soft landing' scenario depends on either: (1) AI revenue realization accelerating to $0.50+ per capex dollar by late 2025, or (2) rest of market rallying to reduce concentration (1987 playbook). Quantifiable trigger points: watch for capex guidance cuts, correlation spikes above 0.80, or earnings revision breadth falling below 50%.",
+      "relevance": 0.78,
+      "date": "2026-03-07",
+      "key_findings": []
+    },
+    {
+      "id": "fermi_evidence_1772882345",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "Historical analysis shows 15%+ market corrections occur in roughly 12% of calendar years. For 2026 specifically, several risk factors elevate this probability: elevated valuations, transition to higher interest rate regime, moderate recession risk, geopolitical uncertainties, and concentration/bubble dynamics in AI/tech sectors. The probabilistic model combining these factors suggests a 20-30% probability range, meaningfully above the base rate but not indicating a correction is more likely than not.",
+      "relevance": 0.75,
+      "date": "2026-03-07",
+      "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1772882939",
+      "source": "Agent: macro_forecaster (Claude API)",
+      "summary": "Historical analysis reveals that CAPE ratios above 30 are associated with roughly 45-50% probability of 15%+ corrections within 24 months, nearly double the base rate when CAPE is below 25. However, elevated valuations alone rarely trigger corrections - catalysts are typically required, most commonly monetary tightening (73% of cases) or earnings disappointments (82% of cases). Current valuations (CAPE ~32-35, forward P/E ~20-21x, ERP ~3.5-4.0%) are stretched but not at historical extremes. Four plausible 2025-2026 scenarios could trigger mean reversion: hard landing with Fed overtightening, soft landing with multiple compression as risk premiums normalize, AI-driven earnings disappointments in mega-cap tech, or exogenous geopolitical/credit shocks. The market's elevated starting valuation creates asymmetric downside risk - limited cushion for negative surprises.",
+      "relevance": 0.78,
+      "date": "2026-03-07",
+      "key_findings": []
+    },
+    {
+      "id": "sentiment_analyzer_0",
+      "source": "Agent: sentiment_analyzer (Claude API)",
+      "summary": "The research indicates that elevated CAPE ratios above 30 have historically been associated with a significantly higher risk of subsequent market corrections of 15% or more within 24 months. The current valuation context, with a CAPE ratio projected to be in the 35-40 range and a concentration in more vulnerable sectors, combined with a higher interest rate environment, suggests an elevated probability of a market correction in the next 1-2 years.",
+      "relevance": 0.85,
+      "date": "2026-03-07",
+      "key_findings": []
+    },
+    {
+      "id": "macro_forecaster_evidence_1772883515",
+      "source": "Agent: macro_forecaster (Claude API)",
+      "summary": "Historical analysis reveals that 15%+ equity corrections occur with 20-25% annual probability when Fed Funds are in the 3-5% range versus 15-20% in the 0-2% range, though low-rate corrections tend to be more severe. Consensus forecasts place 2026 rates at 3.25-3.50%, but 2-year forward predictions historically miss by ±150-200bps. Post-hiking cycle periods typically see equity risk premium compression of 50-100bps over 12-24 months, supporting valuations, though current ERP at 3.8% offers limited compression potential. The 1990s mid-rate regime (closest analog) experienced 15%+ corrections every 2.5 years, primarily from credit events rather than rate levels. Probabilistic modeling suggests 45% chance of 3.00-3.75% rates in 2026 with 15-20% correction risk, 30% chance of 4.25-5.00% with 30-35% risk, and 25% chance of recession-driven cuts with 50-60% risk but shorter duration.",
+      "relevance": 0.72,
+      "date": "2026-03-07",
+      "key_findings": []
+    }
+  ],
+  "agents": [
+    {
+      "name": "market_research_fundamentals",
+      "agent_type": "research",
+      "query": "Research evidence for the 'fundamentals' driver in the forecast: \"will there bee a signifaicant market drop of over 15% in 2026?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "fundamentals"
+      ]
+    },
+    {
+      "name": "entity_investigator_market_conditions",
+      "agent_type": "research",
+      "query": "Research evidence for the 'market_conditions' driver in the forecast: \"will there bee a signifaicant market drop of over 15% in 2026?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "market_conditions"
+      ]
+    },
+    {
+      "name": "market_research_valuation_pressure",
+      "agent_type": "research",
+      "query": "Research evidence for the 'valuation_pressure' driver in the forecast: \"will there bee a signifaicant market drop of over 15% in 2026?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "valuation_pressure"
+      ]
+    },
+    {
+      "name": "entity_investigator_recession_probability",
+      "agent_type": "research",
+      "query": "Analyze current market fundamentals (valuations, earnings, economic indicators) relative to historical norms and expectations for 2025-2026. What is the probability distribution of fundamental strength/weakness that could trigger a 15%+ market correction in 2026? Consider: (1) current P/E ratios vs historical averages before corrections, (2) earnings growth sustainability, (3) interest rate trajectory impact on valuations, (4) base rates of corrections when fundamentals are at current levels, (5) leading indicators of fundamental deterioration.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "recession_probability"
+      ]
+    },
+    {
+      "name": "market_research_ai_bubble_dynamics",
+      "agent_type": "research",
+      "query": "What is the probability of a US recession occurring in 2026? Analyze: (1) Current yield curve signals and historical lead times, (2) Base rates of recessions (frequency per decade since 1950), (3) Current position in business cycle and typical expansion durations, (4) Leading economic indicators (Conference Board LEI, unemployment trends, manufacturing PMI), (5) Fed policy trajectory and historical tightening cycle outcomes. Provide probability distribution for 2026 recession risk with P10, P50, P90 estimates.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "ai_bubble_dynamics"
+      ]
+    },
+    {
+      "name": "macro_forecaster_geopolitical_shock",
+      "agent_type": "research",
+      "query": "Analyze the relationship between interest rate regimes and equity market corrections of 15%+ magnitude. Specifically: (1) What is the base rate of 15%+ corrections when policy rates are in the 3-5% range vs 0-2% range, using data from 1980-present? (2) What are the consensus forecasts for Fed funds rate trajectory through 2026, and what is the historical accuracy of 2-year forward rate predictions? (3) How do equity risk premiums typically behave 12-24 months after rate hiking cycles end? (4) In previous cycles where rates stabilized at 3-5% (1990s, mid-2000s), what was the frequency and magnitude of corrections? Provide probability distributions for likely rate scenarios in 2026 and their historical correlation with market drawdowns.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "geopolitical_shock"
+      ]
+    },
+    {
+      "name": "macro_forecaster_interest_rate_regime",
+      "agent_type": "research",
+      "query": "What is the historical relationship between elevated CAPE ratios (>30) and subsequent 1-2 year market corrections of 15%+ in the S&P 500? Specifically: (1) base rate of 15%+ drops within 24 months when CAPE >30 vs <25, (2) typical catalysts that trigger valuation compression from elevated levels, (3) current valuation metrics (CAPE, forward P/E, equity risk premium) vs historical distributions, (4) scenario analysis of conditions in 2025-2026 that could trigger mean reversion (rate changes, earnings disappointments, risk premium expansion)",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "interest_rate_regime"
+      ]
+    },
+    {
+      "name": "sentiment_analyzer_geopolitical_shock",
+      "agent_type": "research",
+      "query": "Analyze the relationship between interest rate regimes and equity market corrections of 15%+ magnitude. Specifically: (1) What is the base rate of 15%+ corrections when policy rates are in the 3-5% range vs 0-2% range, using data from 1980-present? (2) What are the consensus forecasts for Fed funds rate trajectory through 2026, and what is the historical accuracy of 2-year forward rate predictions? (3) How do equity risk premiums typically behave 12-24 months after rate hiking cycles end? (4) In previous cycles where rates stabilized at 3-5% (1990s, mid-2000s), what was the frequency and magnitude of corrections? Provide probability distributions for likely rate scenarios in 2026 and their historical correlation with market drawdowns.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "geopolitical_shock"
+      ]
+    },
+    {
+      "name": "sentiment_analyzer_valuation_pressure",
+      "agent_type": "research",
+      "query": "What is the probability of a major geopolitical shock in 2026 that would trigger a >15% market correction? Analyze: (1) base rates of market-moving geopolitical events 2000-2025, (2) current flashpoint assessment (Ukraine, Taiwan, Middle East, North Korea), (3) historical market responses to different shock types, (4) leading indicators of geopolitical instability, and (5) 2026-specific risk factors including US political transition effects and great power competition trajectories.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "valuation_pressure"
+      ]
+    },
+    {
+      "name": "sentiment_analyzer_recession_probability",
+      "agent_type": "research",
+      "query": "What is the historical relationship between elevated CAPE ratios (>30) and subsequent 1-2 year market corrections of 15%+? Specifically: (1) Base rate of 15%+ drops within 24 months when CAPE >30 vs <25, (2) Current CAPE ratio context (late 2024/early 2025) including sector composition effects, (3) How interest rate environment (current ~4-5% vs historical) affects justified P/E ratios, (4) Historical precedents: 1929 (CAPE ~30), 2000 (CAPE ~44), 2021-2022 (CAPE ~38), and (5) Median time-to-correction and magnitude distribution when starting from current valuation levels.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "recession_probability"
+      ]
+    }
+  ],
+  "driver_confidence": {
+    "private_funding_sustainability": 0.5,
+    "valuation_pressure": 0.5
+  }
+}

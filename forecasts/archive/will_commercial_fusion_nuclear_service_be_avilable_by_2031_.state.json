@@ -1,8 +1,8 @@
 {
-  "current_version": 24,
-  "predicted_probability": 0.13563918578555792,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly decreases the probability to 13.6%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: private_funding_sustainability (30%), technical_readiness_acceleration (30%), regulatory_pathway_clarity (17%).",
-  "forecast_confidence": 0.42,
+  "current_version": 62,
+  "predicted_probability": 0.08656029215150597,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model significantly decreases the probability to 8.7%. The key factors are: technical_readiness_acceleration, regulatory_pathway_clarity, private_funding_sustainability. Most influential: technical_readiness_acceleration (34%), grid_integration_readiness (30%), private_funding_sustainability (20%).",
+  "forecast_confidence": 0.4619999999999999,
   "versions": [
     {
       "version": 1,
@@ -133,7 +133,7 @@
     {
       "version": 22,
       "timestamp": "2026-03-06 23:20",
-      "probability": 0.12145866821042807,
+      "probability": 0.12145866821042808,
       "change_summary": "v22 update"
     },
     {
@@ -147,14 +147,242 @@
       "timestamp": "2026-03-06 23:21",
       "probability": 0.13563918578555792,
       "change_summary": "v24 update"
+    },
+    {
+      "version": 25,
+      "timestamp": "2026-03-07 11:57",
+      "probability": 0.13563918578555792,
+      "change_summary": "v25 update"
+    },
+    {
+      "version": 26,
+      "timestamp": "2026-03-07 11:57",
+      "probability": 0.1347046389266672,
+      "change_summary": "v26 update"
+    },
+    {
+      "version": 27,
+      "timestamp": "2026-03-07 11:57",
+      "probability": 0.1546944535242897,
+      "change_summary": "v27 update"
+    },
+    {
+      "version": 28,
+      "timestamp": "2026-03-07 11:58",
+      "probability": 0.14957421400775753,
+      "change_summary": "v28 update"
+    },
+    {
+      "version": 29,
+      "timestamp": "2026-03-07 11:58",
+      "probability": 0.17880886117924105,
+      "change_summary": "v29 update"
+    },
+    {
+      "version": 30,
+      "timestamp": "2026-03-07 11:58",
+      "probability": 0.14731467228829692,
+      "change_summary": "v30 update"
+    },
+    {
+      "version": 31,
+      "timestamp": "2026-03-07 11:58",
+      "probability": 0.15771301678237323,
+      "change_summary": "v31 update"
+    },
+    {
+      "version": 32,
+      "timestamp": "2026-03-07 11:58",
+      "probability": 0.1900522175876603,
+      "change_summary": "v32 update"
+    },
+    {
+      "version": 33,
+      "timestamp": "2026-03-07 11:59",
+      "probability": 0.13123387491240252,
+      "change_summary": "v33 update"
+    },
+    {
+      "version": 34,
+      "timestamp": "2026-03-07 11:59",
+      "probability": 0.15816809534914134,
+      "change_summary": "v34 update"
+    },
+    {
+      "version": 35,
+      "timestamp": "2026-03-07 11:59",
+      "probability": 0.15823024818947704,
+      "change_summary": "v35 update"
+    },
+    {
+      "version": 36,
+      "timestamp": "2026-03-07 11:59",
+      "probability": 0.20219180425045644,
+      "change_summary": "v36 update"
+    },
+    {
+      "version": 37,
+      "timestamp": "2026-03-07 11:59",
+      "probability": 0.15857561359226918,
+      "change_summary": "v37 update"
+    },
+    {
+      "version": 38,
+      "timestamp": "2026-03-07 11:59",
+      "probability": 0.14445500717882492,
+      "change_summary": "v38 update"
+    },
+    {
+      "version": 39,
+      "timestamp": "2026-03-07 12:00",
+      "probability": 0.1920811946423192,
+      "change_summary": "v39 update"
+    },
+    {
+      "version": 40,
+      "timestamp": "2026-03-07 12:00",
+      "probability": 0.2458006653688148,
+      "change_summary": "v40 update"
+    },
+    {
+      "version": 41,
+      "timestamp": "2026-03-07 12:00",
+      "probability": 0.12831065941371045,
+      "change_summary": "v41 update"
+    },
+    {
+      "version": 42,
+      "timestamp": "2026-03-07 12:00",
+      "probability": 0.12920724038635287,
+      "change_summary": "v42 update"
+    },
+    {
+      "version": 43,
+      "timestamp": "2026-03-07 12:00",
+      "probability": 0.11883218769589314,
+      "change_summary": "v43 update"
+    },
+    {
+      "version": 44,
+      "timestamp": "2026-03-07 12:01",
+      "probability": 0.10809390799719788,
+      "change_summary": "v44 update"
+    },
+    {
+      "version": 45,
+      "timestamp": "2026-03-07 12:01",
+      "probability": 0.12015707194549442,
+      "change_summary": "v45 update"
+    },
+    {
+      "version": 46,
+      "timestamp": "2026-03-07 12:01",
+      "probability": 0.09851448151904506,
+      "change_summary": "v46 update"
+    },
+    {
+      "version": 47,
+      "timestamp": "2026-03-07 12:01",
+      "probability": 0.09026188974864316,
+      "change_summary": "v47 update"
+    },
+    {
+      "version": 48,
+      "timestamp": "2026-03-07 12:01",
+      "probability": 0.07643701027058865,
+      "change_summary": "v48 update"
+    },
+    {
+      "version": 49,
+      "timestamp": "2026-03-07 12:02",
+      "probability": 0.08341928368282354,
+      "change_summary": "v49 update"
+    },
+    {
+      "version": 50,
+      "timestamp": "2026-03-07 12:02",
+      "probability": 0.07106480122698221,
+      "change_summary": "v50 update"
+    },
+    {
+      "version": 51,
+      "timestamp": "2026-03-07 13:11",
+      "probability": 0.07106480122698221,
+      "change_summary": "v51 update"
+    },
+    {
+      "version": 52,
+      "timestamp": "2026-03-07 14:15",
+      "probability": 0.07106480122698221,
+      "change_summary": "v52 update"
+    },
+    {
+      "version": 53,
+      "timestamp": "2026-03-07 14:16",
+      "probability": 0.09600441488735066,
+      "change_summary": "v53 update"
+    },
+    {
+      "version": 54,
+      "timestamp": "2026-03-07 14:16",
+      "probability": 0.1327920003514127,
+      "change_summary": "v54 update"
+    },
+    {
+      "version": 55,
+      "timestamp": "2026-03-07 14:17",
+      "probability": 0.1327920003514127,
+      "change_summary": "v55 update"
+    },
+    {
+      "version": 56,
+      "timestamp": "2026-03-07 14:17",
+      "probability": 0.07660178196622842,
+      "change_summary": "v56 update"
+    },
+    {
+      "version": 57,
+      "timestamp": "2026-03-07 16:52",
+      "probability": 0.07660178196622842,
+      "change_summary": "v57 update"
+    },
+    {
+      "version": 58,
+      "timestamp": "2026-03-07 16:54",
+      "probability": 0.07660178196622842,
+      "change_summary": "v58 update"
+    },
+    {
+      "version": 59,
+      "timestamp": "2026-03-07 16:54",
+      "probability": 0.07080449121323787,
+      "change_summary": "v59 update"
+    },
+    {
+      "version": 60,
+      "timestamp": "2026-03-07 16:54",
+      "probability": 0.0793623753126468,
+      "change_summary": "v60 update"
+    },
+    {
+      "version": 61,
+      "timestamp": "2026-03-07 16:54",
+      "probability": 0.07486621274419394,
+      "change_summary": "v61 update"
+    },
+    {
+      "version": 62,
+      "timestamp": "2026-03-07 16:54",
+      "probability": 0.08656029215150597,
+      "change_summary": "v62 update"
     }
   ],
   "sim_results": {
-    "mean": 6.449304186138816,
-    "median": 6.065145554764013,
-    "p5": 3.176363481463669,
-    "p95": 11.097113270708416,
-    "std_dev": 2.4582441565929503,
+    "mean": 5.545398556394079,
+    "median": 4.73053579000754,
+    "p5": 1.2482874025094182,
+    "p95": 12.537600664499744,
+    "std_dev": 3.6614617668931513,
     "iterations": 10000
   },
   "base_rate": {
@@ -179,20 +407,14 @@
       "summary": "Commonwealth Fusion Systems shows the strongest technical credibility with peer-reviewed HTS magnet breakthroughs, $2B+ from sophisticated investors, MIT collaboration, and a validated tokamak approach targeting 2025-2027 for SPARC plasma experiments. Their early 2030s commercial timeline is aggressive but grounded in proven physics. TAE and Helion pursue alternative FRC approaches with less independent validation, minimal peer-reviewed publications on their core breakthroughs, and more speculative timelines. TAE's aneutronic fuel cycle faces extreme temperature barriers never demonstrated. Helion's pulsed approach and 2028 commercial claims lack scientific precedent. For Q>10 continuous operation by 2031, CFS has the most credible pathway, though even this faces significant engineering challenges beyond plasma physics.",
       "relevance": 0.78,
       "date": "2026-03-06",
-      "key_findings": [
-        "Commonwealth Fusion Systems (CFS) achieved a major validated milestone in September 2021 with their SPARC tokamak magnet system, demonstrating a 20-tesla high-temperature superconducting (HTS) magnet - the strongest fusion magnet ever built. This was peer-reviewed and published in multiple papers across Nature journals, with independent validation from MIT collaborators. CFS has raised $2+ billion including from Breakthrough Energy Ventures (Gates), Google, Temasek, and Tiger Global. Their SPARC device (Q~11 target) is under construction with ARC commercial pilot plant targeted for early 2030s. Technical leadership (Dennis Whyte, Bob Mumgaard) consistently emphasizes 2025-2027 for SPARC plasma experiments before commercial timelines.",
-        "TAE Technologies (formerly Tri Alpha Energy) uses a field-reversed configuration (FRC) approach and claims their Norman device achieved plasma temperatures of 75 million°C and confinement times >30ms in 2021. However, their path to net energy is less validated - they're pursuing aneutronic p-B11 fusion which requires ~3 billion°C and faces significantly higher technical barriers than D-T fusion. TAE has raised $1.2+ billion from Google, NEA, and Vulcan Capital, but has published fewer peer-reviewed papers in high-impact journals compared to CFS. Their timeline claims of early 2030s commercialization are viewed skeptically by mainstream fusion physicists given the temperature requirements and lack of demonstrated Q>1 in FRC configurations.",
-        "Helion Energy uses a pulsed, non-ignition FRC approach with direct electricity conversion, claiming their Polaris device (7th generation, under construction) will demonstrate net electricity by 2024 and their commercial Antares plant by 2028. They secured a notable 2021 power purchase agreement with Microsoft for 50MW by 2028. However, Helion has published minimal peer-reviewed research, their approach requires solving pulsed operation challenges (duty cycle, thermal/mechanical stress), and independent fusion experts note their timelines are extremely aggressive given they haven't yet demonstrated scientific breakeven. Funding includes $2.2+ billion from Sam Altman, Mithril Capital, and Capricorn Investment Group.",
-        "Engineering talent comparison: CFS has the strongest academic pedigree with MIT PSFC collaboration and advisory board including fusion luminaries (Cowley, Synakowski). TAE has attracted particle accelerator experts (Norman Rostoker legacy) but fewer tokamak specialists. Helion's team includes aerospace engineers focused on practical engineering over plasma physics publications. For Q>10 continuous operation by 2031: tokamaks (CFS approach) have 70+ years of experimental validation and ITER's design basis, while FRC approaches (TAE, Helion) have never demonstrated Q>1 and face unproven scaling laws.",
-        "Critical technical barriers assessment: CFS faces known engineering challenges (tritium breeding, materials damage, continuous operation) but benefits from validated physics. TAE must achieve temperatures 40x higher than demonstrated for their fuel cycle and prove FRC stability at those conditions - no peer-reviewed pathway exists. Helion must demonstrate their pulsed approach can achieve net gain (never shown in FRC), solve repetition-rate engineering, and validate direct conversion efficiency claims (published efficiency data is limited). Utility partnerships: CFS has agreements with Italian energy companies and Commonwealth Edison; TAE announced Google data center discussions; Helion has the Microsoft PPA but with significant performance penalties if unmet."
-      ]
+      "key_findings": []
     },
     {
       "id": "market_research_0",
-      "source": "Agent: market_research (Claude API)",
-      "summary": "The research indicates that significant technical progress is being made in the development of commercial fusion energy, with multiple companies and government agencies targeting the early 2030s for the first commercial fusion power plants. Key advancements in fusion reactor technologies, increased funding, and improvements in supporting technologies suggest that the technical readiness for commercial fusion is accelerating.",
-      "relevance": 0.85,
-      "date": "2026-03-06",
+      "source": "Agent: market_research",
+      "summary": "The knowledge graph does not contain any information about commercial fusion nuclear service availability by 2031 either. I don't have enough internal knowledge to provide a comprehensive answer on the evidence for this forecast driver.\n\nSince I don't have the necessary information, I would suggest reaching out to domain experts or consulting external sources like industry reports, academic publications, or government/regulatory agency data to research this topic further. My knowledge is limited",
+      "relevance": 0.5,
+      "date": "2026-03-07",
       "key_findings": []
     }
   ],
@@ -223,6 +445,36 @@
       "driver_refs": [
         "private_funding_sustainability"
       ]
+    },
+    {
+      "name": "market_research_grid_integration_readiness",
+      "agent_type": "research",
+      "query": "What is the probability of a US recession occurring in 2026? Analyze: (1) Current yield curve signals and historical lead times from inversion to recession; (2) Labor market indicators (unemployment trends, jobless claims, wage growth deceleration); (3) Credit conditions and corporate debt stress; (4) Historical base rates for recessions 2-3 years after major Fed tightening cycles; (5) Leading economic indicators (LEI) trajectory. Provide probability range with confidence intervals.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "grid_integration_readiness"
+      ]
+    },
+    {
+      "name": "entity_investigator_technical_readiness_acceleration",
+      "agent_type": "research",
+      "query": "Research evidence for the 'technical_readiness_acceleration' driver in the forecast: \"will commercial fusion nuclear service be avilable by 2031?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "technical_readiness_acceleration"
+      ]
+    },
+    {
+      "name": "market_research_demonstration_success_by_2027",
+      "agent_type": "research",
+      "query": "Research evidence for the 'demonstration_success_by_2027' driver in the forecast: \"will commercial fusion nuclear service be avilable by 2031?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "demonstration_success_by_2027"
+      ]
     }
-  ]
+  ],
+  "driver_confidence": {
+    "private_funding_sustainability": 0.5
+  }
 }

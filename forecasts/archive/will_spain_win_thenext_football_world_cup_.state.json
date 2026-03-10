@@ -1,0 +1,94 @@
+{
+  "current_version": 5,
+  "predicted_probability": 0.036964001153851386,
+  "inside_view_explanation": "Starting from a 4.3% base rate, our model moderately decreases the probability to 3.7%. The key factors are: injury_impact, competitive_pressure, strength_factor. Most influential: competitive_pressure (77%), injury_impact (11%), strength_factor (10%).",
+  "forecast_confidence": 0.31499999999999995,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-08 10:19",
+      "probability": 0.043,
+      "change_summary": "Initial forecast"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-08 10:23",
+      "probability": 0.043,
+      "change_summary": "v2 update"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-08 10:23",
+      "probability": 0.04517040335004753,
+      "change_summary": "v3 update"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-08 10:24",
+      "probability": 0.04234060628419559,
+      "change_summary": "v4 update"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-08 10:24",
+      "probability": 0.036964001153851386,
+      "change_summary": "v5 update"
+    }
+  ],
+  "sim_results": {
+    "mean": 0.9455907271915472,
+    "median": 0.9436726617740528,
+    "p5": 0.5045160407943523,
+    "p95": 1.3855179213026414,
+    "std_dev": 0.2662773231811034,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "Base rate of 4.3% reflects Spain'",
+    "historical_frequency": 0.043,
+    "sample_size": null,
+    "source": "macro_forecaster",
+    "reasoning": "Base rate of 4.3% reflects Spain's historical performance as a top-tier European nation with one World Cup victory. Six independent drivers capture the key uncertainties: current form, squad quality (slightly positive due to youth talent), tactical approach (slightly negative due to recent knockout struggles), draw luck (high variance), injury luck (moderate variance), and competitive field strength (slightly negative due to increased competition). The model suggests Spain's probability ranges f"
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1772963993",
+      "source": "Agent: fermi",
+      "summary": "",
+      "relevance": 0.72,
+      "date": "2026-03-08",
+      "key_findings": []
+    },
+    {
+      "id": "market_research_0",
+      "source": "Agent: market_research",
+      "summary": "Based on my analytical framework and general market research principles, let me provide evidence analysis for the injury_impact driver:\n\n---\n\n## INJURY_IMPACT DRIVER - EVIDENCE ANALYSIS\n**Forecast Question:** Will Spain win the next Football World Cup?\n\n### KEY FINDINGS\n\n**Historical Injury Impact on World Cup Winners:**\n- **Tournament injury rate**: Elite teams typically experience 15-25% of squad members picking up injuries during major tournaments (FIFA Medical Assessment data)\n- **Critical t",
+      "relevance": 0.5,
+      "date": "2026-03-08",
+      "key_findings": []
+    }
+  ],
+  "agents": [
+    {
+      "name": "market_research_injury_impact",
+      "agent_type": "research",
+      "query": "Research evidence for the 'injury_impact' driver in the forecast: \"will spain win thenext football world cup?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "injury_impact"
+      ]
+    },
+    {
+      "name": "market_research_competitive_pressure",
+      "agent_type": "research",
+      "query": "Research evidence for the 'competitive_pressure' driver in the forecast: \"will spain win thenext football world cup?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "competitive_pressure"
+      ]
+    }
+  ],
+  "driver_confidence": {
+    "private_funding_sustainability": 0.5
+  }
+}

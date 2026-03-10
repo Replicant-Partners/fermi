@@ -1,0 +1,54 @@
+question "will spain win thenext football world cup?"
+
+driver injury_impact continuous {
+    distribution: triangular(0.85, 1, 1.3)
+    unit: "multiplier"
+    rationale: "Effect of injuries on key players"
+}
+
+driver competitive_pressure continuous {
+    distribution: triangular(0.4, 1.1, 1.3)
+    unit: "multiplier"
+    rationale: "Intensity of competition"
+}
+
+driver strength_factor continuous {
+    distribution: triangular(0.8, 1, 1.2)
+    unit: "multiplier"
+    rationale: "How strong is the case for this outcome"
+}
+
+driver conditions continuous {
+    distribution: triangular(0.8, 1, 1.2)
+    unit: "multiplier"
+    rationale: "Are external conditions favorable or unfavorable"
+}
+
+evidence fermi_evidence_1772963993 {
+    source: "Agent: fermi"
+    summary: ""
+    relevance: 0.72p
+    date: 2026-03-08
+}
+
+evidence market_research_0 {
+    source: "Agent: market_research"
+    summary: "Based on my analytical framework and general market research principles, let me provide evidence analysis for the injury_impact driver:
+
+---
+
+## INJURY_IMPACT DRIVER - EVIDENCE ANALYSIS
+**Forecast Question:** Will Spain win the next Football World Cup?
+
+### KEY FINDINGS
+
+**Historical Injury Impact on World Cup Winners:**
+- **Tournament injury rate**: Elite teams typically experience 15-25% of squad members picking up injuries during major tournaments (FIFA Medical Assessment data)
+- **Critical t"
+    relevance: 0.5p
+    date: 2026-03-08
+}
+
+model: (((injury_impact * competitive_pressure) * strength_factor) * conditions)
+
+simulate 10000 iterations

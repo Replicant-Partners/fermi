@@ -1,25 +1,25 @@
 question "will commercial fusion nuclear service be avilable by 2031?"
 
 driver technical_readiness_acceleration continuous {
-    distribution: triangular(1.5, 3.5, 5)
+    distribution: triangular(0.3, 3.7, 5)
     unit: "multiplier"
     rationale: "NIF's Dec 2022 net energy gain was historic but used 300MJ input for 3.15MJ output (only the laser energy counted). Commercial viability requires Q>10 and continuous operation. Private companies (Commonwealth Fusion, TAE, Helion) claim breakthroughs in magnet technology, alternative confinement. If technical progress accelerates beyond current trajectory, probability increases significantly. If fundamental engineering challenges persist, decreases."
 }
 
 driver regulatory_pathway_clarity continuous {
-    distribution: triangular(0.7, 1.1, 1.5)
+    distribution: triangular(0.4, 1.4, 1.7)
     unit: "multiplier"
     rationale: "US NRC and UK regulators are developing fusion-specific frameworks (not treating as fission). Clear regulatory pathways could accelerate deployment by 2-3 years. However, first-of-kind licensing could face unexpected delays. UK's Fusion Energy Act 2021 and US bipartisan support are positive signals."
 }
 
 driver private_funding_sustainability continuous {
-    distribution: triangular(0.9, 1.5, 2.5)
+    distribution: triangular(0.4, 2.2, 3)
     unit: "multiplier"
     rationale: "$5B+ invested in private fusion since 2021. Companies like Commonwealth Fusion (SPARC by 2025), Helion (2028 target), TAE Technologies well-funded. Sustained funding through 2020s critical for meeting 2031 timeline. Economic downturn or failed demonstrations could reduce funding. Success breeds more investment."
 }
 
 driver grid_integration_readiness continuous {
-    distribution: triangular(0.75, 0.95, 1.2)
+    distribution: triangular(0.2, 0.8, 1.5)
     unit: "multiplier"
     rationale: "'Commercial service' requires actual grid connection and power delivery, not just demonstration. Grid interconnection queues, transmission infrastructure, utility contracts take 3-5 years. This is a downward pressure on probability as it's often overlooked. However, some companies planning industrial/data center direct supply which is faster."
 }
@@ -169,10 +169,12 @@ evidence entity_investigator_0 {
 }
 
 evidence market_research_0 {
-    source: "Agent: market_research (Claude API)"
-    summary: "The research indicates that significant technical progress is being made in the development of commercial fusion energy, with multiple companies and government agencies targeting the early 2030s for the first commercial fusion power plants. Key advancements in fusion reactor technologies, increased funding, and improvements in supporting technologies suggest that the technical readiness for commercial fusion is accelerating."
-    relevance: 0.85p
-    date: 2026-03-06
+    source: "Agent: market_research"
+    summary: "The knowledge graph does not contain any information about commercial fusion nuclear service availability by 2031 either. I don't have enough internal knowledge to provide a comprehensive answer on the evidence for this forecast driver.
+
+Since I don't have the necessary information, I would suggest reaching out to domain experts or consulting external sources like industry reports, academic publications, or government/regulatory agency data to research this topic further. My knowledge is limited"
+    relevance: 0.5p
+    date: 2026-03-07
 }
 
 model: ((((technical_readiness_acceleration * regulatory_pathway_clarity) * private_funding_sustainability) * grid_integration_readiness) * (if demonstration_success_by_2027 then 1.3 else 1))

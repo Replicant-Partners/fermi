@@ -1,0 +1,146 @@
+# will the knicks win their next game?
+
+**Probability:** 1.0% · **Version:** v8 · **Updated:** 2026-03-08 10:20 UTC
+
+**Confidence:** Low (14%) · **Drivers:** 4 · **Evidence:** 2 · **Agents:** 4
+
+---
+
+## Inside View
+
+**Probability: 1.0%**
+
+Starting from a 0.6% base rate, our model slightly confirms the probability to 1.0%. The key factors are: home_court, opponent_strength, injury_impact. Most influential: opponent_strength (24%), injury_impact (22%), home_court (21%).
+
+**Forecast Confidence:** Low (14%)
+
+**Divergence from base rate:** 0pp above (1.0% vs 0.6%)
+
+---
+
+## Outside View (Base Rate)
+
+**0.6%** — st relies heavily on league-wide base rates and generic adjustment factors. The base rate of 0.58 assumes a home
+
+- **Source:** macro_forecaster
+
+Without knowing the specific opponent, venue, injury status, or schedule context for the Knicks' next game, this forecast relies heavily on league-wide base rates and generic adjustment factors. The base rate of 0.58 assumes a home game against an average opponent. Each driver can significantly shift the probability: a home game against a weak, injured opponent on a back-to-back could push win probability above 80%, while an away game against a top team with key Knicks players out could drop it 
+
+---
+
+## 1. home_court `continuous`
+
+| p5 | p50 | p95 | unit |
+|---:|---:|---:|---|
+| 0.49 | 0.58 | 0.67 | multiplier |
+
+> Home vs away impact on outcome
+
+### Assigned Agents
+
+- **nba_analyst_home_court** (schedule: once)  
+  Query: _Research evidence for the 'home_court' driver in the forecast: "will the knicks win their next game?"_
+
+_No evidence collected yet. Assign an agent to research this driver._
+
+---
+
+## 2. opponent_strength `continuous`
+
+| p5 | p50 | p95 | unit |
+|---:|---:|---:|---|
+| 0.85 | 1.00 | 1.15 | multiplier |
+
+> Quality of the opposing side
+
+### Assigned Agents
+
+- **nba_analyst_opponent_strength** (schedule: once)  
+  Query: _Research evidence for the 'opponent_strength' driver in the forecast: "will the knicks win their next game?"_
+
+_No evidence collected yet. Assign an agent to research this driver._
+
+---
+
+## 3. injury_impact `continuous`
+
+| p5 | p50 | p95 | unit |
+|---:|---:|---:|---|
+| 0.85 | 1.00 | 1.15 | multiplier |
+
+> Effect of injuries on key players
+
+### Assigned Agents
+
+- **nba_analyst_injury_impact** (schedule: once)  
+  Query: _Research evidence for the 'injury_impact' driver in the forecast: "will the knicks win their next game?"_
+
+_No evidence collected yet. Assign an agent to research this driver._
+
+---
+
+## 4. schedule_fatigue `continuous`
+
+| p5 | p50 | p95 | unit |
+|---:|---:|---:|---|
+| 0.85 | 1.00 | 1.15 | multiplier |
+
+> Days of rest, back-to-back games
+
+### Assigned Agents
+
+- **nba_analyst_schedule_fatigue** (schedule: once)  
+  Query: _Research evidence for the 'schedule_fatigue' driver in the forecast: "will the knicks win their next game?"_
+
+_No evidence collected yet. Assign an agent to research this driver._
+
+---
+
+## General Evidence (2)
+
+_Evidence not linked to a specific driver._
+
+### Agent: fermi — relevance 35%
+
+
+
+### Agent: nba_analyst — relevance 50%
+
+The knowledge search isn't available, so I'll provide analysis based on my expert knowledge of NBA analytics and typical opponent strength assessment frameworks. However, I need to note that **I don't have access to real-time schedule data** to identify the specific opponent for the Knicks' next game.
+
+Let me provide you with the analytical framework and evidence structure for opponent strength assessment:
+
+## OPPONENT STRENGTH EVIDENCE FRAMEWORK FOR KNICKS NEXT GAME
+
+### CRITICAL INFORMATION GA
+
+---
+
+## Methodology
+
+This forecast uses a **Fermi decomposition** approach based on Tetlock superforecasting methodology:
+
+1. **Outside view** — anchor to a base rate from a relevant reference class
+2. **Inside view** — decompose into independent drivers, each represented as a probability multiplier
+3. **Monte Carlo simulation** — run 10,000 iterations sampling from driver distributions
+4. **Normalization** — `P = base_rate × (simulation_mean / baseline_mean)` clamped to [1%, 99%]
+
+### Model
+
+```
+model: home_court * opponent_strength * injury_impact * schedule_fatigue
+```
+
+### Research Agents
+
+| Agent | Driver | Query |
+|---|---|---|
+| nba_analyst_schedule_fatigue | schedule_fatigue | Research evidence for the 'schedule_fatigue' driver in the forecast: "will the knicks win their next game?" |
+| nba_analyst_injury_impact | injury_impact | Research evidence for the 'injury_impact' driver in the forecast: "will the knicks win their next game?" |
+| nba_analyst_home_court | home_court | Research evidence for the 'home_court' driver in the forecast: "will the knicks win their next game?" |
+| nba_analyst_opponent_strength | opponent_strength | Research evidence for the 'opponent_strength' driver in the forecast: "will the knicks win their next game?" |
+
+
+---
+
+_Generated by [Fermi Console](https://agent-bestiary.world) · v8 · 2026-03-08 10:20 UTC_

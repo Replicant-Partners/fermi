@@ -1,0 +1,130 @@
+{
+  "current_version": 8,
+  "predicted_probability": 0.01,
+  "inside_view_explanation": "Starting from a 0.6% base rate, our model slightly confirms the probability to 1.0%. The key factors are: home_court, opponent_strength, injury_impact. Most influential: opponent_strength (24%), injury_impact (22%), home_court (21%).",
+  "forecast_confidence": 0.13999999999999999,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-07 17:34",
+      "probability": 0.5,
+      "change_summary": "Initial forecast"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-07 19:06",
+      "probability": 0.58,
+      "change_summary": "v2 update"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-03-07 19:10",
+      "probability": 0.58,
+      "change_summary": "v3 update"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-03-07 19:44",
+      "probability": 0.0058,
+      "change_summary": "v4 update"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-07 19:44",
+      "probability": 0.0058,
+      "change_summary": "v5 update"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-03-07 19:45",
+      "probability": 0.01,
+      "change_summary": "v6 update"
+    },
+    {
+      "version": 7,
+      "timestamp": "2026-03-07 20:55",
+      "probability": 0.01,
+      "change_summary": "v7 update"
+    },
+    {
+      "version": 8,
+      "timestamp": "2026-03-08 10:20",
+      "probability": 0.01,
+      "change_summary": "v8 update"
+    }
+  ],
+  "sim_results": {
+    "mean": 0.5793214710382014,
+    "median": 0.5763834104677772,
+    "p5": 0.46863522408899927,
+    "p95": 0.7027364110584807,
+    "std_dev": 0.0714646971717547,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "st relies heavily on league-wide base rates and generic adjustment factors. The base rate of 0.58 assumes a home",
+    "historical_frequency": 0.0058,
+    "sample_size": null,
+    "source": "macro_forecaster",
+    "reasoning": "Without knowing the specific opponent, venue, injury status, or schedule context for the Knicks' next game, this forecast relies heavily on league-wide base rates and generic adjustment factors. The base rate of 0.58 assumes a home game against an average opponent. Each driver can significantly shift the probability: a home game against a weak, injured opponent on a back-to-back could push win probability above 80%, while an away game against a top team with key Knicks players out could drop it "
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1772912573",
+      "source": "Agent: fermi",
+      "summary": "",
+      "relevance": 0.35,
+      "date": "2026-03-07",
+      "key_findings": []
+    },
+    {
+      "id": "nba_analyst_0",
+      "source": "Agent: nba_analyst",
+      "summary": "The knowledge search isn't available, so I'll provide analysis based on my expert knowledge of NBA analytics and typical opponent strength assessment frameworks. However, I need to note that **I don't have access to real-time schedule data** to identify the specific opponent for the Knicks' next game.\n\nLet me provide you with the analytical framework and evidence structure for opponent strength assessment:\n\n## OPPONENT STRENGTH EVIDENCE FRAMEWORK FOR KNICKS NEXT GAME\n\n### CRITICAL INFORMATION GA",
+      "relevance": 0.5,
+      "date": "2026-03-07",
+      "key_findings": []
+    }
+  ],
+  "agents": [
+    {
+      "name": "nba_analyst_schedule_fatigue",
+      "agent_type": "research",
+      "query": "Research evidence for the 'schedule_fatigue' driver in the forecast: \"will the knicks win their next game?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "schedule_fatigue"
+      ]
+    },
+    {
+      "name": "nba_analyst_injury_impact",
+      "agent_type": "research",
+      "query": "Research evidence for the 'injury_impact' driver in the forecast: \"will the knicks win their next game?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "injury_impact"
+      ]
+    },
+    {
+      "name": "nba_analyst_home_court",
+      "agent_type": "research",
+      "query": "Research evidence for the 'home_court' driver in the forecast: \"will the knicks win their next game?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "home_court"
+      ]
+    },
+    {
+      "name": "nba_analyst_opponent_strength",
+      "agent_type": "research",
+      "query": "Research evidence for the 'opponent_strength' driver in the forecast: \"will the knicks win their next game?\"",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "opponent_strength"
+      ]
+    }
+  ],
+  "driver_confidence": {
+    "private_funding_sustainability": 0.5
+  }
+}

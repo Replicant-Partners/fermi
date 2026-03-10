@@ -1,0 +1,144 @@
+question "will the lakerswin their next game?"
+
+driver factor_1 continuous {
+    distribution: triangular(0.8, 1, 1.2)
+    unit: "multiplier"
+    rationale: "Main driver of the outcome"
+}
+
+driver factor_2 continuous {
+    distribution: triangular(0.5, 1.2, 1.7)
+    unit: "multiplier"
+    rationale: "Supporting factor"
+}
+
+driver factor_3 continuous {
+    distribution: triangular(0.8, 1, 1.2)
+    unit: "multiplier"
+    rationale: "Key risk or uncertainty"
+}
+
+evidence fermi_evidence_1772990205 {
+    source: "Agent: fermi (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"NBA home team win rate 2023-24 season\",
+    \"historical_frequency\": 0.58,
+    \"sample_size\": 1230,
+    \"reasoning\": \"NBA home teams win approximately 58% of games in recent seasons. Without knowing if Lakers play home/away, using league average of ~50% as neutral baseline.\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"home_away_advantage\",
+      \"display_name\": \"Home/Away Status\",
+      \"type\": \"continuous\",
+      \"p5\": 0.85,
+      \"p50\": 1.0,
+      \"p95\": 1.15,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Home court advantage worth ~8-15% in NBA. Uncertainty since game location unknown.\"
+    },
+    {
+      \"name\": \"recent_form\",
+      \"display_name\": \"Recent Team Form\",
+      \"type\": \"continuous\",
+      \"p5\": 0.75,
+      \"p50\": 0.95,
+      \"p95\": 1.25,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Lakers' current season performance and momentum. Mid-season teams typically near league average with variance.\"
+    },
+    {
+      \"name\": \"opponent_strength\",
+      \"display_name\": \"Opponent Quality\",
+      \"type\": \"continuous\",
+      \"p5\": 0.65,
+      \"p50\": 1.0,
+      \"p95\": 1.35,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Unknown opponent creates wide range. Playing elite team (0.65x) vs weak team (1.35x) significantly affects odds.\"
+    },
+    {
+      \"name\": \"injury_status\",
+      \"display_name\": \"Key Player Availability\",
+      \"type\": \"continuous\",
+      \"p5\": 0.80,
+      \"p50\": 1.0,
+      \"p95\": 1.10,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Star player injuries (LeBron, AD) can reduce win probability 20%+. Opponent injuries can boost it 10%.\"
+    },
+    {
+      \"name\": \"rest_schedule\",
+      \"display_name\": \"Rest and Schedule\",
+      \"type\": \"continuous\",
+      \"p5\": 0.90,
+      \"p50\": 1.0,
+      \"p95\": 1.10,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Back-to-back games reduce win rate ~5-10%. Extra rest days provide modest advantage.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"NBA Official Stats 2023-24\",
+      \"summary\": \"Home teams won 58% of games through current season with consistent advantage across teams.\",
+      \"key_findings\": [
+        \"Home win rate: 58%\",
+        \"Road win rate: 42%\",
+        \"League parity relatively high\"
+      ],
+      \"relevance\": 0.9
+    },
+    {
+      \"source\": \"Lakers 2023-24 Season Performance\",
+      \"summary\": \"Lakers hovering around .500 record mid-season with inconsistent performance and injury concerns.\",
+      \"key_findings\": [
+        \"Win rate near 50%\",
+        \"Injury issues with key players\",
+        \"Competitive Western Conference\"
+      ],
+      \"relevance\": 0.85
+    }
+  ],
+  \"model_expression\": \"base_rate * home_away_advantage * recent_form * opponent_strength * injury_status * rest_schedule\",
+  \"confidence\": 0.3,
+  \"reasoning\": \"High uncertainty due to missing critical information: opponent identity, game location, injury reports, and schedule context. Base rate of 50% with wide confidence intervals on all drivers. Would need specific game details to provide meaningful forecast. Current estimate ranges from 25-75% depending on these unknown factors.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-08
+}
+
+evidence nba_analyst_0 {
+    source: "Agent: nba_analyst"
+    summary: "Let me provide a comprehensive analysis based on my expert knowledge of Lakers injury patterns and historical performance data with/without their star players.
+
+## LAKERS INJURY IMPACT ANALYSIS
+
+### CURRENT CONTEXT & ASSUMPTIONS
+Since I don't have real-time injury report access, I'll provide the analytical framework with historical data that applies to any Lakers game scenario. This analysis is based on:
+- 2023-24 season patterns (most recent complete data)
+- Historical performance splits with/w"
+    relevance: 0.5p
+    date: 2026-03-08
+}
+
+evidence fermi_evidence_1772991083 {
+    source: "Agent: fermi (Claude API)"
+    summary: "```json
+{
+  \"reference_class\": \"NBA team winning their next game (home team advantage considered)\",
+  \"historical_frequency\": 0.52,
+  \"sample_size\": 1230,
+  \"reasoning\": \"NBA teams historically win approximately 50% of games (balanced competition), with home teams winning ~58% and away teams ~42%. Without knowing opponent or venue, using slight above-50% baseline accounting for typical home/away split across season. Lakers' specific win rate varies by season performance.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-08
+}
+
+model: factor_1 * factor_2 * factor_3
+
+simulate 10000 iterations

@@ -1,0 +1,49 @@
+question "will the knicks win their next game?"
+
+driver home_court continuous {
+    distribution: triangular(0.49, 0.58, 0.67)
+    unit: "multiplier"
+    rationale: "Home vs away impact on outcome"
+}
+
+driver opponent_strength continuous {
+    distribution: triangular(0.85, 1, 1.15)
+    unit: "multiplier"
+    rationale: "Quality of the opposing side"
+}
+
+driver injury_impact continuous {
+    distribution: triangular(0.85, 1, 1.15)
+    unit: "multiplier"
+    rationale: "Effect of injuries on key players"
+}
+
+driver schedule_fatigue continuous {
+    distribution: triangular(0.85, 1, 1.15)
+    unit: "multiplier"
+    rationale: "Days of rest, back-to-back games"
+}
+
+evidence fermi_evidence_1772912573 {
+    source: "Agent: fermi"
+    summary: ""
+    relevance: 0.35p
+    date: 2026-03-07
+}
+
+evidence nba_analyst_0 {
+    source: "Agent: nba_analyst"
+    summary: "The knowledge search isn't available, so I'll provide analysis based on my expert knowledge of NBA analytics and typical opponent strength assessment frameworks. However, I need to note that **I don't have access to real-time schedule data** to identify the specific opponent for the Knicks' next game.
+
+Let me provide you with the analytical framework and evidence structure for opponent strength assessment:
+
+## OPPONENT STRENGTH EVIDENCE FRAMEWORK FOR KNICKS NEXT GAME
+
+### CRITICAL INFORMATION GA"
+    relevance: 0.5p
+    date: 2026-03-07
+}
+
+model: (((home_court * opponent_strength) * injury_impact) * schedule_fatigue)
+
+simulate 10000 iterations
