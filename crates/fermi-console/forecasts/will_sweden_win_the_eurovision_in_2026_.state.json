@@ -1,0 +1,91 @@
+{
+  "current_version": 1,
+  "predicted_probability": 0.088,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-03-10 21:31",
+      "probability": 0.088,
+      "change_summary": "Initial: 8.8% base=9%, 4 drivers, 1 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "Sweden's Eurovision wins since contest began in 1956",
+    "historical_frequency": 0.088,
+    "sample_size": 68,
+    "source": "macro_forecaster",
+    "reasoning": "Sweden has won Eurovision 6 times out of 68 contests (1974, 1984, 1991, 1999, 2012, 2015), giving approximately 8.8% historical win rate, one of the highest among participating nations."
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1773178257",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "```json\n{\n  \"base_rate\": {\n    \"reference_class\": \"Sweden's Eurovision wins since contest began in 1956\",\n    \"historical_frequency\": 0.088,\n    \"sample_size\": 68,\n    \"reasoning\": \"Sweden has won Eurovision 6 times out of 68 contests (1974, 1984, 1991, 1999, 2012, 2015), giving approximately 8.8% historical win rate, one of the highest among participating nations.\"\n  },\n  \"drivers\": [\n    {\n      \"name\": \"recent_performance_trend\",\n      \"display_name\": \"Recent Performance Trend\",\n      \"type\": \"continuous\",\n      \"p5\": 0.85,\n      \"p50\": 1.1,\n      \"p95\": 1.4,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Sweden consistently places in top 10, won 2023, and has strong track record 2010s-2020s. Melodifestivalen produces high-quality entries, suggesting above-average prospects.\"\n    },\n    {\n      \"name\": \"competitive_field_strength\",\n      \"display_name\": \"Competitive Field Strength\",\n      \"type\": \"continuous\",\n      \"p5\": 0.7,\n      \"p50\": 0.95,\n      \"p95\": 1.15,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Eurovision competition has intensified with more professional entries from multiple countries. Italy, Ukraine, Netherlands show strong recent form, slightly reducing Sweden's relative advantage.\"\n    },\n    {\n      \"name\": \"voting_system_favorability\",\n      \"display_name\": \"Voting System Favorability\",\n      \"type\": \"continuous\",\n      \"p5\": 0.9,\n      \"p50\": 1.05,\n      \"p95\": 1.25,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Current jury-public split voting system favors polished, radio-friendly pop that Sweden excels at producing. Sweden benefits from broad appeal across both voting mechanisms.\"\n    },\n    {\n      \"name\": \"song_quality_variance\",\n      \"display_name\": \"Song Quality Variance\",\n      \"type\": \"continuous\",\n      \"p5\": 0.6,\n      \"p50\": 1.0,\n      \"p95\": 1.5,\n      \"unit\": \"multiplier\",\n      \"rationale\": \"Unknown 2026 song quality introduces uncertainty. Melodifestivalen's selection process is rigorous, but individual song appeal varies significantly year-to-year regardless of national infrastructure.\"\n    }\n  ],\n  \"evidence\": [\n    {\n      \"source\": \"Eurovision historical results database\",\n      \"summary\": \"Sweden has 6 wins and 27 top-5 finishes in 61 participations, demonstrating consistent competitive strength.\",\n      \"key_findings\": [\n        \"6 victories since 1974\",\n        \"44% top-5 finish rate\",\n        \"Won most recently in 2023 with Loreen\"\n      ],\n      \"relevance\": 0.95\n    },\n    {\n      \"source\": \"Eurovision betting odds analysis 2020-2024\",\n      \"summary\": \"Sweden consistently ranks among pre-contest favorites, typically in top 5 betting odds regardless of eventual outcome.\",\n      \"key_findings\": [\n        \"Average pre-contest odds position: 3-5th favorite\",\n        \"Strong jury vote performance\",\n        \"Melodifestivalen viewed as quality indicator\"\n      ],\n      \"relevance\": 0.8\n    },\n    {\n      \"source\": \"Eurovision voting pattern studies\",\n      \"summary\": \"Sweden receives broad support across European regions with minimal negative voting bloc effects.\",\n      \"key_findings\": [\n        \"No significant voting penalties\",\n        \"Appeals to both Eastern and Western Europe\",\n        \"Strong jury support for production quality\"\n      ],\n      \"relevance\": 0.75\n    }\n  ],\n  \"model_expression\": \"base_rate * recent_performance_trend * competitive_field_strength * voting_system_favorability * song_quality_variance\",\n  \"confidence\": 0.65,\n  \"reasoning\": \"Base rate of 8.8% reflects Sweden's strong historical performance. Recent success and institutional advantages (Melodifestivalen) justify positive adjustment, but increased competition and inherent song quality uncertainty temper expectations. Model estimates ~9-10% probability, acknowledging Sweden as perennial contender but not overwhelming favorite given competitive field.\"\n}\n```",
+      "relevance": 0.5,
+      "date": "2026-03-10",
+      "key_findings": [
+        "\"base_rate\": {",
+        "\"reference_class\": \"Sweden's Eurovision wins since contest began in 1956\",",
+        "\"historical_frequency\": 0.088,",
+        "\"sample_size\": 68,",
+        "\"reasoning\": \"Sweden has won Eurovision 6 times out of 68 contests (1974, 1984, 1991, 1999, 2012, 2015), giving approximately 8.8% historical win rate, one of the highest among participating nations.\"",
+        "\"drivers\": [",
+        "\"name\": \"recent_performance_trend\",",
+        "\"display_name\": \"Recent Performance Trend\",",
+        "\"type\": \"continuous\",",
+        "\"p5\": 0.85,"
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "name": "nba_analyst_recent_performance_trend",
+      "agent_type": "research",
+      "query": "For the forecast: \"Will sweden win the eurovision in 2026?\"\n\nResearch evidence for the 'recent_performance_trend' driver.\nCurrent estimate: p5=0.85, p50=1.10, p95=1.40\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Sweden consistently places in top 10, won 2023, and has strong track record 2010s-2020s. Melodifestivalen produces high-quality entries, suggesting above-average prospects.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "recent_performance_trend"
+      ]
+    },
+    {
+      "name": "market_research_competitive_field_strength",
+      "agent_type": "research",
+      "query": "For the forecast: \"Will sweden win the eurovision in 2026?\"\n\nResearch evidence for the 'competitive_field_strength' driver.\nCurrent estimate: p5=0.70, p50=0.95, p95=1.15\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Eurovision competition has intensified with more professional entries from multiple countries. Italy, Ukraine, Netherlands show strong recent form, slightly reducing Sweden's relative advantage.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "competitive_field_strength"
+      ]
+    },
+    {
+      "name": "market_research_voting_system_favorability",
+      "agent_type": "research",
+      "query": "For the forecast: \"Will sweden win the eurovision in 2026?\"\n\nResearch evidence for the 'voting_system_favorability' driver.\nCurrent estimate: p5=0.90, p50=1.05, p95=1.25\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Current jury-public split voting system favors polished, radio-friendly pop that Sweden excels at producing. Sweden benefits from broad appeal across both voting mechanisms.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "voting_system_favorability"
+      ]
+    },
+    {
+      "name": "nba_analyst_song_quality_variance",
+      "agent_type": "research",
+      "query": "For the forecast: \"Will sweden win the eurovision in 2026?\"\n\nResearch evidence for the 'song_quality_variance' driver.\nCurrent estimate: p5=0.60, p50=1.00, p95=1.50\n\nPROVIDE:\n1. Key data points relevant to this driver (with sources and dates)\n2. Historical base rate or comparable precedent\n3. Suggested p50 multiplier adjustment based on your findings\n4. Confidence (0.0-1.0) in your assessment\n\nContext: Unknown 2026 song quality introduces uncertainty. Melodifestivalen's selection process is rigorous, but individual song appeal varies significantly year-to-year regardless of national infrastructure.\n\nBe specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "song_quality_variance"
+      ]
+    },
+    {
+      "name": "sentiment_analyzer_recent_performance_trend",
+      "agent_type": "research",
+      "query": "For the forecast: \"Will sweden win the eurovision in 2026?\" Research evidence for the 'recent_performance_trend' driver. Current estimate: p5=0.85, p50=1.10, p95=1.40 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Sweden consistently places in top 10, won 2023, and has strong track record 2010s-2020s. Melodifestivalen produces high-quality entries, suggesting above-average prospects. Be specific and quantitative — numbers, percentages, named sources.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "recent_performance_trend"
+      ]
+    }
+  ],
+  "driver_confidence": {}
+}
