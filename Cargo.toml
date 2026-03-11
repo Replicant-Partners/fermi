@@ -143,6 +143,13 @@ opt-level = 3
 lto = true
 codegen-units = 1
 
+# Faster release builds for local dev — `cargo build --profile release-fast -p fermi-console`
+# ~2x faster than release; still optimized, just no LTO
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [[bin]]
 name = "api-server"
 path = "src/api_server.rs"

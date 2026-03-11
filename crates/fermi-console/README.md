@@ -2,20 +2,18 @@
 
 MMOG-style forecasting command center built on [GPUI](https://gpui.rs/) (Zed's GPU-accelerated UI framework).
 
-## Platform Support
+---
 
-| Platform | Status | Renderer |
-|----------|--------|----------|
-| Linux (Ubuntu/Debian) | ✅ Primary | Vulkan via Blade + X11/Wayland |
-| macOS | 🔲 Planned | Metal |
-| Windows | 🔲 Planned | DirectX via Blade |
+## Installation
 
-## Build Dependencies
+### 1. Prerequisites
 
-### Linux (Ubuntu / Debian)
+**Rust toolchain** (stable, 1.78+):
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
 
-GPUI requires several system libraries for X11/Wayland windowing and font rendering:
-
+**System libraries — Linux (Ubuntu / Debian):**
 ```bash
 sudo apt-get install -y \
   libxcb1-dev \
@@ -27,118 +25,200 @@ sudo apt-get install -y \
   libvulkan-dev
 ```
 
-These are the same dependencies required to build [Zed](https://github.com/zed-industries/zed/blob/main/docs/src/development/linux.md) from source.
+**macOS:** Xcode command line tools only — `xcode-select --install`
 
-### macOS
-
-Install Xcode and command line tools:
+### 2. Build
 
 ```bash
-xcode-select --install
-```
+# Clone / navigate to the fermi workspace root
+git clone https://github.com/your-org/fermi && cd fermi
 
-GPUI uses Metal for rendering on macOS — no additional dependencies needed.
-
-### Windows
-
-Windows support requires the MSVC toolchain. Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload.
-
-## Building
-
-```bash
-# From the fermi workspace root:
+# Development build (fast compile, slower runtime)
 cargo build -p fermi-console
 
-# Run:
-cargo run -p fermi-console
-
-# Release build (recommended for daily use):
-cargo build -p fermi-console --release
-cargo run -p fermi-console --release
+# Release build (recommended for daily use)
+cargo build --release -p fermi-console
 ```
 
-## Keyboard Shortcuts
+### 3. Run
 
-| Key | Action |
-|-----|--------|
-| `⌘1` / `Ctrl+1` | Dashboard |
-| `⌘2` / `Ctrl+2` | Portfolio |
-| `⌘3` / `Ctrl+3` | Agent Fleet |
-| `⌘4` / `Ctrl+4` | Composer |
-| `⌘5` / `Ctrl+5` | Leaderboard |
-| `⌘N` / `Ctrl+N` | New Forecast |
-| `⌘Q` / `Ctrl+Q` | Quit |
+```bash
+# Dev
+cargo run -p fermi-console
+
+# Release
+cargo run --release -p fermi-console
+
+# Or run the binary directly after building
+./target/release/fermi-console
+```
+
+---
+
+## Signing In
+
+Fermi Console connects to [agent-bestiary.world](https://agent-bestiary.world) for agent execution, scoring, and leaderboards.
+
+1. Launch the app — the sign-in screen appears automatically
+2. Click **Sign in with Google** or **Sign in with GitHub**
+3. Your browser opens an OAuth page — approve the request
+4. The app receives the token and logs you in automatically
+
+> You can also paste an **API key** from your ABW profile directly into the token input field (useful in headless / SSH environments).
+
+---
+
+## Navigation
+
+| Key | Panel |
+|-----|-------|
+| `Ctrl+1` | Dashboard — your stats, Brier score, activity feed |
+| `Ctrl+2` | Portfolio — active, resolved, and draft forecasts |
+| `Ctrl+3` | Agent Fleet — agent registry and performance |
+| `Ctrl+4` | Composer — forecast editor and cockpit |
+| `Ctrl+5` | Leaderboard |
+| `Ctrl+N` | New forecast (opens Composer) |
+| `Ctrl+Q` | Quit |
+
+---
+
+## Making a Forecast
+
+### Option A — Write it yourself
+
+1. Press `Ctrl+4` to open the Composer
+2. Type your question in the **Question** field (e.g. *"Will RKLB hit $400M in revenues in FY 2026?"*)
+3. Add **drivers** — each driver is a named variable with a probability distribution:
+   - `triangular(low, mid, high)` — most common
+   - `normal(mean, stddev)`
+   - `uniform(low, high)`
+   - `lognormal(median, sigma)`
+4. Write a **model expression** combining the drivers
+5. Press `Ctrl+R` to run the Monte Carlo simulation (instant, runs locally)
+6. Review the histogram and probability output
+7. Press `Ctrl+P` to publish to ABW
+
+### Option B — Import from Polymarket
+
+1. Go to **Portfolio** (`Ctrl+2`)
+2. Click **🔮 Import from Polymarket**
+3. In the search panel, either:
+   - **Type a keyword** — e.g. `Fed rates`, `Bitcoin`, `election`
+   - **Paste a Polymarket URL** — e.g. `https://polymarket.com/event/will-the-fed-cut-rates-march-2025`
+4. Press **Search** (or Enter)
+5. Click any result to import it
+6. The Composer opens pre-filled with the question and the crowd-implied probability as the base rate
+7. Press `Ctrl+Enter` to run agentic research decomposition, then `Ctrl+R` to simulate
+
+### Option C — Run Agentic Research
+
+With a question open in the Composer:
+
+1. Press `Ctrl+Enter` (or **Forecast → Research Question** menu)
+2. The orchestration pipeline runs — agents decompose the question, gather evidence, and suggest drivers
+3. Watch the **Agent Fleet** panel for live execution status
+4. Accept or discard the suggested drivers and base rates
+5. Run simulation (`Ctrl+R`) and publish (`Ctrl+P`)
+
+---
+
+## Polymarket Integration
+
+When a forecast is imported from Polymarket, the Composer cockpit shows a live **crowd price panel**:
+
+- **Purple price** — the current market-implied probability
+- **Divergence box** — how far your Fermi estimate is from the crowd
+  - `< 2pp` = Consensus
+  - `2–5pp` = Minor divergence
+  - `5–15pp` = Moderate — potential edge worth investigating
+  - `> 15pp` = Significant disagreement — verify your assumptions
+- **Use as base rate** button — replaces your base rate with the crowd price
+- **1-week trend** arrow — shows if the market is moving toward or away from your estimate
+- **Volume / liquidity / confidence** — how informative the market price is
+
+The crowd price is fetched when you import. To get a fresh snapshot, re-import from the search panel.
+
+**Costs 1 credit per search.** Requires an ABW account.
+
+---
+
+## Local Forecasts
+
+Forecasts are saved as `.fpl` files in `crates/fermi-console/forecasts/`. Each forecast has three files:
+
+| File | Contents |
+|------|----------|
+| `{slug}.fpl` | The FPL source — question, drivers, model, evidence |
+| `{slug}.state.json` | UI state, version history, Polymarket link data |
+| `{slug}.evidence.md` | Markdown evidence log generated by agents |
+
+These are plain text and git-friendly — commit them to track your forecast history.
+
+---
+
+## FPL Quick Reference
+
+```fpl
+question "Will X happen by date?"
+
+base_rate {
+    reference_class: "Historical precedent..."
+    frequency: 0.35          # 35% base rate
+    sample_size: 120
+    source: "Source name"
+}
+
+driver my_driver continuous {
+    distribution: triangular(0.5, 1.0, 1.5)
+    unit: "multiplier"
+    rationale: "Why this driver matters..."
+}
+
+driver binary_event binary {
+    p: 0.7                   # 70% chance this event occurs
+    rationale: "..."
+    impact: 1.4              # multiplier if it occurs
+}
+
+model {
+    p = base_rate * my_driver * if(binary_event, impact, 1.0)
+}
+```
+
+---
+
+## Platform Support
+
+| Platform | Status | Renderer |
+|----------|--------|----------|
+| Linux (Ubuntu/Debian) | ✅ Supported | Vulkan via Blade + X11/Wayland |
+| macOS | 🔲 Planned | Metal |
+| Windows | 🔲 Planned | DirectX |
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Fermi Console (GPUI native app)                    │
-│                                                     │
-│  ┌───────────┐ ┌────────────┐ ┌──────────────────┐  │
-│  │ Dashboard │ │ Portfolio  │ │ Agent Fleet      │  │
-│  │ - Brier   │ │ - Active   │ │ - Status         │  │
-│  │ - Streak  │ │ - Resolved │ │ - Performance    │  │
-│  │ - Rank    │ │ - Drafts   │ │ - Execution log  │  │
-│  └───────────┘ └────────────┘ └──────────────────┘  │
-│                                                     │
-│  ┌─────────────────────────────────────────────────┐ │
-│  │ Forecast Composer                               │ │
-│  │ - Question builder, driver editor, simulation   │ │
-│  │ - Local Monte Carlo (instant, no server needed) │ │
-│  │ - Results: histogram, tornado, sensitivity      │ │
-│  └─────────────────────────────────────────────────┘ │
-│                                                     │
-│  ┌──────────────────┐ ┌────────────────────────────┐ │
-│  │ Leaderboard      │ │ Tournaments (future)       │ │
-│  └──────────────────┘ └────────────────────────────┘ │
-└────────────────────────┬────────────────────────────┘
-                         │
-          ┌──────────────┴──────────────┐
-          │ Local (instant, offline)    │
-          │ - FPL parsing & validation  │
-          │ - Monte Carlo simulation    │
-          │ - Chart rendering           │
-          │ - Portfolio cache (SQLite)   │
-          └──────────────┬──────────────┘
-                         │ HTTPS (when needed)
-          ┌──────────────┴──────────────┐
-          │ ABW API Server              │
-          │ - Agent execution (LLM)     │
-          │ - Brier scoring             │
-          │ - Leaderboard               │
-          │ - Forecast publishing        │
-          │ - Team collaboration        │
-          └─────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  Fermi Console (GPUI native app)                 │
+│                                                  │
+│  Dashboard · Portfolio · Agent Fleet             │
+│  Composer · Leaderboard                          │
+└───────────────────────┬──────────────────────────┘
+                        │
+         ┌──────────────┴──────────────┐
+         │ Local (instant, offline)    │
+         │ FPL parse · Monte Carlo     │
+         │ Charts · SQLite cache       │
+         └──────────────┬──────────────┘
+                        │ HTTPS
+         ┌──────────────┴──────────────┐
+         │ ABW API (agent-bestiary.world) │
+         │ Agent execution · Scoring   │
+         │ Leaderboard · Publishing    │
+         │ Polymarket proxy            │
+         └─────────────────────────────┘
 ```
 
-## Theme
-
-Ayu Mirage color palette — the same theme used across the Fermi ecosystem.
-
-| Color | Hex | Usage |
-|-------|-----|-------|
-| Background | `#1F2430` | Primary background |
-| Deep BG | `#171B24` | Sidebar |
-| Elevated | `#272D38` | Cards, panels |
-| Foreground | `#CBCCC6` | Primary text |
-| Muted | `#5C6773` | Secondary text |
-| Cyan | `#5CCFE6` | Primary accent |
-| Green | `#BAE67E` | Success, good Brier |
-| Gold | `#FFCC66` | Highlights, warnings |
-| Orange | `#FFAE57` | Secondary accent |
-| Red | `#FF6666` | Errors, bad Brier |
-| Purple | `#D4BFFF` | Premium, tournaments |
-| Blue | `#73D0FF` | Info, agent fleet |
-
-## Development Status
-
-**Phase 0: Spike** ✅ — GPUI shell, dashboard with mock data, panel navigation
-
-**Phase 1: Core** 🔲 — Portfolio with real data, forecast composer, agent fleet
-
-**Phase 2: Server Integration** 🔲 — Auth, API client, Brier scoring, publishing
-
-**Phase 3: Social** 🔲 — Leaderboard, shared forecasts, teams
-
-See [FERMI_NATIVE_CONSOLE.md](../../docs/fermi/discussions/FERMI_NATIVE_CONSOLE.md) for the full design exploration.
+Agent execution and Polymarket data always go through the ABW server — the console never calls external APIs directly.

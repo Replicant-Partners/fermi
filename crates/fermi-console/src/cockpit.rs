@@ -19,7 +19,7 @@
 use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -104,6 +104,19 @@ pub enum AgentRunStatus {
     Failed,
 }
 
+/// A pending parameter adjustment suggested by an agent.
+/// The user can accept (applies the change) or reject (discards it).
+#[derive(Debug, Clone)]
+pub struct EvidenceSuggestion {
+    pub id: String,
+    pub driver_name: String,
+    pub agent_name: String,
+    pub suggested_p50: f64,
+    pub current_p50: f64,
+    pub reasoning: String,
+    pub evidence_id: String,
+}
+
 /// A message from the FPL Assistant — contextual guidance tied to a program node.
 #[derive(Debug, Clone)]
 pub struct AssistantMessage {
@@ -153,8 +166,37 @@ pub struct CockpitState {
     pub editor_rationale: Entity<TextInput>,
     pub agent_query_input: Entity<TextInput>,
     pub editor_confidence: Entity<TextInput>,
+    pub driver_research_input: Entity<TextInput>,
     pub evidence_source_input: Entity<TextInput>,
     pub evidence_summary_input: Entity<TextInput>,
+
+    // ── Evidence Affordances ──────────────────────────────────────
+    /// Pending p50 adjustment suggestions from agents, awaiting user accept/reject.
+    pub pending_suggestions: Vec<EvidenceSuggestion>,
+    /// Evidence IDs that are collapsed in the UI (default: all collapsed).
+    pub collapsed_evidence: HashSet<String>,
+
+    // ── Polymarket Link (live crowd price for linked forecasts) ───
+    /// Polymarket event ID linked to this forecast (if any).
+    pub pm_event_id: Option<String>,
+    /// Polymarket market ID linked to this forecast.
+    pub pm_market_id: Option<String>,
+    /// The PM question text (may differ from Fermi question).
+    pub pm_question: Option<String>,
+    /// Latest crowd-implied probability from Polymarket (0.0–1.0).
+    pub pm_market_price: Option<f64>,
+    /// 24-hour trading volume (USD).
+    pub pm_volume_24h: Option<f64>,
+    /// Market liquidity depth (USD).
+    pub pm_liquidity: Option<f64>,
+    /// Confidence signal based on volume + spread.
+    pub pm_confidence: Option<String>,
+    /// 1-week price change (percentage points).
+    pub pm_price_change_1w: Option<f64>,
+    /// Polymarket URL for this event.
+    pub pm_url: Option<String>,
+    /// Whether PM data is currently being fetched.
+    pub pm_loading: bool,
 
     // ── Agent Execution State (runtime, not in AST) ───────────────
     pub agent_runs: Vec<AgentExecution>,
@@ -268,6 +310,11 @@ impl CockpitState {
                 .with_placeholder("0–100")
                 .with_label("Confidence %")
         });
+        let driver_research_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("What do you want to know about this driver? e.g. 'How deep is Bayern's squad compared to other CL contenders?'")
+                .with_label("Research Question")
+        });
 
         let evidence_source_input = cx.new(|cx| {
             TextInput::new(cx)
@@ -296,8 +343,21 @@ impl CockpitState {
             editor_rationale,
             agent_query_input,
             editor_confidence,
+            driver_research_input,
             evidence_source_input,
             evidence_summary_input,
+            pending_suggestions: Vec::new(),
+            collapsed_evidence: HashSet::new(),
+            pm_event_id: None,
+            pm_market_id: None,
+            pm_question: None,
+            pm_market_price: None,
+            pm_volume_24h: None,
+            pm_liquidity: None,
+            pm_confidence: None,
+            pm_price_change_1w: None,
+            pm_url: None,
+            pm_loading: false,
             agent_runs: Vec::new(),
             orchestration_running: false,
             session_cost: 0.0,
@@ -361,17 +421,35 @@ impl CockpitState {
             match event {
                 SseEvent::Started { ref agent_id } => {
                     log::info!("[sse] {} started", agent_id);
-                    self.messages.push(AssistantMessage {
-                        node: format!("agent:{}", agent_id),
-                        kind: MessageKind::Info,
-                        text: format!("⟳ {} started researching…", agent_id),
-                    });
+                    // Don't spam the banner with multiple "started" messages
+                    // when 5 agents fire in parallel
+                    if !self.messages.iter().rev().take(3).any(|m| {
+                        m.kind == MessageKind::Info && m.text.contains("started researching")
+                    }) {
+                        self.messages.push(AssistantMessage {
+                            node: format!("agent:{}", agent_id),
+                            kind: MessageKind::Info,
+                            text: format!("⟳ {} started researching…", agent_id),
+                        });
+                    }
                     changed = true;
                 }
                 SseEvent::Finding {
                     ref agent_id,
                     ref text,
                 } => {
+                    // Skip raw JSON fragments — only show human-readable findings
+                    let is_json_fragment = text.trim_start().starts_with('{')
+                        || text.trim_start().starts_with('"')
+                        || text.trim_start().starts_with('[')
+                        || text.contains("\"p5\":")
+                        || text.contains("\"type\":")
+                        || text.contains("\"name\":")
+                        || text.len() < 10;
+                    if is_json_fragment {
+                        continue;
+                    }
+
                     log::info!(
                         "[sse] {} finding: {}",
                         agent_id,
@@ -381,6 +459,7 @@ impl CockpitState {
                     if let Some(run) = self.agent_runs.iter_mut().find(|r| {
                         r.agent_name == *agent_id
                             || base_agent_name(&r.agent_name) == agent_id.as_str()
+                            || r.agent_name.starts_with(agent_id.as_str())
                     }) {
                         run.latest_finding = Some(text.chars().take(120).collect());
                     }
@@ -756,9 +835,9 @@ impl CockpitState {
                             evidence_refs: vec![],
                         }
                     } else {
-                        let p5 = drv.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let p50 = drv.get("p50").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let p95 = drv.get("p95").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let p5 = drv.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.8);
+                        let p50 = drv.get("p50").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                        let p95 = drv.get("p95").and_then(|v| v.as_f64()).unwrap_or(1.2);
                         let unit = drv.get("unit").and_then(|v| v.as_str()).unwrap_or("");
 
                         DriverStmt {
@@ -1062,6 +1141,7 @@ impl CockpitState {
 
                 // Create compound agent name for this driver
                 let compound_name = format!("{}_{}", agent_to_use, sanitize_name(driver_name));
+                let compound_for_fire = compound_name.clone();
 
                 // Add agent to AST
                 self.program.add_agent(AgentStmt {
@@ -1093,8 +1173,8 @@ impl CockpitState {
                     latest_finding: None,
                 });
 
-                // Fire agent immediately
-                self.fire_agent(agent_to_use, &query, cx);
+                // Fire agent with compound name so tracking matches agent_runs
+                self.fire_agent(&compound_for_fire, &query, cx);
                 assigned_count += 1;
             }
 
@@ -1725,11 +1805,13 @@ impl CockpitState {
                     .map(|s| s.chars().take(120).collect())
             });
 
-        if let Some(run) = self
-            .agent_runs
-            .iter_mut()
-            .find(|r| r.agent_name == agent_id)
-        {
+        // Match by exact name OR by base agent name (compound names like
+        // market_research_satellite_deployment match base "market_research")
+        if let Some(run) = self.agent_runs.iter_mut().find(|r| {
+            r.agent_name == agent_id
+                || base_agent_name(&r.agent_name) == agent_id
+                || r.agent_name.starts_with(agent_id)
+        }) {
             run.status = AgentRunStatus::Completed;
             run.completed_at = Some(
                 std::time::SystemTime::now()
@@ -1782,6 +1864,72 @@ impl CockpitState {
                 .find(|r| r.agent_name == agent_id)
             {
                 run.evidence_count = count;
+            }
+
+            // ── Extract parameter suggestions from evidence ───────
+            // Agents include "Suggested p50: X.XX" in their findings.
+            // Parse these into pending suggestions for user accept/reject.
+            for ev in evidence_arr {
+                let summary_text = ev.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                let findings_list: Vec<&str> = ev
+                    .get("key_findings")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                let all_text = format!("{} {}", summary_text, findings_list.join(" "));
+
+                if let Some(suggested) = extract_suggested_p50(&all_text) {
+                    let driver_name = self
+                        .program
+                        .agents()
+                        .iter()
+                        .find(|a| {
+                            a.name == agent_id
+                                || base_agent_name(&a.name) == agent_id
+                                || a.name.starts_with(agent_id)
+                        })
+                        .and_then(|a| a.driver_refs.first().cloned());
+
+                    if let Some(dn) = driver_name {
+                        let current_p50 = self
+                            .program
+                            .driver(&dn)
+                            .and_then(|d| d.distribution.as_ref())
+                            .map(|dist| match dist {
+                                Distribution::Triangular { p50, .. } => expr_to_f64(p50),
+                                _ => 1.0,
+                            })
+                            .unwrap_or(1.0);
+
+                        // Only create suggestion if meaningfully different (>1% change)
+                        if (suggested - current_p50).abs() / current_p50.max(0.01) > 0.01 {
+                            let sug_id =
+                                format!("sug_{}_{}", agent_id, self.pending_suggestions.len());
+                            let ev_id = format!("{}_{}", agent_id, count.saturating_sub(1));
+                            self.pending_suggestions.push(EvidenceSuggestion {
+                                id: sug_id,
+                                driver_name: dn.clone(),
+                                agent_name: agent_id.to_string(),
+                                suggested_p50: suggested,
+                                current_p50,
+                                reasoning: all_text.chars().take(200).collect(),
+                                evidence_id: ev_id,
+                            });
+
+                            self.messages.push(AssistantMessage {
+                                node: format!("driver:{}", dn),
+                                kind: MessageKind::Suggestion,
+                                text: format!(
+                                    "💡 {} suggests p50 {:.2} → {:.2} ({:+.0}%)",
+                                    base_agent_name(agent_id),
+                                    current_p50,
+                                    suggested,
+                                    (suggested / current_p50.max(0.001) - 1.0) * 100.0
+                                ),
+                            });
+                        }
+                    }
+                }
             }
         }
     }
@@ -1992,6 +2140,10 @@ impl CockpitState {
         self.agent_query_input.update(cx, |input, cx| {
             input.set_text(&suggested_query.replace('\n', " ").replace("  ", " "), cx)
         });
+
+        // Clear the driver research input for fresh input
+        self.driver_research_input
+            .update(cx, |input, cx| input.set_text("", cx));
 
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
@@ -2230,9 +2382,125 @@ impl CockpitState {
 
     /// Delete a driver from the program.
     /// Add manual evidence to the currently focused driver.
+    /// Enrich a user's rough research question into a structured agent query.
+    /// Takes "How deep is Bayern's squad?" and produces a detailed query with
+    /// context from the forecast question, driver rationale, and current params.
+    pub fn enrich_driver_query(&self, driver_name: &str, user_question: &str, cx: &App) -> String {
+        let driver = self.program.driver(driver_name);
+        let driver_display = driver
+            .and_then(|d| d.display_name.as_deref())
+            .unwrap_or(driver_name);
+        let rationale = driver.and_then(|d| d.rationale.as_deref()).unwrap_or("");
+        let question = self
+            .program
+            .question()
+            .map(|q| q.text.clone())
+            .unwrap_or_default();
+        let (p5, p50, p95) = driver
+            .and_then(|d| d.distribution.as_ref())
+            .map(|dist| match dist {
+                Distribution::Triangular { p5, p50, p95 } => {
+                    (expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95))
+                }
+                _ => (0.8, 1.0, 1.2),
+            })
+            .unwrap_or((0.8, 1.0, 1.2));
+
+        format!(
+            "For the forecast: \"{question}\"\n\
+             Driver: '{driver_display}' (p5={p5:.2}, p50={p50:.2}, p95={p95:.2})\n\
+             Context: {rationale}\n\n\
+             USER'S SPECIFIC QUESTION: {user_question}\n\n\
+             Research this specific question in depth. Provide:\n\
+             1. Specific data points and facts that answer the user's question\n\
+             2. How this evidence should adjust the driver's p50 multiplier\n\
+             3. Sources and dates for your data\n\
+             4. Confidence (0.0-1.0) in your findings"
+        )
+    }
+
+    /// Ingest a URL as evidence — fires an agent to fetch, summarize, and
+    /// suggest how it impacts the driver's probability.
+    pub fn ingest_url_evidence(&mut self, driver_name: &str, url: &str, cx: &mut Context<Self>) {
+        let question = self
+            .program
+            .question()
+            .map(|q| q.text.clone())
+            .unwrap_or_default();
+        let driver = self.program.driver(driver_name);
+        let driver_display = driver
+            .and_then(|d| d.display_name.as_deref())
+            .unwrap_or(driver_name)
+            .to_string();
+        let rationale = driver
+            .and_then(|d| d.rationale.as_deref())
+            .unwrap_or("")
+            .to_string();
+        let (_, p50, _) = driver
+            .and_then(|d| d.distribution.as_ref())
+            .map(|dist| match dist {
+                Distribution::Triangular { p5, p50, p95 } => {
+                    (expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95))
+                }
+                _ => (0.8, 1.0, 1.2),
+            })
+            .unwrap_or((0.8, 1.0, 1.2));
+
+        let query = format!(
+            "For the forecast: \"{question}\"\n\
+             Driver: '{driver_display}' (current p50={p50:.2})\n\
+             Context: {rationale}\n\n\
+             The user has provided this URL as evidence: {url}\n\n\
+             TASKS:\n\
+             1. Analyze the content at this URL (use your knowledge of what this source typically contains)\n\
+             2. Summarize the key findings relevant to the '{driver_display}' driver\n\
+             3. Assess how this evidence should adjust the p50 multiplier\n\
+             4. Provide a suggested new p50 value with reasoning\n\
+             5. Rate the evidence quality (0.0-1.0) based on source reliability and relevance"
+        );
+
+        let compound = format!("market_research_{}", sanitize_name(driver_name));
+        self.program.add_agent(AgentStmt {
+            name: compound.clone(),
+            agent_type: Some("research".into()),
+            query: query.clone(),
+            executor: Some(fermi::ast::ExecutorType::LLM),
+            schedule: Some(Schedule::Once),
+            driver_refs: vec![driver_name.to_string()],
+            depends_on: vec![],
+            confidence_threshold: None,
+        });
+        self.agent_runs.push(AgentExecution {
+            agent_name: compound,
+            status: AgentRunStatus::Running,
+            evidence_count: 0,
+            confidence: None,
+            error: None,
+            credits_charged: None,
+            started_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            completed_at: None,
+            latest_finding: None,
+        });
+
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", driver_name),
+            kind: MessageKind::Info,
+            text: format!("📎 Analyzing URL for '{}': {}…", driver_display, url),
+        });
+
+        self.fire_agent("market_research", &query, cx);
+        cx.notify();
+    }
+
     pub fn add_manual_evidence(&mut self, cx: &mut Context<Self>) {
         let driver_name = match &self.focused_node {
             FocusedNode::Driver(n) => n.clone(),
+            FocusedNode::AgentPicker(n) => n.clone(),
             _ => return,
         };
 
@@ -2240,6 +2508,52 @@ impl CockpitState {
         let summary = self.evidence_summary_input.read(cx).text().to_string();
 
         if source.trim().is_empty() && summary.trim().is_empty() {
+            return;
+        }
+
+        // Auto-detect URLs — if source looks like a URL, trigger agent analysis
+        let is_url = source.contains("http://") || source.contains("https://");
+        if is_url {
+            // Fire agent to analyze the URL and suggest impact
+            self.ingest_url_evidence(&driver_name, &source, cx);
+
+            // Also add as manual evidence immediately so user sees it
+            let ev_id = format!(
+                "url_{}_{}",
+                sanitize_name(&driver_name),
+                self.program.evidence_items().len()
+            );
+            self.program.add_evidence(EvidenceStmt {
+                id: ev_id,
+                source: source.clone(),
+                summary: if summary.is_empty() {
+                    Some(format!("🔗 {} — agent analyzing…", source))
+                } else {
+                    Some(summary.clone())
+                },
+                url: Some(source.clone()),
+                relevance: Some(0.5),
+                date: Some(chrono::Utc::now().format("%Y-%m-%d").to_string()),
+                strength: Some(0.5),
+                key_findings: vec![
+                    "Agent analysis pending — results will update this evidence".into()
+                ],
+            });
+
+            self.evidence_source_input
+                .update(cx, |input, cx| input.set_text("", cx));
+            self.evidence_summary_input
+                .update(cx, |input, cx| input.set_text("", cx));
+
+            self.messages.push(AssistantMessage {
+                node: format!("driver:{}", driver_name),
+                kind: MessageKind::Info,
+                text: format!(
+                    "🔗 URL added to '{}' — agent analyzing for impact…",
+                    driver_name
+                ),
+            });
+            cx.notify();
             return;
         }
 
@@ -2277,9 +2591,83 @@ impl CockpitState {
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
             kind: MessageKind::Info,
-            text: format!("Manual evidence added to '{}'", driver_name),
+            text: format!("✓ Evidence added to '{}'", driver_name),
         });
         cx.notify();
+    }
+
+    /// Accept a pending p50 suggestion — applies the value to the driver.
+    pub fn accept_suggestion(&mut self, suggestion_id: &str, cx: &mut Context<Self>) {
+        let sug = self
+            .pending_suggestions
+            .iter()
+            .find(|s| s.id == suggestion_id)
+            .cloned();
+        if let Some(sug) = sug {
+            if let Some(driver) = self.program.driver_mut(&sug.driver_name) {
+                if let Some(ref mut dist) = driver.distribution {
+                    if let Distribution::Triangular {
+                        ref p5,
+                        ref mut p50,
+                        ref mut p95,
+                        ..
+                    } = dist
+                    {
+                        let old_val = expr_to_f64(p50);
+                        let ratio = if old_val > 0.0 {
+                            sug.suggested_p50 / old_val
+                        } else {
+                            1.0
+                        };
+                        *p50 = Expression::Number(sug.suggested_p50);
+                        // Scale p95 proportionally to preserve spread shape
+                        let old_p95 = expr_to_f64(p95);
+                        *p95 = Expression::Number(old_p95 * ratio);
+                    }
+                }
+            }
+            self.messages.push(AssistantMessage {
+                node: format!("driver:{}", sug.driver_name),
+                kind: MessageKind::Info,
+                text: format!(
+                    "✓ Accepted: p50 {:.2} → {:.2} (from {})",
+                    sug.current_p50,
+                    sug.suggested_p50,
+                    base_agent_name(&sug.agent_name)
+                ),
+            });
+            self.pending_suggestions.retain(|s| s.id != suggestion_id);
+            cx.notify();
+        }
+    }
+
+    /// Reject a pending p50 suggestion — discards it.
+    pub fn reject_suggestion(&mut self, suggestion_id: &str, cx: &mut Context<Self>) {
+        if let Some(sug) = self
+            .pending_suggestions
+            .iter()
+            .find(|s| s.id == suggestion_id)
+        {
+            self.messages.push(AssistantMessage {
+                node: format!("driver:{}", sug.driver_name),
+                kind: MessageKind::Info,
+                text: format!(
+                    "✗ Rejected p50 suggestion from {}",
+                    base_agent_name(&sug.agent_name)
+                ),
+            });
+        }
+        self.pending_suggestions.retain(|s| s.id != suggestion_id);
+        cx.notify();
+    }
+
+    /// Toggle evidence expand/collapse state.
+    pub fn toggle_evidence_collapsed(&mut self, evidence_id: &str) {
+        if self.collapsed_evidence.contains(evidence_id) {
+            self.collapsed_evidence.remove(evidence_id);
+        } else {
+            self.collapsed_evidence.insert(evidence_id.to_string());
+        }
     }
 
     /// Update the outside rate (base rate) without resetting drivers.
@@ -2460,19 +2848,19 @@ impl CockpitState {
 
             match driver.driver_type {
                 DriverType::Continuous => {
-                    let p5 = self.editor_p5.read(cx).text().parse::<f64>().unwrap_or(0.0);
+                    let p5 = self.editor_p5.read(cx).text().parse::<f64>().unwrap_or(0.8);
                     let p50 = self
                         .editor_p50
                         .read(cx)
                         .text()
                         .parse::<f64>()
-                        .unwrap_or(0.0);
+                        .unwrap_or(1.0);
                     let p95 = self
                         .editor_p95
                         .read(cx)
                         .text()
                         .parse::<f64>()
-                        .unwrap_or(0.0);
+                        .unwrap_or(1.2);
                     let unit = self.editor_unit.read(cx).text().to_string();
                     driver.distribution = Some(Distribution::Triangular {
                         p5: Expression::Number(p5),
@@ -2577,13 +2965,116 @@ impl CockpitState {
             return;
         }
 
+        // ── Zero-driver guard ─────────────────────────────────────
+        // If any continuous driver has p5=p50=p95=0, it will nuke the
+        // entire multiplicative model (anything × 0 = 0). Fix these
+        // to neutral (0.8/1.0/1.2) and warn the user.
+        let driver_names_to_fix: Vec<String> = self
+            .program
+            .drivers()
+            .iter()
+            .filter(|d| {
+                d.driver_type == DriverType::Continuous
+                    && d.distribution
+                        .as_ref()
+                        .map(|dist| match dist {
+                            Distribution::Triangular { p5, p50, p95 } => {
+                                expr_to_f64(p5) == 0.0
+                                    && expr_to_f64(p50) == 0.0
+                                    && expr_to_f64(p95) == 0.0
+                            }
+                            _ => false,
+                        })
+                        .unwrap_or(false)
+            })
+            .map(|d| d.name.clone())
+            .collect();
+
+        for name in &driver_names_to_fix {
+            if let Some(driver) = self.program.driver_mut(name) {
+                driver.distribution = Some(Distribution::Triangular {
+                    p5: Expression::Number(0.8),
+                    p50: Expression::Number(1.0),
+                    p95: Expression::Number(1.2),
+                });
+            }
+            self.messages.push(AssistantMessage {
+                node: format!("driver:{}", name),
+                kind: MessageKind::Warning,
+                text: format!(
+                    "⚠ Driver '{}' had all-zero values (p5=p50=p95=0) which would collapse the model. Reset to neutral (0.8/1.0/1.2). Adjust based on evidence.",
+                    name
+                ),
+            });
+            log::warn!("[sim] Fixed zero-driver '{}' → neutral 0.8/1.0/1.2", name);
+        }
+
+        if !driver_names_to_fix.is_empty() {
+            // Regenerate FPL after fixing
+            self.cached_fpl = generate_fpl_text(&self.program);
+        }
+
+        // ── Debug: log driver state before simulation ─────────────
+        log::info!("[sim] === SIMULATION START ===");
+        log::info!("[sim] Drivers in AST: {}", self.program.drivers().len());
+        for d in self.program.drivers() {
+            match d.driver_type {
+                DriverType::Continuous => {
+                    if let Some(Distribution::Triangular {
+                        ref p5,
+                        ref p50,
+                        ref p95,
+                    }) = d.distribution
+                    {
+                        log::info!(
+                            "[sim]   {} (continuous): p5={:.3} p50={:.3} p95={:.3} unit={:?}",
+                            d.name,
+                            expr_to_f64(p5),
+                            expr_to_f64(p50),
+                            expr_to_f64(p95),
+                            d.unit
+                        );
+                    } else {
+                        log::info!("[sim]   {} (continuous): NO DISTRIBUTION", d.name);
+                    }
+                }
+                DriverType::Binary => {
+                    log::info!(
+                        "[sim]   {} (binary): prob={:.3} impact={:.2}",
+                        d.name,
+                        d.probability.unwrap_or(0.0),
+                        d.impact_multiplier.unwrap_or(1.0)
+                    );
+                }
+                _ => log::info!("[sim]   {} (discrete)", d.name),
+            }
+        }
+        log::info!("[sim] Has model: {}", self.program.model().is_some());
+        log::info!("[sim] Has simulate: {}", self.program.simulate().is_some());
+        log::info!(
+            "[sim] Base rate: {:?}",
+            self.program
+                .question()
+                .and_then(|q| q.base_rate.as_ref())
+                .map(|br| br.historical_frequency)
+        );
+
         // Parse the generated FPL and execute
         let fpl = self.cached_fpl.clone();
+        log::info!(
+            "[sim] Generated FPL ({} chars):\n{}",
+            fpl.len(),
+            &fpl[..fpl.len().min(2000)]
+        );
         let start = std::time::Instant::now();
 
         let tokens = match ::fermi::lexer::Lexer::new(&fpl).tokenize() {
-            Ok(t) => t,
+            Ok(t) => {
+                log::info!("[sim] Tokenized OK: {} tokens", t.len());
+                t
+            }
             Err(e) => {
+                log::error!("[sim] Tokenization FAILED: {:?}", e);
                 self.sim_error = Some(format!("FPL tokenization error: {:?}", e));
                 self.sim_running = false;
                 cx.notify();
@@ -2592,8 +3083,18 @@ impl CockpitState {
         };
 
         let parsed = match ::fermi::parser::Parser::new(tokens).parse() {
-            Ok(p) => p,
+            Ok(p) => {
+                log::info!(
+                    "[sim] Parsed OK: {} statements, {} drivers, model={}, simulate={}",
+                    p.statements.len(),
+                    p.drivers().len(),
+                    p.model().is_some(),
+                    p.simulate().is_some()
+                );
+                p
+            }
             Err(e) => {
+                log::error!("[sim] Parse FAILED: {}", e);
                 self.sim_error = Some(format!("FPL parse error: {}", e));
                 self.sim_running = false;
                 cx.notify();
@@ -2605,6 +3106,8 @@ impl CockpitState {
         match executor.execute(&parsed) {
             Ok(results) => {
                 let elapsed = start.elapsed();
+                log::info!("[sim] Execution OK in {}ms: mean={:.4} median={:.4} p5={:.4} p95={:.4} std={:.4} iters={}",
+                    elapsed.as_millis(), results.mean, results.median, results.p5, results.p95, results.std_dev, results.iterations);
                 let histogram_data = results.histogram(20);
                 self.sim_results = Some(SimResults {
                     mean: results.mean,
@@ -2669,8 +3172,8 @@ impl CockpitState {
                     } else {
                         1.0
                     };
-                    self.predicted_probability = (base_rate * ratio).clamp(0.01, 0.99);
-
+                    log::info!("[sim] Normalization: base_rate={:.4} sim_mean={:.4} baseline_mean={:.4} ratio={:.4} → P={:.4}",
+                        base_rate, results.mean, baseline_mean, ratio, (base_rate * ratio).clamp(0.01, 0.99));
                     self.predicted_probability = (base_rate * ratio).clamp(0.01, 0.99);
 
                     // Build narrative explanation
@@ -3660,6 +4163,89 @@ impl Render for CockpitState {
                     // impact treemap, and simulation histogram are shown
                     // immediately after the base rate so the user sees value.
                     .child(render_forecast_index(self))
+                    // ── 8A: Workflow state transition banner ──────────
+                    // Shows clear state after research completes:
+                    //   - "Ready to simulate" (agents done, no sim yet)
+                    //   - "Simulation complete" (sim run, results available)
+                    .when({
+                        let has_drivers = !self.program.drivers().is_empty();
+                        let has_agents = !self.agent_runs.is_empty();
+                        let all_done = self.agent_runs.iter().all(|r| {
+                            r.status != AgentRunStatus::Running
+                        });
+                        let no_sim = self.sim_results.is_none();
+                        !self.orchestration_running && has_drivers && has_agents && all_done && no_sim
+                    }, |el| {
+                        el.child(
+                            div()
+                                .mx(px(8.0))
+                                .my(px(6.0))
+                                .px(px(16.0))
+                                .py(px(10.0))
+                                .rounded(px(8.0))
+                                .bg(rgb(0x1A2A1A))
+                                .border_1()
+                                .border_color(rgb(theme::GREEN))
+                                .flex()
+                                .items_center()
+                                .gap(px(12.0))
+                                .child(
+                                    div()
+                                        .text_size(px(16.0))
+                                        .text_color(rgb(theme::GREEN))
+                                        .child("✓"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(2.0))
+                                        .child(
+                                            div()
+                                                .text_size(px(13.0))
+                                                .text_color(rgb(theme::GREEN))
+                                                .font_weight(FontWeight::BOLD)
+                                                .child("Research complete — ready to simulate"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(rgb(theme::FG_DIM))
+                                                .child("Review drivers and evidence above, then press Ctrl+R to run Monte Carlo simulation."),
+                                        ),
+                                ),
+                        )
+                    })
+                    // ── 8A: Simulation running indicator ──────────────
+                    .when(self.sim_running, |el| {
+                        el.child(
+                            div()
+                                .mx(px(8.0))
+                                .my(px(6.0))
+                                .px(px(16.0))
+                                .py(px(10.0))
+                                .rounded(px(8.0))
+                                .bg(rgb(0x1A2332))
+                                .border_1()
+                                .border_color(rgb(theme::CYAN))
+                                .flex()
+                                .items_center()
+                                .gap(px(12.0))
+                                .child(
+                                    div()
+                                        .text_size(px(16.0))
+                                        .text_color(rgb(theme::CYAN))
+                                        .child("⟳"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(13.0))
+                                        .text_color(rgb(theme::CYAN))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child("Running Monte Carlo simulation (10,000 iterations)…"),
+                                ),
+                        )
+                    })
                     // Drivers section (the core of the forecast)
                     .child(
                         div()
@@ -3674,8 +4260,69 @@ impl Render for CockpitState {
                                     .text_size(px(12.0))
                                     .text_color(rgb(theme::GREEN))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child(format!("Drivers ({})", driver_names.len())),
+                                    .child(if self.orchestration_running && driver_names.is_empty() {
+                                        "Drivers (decomposing…)".to_string()
+                                    } else {
+                                        format!("Drivers ({})", driver_names.len())
+                                    }),
                             )
+                            // ── 8A: Loading skeleton while Fermi decomposes ──
+                            // Pulsing placeholder cards shown while waiting for
+                            // the decomposition result (typically 20-30 seconds).
+                            .when(self.orchestration_running && driver_names.is_empty(), |el| {
+                                el.children((0..4).map(|i| {
+                                    div()
+                                        .mx(px(8.0))
+                                        .my(px(3.0))
+                                        .px(px(12.0))
+                                        .py(px(12.0))
+                                        .rounded(px(6.0))
+                                        .border_1()
+                                        .border_color(rgb(theme::FG_FAINT))
+                                        .bg(rgb(theme::BG_ELEVATED))
+                                        .opacity(if i % 2 == 0 { 0.5 } else { 0.35 })
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(6.0))
+                                        // Skeleton name bar
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(8.0))
+                                                .child(
+                                                    div()
+                                                        .h(px(12.0))
+                                                        .w(px(120.0 + (i as f32) * 20.0))
+                                                        .rounded(px(3.0))
+                                                        .bg(rgb(theme::FG_FAINT)),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h(px(10.0))
+                                                        .w(px(60.0))
+                                                        .rounded(px(2.0))
+                                                        .bg(rgb(theme::FG_FAINT)),
+                                                ),
+                                        )
+                                        // Skeleton parameter bar
+                                        .child(
+                                            div()
+                                                .h(px(8.0))
+                                                .w(px(200.0 - (i as f32) * 15.0))
+                                                .rounded(px(2.0))
+                                                .bg(rgb(theme::FG_FAINT)),
+                                        )
+                                        // Skeleton confidence dots
+                                        .child(
+                                            div()
+                                                .h(px(8.0))
+                                                .w(px(100.0))
+                                                .rounded(px(2.0))
+                                                .bg(rgb(theme::FG_FAINT)),
+                                        )
+                                }))
+                            })
                             .children(driver_names.iter().enumerate().map(|(i, name)| {
                                 let is_focused = focused == FocusedNode::Driver(name.clone())
                                     || focused == FocusedNode::AgentPicker(name.clone());
@@ -3690,6 +4337,9 @@ impl Render for CockpitState {
                                     .collect();
                                 let n = name.clone();
                                 let uc = self.driver_confidence.get(name).copied();
+                                let sug_count = self.pending_suggestions.iter()
+                                    .filter(|s| s.driver_name == *name)
+                                    .count();
                                 render_driver_card(
                                     i,
                                     driver,
@@ -3699,6 +4349,7 @@ impl Render for CockpitState {
                                     &self.messages,
                                     &self.program.evidence_items(),
                                     uc,
+                                    sug_count,
                                     cx,
                                     &n,
                                 )
@@ -3890,8 +4541,20 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                 .gap(px(12.0))
                 .text_size(px(10.0))
                 .text_color(rgb(theme::FG_FAINT))
-                .child("Ctrl+Enter research")
-                .child("Ctrl+R simulate")
+                // ── 8A: Context-sensitive hint for Ctrl+Enter ──
+                .child(if state.orchestration_running {
+                    "⏳ Researching…".to_string()
+                } else {
+                    "Ctrl+Enter research".to_string()
+                })
+                // ── 8A: Context-sensitive hint for Ctrl+R ──
+                .child(if state.sim_running {
+                    "⏳ Simulating…".to_string()
+                } else if state.sim_results.is_some() {
+                    "✓ Simulated · Ctrl+R re-run".to_string()
+                } else {
+                    "Ctrl+R simulate".to_string()
+                })
                 .child("Ctrl+P publish")
                 .child("Ctrl+N new")
                 .child("Ctrl+O import")
@@ -4003,6 +4666,268 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                     }),
             )
         })
+        // ── Polymarket Crowd Price (when linked) ──────────────────
+        .when(state.pm_market_price.is_some(), |el| {
+            let pm_price = state.pm_market_price.unwrap_or(0.0);
+            let pm_pct = format!("{:.1}%", pm_price * 100.0);
+            let fermi_prob = state.predicted_probability;
+            let divergence_pp = (fermi_prob - pm_price) * 100.0;
+            let div_abs = divergence_pp.abs();
+            let (div_sign, div_color) = if divergence_pp > 2.0 {
+                ("+", theme::GREEN)
+            } else if divergence_pp < -2.0 {
+                ("", theme::RED)
+            } else {
+                ("±", theme::FG_DIM)
+            };
+            let div_label = if div_abs < 2.0 {
+                "Consensus"
+            } else if div_abs < 5.0 {
+                "Minor"
+            } else if div_abs < 15.0 {
+                "Moderate"
+            } else if div_abs < 30.0 {
+                "Significant"
+            } else {
+                "Extreme"
+            };
+
+            let vol_str = state.pm_volume_24h.map(|v| {
+                if v >= 1_000_000.0 {
+                    format!("${:.1}M", v / 1_000_000.0)
+                } else if v >= 1_000.0 {
+                    format!("${:.0}K", v / 1_000.0)
+                } else {
+                    format!("${:.0}", v)
+                }
+            }).unwrap_or_default();
+
+            let liq_str = state.pm_liquidity.map(|v| {
+                if v >= 1_000_000.0 {
+                    format!("${:.1}M", v / 1_000_000.0)
+                } else if v >= 1_000.0 {
+                    format!("${:.0}K", v / 1_000.0)
+                } else {
+                    format!("${:.0}", v)
+                }
+            }).unwrap_or_default();
+
+            el.child(
+                div()
+                    .mt(px(6.0))
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(0x1A1A2E))
+                    .border_1()
+                    .border_color(rgb(theme::PURPLE))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Outside View (Prediction Market)"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .px(px(4.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::BG))
+                                    .child("🔗 Polymarket"),
+                            ),
+                    )
+                    // Price + question
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .child(
+                                div()
+                                    .text_size(px(22.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(pm_pct),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(2.0))
+                                    .flex_grow()
+                                    .min_w(px(0.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::FG))
+                                            .child(
+                                                state.pm_question.as_deref()
+                                                    .unwrap_or("Linked Polymarket market")
+                                                    .to_string(),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap(px(8.0))
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .when(!vol_str.is_empty(), |el| {
+                                                el.child(format!("{} vol/24h", vol_str))
+                                            })
+                                            .when(!liq_str.is_empty(), |el| {
+                                                el.child(format!("{} liquidity", liq_str))
+                                            })
+                                            .when(state.pm_confidence.is_some(), |el| {
+                                                el.child(format!("{} confidence",
+                                                    state.pm_confidence.as_deref().unwrap_or("")))
+                                            }),
+                                    ),
+                            ),
+                    )
+                    // 1-week trend
+                    .when(state.pm_price_change_1w.is_some(), |el| {
+                        let change = state.pm_price_change_1w.unwrap_or(0.0);
+                        let (arrow, trend_color) = if change > 0.005 {
+                            ("📈", theme::GREEN)
+                        } else if change < -0.005 {
+                            ("📉", theme::RED)
+                        } else {
+                            ("→", theme::FG_DIM)
+                        };
+                        el.child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(trend_color))
+                                .child(format!(
+                                    "{} {:+.1}pp this week",
+                                    arrow,
+                                    change * 100.0
+                                )),
+                        )
+                    })
+                    // Divergence box
+                    .child(
+                        div()
+                            .mt(px(4.0))
+                            .px(px(10.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(rgb(div_color))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(div_color))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(format!(
+                                        "DIVERGENCE: {}{:.1}pp {} crowd",
+                                        div_sign,
+                                        div_abs,
+                                        if divergence_pp > 0.0 { "above" } else { "below" }
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .child(format!(
+                                        "{} divergence — Your model: {:.1}% · Crowd: {:.1}%",
+                                        div_label,
+                                        fermi_prob * 100.0,
+                                        pm_price * 100.0
+                                    )),
+                            )
+                            .when(div_abs > 15.0, |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::GOLD))
+                                        .child("Is this alpha or overconfidence?"),
+                                )
+                            }),
+                    )
+                    // Action row
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.0))
+                            .mt(px(2.0))
+                            .when(state.pm_url.is_some(), |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::PURPLE))
+                                        .child(format!(
+                                            "🔗 {}",
+                                            state.pm_url.as_deref().unwrap_or("")
+                                        )),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .id("use-pm-as-base-rate")
+                                    .px(px(8.0))
+                                    .py(px(2.0))
+                                    .rounded(px(3.0))
+                                    .bg(rgb(theme::BG_ELEVATED))
+                                    .border_1()
+                                    .border_color(rgb(theme::PURPLE))
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        // Replace base rate with PM crowd price
+                                        if let Some(q) = this.program.question_mut() {
+                                            q.base_rate = Some(BaseRate {
+                                                reference_class: format!(
+                                                    "Polymarket crowd-implied probability ({})",
+                                                    this.pm_question.as_deref().unwrap_or("linked market")
+                                                ),
+                                                historical_frequency: pm_price,
+                                                sample_size: None,
+                                                source: "Polymarket".into(),
+                                                reasoning: Some(format!(
+                                                    "Crowd price backed by {} volume, {} liquidity. {} confidence.",
+                                                    vol_str, liq_str,
+                                                    this.pm_confidence.as_deref().unwrap_or("Medium")
+                                                )),
+                                                generated_by: GeneratedBy::Agent("polymarket".into()),
+                                            });
+                                        }
+                                        this.predicted_probability = pm_price;
+                                        this.messages.push(AssistantMessage {
+                                            node: "question".into(),
+                                            kind: MessageKind::Info,
+                                            text: format!(
+                                                "Base rate updated to Polymarket crowd price: {:.1}%",
+                                                pm_price * 100.0
+                                            ),
+                                        });
+                                        cx.notify();
+                                    }))
+                                    .child("Use as base rate"),
+                            ),
+                    ),
+            )
+        })
 }
 
 fn render_driver_card(
@@ -4014,6 +4939,7 @@ fn render_driver_card(
     messages: &[AssistantMessage],
     evidence_items: &[&fermi::ast::EvidenceStmt],
     user_confidence: Option<f64>,
+    pending_suggestion_count: usize,
     cx: &mut Context<CockpitState>,
     name: &str,
 ) -> AnyElement {
@@ -4184,6 +5110,27 @@ fn render_driver_card(
                                 "{} hint{}",
                                 msg_count,
                                 if msg_count == 1 { "" } else { "s" }
+                            )),
+                    )
+                })
+                .when(pending_suggestion_count > 0, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::BG_DEEP))
+                            .bg(rgb(theme::GOLD))
+                            .px(px(5.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .font_weight(FontWeight::BOLD)
+                            .child(format!(
+                                "💡 {} suggestion{}",
+                                pending_suggestion_count,
+                                if pending_suggestion_count == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                }
                             )),
                     )
                 }),
@@ -4611,6 +5558,25 @@ fn render_agent_picker(
         || combined.contains("ownership")
     {
         "entity_investigator"
+    } else if combined.contains("stock")
+        || combined.contains("valuation")
+        || combined.contains("earnings")
+        || combined.contains("eps")
+        || combined.contains("p/e")
+        || combined.contains("revenue growth")
+        || combined.contains("margin")
+        || combined.contains("balance sheet")
+        || combined.contains("cash flow")
+        || combined.contains("dcf")
+        || combined.contains("intrinsic value")
+        || combined.contains("share price")
+        || combined.contains("dividend")
+        || combined.contains("buyback")
+        || combined.contains("ticker")
+        || combined.contains("ipo")
+        || combined.contains("analyst estimate")
+    {
+        "equity_analyst"
     } else if combined.contains("market")
         || combined.contains("competition")
         || combined.contains("partnership")
@@ -4634,7 +5600,8 @@ fn render_agent_picker(
             "sports_nba" | "basketball" => "nba_analyst",
             "biotech" | "pharma" => "biotech_analyst",
             "sports_football" | "sports_nfl" | "sports_other" => "market_research",
-            "finance" | "stocks" => "macro_forecaster",
+            "stocks" | "equity" => "equity_analyst",
+            "finance" => "macro_forecaster",
             "technology" => "market_research",
             _ => "macro_forecaster",
         }
@@ -4744,14 +5711,47 @@ fn render_agent_picker(
                         .child(format!("p5={:.2}  p50={:.2}  p95={:.2}", p5, p50, p95)),
                 )
                 .when(!existing_evidence.is_empty(), |el| {
+                    // Compute average quality across all evidence for this driver
+                    let avg_quality: f64 = if existing_evidence.is_empty() {
+                        0.0
+                    } else {
+                        existing_evidence
+                            .iter()
+                            .map(|e| score_evidence_quality(e).0)
+                            .sum::<f64>()
+                            / existing_evidence.len() as f64
+                    };
+                    let (q_label, q_color) = if avg_quality >= 0.7 {
+                        ("High", theme::GREEN)
+                    } else if avg_quality >= 0.4 {
+                        ("Medium", theme::GOLD)
+                    } else {
+                        ("Low", theme::RED)
+                    };
                     el.child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::GREEN))
-                            .child(format!(
-                                "✓ {} evidence items already collected",
-                                existing_evidence.len()
-                            )),
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::GREEN))
+                                    .child(format!(
+                                        "✓ {} evidence items collected",
+                                        existing_evidence.len()
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8.0))
+                                    .text_color(rgb(q_color))
+                                    .px(px(4.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::BG_ELEVATED))
+                                    .child(format!("Quality: {} ({:.0}%)", q_label, avg_quality * 100.0)),
+                            ),
                     )
                 })
                 .when(existing_evidence.is_empty(), |el| {
@@ -4864,6 +5864,14 @@ fn render_agent_picker(
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(theme::GREEN)))
                                 .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    // If user typed a custom research question, enrich it
+                                    let user_q = this.driver_research_input.read(cx).text().to_string();
+                                    if !user_q.trim().is_empty() {
+                                        let enriched = this.enrich_driver_query(&dn_rec, &user_q, cx);
+                                        this.agent_query_input.update(cx, |input, cx| {
+                                            input.set_text(&enriched.replace('\n', " ").replace("  ", " "), cx)
+                                        });
+                                    }
                                     this.assign_agent_to_driver(
                                         &dn_rec,
                                         &rec_id,
@@ -4935,25 +5943,123 @@ fn render_agent_picker(
                         }),
                 )
         })
-        // ── Custom query editor ───────────────────────────────────
+        // ── Driver research question ──────────────────────────────
+        // The user types what they want to know — the system enriches
+        // it into a structured query with driver context and params.
         .child(
             div()
                 .flex()
                 .flex_col()
                 .gap(px(4.0))
+                .px(px(10.0))
+                .py(px(8.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG))
+                .border_1()
+                .border_color(rgb(theme::FG_FAINT))
                 .child(
                     div()
                         .text_size(px(10.0))
-                        .text_color(rgb(theme::FG_FAINT))
-                        .child("Customize the research query:"),
+                        .text_color(rgb(theme::FG))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("What do you want to research?"),
                 )
-                .child(state.agent_query_input.clone())
+                .child(state.driver_research_input.clone())
                 .child(
                     div()
                         .text_size(px(8.0))
                         .text_color(rgb(theme::FG_FAINT))
-                        .child("Leave empty to use the suggested query above. Edit to ask for specific data."),
+                        .child("Type your question — the system will structure it for the best agent. Or use the pre-filled query below."),
                 ),
+        )
+        // ── Evidence URL/link input ───────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .px(px(10.0))
+                .py(px(8.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG))
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("📎 Add evidence (URL or text)"),
+                )
+                .child(state.evidence_source_input.clone())
+                .child(state.evidence_summary_input.clone())
+                .child({
+                    let dn_ev = dn.clone();
+                    div()
+                        .flex()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .id("add-evidence-btn")
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::GREEN))
+                                .px(px(10.0))
+                                .py(px(4.0))
+                                .rounded(px(3.0))
+                                .bg(rgb(theme::BG_ACTIVE))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    this.add_manual_evidence(cx);
+                                }))
+                                .child("+ Add Evidence"),
+                        )
+                        .child(
+                            div()
+                                .id("analyze-url-btn")
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::BLUE))
+                                .px(px(10.0))
+                                .py(px(4.0))
+                                .rounded(px(3.0))
+                                .bg(rgb(theme::BG_ACTIVE))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    let source = this.evidence_source_input.read(cx).text().to_string();
+                                    if source.contains("http://") || source.contains("https://") {
+                                        this.ingest_url_evidence(&dn_ev, &source, cx);
+                                        this.evidence_source_input.update(cx, |input, cx| input.set_text("", cx));
+                                    } else {
+                                        this.messages.push(AssistantMessage {
+                                            node: "evidence".into(),
+                                            kind: MessageKind::Warning,
+                                            text: "Enter a URL (https://...) in the Source field to analyze".into(),
+                                        });
+                                        cx.notify();
+                                    }
+                                }))
+                                .child("🔍 Analyze URL"),
+                        )
+                })
+                .child(
+                    div()
+                        .text_size(px(8.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("Paste a URL and click 'Analyze URL' — an agent will summarize it and suggest how it impacts this driver."),
+                ),
+        )
+        // ── Advanced: raw query editor ────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(3.0))
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("Advanced: edit the full agent query"),
+                )
+                .child(state.agent_query_input.clone()),
         )
         // ── Other available agents ────────────────────────────────
         .when(!available_agents.is_empty(), |el| {
@@ -5267,7 +6373,21 @@ fn render_driver_editor_and_evidence(
                             .child(format!("Evidence ({})", driver_evidence.len())),
                     )
                     .children(driver_evidence.iter().map(|ev| {
+                        let is_collapsed = state.collapsed_evidence.contains(&ev.id);
+                        let (quality_score, quality_label, quality_color) =
+                            score_evidence_quality(ev);
+                        let ev_id_toggle = ev.id.clone();
+                        let summary_text = ev.summary.as_deref().unwrap_or("").to_string();
+                        let display_summary = if is_collapsed && summary_text.len() > 120 {
+                            format!("{}…", &summary_text[..117])
+                        } else {
+                            summary_text.clone()
+                        };
+                        let findings_limit = if is_collapsed { 2 } else { 10 };
+                        let total_findings = ev.key_findings.len();
+
                         div()
+                            .id(ElementId::Name(format!("ev-{}", ev.id).into()))
                             .flex()
                             .flex_col()
                             .gap(px(2.0))
@@ -5275,6 +6395,11 @@ fn render_driver_editor_and_evidence(
                             .py(px(6.0))
                             .rounded(px(4.0))
                             .bg(rgb(theme::BG))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                this.toggle_evidence_collapsed(&ev_id_toggle);
+                            }))
+                            // Header row: source + quality + relevance + expand indicator
                             .child(
                                 div()
                                     .flex()
@@ -5284,38 +6409,258 @@ fn render_driver_editor_and_evidence(
                                         div()
                                             .text_size(px(10.0))
                                             .text_color(rgb(theme::FG_FAINT))
+                                            .flex_shrink_0()
                                             .child(ev.source.clone()),
+                                    )
+                                    // Quality indicator
+                                    .child(
+                                        div()
+                                            .text_size(px(8.0))
+                                            .text_color(rgb(quality_color))
+                                            .px(px(4.0))
+                                            .py(px(1.0))
+                                            .rounded(px(2.0))
+                                            .bg(rgb(theme::BG_ELEVATED))
+                                            .flex_shrink_0()
+                                            .child(format!(
+                                                "{} {:.0}%",
+                                                quality_label,
+                                                quality_score * 100.0
+                                            )),
                                     )
                                     .when(ev.relevance.is_some(), |el| {
                                         el.child(
                                             div()
                                                 .text_size(px(9.0))
                                                 .text_color(rgb(theme::CYAN))
+                                                .flex_shrink_0()
                                                 .child(format!(
-                                                    "{:.0}%",
+                                                    "rel {:.0}%",
                                                     ev.relevance.unwrap_or(0.0) * 100.0
                                                 )),
                                         )
-                                    }),
+                                    })
+                                    // Expand/collapse indicator
+                                    .child(
+                                        div()
+                                            .flex_grow()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .child(if is_collapsed {
+                                                "▸ expand"
+                                            } else {
+                                                "▾ collapse"
+                                            }),
+                                    ),
                             )
-                            .when(ev.summary.is_some(), |el| {
+                            // Quality bar (thin colored strip)
+                            .child(
+                                div()
+                                    .h(px(2.0))
+                                    .w_full()
+                                    .rounded(px(1.0))
+                                    .bg(rgb(theme::BG_ELEVATED))
+                                    .child(
+                                        div()
+                                            .h(px(2.0))
+                                            .rounded(px(1.0))
+                                            .bg(rgb(quality_color))
+                                            .w(gpui::px((quality_score * 200.0).min(200.0) as f32)),
+                                    ),
+                            )
+                            // Summary (truncated when collapsed)
+                            .when(!display_summary.is_empty(), |el| {
                                 el.child(
                                     div()
                                         .text_size(px(11.0))
                                         .text_color(rgb(theme::FG))
-                                        .child(ev.summary.as_deref().unwrap_or("").to_string()),
+                                        .mt(px(2.0))
+                                        .child(display_summary),
                                 )
                             })
+                            // Key findings (limited when collapsed)
                             .when(!ev.key_findings.is_empty(), |el| {
-                                el.children(ev.key_findings.iter().take(3).map(|f| {
+                                el.children(ev.key_findings.iter().take(findings_limit).map(|f| {
                                     div()
                                         .text_size(px(10.0))
                                         .text_color(rgb(theme::FG_DIM))
                                         .child(format!("• {}", f))
                                 }))
+                                .when(
+                                    is_collapsed && total_findings > findings_limit,
+                                    |el2| {
+                                        el2.child(
+                                            div()
+                                                .text_size(px(9.0))
+                                                .text_color(rgb(theme::FG_FAINT))
+                                                .child(format!(
+                                                    "… {} more findings",
+                                                    total_findings - findings_limit
+                                                )),
+                                        )
+                                    },
+                                )
+                            })
+                            // Date (shown when expanded)
+                            .when(!is_collapsed && ev.date.is_some(), |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(8.0))
+                                        .text_color(rgb(theme::FG_FAINT))
+                                        .mt(px(2.0))
+                                        .child(format!("📅 {}", ev.date.as_deref().unwrap_or(""))),
+                                )
+                            })
+                            // URL link (shown when expanded and URL exists)
+                            .when(!is_collapsed && ev.url.is_some(), |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::BLUE))
+                                        .mt(px(2.0))
+                                        .child(format!("🔗 {}", ev.url.as_deref().unwrap_or(""))),
+                                )
                             })
                     })),
             )
+        })
+        // ── Pending suggestions for this driver ───────────────────
+        .child({
+            let driver_suggestions: Vec<&EvidenceSuggestion> = state
+                .pending_suggestions
+                .iter()
+                .filter(|s| s.driver_name == name)
+                .collect();
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .when(!driver_suggestions.is_empty(), |el| {
+                    el.mt(px(8.0))
+                        .pt(px(8.0))
+                        .border_t_1()
+                        .border_color(rgb(theme::GOLD))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::GOLD))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(format!(
+                                    "💡 Suggested Adjustments ({})",
+                                    driver_suggestions.len()
+                                )),
+                        )
+                        .children(driver_suggestions.iter().map(|sug| {
+                            let accept_id = sug.id.clone();
+                            let reject_id = sug.id.clone();
+                            let delta_pct =
+                                (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0;
+                            let (arrow, delta_color) = if delta_pct > 0.0 {
+                                ("↑", theme::GREEN)
+                            } else {
+                                ("↓", theme::RED)
+                            };
+
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(4.0))
+                                .px(px(10.0))
+                                .py(px(8.0))
+                                .rounded(px(6.0))
+                                .bg(rgb(0x2A2518))
+                                .border_1()
+                                .border_color(rgb(theme::GOLD))
+                                // Agent name + change summary
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .child(
+                                            div()
+                                                .text_size(px(11.0))
+                                                .text_color(rgb(theme::FG))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(format!(
+                                                    "{} suggests:",
+                                                    base_agent_name(&sug.agent_name)
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(12.0))
+                                                .text_color(rgb(delta_color))
+                                                .font_weight(FontWeight::BOLD)
+                                                .child(format!(
+                                                    "p50 {:.2} → {:.2} ({}{:.0}%)",
+                                                    sug.current_p50,
+                                                    sug.suggested_p50,
+                                                    arrow,
+                                                    delta_pct.abs()
+                                                )),
+                                        ),
+                                )
+                                // Reasoning
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(rgb(theme::FG_DIM))
+                                        .min_w(px(0.0))
+                                        .child(sug.reasoning.chars().take(150).collect::<String>()),
+                                )
+                                // Accept / Reject buttons
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(8.0))
+                                        .mt(px(4.0))
+                                        .child(
+                                            div()
+                                                .id(ElementId::Name(
+                                                    format!("accept-{}", sug.id).into(),
+                                                ))
+                                                .px(px(14.0))
+                                                .py(px(4.0))
+                                                .rounded(px(4.0))
+                                                .bg(rgb(theme::GREEN))
+                                                .text_color(rgb(theme::BG_DEEP))
+                                                .text_size(px(11.0))
+                                                .font_weight(FontWeight::BOLD)
+                                                .cursor_pointer()
+                                                .hover(|s| s.opacity(0.8))
+                                                .on_click(cx.listener(
+                                                    move |this, _event, _window, cx| {
+                                                        this.accept_suggestion(&accept_id, cx);
+                                                    },
+                                                ))
+                                                .child("✓ Accept"),
+                                        )
+                                        .child(
+                                            div()
+                                                .id(ElementId::Name(
+                                                    format!("reject-{}", sug.id).into(),
+                                                ))
+                                                .px(px(14.0))
+                                                .py(px(4.0))
+                                                .rounded(px(4.0))
+                                                .bg(rgb(theme::BG_ELEVATED))
+                                                .border_1()
+                                                .border_color(rgb(theme::RED))
+                                                .text_color(rgb(theme::RED))
+                                                .text_size(px(11.0))
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                                .on_click(cx.listener(
+                                                    move |this, _event, _window, cx| {
+                                                        this.reject_suggestion(&reject_id, cx);
+                                                    },
+                                                ))
+                                                .child("✗ Reject"),
+                                        ),
+                                )
+                        }))
+                })
         })
         // ── Add manual evidence ───────────────────────────────────
         .child(
@@ -6615,7 +7960,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 }
                                 _ => 1.0,
                             };
-                            let ev_count = evidence
+                            let driver_ev_items: Vec<_> = evidence
                                 .iter()
                                 .filter(|e| {
                                     e.id.contains(&d.name)
@@ -6624,13 +7969,15 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                             .filter(|a| a.driver_refs.contains(&d.name))
                                             .any(|a| evidence_matches_agent(e, &a.name))
                                 })
-                                .count();
-                            let quality = if ev_count > 2 {
-                                0.8
-                            } else if ev_count > 0 {
-                                0.5
-                            } else {
+                                .collect();
+                            let quality = if driver_ev_items.is_empty() {
                                 0.2
+                            } else {
+                                driver_ev_items
+                                    .iter()
+                                    .map(|e| score_evidence_quality(e).0)
+                                    .sum::<f64>()
+                                    / driver_ev_items.len() as f64
                             };
                             crate::charts::DriverViz {
                                 name: display.to_string(),
@@ -6737,12 +8084,23 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 _ => String::new(),
             };
 
-            // Evidence quality badge
+            // Evidence quality badge (uses score_evidence_quality for real scoring)
             let ev_count = driver_ev.len();
-            let (quality_label, quality_color) = if ev_count >= 3 {
+            let avg_quality = if driver_ev.is_empty() {
+                0.0
+            } else {
+                driver_ev
+                    .iter()
+                    .map(|e| score_evidence_quality(e).0)
+                    .sum::<f64>()
+                    / driver_ev.len() as f64
+            };
+            let (quality_label, quality_color) = if avg_quality >= 0.7 {
                 ("Strong", theme::GREEN)
-            } else if ev_count >= 1 {
+            } else if avg_quality >= 0.4 {
                 ("Partial", theme::GOLD)
+            } else if ev_count > 0 {
+                ("Weak", theme::ORANGE)
             } else {
                 ("None", theme::RED)
             };
@@ -6860,6 +8218,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 })
                 // Evidence items — expanded, readable
                 .children(driver_ev.iter().map(|ev| {
+                    let (eq_score, eq_label, eq_color) = score_evidence_quality(ev);
                     let summary = ev.summary.as_deref().unwrap_or("");
                     // Show full summary up to 800 chars (was 300)
                     let display_summary = if summary.len() > 800 {
@@ -6928,7 +8287,33 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                             .bg(rgb(theme::BG_ELEVATED))
                                             .child(format!("relevance {:.0}%", r * 100.0)),
                                     )
-                                }),
+                                })
+                                // Quality badge
+                                .child(
+                                    div()
+                                        .text_size(px(8.0))
+                                        .text_color(rgb(eq_color))
+                                        .px(px(4.0))
+                                        .py(px(1.0))
+                                        .rounded(px(2.0))
+                                        .bg(rgb(theme::BG_ELEVATED))
+                                        .child(format!("{} {:.0}%", eq_label, eq_score * 100.0)),
+                                ),
+                        )
+                        // Quality bar (thin colored strip)
+                        .child(
+                            div()
+                                .h(px(2.0))
+                                .w_full()
+                                .rounded(px(1.0))
+                                .bg(rgb(theme::BG_ELEVATED))
+                                .child(
+                                    div()
+                                        .h(px(2.0))
+                                        .rounded(px(1.0))
+                                        .bg(rgb(eq_color))
+                                        .w(gpui::px((eq_score * 200.0).min(200.0) as f32)),
+                                ),
                         )
                         // Summary — full text, readable size
                         .when(!display_summary.is_empty(), |el| {
@@ -7891,17 +9276,40 @@ fn generate_evidence_wiki(
             .collect();
 
         if !driver_evidence.is_empty() {
-            md.push_str(&format!("### Evidence ({})\n\n", driver_evidence.len()));
+            // Compute average quality for the evidence set
+            let avg_q: f64 = driver_evidence
+                .iter()
+                .map(|e| score_evidence_quality(e).0)
+                .sum::<f64>()
+                / driver_evidence.len() as f64;
+            let q_label = if avg_q >= 0.7 {
+                "Strong"
+            } else if avg_q >= 0.4 {
+                "Partial"
+            } else {
+                "Weak"
+            };
+            md.push_str(&format!(
+                "### Evidence ({}) — {} quality ({:.0}%)\n\n",
+                driver_evidence.len(),
+                q_label,
+                avg_q * 100.0
+            ));
             for ev in &driver_evidence {
                 let relevance_pct = ev.relevance.unwrap_or(0.0) * 100.0;
+                let (eq_score, eq_label, _) = score_evidence_quality(ev);
                 let date_str = ev
                     .date
                     .as_deref()
                     .map(|d| format!(" · {}", d))
                     .unwrap_or_default();
                 md.push_str(&format!(
-                    "#### {} — relevance {:.0}%{}\n\n",
-                    ev.source, relevance_pct, date_str
+                    "#### {} — relevance {:.0}% · quality {} ({:.0}%){}\n\n",
+                    ev.source,
+                    relevance_pct,
+                    eq_label,
+                    eq_score * 100.0,
+                    date_str
                 ));
 
                 // Full summary — NO truncation
@@ -7975,10 +9383,13 @@ fn generate_evidence_wiki(
         md.push_str(&format!("## General Evidence ({})\n\n", unassigned.len()));
         md.push_str("_Evidence not linked to a specific driver._\n\n");
         for ev in &unassigned {
+            let (eq_score, eq_label, _) = score_evidence_quality(ev);
             md.push_str(&format!(
-                "### {} — relevance {:.0}%\n\n",
+                "### {} — relevance {:.0}% · quality {} ({:.0}%)\n\n",
                 ev.source,
-                ev.relevance.unwrap_or(0.0) * 100.0
+                ev.relevance.unwrap_or(0.0) * 100.0,
+                eq_label,
+                eq_score * 100.0
             ));
             // Full summary — NO truncation
             if let Some(ref summary) = ev.summary {
@@ -8126,6 +9537,24 @@ fn formulate_research_query(
              Context: {rationale}"
         ),
 
+        (_, "equity_analyst") => format!(
+            "For the forecast: \"{question}\"\n\n\
+             Analyze the '{driver_display}' driver using live financial data.\n{params}\n\n\
+             PULL FROM FMP API:\n\
+             1. Company profile (price, market cap, sector, beta, 52-week range)\n\
+             2. Income statement (revenue, margins, EPS for last 2-3 years)\n\
+             3. Key ratios (P/E, P/B, P/S, EV/EBITDA, ROE, ROIC, debt/equity)\n\
+             4. DCF intrinsic value vs current price\n\
+             5. Analyst consensus estimates (revenue and EPS, low/avg/high)\n\n\
+             THEN PROVIDE:\n\
+             - Growth trajectory assessment (accelerating/stable/decelerating)\n\
+             - Valuation assessment (undervalued/fair/overvalued with % gap)\n\
+             - Suggested p50 multiplier based on financial data\n\
+             - Confidence (0.0-1.0) in your assessment\n\n\
+             Context: {rationale}\n\n\
+             Ground every claim in specific numbers from FMP data."
+        ),
+
         (_, "entity_investigator") => format!(
             "For the forecast: \"{question}\"\n\n\
              Investigate entities relevant to '{driver_display}'.\n\n\
@@ -8196,6 +9625,26 @@ fn detect_domain(question: &str) -> String {
         || q.contains("football") && !q.contains("nfl")
     {
         return "sports_football".into();
+    }
+
+    // Stocks / equity — specific company financial analysis
+    if q.contains("stock price")
+        || q.contains("share price")
+        || q.contains("earnings per share")
+        || q.contains("eps ")
+        || q.contains("p/e ratio")
+        || q.contains("dcf")
+        || q.contains("intrinsic value")
+        || q.contains("market cap")
+        || q.contains("ipo")
+        || q.contains("quarterly earnings")
+        || q.contains("revenue beat")
+        || q.contains("analyst estimate")
+        || q.contains("price target")
+        || q.contains("stock split")
+        || (q.contains("valuation") && (q.contains("company") || q.contains("stock")))
+    {
+        return "stocks".into();
     }
 
     // Sports — NFL
@@ -8870,6 +10319,97 @@ fn base_agent_name(compound_name: &str) -> &str {
 }
 
 /// Check if an evidence item is linked to an agent (by base name match).
+/// Extract a suggested p50 value from agent output text.
+/// Scans for patterns like "Suggested p50: 1.15", "p50 multiplier: 0.95", etc.
+fn extract_suggested_p50(text: &str) -> Option<f64> {
+    let lower = text.to_lowercase();
+    let patterns = [
+        "suggested p50",
+        "p50 multiplier",
+        "recommended p50",
+        "new p50",
+        "adjust p50 to",
+        "p50 value",
+        "p50 of",
+        "suggested multiplier",
+    ];
+    for pattern in &patterns {
+        if let Some(pos) = lower.find(pattern) {
+            let after = &text[pos + pattern.len()..];
+            let num_str: String = after
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit() && *c != '.' && *c != '-')
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            if let Ok(val) = num_str.parse::<f64>() {
+                // Sanity check: p50 multipliers are typically 0.01–50.0
+                if val > 0.01 && val < 50.0 {
+                    return Some(val);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Score evidence quality based on specificity, source, findings count, and relevance.
+/// Returns (score 0.0–1.0, label, theme color).
+fn score_evidence_quality(ev: &EvidenceStmt) -> (f64, &'static str, u32) {
+    let text = format!(
+        "{} {}",
+        ev.summary.as_deref().unwrap_or(""),
+        ev.key_findings.join(" ")
+    );
+
+    let mut score = 0.0;
+
+    // Specificity: numbers, percentages, dollar signs indicate quantitative evidence
+    if text.chars().any(|c| c.is_ascii_digit()) {
+        score += 0.15;
+    }
+    if text.contains('%') {
+        score += 0.1;
+    }
+    if text.contains('$') || text.contains("USD") || text.contains("revenue") {
+        score += 0.05;
+    }
+
+    // Source quality
+    let src = &ev.source;
+    if src.contains("http")
+        || src.contains("Bloomberg")
+        || src.contains("Reuters")
+        || src.contains("API")
+        || src.contains("ESPN")
+        || src.contains("PubMed")
+    {
+        score += 0.2;
+    } else if src == "Manual entry" || src == "Mock Executor" {
+        score += 0.05;
+    } else {
+        score += 0.1;
+    }
+
+    // Findings richness (more findings = more comprehensive)
+    let n = ev.key_findings.len();
+    score += (n.min(5) as f64) * 0.04;
+
+    // Relevance (from the evidence's own relevance field)
+    score += ev.relevance.unwrap_or(0.5) * 0.3;
+
+    let score = score.min(1.0);
+
+    let (label, color) = if score >= 0.7 {
+        ("●●● High", theme::GREEN)
+    } else if score >= 0.4 {
+        ("●●○ Med", theme::GOLD)
+    } else {
+        ("●○○ Low", theme::RED)
+    };
+
+    (score, label, color)
+}
+
 fn evidence_matches_agent(evidence: &EvidenceStmt, agent_name: &str) -> bool {
     let base = base_agent_name(agent_name);
     evidence.source.contains(base) || evidence.id.contains(agent_name)
