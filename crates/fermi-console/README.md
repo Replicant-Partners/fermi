@@ -4,7 +4,19 @@ MMOG-style forecasting command center built on [GPUI](https://gpui.rs/) (Zed's G
 
 ---
 
-## Installation
+## Quick Install (Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/fermi/main/scripts/install-fermi-console.sh | bash
+```
+
+This downloads the pre-built binary and installs runtime deps via apt. No Rust toolchain needed.
+
+Or grab the binary directly from [GitHub Releases](https://github.com/Replicant-Partners/fermi/releases/latest).
+
+---
+
+## Building from Source
 
 ### 1. Prerequisites
 

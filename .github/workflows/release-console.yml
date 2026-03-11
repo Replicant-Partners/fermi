@@ -1,0 +1,134 @@
+name: Release Console
+
+# Builds and publishes a pre-built fermi-console binary.
+#
+# Trigger options:
+#   git tag v0.x.y && git push origin v0.x.y   — full release
+#   workflow_dispatch (GitHub UI)               — manual release from any branch
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0) — leave empty to use 'latest'"
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: fermi-console
+
+jobs:
+  build-linux:
+    name: Build (Linux x86_64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-console-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-console-release-
+
+      - name: Install GPUI system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libwayland-dev \
+            libvulkan-dev \
+            wayland-protocols \
+            pkg-config
+
+      - name: Pin dependency versions
+        run: |
+          cargo update time --precise 0.3.36
+          cargo update home --precise 0.5.9
+
+      - name: Build release binary
+        run: cargo build --release -p fermi-console
+
+      - name: Strip binary
+        run: strip target/release/fermi-console
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package binary
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          ARCHIVE=fermi-console-${TAG}-linux-x86_64.tar.gz
+          cp target/release/fermi-console fermi-console
+          tar -czf "$ARCHIVE" fermi-console crates/fermi-console/README.md
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          # Also keep a plain binary with a fixed name for the install script
+          cp fermi-console fermi-console-linux-x86_64
+          sha256sum "$ARCHIVE" fermi-console-linux-x86_64 > checksums.txt
+          cat checksums.txt
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Fermi Console ${{ steps.tag.outputs.tag }}
+          body: |
+            ## Fermi Console ${{ steps.tag.outputs.tag }}
+
+            ### Quick Install (Linux x86_64)
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/fermi/main/scripts/install-fermi-console.sh | bash
+            ```
+
+            Or download directly:
+
+            ```bash
+            # Install runtime deps (one-time)
+            sudo apt-get install -y libxcb1 libxkbcommon0 libxkbcommon-x11-0 \
+              libfontconfig1 libfreetype6 libwayland-client0 libvulkan1 mesa-vulkan-drivers
+
+            # Download and run
+            curl -L https://github.com/Replicant-Partners/fermi/releases/latest/download/fermi-console-linux-x86_64 \
+              -o fermi-console && chmod +x fermi-console && ./fermi-console
+            ```
+
+            ### Building from source
+
+            See [README](https://github.com/Replicant-Partners/fermi/blob/main/crates/fermi-console/README.md).
+          draft: false
+          prerelease: ${{ steps.tag.outputs.tag == 'latest' }}
+          files: |
+            ${{ env.ARCHIVE }}
+            fermi-console-linux-x86_64
+            checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
