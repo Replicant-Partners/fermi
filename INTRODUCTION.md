@@ -6,71 +6,82 @@
 
 ## What is Fermi?
 
-Fermi is an **AI-coordinated forecasting platform**. Instead of manually researching and calculating probabilities, you work with a team of specialized AI agents that do the heavy lifting — and Fermi coordinates them all.
+Fermi is an **agentic forecasting platform** — a system of coordinated AI agents that help you research, estimate, and track probabilistic forecasts. It's built on a next-generation agent coordination and execution platform that orchestrates specialized agents to do the heavy lifting.
 
-Think of it like having a research department: you ask a question, Fermi assigns the right agents, synthesizes their findings, runs simulations, and delivers a probability estimate. When the question resolves, Fermi learns what worked.
+Think of it like having a research department: you ask a question, Fermi deploys agents to gather evidence, synthesizes their findings, runs Monte Carlo simulations, and delivers a probability estimate. When the question resolves, Fermi learns what worked — and gets better the next time.
 
 ### The Core Idea
 
 You: *"Will AMD hit $200M revenue in FY2026?"*
 
-Fermi: *coordinates agents → synthesizes research → runs Monte Carlo simulation → gives you a probability distribution*
+Fermi: *deploys agents → synthesizes research → runs simulation → gives you a probability*
 
 Then: *watches for resolution → calculates Brier score → learns for next time*
+
+This is a **self-healing system** — every outcome makes the next forecast better.
 
 ---
 
 ## Key Features
 
-### Your AI Research Team
+### Guided Forecasting (Tetlock Methodology)
 
-Fermi coordinates a growing roster of AI agents. Any agent tagged `fermi-orchestra` in Agent Bestiary becomes available to Fermi. These agents specialize in:
+Fermi guides you through the forecasting process using proven methods from the Good Judgment Project:
 
-- Market research and competitive analysis
-- Sentiment analysis from news and social media
-- Company financials and valuations
-- Biotech and clinical trial analysis
-- Macroeconomic indicators
-- Polymarket data interpretation
-- Entity investigation and relationship mapping
+1. **Decomposition** — Break complex questions into independent drivers
+2. **Outside view** — Find base rates and comparable historical cases
+3. **Inside view** — Apply specific knowledge about the case
+4. **Calibration** — Train your probabilistic instincts
+5. **Tracking** — Score outcomes and learn from errors
 
-**The key**: You don't need to know which agent to use. Fermi figures it out based on your question.
+Fermi walks you through each step. You're not just guessing — you're following a methodology used by the world's best forecasters.
 
-### Fermi the Coordinator
+### Agentic Coordination
 
-Fermi isn't just a tool — it's an **agentic orchestrator** that:
+Fermi runs on a next-generation agent coordination platform that:
 
-1. **Understands your question** — Parses what you're asking and identifies the domain
-2. **Assigns agents** — Routes to the right specialists automatically
-3. **Synthesizes findings** — Combines research from multiple agents into coherent drivers
-4. **Runs simulations** — Executes Monte Carlo to generate probability distributions
-5. **Tracks outcomes** — Monitors for resolution and calculates Brier scores
-6. **Learns** — Analyzes what improved predictions and adjusts approach
+- **Perceives** your question and extracts the domain and key entities
+- **Plans** which agents to deploy based on what needs research
+- **Acts** by executing multiple specialized agents in parallel
+- **Synthesizes** findings into coherent probabilistic drivers
+- **Reflects** on outcomes to improve future performance
 
-### Polymarket Integration
+The platform manages agent lifecycles, handles retries, and ensures reliable execution. You focus on the question; Fermi handles the orchestration.
 
-Fermi integrates with [Polymarket](https://polymarket.com), the world's largest prediction market:
+### Extensible Futures Integration
 
-- **Import markets** — Browse and import any Polymarket question into Fermi
-- **Three-number view** — See: historical base rate | Polymarket crowd | your estimate
-- **Edge detection** — Divergence between your model and the crowd = your edge signal
-- **Auto-resolution** — When Polymarket resolves, Fermi auto-resolves your linked forecast and calculates your Brier score
+Polymarket integration is the first implementation — but the architecture supports any futures market:
 
-### The Feedback Loop
+- **Polymarket** — Prediction markets with real money ($300M+ daily volume)
+- **Pwin** — Polymarket's winning token system for resolved markets
+- **Strategic forecasting** — Corporate planning and scenario analysis
+- **Predictive maintenance** — Industrial equipment failure prediction
+- **Custom resolution sources** — Your own data feeds and oracles
 
-Every forecast that resolves teaches you something:
+When a market resolves (however it resolves), Fermi auto-calculates your Brier score.
+
+### The Feedback Loop (Self-Healing)
+
+This is Fermi's superpower — a closed-loop learning system:
 
 ```
-Question → Fermi coordinates agents → Research → Simulation → Probability
-                                                                    ↓
-Resolution (auto via Polymarket) → Brier Score → Learn → Better next time
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│   Question → Agents Research → Synthesis → Simulation       │
+│                                                      │       │
+│                                                      ▼       │
+│   Better Forecasts ← Learn ← Brier Score ← Resolution       │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-Fermi tracks:
-- Your overall Brier score (lower = better)
-- Calibration curve over time
-- Which agents contribute to accurate predictions
-- How your estimates compare to the Polymarket crowd
+Every forecast that resolves:
+- Calculates your Brier score: (prediction - outcome)²
+- Identifies which agents and strategies helped
+- Updates your calibration profile
+- Compounds learning for future forecasts
+
+Over time, this creates genuine probabilistic intuition rather than overconfidence.
 
 ---
 
@@ -78,36 +89,46 @@ Fermi tracks:
 
 ### 1. Ask a Question
 
-Pose any yes/no question with a clear resolution date:
+Pose any question with a clear resolution criteria and date:
 
-*"Will ASTS hit $200M revenue in FY2026?"*
+*"Will ASTS hit $200M revenue in FY2026, verified by their 10-K filing?"*
 
-### 2. Fermi Does the Work
+### 2. Fermi Guides You Through
 
-Fermi automatically:
+Following Tetlock methodology, Fermi helps you:
 
-- Identifies relevant domains (space, telecom, revenue)
-- Routes to appropriate research agents
-- Synthesizes findings into probabilistic drivers
-- Runs Monte Carlo simulation (10K-10M iterations)
-- Returns a probability distribution
+- **Decompose** — Identify the key factors driving the outcome
+- **Find base rates** — What's the historical frequency?
+- **Gather evidence** — Deploy agents to research each factor
+- **Synthesize** — Combine findings into probability distributions
 
-### 3. Get Your Answer
+### 3. Agents Do the Research
+
+Fermi's coordination platform deploys specialized agents:
+
+- Market research agents analyze trends and competition
+- Sentiment agents gauge public and investor opinion
+- Financial agents dig into company fundamentals
+- Entity agents map relationships and dependencies
+
+You see which agents were consulted and what they found.
+
+### 4. Get Your Estimate
 
 You receive:
 
-- **Probability estimate** (e.g., 68% chance)
-- **Confidence interval** (90% likely range)
-- **Key drivers** — what factors matter most
-- **Polymarket comparison** — how you vs. the crowd
+- **Probability distribution** — Not a point estimate, but a range
+- **Confidence interval** — How sure you should be
+- **Key drivers** — What factors matter most
+- **Market comparison** — How your estimate compares to Polymarket (if linked)
 
-### 4. Publish & Track
+### 5. Track & Learn
 
 Publish to the leaderboard. When resolved:
 
-- Brier score calculated automatically
-- System learns what worked
-- Your calibration improves over time
+- **Auto-resolution** — Fermi detects the outcome
+- **Brier scoring** — Your accuracy is quantified
+- **Learning** — The system updates what it knows about good forecasting
 
 ---
 
@@ -115,64 +136,75 @@ Publish to the leaderboard. When resolved:
 
 ### Ask Questions in Plain Language
 
-No code required. Just ask:
+No code required:
 
 > "Will the Fed cut rates in March 2026?"
 > "Will SpaceX land on Mars by 2030?"
-> "Will Bitcoin hit $200K in 2026?"
+> "Will this equipment fail within 90 days?"
 
 Fermi handles the rest.
 
-### Leverage AI Agents
+### Get AI-Assisted Research
 
-Fermi coordinates research agents on your behalf. You see:
-- Which agents were consulted
-- What they found
-- How their research influenced your estimate
+Agents work for you:
 
-### Compare to the Crowd
+- Research competitors, market trends, sentiment
+- Find comparable historical cases
+- Extract key metrics and data points
 
-Every Polymarket-linked forecast shows:
-- Your probability
-- The market's probability
-- The gap (your edge or blind spot)
+You make the final call, but you're informed.
 
-### Track Your Performance
+### Link to Real-World Outcomes
+
+Connect forecasts to resolution sources:
+
+- **Polymarket** — Import markets, get auto-resolution
+- **Custom oracles** — Define your own resolution criteria
+- **Manual resolution** — Mark outcomes yourself
+
+### Track Your Calibration
 
 Your dashboard shows:
-- Brier score over time
-- Calibration curve
-- Leaderboard rank
-- Which agents improve your predictions
+
+- **Brier score** — Lower is better (0.00 = perfect, 0.25 = coin flip)
+- **Calibration curve** — Are you overconfident or underconfident?
+- **Agent performance** — Which agents improve your predictions?
+- **Leaderboard** — How you rank against other forecasters
 
 ---
 
 ## Why Fermi Works
 
-### Better Than Gut Instinct
+### Methodology + AI
 
-Humans are notoriously bad at probabilities. Fermi combines:
-- **AI research** — processes more information than any human
-- **Monte Carlo** — simulates thousands of scenarios
-- **Calibration tracking** — learns from outcomes
+Tetlock's research shows that trained forecasters beat experts. Fermi combines:
 
-### Better Than Going Alone
+- **Proven methodology** — Decomposition, base rates, calibration
+- **AI agents** — Process more information than any human
+- **Monte Carlo** — Simulate thousands of scenarios
+- **Closed-loop learning** — Every outcome makes you better
 
-You could hire a research team. Or you could use Fermi, which:
-- Coordinates multiple specialized agents
-- Synthesizes conflicting findings automatically
-- Tracks what leads to accurate predictions
+### Agentic Architecture
+
+The underlying platform treats forecasting as an agentic problem:
+
+- **Perception** — Understand the question, extract entities
+- **Reasoning** — Plan which agents to deploy
+- **Action** — Execute research in parallel
+- **Learning** — Update beliefs based on outcomes
+
+This isn't just automation — it's genuine agentic coordination.
 
 ### The Feedback Loop
 
-This is the secret sauce. Most forecasting ends at "what do you think?" Fermi continues:
+Most forecasting tools stop at "here's my prediction." Fermi continues:
 
 1. Question resolves
 2. Brier score calculated
-3. System analyzes: which agents helped? which hurt?
-4. Next forecast gets better
+3. System learns: which agents helped? which strategies?
+4. Next forecast incorporates that learning
 
-Over time, you develop genuine insight rather than overconfidence.
+You don't just make predictions — you develop genuine probabilistic judgment.
 
 ---
 
@@ -180,7 +212,7 @@ Over time, you develop genuine insight rather than overconfidence.
 
 ### Option 1: Web Interface
 
-Visit **[agent-bestiary.world](https://agent-bestiary.world)**
+Visit **agent-bestiary.world**
 
 ### Option 2: Desktop App
 
@@ -202,8 +234,8 @@ Install the Fermi extension for FPL syntax highlighting and direct agent executi
 ## Learn More
 
 - **[FERMI_CONSOLE.md](./FERMI_CONSOLE.md)** — Build and run the desktop app
-- **[docs/fermi/DESIGN_POLYMARKET_INTEGRATION.md](./docs/fermi/DESIGN_POLYMARKET_INTEGRATION.md)** — Polymarket details
+- **[docs/fermi/DESIGN_POLYMARKET_INTEGRATION.md](./docs/fermi/DESIGN_POLYMARKET_INTEGRATION.md)** — Polymarket integration details
 
 ---
 
-*Ask questions. Let AI agents research. Learn from outcomes.*
+*Ask questions. Deploy agents. Learn from outcomes.*
