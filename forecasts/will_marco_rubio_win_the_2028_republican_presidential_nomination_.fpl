@@ -19,7 +19,7 @@ driver florida_base_strength continuous {
 }
 
 driver maga_movement_evolution continuous {
-    distribution: triangular(0.5, 0.9, 1.2)
+    distribution: triangular(0.3, 0.9, 1.2)
     unit: "multiplier"
     rationale: "Rubio's establishment-MAGA hybrid positioning faces uncertainty. If movement demands Trump-style populism, his traditional conservatism hurts. If it moderates or seeks competent governance, he benefits."
 }

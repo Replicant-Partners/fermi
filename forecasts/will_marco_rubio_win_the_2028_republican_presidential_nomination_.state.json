@@ -1,17 +1,30 @@
 {
-  "current_version": 1,
-  "predicted_probability": 0.15,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "current_version": 2,
+  "predicted_probability": 0.12748699638386105,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 12.7%. The key factors are: incumbent_party_status, age_and_generational_appeal, florida_base_strength. Most influential: incumbent_party_status (47%), maga_movement_evolution (26%), field_strength (21%).",
+  "forecast_confidence": 0.48999999999999994,
   "versions": [
     {
       "version": 1,
       "timestamp": "2026-03-11 20:52",
       "probability": 0.15,
       "change_summary": "Initial: 15.0% base=15%, 5 drivers, 6 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-03-11 20:52",
+      "probability": 0.12748699638386105,
+      "change_summary": "12.7% (-2pp), 5 drivers, 6 evidence, 2 agents"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 1.0111694861684133,
+    "median": 0.9720163796193562,
+    "p5": 0.49633894705727133,
+    "p95": 1.663099875143589,
+    "std_dev": 0.35869217155455335,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "Sitting or recent Cabinet secretaries seeking Republican presidential nomination",
     "historical_frequency": 0.15,
