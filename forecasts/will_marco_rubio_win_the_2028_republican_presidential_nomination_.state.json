@@ -1,7 +1,7 @@
 {
-  "current_version": 4,
-  "predicted_probability": 0.1177697043760502,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model moderately decreases the probability to 11.8%. The key factors are: incumbent_party_status, age_and_generational_appeal, florida_base_strength. Most influential: maga_movement_evolution (43%), incumbent_party_status (32%), field_strength (17%).",
+  "current_version": 5,
+  "predicted_probability": 0.1501291734436878,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 15.0%. The key factors are: incumbent_party_status, age_and_generational_appeal, florida_base_strength. Most influential: field_strength (37%), maga_movement_evolution (33%), incumbent_party_status (31%).",
   "forecast_confidence": 0.48999999999999994,
   "versions": [
     {
@@ -27,14 +27,20 @@
       "timestamp": "2026-03-11 21:02",
       "probability": 0.1177697043760502,
       "change_summary": "11.8% (→), 5 drivers, 7 evidence, 3 agents"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-03-11 21:02",
+      "probability": 0.1501291734436878,
+      "change_summary": "15.0% (+3pp), 5 drivers, 7 evidence, 3 agents"
     }
   ],
   "sim_results": {
-    "mean": 0.934096298743861,
-    "median": 0.8914955450680886,
-    "p5": 0.4132210969054003,
-    "p95": 1.6007051096000375,
-    "std_dev": 0.36760000554636274,
+    "mean": 0.7520570814488098,
+    "median": 0.6976810302712932,
+    "p5": 0.3136770175953804,
+    "p95": 1.3823776544533446,
+    "std_dev": 0.33265825157884743,
     "iterations": 10000
   },
   "base_rate": {
