@@ -458,6 +458,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/091_swarm_participants.sql",
         "migrations/092_fix_social_layer.sql",
         "migrations/094_fermi_forecasting.sql",
+        "migrations/099_polymarket_observations.sql",
     ];
 
     for file in &migration_files {
@@ -1351,6 +1352,31 @@ async fn main() {
         .route(
             "/api/shares/:share_id",
             delete(handlers::teams::revoke_share_handler),
+        )
+        // ── Polymarket integration routes ──────────────────────────────
+        .route(
+            "/api/polymarket/search",
+            post(handlers::polymarket::search_handler),
+        )
+        .route(
+            "/api/polymarket/snapshot",
+            post(handlers::polymarket::snapshot_handler),
+        )
+        .route(
+            "/api/polymarket/link",
+            post(handlers::polymarket::link_handler),
+        )
+        .route(
+            "/api/polymarket/import",
+            post(handlers::polymarket::import_handler),
+        )
+        .route(
+            "/api/polymarket/observations",
+            get(handlers::polymarket::observations_handler),
+        )
+        .route(
+            "/api/polymarket/check-resolutions",
+            post(handlers::polymarket::check_resolutions_handler),
         )
         // Admin routes (handlers check can_admin())
         .route(

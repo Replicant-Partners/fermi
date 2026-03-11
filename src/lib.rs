@@ -24,6 +24,9 @@ pub mod api;
 pub mod gas;
 pub mod workflows;
 
+// Polymarket integration (prediction market data)
+pub mod polymarket;
+
 // Voice synthesis
 pub mod voice;
 

@@ -28,6 +28,7 @@ pub mod notebooks;
 pub mod observations;
 pub mod ontology;
 pub mod pages;
+pub mod polymarket;
 pub mod profile;
 pub mod push;
 pub mod qr_codes;

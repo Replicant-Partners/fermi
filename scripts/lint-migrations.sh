@@ -47,7 +47,7 @@ lint_file() {
 
     if [ "$stmt_count" -gt 1 ]; then
         # Check if it's a DROP+ADD constraint pattern
-        if echo "$content" | grep -qi 'DROP CONSTRAINT' && echo "$content" | grep -qi 'ADD CONSTRAINT'; then
+        if echo "$stripped" | grep -qi 'DROP CONSTRAINT' && echo "$stripped" | grep -qi 'ADD CONSTRAINT'; then
             echo -e "${RED}ERROR${NC} [$basename]: DROP+ADD CONSTRAINT outside DO block — will silently fail through PgBouncer"
             echo -e "       Wrap in: DO \$\$ BEGIN ... END \$\$;"
             ((errors++))
