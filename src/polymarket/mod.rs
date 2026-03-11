@@ -322,6 +322,15 @@ impl GammaClient {
     ) -> Result<Vec<PolyEvent>, PolymarketError> {
         let limit = limit.min(20);
 
+        // Strategy 0: If the query looks like a slug (hyphens, no spaces), try
+        // direct slug lookup first — this is what URL imports produce.
+        let looks_like_slug = query.contains('-') && !query.contains(' ');
+        if looks_like_slug {
+            if let Ok(event) = self.get_event_by_slug(query).await {
+                return Ok(vec![event]);
+            }
+        }
+
         // Strategy 1: Use the search endpoint if available
         let search_url = format!("{}/events", self.base_url);
         let response = self

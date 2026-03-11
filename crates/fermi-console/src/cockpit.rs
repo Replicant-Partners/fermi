@@ -2791,6 +2791,11 @@ impl CockpitState {
             self.predicted_probability,
             &self.inside_view_explanation,
             self.forecast_confidence,
+            self.pm_market_price,
+            self.pm_url.as_deref(),
+            self.pm_volume_24h,
+            self.pm_confidence.as_deref(),
+            self.pm_price_change_1w,
         );
 
         let export_path = format!("forecasts/{}.evidence.md", filename);
@@ -3807,6 +3812,11 @@ impl CockpitState {
                     self.predicted_probability,
                     &self.inside_view_explanation,
                     self.forecast_confidence,
+                    self.pm_market_price,
+                    self.pm_url.as_deref(),
+                    self.pm_volume_24h,
+                    self.pm_confidence.as_deref(),
+                    self.pm_price_change_1w,
                 );
                 match std::fs::write(&wiki_path, &wiki) {
                     Ok(_) => log::info!("[composer] Saved evidence wiki to {}", wiki_path),
@@ -9109,6 +9119,11 @@ fn generate_evidence_wiki(
     probability: f64,
     explanation: &str,
     confidence: f64,
+    pm_market_price: Option<f64>,
+    pm_url: Option<&str>,
+    pm_volume_24h: Option<f64>,
+    pm_confidence: Option<&str>,
+    pm_price_change_1w: Option<f64>,
 ) -> String {
     let mut md = String::new();
     let question = program
@@ -9149,6 +9164,51 @@ fn generate_evidence_wiki(
         total_agents
     ));
     md.push_str("---\n\n");
+
+    // ── Polymarket Crowd Price ─────────────────────────────────────
+    if let Some(crowd_price) = pm_market_price {
+        md.push_str("## Polymarket Crowd Price\n\n");
+        let divergence_pp = (probability - crowd_price) * 100.0;
+        let edge = if divergence_pp.abs() < 2.0 {
+            "Consensus"
+        } else if divergence_pp.abs() < 5.0 {
+            "Minor divergence"
+        } else if divergence_pp.abs() < 15.0 {
+            "Moderate divergence — potential edge"
+        } else {
+            "Significant disagreement — verify assumptions"
+        };
+        let direction = if divergence_pp >= 0.0 { "above" } else { "below" };
+        md.push_str(&format!(
+            "| Metric | Value |\n|---|---|\n| Crowd price | **{:.1}%** |\n| Fermi estimate | **{:.1}%** |\n| Divergence | {:+.1}pp {} crowd ({}) |\n",
+            crowd_price * 100.0,
+            probability * 100.0,
+            divergence_pp.abs(),
+            direction,
+            edge,
+        ));
+        if let Some(vol) = pm_volume_24h {
+            let vol_fmt = if vol >= 1_000_000.0 {
+                format!("${:.1}M", vol / 1_000_000.0)
+            } else if vol >= 1_000.0 {
+                format!("${:.0}K", vol / 1_000.0)
+            } else {
+                format!("${:.0}", vol)
+            };
+            md.push_str(&format!("| 24h volume | {} |\n", vol_fmt));
+        }
+        if let Some(conf) = pm_confidence {
+            md.push_str(&format!("| Market confidence | {} |\n", conf));
+        }
+        if let Some(chg) = pm_price_change_1w {
+            let arrow = if chg > 0.005 { "↑" } else if chg < -0.005 { "↓" } else { "→" };
+            md.push_str(&format!("| 1-week trend | {} {:+.1}pp |\n", arrow, chg * 100.0));
+        }
+        if let Some(url) = pm_url {
+            md.push_str(&format!("\n[View on Polymarket]({})\n", url));
+        }
+        md.push_str("\n---\n\n");
+    }
 
     // ── Inside View (FIRST — this is the main analysis) ───────────
     if !explanation.is_empty() {

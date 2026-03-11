@@ -1123,12 +1123,310 @@ impl ToolRegistry {
             "activate_formation" => execute_activate_formation(input, ctx).await,
             "scan_nearby_creatures" => execute_scan_nearby_creatures(input, ctx).await,
             "gbif_taxonomy_tree" => execute_gbif_taxonomy_tree(input).await,
+            // FMP (Financial Modeling Prep) tools for equity_analyst
+            "fmp_company_profile" => execute_fmp_api(input, "/stable/profile", &["symbol"]).await,
+            "fmp_income_statement" => {
+                execute_fmp_api(
+                    input,
+                    "/stable/income-statement",
+                    &["symbol", "period", "limit"],
+                )
+                .await
+            }
+            "fmp_balance_sheet" => {
+                execute_fmp_api(
+                    input,
+                    "/stable/balance-sheet-statement",
+                    &["symbol", "period", "limit"],
+                )
+                .await
+            }
+            "fmp_cash_flow" => {
+                execute_fmp_api(
+                    input,
+                    "/stable/cash-flow-statement",
+                    &["symbol", "period", "limit"],
+                )
+                .await
+            }
+            "fmp_ratios" => {
+                execute_fmp_api(input, "/stable/ratios", &["symbol", "period", "limit"]).await
+            }
+            "fmp_key_metrics" => {
+                execute_fmp_api(input, "/stable/key-metrics", &["symbol", "period", "limit"]).await
+            }
+            "fmp_dcf" => execute_fmp_api(input, "/stable/discounted-cash-flow", &["symbol"]).await,
+            "fmp_analyst_estimates" => {
+                execute_fmp_api(
+                    input,
+                    "/stable/analyst-estimates",
+                    &["symbol", "period", "limit"],
+                )
+                .await
+            }
+            "fmp_historical_price" => {
+                execute_fmp_api(
+                    input,
+                    "/stable/historical-price-eod/full",
+                    &["symbol", "from", "to"],
+                )
+                .await
+            }
+            // Polymarket tools for prediction_market agent and general orchestra use
+            "polymarket_search" => execute_polymarket_search(input).await,
+            "polymarket_event" => execute_polymarket_event(input).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
 }
 
 // ─── Tool implementations ──────────────────────────────────────────
+
+/// Search Polymarket for events matching a query.
+/// Used by orchestra agents (especially prediction_market) during research.
+async fn execute_polymarket_search(input: &serde_json::Value) -> Result<String, String> {
+    let query = input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: query")?;
+    let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+
+    let gamma = crate::polymarket::GammaClient::new();
+    let events = gamma
+        .search_events(query, limit)
+        .await
+        .map_err(|e| format!("Polymarket search failed: {}", e))?;
+
+    if events.is_empty() {
+        return Ok("No matching Polymarket markets found for this query.".to_string());
+    }
+
+    let mut output = String::new();
+    for event in &events {
+        output.push_str(&format!("## {}\n", event.title));
+        output.push_str(&format!(
+            "Event ID: {} | Volume 24h: ${:.0} | Liquidity: ${:.0}\n",
+            event.id, event.volume_24hr, event.liquidity
+        ));
+        if let Some(ref end) = event.end_date {
+            output.push_str(&format!("End date: {}\n", end));
+        }
+        for market in &event.markets {
+            let processed = crate::polymarket::process_market_public(event, market);
+            output.push_str(&format!(
+                "  → {} | YES: {:.1}% | bid/ask: {:.3}/{:.3} | vol24h: ${:.0} | confidence: {}\n",
+                processed.question,
+                processed.market_price * 100.0,
+                processed.bid_price,
+                processed.ask_price,
+                processed.volume_24h,
+                processed.confidence_signal.label(),
+            ));
+            if let Some(ref change) = processed.price_change_1w {
+                output.push_str(&format!("    1-week change: {:+.1}pp\n", change * 100.0));
+            }
+        }
+        output.push('\n');
+    }
+
+    // Truncate if very large
+    if output.len() > 24_000 {
+        output.truncate(24_000);
+        output.push_str("\n... [truncated]");
+    }
+
+    Ok(output)
+}
+
+/// Get details for a specific Polymarket event by ID.
+async fn execute_polymarket_event(input: &serde_json::Value) -> Result<String, String> {
+    let event_id = input
+        .get("event_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: event_id")?;
+
+    let gamma = crate::polymarket::GammaClient::new();
+    let event = gamma
+        .get_event(event_id)
+        .await
+        .map_err(|e| format!("Polymarket event fetch failed: {}", e))?;
+
+    let mut output = String::new();
+    output.push_str(&format!("# {}\n\n", event.title));
+    output.push_str(&format!(
+        "Description: {}\n\n",
+        &event.description[..event.description.len().min(500)]
+    ));
+    output.push_str(&format!(
+        "Total volume: ${:.0} | 24h volume: ${:.0} | Liquidity: ${:.0}\n",
+        event.volume, event.volume_24hr, event.liquidity
+    ));
+    if let Some(ref end) = event.end_date {
+        output.push_str(&format!("End date: {}\n", end));
+    }
+    output.push_str(&format!(
+        "Active: {} | Closed: {}\n\n",
+        event.active, event.closed
+    ));
+
+    output.push_str("## Markets\n\n");
+    for market in &event.markets {
+        let processed = crate::polymarket::process_market_public(&event, market);
+        output.push_str(&format!("### {}\n", processed.question));
+        output.push_str(&format!("  Market ID: {}\n", processed.pm_market_id));
+        output.push_str(&format!(
+            "  YES price: {:.1}% (midpoint: {:.1}%)\n",
+            processed.market_price * 100.0,
+            processed.midpoint_price * 100.0
+        ));
+        output.push_str(&format!(
+            "  Bid/Ask: {:.3} / {:.3} (spread: {:.3})\n",
+            processed.bid_price, processed.ask_price, processed.spread
+        ));
+        output.push_str(&format!(
+            "  Volume 24h: ${:.0} | Total: ${:.0}\n",
+            processed.volume_24h, processed.volume_total
+        ));
+        output.push_str(&format!("  Liquidity: ${:.0}\n", processed.liquidity));
+        output.push_str(&format!(
+            "  Confidence: {} ({:.0}% quality)\n",
+            processed.confidence_signal.label(),
+            processed.confidence_signal.quality_score() * 100.0
+        ));
+        if let Some(change) = processed.price_change_1w {
+            output.push_str(&format!(
+                "  1-week price change: {:+.1}pp\n",
+                change * 100.0
+            ));
+        }
+        if let Some(change) = processed.price_change_1m {
+            output.push_str(&format!(
+                "  1-month price change: {:+.1}pp\n",
+                change * 100.0
+            ));
+        }
+        output.push_str(&format!(
+            "  Status: {}\n",
+            if processed.resolved {
+                "RESOLVED"
+            } else if processed.closed {
+                "CLOSED"
+            } else if processed.active {
+                "ACTIVE"
+            } else {
+                "INACTIVE"
+            }
+        ));
+        if let Some(ref group) = processed.group_item_title {
+            output.push_str(&format!("  Group: {}\n", group));
+        }
+        output.push('\n');
+    }
+
+    output.push_str(&format!(
+        "Tags: {}\n",
+        event
+            .tags
+            .iter()
+            .map(|t| t.label.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    output.push_str(&format!(
+        "URL: https://polymarket.com/event/{}\n",
+        event.slug
+    ));
+
+    Ok(output)
+}
+
+/// Generic FMP API executor — builds a GET request from the input parameters
+/// and the endpoint path. Appends the FMP API key from env or hardcoded fallback.
+async fn execute_fmp_api(
+    input: &serde_json::Value,
+    endpoint: &str,
+    param_names: &[&str],
+) -> Result<String, String> {
+    let api_key = std::env::var("FMP_API_KEY")
+        .unwrap_or_else(|_| "xadhcaZJ9suK6jthYq2axsDINSE31Nxj".to_string());
+
+    let base_url = "https://financialmodelingprep.com";
+    let mut url = format!("{}{}", base_url, endpoint);
+
+    // Build query string from known parameter names
+    let mut params: Vec<(String, String)> = Vec::new();
+    for &name in param_names {
+        if let Some(val) = input.get(name) {
+            let s = match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string().trim_matches('"').to_string(),
+            };
+            if !s.is_empty() {
+                params.push((name.to_string(), s));
+            }
+        }
+    }
+    params.push(("apikey".to_string(), api_key));
+
+    let query_string: String = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    url = format!("{}?{}", url, query_string);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .header("User-Agent", "FermiConsole/1.0")
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("FMP API request failed: {}", e))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read FMP response: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "FMP API error (HTTP {}): {}",
+            status.as_u16(),
+            body
+        ));
+    }
+
+    // If response is empty array, return a clear message
+    if body.trim() == "[]" {
+        return Ok("No data found for the given parameters.".to_string());
+    }
+
+    // Compact the JSON if it's very large (>8k chars) — keep structure but trim
+    if body.len() > 8000 {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) {
+            // For arrays, limit to first 3 entries to save token budget
+            if let Some(arr) = parsed.as_array() {
+                let limited: Vec<&serde_json::Value> = arr.iter().take(3).collect();
+                let note = if arr.len() > 3 {
+                    format!("\n[Showing 3 of {} results]", arr.len())
+                } else {
+                    String::new()
+                };
+                return Ok(format!(
+                    "{}{}",
+                    serde_json::to_string_pretty(&limited).unwrap_or(body),
+                    note
+                ));
+            }
+        }
+    }
+
+    Ok(body)
+}
 
 async fn execute_search_knowledge(
     input: &serde_json::Value,

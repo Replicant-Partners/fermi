@@ -166,8 +166,8 @@ impl ToolAwareExecutor {
                     iteration,
                 });
 
-                // Cap tool result to ~12k chars (~3k tokens) to prevent context overflow
-                const MAX_TOOL_RESULT_CHARS: usize = 12_000;
+                // Cap tool result to prevent context overflow
+                const MAX_TOOL_RESULT_CHARS: usize = 32_000;
                 let truncated_output = if output.len() > MAX_TOOL_RESULT_CHARS {
                     format!(
                         "{}... [truncated, {} chars total]",
@@ -323,7 +323,7 @@ impl ToolAwareExecutor {
                 });
 
                 // Cap tool result to prevent context overflow
-                const MAX_TOOL_RESULT_CHARS_OAI: usize = 12_000;
+                const MAX_TOOL_RESULT_CHARS_OAI: usize = 32_000;
                 let truncated = if output.len() > MAX_TOOL_RESULT_CHARS_OAI {
                     format!(
                         "{}... [truncated, {} chars total]",
@@ -535,16 +535,72 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
             (evidence, confidence, Some(data.reasoning))
         }
         Err(_) => {
-            // Fallback: treat as plain text
+            // Fallback: treat as plain text evidence.
+            // IMPORTANT: preserve the FULL text as summary so downstream
+            // consumers (wiki, evidence panel) can display it completely.
+            // Extract key lines as findings for the evidence card display.
+            let summary = text.to_string();
+
+            // Extract meaningful lines as key findings:
+            // - Bullet points (•, -, *, ▸)
+            // - Numbered items (1., 2.)
+            // - Lines with data signals (%, $, numbers)
+            // - Lines longer than 20 chars (skip headers/blanks)
+            let findings: Vec<String> = text
+                .lines()
+                .filter(|l| {
+                    let trimmed = l.trim();
+                    if trimmed.is_empty() || trimmed.len() < 15 {
+                        return false;
+                    }
+                    // Skip markdown headers and separators
+                    if trimmed.starts_with('#')
+                        || trimmed.starts_with("---")
+                        || trimmed.starts_with("===")
+                    {
+                        return false;
+                    }
+                    // Prefer bullet points, numbered items, and data-rich lines
+                    trimmed.starts_with('-')
+                        || trimmed.starts_with('•')
+                        || trimmed.starts_with('*')
+                        || trimmed.starts_with("▸")
+                        || trimmed
+                            .chars()
+                            .next()
+                            .map(|c| c.is_ascii_digit())
+                            .unwrap_or(false)
+                        || trimmed.contains('%')
+                        || trimmed.contains('$')
+                        || trimmed.contains("p50")
+                        || trimmed.contains("Suggested")
+                        || trimmed.contains("confidence")
+                        || trimmed.contains("relevance")
+                })
+                .take(15)
+                .map(|l| {
+                    let trimmed = l.trim();
+                    // Clean leading bullet chars for consistency
+                    let cleaned = trimmed
+                        .trim_start_matches('-')
+                        .trim_start_matches('•')
+                        .trim_start_matches('*')
+                        .trim_start_matches("▸")
+                        .trim();
+                    cleaned.to_string()
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+
             let evidence = vec![EvidenceStmt {
                 id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
                 source: format!("Agent: {}", agent_name),
-                summary: Some(text.chars().take(500).collect()),
+                summary: Some(summary),
                 url: None,
                 relevance: Some(0.5),
                 date: Some(Utc::now().format("%Y-%m-%d").to_string()),
                 strength: Some(0.5),
-                key_findings: vec![],
+                key_findings: findings,
             }];
             (evidence, 0.5, Some(text.to_string()))
         }

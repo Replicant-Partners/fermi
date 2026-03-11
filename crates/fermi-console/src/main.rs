@@ -1885,8 +1885,11 @@ impl FermiConsole {
                         return Err(format!("Server error {}: {}", status.as_u16(), body.chars().take(120).collect::<String>()));
                     }
 
-                    let data: serde_json::Value =
-                        resp.json().await.map_err(|e| format!("Bad response: {}", e))?;
+                    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read body: {}", e))?;
+                    let body = String::from_utf8_lossy(&bytes);
+                    log::debug!("[polymarket] Raw response ({} bytes): {}", bytes.len(), &body[..body.len().min(500)]);
+                    let data: serde_json::Value = serde_json::from_slice(&bytes)
+                        .map_err(|e| format!("Bad response ({}): {}", e, body.chars().take(120).collect::<String>()))?;
                     let matches = data
                         .get("matches")
                         .and_then(|v| v.as_array())
@@ -2172,9 +2175,12 @@ impl FermiConsole {
                         .when(!self.pm_search_results.is_empty(), |el| {
                             el.child(
                                 div()
+                                    .id("pm-results-scroll")
                                     .flex()
                                     .flex_col()
                                     .gap(px(6.0))
+                                    .overflow_y_scroll()
+                                    .max_h(px(480.0))
                                     .children(self.pm_search_results.iter().enumerate().map(|(i, result)| {
                                         let question_str = result.get("question")
                                             .and_then(|v| v.as_str())
