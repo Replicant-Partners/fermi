@@ -25,7 +25,7 @@ driver maga_movement_evolution continuous {
 }
 
 driver field_strength continuous {
-    distribution: triangular(0.6, 0.95, 1.3)
+    distribution: triangular(0.4, 0.6, 1.3)
     unit: "multiplier"
     rationale: "Likely faces DeSantis, Vance, Haley, Youngkin, and others. Strong field dilutes chances, but weak field or early consolidation helps. 2016 showed Rubio struggles in crowded primaries."
 }
@@ -224,6 +224,27 @@ evidence market_research_florida_base_strength_0 {
     date: 2026-03-11
 }
 
-model: incumbent_party_status * age_and_generational_appeal * florida_base_strength * maga_movement_evolution * field_strength
+evidence sentiment_analyzer_0 {
+    source: "Agent: sentiment_analyzer"
+    summary: "I don't have access to real-time social media scraping or NLP analysis tools. Let me provide a sentiment analysis based on established political analysis frameworks and documented evidence patterns:
+
+---
+
+## SENTIMENT ANALYSIS: 2028 GOP Field Strength (Rubio Impact)
+
+**DRIVER:** Field strength and competitive dynamics
+
+**SENTIMENT CLASSIFICATION:** Bearish for Rubio (field appears strong and fragmented)
+
+---
+
+### 1. KEY DATA POINTS (with sources and dates)
+
+**Current Field Perception (2025-2026 "
+    relevance: 0.5p
+    date: 2026-03-11
+}
+
+model: ((((incumbent_party_status * age_and_generational_appeal) * florida_base_strength) * maga_movement_evolution) * field_strength)
 
 simulate 10000 iterations
