@@ -19,7 +19,7 @@ driver security_apparatus_loyalty continuous {
 }
 
 driver external_intervention continuous {
-    distribution: triangular(0.4, 1, 1.8)
+    distribution: triangular(0.4, 1.4, 1.8)
     unit: "multiplier"
     rationale: "Regional tensions with Israel elevated, but direct military intervention targeting regime change unlikely in 5-month timeframe. US policy focused on containment rather than regime change operations."
 }
