@@ -1,0 +1,138 @@
+question "Will the Iranian regime fall by June 30?"
+
+driver economic_pressure continuous {
+    distribution: triangular(0.8, 1.1, 1.6)
+    unit: "multiplier"
+    rationale: "Severe sanctions and 40%+ inflation strain regime legitimacy, but Iran has adapted over decades. Current economic stress elevated but not unprecedented compared to 2012-2013 period."
+}
+
+driver protest_intensity continuous {
+    distribution: triangular(0.6, 0.9, 1.4)
+    unit: "multiplier"
+    rationale: "Post-Mahsa Amini protests have diminished significantly from late 2022 peak. Current protest activity is lower than critical mass needed for regime collapse, though underlying discontent remains."
+}
+
+driver security_apparatus_loyalty continuous {
+    distribution: triangular(0.4, 0.6, 0.9)
+    unit: "multiplier"
+    rationale: "IRGC remains deeply entrenched with extensive economic interests. No significant defections observed. Iranian security apparatus historically more resilient than Arab Spring counterparts due to ideological indoctrination and patronage networks."
+}
+
+driver external_intervention continuous {
+    distribution: triangular(0.7, 1, 1.8)
+    unit: "multiplier"
+    rationale: "Regional tensions with Israel elevated, but direct military intervention targeting regime change unlikely in 5-month timeframe. US policy focused on containment rather than regime change operations."
+}
+
+driver leadership_crisis continuous {
+    distribution: triangular(0.8, 1, 1.5)
+    unit: "multiplier"
+    rationale: "Khamenei's age (85) creates succession uncertainty, but no immediate health crisis reported. Succession mechanisms exist though could create instability. Five-month window makes acute crisis unlikely."
+}
+
+evidence fermi_evidence_1773275059 {
+    source: "Agent: fermi (Claude API)"
+    summary: "```json
+{
+  \"base_rate\": {
+    \"reference_class\": \"Middle Eastern authoritarian regime collapses within 6-month period (2000-2024)\",
+    \"historical_frequency\": 0.015,
+    \"sample_size\": 45,
+    \"reasoning\": \"Examining 15 Middle Eastern authoritarian regimes over 24 years (360 six-month periods total), approximately 7 experienced regime collapse (Tunisia 2011, Egypt 2011, Libya 2011, Yemen 2012, Iraq 2003, Syria partial 2011-ongoing, Sudan 2019), yielding ~1.5% per 6-month period.\"
+  },
+  \"drivers\": [
+    {
+      \"name\": \"economic_pressure\",
+      \"display_name\": \"Economic Sanctions & Inflation Impact\",
+      \"type\": \"continuous\",
+      \"p5\": 0.8,
+      \"p50\": 1.1,
+      \"p95\": 1.6,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Severe sanctions and 40%+ inflation strain regime legitimacy, but Iran has adapted over decades. Current economic stress elevated but not unprecedented compared to 2012-2013 period.\"
+    },
+    {
+      \"name\": \"protest_intensity\",
+      \"display_name\": \"Ongoing Protest Movement Strength\",
+      \"type\": \"continuous\",
+      \"p5\": 0.6,
+      \"p50\": 0.9,
+      \"p95\": 1.4,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Post-Mahsa Amini protests have diminished significantly from late 2022 peak. Current protest activity is lower than critical mass needed for regime collapse, though underlying discontent remains.\"
+    },
+    {
+      \"name\": \"security_apparatus_loyalty\",
+      \"display_name\": \"IRGC and Security Forces Cohesion\",
+      \"type\": \"continuous\",
+      \"p5\": 0.4,
+      \"p50\": 0.6,
+      \"p95\": 0.9,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"IRGC remains deeply entrenched with extensive economic interests. No significant defections observed. Iranian security apparatus historically more resilient than Arab Spring counterparts due to ideological indoctrination and patronage networks.\"
+    },
+    {
+      \"name\": \"external_intervention\",
+      \"display_name\": \"Foreign Military or Political Intervention\",
+      \"type\": \"continuous\",
+      \"p5\": 0.7,
+      \"p50\": 1.0,
+      \"p95\": 1.8,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Regional tensions with Israel elevated, but direct military intervention targeting regime change unlikely in 5-month timeframe. US policy focused on containment rather than regime change operations.\"
+    },
+    {
+      \"name\": \"leadership_crisis\",
+      \"display_name\": \"Supreme Leader Health or Succession Crisis\",
+      \"type\": \"continuous\",
+      \"p5\": 0.8,
+      \"p50\": 1.0,
+      \"p95\": 1.5,
+      \"unit\": \"multiplier\",
+      \"rationale\": \"Khamenei's age (85) creates succession uncertainty, but no immediate health crisis reported. Succession mechanisms exist though could create instability. Five-month window makes acute crisis unlikely.\"
+    }
+  ],
+  \"evidence\": [
+    {
+      \"source\": \"International Crisis Group Iran Reports 2023-2024\",
+      \"summary\": \"Protest movements significantly weakened after government crackdown. IRGC maintains control despite economic pressures.\",
+      \"key_findings\": [
+        \"Mahsa Amini protests peaked in late 2022, substantially diminished by early 2023\",
+        \"Security forces demonstrated willingness to use lethal force\",
+        \"No significant elite defections observed\"
+      ],
+      \"relevance\": 0.9
+    },
+    {
+      \"source\": \"Historical analysis of authoritarian regime collapses (Geddes, Wright & Frantz dataset)\",
+      \"summary\": \"Personalist and military regimes in Middle East show high resilience. Collapses typically require security force defection or external intervention.\",
+      \"key_findings\": [
+        \"Average authoritarian regime duration in region: 32 years\",
+        \"Security apparatus defection critical in 85% of collapses\",
+        \"Economic crisis alone rarely sufficient for regime collapse\"
+      ],
+      \"relevance\": 0.85
+    },
+    {
+      \"source\": \"IMF and World Bank Iran economic indicators 2024\",
+      \"summary\": \"Inflation remains high (40-50%) but economy showing adaptation to sanctions through gray market channels.\",
+      \"key_findings\": [
+        \"GDP contraction moderated compared to 2018-2019\",
+        \"Oil exports continue via sanctions evasion\",
+        \"Currency stabilized from 2022 lows\"
+      ],
+      \"relevance\": 0.7
+    }
+  ],
+  \"model_expression\": \"base_rate * economic_pressure * protest_intensity * security_apparatus_loyalty * external_intervention * leadership_crisis\",
+  \"confidence\": 0.75,
+  \"reasoning\": \"Iranian regime has proven highly resilient with entrenched security apparatus. Five-month timeframe extremely short for regime collapse absent acute trigger (military defeat, leadership death, mass defections). Current protest movement insufficient, IRGC loyal, no imminent external intervention. Base rate already low; most drivers reduce probability further. Confidence moderate due to inherent unpredictability of rapid political change.\"
+}
+```"
+    relevance: 0.5p
+    date: 2026-03-12
+}
+
+model: economic_pressure * protest_intensity * security_apparatus_loyalty * external_intervention * leadership_crisis
+
+simulate 10000 iterations
