@@ -7,7 +7,7 @@ driver economic_pressure continuous {
 }
 
 driver protest_intensity continuous {
-    distribution: triangular(0.6, 0.9, 1.4)
+    distribution: triangular(0.6, 1.3, 1.7)
     unit: "multiplier"
     rationale: "Post-Mahsa Amini protests have diminished significantly from late 2022 peak. Current protest activity is lower than critical mass needed for regime collapse, though underlying discontent remains."
 }
