@@ -1,7 +1,7 @@
 question "Will the Iranian regime fall by June 30?"
 
 driver economic_pressure continuous {
-    distribution: triangular(0.8, 1.1, 1.6)
+    distribution: triangular(0.8, 1.3, 1.6)
     unit: "multiplier"
     rationale: "Severe sanctions and 40%+ inflation strain regime legitimacy, but Iran has adapted over decades. Current economic stress elevated but not unprecedented compared to 2012-2013 period."
 }
@@ -565,6 +565,6 @@ The security apparatus loyalty driver is the **strongest pillar** of regime stab
     date: 2026-03-12
 }
 
-model: economic_pressure * protest_intensity * security_apparatus_loyalty * external_intervention * leadership_crisis
+model: ((((economic_pressure * protest_intensity) * security_apparatus_loyalty) * external_intervention) * leadership_crisis)
 
 simulate 10000 iterations

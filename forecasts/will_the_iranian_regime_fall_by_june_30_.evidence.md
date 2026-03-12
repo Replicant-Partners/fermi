@@ -1,6 +1,6 @@
 # Will the Iranian regime fall by June 30?
 
-**Probability:** 2.3% · **Version:** v8 · **Updated:** 2026-03-12 00:25 UTC
+**Probability:** 2.3% · **Version:** v9 · **Updated:** 2026-03-12 00:27 UTC
 
 **Confidence:** Low (14%) · **Drivers:** 5 · **Evidence:** 4 · **Agents:** 5
 
@@ -33,7 +33,7 @@ Examining 15 Middle Eastern authoritarian regimes over 24 years (360 six-month p
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.10 | 1.60 | multiplier |
+| 0.80 | 1.30 | 1.60 | multiplier |
 
 > Severe sanctions and 40%+ inflation strain regime legitimacy, but Iran has adapted over decades. Current economic stress elevated but not unprecedented compared to 2012-2013 period.
 
@@ -55,9 +55,9 @@ Context: Severe sanctions and 40%+ inflation strain regime legitimacy, but Iran 
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (3) — Strong quality (73%)
+### Evidence (3) — Partial quality (53%)
 
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (70%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (50%) · 2026-03-12
 
 Based on my macroeconomic and geopolitical analysis framework, here's my assessment of the **external_intervention** driver:
 
@@ -180,25 +180,7 @@ This implies external intervention contributes ~20% of baseline risk to regime c
 
 **Quantitative anchor**: If external intervention were the *only* driver, regime collapse probability by June 30 would be **5-12%** based on historical precedent and current force posture.
 
-**Key findings:**
-
-- Military Posture:**
-- **Israel-Iran strikes (Oct 2024)**: Israel conducted limited strikes on Iranian military targets following Iranian missile barrage. Calibrated to avoid oil infrastructure and nuclear sites. Estimated ~20 targets hit, primarily air defense systems.
-- **US force posture**: ~40,000 US troops in Middle East (CENTCOM AOR) as of Dec 2024. No significant buildup beyond routine carrier rotations.
-- **Trump administration (Jan 20, 2025)**: Transition to Trump 2.0. Historical pattern: "maximum pressure" sanctions, but **avoided direct military action** in first term despite Soleimani strike (Jan 2020).
-- Policy Signals:**
-- **US stated policy**: No public statements indicating regime change as objective. Focus on nuclear containment and countering proxies.
-- **Israeli capability**: Demonstrated long-range strike capability, but **lacks ground force projection** for regime change operation. Population 9.7M vs Iran 89M.
-- **NATO/coalition**: Zero appetite. Ukraine conflict consuming European military resources.
-- Economic Warfare:**
-- **Iran oil exports**: ~1.5M bpd (Dec 2024 est.), down from 2.5M pre-sanctions but **stabilized via China purchases**.
-- **Sanctions enforcement**: Existing "maximum pressure" already in place. Marginal tightening possible but not regime-collapsing in 5 months.
-- Regional Dynamics:**
-- **Hezbollah degraded**: ~30-40% leadership eliminated (2024), reduces Iranian deterrence but doesn't invite invasion.
-- **Syria**: Assad regime weakened but Iran maintains land bridge to Lebanon.
-- Regime change via external intervention (5-month window):**
-
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (75%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (55%) · 2026-03-12
 
 I'll provide analysis based on available open-source intelligence and historical precedent analysis:
 
@@ -348,25 +330,7 @@ Protest intensity is currently at **~20% of critical threshold**, not 90%. The 2
 
 This driver alone suggests **low probability** of regime collapse by June 30, 2025, absent exogenous shocks or security force defection.
 
-**Key findings:**
-
-- Target Question:** Will the Iranian regime fall by June 30, 2025?
-- Driver:** Protest Intensity
-- Current Estimate:** p5=0.60, p50=0.90, p95=1.40
-- Current Protest Metrics (2024-2025):**
-- **Demonstration frequency:** ~5-15 scattered protests per week (per HRANA, Iran Human Rights Activists News Agency, Dec 2024)
-- Down from 50-100+ daily during Sept-Nov 2022 peak
-- **Participation:** Typically 50-500 participants per event
-- Compare to 10,000-50,000 at 2022 peak events
-- **Geographic spread:** Concentrated in Tehran, Isfahan, Kurdistan provinces
-- 2022 peak: 140+ cities across all 31 provinces simultaneously
-- **Sectoral strikes:** Sporadic teacher strikes (Nov 2024), bazaar closures in Kurdish regions
-- No sustained general strike activity
-- Regime Response Indicators:**
-- **Executions related to protests:** 9 executed for 2022 protests (Iran Human Rights, final count May 2023)
-- **Arrests:** ~20,000 arrested during 2022 protests; ~500-1,000 estimated detained in 2024 actions
-
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (75%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (55%) · 2026-03-12
 
 Based on my analysis framework and available comparative data:
 
@@ -515,24 +479,6 @@ The base rate alone suggests >90% loyalty probability. I'm adjusting downward on
 **Multiplier: 1.28x**
 
 The security apparatus loyalty driver is the **strongest pillar** of regime stability. Absent external military defeat or Supreme Leader death, the probability of institutional IRGC defection in 6 months is **<25%**. Your current estimate underweights the historical base rate and structural entrenchment. The 2022-23 protests were the most serious test in decades, and the IRGC passed with zero institutional fracture.
-
-**Key findings:**
-
-- IRGC Economic Entrenchment:**
-- **40-60% of Iranian economy** controlled by IRGC-affiliated entities (estimates from UANI, Foundation for Defense of Democracies, 2023-2024)
-- **Khatam al-Anbiya Construction Headquarters**: $40+ billion in contracts (infrastructure, oil, gas) - source: Reuters analysis 2023
-- **IRGC pension funds, cooperatives**: estimated $200+ billion in assets
-- **Smuggling networks**: estimated $12-25 billion annually (sanctions evasion, fuel, goods)
-- Force Structure & Compensation:**
-- IRGC: ~190,000 active personnel + ~90,000 Quds Force
-- Basij militia: ~600,000 active, 1M+ mobilizable reserves
-- **Salary premiums**: IRGC personnel earn 2-3x regular military, plus access to subsidized housing, import licenses
-- **Recent increases**: 20% salary boost announced October 2024 for security forces (Iranian state media)
-- Defection/Loyalty Indicators (2022-2025):**
-- **Zero confirmed senior IRGC defections** during Mahsa Amini protests (Sept 2022-Feb 2023)
-- **5 reported mid-level defections** (colonels/below) - unconfirmed, mostly diaspora claims
-- **Internal purges**: 12+ IRGC commanders rotated/arrested for "corruption" (Dec 2023-Nov 2024) - suggests loyalty enforcement, not fracture
-- **Crackdown effectiveness**: 500+ protesters killed, 20,000+ arrested with minimal reported hesitation by security forces
 
 ### Related Evidence
 
@@ -662,9 +608,9 @@ Context: Post-Mahsa Amini protests have diminished significantly from late 2022 
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (3) — Strong quality (73%)
+### Evidence (3) — Partial quality (53%)
 
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (70%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (50%) · 2026-03-12
 
 Based on my macroeconomic and geopolitical analysis framework, here's my assessment of the **external_intervention** driver:
 
@@ -787,25 +733,7 @@ This implies external intervention contributes ~20% of baseline risk to regime c
 
 **Quantitative anchor**: If external intervention were the *only* driver, regime collapse probability by June 30 would be **5-12%** based on historical precedent and current force posture.
 
-**Key findings:**
-
-- Military Posture:**
-- **Israel-Iran strikes (Oct 2024)**: Israel conducted limited strikes on Iranian military targets following Iranian missile barrage. Calibrated to avoid oil infrastructure and nuclear sites. Estimated ~20 targets hit, primarily air defense systems.
-- **US force posture**: ~40,000 US troops in Middle East (CENTCOM AOR) as of Dec 2024. No significant buildup beyond routine carrier rotations.
-- **Trump administration (Jan 20, 2025)**: Transition to Trump 2.0. Historical pattern: "maximum pressure" sanctions, but **avoided direct military action** in first term despite Soleimani strike (Jan 2020).
-- Policy Signals:**
-- **US stated policy**: No public statements indicating regime change as objective. Focus on nuclear containment and countering proxies.
-- **Israeli capability**: Demonstrated long-range strike capability, but **lacks ground force projection** for regime change operation. Population 9.7M vs Iran 89M.
-- **NATO/coalition**: Zero appetite. Ukraine conflict consuming European military resources.
-- Economic Warfare:**
-- **Iran oil exports**: ~1.5M bpd (Dec 2024 est.), down from 2.5M pre-sanctions but **stabilized via China purchases**.
-- **Sanctions enforcement**: Existing "maximum pressure" already in place. Marginal tightening possible but not regime-collapsing in 5 months.
-- Regional Dynamics:**
-- **Hezbollah degraded**: ~30-40% leadership eliminated (2024), reduces Iranian deterrence but doesn't invite invasion.
-- **Syria**: Assad regime weakened but Iran maintains land bridge to Lebanon.
-- Regime change via external intervention (5-month window):**
-
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (75%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (55%) · 2026-03-12
 
 I'll provide analysis based on available open-source intelligence and historical precedent analysis:
 
@@ -955,25 +883,7 @@ Protest intensity is currently at **~20% of critical threshold**, not 90%. The 2
 
 This driver alone suggests **low probability** of regime collapse by June 30, 2025, absent exogenous shocks or security force defection.
 
-**Key findings:**
-
-- Target Question:** Will the Iranian regime fall by June 30, 2025?
-- Driver:** Protest Intensity
-- Current Estimate:** p5=0.60, p50=0.90, p95=1.40
-- Current Protest Metrics (2024-2025):**
-- **Demonstration frequency:** ~5-15 scattered protests per week (per HRANA, Iran Human Rights Activists News Agency, Dec 2024)
-- Down from 50-100+ daily during Sept-Nov 2022 peak
-- **Participation:** Typically 50-500 participants per event
-- Compare to 10,000-50,000 at 2022 peak events
-- **Geographic spread:** Concentrated in Tehran, Isfahan, Kurdistan provinces
-- 2022 peak: 140+ cities across all 31 provinces simultaneously
-- **Sectoral strikes:** Sporadic teacher strikes (Nov 2024), bazaar closures in Kurdish regions
-- No sustained general strike activity
-- Regime Response Indicators:**
-- **Executions related to protests:** 9 executed for 2022 protests (Iran Human Rights, final count May 2023)
-- **Arrests:** ~20,000 arrested during 2022 protests; ~500-1,000 estimated detained in 2024 actions
-
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (75%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (55%) · 2026-03-12
 
 Based on my analysis framework and available comparative data:
 
@@ -1122,24 +1032,6 @@ The base rate alone suggests >90% loyalty probability. I'm adjusting downward on
 **Multiplier: 1.28x**
 
 The security apparatus loyalty driver is the **strongest pillar** of regime stability. Absent external military defeat or Supreme Leader death, the probability of institutional IRGC defection in 6 months is **<25%**. Your current estimate underweights the historical base rate and structural entrenchment. The 2022-23 protests were the most serious test in decades, and the IRGC passed with zero institutional fracture.
-
-**Key findings:**
-
-- IRGC Economic Entrenchment:**
-- **40-60% of Iranian economy** controlled by IRGC-affiliated entities (estimates from UANI, Foundation for Defense of Democracies, 2023-2024)
-- **Khatam al-Anbiya Construction Headquarters**: $40+ billion in contracts (infrastructure, oil, gas) - source: Reuters analysis 2023
-- **IRGC pension funds, cooperatives**: estimated $200+ billion in assets
-- **Smuggling networks**: estimated $12-25 billion annually (sanctions evasion, fuel, goods)
-- Force Structure & Compensation:**
-- IRGC: ~190,000 active personnel + ~90,000 Quds Force
-- Basij militia: ~600,000 active, 1M+ mobilizable reserves
-- **Salary premiums**: IRGC personnel earn 2-3x regular military, plus access to subsidized housing, import licenses
-- **Recent increases**: 20% salary boost announced October 2024 for security forces (Iranian state media)
-- Defection/Loyalty Indicators (2022-2025):**
-- **Zero confirmed senior IRGC defections** during Mahsa Amini protests (Sept 2022-Feb 2023)
-- **5 reported mid-level defections** (colonels/below) - unconfirmed, mostly diaspora claims
-- **Internal purges**: 12+ IRGC commanders rotated/arrested for "corruption" (Dec 2023-Nov 2024) - suggests loyalty enforcement, not fracture
-- **Crackdown effectiveness**: 500+ protesters killed, 20,000+ arrested with minimal reported hesitation by security forces
 
 ### Related Evidence
 
@@ -1269,9 +1161,9 @@ Context: IRGC remains deeply entrenched with extensive economic interests. No si
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (3) — Strong quality (73%)
+### Evidence (3) — Partial quality (53%)
 
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (70%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (50%) · 2026-03-12
 
 Based on my macroeconomic and geopolitical analysis framework, here's my assessment of the **external_intervention** driver:
 
@@ -1394,25 +1286,7 @@ This implies external intervention contributes ~20% of baseline risk to regime c
 
 **Quantitative anchor**: If external intervention were the *only* driver, regime collapse probability by June 30 would be **5-12%** based on historical precedent and current force posture.
 
-**Key findings:**
-
-- Military Posture:**
-- **Israel-Iran strikes (Oct 2024)**: Israel conducted limited strikes on Iranian military targets following Iranian missile barrage. Calibrated to avoid oil infrastructure and nuclear sites. Estimated ~20 targets hit, primarily air defense systems.
-- **US force posture**: ~40,000 US troops in Middle East (CENTCOM AOR) as of Dec 2024. No significant buildup beyond routine carrier rotations.
-- **Trump administration (Jan 20, 2025)**: Transition to Trump 2.0. Historical pattern: "maximum pressure" sanctions, but **avoided direct military action** in first term despite Soleimani strike (Jan 2020).
-- Policy Signals:**
-- **US stated policy**: No public statements indicating regime change as objective. Focus on nuclear containment and countering proxies.
-- **Israeli capability**: Demonstrated long-range strike capability, but **lacks ground force projection** for regime change operation. Population 9.7M vs Iran 89M.
-- **NATO/coalition**: Zero appetite. Ukraine conflict consuming European military resources.
-- Economic Warfare:**
-- **Iran oil exports**: ~1.5M bpd (Dec 2024 est.), down from 2.5M pre-sanctions but **stabilized via China purchases**.
-- **Sanctions enforcement**: Existing "maximum pressure" already in place. Marginal tightening possible but not regime-collapsing in 5 months.
-- Regional Dynamics:**
-- **Hezbollah degraded**: ~30-40% leadership eliminated (2024), reduces Iranian deterrence but doesn't invite invasion.
-- **Syria**: Assad regime weakened but Iran maintains land bridge to Lebanon.
-- Regime change via external intervention (5-month window):**
-
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (75%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (55%) · 2026-03-12
 
 I'll provide analysis based on available open-source intelligence and historical precedent analysis:
 
@@ -1562,25 +1436,7 @@ Protest intensity is currently at **~20% of critical threshold**, not 90%. The 2
 
 This driver alone suggests **low probability** of regime collapse by June 30, 2025, absent exogenous shocks or security force defection.
 
-**Key findings:**
-
-- Target Question:** Will the Iranian regime fall by June 30, 2025?
-- Driver:** Protest Intensity
-- Current Estimate:** p5=0.60, p50=0.90, p95=1.40
-- Current Protest Metrics (2024-2025):**
-- **Demonstration frequency:** ~5-15 scattered protests per week (per HRANA, Iran Human Rights Activists News Agency, Dec 2024)
-- Down from 50-100+ daily during Sept-Nov 2022 peak
-- **Participation:** Typically 50-500 participants per event
-- Compare to 10,000-50,000 at 2022 peak events
-- **Geographic spread:** Concentrated in Tehran, Isfahan, Kurdistan provinces
-- 2022 peak: 140+ cities across all 31 provinces simultaneously
-- **Sectoral strikes:** Sporadic teacher strikes (Nov 2024), bazaar closures in Kurdish regions
-- No sustained general strike activity
-- Regime Response Indicators:**
-- **Executions related to protests:** 9 executed for 2022 protests (Iran Human Rights, final count May 2023)
-- **Arrests:** ~20,000 arrested during 2022 protests; ~500-1,000 estimated detained in 2024 actions
-
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (75%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (55%) · 2026-03-12
 
 Based on my analysis framework and available comparative data:
 
@@ -1729,24 +1585,6 @@ The base rate alone suggests >90% loyalty probability. I'm adjusting downward on
 **Multiplier: 1.28x**
 
 The security apparatus loyalty driver is the **strongest pillar** of regime stability. Absent external military defeat or Supreme Leader death, the probability of institutional IRGC defection in 6 months is **<25%**. Your current estimate underweights the historical base rate and structural entrenchment. The 2022-23 protests were the most serious test in decades, and the IRGC passed with zero institutional fracture.
-
-**Key findings:**
-
-- IRGC Economic Entrenchment:**
-- **40-60% of Iranian economy** controlled by IRGC-affiliated entities (estimates from UANI, Foundation for Defense of Democracies, 2023-2024)
-- **Khatam al-Anbiya Construction Headquarters**: $40+ billion in contracts (infrastructure, oil, gas) - source: Reuters analysis 2023
-- **IRGC pension funds, cooperatives**: estimated $200+ billion in assets
-- **Smuggling networks**: estimated $12-25 billion annually (sanctions evasion, fuel, goods)
-- Force Structure & Compensation:**
-- IRGC: ~190,000 active personnel + ~90,000 Quds Force
-- Basij militia: ~600,000 active, 1M+ mobilizable reserves
-- **Salary premiums**: IRGC personnel earn 2-3x regular military, plus access to subsidized housing, import licenses
-- **Recent increases**: 20% salary boost announced October 2024 for security forces (Iranian state media)
-- Defection/Loyalty Indicators (2022-2025):**
-- **Zero confirmed senior IRGC defections** during Mahsa Amini protests (Sept 2022-Feb 2023)
-- **5 reported mid-level defections** (colonels/below) - unconfirmed, mostly diaspora claims
-- **Internal purges**: 12+ IRGC commanders rotated/arrested for "corruption" (Dec 2023-Nov 2024) - suggests loyalty enforcement, not fracture
-- **Crackdown effectiveness**: 500+ protesters killed, 20,000+ arrested with minimal reported hesitation by security forces
 
 ### Related Evidence
 
@@ -1876,9 +1714,9 @@ Context: Regional tensions with Israel elevated, but direct military interventio
 
 Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (3) — Strong quality (73%)
+### Evidence (3) — Partial quality (53%)
 
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (70%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (50%) · 2026-03-12
 
 Based on my macroeconomic and geopolitical analysis framework, here's my assessment of the **external_intervention** driver:
 
@@ -2001,25 +1839,7 @@ This implies external intervention contributes ~20% of baseline risk to regime c
 
 **Quantitative anchor**: If external intervention were the *only* driver, regime collapse probability by June 30 would be **5-12%** based on historical precedent and current force posture.
 
-**Key findings:**
-
-- Military Posture:**
-- **Israel-Iran strikes (Oct 2024)**: Israel conducted limited strikes on Iranian military targets following Iranian missile barrage. Calibrated to avoid oil infrastructure and nuclear sites. Estimated ~20 targets hit, primarily air defense systems.
-- **US force posture**: ~40,000 US troops in Middle East (CENTCOM AOR) as of Dec 2024. No significant buildup beyond routine carrier rotations.
-- **Trump administration (Jan 20, 2025)**: Transition to Trump 2.0. Historical pattern: "maximum pressure" sanctions, but **avoided direct military action** in first term despite Soleimani strike (Jan 2020).
-- Policy Signals:**
-- **US stated policy**: No public statements indicating regime change as objective. Focus on nuclear containment and countering proxies.
-- **Israeli capability**: Demonstrated long-range strike capability, but **lacks ground force projection** for regime change operation. Population 9.7M vs Iran 89M.
-- **NATO/coalition**: Zero appetite. Ukraine conflict consuming European military resources.
-- Economic Warfare:**
-- **Iran oil exports**: ~1.5M bpd (Dec 2024 est.), down from 2.5M pre-sanctions but **stabilized via China purchases**.
-- **Sanctions enforcement**: Existing "maximum pressure" already in place. Marginal tightening possible but not regime-collapsing in 5 months.
-- Regional Dynamics:**
-- **Hezbollah degraded**: ~30-40% leadership eliminated (2024), reduces Iranian deterrence but doesn't invite invasion.
-- **Syria**: Assad regime weakened but Iran maintains land bridge to Lebanon.
-- Regime change via external intervention (5-month window):**
-
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (75%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (55%) · 2026-03-12
 
 I'll provide analysis based on available open-source intelligence and historical precedent analysis:
 
@@ -2169,25 +1989,7 @@ Protest intensity is currently at **~20% of critical threshold**, not 90%. The 2
 
 This driver alone suggests **low probability** of regime collapse by June 30, 2025, absent exogenous shocks or security force defection.
 
-**Key findings:**
-
-- Target Question:** Will the Iranian regime fall by June 30, 2025?
-- Driver:** Protest Intensity
-- Current Estimate:** p5=0.60, p50=0.90, p95=1.40
-- Current Protest Metrics (2024-2025):**
-- **Demonstration frequency:** ~5-15 scattered protests per week (per HRANA, Iran Human Rights Activists News Agency, Dec 2024)
-- Down from 50-100+ daily during Sept-Nov 2022 peak
-- **Participation:** Typically 50-500 participants per event
-- Compare to 10,000-50,000 at 2022 peak events
-- **Geographic spread:** Concentrated in Tehran, Isfahan, Kurdistan provinces
-- 2022 peak: 140+ cities across all 31 provinces simultaneously
-- **Sectoral strikes:** Sporadic teacher strikes (Nov 2024), bazaar closures in Kurdish regions
-- No sustained general strike activity
-- Regime Response Indicators:**
-- **Executions related to protests:** 9 executed for 2022 protests (Iran Human Rights, final count May 2023)
-- **Arrests:** ~20,000 arrested during 2022 protests; ~500-1,000 estimated detained in 2024 actions
-
-#### Agent: macro_forecaster — relevance 50% · quality ●●● High (75%) · 2026-03-12
+#### Agent: macro_forecaster — relevance 50% · quality ●●○ Med (55%) · 2026-03-12
 
 Based on my analysis framework and available comparative data:
 
@@ -2336,24 +2138,6 @@ The base rate alone suggests >90% loyalty probability. I'm adjusting downward on
 **Multiplier: 1.28x**
 
 The security apparatus loyalty driver is the **strongest pillar** of regime stability. Absent external military defeat or Supreme Leader death, the probability of institutional IRGC defection in 6 months is **<25%**. Your current estimate underweights the historical base rate and structural entrenchment. The 2022-23 protests were the most serious test in decades, and the IRGC passed with zero institutional fracture.
-
-**Key findings:**
-
-- IRGC Economic Entrenchment:**
-- **40-60% of Iranian economy** controlled by IRGC-affiliated entities (estimates from UANI, Foundation for Defense of Democracies, 2023-2024)
-- **Khatam al-Anbiya Construction Headquarters**: $40+ billion in contracts (infrastructure, oil, gas) - source: Reuters analysis 2023
-- **IRGC pension funds, cooperatives**: estimated $200+ billion in assets
-- **Smuggling networks**: estimated $12-25 billion annually (sanctions evasion, fuel, goods)
-- Force Structure & Compensation:**
-- IRGC: ~190,000 active personnel + ~90,000 Quds Force
-- Basij militia: ~600,000 active, 1M+ mobilizable reserves
-- **Salary premiums**: IRGC personnel earn 2-3x regular military, plus access to subsidized housing, import licenses
-- **Recent increases**: 20% salary boost announced October 2024 for security forces (Iranian state media)
-- Defection/Loyalty Indicators (2022-2025):**
-- **Zero confirmed senior IRGC defections** during Mahsa Amini protests (Sept 2022-Feb 2023)
-- **5 reported mid-level defections** (colonels/below) - unconfirmed, mostly diaspora claims
-- **Internal purges**: 12+ IRGC commanders rotated/arrested for "corruption" (Dec 2023-Nov 2024) - suggests loyalty enforcement, not fracture
-- **Crackdown effectiveness**: 500+ protesters killed, 20,000+ arrested with minimal reported hesitation by security forces
 
 ### Related Evidence
 
@@ -2589,7 +2373,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 _Evidence not linked to a specific driver._
 
-### Agent: fermi (Claude API) — relevance 50% · quality ●●● High (80%)
+### Agent: fermi (Claude API) — relevance 50% · quality ●●○ Med (60%)
 
 ```json
 {
@@ -2689,19 +2473,6 @@ _Evidence not linked to a specific driver._
 }
 ```
 
-**Key findings:**
-
-- "base_rate": {
-- "reference_class": "Middle Eastern authoritarian regime collapses within 6-month period (2000-2024)",
-- "historical_frequency": 0.015,
-- "sample_size": 45,
-- "reasoning": "Examining 15 Middle Eastern authoritarian regimes over 24 years (360 six-month periods total), approximately 7 experienced regime collapse (Tunisia 2011, Egypt 2011, Libya 2011, Yemen 2012, Iraq 2003, Syria partial 2011-ongoing, Sudan 2019), yielding ~1.5% per 6-month period."
-- "drivers": [
-- "name": "economic_pressure",
-- "display_name": "Economic Sanctions & Inflation Impact",
-- "type": "continuous",
-- "p5": 0.8,
-
 ---
 
 ## Methodology
@@ -2795,4 +2566,4 @@ Context: Khamenei's age (85) creates succession uncertainty, but no immediate he
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v8 · 2026-03-12 00:25 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v9 · 2026-03-12 00:27 UTC_
