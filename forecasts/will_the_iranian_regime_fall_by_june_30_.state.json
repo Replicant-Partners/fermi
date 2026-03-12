@@ -1,7 +1,7 @@
 {
-  "current_version": 10,
-  "predicted_probability": 0.020753456331719856,
-  "inside_view_explanation": "Starting from a 1.5% base rate, our model significantly increases the probability to 2.1%. The key factors are: economic_pressure, protest_intensity, security_apparatus_loyalty. Most influential: external_intervention (27%), security_apparatus_loyalty (21%), protest_intensity (19%).",
+  "current_version": 11,
+  "predicted_probability": 0.017745817682356377,
+  "inside_view_explanation": "Starting from a 1.5% base rate, our model moderately increases the probability to 1.8%. The key factors are: economic_pressure, protest_intensity, security_apparatus_loyalty. Most influential: external_intervention (39%), protest_intensity (32%), security_apparatus_loyalty (24%).",
   "forecast_confidence": 0.42,
   "versions": [
     {
@@ -63,14 +63,20 @@
       "timestamp": "2026-03-12 00:27",
       "probability": 0.020753456331719856,
       "change_summary": "2.1% (→), 5 drivers, 4 evidence, 1 agents"
+    },
+    {
+      "version": 11,
+      "timestamp": "2026-03-12 00:27",
+      "probability": 0.017745817682356377,
+      "change_summary": "1.8% (→), 5 drivers, 4 evidence, 1 agents"
     }
   ],
   "sim_results": {
-    "mean": 0.9712617563244894,
-    "median": 0.9094700698603765,
-    "p5": 0.4950193692935071,
-    "p95": 1.6384116134585853,
-    "std_dev": 0.35914406395284465,
+    "mean": 1.1996172753272911,
+    "median": 1.126470591887897,
+    "p5": 0.5915537933140754,
+    "p95": 2.048043928558936,
+    "std_dev": 0.45671329653636206,
     "iterations": 10000
   },
   "base_rate": {
