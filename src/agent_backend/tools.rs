@@ -4580,7 +4580,6 @@ async fn execute_web_search(input: &serde_json::Value) -> Result<String, String>
     let mut req = client
         .get("https://api.search.brave.com/res/v1/web/search")
         .header("Accept", "application/json")
-        .header("Accept-Encoding", "gzip")
         .header("X-Subscription-Token", &api_key)
         .query(&[("q", query), ("count", &count.to_string()), ("search_lang", "en")]);
 
