@@ -32,6 +32,9 @@
 ///   - mint_creature: store a minted creature specimen (workspace-only)
 ///   - generate_specimen_art: generate unique naturalist illustration for a creature via Gemini
 ///   - scan_nearby_creatures: H3 proximity scan for enemy_sensor agent threat assessment
+///   - web_search: search the web via Brave Search API (requires BRAVE_SEARCH_API_KEY)
+///   - run_monte_carlo: execute FPL program via the real Monte Carlo engine, returns stats + histogram
+///   - run_sensitivity_analysis: Sobol global sensitivity analysis (Saltelli) on an FPL program
 use crate::agent_backend::agent_card::AgentCard;
 use crate::agent_backend::executor::{AgentExecutor, ExecutionContext};
 use crate::agent_backend::llm_executor::ClaudeTool;
@@ -990,6 +993,76 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: false,
             is_delegation: false,
         },
+        // ─── Web Search ───
+        BuiltinToolDef {
+            name: "web_search",
+            description: "Search the web for current information using Brave Search. Returns recent news, articles, and web pages with titles, URLs, descriptions, and publication dates. Use this to get up-to-date evidence that goes beyond your training data cutoff.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query. Be specific: include names, dates, ticker symbols, or event terms. E.g. 'RKLB Q4 2025 earnings revenue' or 'Fed interest rate decision March 2026'."
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of results to return (default: 5, max: 10)",
+                        "default": 5
+                    },
+                    "freshness": {
+                        "type": "string",
+                        "description": "Filter by recency: 'pd' = past day, 'pw' = past week, 'pm' = past month, 'py' = past year. Omit for all-time results.",
+                        "enum": ["pd", "pw", "pm", "py"]
+                    }
+                },
+                "required": ["query"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        // ─── Monte Carlo / FPL Simulation ───
+        BuiltinToolDef {
+            name: "run_monte_carlo",
+            description: "Execute a Monte Carlo simulation from an FPL (Fermi Probabilistic Language) program. Parses the program, samples from each driver's distribution, and returns full statistics: mean, median, percentiles (p5/p25/p75/p95), std_dev, min/max, and a histogram. Use this to produce rigorous probabilistic results rather than reasoning about distributions informally.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "fpl_program": {
+                        "type": "string",
+                        "description": "FPL source code defining drivers (with distributions), a model expression, and a simulate statement. Example:\n  driver x continuous { distribution: triangular(0.3, 0.6, 0.9) }\n  model: x\n  simulate 10000 iterations"
+                    },
+                    "iterations": {
+                        "type": "integer",
+                        "description": "Number of Monte Carlo iterations (default: 10000). Overrides the simulate statement in the FPL if provided.",
+                        "default": 10000
+                    }
+                },
+                "required": ["fpl_program"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "run_sensitivity_analysis",
+            description: "Run Sobol global sensitivity analysis on an FPL program. Returns first-order and total-order Sobol indices for each driver, ranked by total-order impact, plus bootstrap standard errors for uncertainty quantification. Use this to identify which input variables drive the most outcome variance — a proper variance decomposition, not a heuristic tornado diagram.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "fpl_program": {
+                        "type": "string",
+                        "description": "FPL source code with driver definitions and model expression."
+                    },
+                    "iterations": {
+                        "type": "integer",
+                        "description": "Baseline iterations for the analysis (default: 10000). More iterations improve index precision.",
+                        "default": 10000
+                    }
+                },
+                "required": ["fpl_program"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
     ]
 }
 
@@ -1172,6 +1245,11 @@ impl ToolRegistry {
                 )
                 .await
             }
+            // Web Search
+            "web_search" => execute_web_search(input).await,
+            // Monte Carlo / FPL Simulation tools
+            "run_monte_carlo" => execute_run_monte_carlo(input).await,
+            "run_sensitivity_analysis" => execute_run_sensitivity_analysis(input).await,
             // Polymarket tools for prediction_market agent and general orchestra use
             "polymarket_search" => execute_polymarket_search(input).await,
             "polymarket_event" => execute_polymarket_event(input).await,
@@ -4475,4 +4553,235 @@ async fn execute_get_workspace_messages(
         .collect();
 
     serde_json::to_string_pretty(&formatted).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Web Search ───────────────────────────────────────────────────
+
+/// Search the web using the Brave Search API.
+/// Requires BRAVE_SEARCH_API_KEY environment variable.
+async fn execute_web_search(input: &serde_json::Value) -> Result<String, String> {
+    let query = input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: query")?;
+    let count = input
+        .get("count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5)
+        .min(10) as usize;
+    let freshness = input
+        .get("freshness")
+        .and_then(|v| v.as_str());
+
+    let api_key = std::env::var("BRAVE_SEARCH_API_KEY")
+        .map_err(|_| "BRAVE_SEARCH_API_KEY environment variable not set. Get a free API key at https://brave.com/search/api/".to_string())?;
+
+    let client = reqwest::Client::new();
+    let mut req = client
+        .get("https://api.search.brave.com/res/v1/web/search")
+        .header("Accept", "application/json")
+        .header("Accept-Encoding", "gzip")
+        .header("X-Subscription-Token", &api_key)
+        .query(&[("q", query), ("count", &count.to_string()), ("search_lang", "en")]);
+
+    if let Some(f) = freshness {
+        req = req.query(&[("freshness", f)]);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("Brave Search request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Brave Search API error {}: {}", status, body));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Brave Search response: {}", e))?;
+
+    let results = data
+        .get("web")
+        .and_then(|w| w.get("results"))
+        .and_then(|r| r.as_array());
+
+    let Some(results) = results else {
+        return Ok("No web results found for this query.".to_string());
+    };
+
+    if results.is_empty() {
+        return Ok("No web results found for this query.".to_string());
+    }
+
+    let mut output = format!("## Web Search Results for: {}\n\n", query);
+    for (i, result) in results.iter().enumerate() {
+        let title = result.get("title").and_then(|v| v.as_str()).unwrap_or("(no title)");
+        let url = result.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        let description = result
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no description)");
+        let age = result
+            .get("age")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let published = result
+            .get("page_age")
+            .and_then(|v| v.as_str())
+            .or(if age.is_empty() { None } else { Some(age) })
+            .unwrap_or("(date unknown)");
+
+        output.push_str(&format!(
+            "**{}. {}**\n{}\n{}\n{}\n\n",
+            i + 1, title, url, published, description
+        ));
+    }
+
+    // Truncate to avoid context overflow
+    if output.len() > 12_000 {
+        output.truncate(12_000);
+        output.push_str("\n... [truncated]");
+    }
+
+    Ok(output)
+}
+
+// ─── Monte Carlo / FPL Simulation tools ───────────────────────────
+
+/// Parse an FPL program string into an AST Program, returning a human-readable error on failure.
+fn parse_fpl(source: &str) -> Result<crate::ast::Program, String> {
+    let tokens = crate::lexer::Lexer::new(source)
+        .tokenize()
+        .map_err(|errs| {
+            errs.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })?;
+    crate::parser::Parser::new(tokens)
+        .parse()
+        .map_err(|e| e.to_string())
+}
+
+/// Run a Monte Carlo simulation from an FPL program.
+async fn execute_run_monte_carlo(input: &serde_json::Value) -> Result<String, String> {
+    let source = input
+        .get("fpl_program")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: fpl_program")?;
+
+    let program = parse_fpl(source)?;
+
+    let iterations = input
+        .get("iterations")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10_000) as usize;
+
+    let mut executor = crate::executor::Executor::new(iterations);
+    let results = executor
+        .execute(&program)
+        .map_err(|e| format!("Simulation error: {}", e))?;
+
+    // Build a compact ASCII histogram (10 bins)
+    let histogram = results.histogram(10);
+    let max_count = histogram.iter().map(|(_, c)| *c).max().unwrap_or(1);
+    let bar_width = 30usize;
+    let mut hist_str = String::new();
+    for (bin_start, count) in &histogram {
+        let bar_len = (count * bar_width) / max_count;
+        hist_str.push_str(&format!(
+            "  {:>6.3} | {:<30} {}\n",
+            bin_start,
+            "#".repeat(bar_len),
+            count
+        ));
+    }
+
+    let result = json!({
+        "iterations": results.iterations,
+        "mean": results.mean,
+        "median": results.median,
+        "std_dev": results.std_dev,
+        "min": results.min,
+        "max": results.max,
+        "percentiles": {
+            "p5": results.p5,
+            "p25": results.p25,
+            "p75": results.p75,
+            "p95": results.p95,
+        },
+        "base_rate": results.base_rate,
+        "divergence_relative": results.divergence_relative,
+        "divergence_absolute": results.divergence_absolute,
+        "histogram_ascii": hist_str,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// Run Sobol global sensitivity analysis on an FPL program.
+async fn execute_run_sensitivity_analysis(input: &serde_json::Value) -> Result<String, String> {
+    let source = input
+        .get("fpl_program")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: fpl_program")?;
+
+    let program = parse_fpl(source)?;
+
+    let iterations = input
+        .get("iterations")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10_000) as usize;
+
+    let analysis = crate::sensitivity::full_sensitivity_analysis(&program, iterations)
+        .map_err(|e| format!("Sensitivity analysis error: {}", e))?;
+
+    // Build ranked driver list with indices
+    let drivers: Vec<serde_json::Value> = analysis
+        .ranked_drivers
+        .iter()
+        .filter_map(|name| analysis.driver_sensitivities.get(name))
+        .map(|ds| {
+            let ci_low = (ds.total_order_index - 1.96 * ds.standard_error).max(0.0);
+            let ci_high = (ds.total_order_index + 1.96 * ds.standard_error).min(1.0);
+            json!({
+                "driver": ds.driver_name,
+                "first_order_index": ds.first_order_index,
+                "total_order_index": ds.total_order_index,
+                "variance_contribution": ds.variance_contribution,
+                "standard_error": ds.standard_error,
+                "confidence_interval_95": [ci_low, ci_high],
+            })
+        })
+        .collect();
+
+    // ASCII tornado diagram
+    let mut tornado = String::new();
+    for ds in &drivers {
+        let s_t = ds["total_order_index"].as_f64().unwrap_or(0.0);
+        let bar_len = (s_t * 40.0) as usize;
+        tornado.push_str(&format!(
+            "  {:<30} | {:<40} {:.3}\n",
+            ds["driver"].as_str().unwrap_or(""),
+            "#".repeat(bar_len),
+            s_t
+        ));
+    }
+
+    let result = json!({
+        "baseline": {
+            "mean": analysis.baseline.mean,
+            "std_dev": analysis.baseline.std_dev,
+            "p5": analysis.baseline.p5,
+            "p95": analysis.baseline.p95,
+        },
+        "drivers_ranked_by_total_order": drivers,
+        "tornado_diagram_ascii": tornado,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
 }

@@ -8,51 +8,41 @@
     "executor": "llm",
     "mcp_tools": [
       {
-        "name": "simulation_engine",
-        "description": "Run Monte Carlo simulations with configurable parameters and distributions",
+        "name": "run_monte_carlo",
+        "description": "Execute a Monte Carlo simulation from an FPL (Fermi Probabilistic Language) program. Returns mean, median, std_dev, percentiles (p5/p25/p75/p95), min/max, and an ASCII histogram. Use this instead of reasoning informally about distributions.",
         "input_schema": {
           "type": "object",
           "properties": {
-            "query": {
+            "fpl_program": {
               "type": "string",
-              "description": "The input query or parameters"
+              "description": "FPL source defining drivers with distributions, a model expression, and a simulate statement. Example:\n  driver x continuous { distribution: triangular(0.3, 0.6, 0.9) }\n  model: x\n  simulate 10000 iterations"
+            },
+            "iterations": {
+              "type": "integer",
+              "description": "Number of Monte Carlo iterations (default: 10000)",
+              "default": 10000
             }
           },
-          "required": [
-            "query"
-          ]
+          "required": ["fpl_program"]
         }
       },
       {
-        "name": "distribution_fitter",
-        "description": "Fit probability distributions to historical data or expert estimates",
+        "name": "run_sensitivity_analysis",
+        "description": "Run Sobol global sensitivity analysis (Saltelli method) on an FPL program. Returns first-order and total-order Sobol indices for each driver ranked by total-order impact, bootstrap standard errors, and 95% confidence intervals. Use this for rigorous variance decomposition instead of heuristic tornado diagrams.",
         "input_schema": {
           "type": "object",
           "properties": {
-            "query": {
+            "fpl_program": {
               "type": "string",
-              "description": "The input query or parameters"
+              "description": "FPL source code with driver definitions and model expression."
+            },
+            "iterations": {
+              "type": "integer",
+              "description": "Baseline iterations for the analysis (default: 10000)",
+              "default": 10000
             }
           },
-          "required": [
-            "query"
-          ]
-        }
-      },
-      {
-        "name": "sensitivity_analyzer",
-        "description": "Identify which input variables have the greatest impact on outcomes",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "The input query or parameters"
-            }
-          },
-          "required": [
-            "query"
-          ]
+          "required": ["fpl_program"]
         }
       }
     ],

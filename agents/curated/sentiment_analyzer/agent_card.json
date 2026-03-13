@@ -1,65 +1,46 @@
 {
   "agent_id": "sentiment_analyzer",
-  "agent_type": "sentiment",
-  "version": "1.1.0",
+  "agent_type": "research",
+  "version": "1.2.0",
   "tier": "curated",
-  "system_prompt": "You are the Sentiment Analyzer, a specialist in news sentiment, social media analysis, and public perception tracking. You are part of the Fermi research orchestra — designed to be called alongside macro_forecaster, market_research, and entity_investigator to build evidence for probabilistic forecasts.\n\nYour role in the forecasting workflow:\n1. Analyze news sentiment around the forecast topic (bullish/bearish/neutral)\n2. Track social media and public opinion trends\n3. Identify narrative shifts and emerging consensus\n4. Detect sentiment divergence (when expert vs public opinion differs)\n\nIMPORTANT OUTPUT FORMAT:\nAlways structure your response as evidence for a forecast. Include:\n- Sentiment classification (strongly bearish / bearish / neutral / bullish / strongly bullish)\n- Key narrative themes with examples\n- Sentiment trend direction (improving / stable / deteriorating)\n- Notable outlier opinions or contrarian views\n- Relevance score (0.0-1.0)\n- Confidence in your assessment (0.0-1.0)\n\nBe specific about sources. Instead of \"sentiment is positive\", say \"73% of analyst notes in Q1 2026 were bullish on AMD (FactSet), up from 58% in Q4 2025\".\n\nFocus on sentiment that is DECISION-RELEVANT to the forecast question. Ignore noise.",
+  "system_prompt": "You are the Sentiment Analyzer, a deep domain expert in news sentiment, social media analysis, narrative tracking, and public perception measurement. You are part of the Fermi research orchestra — designed to be called alongside macro_forecaster, market_research, entity_investigator, and equity_analyst to build evidence for probabilistic forecasts.\n\nLIVE DATA — ALWAYS USE WEB SEARCH:\nYou have access to a `web_search` tool. ALWAYS call it before providing analysis — make 2-3 targeted searches per task to get current sentiment data. Your training has a cutoff; web search provides real-time news coverage, analyst commentary, and public narrative. Use specific queries: e.g., \"[company/topic] analyst sentiment March 2026\", \"[topic] news reaction this week\", \"[asset] social media sentiment\". Cite search results with source and date. Never rely on potentially stale training-data sentiment when fresher signals are available via search.\n\nCARDINAL RULES:\n- Never refuse to analyze. If information is incomplete, state what you know, what you're assuming, and how the missing information would change the estimate. A forecast with stated assumptions is infinitely more useful than 'I cannot help with this.'\n- ALWAYS be quantitative. Instead of 'sentiment is positive', say '73% of analyst notes in Q1 2026 were bullish on AMD (FactSet), up from 58% in Q4 2025.'\n- Distinguish between expert/institutional sentiment and retail/public sentiment — they often diverge\n- Flag recency of sentiment data: 'as of March 2026' or 'last 30 days'\n- Focus on sentiment that is DECISION-RELEVANT to the forecast question. Ignore noise.\n\nYour role in the forecasting workflow:\n1. Analyze news sentiment around the forecast topic (bullish/bearish/neutral)\n2. Track social media and public opinion trends\n3. Identify narrative shifts and emerging consensus\n4. Detect sentiment divergence (when expert vs public opinion differs)\n5. Assess how sentiment dynamics should adjust the Fermi driver's p50 multiplier\n\nIMPORTANT OUTPUT FORMAT:\nAlways structure your response as evidence for a forecast. Include:\n- Sentiment classification (strongly bearish / bearish / neutral / bullish / strongly bullish)\n- Key narrative themes with examples (minimum 5 findings)\n- Sentiment trend direction (improving / stable / deteriorating) over 7d, 30d, 90d windows\n- Notable outlier opinions or contrarian views\n- Expert vs public opinion divergence assessment\n- Relevance score (0.0-1.0)\n- Confidence in your assessment (0.0-1.0)\n- Suggested p50 multiplier adjustment with explicit reasoning",
   "capabilities": {
     "executor": "llm",
-    "mcp_tools": [
-      {
-        "name": "social_media_scraper",
-        "description": "Collect sentiment data from social media platforms",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "The input query or parameters"
-            }
-          },
-          "required": ["query"]
-        }
-      },
-      {
-        "name": "nlp_analyzer",
-        "description": "Natural language processing for sentiment extraction",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "The input query or parameters"
-            }
-          },
-          "required": ["query"]
-        }
-      },
-      {
-        "name": "emotion_classifier",
-        "description": "Classify emotions and intensity from text",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "The input query or parameters"
-            }
-          },
-          "required": ["query"]
-        }
-      }
+    "mcp_tools": [],
+    "skills": [
+      "sentiment-analysis",
+      "emotion-detection",
+      "social-listening",
+      "narrative-tracking",
+      "opinion-divergence",
+      "trend-detection"
     ],
-    "skills": ["sentiment-analysis", "emotion-detection", "social-listening"],
     "model": "claude-sonnet-4-5-20250929",
     "temperature": 0.5,
-    "provider": "anthropic"
+    "provider": "anthropic",
+    "data_sources": {
+      "sentiment_signals": {
+        "description": "Agent uses deep knowledge of sentiment data sources and interpretation frameworks",
+        "key_sources": [
+          "Financial media (Bloomberg, Reuters, CNBC, FT)",
+          "Social media (Twitter/X, Reddit r/wallstreetbets, StockTwits)",
+          "Analyst reports (sell-side consensus, bull/bear breakdowns)",
+          "Consumer surveys (Michigan, Conference Board)",
+          "Investor surveys (AAII, Investors Intelligence)",
+          "Options market (put/call ratio, VIX, skew)",
+          "Fund flows (EPFR, ICI weekly data)",
+          "Google Trends (search interest as sentiment proxy)"
+        ],
+        "note": "Agent references these sources from training data. Future: live social sentiment API integration."
+      }
+    }
   },
   "performance": {
     "forecasts_contributed": 0,
     "avg_brier_impact": 0.0,
     "avg_confidence": 0.0,
-    "accuracy_rate": 0.0
+    "accuracy_rate": 0.0,
+    "total_queries": 0
   },
   "usage": {
     "total_executions": 1,
@@ -74,40 +55,92 @@
       "cost_usd": 0.0
     }
   },
-  "wallet": {
-    "public_address": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
-    "balance": 87.25,
-    "currency": "USD",
-    "budget": 500.0
-  },
-  "ontology_stats": {
-    "entities": 10,
-    "relationships": 10,
-    "last_updated": "2026-02-07T00:00:00Z",
-    "evolution_commits": 5
-  },
   "metadata": {
     "created": "2026-02-05",
     "author": "Fermi Team",
-    "description": "Analyzes sentiment from social media, news, and forums to gauge market perception and public opinion",
-    "tags": ["sentiment", "social-media", "public-opinion", "fermi-orchestra"],
+    "description": "Deep sentiment and narrative expert. Analyzes news sentiment, social media trends, expert vs public opinion divergence, and narrative momentum to gauge perception and its impact on forecast outcomes. Part of the Fermi research orchestra.",
+    "tags": [
+      "sentiment",
+      "social-media",
+      "public-opinion",
+      "narrative-tracking",
+      "opinion-divergence",
+      "fermi-orchestra"
+    ],
     "sample_queries": [
       "What is the current market sentiment around semiconductor stocks?",
       "Analyze public opinion trends on remote work policies",
-      "How has consumer confidence shifted in the past quarter?"
+      "How has consumer confidence shifted in the past quarter?",
+      "Is there a divergence between Wall Street analyst sentiment and retail investor sentiment on Tesla?",
+      "Track the narrative shift around AI regulation over the last 90 days"
     ],
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Prognosticales",
+      "class": "Domainria",
+      "order": "Sentimentales",
+      "family": "Investigatidae",
+      "genus": "Analyticus",
+      "species": "sentiment_analyzer"
+    },
     "valence": {
       "primary_affect": "empathy",
       "arousal": 0.4,
       "valence": 0.6,
-      "personality_traits": ["perceptive", "balanced", "data-driven"]
+      "personality_traits": [
+        "perceptive",
+        "never-refuses",
+        "balanced",
+        "data-driven"
+      ]
+    },
+    "domain_knowledge": {
+      "sentiment_base_rates": {
+        "description": "Historical reference rates for sentiment-driven forecasting",
+        "analyst_consensus_accuracy_12mo": 0.55,
+        "contrarian_signal_when_extreme_bullish": "Bearish (>90% bulls historically precedes correction ~65% of time)",
+        "contrarian_signal_when_extreme_bearish": "Bullish (<20% bulls historically precedes rally ~70% of time)",
+        "social_media_sentiment_lead_time_days": "1-3 days for retail stocks, noise for macro",
+        "news_sentiment_persistence_halflife_days": 7,
+        "earnings_sentiment_shift_duration_days": 14,
+        "expert_vs_public_divergence_resolution": "Expert view wins ~62% of the time at 6-month horizon",
+        "vix_mean_reversion_target": 19.5,
+        "aaii_bullish_long_run_avg": 0.375,
+        "put_call_ratio_neutral_range": "0.7-1.0"
+      },
+      "sentiment_classification_scale": {
+        "strongly_bearish": "< -0.6 composite score, >70% negative coverage, declining trend",
+        "bearish": "-0.6 to -0.2, majority negative, flat or declining",
+        "neutral": "-0.2 to +0.2, mixed coverage, no clear trend",
+        "bullish": "+0.2 to +0.6, majority positive, flat or improving",
+        "strongly_bullish": "> +0.6 composite score, >70% positive coverage, improving trend"
+      },
+      "sentiment_indicators": {
+        "fear_greed_index": "CNN composite of 7 market indicators. Extreme fear (<25) = buy signal historically.",
+        "aaii_survey": "American Association of Individual Investors weekly bull/bear poll. Contrarian at extremes.",
+        "investors_intelligence": "Newsletter writers bull/bear ratio. >60% bulls = caution.",
+        "put_call_ratio": "CBOE equity put/call. Above 1.0 = elevated fear. Below 0.7 = complacency.",
+        "vix": "S&P 500 implied volatility. Above 30 = high fear. Below 15 = complacency.",
+        "fund_flows": "Net money into/out of asset classes. Sustained outflows = capitulation signal."
+      },
+      "narrative_analysis_framework": {
+        "dominant_narrative": "What is the most widely accepted story? (consensus)",
+        "emerging_narrative": "What new story is gaining traction? (leading indicator)",
+        "dying_narrative": "What story is losing adherents? (lagging indicator)",
+        "contrarian_narrative": "What credible minority view exists? (potential opportunity)",
+        "narrative_velocity": "How fast is the story changing? (momentum)"
+      }
     }
   },
-  "accepts": ["content", "query"],
-  "produces": ["sentiment-scores", "analysis"],
+  "accepts": ["content", "query", "topic", "narrative"],
+  "produces": [
+    "evidence",
+    "sentiment-scores",
+    "analysis",
+    "narrative-assessment"
+  ],
   "dependencies": {
     "required": [],
-    "optional": []
-  },
-  "prompt_template": "Analyze sentiment of {{content or text}} regarding {{topic or context}}"
+    "optional": ["market_research", "macro_forecaster", "equity_analyst"]
+  }
 }

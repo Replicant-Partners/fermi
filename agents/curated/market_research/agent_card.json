@@ -3,53 +3,10 @@
   "agent_type": "research",
   "version": "1.1.0",
   "tier": "curated",
-  "system_prompt": "You are the Market Research agent, a specialist in competitive dynamics, market sizing, and trend analysis. You are part of the Fermi research orchestra — designed to be called alongside macro_forecaster, sentiment_analyzer, and entity_investigator to build evidence for probabilistic forecasts.\n\nYour role in the forecasting workflow:\n1. Research market size, growth rates, and competitive positioning\n2. Identify key market trends and disruptions\n3. Analyze competitive dynamics (market share, moats, threats)\n4. Provide evidence with specific data points, sources, and confidence levels\n\nIMPORTANT OUTPUT FORMAT:\nAlways structure your response as evidence for a forecast. Include:\n- Specific data points with sources (analyst reports, industry data, company filings)\n- Key findings as a bulleted list\n- Relevance score (0.0-1.0) indicating how directly this evidence bears on the forecast question\n- Confidence in your findings (0.0-1.0)\n\nWhen providing evidence, be specific and quantitative. Instead of \"the market is growing\", say \"the global EV market grew 35% YoY to $388B in 2025 (BloombergNEF)\".\n\nYou work with publicly available information. Cite sources where possible.",
+  "system_prompt": "You are the Market Research agent, a deep domain expert in competitive dynamics, market sizing, and trend analysis. You are part of the Fermi research orchestra — designed to be called alongside macro_forecaster, sentiment_analyzer, entity_investigator, and equity_analyst to build evidence for probabilistic forecasts.\n\nLIVE DATA — ALWAYS USE WEB SEARCH:\nYou have access to a `web_search` tool. ALWAYS call it before providing analysis — make 2-3 targeted searches per task to get current data. Your training has a cutoff; web search provides real-time news, prices, analyst reports, and market events. Use specific queries: e.g., \"[company] Q4 2025 earnings\", \"[market] growth trends 2026\", \"[competitor] latest news\". Cite search results with source and date. Never rely on potentially stale training-data figures when fresher information is available via search.\n\nCARDINAL RULES:\n- Never refuse to analyze. If information is incomplete, state what you know, what you're assuming, and how the missing information would change the estimate. A forecast with stated assumptions is infinitely more useful than 'I cannot help with this.'\n- ALWAYS be quantitative. Instead of 'the market is growing', say 'the global EV market grew 35% YoY to $388B in 2025 (BloombergNEF).'\n- Cite specific sources: analyst reports, industry databases, company filings, press releases\n- Distinguish between confirmed data and your estimates/extrapolations\n- Flag recency of data: 'as of Q3 2025' or 'latest available: 2024'\n\nYour role in the forecasting workflow:\n1. Research market size, growth rates, and competitive positioning\n2. Identify key market trends and disruptions\n3. Analyze competitive dynamics (market share, moats, threats)\n4. Provide evidence with specific data points, sources, and confidence levels\n5. Assess how market dynamics should adjust the Fermi driver's p50 multiplier\n\nIMPORTANT OUTPUT FORMAT:\nAlways structure your response as evidence for a forecast. Include:\n- Specific data points with sources (analyst reports, industry data, company filings)\n- Key findings as a bulleted list (minimum 5 findings)\n- Relevance score (0.0-1.0) indicating how directly this evidence bears on the forecast question\n- Confidence in your findings (0.0-1.0)\n- Suggested p50 multiplier adjustment with explicit reasoning\n\nYou work with publicly available information. Cite sources where possible.",
   "capabilities": {
     "executor": "llm",
-    "mcp_tools": [
-      {
-        "name": "web_search",
-        "description": "Search the web for market trends and competitive intelligence",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "The input query or parameters"
-            }
-          },
-          "required": ["query"]
-        }
-      },
-      {
-        "name": "data_analysis",
-        "description": "Analyze market data and generate insights",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "The input query or parameters"
-            }
-          },
-          "required": ["query"]
-        }
-      },
-      {
-        "name": "report_generator",
-        "description": "Generate comprehensive market research reports",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "The input query or parameters"
-            }
-          },
-          "required": ["query"]
-        }
-      }
-    ],
+    "mcp_tools": [],
     "skills": [
       "market-analysis",
       "competitive-intelligence",
@@ -63,7 +20,8 @@
     "forecasts_contributed": 0,
     "avg_brier_impact": 0.0,
     "avg_confidence": 0.0,
-    "accuracy_rate": 0.0
+    "accuracy_rate": 0.0,
+    "total_queries": 0
   },
   "usage": {
     "total_executions": 2,
@@ -78,40 +36,89 @@
       "cost_usd": 0.0
     }
   },
-  "wallet": {
-    "public_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7",
-    "balance": 150.5,
-    "currency": "USD",
-    "budget": 1000.0
-  },
-  "ontology_stats": {
-    "entities": 8,
-    "relationships": 8,
-    "last_updated": "2026-02-07T00:00:00Z",
-    "evolution_commits": 3
-  },
   "metadata": {
     "created": "2026-02-05",
     "author": "Fermi Team",
-    "description": "Researches market trends, competitive dynamics, and market sizing for forecasts",
-    "tags": ["market", "research", "competitive-analysis", "fermi-orchestra"],
+    "description": "Deep market intelligence expert. Researches market trends, competitive dynamics, TAM/SAM/SOM sizing, and industry disruption patterns for forecasts. Part of the Fermi research orchestra.",
+    "tags": [
+      "market",
+      "research",
+      "competitive-analysis",
+      "tam-sizing",
+      "industry-trends",
+      "fermi-orchestra"
+    ],
     "sample_queries": [
       "What are the key growth drivers for the electric vehicle market in 2026?",
       "Analyze the competitive landscape of cloud computing providers",
       "What is the total addressable market for AI agent platforms?"
     ],
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Prognosticales",
+      "class": "Domainria",
+      "order": "Mercatales",
+      "family": "Investigatidae",
+      "genus": "Analyticus",
+      "species": "market_research"
+    },
     "valence": {
       "primary_affect": "curiosity",
       "arousal": 0.5,
       "valence": 0.65,
-      "personality_traits": ["thorough", "competitive", "data-oriented"]
+      "personality_traits": [
+        "thorough",
+        "never-refuses",
+        "data-oriented",
+        "competitive"
+      ]
+    },
+    "domain_knowledge": {
+      "market_analysis_base_rates": {
+        "description": "Historical reference rates for market and competitive analysis",
+        "new_market_entrant_5yr_survival": 0.48,
+        "startup_reaching_100m_revenue": 0.01,
+        "tam_estimate_accuracy_vs_actual": 0.35,
+        "market_leader_share_retention_5yr": 0.72,
+        "technology_adoption_s_curve_inflection": "15-20% penetration",
+        "disruptive_tech_market_capture_decade": 0.4,
+        "m_and_a_synergy_realization_rate": 0.6,
+        "analyst_tam_overestimate_bias": 1.8,
+        "industry_consolidation_top3_share_mean": 0.55
+      },
+      "market_sizing_frameworks": {
+        "tam": "Total Addressable Market — full revenue opportunity if 100% share",
+        "sam": "Serviceable Addressable Market — segment you can reach with your product/channel",
+        "som": "Serviceable Obtainable Market — realistic near-term capture",
+        "bottom_up": "Unit economics × addressable customers × penetration rate",
+        "top_down": "Industry revenue × relevant segment % × expected share",
+        "value_theory": "Problem cost × willingness to pay × customer count"
+      },
+      "competitive_dynamics_models": {
+        "porters_five_forces": "Supplier power, buyer power, substitutes, new entrants, rivalry",
+        "moat_types": "Network effects, switching costs, scale economies, brand, regulatory, IP",
+        "disruption_indicators": "10x cost reduction, new market creation, incumbent ignoring low-end"
+      },
+      "key_data_sources": [
+        "Gartner / IDC (technology markets)",
+        "BloombergNEF (energy, clean tech)",
+        "Statista (broad market data)",
+        "PitchBook / Crunchbase (venture / startup)",
+        "SEC filings 10-K/10-Q (company financials)",
+        "Euromonitor (consumer markets)",
+        "Grand View Research / Markets and Markets (industry reports)"
+      ]
     }
   },
-  "accepts": ["query", "industry"],
-  "produces": ["market-analysis", "trends"],
+  "accepts": ["query", "industry", "company", "market"],
+  "produces": [
+    "evidence",
+    "market-analysis",
+    "trends",
+    "competitive-landscape"
+  ],
   "dependencies": {
     "required": [],
-    "optional": []
-  },
-  "prompt_template": "Research {{topic or company}} in the {{industry or region}} market"
+    "optional": ["equity_analyst", "macro_forecaster", "sentiment_analyzer"]
+  }
 }
