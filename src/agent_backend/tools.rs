@@ -1160,14 +1160,19 @@ impl ToolRegistry {
     /// Also include any MCP tools declared on the agent card
     pub(crate) fn to_claude_tools_with_card(&self, card: &AgentCard) -> Vec<ClaudeTool> {
         let mut tools = self.to_claude_tools();
+        // Collect builtin names first — Anthropic API rejects duplicate tool names with 400.
+        let builtin_names: std::collections::HashSet<String> =
+            tools.iter().map(|t| t.name.clone()).collect();
         for mcp in &card.capabilities.mcp_tools {
-            // Only include MCP tools that have schemas (otherwise the LLM can't call them)
+            // Only include MCP tools that have schemas and aren't already registered as builtins
             if let Some(ref schema) = mcp.input_schema {
-                tools.push(ClaudeTool {
-                    name: mcp.name.clone(),
-                    description: mcp.description.clone(),
-                    input_schema: schema.clone(),
-                });
+                if !builtin_names.contains(&mcp.name) {
+                    tools.push(ClaudeTool {
+                        name: mcp.name.clone(),
+                        description: mcp.description.clone(),
+                        input_schema: schema.clone(),
+                    });
+                }
             }
         }
         tools
