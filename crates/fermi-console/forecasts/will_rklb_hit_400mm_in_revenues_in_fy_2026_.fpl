@@ -7,7 +7,7 @@ driver launch_cadence_growth continuous {
 }
 
 driver neutron_revenue_contribution continuous {
-    distribution: triangular(0.6, 1.2, 1.5)
+    distribution: triangular(0.6, 1, 1.5)
     unit: "multiplier"
     rationale: "Neutron's first flight targeted for 2025, with commercial operations in 2026. Early customer contracts and successful deployment would significantly boost revenue. Delays or technical issues would reduce contribution below expectations."
 }

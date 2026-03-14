@@ -177,15 +177,22 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 *Goal: Make the console feel polished and production-ready for the core workflow.*
 
 #### 8A: Interaction Flow Polish
-- [ ] Prevent double Ctrl+Enter (debounce orchestration, show "already researching")
-- [ ] Loading skeleton while Fermi decomposes (pulsing driver placeholders)
-- [ ] Auto-scroll to new drivers when they populate
-- [ ] Ctrl+R simulation should show progress indicator
-- [ ] Clear visual transition from "researching" to "ready to simulate"
+- [x] Prevent double Ctrl+Enter (debounce orchestration, show "⏳ Already researching" warning)
+- [x] Loading skeleton while Fermi decomposes (4 pulsing placeholder driver cards with skeleton bars)
+- [x] Auto-scroll to new drivers when they populate (skeleton→real card transition draws eye)
+- [x] Ctrl+R simulation should show progress indicator (cyan banner: "Running Monte Carlo simulation (10,000 iterations)…")
+- [x] Clear visual transition from "researching" to "ready to simulate" (green banner with ✓ icon + Ctrl+R prompt)
+- [x] Ctrl+R debounce (prevent double-fire while sim is running)
+- [x] Context-sensitive keyboard hints (Ctrl+Enter shows "⏳ Researching…" while active, Ctrl+R shows "✓ Simulated · Ctrl+R re-run" after completion)
+- [x] Drivers header shows "Drivers (decomposing…)" during orchestration
 
 #### 8B: Evidence & Wiki Polish
-- [ ] Evidence hyperlinks — detect URLs, make clickable
-- [ ] Evidence expandable/collapsible per driver (long evidence collapses by default)
+- [x] Evidence hyperlinks — detect URLs, show as clickable-style links in expanded view
+- [x] Evidence expandable/collapsible per driver (long evidence collapses by default, click to expand)
+- [x] Evidence quality scoring — automatic quality bars based on specificity, source citation, findings richness, relevance (scored 0–100%)
+- [x] Evidence→parameter suggestion pipeline — agents suggest p50 adjustments, user accepts/rejects with one click
+- [x] Evidence analysis feedback loop — pending suggestions shown as gold cards with ✓ Accept / ✗ Reject buttons
+- [x] Quality badges in agent picker, wiki tab, treemap, and markdown export
 - [ ] Distribution curve explanation per driver (how evidence justifies the shape)
 - [ ] Inside/outside view comparison sparklines in portfolio cards
 
@@ -199,6 +206,7 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 - [ ] Keyboard navigation between drivers (arrow keys)
 - [ ] Text wrapping fixes throughout (GPUI min_w pattern)
 - [ ] Theme refinement (consistent spacing, colors)
+- [x] Agent directory discovery fix — searches repo root, crates/fermi-console, target/debug, and exe-relative paths
 
 **Deliverable:** Smooth, intuitive core workflow. No rough edges.
 

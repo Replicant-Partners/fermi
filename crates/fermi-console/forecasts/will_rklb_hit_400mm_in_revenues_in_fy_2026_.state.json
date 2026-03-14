@@ -1,7 +1,7 @@
 {
-  "current_version": 4,
-  "predicted_probability": 0.14516228565573486,
-  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 14.5%. The key factors are: launch_cadence_growth, neutron_revenue_contribution, space_systems_growth. Most influential: neutron_revenue_contribution (49%), launch_cadence_growth (27%), space_systems_growth (16%).",
+  "current_version": 2,
+  "predicted_probability": 0.14574729745122422,
+  "inside_view_explanation": "Starting from a 15.0% base rate, our model slightly confirms the probability to 14.6%. The key factors are: launch_cadence_growth, neutron_revenue_contribution, space_systems_growth. Most influential: neutron_revenue_contribution (41%), launch_cadence_growth (26%), operational_execution (14%).",
   "forecast_confidence": 0.48999999999999994,
   "versions": [
     {
@@ -15,26 +15,14 @@
       "timestamp": "2026-03-10 20:55",
       "probability": 0.14574729745122422,
       "change_summary": "14.6% (→), 5 drivers, 8 evidence, 5 agents"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-03-10 21:06",
-      "probability": 0.14574729745122422,
-      "change_summary": "14.6% (→), 5 drivers, 8 evidence, 5 agents"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-03-10 21:06",
-      "probability": 0.14516228565573486,
-      "change_summary": "14.5% (→), 5 drivers, 8 evidence, 5 agents"
     }
   ],
   "sim_results": {
-    "mean": 1.0618621195717008,
-    "median": 1.0291927681089854,
-    "p5": 0.6224707194991002,
-    "p95": 1.608158690028299,
-    "std_dev": 0.29973198990114047,
+    "mean": 1.0661414808557055,
+    "median": 1.0335410835883607,
+    "p5": 0.631443720952167,
+    "p95": 1.613529289451922,
+    "std_dev": 0.30076276463510887,
     "iterations": 10000
   },
   "base_rate": {

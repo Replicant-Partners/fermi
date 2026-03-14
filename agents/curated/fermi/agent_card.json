@@ -75,6 +75,7 @@
       "market_research",
       "sentiment_analyzer",
       "entity_investigator",
+      "equity_analyst",
       "biotech_analyst",
       "nba_analyst"
     ]

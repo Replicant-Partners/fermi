@@ -18,7 +18,7 @@ Fermi: *deploys agents → synthesizes research → runs simulation → gives yo
 
 Then: *watches for resolution → calculates Brier score → learns for next time*
 
-This is a **self-healing system** — every outcome makes the next forecast better.
+This is a **self-learning system** — every outcome makes the next forecast better.
 
 ---
 
@@ -26,7 +26,7 @@ This is a **self-healing system** — every outcome makes the next forecast bett
 
 ### Guided Forecasting (Tetlock Methodology)
 
-Fermi guides you through the forecasting process using proven methods from the Good Judgment Project:
+Fermi guides you through the forecasting process based in SUperforecasting practices:
 
 1. **Decomposition** — Break complex questions into independent drivers
 2. **Outside view** — Find base rates and comparable historical cases
@@ -53,14 +53,14 @@ The platform manages agent lifecycles, handles retries, and ensures reliable exe
 Polymarket integration is the first implementation — but the architecture supports any futures market:
 
 - **Polymarket** — Prediction markets with real money ($300M+ daily volume)
-- **Pwin** — Polymarket's winning token system for resolved markets
+- **Pwin** — Proabaility win analysis
 - **Strategic forecasting** — Corporate planning and scenario analysis
 - **Predictive maintenance** — Industrial equipment failure prediction
 - **Custom resolution sources** — Your own data feeds and oracles
 
 When a market resolves (however it resolves), Fermi auto-calculates your Brier score.
 
-### The Feedback Loop (Self-Healing)
+### The Feedback Loop (Self-Learning)
 
 This is Fermi's superpower — a closed-loop learning system:
 
@@ -210,11 +210,7 @@ You don't just make predictions — you develop genuine probabilistic judgment.
 
 ## Getting Started
 
-### Option 1: Web Interface
-
-Visit **agent-bestiary.world**
-
-### Option 2: Desktop App
+### Option 1: Desktop App
 
 ```bash
 git clone https://github.com/Replicant-Partners/fermi
@@ -225,9 +221,9 @@ cargo run -p fermi-console
 
 See [FERMI_CONSOLE.md](./FERMI_CONSOLE.md)
 
-### Option 3: Zed Editor
+### Option 2: Zed Editor
 
-Install the Fermi extension for FPL syntax highlighting and direct agent execution.
+Install the Fermi extension for FPL syntax highlighting and direct agent execution. You can add the ABW MCP to develop and deploy new fermi specific agents (need to define how but thats there already)
 
 ---
 
