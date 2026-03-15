@@ -1,0 +1,131 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  SimOps Process Config — SCOBY Kombucha Fermentation
+#  ΞSYSTEM Domain 10–11 (SCOBY Identity + Fermentation Session)
+#
+#  Models a two-stage kombucha fermentation value chain:
+#    Stage 1: Substrate (sweetened tea) → Primary Ferment (acidified broth)
+#    Stage 2: Primary Ferment → Secondary Ferment / Carbonated Product
+#
+#  The cascade_forward mode predicts the organic acid / sugar profile at
+#  any elapsed time.  cascade_backward computes the substrate input required
+#  to hit a target acidity (e.g. 7 g/L titratable acidity).
+#
+#  Carbon model:
+#    - Stage 1 (primary): SCOBY biomass grows → sequesters CO2 via
+#      cellulose synthesis (~0.44 kg CO2 / kg cellulose produced)
+#    - Simultaneously releases CO2 through respiratory metabolism
+#    - Net CI empirically close to zero for primary fermentation;
+#      slight positive for secondary (CO2 carbonation release)
+#
+#  Observable properties used by predictor:
+#    xi:observable/Brix        → substrate depletion
+#    xi:observable/Temperature → metabolic rate
+#    xi:observable/pH          → acidity progress (planned sensor)
+# ═══════════════════════════════════════════════════════════════════════════
+
+name        = "SCOBY Kombucha — Primary + Secondary Fermentation"
+description = "Two-stage kombucha fermentation: sweetened tea substrate → acidified primary ferment → carbonated consumer product. Models Brix depletion, organic acid accumulation, and harvest timing."
+feature_of_interest = "xid:platform/ambu-001"
+
+elec_price_per_kwh   = 0.22
+maintenance_cost_usd = 120.0  # media, tea, sugar, cleaning per year
+
+# ─────────────────────────────────────────────────────────
+#  STAGE 1 — PRIMARY FERMENTATION
+#  Substrate sugar (Brix) → organic acids + biomass
+#
+#  Efficiency here is the sugar-to-organic-acid conversion yield:
+#  ~60% of initial sugar mass is converted to titratable acids
+#  (acetic + lactic + gluconic), remainder goes to CO2, ethanol, biomass.
+#
+#  Input unit: kg of dissolved sugars (from initial Brix × volume)
+#  Output unit: kg of organic acids produced (titratable acidity)
+# ─────────────────────────────────────────────────────────
+
+[[stages]]
+id               = "primary_fermentation"
+efficiency       = 0.60       # sugar → organic acid mass yield (SOTA Chlorella/AAB)
+carbon_intensity = 0.05       # slight net CO2 release (respiration > cellulose sink)
+
+[stages.input]
+name  = "substrate_sugars"
+unit  = "kg"
+# Energy density of sucrose: ~3.94 kcal/g
+energy_density = 3.94
+density_unit   = "kcal/g"
+
+[stages.output]
+name            = "organic_acids"
+unit            = "kg"
+# Organic acid mixture: ~2.5 kcal/g (acetic 3.49, lactic 3.62, gluconic ~1.5)
+energy_density  = 2.5
+density_unit    = "kcal/g"
+
+[stages.capex]
+total_usd      = 15.0         # glass vessel, airlock, thermometer
+lifespan_years = 5.0
+
+stages.opex_per_input_unit = 0.60   # $/kg sugar (organic cane sugar)
+
+
+# ─────────────────────────────────────────────────────────
+#  STAGE 2 — SECONDARY FERMENTATION (bottle conditioning)
+#  Residual sugars + acids → CO2 carbonation + flavour development
+#
+#  Input: primary ferment (kg organic acids + residual sugars)
+#  Output: finished product (kg carbonated kombucha, ~98% mass recovery)
+#  Efficiency ≈ 0.98 (most mass is retained; small CO2 loss)
+# ─────────────────────────────────────────────────────────
+
+[[stages]]
+id               = "secondary_fermentation"
+efficiency       = 0.98       # mass retention into final product
+carbon_intensity = 0.12       # CO2 off-gassing during carbonation
+
+[stages.input]
+name  = "primary_ferment"
+unit  = "kg"
+energy_density = 2.5
+density_unit   = "kcal/g"
+
+[stages.output]
+name            = "kombucha_product"
+unit            = "kg"
+energy_density  = 0.17        # ~17 kcal / 100g (low sugar, finished kombucha)
+density_unit    = "kcal/g"
+
+[stages.capex]
+total_usd      = 8.0          # bottles, caps, carbonation equipment
+lifespan_years = 3.0
+
+stages.opex_per_input_unit = 0.10   # $/kg for bottling consumables
+
+
+# ─────────────────────────────────────────────────────────
+#  OBSERVABLE PROPERTY MAPPINGS
+# ─────────────────────────────────────────────────────────
+[observable_mappings]
+"xi:observable/Brix"        = "brix"
+"xi:observable/Temperature" = "temp_c"
+"xi:observable/pH"          = "ph"
+
+# ─────────────────────────────────────────────────────────
+#  HARVEST THRESHOLDS (primary fermentation endpoint)
+# ─────────────────────────────────────────────────────────
+[harvest_thresholds]
+# Primary ferment is ready when pH drops below target
+ph_harvest_target   = 3.2    # standard kombucha harvest pH
+ph_over_sour        = 2.8    # abort / dilute if below this
+# Or when Brix has fallen by this fraction from initial
+brix_depletion_pct  = 0.65   # 65% Brix depletion → harvest
+# Maximum fermentation time
+max_run_hours       = 240.0  # 10 days primary
+
+# ─────────────────────────────────────────────────────────
+#  PREDICTOR FEATURES
+#  Target: organic acid yield (g/L titratable acidity) at harvest
+# ─────────────────────────────────────────────────────────
+[predictor]
+target   = "titratable_acidity_g_l"
+features = ["initial_brix", "temp_c", "elapsed_hours", "inoculation_ratio_pct"]
+min_samples = 4

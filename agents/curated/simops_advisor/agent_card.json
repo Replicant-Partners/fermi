@@ -38,7 +38,7 @@
   "wallet": {
     "public_address": "",
     "balance": 0.0,
-    "currency": "ABW",
+    "currency": "USD",
     "budget": 100.0
   },
   "metadata": {
@@ -56,8 +56,17 @@
       "personality_traits": ["inquisitive", "direct", "knowledgeable", "plain-spoken"]
     },
     "created": "2026-03-15",
-    "author": "Kask R&D Team",
-    "description": "Agent-led process modelling guide. Conducts a 6-turn domain-aware interview to build a SimOps pipeline config. Identifies value leakages, sidestream opportunities, supply chain risks, and pricing gaps. Reference implementation: AMBU bioreactor."
+    "author": "Ivan Labra",
+    "description": "Agent-led process modelling guide. Conducts a 6-turn domain-aware interview to build a SimOps pipeline config. Identifies value leakages, sidestream opportunities, supply chain risks, and pricing gaps. Reference implementation: AMBU bioreactor.",
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Physicalivora",
+      "class": "Processoria",
+      "order": "Consultivales",
+      "family": "Simopsidae",
+      "genus": "Advisor",
+      "species": "simops_advisor"
+    }
   },
   "accepts": [
     "free_text_process_description",

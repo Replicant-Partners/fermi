@@ -46,7 +46,7 @@
   "wallet": {
     "public_address": "",
     "balance": 0.0,
-    "currency": "ABW",
+    "currency": "USD",
     "budget": 100.0
   },
   "metadata": {
@@ -64,8 +64,17 @@
       "personality_traits": ["analytical", "deterministic", "concise"]
     },
     "created": "2026-03-14",
-    "author": "Kask R&D Team",
-    "description": "Multi-stage energy and mass balance cascade engine. Forward and backward propagation through any transformation process with carbon intensity tracking and LCC calculation."
+    "author": "Ivan Labra",
+    "description": "Multi-stage energy and mass balance cascade engine. Forward and backward propagation through any transformation process with carbon intensity tracking and LCC calculation.",
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Physicalivora",
+      "class": "Processoria",
+      "order": "Cascadales",
+      "family": "Simopsidae",
+      "genus": "Calculator",
+      "species": "simops_cascade"
+    }
   },
   "accepts": [
     "process_config",

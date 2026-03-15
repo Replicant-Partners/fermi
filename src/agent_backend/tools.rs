@@ -1084,6 +1084,160 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: false,
             is_delegation: false,
         },
+        // ─── SimOps — Universal Resource Efficiency Engine (SOSA-aligned) ───
+        BuiltinToolDef {
+            name: "simops_cascade_forward",
+            description: "Run a forward cascade through a multi-stage transformation process. Propagates input_quantity through all stages computing output quantities, energy, carbon delta (kg CO₂-eq), stage NER, and OPEX at each step. Returns a CascadeResult with system-level NER, total carbon, and LCC.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "process_name": {
+                        "type": "string",
+                        "description": "Named process config: 'ambu_bioreactor' or 'scoby_kombucha'. Omit to use ambu_bioreactor as default."
+                    },
+                    "process_json": {
+                        "type": "object",
+                        "description": "Inline process config JSON (overrides process_name). Full ProcessConfig schema."
+                    },
+                    "input_quantity": {
+                        "type": "number",
+                        "description": "Input quantity at stage 0 (in the units of the first stage's input resource)."
+                    }
+                },
+                "required": ["input_quantity"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_cascade_backward",
+            description: "Run a backward cascade to determine the primary input required to produce a specified output. Given target_output at the final stage, back-calculates all intermediate quantities and the required stage-0 input.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "process_name": {
+                        "type": "string",
+                        "description": "Named process config: 'ambu_bioreactor' or 'scoby_kombucha'."
+                    },
+                    "process_json": {
+                        "type": "object",
+                        "description": "Inline process config JSON (overrides process_name)."
+                    },
+                    "target_output": {
+                        "type": "number",
+                        "description": "Desired output quantity at the final stage (in the final stage's output units)."
+                    }
+                },
+                "required": ["target_output"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_kpi_compute",
+            description: "Compute batch KPIs for a fermentation or cultivation run: NER (Net Energy Ratio), SEC (Specific Energy Consumption kWh/kg), LCC (Levelized Cost of Calories $/million kcal), and Harvest Intensity %. Takes measured energy inputs and batch output.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "primary_energy_kwh":     { "type": "number", "description": "Primary process energy input (e.g. LED lighting) in kWh." },
+                    "climate_energy_kwh":     { "type": "number", "description": "Climate control energy (heating/cooling/Peltier) in kWh." },
+                    "delivery_energy_kwh":    { "type": "number", "description": "Pumping and delivery energy in kWh." },
+                    "harvest_energy_kwh":     { "type": "number", "description": "Harvest and post-processing energy in kWh." },
+                    "output_mass_kg":         { "type": "number", "description": "Harvested output mass in kg (dry weight for biomass)." },
+                    "caloric_density_kcal_g": { "type": "number", "description": "Caloric density of the output in kcal/g." },
+                    "elec_price_per_kwh":     { "type": "number", "description": "Electricity price in USD/kWh (e.g. 0.22 for German industrial)." },
+                    "consumables_cost_usd":   { "type": "number", "description": "Total consumables cost for the batch in USD (nutrients, substrate, CO₂, etc.)." },
+                    "capex_contribution_usd": { "type": "number", "description": "Amortized CAPEX contribution for this batch in USD (optional, default 0)." }
+                },
+                "required": [
+                    "primary_energy_kwh", "climate_energy_kwh", "delivery_energy_kwh",
+                    "harvest_energy_kwh", "output_mass_kg", "caloric_density_kcal_g",
+                    "elec_price_per_kwh", "consumables_cost_usd"
+                ]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_predictor_train",
+            description: "Fit an OLS linear regression model from historical observations. Takes an array of {features: {k: v, ...}, target: f64} records and returns model coefficients, intercept, R², and feature importance. Model JSON can be passed to simops_predictor_forecast or simops_optimize_* tools.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "observations": {
+                        "type": "array",
+                        "description": "Array of training observations. Each item must have 'features' (object of string→number) and 'target' (number).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "features": { "type": "object", "additionalProperties": { "type": "number" } },
+                                "target":   { "type": "number" }
+                            },
+                            "required": ["features", "target"]
+                        },
+                        "minItems": 4
+                    }
+                },
+                "required": ["observations"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_predictor_forecast",
+            description: "Predict yield or output for a planned operational batch using a trained OLS model. Takes a model_json (from simops_predictor_train) and a feature map. Returns predicted value, R², and caloric-positive/energy-sink status.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "model_json": {
+                        "type": "object",
+                        "description": "Trained predictor model returned by simops_predictor_train."
+                    },
+                    "features": {
+                        "type": "object",
+                        "description": "Feature map for the planned batch (same keys as training features, e.g. {lighting_kwh: 120, nutrients_g: 6.5, temp_c: 27}).",
+                        "additionalProperties": { "type": "number" }
+                    }
+                },
+                "required": ["model_json", "features"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_optimize_scale",
+            description: "Proportionally scale a reference operating point to hit a target output. All inputs in the reference are scaled by the same factor. Returns scaled input values, predicted output, convergence status, and residual. Use for holistic scale-up planning.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "model_json":     { "type": "object", "description": "Trained predictor model from simops_predictor_train." },
+                    "reference":      { "type": "object", "description": "Reference operating point: feature map of current/baseline input values.", "additionalProperties": { "type": "number" } },
+                    "target_output":  { "type": "number", "description": "Target output value to achieve." },
+                    "max_scale":      { "type": "number", "description": "Maximum scaling factor allowed (default: 5.0)." }
+                },
+                "required": ["model_json", "reference", "target_output"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_optimize_single_input",
+            description: "Solve analytically for a single free input variable to hit a target output, holding all other inputs fixed. Use for questions like 'how much more LED power do I need to produce 5 kg biomass?'. Returns the required value and convergence report.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "model_json":    { "type": "object", "description": "Trained predictor model from simops_predictor_train." },
+                    "fixed_inputs":  { "type": "object", "description": "Fixed input feature values (all features except the free one).", "additionalProperties": { "type": "number" } },
+                    "free_feature":  { "type": "string", "description": "Name of the single input feature to solve for." },
+                    "target_output": { "type": "number", "description": "Target output value to achieve." },
+                    "min_value":     { "type": "number", "description": "Minimum allowed value for the free feature (default: 0)." },
+                    "max_value":     { "type": "number", "description": "Maximum allowed value for the free feature (default: 1,000,000)." }
+                },
+                "required": ["model_json", "fixed_inputs", "free_feature", "target_output"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
     ]
 }
 
@@ -1281,6 +1435,14 @@ impl ToolRegistry {
             // Polymarket tools for prediction_market agent and general orchestra use
             "polymarket_search" => execute_polymarket_search(input).await,
             "polymarket_event" => execute_polymarket_event(input).await,
+            // SimOps — Universal Resource Efficiency Engine (SOSA-aligned)
+            "simops_cascade_forward"       => crate::agent_backend::simops_tools::execute_simops_cascade_forward(input).await,
+            "simops_cascade_backward"      => crate::agent_backend::simops_tools::execute_simops_cascade_backward(input).await,
+            "simops_kpi_compute"           => crate::agent_backend::simops_tools::execute_simops_kpi_compute(input).await,
+            "simops_predictor_train"       => crate::agent_backend::simops_tools::execute_simops_predictor_train(input).await,
+            "simops_predictor_forecast"    => crate::agent_backend::simops_tools::execute_simops_predictor_forecast(input).await,
+            "simops_optimize_scale"        => crate::agent_backend::simops_tools::execute_simops_optimize_scale(input).await,
+            "simops_optimize_single_input" => crate::agent_backend::simops_tools::execute_simops_optimize_single_input(input).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }

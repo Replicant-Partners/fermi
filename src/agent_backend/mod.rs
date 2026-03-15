@@ -10,6 +10,7 @@ pub mod executor;
 pub mod llm_executor;
 pub mod multi_model_executor;
 pub mod registry;
+pub mod simops_tools;
 pub mod tool_executor;
 pub mod tools;
 

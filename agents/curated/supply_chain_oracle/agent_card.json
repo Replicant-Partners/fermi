@@ -34,7 +34,7 @@
   "wallet": {
     "public_address": "",
     "balance": 0.0,
-    "currency": "ABW",
+    "currency": "USD",
     "budget": 100.0
   },
   "metadata": {
@@ -51,8 +51,17 @@
       "personality_traits": ["analytical", "cautious", "practical", "market-aware"]
     },
     "created": "2026-03-15",
-    "author": "Kask R&D Team",
-    "description": "BoM price resolver and supply chain risk assessor for botanical ingredients, skincare actives, and process materials. Called by the SimOps Composer when the user requests agent-resolved pricing. Returns mid-market prices, cost ranges, supplier notes, and supply chain risk flags."
+    "author": "Ivan Labra",
+    "description": "BoM price resolver and supply chain risk assessor for botanical ingredients, skincare actives, and process materials. Called by the SimOps Composer when the user requests agent-resolved pricing. Returns mid-market prices, cost ranges, supplier notes, and supply chain risk flags.",
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Mercatoria",
+      "class": "Supplyia",
+      "order": "Oraclales",
+      "family": "Investigatidae",
+      "genus": "Oracle",
+      "species": "supply_chain_oracle"
+    }
   },
   "accepts": [
     "bom_items_json",

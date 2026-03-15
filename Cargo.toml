@@ -13,6 +13,7 @@ members = [
     "fermi-memory",
     "fermi-auth",
     "fermi-lsp", "crates/fermi-console",
+    "crates/simops",
 ]
 resolver = "2"
 
@@ -81,6 +82,9 @@ sha2 = "0.10"
 coherence-core = { path = "agent-bestiary/coherence/crates/coherence-core" }
 coherence-engine = { path = "agent-bestiary/coherence/crates/coherence-engine" }
 coherence-observer = { path = "agent-bestiary/coherence/crates/coherence-observer" }
+
+# SimOps — Universal Resource Efficiency Engine (SOSA-aligned)
+simops = { path = "crates/simops" }
 
 # Auth
 fermi-auth = { path = "fermi-auth" }

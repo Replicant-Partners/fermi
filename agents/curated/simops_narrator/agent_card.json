@@ -29,7 +29,7 @@
   "wallet": {
     "public_address": "",
     "balance": 0.0,
-    "currency": "ABW",
+    "currency": "USD",
     "budget": 100.0
   },
   "metadata": {
@@ -47,8 +47,17 @@
       "personality_traits": ["accessible", "warm", "precise", "practical"]
     },
     "created": "2026-03-15",
-    "author": "Kask R&D Team",
-    "description": "Plain-language interpreter for SimOps pipeline configurations. Translates NER, stage efficiencies, sidestreams, and value density into a human-readable narrative with benchmarks and one actionable suggestion."
+    "author": "Ivan Labra",
+    "description": "Plain-language interpreter for SimOps pipeline configurations. Translates NER, stage efficiencies, sidestreams, and value density into a human-readable narrative with benchmarks and one actionable suggestion.",
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Physicalivora",
+      "class": "Processoria",
+      "order": "Narrativales",
+      "family": "Simopsidae",
+      "genus": "Narrator",
+      "species": "simops_narrator"
+    }
   },
   "accepts": [
     "pipeline_config",

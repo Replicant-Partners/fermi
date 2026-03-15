@@ -1,0 +1,94 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  SimOps Process Config — Ambu Bioreactor (Algae Cultivation)
+#  ΞSYSTEM platform: xid:platform/ambu-001
+#
+#  Models a single-stage photobioreactor cycle:
+#    Photons (LED input) → Algae Biomass (harvestable output)
+#
+#  The bioreactor_modeler agent uses cascade_backward to determine the
+#  required light input for a target biomass yield, and the predictor
+#  to forecast yield from historical Brix/OD600/Temperature observations.
+#
+#  Observable properties align with sosa_sensor entries from seed 015:
+#    xi:observable/Brix        → fermentation progress proxy
+#    xi:observable/Temperature → metabolic rate driver
+#    xi:observable/OD600       → biomass density proxy (planned sensor)
+#
+#  Harvest signal: when OD600 approaches self-shading threshold (~10 g/L DW)
+#  or when Brix plateaus for > 2 hours, the modeler emits a harvest actuation.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name        = "Ambu Bioreactor — Chlorella Cultivation"
+description = "Single-stage photoautotrophic cultivation in the Ambu bioreactor. Models the photons → biomass transformation with LCC, NER, and harvest timing."
+feature_of_interest = "xid:platform/ambu-001"
+
+# Electricity cost at Konstanz Lab (German industrial tariff)
+elec_price_per_kwh  = 0.22
+# Fixed annual maintenance (nutrients, CO2, disposables) USD
+maintenance_cost_usd = 480.0
+
+# ─────────────────────────────────────────────────────────
+#  STAGES
+#  Single-stage process: light → biomass
+#  Efficiency = photosynthetic efficiency of Chlorella under LED
+#  (SOTA range: 1–5%; 3% used as conservative realistic value)
+# ─────────────────────────────────────────────────────────
+
+[[stages]]
+id               = "cultivation"
+efficiency       = 0.03       # photosynthetic efficiency (energy out / energy in)
+carbon_intensity = -1.8       # kg CO2 sequestered per kg DW biomass (Chlorella SOTA)
+
+[stages.input]
+name  = "photons"
+unit  = "kWh"
+# No energy_density — photons are already in kWh
+
+[stages.output]
+name            = "biomass_dw"
+unit            = "kg"
+energy_density  = 5.5         # kcal/g — Chlorella vulgaris standard
+density_unit    = "kcal/g"
+
+[stages.capex]
+total_usd      = 40.0         # Ambu vessel + rack + LED unit
+lifespan_years = 2.0          # LED lifespan before replacement
+
+stages.opex_per_input_unit = 0.22   # $/kWh LED electricity
+
+
+# ─────────────────────────────────────────────────────────
+#  OBSERVABLE PROPERTY MAPPINGS
+#  Maps SOSA observable properties (from sosa_sensor) to
+#  SimOps predictor feature names.
+#  Used by bioreactor_modeler to pull training data from
+#  sosa_observation via the observable_property_uri index.
+# ─────────────────────────────────────────────────────────
+[observable_mappings]
+"xi:observable/Brix"        = "brix"
+"xi:observable/Temperature" = "temp_c"
+"xi:observable/OD600"       = "od600"
+
+# ─────────────────────────────────────────────────────────
+#  HARVEST THRESHOLDS
+#  bioreactor_modeler monitors these to emit harvest signals.
+# ─────────────────────────────────────────────────────────
+[harvest_thresholds]
+# Self-shading onset: OD600 above this degrades NER
+od600_self_shading  = 8.0     # AU — start flagging
+od600_critical      = 10.0    # AU — force harvest
+# Brix plateau: if Δ Brix/hour < this for 2+ hours, fermentation stalled
+brix_delta_min_per_hour = 0.05
+# Temperature out-of-range (Chlorella optimal: 23–28°C)
+temp_min_c = 18.0
+temp_max_c = 32.0
+
+# ─────────────────────────────────────────────────────────
+#  PREDICTOR FEATURES
+#  Historical feature names used to train the OLS predictor.
+#  Target variable: dry weight biomass yield (kg).
+# ─────────────────────────────────────────────────────────
+[predictor]
+target          = "biomass_dw_kg"
+features        = ["lighting_kwh", "nutrients_g", "temp_c", "run_hours"]
+min_samples     = 4
