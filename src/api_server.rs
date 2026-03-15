@@ -1939,11 +1939,14 @@ async fn main() {
 
     let rabble_router = Router::new().fallback(rabble_spa_fallback);
 
-    // Configure CORS to allow credentials from fermi.systems
+    // Configure CORS to allow credentials from fermi.systems and kask.bio
     let cors = CorsLayer::new()
         .allow_origin([
             "https://fermi.systems".parse::<HeaderValue>().unwrap(),
+            "https://kask.bio".parse::<HeaderValue>().unwrap(),
+            "https://www.kask.bio".parse::<HeaderValue>().unwrap(),
             "http://localhost:5173".parse::<HeaderValue>().unwrap(), // Dev
+            "http://localhost:3000".parse::<HeaderValue>().unwrap(), // Dev
         ])
         .allow_methods([
             axum::http::Method::GET,
