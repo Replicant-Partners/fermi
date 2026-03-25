@@ -162,6 +162,7 @@ pub async fn auth_callback_inner(
             .filter(|r| {
                 (r.starts_with('/') && !r.contains("//"))
                     || r.starts_with("https://rabble.world")
+                    || r.starts_with("https://silat.ooo")
                     || r.starts_with("http://127.0.0.1:")
                     || r.starts_with("http://localhost:")
             })
@@ -174,6 +175,11 @@ pub async fn auth_callback_inner(
         let final_dest = if dest.starts_with("https://rabble.world") {
             format!(
                 "https://rabble.world/#/auth?token={}&user_id={}",
+                token, user.user_id
+            )
+        } else if dest.starts_with("https://silat.ooo") {
+            format!(
+                "https://silat.ooo/#/auth?token={}&user_id={}",
                 token, user.user_id
             )
         } else if dest.starts_with("http://127.0.0.1:") || dest.starts_with("http://localhost:") {
