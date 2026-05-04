@@ -459,6 +459,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/092_fix_social_layer.sql",
         "migrations/094_fermi_forecasting.sql",
         "migrations/099_polymarket_observations.sql",
+        "migrations/100_cognition_tier.sql",
+        "migrations/101_model_ladder.sql",
     ];
 
     for file in &migration_files {
@@ -885,6 +887,10 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/flight-path/:flight_id",
             get(handlers::creatures::creature_flight_path_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/cognition",
+            get(handlers::creatures::creature_cognition_handler),
         )
         .route("/api/swarms", get(handlers::creatures::list_swarms_handler))
         .route(
@@ -2126,6 +2132,11 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             } else {
                 serde_json::to_value(&card.requires_secrets).ok()
             },
+            model_ladder: serde_json::to_value(&card.capabilities.model_ladder)
+                .unwrap_or(serde_json::Value::Array(vec![])),
+            min_tier: format!("{:?}", card.capabilities.min_tier).to_lowercase(),
+            capability_gates: serde_json::to_value(&card.capabilities.capability_gates)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -2192,6 +2203,15 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             model: agent.model.clone(),
             temperature: agent.temperature,
             provider: agent.llm_provider.clone(),
+            model_ladder: serde_json::from_value(agent.model_ladder.clone())
+                .unwrap_or_default(),
+            min_tier: match agent.min_tier.as_str() {
+                "standard" => fermi::agent_backend::agent_card::CognitionTier::Standard,
+                "premium" => fermi::agent_backend::agent_card::CognitionTier::Premium,
+                _ => fermi::agent_backend::agent_card::CognitionTier::Free,
+            },
+            capability_gates: serde_json::from_value(agent.capability_gates.clone())
+                .unwrap_or_default(),
         },
         performance: AgentPerformance {
             forecasts_contributed: 0,

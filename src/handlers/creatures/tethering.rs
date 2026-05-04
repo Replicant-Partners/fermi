@@ -84,6 +84,7 @@ pub async fn update_creature_presence_handler(
                 "presence_change",
                 &query,
                 &user_id2,
+                Some(creature_id),
             )
             .await;
         });

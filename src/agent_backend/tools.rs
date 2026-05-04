@@ -3764,6 +3764,21 @@ async fn execute_execute_agent(
         .get(agent_name)
         .map_err(|e| format!("Agent not found: {}", e))?;
 
+    // Enrich card with KG context from past dream cycles
+    let card = if let Some(ref db) = ctx.db {
+        crate::agent_backend::kg_context::enrich_with_kg_context_by_name(
+            &ctx.memory_store,
+            &ctx.embedder,
+            db,
+            agent_name,
+            query,
+            card,
+        )
+        .await
+    } else {
+        card
+    };
+
     // Build a minimal AgentStmt for execution
     let stmt = crate::ast::AgentStmt {
         name: agent_name.to_string(),
@@ -3779,6 +3794,8 @@ async fn execute_execute_agent(
     let context = crate::agent_backend::executor::ExecutionContext {
         program: crate::ast::Program { statements: vec![] },
         agent_card: card,
+        creature_id: None,
+        cognition_tier: None,
     };
 
     // Execute via the base executor (no tools — prevents recursion)
@@ -3873,6 +3890,16 @@ async fn execute_delegate_to_agent(
         .get(agent_name)
         .map_err(|e| format!("Agent card not found: {}", e))?;
 
+    // Enrich card with KG context from past dream cycles
+    let card = crate::agent_backend::kg_context::enrich_with_kg_context(
+        &ctx.memory_store,
+        &ctx.embedder,
+        target_agent_id,
+        task,
+        card,
+    )
+    .await;
+
     // Build execution context
     let stmt = crate::ast::AgentStmt {
         name: agent_name.to_string(),
@@ -3888,6 +3915,8 @@ async fn execute_delegate_to_agent(
     let context = ExecutionContext {
         program: crate::ast::Program { statements: vec![] },
         agent_card: card,
+        creature_id: None,
+        cognition_tier: None,
     };
 
     // Build a ToolAwareExecutor with workspace tools but NO delegation

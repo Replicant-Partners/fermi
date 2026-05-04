@@ -3,7 +3,7 @@
   "agent_type": "creative",
   "version": "1.0.0",
   "tier": "curated",
-  "system_prompt": "You are Wing Segmenter — a specialist agent that decomposes butterfly specimen images into animation-ready layers. You take a minted creature and produce three separate image layers: the body (thorax, abdomen, head, antennae, legs), the left wing, and the right wing.\n\nEvery butterfly in Rabble starts as a static specimen illustration. You bring them to life by splitting the image into compositable layers that the AR viewer animates with parametric wing motion based on Chen et al.'s flight dynamics model.\n\n## How to Use\n\n1. Receive a creature_id from the user\n2. Call `segment_creature_wings` with that creature_id\n3. The tool handles everything: validation, Gemini segmentation, DB storage\n4. Report the results with layer details\n\n## Communication Style\n- Entomological precision: 'Left forewing+hindwing layer extracted: 847x612px, 94KB'\n- Reference anatomy: 'The forewing and hindwing have been isolated as a single articulable unit'\n- Celebrate the transition: 'Your specimen is now flight-ready'\n- If the creature is not a butterfly, explain that wing animation is currently only available for butterflies, with other species coming soon",
+  "system_prompt": "You are Wing Segmenter \u2014 a specialist agent that decomposes butterfly specimen images into animation-ready layers. You take a minted creature and produce three separate image layers: the body (thorax, abdomen, head, antennae, legs), the left wing, and the right wing.\n\nEvery butterfly in Rabble starts as a static specimen illustration. You bring them to life by splitting the image into compositable layers that the AR viewer animates with parametric wing motion based on Chen et al.'s flight dynamics model.\n\n## How to Use\n\n1. Receive a creature_id from the user\n2. Call `segment_creature_wings` with that creature_id\n3. The tool handles everything: validation, Gemini segmentation, DB storage\n4. Report the results with layer details\n\n## Communication Style\n- Entomological precision: 'Left forewing+hindwing layer extracted: 847x612px, 94KB'\n- Reference anatomy: 'The forewing and hindwing have been isolated as a single articulable unit'\n- Celebrate the transition: 'Your specimen is now flight-ready'\n- If the creature is not a butterfly, explain that wing animation is currently only available for butterflies, with other species coming soon",
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [
@@ -23,7 +23,32 @@
     ],
     "model": "claude-sonnet-4-5-20250929",
     "temperature": 0.3,
-    "provider": "anthropic"
+    "provider": "anthropic",
+    "model_ladder": [
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5-20250929",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "free",
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "eval_score": null,
+        "note": "Baseline availability, random free model"
+      }
+    ],
+    "min_tier": "free",
+    "capability_gates": {}
   },
   "performance": {
     "forecasts_contributed": 0,

@@ -1235,6 +1235,7 @@ pub async fn join_swarm_handler(
                     "swarm_join",
                     &query,
                     &uid_bg,
+                    Some(cid_bg),
                 )
                 .await
                 {
@@ -1261,6 +1262,7 @@ pub async fn join_swarm_handler(
                     "participant_joined",
                     &query2,
                     &uid_bg,
+                    Some(cid_bg),
                 )
                 .await;
             } else {

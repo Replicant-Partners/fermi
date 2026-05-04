@@ -47,7 +47,18 @@
     ],
     "model": "deterministic",
     "temperature": 0.0,
-    "provider": "anthropic"
+    "provider": "anthropic",
+    "model_ladder": [
+      {
+        "tier": "free",
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "eval_score": null,
+        "note": "Baseline availability"
+      }
+    ],
+    "min_tier": "free",
+    "capability_gates": {}
   },
   "performance": {
     "forecasts_contributed": 0,

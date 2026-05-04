@@ -23,6 +23,7 @@ use coherence_engine::SettlingEngine;
 use coherence_observer::ConversationObserver;
 
 use fermi::agent_backend::executor::AgentExecutor;
+use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
@@ -335,6 +336,9 @@ pub async fn create_workspace_agent_handler(
         workflow_template: None,
         prompt_template: None,
         requires_secrets: None,
+        model_ladder: serde_json::Value::Array(vec![]),
+        min_tier: "free".to_string(),
+        capability_gates: serde_json::Value::Object(serde_json::Map::new()),
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -698,6 +702,16 @@ pub async fn post_workspace_message_handler(
                         let db_agent = resolve_agent(&state2, &agent_name2).await?;
                         let card = resolve_agent_card(&state2, &db_agent);
 
+                        // Enrich card with KG context from past dream cycles
+                        let card = enrich_with_kg_context(
+                            &state2.memory_store,
+                            &state2.embedder,
+                            db_agent.agent_id,
+                            &augmented_query,
+                            card,
+                        )
+                        .await;
+
                         let agent_stmt = ast::AgentStmt {
                             name: agent_name2.clone(),
                             agent_type: Some(card.agent_type.clone()),
@@ -714,6 +728,8 @@ pub async fn post_workspace_message_handler(
                         let context = ExecutionContext {
                             program,
                             agent_card: card.clone(),
+                            creature_id: None,
+                            cognition_tier: None,
                         };
 
                         // Resolve user secrets for this agent
@@ -1841,6 +1857,8 @@ pub async fn evaluate_coherence_handler(
                 let context = ExecutionContext {
                     program,
                     agent_card: card,
+                    creature_id: None,
+                    cognition_tier: None,
                 };
                 match state.registry.execute_agent(&agent_stmt, &context).await {
                     Ok(output) => output.metadata.reasoning,

@@ -419,6 +419,7 @@ pub async fn post_rabble_message(
                     "rabble_narration",
                     &query,
                     &user_id2,
+                    None,
                 )
                 .await
                 {

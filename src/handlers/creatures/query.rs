@@ -1267,3 +1267,66 @@ pub async fn feed_handler(
         "has_more": has_more,
     })))
 }
+
+// ─── ADR-011: Cognition endpoint ────────────────────────────────────
+
+/// GET /api/creatures/:creature_id/cognition
+///
+/// Returns both cognition axes for a creature:
+/// - cognition_level: earned knowledge (computed from activity history, never degrades)
+/// - cognition_tier:  bandwidth (set by owner, determines which model runs)
+pub async fn creature_cognition_handler(
+    State(state): State<AppState>,
+    Path(creature_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let row = sqlx::query(
+        "SELECT
+           c.creature_id,
+           c.owner_id,
+           c.specimen_name,
+           c.scientific_name,
+           COALESCE(cc.cognition_tier, 'free') AS cognition_tier,
+           FLOOR(LOG(2, 1.0
+             + COALESCE((SELECT COUNT(*) FROM creature_versions WHERE creature_id = c.creature_id), 0) * 1.0
+             + COALESCE((SELECT COUNT(*) FROM creature_versions WHERE creature_id = c.creature_id AND transition_type = 'dream'), 0) * 5.0
+             + c.total_flights * 0.2
+             + c.unique_locations * 0.3
+             + COALESCE((SELECT COUNT(DISTINCT swarm_id) FROM creature_flights WHERE creature_id = c.creature_id AND swarm_id IS NOT NULL), 0) * 2.0
+             + COALESCE(array_length(cc.active_modules, 1), 0) * 1.0
+           ))::int AS cognition_level
+         FROM creatures c
+         LEFT JOIN creature_conditions cc ON cc.creature_id = c.creature_id
+         WHERE c.creature_id = $1",
+    )
+    .bind(creature_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| (StatusCode::NOT_FOUND, "Creature not found".into()))?;
+
+    let cognition_level: i32 = row.try_get("cognition_level").unwrap_or(0);
+    let cognition_tier: String = row.try_get("cognition_tier").unwrap_or_else(|_| "free".into());
+
+    // Tier thresholds for upgrade nudge: if level suggests the creature has
+    // outgrown free, surface a hint. Thresholds are intentionally generous.
+    let upgrade_available = match cognition_tier.as_str() {
+        "free" => cognition_level >= 3,
+        "standard" => cognition_level >= 7,
+        _ => false,
+    };
+
+    Ok(Json(json!({
+        "creature_id": creature_id,
+        "specimen_name": row.try_get::<String, _>("specimen_name").unwrap_or_default(),
+        "scientific_name": row.try_get::<String, _>("scientific_name").unwrap_or_default(),
+        "cognition_level": cognition_level,
+        "cognition_tier": cognition_tier,
+        "upgrade_available": upgrade_available,
+        "tier_description": match cognition_tier.as_str() {
+            "free"     => "Basic retrieval and generation. Compound orchestrations gated.",
+            "standard" => "Moderate synthesis, reliable tool use, richer narration.",
+            "premium"  => "Deep reasoning, full choreography, complex compound agents.",
+            _          => "Unknown tier.",
+        },
+    })))
+}

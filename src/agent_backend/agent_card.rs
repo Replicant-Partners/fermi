@@ -5,6 +5,7 @@
 use crate::ast::ExecutorType;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Agent card containing all metadata and performance tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +116,44 @@ pub struct McpTool {
     pub input_schema: Option<serde_json::Value>,
 }
 
+// ─── Cognition tier (ADR-011) ──────────────────────────────────────
+
+/// Cognitive bandwidth tier for creature-driven model selection.
+/// Declaration order determines Ord: Free < Standard < Premium.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum CognitionTier {
+    Free,
+    Standard,
+    Premium,
+}
+
+impl Default for CognitionTier {
+    fn default() -> Self {
+        CognitionTier::Free
+    }
+}
+
+/// One rung in an agent's model ladder — maps a tier to a specific model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRung {
+    pub tier: CognitionTier,
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub eval_score: Option<f64>,
+    #[serde(default)]
+    pub benchmarked_at: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+fn default_min_tier() -> CognitionTier {
+    CognitionTier::Free
+}
+
+// ─── Agent capabilities ────────────────────────────────────────────
+
 /// Agent capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentCapabilities {
@@ -127,10 +166,48 @@ pub struct AgentCapabilities {
     pub temperature: f64,
     #[serde(default = "default_provider")]
     pub provider: String,
+
+    // ── ADR-011: Cognition economy ──────────────────────────────────
+    /// Ordered list of (tier → model) mappings. `model`/`provider` above
+    /// remain the effective runtime fields; the ladder is used when a
+    /// creature's cognition_tier is known.
+    #[serde(default)]
+    pub model_ladder: Vec<ModelRung>,
+    /// The lowest tier this agent will accept — requests below this fail gracefully.
+    #[serde(default = "default_min_tier")]
+    pub min_tier: CognitionTier,
+    /// Feature gates: capability name → minimum tier required to invoke it.
+    #[serde(default)]
+    pub capability_gates: HashMap<String, CognitionTier>,
 }
 
 fn default_provider() -> String {
     "anthropic".to_string()
+}
+
+impl AgentCapabilities {
+    /// Resolve the best (provider, model) for the given tier and patch self in place.
+    ///
+    /// Algorithm (from ADR-011):
+    ///   1. Find the highest rung whose tier ≤ requested tier
+    ///   2. If found, overwrite model + provider (used by all executors at runtime)
+    ///   3. If no matching rung exists, leave defaults unchanged
+    pub fn apply_tier_resolution(&mut self, tier: &CognitionTier) {
+        if self.model_ladder.is_empty() {
+            return;
+        }
+        // Pick the highest rung whose tier is ≤ requested tier
+        let best = self
+            .model_ladder
+            .iter()
+            .filter(|r| &r.tier <= tier)
+            .max_by(|a, b| a.tier.cmp(&b.tier));
+
+        if let Some(rung) = best {
+            self.model = rung.model.clone();
+            self.provider = rung.provider.clone();
+        }
+    }
 }
 
 /// Agent performance metrics
@@ -236,6 +313,9 @@ impl AgentCard {
                 model: "claude-3-haiku-20240307".to_string(),
                 temperature: 0.3,
                 provider: "anthropic".to_string(),
+                model_ladder: vec![],
+                min_tier: CognitionTier::Free,
+                capability_gates: HashMap::new(),
             },
             performance: AgentPerformance {
                 forecasts_contributed: 0,

@@ -74,6 +74,8 @@ pub async fn execute_agent(
     let context = ExecutionContext {
         program: Program { statements: vec![] },
         agent_card: card.clone(),
+        creature_id: None,
+        cognition_tier: None,
     };
 
     // Execute agent

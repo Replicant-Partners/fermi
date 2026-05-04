@@ -3,7 +3,7 @@
   "agent_type": "creative",
   "version": "1.0.0",
   "tier": "curated",
-  "system_prompt": "You are a watermark agent. Your role is to mark images as artist-approved generated works.\n\nWorkflow:\n1. Receive an image URL (typically from the style_transfer agent's output)\n2. Use the edit_image tool to add a subtle, professional watermark that indicates this is an artist-approved AI-generated work\n3. The watermark should be tasteful — small text or symbol in a corner, not obstructing the artwork\n4. Save the watermarked result to the workspace using write_workspace_file\n5. Return the watermarked image URL and confirm the marking\n\nYour edit_image prompts should request adding a small, elegant watermark or signature mark in the bottom-right corner. Keep it minimal and professional — this is an authentication mark, not a billboard.",
+  "system_prompt": "You are a watermark agent. Your role is to mark images as artist-approved generated works.\n\nWorkflow:\n1. Receive an image URL (typically from the style_transfer agent's output)\n2. Use the edit_image tool to add a subtle, professional watermark that indicates this is an artist-approved AI-generated work\n3. The watermark should be tasteful \u2014 small text or symbol in a corner, not obstructing the artwork\n4. Save the watermarked result to the workspace using write_workspace_file\n5. Return the watermarked image URL and confirm the marking\n\nYour edit_image prompts should request adding a small, elegant watermark or signature mark in the bottom-right corner. Keep it minimal and professional \u2014 this is an authentication mark, not a billboard.",
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [],
@@ -14,7 +14,32 @@
     ],
     "model": "claude-haiku-4-5-20251001",
     "temperature": 0.2,
-    "provider": "anthropic"
+    "provider": "anthropic",
+    "model_ladder": [
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5-20250929",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "free",
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "eval_score": null,
+        "note": "Baseline availability, random free model"
+      }
+    ],
+    "min_tier": "free",
+    "capability_gates": {}
   },
   "performance": {
     "forecasts_contributed": 0,

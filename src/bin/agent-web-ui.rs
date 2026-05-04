@@ -224,6 +224,8 @@ async fn execute_agent_api(
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
+        creature_id: None,
+        cognition_tier: None,
     };
 
     // Execute agent

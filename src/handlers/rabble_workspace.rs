@@ -12,7 +12,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use agent_bestiary_memory::WorkspaceMessage;
+use fermi::agent_backend::agent_card::CognitionTier;
 use fermi::agent_backend::executor::AgentExecutor;
+use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
@@ -200,12 +202,48 @@ pub async fn dispatch_rabble_action(
     action_type: &str,
     query: &str,
     user_id: &str,
+    creature_id: Option<Uuid>,
 ) -> Result<String, String> {
     // Resolve agent
     let db_agent = resolve_agent(state, agent_name)
         .await
         .map_err(|(_code, msg)| msg)?;
-    let card = resolve_agent_card(state, &db_agent);
+    let mut card = resolve_agent_card(state, &db_agent);
+
+    // Enrich card with KG context from past dream cycles
+    card = enrich_with_kg_context(
+        &state.memory_store,
+        &state.embedder,
+        db_agent.agent_id,
+        query,
+        card,
+    )
+    .await;
+
+    // ADR-011: resolve model tier from creature_conditions when creature is known
+    let cognition_tier = if let Some(cid) = creature_id {
+        sqlx::query(
+            "SELECT cognition_tier FROM creature_conditions WHERE creature_id = $1 LIMIT 1",
+        )
+        .bind(cid)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.try_get::<String, _>("cognition_tier").ok())
+        .and_then(|t| match t.as_str() {
+            "standard" => Some(CognitionTier::Standard),
+            "premium" => Some(CognitionTier::Premium),
+            _ => Some(CognitionTier::Free),
+        })
+    } else {
+        None
+    };
+
+    // Apply tier resolution to card (patching model/provider in place)
+    if let Some(ref tier) = cognition_tier {
+        card.capabilities.apply_tier_resolution(tier);
+    }
 
     // Build AST for execution
     let agent_stmt = ast::AgentStmt {
@@ -224,6 +262,8 @@ pub async fn dispatch_rabble_action(
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
+        creature_id,
+        cognition_tier,
     };
 
     // Get workspace slug for git context
@@ -567,7 +607,7 @@ pub async fn flock_tick_handler(
         serde_json::to_string_pretty(&query).unwrap_or_default()
     );
 
-    // Dispatch to reynolds_flock agent
+    // Dispatch to reynolds_flock agent (flock tick is swarm-level, no specific creature)
     let response = dispatch_rabble_action(
         &state,
         ws_id,
@@ -575,6 +615,7 @@ pub async fn flock_tick_handler(
         "flock_tick",
         &query_str,
         &user_id,
+        None,
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -772,6 +813,7 @@ pub async fn transfer_anchor_handler(
                 "anchor_transferred",
                 &query,
                 &user_id2,
+                None,
             )
             .await;
             let _ = dispatch_rabble_action(
@@ -781,6 +823,7 @@ pub async fn transfer_anchor_handler(
                 "anchor_transferred",
                 &query,
                 &user_id2,
+                None,
             )
             .await;
         });

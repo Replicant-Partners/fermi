@@ -352,6 +352,8 @@ pub async fn consolidate_agent_handler(
             let context = ExecutionContext {
                 program,
                 agent_card: card,
+                creature_id: None,
+                cognition_tier: None,
             };
             match narrator_state
                 .registry

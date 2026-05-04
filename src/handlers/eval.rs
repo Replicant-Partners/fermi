@@ -21,7 +21,7 @@ use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
-use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
+use crate::{agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState};
 
 // ─── Eval Framework Handlers ────────────────────────────────────────
 
@@ -310,6 +310,8 @@ pub async fn run_eval_cases(
         let context = ExecutionContext {
             program,
             agent_card: card.clone(),
+            creature_id: None,
+            cognition_tier: None,
         };
         let tool_context = Arc::new(ToolContext {
             memory_store: state.memory_store.clone(),
@@ -414,6 +416,9 @@ pub async fn run_eval_cases(
     )
     .await;
 
+    // Clone before moving into completed_run so the notification can use it
+    let regression_details_for_notify = regression_details.clone();
+
     let completed_run = EvalRun {
         run_id,
         agent_id: db_agent.agent_id,
@@ -441,6 +446,26 @@ pub async fn run_eval_cases(
 
     if let Err(e) = state.memory_store.complete_eval_run(&completed_run).await {
         eprintln!("Failed to complete eval run {}: {}", run_id, e);
+    }
+
+    // Notify the agent owner when a regression is detected so the stored
+    // flag actually becomes actionable, not just write-only dead storage.
+    if regression {
+        let db = state.db.clone();
+        let owner_id = completed_run.triggered_by.clone();
+        let agent_label = agent_name.clone();
+        let details_snapshot = regression_details_for_notify;
+        tokio::spawn(async move {
+            let body = format_regression_body(&details_snapshot);
+            create_notification(
+                &db,
+                &owner_id,
+                "eval_regression",
+                &format!("Eval regression detected: {}", agent_label),
+                Some(&body),
+            )
+            .await;
+        });
     }
 }
 
@@ -561,4 +586,51 @@ pub async fn detect_regression(
         None
     };
     (detected, details)
+}
+
+// ─── Regression notification body ───────────────────────────────────
+
+fn format_regression_body(details: &Option<Value>) -> String {
+    let Some(details) = details else {
+        return "Regressions detected in the latest eval run. Open the eval dashboard to review.".into();
+    };
+    let empty = vec![];
+    let regressions = details.as_array().unwrap_or(&empty);
+
+    let mut lines = vec![format!(
+        "{} regression(s) detected in the latest eval run:",
+        regressions.len()
+    )];
+
+    for r in regressions {
+        let dim = r.get("dimension").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let line = match dim {
+            "pass_rate" => {
+                let prev = r.get("previous").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let curr = r.get("current").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                format!(
+                    "• Pass rate: {:.0}% → {:.0}% ({:+.0} points)",
+                    prev * 100.0,
+                    curr * 100.0,
+                    (curr - prev) * 100.0
+                )
+            }
+            "judge_score" => {
+                let prev = r.get("previous").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let curr = r.get("current").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                format!("• Judge score: {:.1} → {:.1} ({:+.1})", prev, curr, curr - prev)
+            }
+            "latency" => {
+                let prev = r.get("previous_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+                let curr = r.get("current_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+                let ratio = r.get("ratio").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                format!("• Latency: {}ms → {}ms ({:.1}x slower)", prev, curr, ratio)
+            }
+            other => format!("• {}", other),
+        };
+        lines.push(line);
+    }
+
+    lines.push("Open the eval dashboard to review the run and update the agent.".into());
+    lines.join("\n")
 }

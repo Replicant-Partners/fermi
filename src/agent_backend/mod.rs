@@ -7,6 +7,7 @@
 /// - Ontology: Per-agent knowledge representation (future)
 pub mod agent_card;
 pub mod executor;
+pub mod kg_context;
 pub mod llm_executor;
 pub mod multi_model_executor;
 pub mod registry;

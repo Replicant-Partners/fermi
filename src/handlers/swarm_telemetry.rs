@@ -438,6 +438,8 @@ pub async fn ingest_telemetry_handler(
             let context = ExecutionContext {
                 program,
                 agent_card: card.clone(),
+                creature_id: None,
+                cognition_tier: None,
             };
 
             match spawn_state

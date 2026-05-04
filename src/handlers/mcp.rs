@@ -152,6 +152,8 @@ pub async fn mcp_agent_rpc(
             let context = ExecutionContext {
                 program,
                 agent_card: card.clone(),
+                creature_id: None,
+                cognition_tier: None,
             };
 
             match state.registry.execute_agent(&agent_stmt, &context).await {

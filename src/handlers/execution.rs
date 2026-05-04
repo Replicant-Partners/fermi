@@ -6,13 +6,12 @@ use axum::{
     Json,
 };
 use fermi::agent_backend::executor::AgentStatus;
+use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::gas::{charge_gas, check_low_balance};
 use fermi_auth::{credit_charge, get_or_create_wallet, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-
-use agent_bestiary_memory::EmbeddingGenerator;
 
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
@@ -23,6 +22,7 @@ use fermi::ast;
 use crate::{
     agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState,
 };
+
 // ─── Agent execution ───────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +66,16 @@ pub async fn execute_agent_handler(
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let card = resolve_agent_card(&state, &db_agent);
 
+    // 1a. Enrich card with relevant KG context from past dream cycles
+    let card = enrich_with_kg_context(
+        &state.memory_store,
+        &state.embedder,
+        db_agent.agent_id,
+        &body.query,
+        card,
+    )
+    .await;
+
     // 2. Build execution context
     let agent_stmt = ast::AgentStmt {
         name: agent_id.clone(),
@@ -85,6 +95,8 @@ pub async fn execute_agent_handler(
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
+        creature_id: None,
+        cognition_tier: None,
     };
 
     // 3. Execute via ToolAwareExecutor

@@ -593,6 +593,9 @@ pub async fn create_agent_handler(
         workflow_template: None,
         prompt_template: req.prompt_template,
         requires_secrets: None,
+        model_ladder: serde_json::Value::Array(vec![]),
+        min_tier: "free".to_string(),
+        capability_gates: serde_json::Value::Object(serde_json::Map::new()),
     };
 
     // If education budget requested, debit from user's wallet
@@ -837,6 +840,22 @@ pub async fn import_agent_handler(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         requires_secrets: card.get("requires_secrets").cloned(),
+        model_ladder: card
+            .get("capabilities")
+            .and_then(|c| c.get("model_ladder"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![])),
+        min_tier: card
+            .get("capabilities")
+            .and_then(|c| c.get("min_tier"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("free")
+            .to_string(),
+        capability_gates: card
+            .get("capabilities")
+            .and_then(|c| c.get("capability_gates"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {

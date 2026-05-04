@@ -245,6 +245,7 @@ pub async fn record_flight_handler(
                 "creature_flight",
                 &query,
                 &user_id2,
+                Some(cid),
             )
             .await
             {
@@ -302,6 +303,7 @@ pub async fn record_flight_handler(
                                 "threat_scan",
                                 &query,
                                 &user_id3,
+                                Some(cid),
                             )
                             .await
                             {
@@ -768,6 +770,7 @@ pub async fn end_flight_handler(
                     "anchor_departing",
                     &query,
                     &spawn_user_id,
+                    Some(creature_id),
                 )
                 .await;
             }
@@ -984,6 +987,7 @@ pub async fn plan_flight_handler(
             "flight_plan",
             &query,
             &spawn_user,
+            Some(creature_id),
         )
         .await
         {
@@ -1547,6 +1551,7 @@ pub async fn fly_handler(
                 "fly",
                 &query,
                 &spawn_user,
+                Some(spawn_creature),
             )
             .await
             {

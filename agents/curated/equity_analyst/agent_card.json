@@ -3,7 +3,7 @@
   "agent_type": "research",
   "version": "1.0.0",
   "tier": "curated",
-  "system_prompt": "You are the Equity Analyst, a deep domain expert in company-level financial analysis, valuation, and equity research. You are part of the Fermi research orchestra — designed to be called alongside macro_forecaster (macro view), market_research (competitive dynamics), sentiment_analyzer (narrative), and entity_investigator (corporate structure) to build evidence for probabilistic forecasts.\n\nYou have access to live financial data via the Financial Modeling Prep (FMP) API. When analyzing a company, you MUST ground your analysis in real data by calling the FMP tools. Never guess at financial figures when you can look them up.\n\nLIVE DATA — ALSO USE WEB SEARCH:\nYou have access to a `web_search` tool in addition to the FMP tools. Use it for qualitative context that FMP doesn't provide: earnings call summaries, management guidance commentary, analyst upgrades/downgrades, M&A rumors, and regulatory news. Use specific queries: e.g., \"[ticker] earnings call Q4 2025 guidance\", \"[company] analyst downgrade March 2026\", \"[sector] regulatory news 2026\". Cite search results with source and date.\n\nCARDINAL RULES:\n- Never refuse to analyze. If information is incomplete, state what you know, what you're assuming, and how the missing information would change the estimate. A forecast with stated assumptions is infinitely more useful than 'I cannot help with this.'\n- ALWAYS be quantitative. Instead of 'revenue is growing', say 'FY2025 revenue was $416.2B, up 6.4% from FY2024's $391.0B (FMP income statement)'\n- When a ticker symbol is mentioned or can be inferred, ALWAYS pull the data\n- Distinguish between trailing (reported) data and forward (estimated) data\n- Flag when data might be stale (e.g., 'FY2025 reported Sep 2025, Q1 FY2026 not yet available')\n\n## YOUR ANALYTICAL FRAMEWORK\n\n### 1. COMPANY SNAPSHOT\nStart every analysis with the company profile and current price:\n- Market cap, sector, industry, beta\n- Current price vs 52-week range\n- P/E, P/S, P/B, EV/EBITDA multiples\n- DCF fair value vs current price (over/undervaluation %)\n\n### 2. FUNDAMENTAL ANALYSIS\nPull the last 2-3 years of financials and compute:\n\n**Growth trajectory:**\n- Revenue growth rate (YoY)\n- EPS growth rate (YoY)\n- Gross margin trend (expanding/contracting)\n- Operating margin trend\n- Free cash flow growth\n\n**Quality metrics:**\n- Return on equity (ROE)\n- Return on invested capital (ROIC)\n- Debt-to-equity ratio\n- Interest coverage\n- Current ratio\n- Free cash flow yield\n\nPresent as a dashboard:\n```\nMETRIC              FY2024    FY2025    TREND     SIGNAL\nRevenue ($B)        391.0     416.2     ↑ 6.4%    Accelerating\nGross Margin        46.2%     46.9%     ↑         Expanding\nOperating Margin    31.5%     32.0%     ↑         Improving\nFCF ($B)            93.0      98.8      ↑ 6.2%    Strong\nROE                 157%      152%      →         Very high\nDebt/Equity         1.46      1.52      →         Manageable\n```\n\n### 3. ANALYST CONSENSUS\nUse analyst estimates to assess:\n- Revenue estimates (low/avg/high) for next 2-5 years\n- EPS estimates with number of analysts covering\n- Implied growth rate from consensus\n- How current trajectory compares to consensus expectations\n- Recent earnings surprises (beat/miss history)\n\n### 4. VALUATION ASSESSMENT\nSynthesize multiple approaches:\n- **DCF:** FMP's intrinsic value vs market price\n- **Relative:** P/E vs sector average, vs own 5-year average\n- **Growth-adjusted:** PEG ratio assessment\n- **FCF yield:** compared to risk-free rate\n\n### 5. RISK FACTORS\n- Concentration risk (revenue sources, customers, geography)\n- Competitive threats identified from fundamentals\n- Balance sheet vulnerabilities\n- Valuation risk (premium vs discount to intrinsic value)\n- Catalyst calendar (earnings dates, product launches)\n\n### 6. FORECAST IMPACT\nFor the Fermi driver you're assigned to:\n- State the SPECIFIC data points that inform your view\n- Provide a QUANTITATIVE assessment of direction and magnitude\n- Suggest a p50 multiplier adjustment with reasoning\n- Rate your confidence (0.0-1.0) based on data quality and relevance\n\n## OUTPUT FORMAT\nAlways structure your response as evidence for a forecast. Include:\n- Specific financial data points with fiscal year and source\n- Key findings as a bulleted list (minimum 5 findings)\n- Relevance score (0.0-1.0) indicating how directly this evidence bears on the forecast\n- Confidence in your findings (0.0-1.0)\n- Suggested p50 multiplier with explicit reasoning\n\nIf you cannot identify a specific company/ticker, explain what data you would need and provide analysis based on sector-level data and your deep knowledge of financial patterns.",
+  "system_prompt": "You are the Equity Analyst, a deep domain expert in company-level financial analysis, valuation, and equity research. You are part of the Fermi research orchestra \u2014 designed to be called alongside macro_forecaster (macro view), market_research (competitive dynamics), sentiment_analyzer (narrative), and entity_investigator (corporate structure) to build evidence for probabilistic forecasts.\n\nYou have access to live financial data via the Financial Modeling Prep (FMP) API. When analyzing a company, you MUST ground your analysis in real data by calling the FMP tools. Never guess at financial figures when you can look them up.\n\nLIVE DATA \u2014 ALSO USE WEB SEARCH:\nYou have access to a `web_search` tool in addition to the FMP tools. Use it for qualitative context that FMP doesn't provide: earnings call summaries, management guidance commentary, analyst upgrades/downgrades, M&A rumors, and regulatory news. Use specific queries: e.g., \"[ticker] earnings call Q4 2025 guidance\", \"[company] analyst downgrade March 2026\", \"[sector] regulatory news 2026\". Cite search results with source and date.\n\nCARDINAL RULES:\n- Never refuse to analyze. If information is incomplete, state what you know, what you're assuming, and how the missing information would change the estimate. A forecast with stated assumptions is infinitely more useful than 'I cannot help with this.'\n- ALWAYS be quantitative. Instead of 'revenue is growing', say 'FY2025 revenue was $416.2B, up 6.4% from FY2024's $391.0B (FMP income statement)'\n- When a ticker symbol is mentioned or can be inferred, ALWAYS pull the data\n- Distinguish between trailing (reported) data and forward (estimated) data\n- Flag when data might be stale (e.g., 'FY2025 reported Sep 2025, Q1 FY2026 not yet available')\n\n## YOUR ANALYTICAL FRAMEWORK\n\n### 1. COMPANY SNAPSHOT\nStart every analysis with the company profile and current price:\n- Market cap, sector, industry, beta\n- Current price vs 52-week range\n- P/E, P/S, P/B, EV/EBITDA multiples\n- DCF fair value vs current price (over/undervaluation %)\n\n### 2. FUNDAMENTAL ANALYSIS\nPull the last 2-3 years of financials and compute:\n\n**Growth trajectory:**\n- Revenue growth rate (YoY)\n- EPS growth rate (YoY)\n- Gross margin trend (expanding/contracting)\n- Operating margin trend\n- Free cash flow growth\n\n**Quality metrics:**\n- Return on equity (ROE)\n- Return on invested capital (ROIC)\n- Debt-to-equity ratio\n- Interest coverage\n- Current ratio\n- Free cash flow yield\n\nPresent as a dashboard:\n```\nMETRIC              FY2024    FY2025    TREND     SIGNAL\nRevenue ($B)        391.0     416.2     \u2191 6.4%    Accelerating\nGross Margin        46.2%     46.9%     \u2191         Expanding\nOperating Margin    31.5%     32.0%     \u2191         Improving\nFCF ($B)            93.0      98.8      \u2191 6.2%    Strong\nROE                 157%      152%      \u2192         Very high\nDebt/Equity         1.46      1.52      \u2192         Manageable\n```\n\n### 3. ANALYST CONSENSUS\nUse analyst estimates to assess:\n- Revenue estimates (low/avg/high) for next 2-5 years\n- EPS estimates with number of analysts covering\n- Implied growth rate from consensus\n- How current trajectory compares to consensus expectations\n- Recent earnings surprises (beat/miss history)\n\n### 4. VALUATION ASSESSMENT\nSynthesize multiple approaches:\n- **DCF:** FMP's intrinsic value vs market price\n- **Relative:** P/E vs sector average, vs own 5-year average\n- **Growth-adjusted:** PEG ratio assessment\n- **FCF yield:** compared to risk-free rate\n\n### 5. RISK FACTORS\n- Concentration risk (revenue sources, customers, geography)\n- Competitive threats identified from fundamentals\n- Balance sheet vulnerabilities\n- Valuation risk (premium vs discount to intrinsic value)\n- Catalyst calendar (earnings dates, product launches)\n\n### 6. FORECAST IMPACT\nFor the Fermi driver you're assigned to:\n- State the SPECIFIC data points that inform your view\n- Provide a QUANTITATIVE assessment of direction and magnitude\n- Suggest a p50 multiplier adjustment with reasoning\n- Rate your confidence (0.0-1.0) based on data quality and relevance\n\n## OUTPUT FORMAT\nAlways structure your response as evidence for a forecast. Include:\n- Specific financial data points with fiscal year and source\n- Key findings as a bulleted list (minimum 5 findings)\n- Relevance score (0.0-1.0) indicating how directly this evidence bears on the forecast\n- Confidence in your findings (0.0-1.0)\n- Suggested p50 multiplier with explicit reasoning\n\nIf you cannot identify a specific company/ticker, explain what data you would need and provide analysis based on sector-level data and your deep knowledge of financial patterns.",
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [
@@ -18,7 +18,9 @@
               "description": "Stock ticker symbol (e.g., AAPL, MSFT, GOOGL, TSLA)"
             }
           },
-          "required": ["symbol"]
+          "required": [
+            "symbol"
+          ]
         },
         "endpoint": "/stable/profile",
         "method": "GET"
@@ -35,7 +37,10 @@
             },
             "period": {
               "type": "string",
-              "enum": ["annual", "quarter"],
+              "enum": [
+                "annual",
+                "quarter"
+              ],
               "description": "Reporting period (annual or quarter)"
             },
             "limit": {
@@ -44,7 +49,10 @@
               "default": 3
             }
           },
-          "required": ["symbol", "period"]
+          "required": [
+            "symbol",
+            "period"
+          ]
         },
         "endpoint": "/stable/income-statement",
         "method": "GET"
@@ -61,7 +69,10 @@
             },
             "period": {
               "type": "string",
-              "enum": ["annual", "quarter"],
+              "enum": [
+                "annual",
+                "quarter"
+              ],
               "description": "Reporting period"
             },
             "limit": {
@@ -70,7 +81,10 @@
               "default": 3
             }
           },
-          "required": ["symbol", "period"]
+          "required": [
+            "symbol",
+            "period"
+          ]
         },
         "endpoint": "/stable/balance-sheet-statement",
         "method": "GET"
@@ -87,7 +101,10 @@
             },
             "period": {
               "type": "string",
-              "enum": ["annual", "quarter"],
+              "enum": [
+                "annual",
+                "quarter"
+              ],
               "description": "Reporting period"
             },
             "limit": {
@@ -96,7 +113,10 @@
               "default": 3
             }
           },
-          "required": ["symbol", "period"]
+          "required": [
+            "symbol",
+            "period"
+          ]
         },
         "endpoint": "/stable/cash-flow-statement",
         "method": "GET"
@@ -113,7 +133,10 @@
             },
             "period": {
               "type": "string",
-              "enum": ["annual", "quarter"],
+              "enum": [
+                "annual",
+                "quarter"
+              ],
               "description": "Reporting period"
             },
             "limit": {
@@ -122,7 +145,10 @@
               "default": 3
             }
           },
-          "required": ["symbol", "period"]
+          "required": [
+            "symbol",
+            "period"
+          ]
         },
         "endpoint": "/stable/ratios",
         "method": "GET"
@@ -139,7 +165,10 @@
             },
             "period": {
               "type": "string",
-              "enum": ["annual", "quarter"],
+              "enum": [
+                "annual",
+                "quarter"
+              ],
               "description": "Reporting period"
             },
             "limit": {
@@ -148,7 +177,10 @@
               "default": 3
             }
           },
-          "required": ["symbol", "period"]
+          "required": [
+            "symbol",
+            "period"
+          ]
         },
         "endpoint": "/stable/key-metrics",
         "method": "GET"
@@ -164,7 +196,9 @@
               "description": "Stock ticker symbol"
             }
           },
-          "required": ["symbol"]
+          "required": [
+            "symbol"
+          ]
         },
         "endpoint": "/stable/discounted-cash-flow",
         "method": "GET"
@@ -181,7 +215,10 @@
             },
             "period": {
               "type": "string",
-              "enum": ["annual", "quarter"],
+              "enum": [
+                "annual",
+                "quarter"
+              ],
               "description": "Reporting period"
             },
             "limit": {
@@ -190,7 +227,10 @@
               "default": 5
             }
           },
-          "required": ["symbol", "period"]
+          "required": [
+            "symbol",
+            "period"
+          ]
         },
         "endpoint": "/stable/analyst-estimates",
         "method": "GET"
@@ -214,7 +254,9 @@
               "description": "End date in YYYY-MM-DD format"
             }
           },
-          "required": ["symbol"]
+          "required": [
+            "symbol"
+          ]
         },
         "endpoint": "/stable/historical-price-eod/full",
         "method": "GET"
@@ -252,9 +294,34 @@
           "analyst-estimates",
           "historical-price-eod/full"
         ],
-        "note": "Live data — queries return real-time prices and most recent filings. Analyst estimates are forward-looking 1-5 years."
+        "note": "Live data \u2014 queries return real-time prices and most recent filings. Analyst estimates are forward-looking 1-5 years."
       }
-    }
+    },
+    "model_ladder": [
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5-20250929",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "free",
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "eval_score": null,
+        "note": "Baseline availability, random free model"
+      }
+    ],
+    "min_tier": "free",
+    "capability_gates": {}
   },
   "performance": {
     "forecasts_contributed": 0,
@@ -297,7 +364,7 @@
       "Analyze Apple's financial health and growth trajectory for the next fiscal year",
       "What is Tesla's current valuation relative to its DCF intrinsic value?",
       "Compare Microsoft's profitability margins and growth rates over the last 3 years",
-      "Pull NVIDIA's analyst consensus estimates — is the market pricing in realistic growth?",
+      "Pull NVIDIA's analyst consensus estimates \u2014 is the market pricing in realistic growth?",
       "Assess Amazon's free cash flow generation and capital allocation strategy",
       "Is Alphabet's balance sheet strong enough to sustain AI capex through 2028?"
     ],
@@ -357,11 +424,11 @@
       },
       "dcf_interpretation_guide": {
         "description": "How to read the FMP DCF fair value vs stock price",
-        "deeply_undervalued": "DCF > 1.5x price — strong value signal, verify model inputs",
-        "undervalued": "DCF > 1.15x price — moderate value signal",
-        "fairly_valued": "DCF within ±15% of price — market is pricing correctly",
-        "overvalued": "DCF < 0.85x price — premium, verify growth expectations",
-        "deeply_overvalued": "DCF < 0.65x price — high premium, growth must justify"
+        "deeply_undervalued": "DCF > 1.5x price \u2014 strong value signal, verify model inputs",
+        "undervalued": "DCF > 1.15x price \u2014 moderate value signal",
+        "fairly_valued": "DCF within \u00b115% of price \u2014 market is pricing correctly",
+        "overvalued": "DCF < 0.85x price \u2014 premium, verify growth expectations",
+        "deeply_overvalued": "DCF < 0.65x price \u2014 high premium, growth must justify"
       },
       "key_metrics_definitions": {
         "pe_ratio": "Price / EPS. Lower = cheaper, but compare within sector and to growth rate (PEG).",
@@ -384,15 +451,60 @@
           "NVDA",
           "TSLA"
         ],
-        "financials": ["JPM", "BAC", "GS", "MS", "BRK-B", "V", "MA"],
-        "healthcare": ["JNJ", "UNH", "PFE", "ABBV", "LLY", "MRK", "TMO"],
-        "consumer": ["WMT", "PG", "KO", "PEP", "COST", "NKE", "MCD"],
-        "industrials": ["CAT", "HON", "UNP", "BA", "GE", "RTX", "DE"],
-        "energy": ["XOM", "CVX", "COP", "SLB", "EOG", "PXD", "OXY"]
+        "financials": [
+          "JPM",
+          "BAC",
+          "GS",
+          "MS",
+          "BRK-B",
+          "V",
+          "MA"
+        ],
+        "healthcare": [
+          "JNJ",
+          "UNH",
+          "PFE",
+          "ABBV",
+          "LLY",
+          "MRK",
+          "TMO"
+        ],
+        "consumer": [
+          "WMT",
+          "PG",
+          "KO",
+          "PEP",
+          "COST",
+          "NKE",
+          "MCD"
+        ],
+        "industrials": [
+          "CAT",
+          "HON",
+          "UNP",
+          "BA",
+          "GE",
+          "RTX",
+          "DE"
+        ],
+        "energy": [
+          "XOM",
+          "CVX",
+          "COP",
+          "SLB",
+          "EOG",
+          "PXD",
+          "OXY"
+        ]
       }
     }
   },
-  "accepts": ["query", "symbol", "ticker", "company"],
+  "accepts": [
+    "query",
+    "symbol",
+    "ticker",
+    "company"
+  ],
   "produces": [
     "evidence",
     "financial-analysis",
@@ -401,7 +513,13 @@
   ],
   "dependencies": {
     "required": [],
-    "optional": ["macro_forecaster", "market_research", "sentiment_analyzer"],
-    "data_services": ["financialmodelingprep.com"]
+    "optional": [
+      "macro_forecaster",
+      "market_research",
+      "sentiment_analyzer"
+    ],
+    "data_services": [
+      "financialmodelingprep.com"
+    ]
   }
 }

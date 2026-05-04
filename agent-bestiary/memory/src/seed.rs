@@ -180,6 +180,9 @@ impl SeedData {
                 workflow_template: None,
                 prompt_template: None,
                 requires_secrets: None,
+                model_ladder: serde_json::Value::Array(vec![]),
+                min_tier: "free".to_string(),
+                capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             },
             Agent {
                 agent_id: make_uuid(1, 0, 0),
@@ -231,6 +234,9 @@ impl SeedData {
                 workflow_template: None,
                 prompt_template: None,
                 requires_secrets: None,
+                model_ladder: serde_json::Value::Array(vec![]),
+                min_tier: "free".to_string(),
+                capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             },
             Agent {
                 agent_id: make_uuid(2, 0, 0),
@@ -277,6 +283,9 @@ impl SeedData {
                 workflow_template: None,
                 prompt_template: None,
                 requires_secrets: None,
+                model_ladder: serde_json::Value::Array(vec![]),
+                min_tier: "free".to_string(),
+                capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             },
         ]
     }

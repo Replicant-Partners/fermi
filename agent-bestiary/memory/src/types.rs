@@ -292,6 +292,23 @@ pub struct Agent {
     pub workflow_template: Option<serde_json::Value>,
     pub prompt_template: Option<String>,
     pub requires_secrets: Option<serde_json::Value>,
+    // ADR-011: cognition economy
+    #[serde(default = "default_json_array")]
+    pub model_ladder: serde_json::Value,
+    #[serde(default = "default_free_tier")]
+    pub min_tier: String,
+    #[serde(default = "default_json_object")]
+    pub capability_gates: serde_json::Value,
+}
+
+fn default_json_array() -> serde_json::Value {
+    serde_json::Value::Array(vec![])
+}
+fn default_json_object() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
+}
+fn default_free_tier() -> String {
+    "free".to_string()
 }
 
 fn default_status() -> String {
@@ -333,6 +350,10 @@ pub struct AgentUpdate {
     pub workflow_template: Option<serde_json::Value>,
     pub prompt_template: Option<String>,
     pub requires_secrets: Option<serde_json::Value>,
+    // ADR-011: cognition economy
+    pub model_ladder: Option<serde_json::Value>,
+    pub min_tier: Option<String>,
+    pub capability_gates: Option<serde_json::Value>,
 }
 
 /// Snapshot of mutable agent fields at a point in time

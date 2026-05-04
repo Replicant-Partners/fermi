@@ -233,6 +233,8 @@ impl ServerHandler for AgentBestiaryHandler {
                 let context = ExecutionContext {
                     program,
                     agent_card: card.clone(),
+                    creature_id: None,
+                    cognition_tier: None,
                 };
 
                 // Execute the agent
@@ -422,6 +424,8 @@ impl ServerHandler for AgentBestiaryHandler {
                 let context = ExecutionContext {
                     program,
                     agent_card: card.clone(),
+                    creature_id: None,
+                    cognition_tier: None,
                 };
 
                 let result = self

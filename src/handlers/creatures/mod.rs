@@ -17,9 +17,9 @@ mod tethering;
 // ─── Re-exports: query ─────────────────────────────────────────────
 pub use query::{
     creature_activity_handler, creature_animation_layer_handler, creature_animation_status_handler,
-    creature_flight_path_handler, creature_flights_handler, creature_image_handler,
-    creature_versions_handler, feed_handler, get_creature_handler, list_creatures_handler,
-    list_visible_flights_handler,
+    creature_cognition_handler, creature_flight_path_handler, creature_flights_handler,
+    creature_image_handler, creature_versions_handler, feed_handler, get_creature_handler,
+    list_creatures_handler, list_visible_flights_handler,
 };
 
 // ─── Re-exports: flights ───────────────────────────────────────────
@@ -332,6 +332,8 @@ pub(crate) async fn trigger_swarm_host_welcome(
     let context = ExecutionContext {
         program,
         agent_card: card,
+        creature_id: None,
+        cognition_tier: None,
     };
 
     let tool_context = Arc::new(ToolContext {

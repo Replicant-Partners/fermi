@@ -165,6 +165,7 @@ pub async fn enemy_sensor_handler(
                     "threat_scan",
                     &query,
                     &user_id,
+                    Some(creature_id),
                 ),
             )
             .await
@@ -281,6 +282,7 @@ pub async fn enemy_sensor_handler(
                     "defense_strategy",
                     &query,
                     &user_id,
+                    Some(creature_id),
                 ),
             )
             .await
@@ -499,6 +501,7 @@ pub async fn genome_profiler_handler(
                     "phylogenetic_profile",
                     &query,
                     &user_id,
+                    Some(creature_id),
                 ),
             )
             .await
@@ -720,6 +723,7 @@ pub async fn prey_locator_handler(
                     "prey_scan",
                     &query,
                     &user_id,
+                    Some(creature_id),
                 ),
             )
             .await
@@ -848,6 +852,7 @@ pub async fn prey_locator_handler(
                     "stalk_plan",
                     &query,
                     &user_id,
+                    Some(creature_id),
                 ),
             )
             .await
@@ -959,6 +964,7 @@ pub async fn prey_locator_handler(
                     "prey_strategy",
                     &query,
                     &user_id,
+                    Some(creature_id),
                 ),
             )
             .await
@@ -1305,6 +1311,7 @@ pub async fn creature_dream_handler(
             "dream",
             &dream_query,
             &spawn_user,
+            Some(creature_id),
         )
         .await
         {

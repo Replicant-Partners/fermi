@@ -6,6 +6,7 @@
 ///   - mistral (OpenAI-compatible)
 ///   - qwen (OpenAI-compatible)
 ///   - openrouter (OpenAI-compatible proxy)
+///   - glm (Zhipu AI GLM, OpenAI-compatible — GLM_API_KEY / GLM_BASE_URL)
 use crate::agent_backend::executor::{
     AgentExecutor, AgentMetadata, AgentOutput, AgentStatus, ExecutionContext, ExecutionError,
 };
@@ -72,6 +73,19 @@ impl MultiModelExecutor {
                 },
             );
             println!("  Multi-model: OpenRouter provider available");
+        }
+
+        if let Ok(key) = std::env::var("GLM_API_KEY") {
+            providers.insert(
+                "glm".to_string(),
+                ProviderConfig {
+                    api_key: key,
+                    base_url: std::env::var("GLM_BASE_URL").unwrap_or_else(|_| {
+                        "https://open.bigmodel.cn/api/paas/v4".to_string()
+                    }),
+                },
+            );
+            println!("  Multi-model: Zhipu AI GLM provider available");
         }
 
         println!(
@@ -196,13 +210,24 @@ impl AgentExecutor for MultiModelExecutor {
         agent: &AgentStmt,
         context: &ExecutionContext,
     ) -> Result<AgentOutput, ExecutionError> {
-        let provider = &context.agent_card.capabilities.provider;
+        // ADR-011 Phase 2: resolve model from ladder when creature tier is present
+        let resolved_ctx;
+        let effective_context: &ExecutionContext = if let Some(tier) = &context.cognition_tier {
+            let mut patched = context.clone();
+            patched.agent_card.capabilities.apply_tier_resolution(tier);
+            resolved_ctx = patched;
+            &resolved_ctx
+        } else {
+            context
+        };
+
+        let provider = &effective_context.agent_card.capabilities.provider;
 
         match provider.as_str() {
-            "anthropic" | "" => self.anthropic.execute(agent, context).await,
+            "anthropic" | "" => self.anthropic.execute(agent, effective_context).await,
             other => {
                 if let Some(config) = self.providers.get(other) {
-                    self.execute_openai_compatible(agent, context, config).await
+                    self.execute_openai_compatible(agent, effective_context, config).await
                 } else {
                     Err(ExecutionError::ExecutionFailed(format!(
                         "Provider '{}' not configured. Set {}_API_KEY env var.",

@@ -3,7 +3,7 @@
   "agent_type": "creative",
   "version": "1.0.0",
   "tier": "curated",
-  "system_prompt": "You are a video analysis agent that works with Reduct.video to analyze transcripts and create highlight reels.\n\nWorkflow:\n1. Use reduct_list_projects to discover available projects, or accept a project_id directly\n2. Use reduct_get_project to see all recordings and existing reels in a project\n3. Use reduct_get_transcript to pull the JSON transcript (with timestamps) for each recording\n4. Analyze the transcript text to identify the most meaningful, compelling, or relevant clips based on the user's prompt\n5. Use reduct_create_reel to create a new reel with a descriptive title\n6. Use reduct_add_block with type 'title' to add a title card summarizing the theme\n7. Use reduct_add_block with type 'doc-range' for each identified clip, using the exact start/end times from the transcript\n\nWhen analyzing transcripts:\n- Look for moments of insight, strong statements, emotional resonance, or topical relevance\n- Prefer complete thoughts — don't cut mid-sentence\n- Use the JSON transcript format to get precise timestamps\n- Group related clips together in the reel for narrative flow\n- Add title cards between thematic sections when creating longer reels\n\nAlways report back what you found: how many clips, total duration, and the themes identified.",
+  "system_prompt": "You are a video analysis agent that works with Reduct.video to analyze transcripts and create highlight reels.\n\nWorkflow:\n1. Use reduct_list_projects to discover available projects, or accept a project_id directly\n2. Use reduct_get_project to see all recordings and existing reels in a project\n3. Use reduct_get_transcript to pull the JSON transcript (with timestamps) for each recording\n4. Analyze the transcript text to identify the most meaningful, compelling, or relevant clips based on the user's prompt\n5. Use reduct_create_reel to create a new reel with a descriptive title\n6. Use reduct_add_block with type 'title' to add a title card summarizing the theme\n7. Use reduct_add_block with type 'doc-range' for each identified clip, using the exact start/end times from the transcript\n\nWhen analyzing transcripts:\n- Look for moments of insight, strong statements, emotional resonance, or topical relevance\n- Prefer complete thoughts \u2014 don't cut mid-sentence\n- Use the JSON transcript format to get precise timestamps\n- Group related clips together in the reel for narrative flow\n- Add title cards between thematic sections when creating longer reels\n\nAlways report back what you found: how many clips, total duration, and the themes identified.",
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [],
@@ -15,7 +15,32 @@
     ],
     "model": "claude-haiku-4-5-20251001",
     "temperature": 0.3,
-    "provider": "anthropic"
+    "provider": "anthropic",
+    "model_ladder": [
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5-20250929",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "free",
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "eval_score": null,
+        "note": "Baseline availability, random free model"
+      }
+    ],
+    "min_tier": "free",
+    "capability_gates": {}
   },
   "performance": {
     "forecasts_contributed": 0,

@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use fermi::agent_backend::executor::{AgentExecutor, AgentStatus};
+use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
@@ -75,8 +76,19 @@ pub async fn execute_agent_stream_handler(
     let card = resolve_agent_card(&state, &db_agent);
     let agent_db_id = db_agent.agent_id;
     let agent_name = db_agent.agent_name.clone();
-    let model = card.capabilities.model.clone();
     let query = body.query.clone();
+
+    // ── Enrich card with KG context from past dream cycles ─────────
+    let card = enrich_with_kg_context(
+        &state.memory_store,
+        &state.embedder,
+        agent_db_id,
+        &query,
+        card,
+    )
+    .await;
+
+    let model = card.capabilities.model.clone();
 
     // ── Build execution context ────────────────────────────────────
     let agent_stmt = ast::AgentStmt {
@@ -97,6 +109,8 @@ pub async fn execute_agent_stream_handler(
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
+        creature_id: None,
+        cognition_tier: None,
     };
 
     // ── Build executor ─────────────────────────────────────────────

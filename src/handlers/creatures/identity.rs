@@ -201,6 +201,7 @@ pub async fn mint_creature_handler(
                 "creature_mint",
                 &query,
                 &user_id2,
+                Some(creature_id),
             )
             .await
             {

@@ -2,16 +2,21 @@
 ///
 /// Pluggable execution engines for agents.
 /// Currently implements Mock executor for testing.
-use crate::agent_backend::agent_card::AgentCard;
+use crate::agent_backend::agent_card::{AgentCard, CognitionTier};
 use crate::ast::{AgentStmt, EvidenceStmt, Program};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Execution context passed to executors
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
     pub program: Program,
     pub agent_card: AgentCard,
+    /// Creature ID executing this agent (None for non-creature executions)
+    pub creature_id: Option<Uuid>,
+    /// Creature's cognition tier — drives model ladder resolution (None = use card defaults)
+    pub cognition_tier: Option<CognitionTier>,
 }
 
 /// A record of a single tool invocation during agentic execution
@@ -192,6 +197,8 @@ mod tests {
         let context = ExecutionContext {
             program,
             agent_card: card,
+            creature_id: None,
+            cognition_tier: None,
         };
 
         let executor = MockExecutor::new();

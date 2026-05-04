@@ -73,9 +73,9 @@ Knowledge is the creature's soul. Bandwidth is its voice.
 
 ### Cognition Tiers
 
-#### Free Tier (`openrouter/free`)
+#### Free Tier (`openrouter/free` or `glm-4-flash`)
 
-**Cost:** Zero. Always available. No API key required from the user.
+**Cost:** Zero (openrouter/free) or near-zero (GLM-4-Flash at ~$0.0001/1K tokens). Always available.
 
 **Creature experience:**
 - Minted with a basic specimen image (simpler variation prompt → less unique)
@@ -185,11 +185,25 @@ The existing single `model` + `provider` fields in `AgentCapabilities` are exten
         "benchmarked_at": "2026-02-15"
       },
       {
+        "tier": "standard",
+        "provider": "glm",
+        "model": "glm-4-air",
+        "eval_score": null,
+        "note": "Zhipu AI GLM-4-Air — cost-effective alternative to Haiku"
+      },
+      {
         "tier": "free",
         "provider": "openrouter",
         "model": "openrouter/free",
         "eval_score": null,
         "note": "Baseline availability, random free model"
+      },
+      {
+        "tier": "free",
+        "provider": "glm",
+        "model": "glm-4-flash",
+        "eval_score": null,
+        "note": "Zhipu AI GLM-4-Flash — deterministic free-tier alternative"
       }
     ],
     "min_tier": "free",
@@ -361,14 +375,15 @@ Both cost credits, but they serve different purposes. A player might prioritize 
 
 - **Complexity in execution path.** The executor must resolve creature tier → model ladder → capability gates before every execution. This adds latency (small — one DB lookup + one JSON traversal).
 - **Agent maker burden.** Every agent needs a model ladder and eval scores for each rung. The `publish_coach` and `performance_coach` agents help, but it's still more work than a single model field.
-- **Free model unpredictability.** `openrouter/free` selects models randomly. The same creature might get different quality on consecutive executions. Mitigation: capability gates prevent free models from attempting tasks they can't handle.
+- **Free model unpredictability.** `openrouter/free` selects models randomly. The same creature might get different quality on consecutive executions. Mitigation: capability gates prevent free models from attempting tasks they can't handle. `glm-4-flash` is a deterministic alternative for the free tier.
 - **Credit economy design.** Balancing credit costs across tiers requires ongoing tuning. Too cheap and premium is universal (no revenue). Too expensive and nobody upgrades (bad game).
 
 ### Neutral
 
 - The existing `cognition_level` formula doesn't change. It measures knowledge. The new `cognition_tier` measures bandwidth. They're independent axes.
 - Deterministic agents (coherence_evaluator, reynolds_flock) are unaffected — they don't use LLMs.
-- The `MultiModelExecutor` already supports OpenRouter as a provider. The model ladder adds tier resolution on top of existing dispatch.
+- The `MultiModelExecutor` already supports OpenRouter and Zhipu AI GLM as providers (`GLM_API_KEY` env var). The model ladder adds tier resolution on top of existing dispatch.
+- GLM models use `glm` as the provider identifier. Env vars: `GLM_API_KEY`, optionally `GLM_BASE_URL` (default: `https://open.bigmodel.cn/api/paas/v4`).
 
 ---
 
@@ -612,6 +627,8 @@ For reference, here's what happens when the entire rabble runs on free tier:
 | `rabble_lifecycle_coordinator` | Gated — not available on free | ❌ Graceful skip |
 | `enemy_sensor` | Gated — not available on free | ❌ Graceful skip |
 | `prey_locator` | Gated — not available on free | ❌ Graceful skip |
+
+**GLM-4-Flash advantage over `openrouter/free`:** GLM-4-Flash is a named, pinned model — the creature gets consistent behavior across executions. `openrouter/free` is a pool that changes. For agents where consistency matters (keeper, narrator tone), agent makers should prefer GLM-4-Flash in their free rung.
 
 **The game works but loses its soul.** The functional skeleton survives. The experiential richness — vivid narration, complex choreography, ecological awareness, compound orchestrations — requires cognitive bandwidth that free models can't reliably provide. This is by design: the gap between what the creature knows and what it can express is the upgrade incentive.
 
