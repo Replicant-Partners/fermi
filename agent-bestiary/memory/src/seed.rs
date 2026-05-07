@@ -183,6 +183,8 @@ impl SeedData {
                 model_ladder: serde_json::Value::Array(vec![]),
                 min_tier: "free".to_string(),
                 capability_gates: serde_json::Value::Object(serde_json::Map::new()),
+                persona_version: 1,
+                fermi_contract: None,
             },
             Agent {
                 agent_id: make_uuid(1, 0, 0),
@@ -237,6 +239,8 @@ impl SeedData {
                 model_ladder: serde_json::Value::Array(vec![]),
                 min_tier: "free".to_string(),
                 capability_gates: serde_json::Value::Object(serde_json::Map::new()),
+                persona_version: 1,
+                fermi_contract: None,
             },
             Agent {
                 agent_id: make_uuid(2, 0, 0),
@@ -286,6 +290,8 @@ impl SeedData {
                 model_ladder: serde_json::Value::Array(vec![]),
                 min_tier: "free".to_string(),
                 capability_gates: serde_json::Value::Object(serde_json::Map::new()),
+                persona_version: 1,
+                fermi_contract: None,
             },
         ]
     }
@@ -468,6 +474,10 @@ impl SeedData {
                     ),
                     "iterations:1".to_string(),
                 ],
+                provenance: crate::types::Provenance::AutoPass,
+                authority_weight: 0.5,
+                dyad_id: None,
+                persona_version_at_write: None,
             });
         }
 
@@ -733,6 +743,7 @@ impl SeedData {
                     } else {
                         None
                     },
+                    properties: None,
                 }
             })
             .collect()
@@ -787,6 +798,7 @@ impl SeedData {
                     t_valid: base_time + Duration::days(5),
                     t_invalid,
                     source_episodes: source_eps.clone(),
+                    data: None,
                 }
             })
             .collect()

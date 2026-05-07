@@ -2138,6 +2138,12 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             min_tier: format!("{:?}", card.capabilities.min_tier).to_lowercase(),
             capability_gates: serde_json::to_value(&card.capabilities.capability_gates)
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+            persona_version: 1,
+            fermi_contract: card
+                .capabilities
+                .fermi_contract
+                .as_ref()
+                .and_then(|fc| serde_json::to_value(fc).ok()),
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -2155,9 +2161,61 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
                         _ => {}
                     }
                 }
+                // Seed CEP knowledge-graph entities from fermi_contract.seed_facts (idempotent)
+                if let Some(fc) = &card.capabilities.fermi_contract {
+                    if !fc.seed_facts.is_empty() {
+                        seed_cep_entities(memory_store, id, &card.agent_id, fc).await;
+                    }
+                }
             }
             Err(e) => eprintln!("Warning: failed to seed {}: {}", card.agent_id, e),
         }
+    }
+}
+
+async fn seed_cep_entities(
+    memory_store: &MemoryStore,
+    agent_uuid: uuid::Uuid,
+    agent_name: &str,
+    fc: &fermi::agent_backend::agent_card::FermiContract,
+) {
+    // Check if CEP entities already exist to stay idempotent across restarts.
+    let existing = memory_store
+        .get_agent_entities(agent_uuid)
+        .await
+        .unwrap_or_default();
+    let has_cep = existing
+        .iter()
+        .any(|e| e.entity_type.starts_with("cep_"));
+    if has_cep {
+        return;
+    }
+
+    let mut seeded = 0usize;
+    for sf in &fc.seed_facts {
+        let entity = agent_bestiary_memory::Entity {
+            entity_id: uuid::Uuid::new_v4(),
+            agent_id: agent_uuid,
+            entity_name: sf.name.clone(),
+            entity_type: sf.entity_type.clone(),
+            summary: Some(sf.description.clone()),
+            t_valid: chrono::Utc::now(),
+            t_invalid: None,
+            source_episodes: vec![],
+            extraction_confidence: sf.confidence,
+            embedding: None,
+            properties: Some(sf.properties.clone()),
+        };
+        match memory_store.store_entity(entity).await {
+            Ok(_) => seeded += 1,
+            Err(e) => eprintln!(
+                "  Warning: failed to seed CEP entity '{}' for {}: {}",
+                sf.name, agent_name, e
+            ),
+        }
+    }
+    if seeded > 0 {
+        println!("  Seeded {} CEP entities for {}", seeded, agent_name);
     }
 }
 
@@ -2213,6 +2271,10 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             },
             capability_gates: serde_json::from_value(agent.capability_gates.clone())
                 .unwrap_or_default(),
+            fermi_contract: agent
+                .fermi_contract
+                .as_ref()
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
         },
         performance: AgentPerformance {
             forecasts_contributed: 0,
@@ -2405,6 +2467,10 @@ pub(crate) fn agent_output_to_episode(
         embedding: None,
         consolidated: false,
         tags,
+        provenance: agent_bestiary_memory::Provenance::AutoPass,
+        authority_weight: 0.5,
+        dyad_id: None,
+        persona_version_at_write: None,
     }
 }
 

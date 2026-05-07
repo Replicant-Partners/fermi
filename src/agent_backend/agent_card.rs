@@ -146,6 +146,10 @@ pub struct ModelRung {
     pub benchmarked_at: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    /// Per-rung sampling overrides merged on top of agent-level model_params
+    /// when this rung is selected by apply_tier_resolution().
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
 }
 
 fn default_min_tier() -> CognitionTier {
@@ -179,10 +183,69 @@ pub struct AgentCapabilities {
     /// Feature gates: capability name → minimum tier required to invoke it.
     #[serde(default)]
     pub capability_gates: HashMap<String, CognitionTier>,
+
+    // ── CEP: Calibrated Evidence Protocol ──────────────────────────
+    /// Structured probabilistic reasoning contract for fermi-orchestra agents.
+    #[serde(default)]
+    pub fermi_contract: Option<FermiContract>,
+
+    /// Provider-agnostic sampling configuration. Keys override the legacy
+    /// `temperature` field and add provider-specific params (top_p, top_k,
+    /// extended_thinking, thinking_budget_tokens, frequency_penalty, etc.).
+    /// `apply_tier_resolution()` merges the selected rung's `params` on top.
+    #[serde(default = "default_json_object")]
+    pub model_params: serde_json::Value,
+}
+
+/// CEP finding labels an orchestra agent is expected to emit.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FermiContract {
+    /// Labels this agent uses in key_findings (e.g. ["BASE RATE", "TRIAL DATA", "MULTIPLIER"]).
+    #[serde(default)]
+    pub finding_labels: Vec<String>,
+    /// Valid range for multiplier suggestions [min, max].
+    pub multiplier_range: Option<[f64; 2]>,
+    /// KG fact categories this agent maintains (e.g. ["base_rate", "designation_multiplier"]).
+    #[serde(default)]
+    pub kg_fact_categories: Vec<String>,
+    /// Seed facts to populate the KG on first run.
+    #[serde(default)]
+    pub seed_facts: Vec<CepSeedFact>,
+}
+
+/// A single seed fact for CEP KG initialisation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CepSeedFact {
+    pub entity_type: String,
+    pub name: String,
+    pub description: String,
+    pub properties: serde_json::Value,
+    pub confidence: f64,
 }
 
 fn default_provider() -> String {
     "anthropic".to_string()
+}
+
+fn default_json_object() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
+}
+
+/// Resolved sampling parameters — single source of truth for all 5 request
+/// construction sites in the executor pipeline (llm_executor, multi_model_executor,
+/// tool_executor ×2). Produced by `AgentCapabilities::resolve_sampling_params()`.
+#[derive(Debug, Clone)]
+pub struct SamplingParams {
+    pub temperature: Option<f64>,
+    pub max_tokens: u32,
+    pub top_p: Option<f64>,
+    pub top_k: Option<i32>,
+    pub extended_thinking: bool,
+    pub thinking_budget_tokens: Option<u32>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub repetition_penalty: Option<f64>,
+    pub random_seed: Option<u32>,
 }
 
 impl AgentCapabilities {
@@ -190,22 +253,82 @@ impl AgentCapabilities {
     ///
     /// Algorithm (from ADR-011):
     ///   1. Find the highest rung whose tier ≤ requested tier
-    ///   2. If found, overwrite model + provider (used by all executors at runtime)
+    ///   2. If found, overwrite model + provider and merge rung params into model_params
     ///   3. If no matching rung exists, leave defaults unchanged
     pub fn apply_tier_resolution(&mut self, tier: &CognitionTier) {
         if self.model_ladder.is_empty() {
             return;
         }
-        // Pick the highest rung whose tier is ≤ requested tier
+        // Extract needed data before taking a mutable borrow on self
         let best = self
             .model_ladder
             .iter()
             .filter(|r| &r.tier <= tier)
-            .max_by(|a, b| a.tier.cmp(&b.tier));
+            .max_by(|a, b| a.tier.cmp(&b.tier))
+            .map(|r| (r.model.clone(), r.provider.clone(), r.params.clone()));
 
-        if let Some(rung) = best {
-            self.model = rung.model.clone();
-            self.provider = rung.provider.clone();
+        if let Some((model, provider, rung_params)) = best {
+            self.model = model;
+            self.provider = provider;
+            // Merge rung-level params on top of agent-level model_params
+            if let Some(rp) = rung_params {
+                if let (
+                    serde_json::Value::Object(base),
+                    serde_json::Value::Object(overrides),
+                ) = (&mut self.model_params, rp)
+                {
+                    for (k, v) in overrides {
+                        base.insert(k, v);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Produce resolved sampling parameters for one LLM request.
+    ///
+    /// Priority: model_params JSONB keys > legacy `temperature` f64 field.
+    /// Extended thinking forces temperature = 1.0 (Anthropic requirement).
+    pub fn resolve_sampling_params(&self, default_max_tokens: u32) -> SamplingParams {
+        let p = &self.model_params;
+
+        let extended_thinking = p
+            .get("extended_thinking")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let temperature = if extended_thinking {
+            Some(1.0)
+        } else {
+            p.get("temperature")
+                .and_then(|v| v.as_f64())
+                .or(Some(self.temperature))
+        };
+
+        SamplingParams {
+            temperature,
+            max_tokens: p
+                .get("max_tokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(default_max_tokens),
+            top_p: p.get("top_p").and_then(|v| v.as_f64()),
+            top_k: p
+                .get("top_k")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i32),
+            extended_thinking,
+            thinking_budget_tokens: p
+                .get("thinking_budget_tokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
+            frequency_penalty: p.get("frequency_penalty").and_then(|v| v.as_f64()),
+            presence_penalty: p.get("presence_penalty").and_then(|v| v.as_f64()),
+            repetition_penalty: p.get("repetition_penalty").and_then(|v| v.as_f64()),
+            random_seed: p
+                .get("random_seed")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
         }
     }
 }
@@ -316,6 +439,8 @@ impl AgentCard {
                 model_ladder: vec![],
                 min_tier: CognitionTier::Free,
                 capability_gates: HashMap::new(),
+                fermi_contract: None,
+                model_params: serde_json::Value::Object(serde_json::Map::new()),
             },
             performance: AgentPerformance {
                 forecasts_contributed: 0,

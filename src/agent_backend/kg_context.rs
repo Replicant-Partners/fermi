@@ -65,51 +65,102 @@ pub async fn enrich_with_kg_context(
     scored_rules.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored_rules.truncate(5);
 
-    let mut scored_entities: Vec<(f32, _)> = entities
+    // Partition: CEP seed entities are reference data (always included); others are episodic.
+    let (cep_entities, episodic_entities): (Vec<_>, Vec<_>) = entities
+        .iter()
+        .partition(|e| e.entity_type.starts_with("cep_"));
+
+    let mut scored_entities: Vec<(f32, _)> = episodic_entities
         .iter()
         .filter_map(|e| {
             e.embedding
                 .as_ref()
-                .map(|emb| (cosine_similarity(&query_embedding, emb), e))
+                .map(|emb| (cosine_similarity(&query_embedding, emb), *e))
         })
         .filter(|(s, _)| *s >= MIN_SIMILARITY)
         .collect();
     scored_entities.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored_entities.truncate(8);
 
-    if scored_rules.is_empty() && scored_entities.is_empty() {
+    if scored_rules.is_empty() && scored_entities.is_empty() && cep_entities.is_empty() {
         return card;
     }
 
-    let mut kg_block = String::from(
-        "\n\n## Learned Knowledge (from past experience)\n\
-         The following was distilled from your episodic memory during dream cycles. \
-         Use it as context — prioritise your core instructions over these where they conflict.\n",
-    );
+    let mut kg_block = String::new();
 
-    if !scored_rules.is_empty() {
-        kg_block.push_str("\n### Learned Rules\n");
-        for (score, rule) in &scored_rules {
-            kg_block.push_str(&format!(
-                "- ({:.0}% match, {:.0}% confidence) {}\n",
-                score * 100.0,
-                rule.confidence_score * 100.0,
-                rule.rule_content
-            ));
+    // ── CEP calibration reference (structured, not similarity-gated) ──────────
+    if !cep_entities.is_empty() {
+        kg_block.push_str(
+            "\n\n## CEP Calibration Reference (from knowledge graph)\n\
+             These are validated reference values seeded into your knowledge graph. \
+             Treat them as authoritative priors unless you have stronger current evidence.\n",
+        );
+
+        // Group by entity_type for readable output.
+        let mut by_type: std::collections::BTreeMap<&str, Vec<_>> =
+            std::collections::BTreeMap::new();
+        for e in &cep_entities {
+            by_type.entry(e.entity_type.as_str()).or_default().push(e);
+        }
+
+        for (etype, items) in &by_type {
+            let header = etype.trim_start_matches("cep_").replace('_', " ");
+            let header = {
+                let mut c = header.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => String::new(),
+                }
+            };
+            kg_block.push_str(&format!("\n### {}\n", header));
+            for e in items.iter() {
+                let summary = e.summary.as_deref().unwrap_or("");
+                if let Some(props) = &e.properties {
+                    kg_block.push_str(&format!(
+                        "- **{}**: {} | data: {}\n",
+                        e.entity_name,
+                        summary,
+                        props
+                    ));
+                } else {
+                    kg_block.push_str(&format!("- **{}**: {}\n", e.entity_name, summary));
+                }
+            }
         }
     }
 
-    if !scored_entities.is_empty() {
-        kg_block.push_str("\n### Known Entities\n");
-        for (score, entity) in &scored_entities {
-            let summary = entity.summary.as_deref().unwrap_or("no summary");
-            kg_block.push_str(&format!(
-                "- ({:.0}% match) **{}** ({}): {}\n",
-                score * 100.0,
-                entity.entity_name,
-                entity.entity_type,
-                summary
-            ));
+    // ── Episodic knowledge (similarity-gated) ────────────────────────────────
+    if !scored_rules.is_empty() || !scored_entities.is_empty() {
+        kg_block.push_str(
+            "\n\n## Learned Knowledge (from past experience)\n\
+             The following was distilled from your episodic memory during dream cycles. \
+             Use it as context — prioritise your core instructions over these where they conflict.\n",
+        );
+
+        if !scored_rules.is_empty() {
+            kg_block.push_str("\n### Learned Rules\n");
+            for (score, rule) in &scored_rules {
+                kg_block.push_str(&format!(
+                    "- ({:.0}% match, {:.0}% confidence) {}\n",
+                    score * 100.0,
+                    rule.confidence_score * 100.0,
+                    rule.rule_content
+                ));
+            }
+        }
+
+        if !scored_entities.is_empty() {
+            kg_block.push_str("\n### Known Entities\n");
+            for (score, entity) in &scored_entities {
+                let summary = entity.summary.as_deref().unwrap_or("no summary");
+                kg_block.push_str(&format!(
+                    "- ({:.0}% match) **{}** ({}): {}\n",
+                    score * 100.0,
+                    entity.entity_name,
+                    entity.entity_type,
+                    summary
+                ));
+            }
         }
     }
 

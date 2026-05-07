@@ -20,6 +20,252 @@ pub struct Episode {
     pub consolidated: bool,
     #[serde(default)]
     pub tags: Vec<String>,
+
+    // ─── Phase 0 observability foundations (migration 103) ───
+    /// Source of this episode — `auto_pass` (default), HITL outcomes,
+    /// or `synthetic_correction` (HumanAuthority-weighted re-write).
+    #[serde(default)]
+    pub provenance: Provenance,
+    /// 1.0 = HumanAuthority (max), <1.0 = lower-confidence sources.
+    /// Default 0.5 = "automated default".
+    #[serde(default = "default_authority_weight")]
+    pub authority_weight: f64,
+    /// Deterministic id of (agent, human) dyad. Wiring deferred per Q4
+    /// — populated only by callers that explicitly know the human
+    /// participant in the interaction.
+    #[serde(default)]
+    pub dyad_id: Option<String>,
+    /// `agents.persona_version` at the time this episode was written.
+    /// Drift monitor uses this to compare embeddings across versions.
+    #[serde(default)]
+    pub persona_version_at_write: Option<i32>,
+}
+
+fn default_authority_weight() -> f64 {
+    0.5
+}
+
+/// Provenance of an episode — who/what produced it and at what authority.
+///
+/// See `migrations/103_observability_foundations.sql` for the matching DB
+/// constraint. Default is `AutoPass` so existing automated runs keep their
+/// current semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Provenance {
+    /// Evaluator registry passed the episode (no human review needed).
+    AutoPass,
+    /// Evaluator registry failed the episode (no human has seen it yet).
+    AutoFail,
+    /// HITL reviewer confirmed the evaluator verdict.
+    HumanApproved,
+    /// HITL reviewer corrected dimension scores only (no behavioural change).
+    HumanRelabeled,
+    /// HITL reviewer ran a full intervention — the *original* episode is
+    /// flagged, the synthetic corrected episode is `SyntheticCorrection`.
+    HumanCorrected,
+    /// The second write of the intervention flow — synthetic corrected
+    /// episode at HumanAuthority weight (1.0).
+    SyntheticCorrection,
+}
+
+impl Default for Provenance {
+    fn default() -> Self {
+        Provenance::AutoPass
+    }
+}
+
+impl std::fmt::Display for Provenance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Provenance::AutoPass => write!(f, "auto_pass"),
+            Provenance::AutoFail => write!(f, "auto_fail"),
+            Provenance::HumanApproved => write!(f, "human_approved"),
+            Provenance::HumanRelabeled => write!(f, "human_relabeled"),
+            Provenance::HumanCorrected => write!(f, "human_corrected"),
+            Provenance::SyntheticCorrection => write!(f, "synthetic_correction"),
+        }
+    }
+}
+
+impl std::str::FromStr for Provenance {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto_pass" => Ok(Provenance::AutoPass),
+            "auto_fail" => Ok(Provenance::AutoFail),
+            "human_approved" => Ok(Provenance::HumanApproved),
+            "human_relabeled" => Ok(Provenance::HumanRelabeled),
+            "human_corrected" => Ok(Provenance::HumanCorrected),
+            "synthetic_correction" => Ok(Provenance::SyntheticCorrection),
+            _ => Err(format!("Invalid provenance: {}", s)),
+        }
+    }
+}
+
+impl Provenance {
+    /// Whether this provenance represents a write originating from a
+    /// human reviewer (used by the timeline filters in Phase 3+).
+    pub fn is_human_originated(&self) -> bool {
+        matches!(
+            self,
+            Provenance::HumanApproved
+                | Provenance::HumanRelabeled
+                | Provenance::HumanCorrected
+                | Provenance::SyntheticCorrection
+        )
+    }
+
+    /// HumanAuthority-weighted writes that should never be averaged
+    /// down by lower-confidence subsequent observations.
+    pub fn is_human_authority(&self) -> bool {
+        matches!(
+            self,
+            Provenance::HumanCorrected | Provenance::SyntheticCorrection
+        )
+    }
+}
+
+/// HITL correction record — see `episode_corrections` table.
+///
+/// Append-only; mutating an existing row is rejected by a DB-level
+/// trigger (see migration 103). The optional `synthetic_episode_id`
+/// pointer is filled in by Phase 5 when the second write (synthetic
+/// corrected episode) is created.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeCorrection {
+    pub correction_id: Uuid,
+    pub episode_id: Uuid,
+    pub agent_id: Uuid,
+
+    pub reviewer_id: String,
+    pub reviewer_action: ReviewerAction,
+
+    pub scope: CorrectionScope,
+    pub classification: Option<CorrectionClassification>,
+
+    pub dimension: Option<String>,
+    pub correction_text: Option<String>,
+    #[serde(default)]
+    pub score_overrides: serde_json::Value,
+
+    pub coherence_check: Option<serde_json::Value>,
+    pub minimum_update_set: Option<serde_json::Value>,
+    pub tensions_flagged: Option<serde_json::Value>,
+
+    pub synthetic_episode_id: Option<Uuid>,
+
+    pub authority_weight: f64,
+    pub persona_version_bump: Option<i32>,
+
+    pub justification: Option<String>,
+
+    pub created_at: DateTime<Utc>,
+}
+
+/// Action a reviewer took in the HITL queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewerAction {
+    /// Confirm the evaluator verdict; no change to scores or behaviour.
+    Approve,
+    /// Correct dimension scores only.
+    Relabel,
+    /// Substantive correction — triggers the full intervention flow
+    /// (coherence gate + two-write memory pattern).
+    Intervene,
+}
+
+impl std::fmt::Display for ReviewerAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReviewerAction::Approve => write!(f, "approve"),
+            ReviewerAction::Relabel => write!(f, "relabel"),
+            ReviewerAction::Intervene => write!(f, "intervene"),
+        }
+    }
+}
+
+impl std::str::FromStr for ReviewerAction {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "approve" => Ok(ReviewerAction::Approve),
+            "relabel" => Ok(ReviewerAction::Relabel),
+            "intervene" => Ok(ReviewerAction::Intervene),
+            _ => Err(format!("Invalid reviewer action: {}", s)),
+        }
+    }
+}
+
+/// Scope of a correction — how broadly the corrective signal applies.
+///
+/// Per architecture doc step 2: `Episode` annotates the single record;
+/// `Dyad` updates relationship state for one human–agent pair;
+/// `AgentWide` updates persona baseline globally and requires two-reviewer
+/// consensus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrectionScope {
+    Episode,
+    Dyad,
+    AgentWide,
+}
+
+impl std::fmt::Display for CorrectionScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CorrectionScope::Episode => write!(f, "episode"),
+            CorrectionScope::Dyad => write!(f, "dyad"),
+            CorrectionScope::AgentWide => write!(f, "agent_wide"),
+        }
+    }
+}
+
+impl std::str::FromStr for CorrectionScope {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "episode" => Ok(CorrectionScope::Episode),
+            "dyad" => Ok(CorrectionScope::Dyad),
+            "agent_wide" => Ok(CorrectionScope::AgentWide),
+            _ => Err(format!("Invalid correction scope: {}", s)),
+        }
+    }
+}
+
+/// Belief vs behavioural classification (architecture doc step 3).
+///
+/// `Belief` — agent held an incorrect belief; target = world model /
+/// relationship beliefs / factual grounding.
+/// `Behaviour` — agent acted wrongly despite correct beliefs; target =
+/// action tendencies / response style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrectionClassification {
+    Belief,
+    Behaviour,
+}
+
+impl std::fmt::Display for CorrectionClassification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CorrectionClassification::Belief => write!(f, "belief"),
+            CorrectionClassification::Behaviour => write!(f, "behaviour"),
+        }
+    }
+}
+
+impl std::str::FromStr for CorrectionClassification {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "belief" => Ok(CorrectionClassification::Belief),
+            "behaviour" => Ok(CorrectionClassification::Behaviour),
+            _ => Err(format!("Invalid correction classification: {}", s)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +414,10 @@ pub struct Entity {
     pub source_episodes: Vec<Uuid>,
     pub extraction_confidence: f64,
     pub embedding: Option<Vec<f32>>,
+    /// Structured attributes. CEP seed entities (entity_type = "cep_*") use this
+    /// to store numeric reference data: {n, source, year, area, ...}.
+    #[serde(default)]
+    pub properties: Option<serde_json::Value>,
 }
 
 /// Fact (knowledge graph edge)
@@ -184,6 +434,9 @@ pub struct Fact {
     pub t_valid: DateTime<Utc>,
     pub t_invalid: Option<DateTime<Utc>>,
     pub source_episodes: Vec<Uuid>,
+    /// Arbitrary payload for richer fact metadata (CEP, provenance, etc.).
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,6 +552,18 @@ pub struct Agent {
     pub min_tier: String,
     #[serde(default = "default_json_object")]
     pub capability_gates: serde_json::Value,
+    // Phase 0 observability foundations (migration 103) —
+    // monotonic counter bumped by AgentVersion writes (DB trigger) and
+    // by agent-wide HITL interventions. Drift baseline.
+    #[serde(default = "default_persona_version")]
+    pub persona_version: i32,
+    // CEP: structured probabilistic reasoning contract (migration 105)
+    #[serde(default)]
+    pub fermi_contract: Option<serde_json::Value>,
+}
+
+fn default_persona_version() -> i32 {
+    1
 }
 
 fn default_json_array() -> serde_json::Value {

@@ -600,6 +600,8 @@ pub async fn create_agent_handler(
         model_ladder: serde_json::Value::Array(vec![]),
         min_tier: "free".to_string(),
         capability_gates: serde_json::Value::Object(serde_json::Map::new()),
+        persona_version: 1,
+        fermi_contract: None,
     };
 
     // If education budget requested, debit from user's wallet
@@ -860,6 +862,11 @@ pub async fn import_agent_handler(
             .and_then(|c| c.get("capability_gates"))
             .cloned()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+        persona_version: 1,
+        fermi_contract: card
+            .get("capabilities")
+            .and_then(|c| c.get("fermi_contract"))
+            .cloned(),
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -976,6 +983,10 @@ pub async fn import_embeddings_handler(
             embedding: Some(ep.embedding.clone()),
             consolidated: false,
             tags: vec![],
+            provenance: agent_bestiary_memory::Provenance::AutoPass,
+            authority_weight: 0.5,
+            dyad_id: None,
+            persona_version_at_write: None,
         };
 
         state

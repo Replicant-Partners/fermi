@@ -470,8 +470,9 @@ impl ConsolidationWorker {
                         t_valid: Utc::now(),
                         t_invalid: None,
                         source_episodes: vec![episode.episode_id],
-                        extraction_confidence: 0.5, // Low confidence for simple extraction
+                        extraction_confidence: 0.5,
                         embedding,
+                        properties: None,
                     };
 
                     entities.push(entity);
@@ -578,6 +579,7 @@ impl ConsolidationWorker {
                     source_episodes: episode_ids.clone(),
                     extraction_confidence: 0.8,
                     embedding,
+                    properties: None,
                 });
             }
         }
@@ -691,6 +693,7 @@ impl ConsolidationWorker {
                     t_valid: Utc::now(),
                     t_invalid: None,
                     source_episodes: episode_ids.clone(),
+                    data: None,
                 });
             }
         }
@@ -879,6 +882,10 @@ mod tests {
             prompt_template: None,
             requires_secrets: None,
             auto_collect_pct: 0,
+            model_ladder: serde_json::Value::Array(vec![]),
+            min_tier: "free".to_string(),
+            capability_gates: serde_json::Value::Object(serde_json::Map::new()),
+            persona_version: 1,
         };
         store.upsert_agent(agent.clone()).await.unwrap();
 
@@ -906,6 +913,10 @@ mod tests {
                 embedding: Some(vec![0.1; 1024]),
                 consolidated: false,
                 tags: vec![],
+                provenance: crate::Provenance::AutoPass,
+                authority_weight: 0.5,
+                dyad_id: None,
+                persona_version_at_write: None,
             };
             store.store_episode(episode).await.unwrap();
         }

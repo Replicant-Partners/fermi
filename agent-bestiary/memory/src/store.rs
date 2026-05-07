@@ -1,7 +1,8 @@
 use crate::{
-    Agent, AgentUpdate, AgentVersion, CoherenceEvaluation, Community, ConsolidationJob, Entity,
-    Episode, EvalRun, EvalTestCase, Fact, MarketplaceListing, MarketplaceTransaction, MemoryError,
-    Result, SemanticRule, ShoppingProfile, VerificationStatus, WorkspaceMessage,
+    Agent, AgentUpdate, AgentVersion, CoherenceEvaluation, Community, ConsolidationJob,
+    CorrectionClassification, CorrectionScope, Entity, Episode, EpisodeCorrection, EvalRun,
+    EvalTestCase, Fact, MarketplaceListing, MarketplaceTransaction, MemoryError, Provenance,
+    Result, ReviewerAction, SemanticRule, ShoppingProfile, VerificationStatus, WorkspaceMessage,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
@@ -21,7 +22,8 @@ const AGENT_COLUMNS: &str = r#"
     sample_queries,
     status, fork_pricing, forked_from, fork_count,
     accepts, produces, workflow_template, prompt_template, requires_secrets,
-    model_ladder, min_tier, capability_gates
+    model_ladder, min_tier, capability_gates,
+    persona_version, fermi_contract
 "#;
 
 pub struct MemoryStore {
@@ -66,9 +68,11 @@ impl MemoryStore {
             INSERT INTO episodes (
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, embedding, consolidated, tags
+                tokens_used, cost_usd, embedding, consolidated, tags,
+                provenance, authority_weight, dyad_id, persona_version_at_write
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                    $14, $15, $16, $17)
             RETURNING episode_id
             "#,
         )
@@ -85,10 +89,38 @@ impl MemoryStore {
         .bind(embedding_vec)
         .bind(episode.consolidated)
         .bind(&episode.tags)
+        .bind(episode.provenance.to_string())
+        .bind(episode.authority_weight)
+        .bind(&episode.dyad_id)
+        .bind(episode.persona_version_at_write)
         .fetch_one(&self.pool)
         .await?;
 
         Ok(row.try_get("episode_id")?)
+    }
+
+    /// Read the Phase 0 observability fields from a `pg` row, falling
+    /// back to the type defaults when the columns are missing (defensive
+    /// against rows fetched by SELECTs written before migration 103
+    /// shipped).
+    fn read_episode_observability_fields(
+        row: &sqlx::postgres::PgRow,
+    ) -> (Provenance, f64, Option<String>, Option<i32>) {
+        let provenance = row
+            .try_get::<String, _>("provenance")
+            .ok()
+            .and_then(|s| s.parse::<Provenance>().ok())
+            .unwrap_or_default();
+        let authority_weight = row
+            .try_get::<f64, _>("authority_weight")
+            .ok()
+            .unwrap_or(0.5);
+        let dyad_id = row.try_get::<Option<String>, _>("dyad_id").ok().flatten();
+        let persona_version_at_write = row
+            .try_get::<Option<i32>, _>("persona_version_at_write")
+            .ok()
+            .flatten();
+        (provenance, authority_weight, dyad_id, persona_version_at_write)
     }
 
     /// Get an episode by ID
@@ -98,7 +130,8 @@ impl MemoryStore {
             SELECT
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, embedding, consolidated
+                tokens_used, cost_usd, embedding, consolidated, tags,
+                provenance, authority_weight, dyad_id, persona_version_at_write
             FROM episodes
             WHERE episode_id = $1
             "#,
@@ -127,6 +160,17 @@ impl MemoryStore {
             embedding: embedding.map(|v| v.to_vec()),
             consolidated: row.try_get("consolidated")?,
             tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+            provenance: row
+                .try_get::<String, _>("provenance")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_default(),
+            authority_weight: row.try_get("authority_weight").ok().unwrap_or(0.5),
+            dyad_id: row.try_get::<Option<String>, _>("dyad_id").ok().flatten(),
+            persona_version_at_write: row
+                .try_get::<Option<i32>, _>("persona_version_at_write")
+                .ok()
+                .flatten(),
         })
     }
 
@@ -137,7 +181,8 @@ impl MemoryStore {
             SELECT
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, embedding, consolidated
+                tokens_used, cost_usd, embedding, consolidated, tags,
+                provenance, authority_weight, dyad_id, persona_version_at_write
             FROM episodes
             WHERE agent_id = $1 AND NOT consolidated
             ORDER BY timestamp_ref DESC
@@ -168,6 +213,17 @@ impl MemoryStore {
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+                provenance: row
+                    .try_get::<String, _>("provenance")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                authority_weight: row.try_get("authority_weight").ok().unwrap_or(0.5),
+                dyad_id: row.try_get::<Option<String>, _>("dyad_id").ok().flatten(),
+                persona_version_at_write: row
+                    .try_get::<Option<i32>, _>("persona_version_at_write")
+                    .ok()
+                    .flatten(),
             });
         }
 
@@ -187,9 +243,10 @@ impl MemoryStore {
                 llm_provider, embedding_provider, embedding_model, embedding_dimension,
                 sample_queries, status, fork_pricing, forked_from, fork_count,
                 accepts, produces, workflow_template, prompt_template, requires_secrets,
-                model_ladder, min_tier, capability_gates
+                model_ladder, min_tier, capability_gates,
+                fermi_contract
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -210,7 +267,8 @@ impl MemoryStore {
                 requires_secrets = EXCLUDED.requires_secrets,
                 model_ladder = EXCLUDED.model_ladder,
                 min_tier = EXCLUDED.min_tier,
-                capability_gates = EXCLUDED.capability_gates
+                capability_gates = EXCLUDED.capability_gates,
+                fermi_contract = EXCLUDED.fermi_contract
             RETURNING agent_id
             "#,
         )
@@ -251,6 +309,7 @@ impl MemoryStore {
         .bind(&agent.model_ladder)
         .bind(&agent.min_tier)
         .bind(&agent.capability_gates)
+        .bind(&agent.fermi_contract)
         .fetch_one(&self.pool)
         .await?;
 
@@ -343,9 +402,10 @@ impl MemoryStore {
                 llm_provider, embedding_provider, embedding_model, embedding_dimension,
                 sample_queries, status, fork_pricing, forked_from, fork_count,
                 accepts, produces, workflow_template, prompt_template, requires_secrets,
-                model_ladder, min_tier, capability_gates
+                model_ladder, min_tier, capability_gates,
+                fermi_contract
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
             RETURNING agent_id
             "#,
         )
@@ -384,6 +444,7 @@ impl MemoryStore {
         .bind(&agent.model_ladder)
         .bind(&agent.min_tier)
         .bind(&agent.capability_gates)
+        .bind(&agent.fermi_contract)
         .fetch_one(&self.pool)
         .await?;
 
@@ -751,6 +812,8 @@ impl MemoryStore {
             capability_gates: row
                 .try_get("capability_gates")
                 .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new())),
+            persona_version: row.try_get("persona_version").unwrap_or(1),
+            fermi_contract: row.try_get("fermi_contract").unwrap_or(None),
         })
     }
 
@@ -768,7 +831,8 @@ impl MemoryStore {
             SELECT
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, embedding, consolidated,
+                tokens_used, cost_usd, embedding, consolidated, tags,
+                provenance, authority_weight, dyad_id, persona_version_at_write,
                 embedding <=> $1 AS distance
             FROM episodes
             WHERE agent_id = $2
@@ -805,6 +869,17 @@ impl MemoryStore {
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+                provenance: row
+                    .try_get::<String, _>("provenance")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                authority_weight: row.try_get("authority_weight").ok().unwrap_or(0.5),
+                dyad_id: row.try_get::<Option<String>, _>("dyad_id").ok().flatten(),
+                persona_version_at_write: row
+                    .try_get::<Option<i32>, _>("persona_version_at_write")
+                    .ok()
+                    .flatten(),
             };
 
             results.push((episode, distance));
@@ -828,7 +903,8 @@ impl MemoryStore {
             SELECT
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, embedding, consolidated,
+                tokens_used, cost_usd, embedding, consolidated, tags,
+                provenance, authority_weight, dyad_id, persona_version_at_write,
                 embedding <=> $1 AS distance
             FROM episodes
             WHERE agent_id = $2
@@ -869,6 +945,17 @@ impl MemoryStore {
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+                provenance: row
+                    .try_get::<String, _>("provenance")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                authority_weight: row.try_get("authority_weight").ok().unwrap_or(0.5),
+                dyad_id: row.try_get::<Option<String>, _>("dyad_id").ok().flatten(),
+                persona_version_at_write: row
+                    .try_get::<Option<i32>, _>("persona_version_at_write")
+                    .ok()
+                    .flatten(),
             };
 
             results.push((episode, distance));
@@ -887,7 +974,8 @@ impl MemoryStore {
             SELECT
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, embedding, consolidated
+                tokens_used, cost_usd, embedding, consolidated, tags,
+                provenance, authority_weight, dyad_id, persona_version_at_write
             FROM episodes
             WHERE agent_id = $1
               AND execution_status = 'failure'
@@ -921,6 +1009,17 @@ impl MemoryStore {
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+                provenance: row
+                    .try_get::<String, _>("provenance")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                authority_weight: row.try_get("authority_weight").ok().unwrap_or(0.5),
+                dyad_id: row.try_get::<Option<String>, _>("dyad_id").ok().flatten(),
+                persona_version_at_write: row
+                    .try_get::<Option<i32>, _>("persona_version_at_write")
+                    .ok()
+                    .flatten(),
             });
         }
 
@@ -1206,8 +1305,8 @@ impl MemoryStore {
         sqlx::query(
             "INSERT INTO entities
              (entity_id, agent_id, entity_name, entity_type, summary,
-              t_valid, t_invalid, source_episodes, extraction_confidence, embedding)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+              t_valid, t_invalid, source_episodes, extraction_confidence, embedding, properties)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(entity.entity_id)
         .bind(entity.agent_id)
@@ -1224,6 +1323,7 @@ impl MemoryStore {
                 .as_ref()
                 .map(|e| pgvector::Vector::from(e.clone())),
         )
+        .bind(&entity.properties)
         .execute(&self.pool)
         .await?;
 
@@ -1234,7 +1334,7 @@ impl MemoryStore {
     pub async fn get_entity(&self, entity_id: Uuid) -> Result<Entity> {
         let row = sqlx::query(
             "SELECT entity_id, agent_id, entity_name, entity_type, summary,
-                    t_valid, t_invalid, source_episodes, extraction_confidence, embedding
+                    t_valid, t_invalid, source_episodes, extraction_confidence, embedding, properties
              FROM entities
              WHERE entity_id = $1 AND (t_invalid IS NULL OR t_invalid > NOW())",
         )
@@ -1256,6 +1356,7 @@ impl MemoryStore {
             source_episodes: row.try_get("source_episodes")?,
             extraction_confidence: row.try_get("extraction_confidence")?,
             embedding: embedding.map(|v| v.to_vec()),
+            properties: row.try_get("properties")?,
         })
     }
 
@@ -1263,7 +1364,7 @@ impl MemoryStore {
     pub async fn get_agent_entities(&self, agent_id: Uuid) -> Result<Vec<Entity>> {
         let rows = sqlx::query(
             "SELECT entity_id, agent_id, entity_name, entity_type, summary,
-                    t_valid, t_invalid, source_episodes, extraction_confidence, embedding
+                    t_valid, t_invalid, source_episodes, extraction_confidence, embedding, properties
              FROM entities
              WHERE agent_id = $1 AND (t_invalid IS NULL OR t_invalid > NOW())
              ORDER BY entity_name",
@@ -1286,6 +1387,7 @@ impl MemoryStore {
                 source_episodes: row.try_get("source_episodes")?,
                 extraction_confidence: row.try_get("extraction_confidence")?,
                 embedding: embedding.map(|v| v.to_vec()),
+                properties: row.try_get("properties")?,
             });
         }
 
@@ -1313,8 +1415,8 @@ impl MemoryStore {
         sqlx::query(
             "INSERT INTO facts
              (fact_id, agent_id, source_entity_id, target_entity_id, relation_type,
-              relation_cardinality, confidence, reasoning, t_valid, t_invalid, source_episodes)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+              relation_cardinality, confidence, reasoning, t_valid, t_invalid, source_episodes, data)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(fact.fact_id)
         .bind(fact.agent_id)
@@ -1327,6 +1429,7 @@ impl MemoryStore {
         .bind(fact.t_valid)
         .bind(fact.t_invalid)
         .bind(&fact.source_episodes)
+        .bind(&fact.data)
         .execute(&self.pool)
         .await?;
 
@@ -1337,7 +1440,7 @@ impl MemoryStore {
     pub async fn get_fact(&self, fact_id: Uuid) -> Result<Fact> {
         let row = sqlx::query(
             "SELECT fact_id, agent_id, source_entity_id, target_entity_id, relation_type,
-                    relation_cardinality, confidence, reasoning, t_valid, t_invalid, source_episodes
+                    relation_cardinality, confidence, reasoning, t_valid, t_invalid, source_episodes, data
              FROM facts
              WHERE fact_id = $1 AND (t_invalid IS NULL OR t_invalid > NOW())",
         )
@@ -1361,6 +1464,7 @@ impl MemoryStore {
             t_valid: row.try_get("t_valid")?,
             t_invalid: row.try_get("t_invalid")?,
             source_episodes: row.try_get("source_episodes")?,
+            data: row.try_get("data")?,
         })
     }
 
@@ -1368,7 +1472,7 @@ impl MemoryStore {
     pub async fn get_agent_facts(&self, agent_id: Uuid) -> Result<Vec<Fact>> {
         let rows = sqlx::query(
             "SELECT fact_id, agent_id, source_entity_id, target_entity_id, relation_type,
-                    relation_cardinality, confidence, reasoning, t_valid, t_invalid, source_episodes
+                    relation_cardinality, confidence, reasoning, t_valid, t_invalid, source_episodes, data
              FROM facts
              WHERE agent_id = $1 AND (t_invalid IS NULL OR t_invalid > NOW())
              ORDER BY confidence DESC",
@@ -1394,6 +1498,7 @@ impl MemoryStore {
                 t_valid: row.try_get("t_valid")?,
                 t_invalid: row.try_get("t_invalid")?,
                 source_episodes: row.try_get("source_episodes")?,
+                data: row.try_get("data")?,
             });
         }
 
@@ -1404,7 +1509,7 @@ impl MemoryStore {
     pub async fn get_entity_facts(&self, entity_id: Uuid) -> Result<Vec<Fact>> {
         let rows = sqlx::query(
             "SELECT fact_id, agent_id, source_entity_id, target_entity_id, relation_type,
-                    relation_cardinality, confidence, reasoning, t_valid, t_invalid, source_episodes
+                    relation_cardinality, confidence, reasoning, t_valid, t_invalid, source_episodes, data
              FROM facts
              WHERE (source_entity_id = $1 OR target_entity_id = $1)
                AND (t_invalid IS NULL OR t_invalid > NOW())
@@ -1431,6 +1536,7 @@ impl MemoryStore {
                 t_valid: row.try_get("t_valid")?,
                 t_invalid: row.try_get("t_invalid")?,
                 source_episodes: row.try_get("source_episodes")?,
+                data: row.try_get("data")?,
             });
         }
 
@@ -1471,7 +1577,8 @@ impl MemoryStore {
             SELECT
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, consolidated
+                tokens_used, cost_usd, consolidated, tags,
+                provenance, authority_weight, dyad_id, persona_version_at_write
             FROM episodes
             WHERE agent_id = $1
             ORDER BY timestamp_ref DESC
@@ -1503,6 +1610,17 @@ impl MemoryStore {
                 embedding: None, // omit for performance
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+                provenance: row
+                    .try_get::<String, _>("provenance")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                authority_weight: row.try_get("authority_weight").ok().unwrap_or(0.5),
+                dyad_id: row.try_get::<Option<String>, _>("dyad_id").ok().flatten(),
+                persona_version_at_write: row
+                    .try_get::<Option<i32>, _>("persona_version_at_write")
+                    .ok()
+                    .flatten(),
             });
         }
 
@@ -1518,7 +1636,8 @@ impl MemoryStore {
             SELECT
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
-                tokens_used, cost_usd, embedding, consolidated
+                tokens_used, cost_usd, embedding, consolidated, tags,
+                provenance, authority_weight, dyad_id, persona_version_at_write
             FROM episodes
             WHERE agent_id = $1 AND embedding IS NOT NULL
             ORDER BY timestamp_ref ASC
@@ -1548,6 +1667,17 @@ impl MemoryStore {
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+                provenance: row
+                    .try_get::<String, _>("provenance")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                authority_weight: row.try_get("authority_weight").ok().unwrap_or(0.5),
+                dyad_id: row.try_get::<Option<String>, _>("dyad_id").ok().flatten(),
+                persona_version_at_write: row
+                    .try_get::<Option<i32>, _>("persona_version_at_write")
+                    .ok()
+                    .flatten(),
             });
         }
 
@@ -2312,6 +2442,163 @@ impl MemoryStore {
         .await?;
         Ok(rows.iter().map(row_to_marketplace_transaction).collect())
     }
+
+    // ─── Phase 0 — episode_corrections (HITL audit trail) ────────────
+    //
+    // Append-only. The DB enforces immutability via a row-level trigger
+    // (see migration 103). The write APIs accept either a fully-formed
+    // `EpisodeCorrection` (the common path used by the HITL handler) or
+    // a builder-shaped helper for the simplest "approve" action.
+
+    /// Insert a correction row. Returns the assigned `correction_id`
+    /// (overrides the value on the input struct if it was zero).
+    pub async fn create_episode_correction(
+        &self,
+        correction: &EpisodeCorrection,
+    ) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO episode_corrections (
+                correction_id, episode_id, agent_id, reviewer_id,
+                reviewer_action, scope, classification, dimension,
+                correction_text, score_overrides, coherence_check,
+                minimum_update_set, tensions_flagged, synthetic_episode_id,
+                authority_weight, persona_version_bump, justification
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            RETURNING correction_id
+            "#,
+        )
+        .bind(correction.correction_id)
+        .bind(correction.episode_id)
+        .bind(correction.agent_id)
+        .bind(&correction.reviewer_id)
+        .bind(correction.reviewer_action.to_string())
+        .bind(correction.scope.to_string())
+        .bind(correction.classification.map(|c| c.to_string()))
+        .bind(&correction.dimension)
+        .bind(&correction.correction_text)
+        .bind(&correction.score_overrides)
+        .bind(&correction.coherence_check)
+        .bind(&correction.minimum_update_set)
+        .bind(&correction.tensions_flagged)
+        .bind(correction.synthetic_episode_id)
+        .bind(correction.authority_weight)
+        .bind(correction.persona_version_bump)
+        .bind(&correction.justification)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.try_get("correction_id")?)
+    }
+
+    /// All corrections for a given episode, newest first.
+    pub async fn list_corrections_for_episode(
+        &self,
+        episode_id: Uuid,
+    ) -> Result<Vec<EpisodeCorrection>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT correction_id, episode_id, agent_id, reviewer_id,
+                   reviewer_action, scope, classification, dimension,
+                   correction_text, score_overrides, coherence_check,
+                   minimum_update_set, tensions_flagged, synthetic_episode_id,
+                   authority_weight, persona_version_bump, justification, created_at
+            FROM episode_corrections
+            WHERE episode_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(episode_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.iter().map(row_to_episode_correction).collect()
+    }
+
+    /// All corrections for a given agent (used by the observatory
+    /// dashboard in Phase 4). `limit` caps the page size.
+    pub async fn list_corrections_for_agent(
+        &self,
+        agent_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<EpisodeCorrection>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT correction_id, episode_id, agent_id, reviewer_id,
+                   reviewer_action, scope, classification, dimension,
+                   correction_text, score_overrides, coherence_check,
+                   minimum_update_set, tensions_flagged, synthetic_episode_id,
+                   authority_weight, persona_version_bump, justification, created_at
+            FROM episode_corrections
+            WHERE agent_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(agent_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.iter().map(row_to_episode_correction).collect()
+    }
+
+    /// Look up a single correction by id.
+    pub async fn get_episode_correction(
+        &self,
+        correction_id: Uuid,
+    ) -> Result<Option<EpisodeCorrection>> {
+        let row = sqlx::query(
+            r#"
+            SELECT correction_id, episode_id, agent_id, reviewer_id,
+                   reviewer_action, scope, classification, dimension,
+                   correction_text, score_overrides, coherence_check,
+                   minimum_update_set, tensions_flagged, synthetic_episode_id,
+                   authority_weight, persona_version_bump, justification, created_at
+            FROM episode_corrections
+            WHERE correction_id = $1
+            "#,
+        )
+        .bind(correction_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|r| row_to_episode_correction(&r)).transpose()
+    }
+}
+
+fn row_to_episode_correction(row: &sqlx::postgres::PgRow) -> Result<EpisodeCorrection> {
+    Ok(EpisodeCorrection {
+        correction_id: row.try_get("correction_id")?,
+        episode_id: row.try_get("episode_id")?,
+        agent_id: row.try_get("agent_id")?,
+        reviewer_id: row.try_get("reviewer_id")?,
+        reviewer_action: row
+            .try_get::<String, _>("reviewer_action")?
+            .parse()
+            .map_err(MemoryError::InvalidData)?,
+        scope: row
+            .try_get::<String, _>("scope")?
+            .parse()
+            .map_err(MemoryError::InvalidData)?,
+        classification: row
+            .try_get::<Option<String>, _>("classification")?
+            .map(|s| s.parse::<CorrectionClassification>())
+            .transpose()
+            .map_err(MemoryError::InvalidData)?,
+        dimension: row.try_get("dimension")?,
+        correction_text: row.try_get("correction_text")?,
+        score_overrides: row.try_get("score_overrides")?,
+        coherence_check: row.try_get("coherence_check")?,
+        minimum_update_set: row.try_get("minimum_update_set")?,
+        tensions_flagged: row.try_get("tensions_flagged")?,
+        synthetic_episode_id: row.try_get("synthetic_episode_id")?,
+        authority_weight: row.try_get("authority_weight")?,
+        persona_version_bump: row.try_get("persona_version_bump")?,
+        justification: row.try_get("justification")?,
+        created_at: row.try_get("created_at")?,
+    })
 }
 
 fn row_to_coherence_evaluation(row: &sqlx::postgres::PgRow) -> CoherenceEvaluation {
@@ -2473,6 +2760,10 @@ mod tests {
             prompt_template: None,
             requires_secrets: None,
             auto_collect_pct: 0,
+            model_ladder: serde_json::Value::Array(vec![]),
+            min_tier: "free".to_string(),
+            capability_gates: serde_json::Value::Object(serde_json::Map::new()),
+            persona_version: 1,
         }
     }
 
@@ -2505,6 +2796,10 @@ mod tests {
             embedding: None,
             consolidated: false,
             tags: vec![],
+            provenance: crate::Provenance::AutoPass,
+            authority_weight: 0.5,
+            dyad_id: None,
+            persona_version_at_write: None,
         };
 
         let episode_id = store.store_episode(episode.clone()).await.unwrap();
@@ -2550,6 +2845,10 @@ mod tests {
                 embedding: Some(embedding),
                 consolidated: false,
                 tags: vec![],
+                provenance: crate::Provenance::AutoPass,
+                authority_weight: 0.5,
+                dyad_id: None,
+                persona_version_at_write: None,
             };
 
             store.store_episode(episode).await.unwrap();
@@ -2600,6 +2899,10 @@ mod tests {
                 embedding: None,
                 consolidated: false,
                 tags: vec![],
+                provenance: crate::Provenance::AutoPass,
+                authority_weight: 0.5,
+                dyad_id: None,
+                persona_version_at_write: None,
             };
             episode_ids.push(episode.episode_id);
             store.store_episode(episode).await.unwrap();
