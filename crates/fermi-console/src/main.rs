@@ -10,9 +10,11 @@ mod composer;
 mod text_input;
 
 use api::client::{
-    ApiClient, ApiConfig, ApiError, CalibrationData, Forecast, ForecastQuery, LeaderboardEntry,
-    LeaderboardQuery, LeaderboardResponse, MyStats, Portfolio,
+    ApiClient, ApiConfig, ApiError, CalibrationData, CreatePortfolioRequest, Forecast,
+    ForecastQuery, LeaderboardEntry, LeaderboardQuery, LeaderboardResponse, MyStats, Portfolio,
+    PortfolioStats,
 };
+use std::collections::HashMap;
 use cockpit::CockpitState;
 use composer::ComposerState;
 use fermi::agent_backend::{
@@ -328,6 +330,16 @@ struct FermiConsole {
     pm_search_loading: bool,
     pm_show_search: bool,
     pm_search_error: Option<String>,
+    pm_resolutions_loading: bool,
+    pm_resolutions_last_result: Option<String>,
+
+    // Named portfolio management
+    portfolio_create_showing: bool,
+    portfolio_create_input: Entity<TextInput>,
+    portfolio_create_loading: bool,
+    portfolio_create_error: Option<String>,
+    selected_portfolio_id: Option<String>,
+    portfolio_stats_cache: HashMap<String, PortfolioStats>,
 }
 
 #[derive(Clone)]
@@ -351,6 +363,12 @@ impl FermiConsole {
             TextInput::new(cx)
                 .with_placeholder("Search or paste a Polymarket URL…")
                 .with_label("Search Polymarket")
+        });
+
+        let portfolio_create_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("Portfolio name…")
+                .with_label("New Portfolio")
         });
 
         let mut console = Self {
@@ -389,6 +407,14 @@ impl FermiConsole {
             pm_search_loading: false,
             pm_show_search: false,
             pm_search_error: None,
+            pm_resolutions_loading: false,
+            pm_resolutions_last_result: None,
+            portfolio_create_showing: false,
+            portfolio_create_input,
+            portfolio_create_loading: false,
+            portfolio_create_error: None,
+            selected_portfolio_id: None,
+            portfolio_stats_cache: HashMap::new(),
         };
 
         // Try to load API key from environment (fallback for dev)
@@ -992,6 +1018,7 @@ impl FermiConsole {
                 Panel::Portfolio => {
                     self.fetch_forecasts(cx);
                     self.load_local_forecasts();
+                    self.check_pm_resolutions(cx);
                 }
                 _ => {}
             }
@@ -1924,6 +1951,149 @@ impl FermiConsole {
         .detach();
     }
 
+    fn check_pm_resolutions(&mut self, cx: &mut Context<Self>) {
+        if self.pm_resolutions_loading {
+            return;
+        }
+        self.pm_resolutions_loading = true;
+        self.pm_resolutions_last_result = None;
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| {
+            match api.check_polymarket_resolutions().await {
+                Ok(resp) => {
+                    let checked = resp.get("checked").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let resolved = resp.get("resolved").and_then(|v| v.as_i64()).unwrap_or(0);
+                    this.update(cx, |this, cx| {
+                        this.pm_resolutions_loading = false;
+                        this.pm_resolutions_last_result = Some(if resolved > 0 {
+                            format!("✓ {} resolved", resolved)
+                        } else if checked > 0 {
+                            format!("{} checked — none resolved", checked)
+                        } else {
+                            "No linked markets".into()
+                        });
+                        // Refresh forecasts so resolved ones move to the Resolved bucket
+                        if resolved > 0 {
+                            this.fetch_forecasts(cx);
+                            this.fetch_stats(cx);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!("[polymarket] check-resolutions failed: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.pm_resolutions_loading = false;
+                        this.pm_resolutions_last_result = Some("⚠ check failed".into());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    // ── Portfolio management ──────────────────────────────────────────────────
+
+    fn create_portfolio_from_input(&mut self, cx: &mut Context<Self>) {
+        let title = self.portfolio_create_input.read(cx).text().trim().to_string();
+        if title.is_empty() {
+            return;
+        }
+        self.portfolio_create_loading = true;
+        self.portfolio_create_error = None;
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| {
+            let req = CreatePortfolioRequest {
+                title,
+                description: None,
+                domain: None,
+                visibility: Some("private".into()),
+                team_id: None,
+            };
+            match api.create_portfolio(&req).await {
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.portfolio_create_loading = false;
+                        this.portfolio_create_showing = false;
+                        this.fetch_portfolios(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    this.update(cx, |this, cx| {
+                        this.portfolio_create_loading = false;
+                        this.portfolio_create_error = Some(e.to_string());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn fetch_portfolio_stats_if_needed(&mut self, portfolio_id: String, cx: &mut Context<Self>) {
+        if self.portfolio_stats_cache.contains_key(&portfolio_id) {
+            return;
+        }
+        let api = self.api.clone();
+        let pid = portfolio_id.clone();
+
+        cx.spawn(async move |this, cx| {
+            match api.portfolio_stats(&pid).await {
+                Ok(stats) => {
+                    this.update(cx, |this, cx| {
+                        this.portfolio_stats_cache.insert(pid, stats);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!("Failed to fetch portfolio stats {}: {}", pid, e);
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn add_forecast_to_portfolio(
+        &mut self,
+        forecast_id: String,
+        portfolio_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let api = self.api.clone();
+        let pid = portfolio_id.clone();
+
+        cx.spawn(async move |this, cx| {
+            match api.add_to_portfolio(&portfolio_id, &forecast_id).await {
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.portfolio_stats_cache.remove(&pid);
+                        this.fetch_portfolios(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to add forecast {} to portfolio {}: {}",
+                        forecast_id,
+                        pid,
+                        e
+                    );
+                }
+            }
+        })
+        .detach();
+    }
+
     fn import_polymarket_forecast(
         &mut self,
         pm_event_id: &str,
@@ -2000,6 +2170,277 @@ impl FermiConsole {
 
     // ── Portfolio Panel ───────────────────────────────────────────────────
 
+    fn render_portfolios_section(&self, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .bg(theme::bg_elevated())
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            // Section header
+            .child(
+                div()
+                    .px(px(16.0))
+                    .py(px(10.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(rgb(theme::BLUE))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("Named Portfolios ({})", self.portfolios.len())),
+                    )
+                    .child(
+                        div()
+                            .id("create-portfolio-btn")
+                            .px(px(10.0))
+                            .py(px(3.0))
+                            .rounded(px(4.0))
+                            .border_1()
+                            .border_color(rgb(theme::CYAN))
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::CYAN))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.portfolio_create_showing = !this.portfolio_create_showing;
+                                this.portfolio_create_error = None;
+                                cx.notify();
+                            }))
+                            .child("+ New Portfolio"),
+                    ),
+            )
+            // Inline create form
+            .when(self.portfolio_create_showing, |el| {
+                el.child(
+                    div()
+                        .px(px(16.0))
+                        .py(px(10.0))
+                        .border_b_1()
+                        .border_color(theme::fg_faint())
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(div().flex_grow().child(self.portfolio_create_input.clone()))
+                        .when(!self.portfolio_create_loading, |el| {
+                            el.child(
+                                div()
+                                    .id("portfolio-create-submit")
+                                    .px(px(12.0))
+                                    .py(px(5.0))
+                                    .rounded(px(4.0))
+                                    .bg(rgb(theme::CYAN))
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::BG))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.85))
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.create_portfolio_from_input(cx);
+                                    }))
+                                    .child("Create"),
+                            )
+                        })
+                        .when(self.portfolio_create_loading, |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_dim())
+                                    .child("Creating…"),
+                            )
+                        })
+                        .child(
+                            div()
+                                .id("portfolio-create-cancel")
+                                .px(px(8.0))
+                                .py(px(5.0))
+                                .rounded(px(4.0))
+                                .text_size(px(11.0))
+                                .text_color(theme::fg_dim())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_hover()))
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.portfolio_create_showing = false;
+                                    this.portfolio_create_error = None;
+                                    cx.notify();
+                                }))
+                                .child("Cancel"),
+                        )
+                        .when(self.portfolio_create_error.is_some(), |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::red())
+                                    .child(
+                                        self.portfolio_create_error
+                                            .as_deref()
+                                            .unwrap_or("")
+                                            .to_string(),
+                                    ),
+                            )
+                        }),
+                )
+            })
+            // Portfolio list
+            .when(!self.portfolios.is_empty(), |el| {
+                el.children(self.portfolios.iter().map(|p| {
+                    let is_selected =
+                        self.selected_portfolio_id.as_deref() == Some(p.id.as_str());
+                    let pid = p.id.clone();
+                    let stats = self.portfolio_stats_cache.get(&p.id).cloned();
+                    let count = p.forecast_count.unwrap_or(0);
+                    let brier_text = p
+                        .avg_brier
+                        .map(|b| format!(" · Brier {:.3}", b))
+                        .unwrap_or_default();
+
+                    div()
+                        .flex()
+                        .flex_col()
+                        .border_b_1()
+                        .border_color(theme::fg_faint())
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("portfolio-toggle-{}", pid)))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .px(px(16.0))
+                                .py(px(10.0))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_hover()))
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    if this.selected_portfolio_id.as_deref() == Some(&pid) {
+                                        this.selected_portfolio_id = None;
+                                    } else {
+                                        this.selected_portfolio_id = Some(pid.clone());
+                                        this.fetch_portfolio_stats_if_needed(pid.clone(), cx);
+                                    }
+                                    cx.notify();
+                                }))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .child(
+                                            div()
+                                                .text_size(px(12.0))
+                                                .text_color(rgb(theme::BLUE))
+                                                .child("◈"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(13.0))
+                                                .text_color(theme::fg())
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(p.title.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.0))
+                                                .text_color(theme::fg_dim())
+                                                .child(format!(
+                                                    "{} forecast{}{}",
+                                                    count,
+                                                    if count == 1 { "" } else { "s" },
+                                                    brier_text
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(theme::fg_faint())
+                                        .child(if is_selected { "▾" } else { "▸" }),
+                                ),
+                        )
+                        .when(is_selected, move |el| {
+                            if let Some(s) = stats {
+                                el.child(render_portfolio_stats_panel(&s))
+                            } else {
+                                el.child(
+                                    div()
+                                        .px(px(24.0))
+                                        .py(px(10.0))
+                                        .text_size(px(11.0))
+                                        .text_color(theme::fg_dim())
+                                        .child("Loading stats…"),
+                                )
+                            }
+                        })
+                }))
+            })
+            .when(self.portfolios.is_empty() && self.connected, |el| {
+                el.child(
+                    div()
+                        .px(px(16.0))
+                        .py(px(12.0))
+                        .text_size(px(12.0))
+                        .text_color(theme::fg_faint())
+                        .child("No portfolios yet — create one to group your forecasts."),
+                )
+            })
+    }
+
+    fn render_forecast_portfolio_row(
+        &self,
+        forecast_id: &str,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let fid = forecast_id.to_string();
+        div()
+            .px(px(24.0))
+            .py(px(8.0))
+            .border_t_1()
+            .border_color(theme::fg_faint())
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .child("Add to portfolio:"),
+            )
+            .when(!self.portfolios.is_empty(), |el| {
+                el.children(self.portfolios.iter().map(|p| {
+                    let pid = p.id.clone();
+                    let fid2 = fid.clone();
+                    let label = truncate(&p.title, 22);
+                    div()
+                        .id(SharedString::from(format!("add-to-{}-{}", pid, fid)))
+                        .px(px(8.0))
+                        .py(px(3.0))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(rgb(theme::CYAN))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::CYAN))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::bg_hover()))
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.add_forecast_to_portfolio(fid2.clone(), pid.clone(), cx);
+                        }))
+                        .child(format!("+ {}", label))
+                }))
+            })
+            .when(self.portfolios.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .child("Create a portfolio above first"),
+                )
+            })
+    }
+
     fn render_portfolio(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -2049,6 +2490,47 @@ impl FermiConsole {
                                             cx.notify();
                                         }))
                                         .child("🔮 Import from Polymarket"),
+                                )
+                            })
+                            // Check Resolutions button (flywheel trigger)
+                            .when(self.connected, |el| {
+                                let loading = self.pm_resolutions_loading;
+                                let result = self.pm_resolutions_last_result.clone();
+                                let label = if loading {
+                                    "⚡ Checking…".to_string()
+                                } else if let Some(ref r) = result {
+                                    r.clone()
+                                } else {
+                                    "⚡ Check Resolutions".to_string()
+                                };
+                                let accent = if result.as_deref().map(|r| r.starts_with("✓")).unwrap_or(false) {
+                                    theme::GREEN
+                                } else {
+                                    theme::GOLD
+                                };
+                                el.child(
+                                    div()
+                                        .id("pm-check-resolutions-btn")
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .px(px(12.0))
+                                        .py(px(5.0))
+                                        .rounded(px(6.0))
+                                        .bg(rgb(0x1A1A1A))
+                                        .border_1()
+                                        .border_color(rgb(accent))
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(accent))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .when(!loading, |s| s.cursor_pointer())
+                                        .when(!loading, |s| {
+                                            s.hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                        })
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.check_pm_resolutions(cx);
+                                        }))
+                                        .child(label),
                                 )
                             }),
                     )
@@ -2400,6 +2882,10 @@ impl FermiConsole {
                                 .child("Set FERMI_API_KEY environment variable"),
                         ),
                 )
+            })
+            // ── Named Portfolios ──────────────────────────────────────
+            .when(self.connected, |el| {
+                el.child(self.render_portfolios_section(cx))
             })
             .when(self.connected && !self.forecasts_loading, |el| {
                 el
@@ -2832,7 +3318,10 @@ impl FermiConsole {
                     ),
             )
             // ── Detail panel (visible when selected) ──────────────
-            .when(is_selected, |el| el.child(render_forecast_detail(forecast)))
+            .when(is_selected, |el| {
+                el.child(render_forecast_detail(forecast))
+                    .child(self.render_forecast_portfolio_row(&forecast.id, cx))
+            })
     }
 
     // ── Agent Fleet Panel ─────────────────────────────────────────────────
@@ -3477,6 +3966,174 @@ fn render_local_agent_card(card: &AgentCard) -> impl IntoElement {
                 .child(card.capabilities.model.clone())
                 .child(format!("{} runs", card.usage.total_executions)),
         )
+}
+
+fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
+    let s = &stats.stats;
+    let c = &stats.calibration;
+    let cal_buckets: &[(&str, Option<f64>, f64)] = &[
+        ("0-20", c.bucket_0_20, 0.10),
+        ("20-40", c.bucket_20_40, 0.30),
+        ("40-60", c.bucket_40_60, 0.50),
+        ("60-80", c.bucket_60_80, 0.70),
+        ("80-100", c.bucket_80_100, 0.90),
+    ];
+
+    div()
+        .px(px(24.0))
+        .py(px(12.0))
+        .bg(theme::bg())
+        .border_t_1()
+        .border_color(theme::fg_faint())
+        .flex()
+        .flex_col()
+        .gap(px(10.0))
+        // Stats row
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_x(px(20.0))
+                .gap_y(px(4.0))
+                .children([
+                    render_detail_kv(
+                        "Total",
+                        &s.total_forecasts
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "—".into()),
+                    ),
+                    render_detail_kv(
+                        "Active",
+                        &s.active_count
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "—".into()),
+                    ),
+                    render_detail_kv(
+                        "Resolved",
+                        &s.resolved_count
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "—".into()),
+                    ),
+                    render_detail_kv(
+                        "Avg Brier",
+                        &s.avg_brier
+                            .map(|b| format!("{:.4}", b))
+                            .unwrap_or_else(|| "—".into()),
+                    ),
+                    render_detail_kv(
+                        "Best",
+                        &s.best_brier
+                            .map(|b| format!("{:.4}", b))
+                            .unwrap_or_else(|| "—".into()),
+                    ),
+                ]),
+        )
+        // Calibration row
+        .when(
+            cal_buckets.iter().any(|(_, v, _)| v.is_some()),
+            |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .items_end()
+                        .gap(px(10.0))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_faint())
+                                .child("Calibration:"),
+                        )
+                        .children(cal_buckets.iter().map(|(label, val, ideal)| {
+                            let error = val.map(|v| (v - ideal).abs()).unwrap_or(0.5);
+                            let bar_color = if error < 0.08 {
+                                theme::GREEN
+                            } else if error < 0.18 {
+                                theme::GOLD
+                            } else {
+                                theme::ORANGE
+                            };
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap(px(2.0))
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(bar_color))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(
+                                            val.map(|v| format!("{:.0}%", v * 100.0))
+                                                .unwrap_or_else(|| "—".into()),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(theme::fg_faint())
+                                        .child(label.to_string()),
+                                )
+                        }))
+                )
+            },
+        )
+        // Recent resolutions
+        .when(!stats.recent_resolutions.is_empty(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child("Recent Resolutions"),
+                    )
+                    .children(stats.recent_resolutions.iter().take(3).map(|r| {
+                        let outcome_color = match r.actual_outcome {
+                            Some(true) => theme::GREEN,
+                            Some(false) => theme::RED,
+                            None => theme::FG_DIM,
+                        };
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(outcome_color))
+                                    .child(match r.actual_outcome {
+                                        Some(true) => "Yes",
+                                        Some(false) => "No",
+                                        None => "?",
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_dim())
+                                    .child(truncate(
+                                        r.question_text.as_deref().unwrap_or("?"),
+                                        52,
+                                    )),
+                            )
+                            .when(r.brier_score.is_some(), |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(theme::fg_faint())
+                                        .child(format!(
+                                            "{:.3}",
+                                            r.brier_score.unwrap_or(0.0)
+                                        )),
+                                )
+                            })
+                    })),
+            )
+        })
 }
 
 fn render_detail_kv(key: &str, value: &str) -> impl IntoElement {

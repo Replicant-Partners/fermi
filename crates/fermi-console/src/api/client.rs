@@ -849,6 +849,36 @@ impl ApiClient {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Polymarket
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Search Polymarket for events matching a query or URL slug.
+    pub async fn pm_search(&self, query: &str) -> Result<JsonValue, ApiError> {
+        self.post("/api/polymarket/search", &json!({ "query": query }))
+            .await
+    }
+
+    /// Refresh the latest crowd price for a linked forecast.
+    pub async fn pm_snapshot(
+        &self,
+        forecast_id: &str,
+        pm_market_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            "/api/polymarket/snapshot",
+            &json!({ "forecast_id": forecast_id, "pm_market_id": pm_market_id }),
+        )
+        .await
+    }
+
+    /// Check all the user's active PM-linked forecasts for resolution.
+    /// Returns { checked: N, resolved: M, results: [...] }.
+    pub async fn check_polymarket_resolutions(&self) -> Result<JsonValue, ApiError> {
+        self.post("/api/polymarket/check-resolutions", &json!({}))
+            .await
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Leaderboard
     // ═══════════════════════════════════════════════════════════════
 
