@@ -272,18 +272,27 @@ impl AgentExecutor for LLMExecutor {
         let system_prompt = self.build_system_prompt(context);
         let user_prompt = self.build_prompt(agent, context);
 
-        // Prepare Claude API request
-        // Agents with custom system prompts (e.g., fermi decomposition) need more
-        // tokens for structured JSON output. Default agents use 2048.
-        let max_tokens = if Self::has_custom_prompt(context) {
-            4096
+        // Resolve sampling params — model_params JSONB overrides the legacy temperature f64.
+        // Agents with custom system prompts (e.g. fermi decomposition) need more tokens.
+        let default_max = if Self::has_custom_prompt(context) { 4096 } else { 2048 };
+        let sp = context.agent_card.capabilities.resolve_sampling_params(default_max);
+
+        let thinking = if sp.extended_thinking {
+            sp.thinking_budget_tokens.map(|budget| ClaudeThinking {
+                thinking_type: "enabled".to_string(),
+                budget_tokens: budget,
+            })
         } else {
-            2048
+            None
         };
+
         let request = ClaudeRequest {
             model: context.agent_card.capabilities.model.clone(),
-            max_tokens,
-            temperature: context.agent_card.capabilities.temperature,
+            max_tokens: sp.max_tokens,
+            temperature: sp.temperature,
+            top_p: sp.top_p,
+            top_k: sp.top_k,
+            thinking,
             system: Some(system_prompt),
             messages: vec![Message {
                 role: "user".to_string(),
@@ -319,9 +328,7 @@ impl AgentExecutor for LLMExecutor {
             ),
             metadata: AgentMetadata {
                 model_used: Some(claude_response.model),
-                temperature: Some(request.temperature),
-                // Store the full response text so downstream consumers
-                // can parse structured data from it
+                temperature: request.temperature,
                 reasoning: Some(full_response_text),
             },
             tool_invocations: vec![],
@@ -341,7 +348,14 @@ impl AgentExecutor for LLMExecutor {
 pub(crate) struct ClaudeRequest {
     pub model: String,
     pub max_tokens: u32,
-    pub temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ClaudeThinking>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
     pub messages: Vec<Message>,
@@ -349,6 +363,14 @@ pub(crate) struct ClaudeRequest {
     pub tools: Option<Vec<ClaudeTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+}
+
+/// Anthropic extended thinking block — requires temperature = 1.0.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ClaudeThinking {
+    #[serde(rename = "type")]
+    pub thinking_type: String,
+    pub budget_tokens: u32,
 }
 
 /// A tool definition for the Anthropic API

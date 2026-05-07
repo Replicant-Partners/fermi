@@ -560,6 +560,9 @@ pub struct Agent {
     // CEP: structured probabilistic reasoning contract (migration 105)
     #[serde(default)]
     pub fermi_contract: Option<serde_json::Value>,
+    // ADR-011 Phase 4: provider-agnostic sampling configuration (migration 106)
+    #[serde(default = "default_json_object")]
+    pub model_params: serde_json::Value,
 }
 
 fn default_persona_version() -> i32 {
@@ -620,6 +623,8 @@ pub struct AgentUpdate {
     pub model_ladder: Option<serde_json::Value>,
     pub min_tier: Option<String>,
     pub capability_gates: Option<serde_json::Value>,
+    // ADR-011 Phase 4: provider-agnostic sampling config
+    pub model_params: Option<serde_json::Value>,
 }
 
 /// Snapshot of mutable agent fields at a point in time

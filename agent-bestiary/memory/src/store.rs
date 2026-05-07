@@ -23,7 +23,7 @@ const AGENT_COLUMNS: &str = r#"
     status, fork_pricing, forked_from, fork_count,
     accepts, produces, workflow_template, prompt_template, requires_secrets,
     model_ladder, min_tier, capability_gates,
-    persona_version, fermi_contract
+    persona_version, fermi_contract, model_params
 "#;
 
 pub struct MemoryStore {
@@ -244,9 +244,9 @@ impl MemoryStore {
                 sample_queries, status, fork_pricing, forked_from, fork_count,
                 accepts, produces, workflow_template, prompt_template, requires_secrets,
                 model_ladder, min_tier, capability_gates,
-                fermi_contract
+                fermi_contract, model_params
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)
             ON CONFLICT (agent_name)
             DO UPDATE SET
                 agent_type = EXCLUDED.agent_type,
@@ -268,7 +268,8 @@ impl MemoryStore {
                 model_ladder = EXCLUDED.model_ladder,
                 min_tier = EXCLUDED.min_tier,
                 capability_gates = EXCLUDED.capability_gates,
-                fermi_contract = EXCLUDED.fermi_contract
+                fermi_contract = EXCLUDED.fermi_contract,
+                model_params = EXCLUDED.model_params
             RETURNING agent_id
             "#,
         )
@@ -310,6 +311,7 @@ impl MemoryStore {
         .bind(&agent.min_tier)
         .bind(&agent.capability_gates)
         .bind(&agent.fermi_contract)
+        .bind(&agent.model_params)
         .fetch_one(&self.pool)
         .await?;
 
@@ -403,9 +405,9 @@ impl MemoryStore {
                 sample_queries, status, fork_pricing, forked_from, fork_count,
                 accepts, produces, workflow_template, prompt_template, requires_secrets,
                 model_ladder, min_tier, capability_gates,
-                fermi_contract
+                fermi_contract, model_params
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
             RETURNING agent_id
             "#,
         )
@@ -445,6 +447,7 @@ impl MemoryStore {
         .bind(&agent.min_tier)
         .bind(&agent.capability_gates)
         .bind(&agent.fermi_contract)
+        .bind(&agent.model_params)
         .fetch_one(&self.pool)
         .await?;
 
@@ -531,6 +534,10 @@ impl MemoryStore {
         }
         if updates.capability_gates.is_some() {
             set_clauses.push(format!("capability_gates = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.model_params.is_some() {
+            set_clauses.push(format!("model_params = ${}", param_idx));
             let _ = param_idx;
         }
 
@@ -600,6 +607,9 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.capability_gates {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.model_params {
             query = query.bind(v);
         }
 
@@ -814,6 +824,9 @@ impl MemoryStore {
                 .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new())),
             persona_version: row.try_get("persona_version").unwrap_or(1),
             fermi_contract: row.try_get("fermi_contract").unwrap_or(None),
+            model_params: row
+                .try_get("model_params")
+                .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new())),
         })
     }
 

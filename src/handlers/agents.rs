@@ -193,6 +193,7 @@ pub async fn list_agents(
                         "workflow_template": a.workflow_template,
                         "prompt_template": a.prompt_template,
                         "requires_secrets": a.requires_secrets,
+                        "model_params": a.model_params,
                         "capabilities": {
                             "executor": a.executor_type,
                             "model": a.model,
@@ -602,6 +603,7 @@ pub async fn create_agent_handler(
         capability_gates: serde_json::Value::Object(serde_json::Map::new()),
         persona_version: 1,
         fermi_contract: None,
+        model_params: serde_json::Value::Object(serde_json::Map::new()),
     };
 
     // If education budget requested, debit from user's wallet
@@ -867,6 +869,11 @@ pub async fn import_agent_handler(
             .get("capabilities")
             .and_then(|c| c.get("fermi_contract"))
             .cloned(),
+        model_params: card
+            .get("capabilities")
+            .and_then(|c| c.get("model_params"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {

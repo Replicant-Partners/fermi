@@ -10,6 +10,7 @@
 //! - Bi-temporal tracking
 //! - Vector similarity search
 
+pub mod bundle;
 pub mod clustering;
 pub mod consolidation;
 pub mod embeddings;
@@ -20,6 +21,7 @@ pub mod seed;
 pub mod store;
 pub mod types;
 
+pub use bundle::{AgentCardSnapshot, EpisodeBundle, TranscriptRole, TranscriptTurn};
 pub use clustering::{DBSCANClustering, EpisodeCluster};
 pub use consolidation::{ConsolidationResult, ConsolidationWorker};
 pub use embeddings::{

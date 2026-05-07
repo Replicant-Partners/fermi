@@ -862,7 +862,7 @@
           const mcpTools = agent.capabilities?.mcp_tools || [];
           const model = agent.model || agent.capabilities?.model || "N/A";
           const executor = agent.capabilities?.executor || "N/A";
-          const temperature = agent.capabilities?.temperature || "N/A";
+          const provider = agent.llm_provider || agent.capabilities?.provider || "anthropic";
           const tags = agent.tags || agent.metadata?.tags || [];
 
           const totalExec =
@@ -1020,12 +1020,11 @@
                   <div class="section">
                     <div class="section-title">Configuration</div>
                     <div class="field-grid">
-                      <div class="field-item"><div class="field-label">Executor</div><div class="field-value">${executor}</div></div>
+                      <div class="field-item"><div class="field-label">Provider</div><div class="field-value">${provider}</div></div>
                       <div class="field-item"><div class="field-label">Model</div><div class="field-value">${model}</div></div>
-                      <div class="field-item"><div class="field-label">Temperature</div><div class="field-value">${temperature}</div></div>
+                      <div class="field-item"><div class="field-label">Executor</div><div class="field-value">${executor}</div></div>
                       <div class="field-item"><div class="field-label">Type</div><div class="field-value">${agent.agent_type || "N/A"}</div></div>
                       <div class="field-item"><div class="field-label">First Observed</div><div class="field-value">${agent.metadata?.created || "N/A"}</div></div>
-                      <div class="field-item"><div class="field-label">Researcher</div><div class="field-value">${agent.owner_id ? `<a href="/user/${encodeURIComponent(agent.owner_id)}" style="color:var(--aqua);text-decoration:none">${agent.owner_display_name || agent.metadata?.author || "N/A"}</a>` : agent.metadata?.author || "N/A"}</div></div>
                     </div>
                   </div>
 
@@ -2138,6 +2137,17 @@
               </div>
 
               <div class="section">
+                <div class="section-title">Sampling Parameters</div>
+                <div style="font-size:0.82em;color:var(--fg3);margin-bottom:10px">
+                  Provider-specific inference controls stored in <code style="background:var(--bg1);padding:1px 4px;border-radius:2px">model_params</code>.
+                  Absent keys fall back to provider defaults. Extended Thinking forces temperature&nbsp;=&nbsp;1.0.
+                </div>
+                <div id="sampling-params-wrap">
+                  <!-- rendered by renderSamplingParams() -->
+                </div>
+              </div>
+
+              <div class="section">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                   <div class="section-title" style="margin-bottom:0">Model Ladder</div>
                   <button class="owner-btn" onclick="addLadderRung()" style="border-color:var(--aqua);color:var(--aqua);font-size:0.8em;padding:4px 10px">+ Add Rung</button>
@@ -2760,7 +2770,7 @@
         if (modelIn) modelIn.value = agent.model || "";
         if (minTierSel) minTierSel.value = agent.min_tier || "free";
 
-        intelProviderChanged();
+        intelProviderChanged(); // also calls renderSamplingParams()
         renderLadderTable();
         renderGatesTable();
         renderValidation();
@@ -2775,6 +2785,118 @@
           `<button onclick="document.getElementById('intel-model').value='${m}'"
             style="background:var(--bg1);border:1px solid var(--bg3);color:var(--fg2);padding:3px 8px;font-family:inherit;font-size:0.8em;cursor:pointer;border-radius:3px">${m}</button>`
         ).join("");
+        renderSamplingParams();
+      }
+
+      // Render provider-aware sampling param controls into #sampling-params-wrap
+      function renderSamplingParams() {
+        const wrap = document.getElementById("sampling-params-wrap");
+        if (!wrap) return;
+        const provider = document.getElementById("intel-provider")?.value || "anthropic";
+        const mp = (_agentData && _agentData.model_params) ? _agentData.model_params : {};
+
+        const inp = (id, label, value, placeholder, tip) => `
+          <div>
+            <div style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">${label}${tip ? ` <span style="color:var(--fg4);font-size:0.85em;text-transform:none;letter-spacing:0">${tip}</span>` : ""}</div>
+            <input type="text" id="${id}" value="${value ?? ""}" placeholder="${placeholder}"
+              style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:6px 9px;font-family:inherit;font-size:0.88em;box-sizing:border-box" />
+          </div>`;
+
+        const chk = (id, label, checked, onchange, tip) => `
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 0">
+            <input type="checkbox" id="${id}" ${checked ? "checked" : ""} onchange="${onchange}" style="cursor:pointer" />
+            <label for="${id}" style="font-size:0.88em;cursor:pointer">${label}</label>
+            ${tip ? `<span style="font-size:0.8em;color:var(--fg4)">${tip}</span>` : ""}
+          </div>`;
+
+        let html = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">`;
+
+        if (provider === "anthropic") {
+          const extThinking = !!mp.extended_thinking;
+          html += inp("sp-temperature", "Temperature", mp.temperature ?? "", "0.0 – 1.0", extThinking ? "(forced 1.0)" : "");
+          html += inp("sp-max-tokens", "Max Tokens", mp.max_tokens ?? "", "default");
+          html += `<div></div>`;
+          html += `</div>`;
+          html += `<div style="margin-bottom:8px">` +
+            chk("sp-extended-thinking", "Extended Thinking (claude-3-7+)", extThinking,
+              "toggleExtendedThinking()", "Forces temperature=1.0, requires budget_tokens") +
+            `</div>`;
+          const budgetVis = extThinking ? "" : "display:none";
+          html += `<div id="sp-thinking-budget-wrap" style="${budgetVis};margin-bottom:8px">
+            <div style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Thinking Budget Tokens</div>
+            <input type="text" id="sp-thinking-budget" value="${mp.thinking_budget_tokens ?? ""}" placeholder="e.g. 8000"
+              style="width:200px;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:6px 9px;font-family:inherit;font-size:0.88em" />
+          </div>`;
+          html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">`;
+          html += inp("sp-top-p", "Top P", mp.top_p ?? "", "optional");
+          html += inp("sp-top-k", "Top K", mp.top_k ?? "", "optional");
+          html += `<div></div></div>`;
+        } else {
+          // All OpenAI-compatible providers share this base set
+          html += inp("sp-temperature", "Temperature", mp.temperature ?? "", "0.0 – 2.0");
+          html += inp("sp-max-tokens", "Max Tokens", mp.max_tokens ?? "", "default");
+          html += inp("sp-top-p", "Top P", mp.top_p ?? "", "optional");
+          html += inp("sp-frequency-penalty", "Frequency Penalty", mp.frequency_penalty ?? "", "0.0 – 2.0");
+          html += inp("sp-presence-penalty", "Presence Penalty", mp.presence_penalty ?? "", "0.0 – 2.0");
+          if (provider === "mistral") {
+            html += inp("sp-repetition-penalty", "Repetition Penalty", mp.repetition_penalty ?? "", "Mistral-specific");
+          } else {
+            html += `<div></div>`;
+          }
+          html += `</div>`;
+          html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">`;
+          html += inp("sp-random-seed", "Seed", mp.random_seed ?? "", "optional, for reproducibility");
+          html += `<div></div><div></div>`;
+          html += `</div>`;
+        }
+
+        wrap.innerHTML = html;
+      }
+
+      function toggleExtendedThinking() {
+        const checked = document.getElementById("sp-extended-thinking")?.checked;
+        const budgetWrap = document.getElementById("sp-thinking-budget-wrap");
+        const tempIn = document.getElementById("sp-temperature");
+        if (budgetWrap) budgetWrap.style.display = checked ? "" : "none";
+        if (tempIn && checked) tempIn.value = "1";
+      }
+
+      function collectSamplingParams() {
+        const provider = document.getElementById("intel-provider")?.value || "anthropic";
+        const mp = {};
+        const v = id => (document.getElementById(id)?.value || "").trim();
+        const nf = s => s !== "" ? parseFloat(s) : undefined;
+        const ni = s => s !== "" ? parseInt(s, 10) : undefined;
+
+        const temp = nf(v("sp-temperature"));
+        if (temp !== undefined) mp.temperature = temp;
+        const maxTok = ni(v("sp-max-tokens"));
+        if (maxTok !== undefined) mp.max_tokens = maxTok;
+        const topP = nf(v("sp-top-p"));
+        if (topP !== undefined) mp.top_p = topP;
+
+        if (provider === "anthropic") {
+          const topK = ni(v("sp-top-k"));
+          if (topK !== undefined) mp.top_k = topK;
+          const extThinking = !!document.getElementById("sp-extended-thinking")?.checked;
+          if (extThinking) {
+            mp.extended_thinking = true;
+            mp.temperature = 1.0;
+            const budget = ni(v("sp-thinking-budget"));
+            if (budget !== undefined) mp.thinking_budget_tokens = budget;
+          }
+        } else {
+          const freqP = nf(v("sp-frequency-penalty"));
+          if (freqP !== undefined) mp.frequency_penalty = freqP;
+          const presP = nf(v("sp-presence-penalty"));
+          if (presP !== undefined) mp.presence_penalty = presP;
+          const repP = nf(v("sp-repetition-penalty"));
+          if (repP !== undefined) mp.repetition_penalty = repP;
+          const seed = ni(v("sp-random-seed"));
+          if (seed !== undefined) mp.random_seed = seed;
+        }
+
+        return mp;
       }
 
       function tierColor(tier) {
@@ -2973,6 +3095,8 @@
         }
 
         try {
+          const modelParams = collectSamplingParams();
+
           const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -2982,6 +3106,7 @@
               min_tier: minTier,
               model_ladder: ladder,
               capability_gates: gates,
+              model_params: modelParams,
             }),
           });
           if (res.ok) {
@@ -2994,6 +3119,7 @@
               _agentData.min_tier = minTier;
               _agentData.model_ladder = ladder;
               _agentData.capability_gates = gates;
+              _agentData.model_params = modelParams;
             }
             setTimeout(() => { statusEl.textContent = ""; }, 3000);
           } else {

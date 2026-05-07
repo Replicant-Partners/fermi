@@ -123,14 +123,21 @@ impl MultiModelExecutor {
             agent.query
         );
 
+        let sp = context.agent_card.capabilities.resolve_sampling_params(2048);
+
         let request = OpenAIRequest {
             model: context.agent_card.capabilities.model.clone(),
             messages: vec![
                 OpenAIMessage::chat("system", &system_prompt),
                 OpenAIMessage::chat("user", &user_prompt),
             ],
-            temperature: Some(context.agent_card.capabilities.temperature),
-            max_tokens: Some(2048),
+            temperature: sp.temperature,
+            max_tokens: Some(sp.max_tokens),
+            top_p: sp.top_p,
+            frequency_penalty: sp.frequency_penalty,
+            presence_penalty: sp.presence_penalty,
+            repetition_penalty: sp.repetition_penalty,
+            seed: sp.random_seed,
             tools: None,
             tool_choice: None,
         };
@@ -164,7 +171,7 @@ impl MultiModelExecutor {
             tokens_used,
             metadata: AgentMetadata {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
-                temperature: Some(context.agent_card.capabilities.temperature),
+                temperature: sp.temperature,
                 reasoning,
             },
             tool_invocations: vec![],
@@ -254,6 +261,18 @@ pub(crate) struct OpenAIRequest {
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
+    /// Used by Mistral and some other providers (not standard OpenAI)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f64>,
+    /// Reproducibility seed — OpenAI calls this "seed", Mistral also supports it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<OpenAITool>>,
     #[serde(skip_serializing_if = "Option::is_none")]

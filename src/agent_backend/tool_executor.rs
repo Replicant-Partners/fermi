@@ -12,8 +12,8 @@ use crate::agent_backend::executor::{
     ToolInvocation,
 };
 use crate::agent_backend::llm_executor::{
-    extract_text_from_content, ClaudeRequest, ClaudeResponse, ContentBlock, Message, MessageBlock,
-    MessageContent,
+    extract_text_from_content, ClaudeRequest, ClaudeResponse, ClaudeThinking, ContentBlock,
+    Message, MessageBlock, MessageContent,
 };
 use crate::agent_backend::multi_model_executor::{OpenAIMessage, OpenAIRequest, OpenAIResponse};
 use crate::agent_backend::tools::{ToolContext, ToolRegistry};
@@ -69,6 +69,16 @@ impl ToolAwareExecutor {
             ExecutionError::ExecutionFailed("ANTHROPIC_API_KEY not set".to_string())
         })?;
 
+        let sp = context.agent_card.capabilities.resolve_sampling_params(4096);
+        let thinking_block = if sp.extended_thinking {
+            sp.thinking_budget_tokens.map(|budget| ClaudeThinking {
+                thinking_type: "enabled".to_string(),
+                budget_tokens: budget,
+            })
+        } else {
+            None
+        };
+
         let mut messages: Vec<Message> = vec![Message {
             role: "user".to_string(),
             content: MessageContent::Text(agent.query.clone()),
@@ -85,8 +95,11 @@ impl ToolAwareExecutor {
 
             let request = ClaudeRequest {
                 model: context.agent_card.capabilities.model.clone(),
-                max_tokens: 4096,
-                temperature: context.agent_card.capabilities.temperature,
+                max_tokens: sp.max_tokens,
+                temperature: sp.temperature,
+                top_p: sp.top_p,
+                top_k: sp.top_k,
+                thinking: thinking_block.clone(),
                 system: Some(system_prompt.clone()),
                 messages: messages.clone(),
                 tools: Some(tools.clone()),
@@ -212,7 +225,7 @@ impl ToolAwareExecutor {
             tokens_used: Some(total_input_tokens + total_output_tokens),
             metadata: AgentMetadata {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
-                temperature: Some(context.agent_card.capabilities.temperature),
+                temperature: sp.temperature,
                 reasoning,
             },
             tool_invocations,
@@ -239,6 +252,8 @@ impl ToolAwareExecutor {
 
         let tools = self.tool_registry.to_openai_tools();
 
+        let sp_oai = context.agent_card.capabilities.resolve_sampling_params(2048);
+
         let mut messages: Vec<OpenAIMessage> = vec![
             OpenAIMessage::chat("system", &system_prompt),
             OpenAIMessage::chat("user", &agent.query),
@@ -255,8 +270,13 @@ impl ToolAwareExecutor {
             let request = OpenAIRequest {
                 model: context.agent_card.capabilities.model.clone(),
                 messages: messages.clone(),
-                temperature: Some(context.agent_card.capabilities.temperature),
-                max_tokens: Some(2048),
+                temperature: sp_oai.temperature,
+                max_tokens: Some(sp_oai.max_tokens),
+                top_p: sp_oai.top_p,
+                frequency_penalty: sp_oai.frequency_penalty,
+                presence_penalty: sp_oai.presence_penalty,
+                repetition_penalty: sp_oai.repetition_penalty,
+                seed: sp_oai.random_seed,
                 tools: Some(tools.clone()),
                 tool_choice: None,
             };
@@ -356,7 +376,7 @@ impl ToolAwareExecutor {
             tokens_used: Some(total_tokens),
             metadata: AgentMetadata {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
-                temperature: Some(context.agent_card.capabilities.temperature),
+                temperature: sp_oai.temperature,
                 reasoning,
             },
             tool_invocations,
