@@ -9619,14 +9619,15 @@ fn formulate_research_query(
         (_, "biotech_analyst") => format!(
             "For the forecast: \"{question}\"\n\n\
              Research the '{driver_display}' driver.\n{params}\n\n\
-             PROVIDE:\n\
-             1. Clinical trial phase and historical success rate for this indication\n\
-             2. Key upcoming data readouts or regulatory milestones\n\
-             3. Competitive landscape (similar therapies in development)\n\
-             4. Suggested p50 multiplier based on findings\n\
-             5. Confidence (0.0-1.0)\n\n\
+             Return findings using these labels:\n\
+             [BASE RATE] phase + historical POS with sample size\n\
+             [TRIAL DATA] specific endpoint result (n, p-value, comparator)\n\
+             [FDA STATUS] current designation or action with date\n\
+             [COMPETITIVE] competitor count, approval status, differentiation\n\
+             [MECHANISTIC] biological plausibility with ontology IDs\n\
+             [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) — rationale\n\n\
              Context: {rationale}\n\
-             Use standard ontology terms where applicable."
+             Confidence (0.0-1.0) in your assessment."
         ),
 
         (d, "macro_forecaster") if d.contains("finance") || d.contains("stock") => format!(
