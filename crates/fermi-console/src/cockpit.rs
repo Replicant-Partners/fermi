@@ -4007,7 +4007,7 @@ impl CockpitState {
         cx.notify();
     }
 
-    pub fn publish_forecast(&mut self, cx: &mut Context<Self>) {
+    pub fn publish_forecast(&mut self, visibility: String, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.cached_fpl = generate_fpl_text(&self.program);
 
@@ -4053,7 +4053,7 @@ impl CockpitState {
             }),
             drivers: None,
             evidence: None,
-            visibility: Some("private".into()),
+            visibility: Some(visibility),
             tags: None,
             portfolio_id: None,
             status: Some("active".into()),

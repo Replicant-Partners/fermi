@@ -340,6 +340,12 @@ struct FermiConsole {
     portfolio_create_error: Option<String>,
     selected_portfolio_id: Option<String>,
     portfolio_stats_cache: HashMap<String, PortfolioStats>,
+
+    // Commit sheet (shown on ⌘P before publishing)
+    commit_sheet_showing: bool,
+    commit_sheet_visibility: String,
+    commit_sheet_question: String,
+    commit_sheet_probability: f64,
 }
 
 #[derive(Clone)]
@@ -415,6 +421,10 @@ impl FermiConsole {
             portfolio_create_error: None,
             selected_portfolio_id: None,
             portfolio_stats_cache: HashMap::new(),
+            commit_sheet_showing: false,
+            commit_sheet_visibility: "private".into(),
+            commit_sheet_question: String::new(),
+            commit_sheet_probability: 0.5,
         };
 
         // Try to load API key from environment (fallback for dev)
@@ -1141,9 +1151,7 @@ impl FermiConsole {
         }
     }
 
-    /// Ctrl+P — Publish forecast to the API for Brier tracking.
-    /// After the cockpit fires the publish, we schedule a delayed
-    /// refresh of portfolio + stats so the sidebar data updates.
+    /// Ctrl+P — Show the commit sheet before publishing.
     fn on_publish_forecast(
         &mut self,
         _: &PublishForecast,
@@ -1151,13 +1159,33 @@ impl FermiConsole {
         cx: &mut Context<Self>,
     ) {
         if let Some(ref cockpit) = self.cockpit {
+            let state = cockpit.read(cx);
+            let question = state
+                .program
+                .question()
+                .map(|q| q.text.clone())
+                .unwrap_or_default();
+            if question.is_empty() {
+                return;
+            }
+            self.commit_sheet_question = question;
+            self.commit_sheet_probability = cockpit.read(cx).predicted_probability;
+            self.commit_sheet_showing = true;
+            cx.notify();
+        }
+    }
+
+    /// Called when the user confirms in the commit sheet.
+    fn do_commit_forecast(&mut self, cx: &mut Context<Self>) {
+        self.commit_sheet_showing = false;
+        let visibility = self.commit_sheet_visibility.clone();
+
+        if let Some(ref cockpit) = self.cockpit {
             let cockpit = cockpit.clone();
             cockpit.update(cx, |cockpit, cx| {
-                cockpit.publish_forecast(cx);
+                cockpit.publish_forecast(visibility, cx);
             });
 
-            // Refresh portfolio and stats after a short delay to let
-            // the publish POST complete on the server side.
             cx.spawn(async move |this, cx| {
                 cx.background_executor()
                     .timer(std::time::Duration::from_secs(2))
@@ -2892,28 +2920,31 @@ impl FermiConsole {
             })
             .when(self.connected && !self.forecasts_loading, |el| {
                 el
-                    // Active forecasts section
+                    // Live forecasts (committed, Brier-scored)
                     .when(!self.active_forecasts.is_empty(), |el| {
                         el.child(self.render_forecast_section(
-                            "Active Forecasts",
+                            "Live",
+                            "committed · Brier-scored",
                             &self.active_forecasts,
                             theme::CYAN,
                             cx,
                         ))
                     })
-                    // Draft forecasts section
+                    // Draft forecasts (saved, not committed)
                     .when(!self.draft_forecasts.is_empty(), |el| {
                         el.child(self.render_forecast_section(
                             "Drafts",
+                            "saved · not committed",
                             &self.draft_forecasts,
                             theme::FG_DIM,
                             cx,
                         ))
                     })
-                    // Resolved forecasts section
+                    // Resolved forecasts
                     .when(!self.resolved_forecasts.is_empty(), |el| {
                         el.child(self.render_forecast_section(
                             "Resolved",
+                            "",
                             &self.resolved_forecasts,
                             theme::GREEN,
                             cx,
@@ -2935,15 +2966,24 @@ impl FermiConsole {
                                         .py(px(10.0))
                                         .border_b_1()
                                         .border_color(theme::fg_faint())
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.0))
                                         .child(
                                             div()
                                                 .text_size(px(13.0))
-                                                .text_color(rgb(theme::CYAN))
+                                                .text_color(rgb(theme::GOLD))
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .child(format!(
-                                                    "Local Forecasts ({})",
+                                                    "Lab ({})",
                                                     self.local_forecasts.len()
                                                 )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(theme::fg_faint())
+                                                .child("on disk · not synced"),
                                         ),
                                 )
                                 .child(div().flex().flex_col().children(
@@ -3159,6 +3199,7 @@ impl FermiConsole {
     fn render_forecast_section(
         &self,
         title: &str,
+        subtitle: &str,
         forecasts: &[Forecast],
         accent: u32,
         cx: &Context<Self>,
@@ -3178,14 +3219,22 @@ impl FermiConsole {
                     .border_color(theme::fg_faint())
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .gap(px(10.0))
                     .child(
                         div()
                             .text_size(px(13.0))
                             .text_color(rgb(accent))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("{} ({})", title, forecasts.len())),
-                    ),
+                    )
+                    .when(!subtitle.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_faint())
+                                .child(subtitle.to_string()),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -3296,6 +3345,20 @@ impl FermiConsole {
                             .bg(theme::bg_active())
                             .child(forecast.status.clone()),
                     )
+                    // Visibility badge (Live forecasts only)
+                    .when(forecast.status == "active", |el| {
+                        let (icon, label, color) = match forecast.visibility.as_str() {
+                            "public" => ("🌐", "public", theme::CYAN),
+                            "team" => ("👥", "team", theme::BLUE),
+                            _ => ("🔒", "private", theme::FG_DIM),
+                        };
+                        el.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(color))
+                                .child(format!("{} {}", icon, label)),
+                        )
+                    })
                     .when(forecast.actual_outcome.is_some(), |el| {
                         el.child(
                             div()
@@ -3645,6 +3708,297 @@ impl FermiConsole {
                     .child(cal_indicator),
             )
     }
+
+    // ── Commit Sheet Modal ────────────────────────────────────────────────
+
+    fn render_commit_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let question = truncate(&self.commit_sheet_question, 80);
+        let prob_pct = (self.commit_sheet_probability * 100.0).round() as u32;
+        let selected_vis = self.commit_sheet_visibility.clone();
+
+        // Full-screen scrim
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E1499))
+            // Sheet card
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(20.0))
+                    .w(px(480.0))
+                    .p(px(28.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_size(px(18.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(theme::CYAN))
+                                    .child("Commit Forecast"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_faint())
+                                    .child("Once committed, this forecast enters Brier scoring."),
+                            ),
+                    )
+                    // Question + probability summary
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .p(px(12.0))
+                            .rounded(px(6.0))
+                            .bg(rgb(theme::BG))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(rgb(theme::FG))
+                                    .child(question),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(24.0))
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(rgb(theme::CYAN))
+                                            .child(format!("{}%", prob_pct)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(theme::fg_faint())
+                                            .child("committed probability"),
+                                    ),
+                            ),
+                    )
+                    // Visibility picker
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_faint())
+                                    .child("WHO CAN SEE THIS FORECAST"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(8.0))
+                                    // Private option
+                                    .child({
+                                        let is_sel = selected_vis == "private";
+                                        div()
+                                            .id("vis-private")
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .gap(px(4.0))
+                                            .flex_1()
+                                            .p(px(12.0))
+                                            .rounded(px(8.0))
+                                            .border_1()
+                                            .border_color(if is_sel {
+                                                rgb(theme::CYAN)
+                                            } else {
+                                                rgb(theme::FG_FAINT)
+                                            })
+                                            .bg(if is_sel {
+                                                rgb(theme::BG_ACTIVE)
+                                            } else {
+                                                rgb(theme::BG)
+                                            })
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.commit_sheet_visibility = "private".into();
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_size(px(18.0))
+                                                    .child("🔒"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(rgb(theme::FG))
+                                                    .child("Private"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(theme::fg_faint())
+                                                    .child("only you"),
+                                            )
+                                    })
+                                    // Team option
+                                    .child({
+                                        let is_sel = selected_vis == "team";
+                                        div()
+                                            .id("vis-team")
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .gap(px(4.0))
+                                            .flex_1()
+                                            .p(px(12.0))
+                                            .rounded(px(8.0))
+                                            .border_1()
+                                            .border_color(if is_sel {
+                                                rgb(theme::BLUE)
+                                            } else {
+                                                rgb(theme::FG_FAINT)
+                                            })
+                                            .bg(if is_sel {
+                                                rgb(theme::BG_ACTIVE)
+                                            } else {
+                                                rgb(theme::BG)
+                                            })
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.commit_sheet_visibility = "team".into();
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_size(px(18.0))
+                                                    .child("👥"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(rgb(theme::FG))
+                                                    .child("Team"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(theme::fg_faint())
+                                                    .child("team Brier"),
+                                            )
+                                    })
+                                    // Public option
+                                    .child({
+                                        let is_sel = selected_vis == "public";
+                                        div()
+                                            .id("vis-public")
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .gap(px(4.0))
+                                            .flex_1()
+                                            .p(px(12.0))
+                                            .rounded(px(8.0))
+                                            .border_1()
+                                            .border_color(if is_sel {
+                                                rgb(theme::CYAN)
+                                            } else {
+                                                rgb(theme::FG_FAINT)
+                                            })
+                                            .bg(if is_sel {
+                                                rgb(theme::BG_ACTIVE)
+                                            } else {
+                                                rgb(theme::BG)
+                                            })
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.commit_sheet_visibility = "public".into();
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_size(px(18.0))
+                                                    .child("🌐"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(rgb(theme::FG))
+                                                    .child("Public"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(theme::fg_faint())
+                                                    .child("global Brier"),
+                                            )
+                                    }),
+                            ),
+                    )
+                    // Action buttons
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(12.0))
+                            .justify_end()
+                            // Cancel
+                            .child(
+                                div()
+                                    .id("commit-cancel")
+                                    .px(px(20.0))
+                                    .py(px(10.0))
+                                    .rounded(px(6.0))
+                                    .border_1()
+                                    .border_color(rgb(theme::FG_FAINT))
+                                    .text_size(px(13.0))
+                                    .text_color(theme::fg_faint())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.commit_sheet_showing = false;
+                                        cx.notify();
+                                    }))
+                                    .child("Cancel"),
+                            )
+                            // Commit
+                            .child(
+                                div()
+                                    .id("commit-confirm")
+                                    .px(px(20.0))
+                                    .py(px(10.0))
+                                    .rounded(px(6.0))
+                                    .bg(rgb(theme::CYAN))
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(theme::BG_DEEP))
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.85))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.do_commit_forecast(cx);
+                                    }))
+                                    .child("⚡ Commit"),
+                            ),
+                    ),
+            )
+    }
 }
 
 impl Focusable for FermiConsole {
@@ -3655,6 +4009,11 @@ impl Focusable for FermiConsole {
 
 impl Render for FermiConsole {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Pre-compute commit sheet overlay before chaining to avoid borrow conflicts
+        let commit_overlay = self
+            .commit_sheet_showing
+            .then(|| self.render_commit_sheet(cx).into_any_element());
+
         div()
             .key_context("FermiConsole")
             .track_focus(&self.focus_handle(cx))
@@ -3674,6 +4033,7 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_toggle_fullscreen))
             .on_action(cx.listener(Self::on_reset_cockpit))
             .on_action(cx.listener(Self::on_new_forecast))
+            .relative()
             .flex()
             .size_full()
             .bg(theme::bg())
@@ -3702,6 +4062,8 @@ impl Render for FermiConsole {
                     },
                 ),
             )
+            // Commit sheet overlay (⌘P)
+            .children(commit_overlay)
     }
 }
 
