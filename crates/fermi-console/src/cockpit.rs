@@ -1049,7 +1049,7 @@ impl CockpitState {
             let domain_agent = match domain.as_str() {
                 "sports_nba" | "basketball" => "nba_analyst",
                 "biotech" | "pharma" | "clinical" => "biotech_analyst",
-                "sports_football" | "sports_nfl" | "sports_other" => "market_research",
+                "sports_football" | "sports_nfl" | "sports_other" => "football_analyst",
                 "finance" | "stocks" => "macro_forecaster",
                 "politics" | "geopolitics" => "macro_forecaster",
                 "technology" => "market_research",
@@ -2175,7 +2175,7 @@ impl CockpitState {
             match domain.as_str() {
                 "sports_nba" | "basketball" => "nba_analyst",
                 "biotech" | "pharma" => "biotech_analyst",
-                "sports_football" | "sports_nfl" | "sports_other" => "market_research",
+                "sports_football" | "sports_nfl" | "sports_other" => "football_analyst",
                 "finance" | "stocks" => "macro_forecaster",
                 "technology" => "market_research",
                 _ => "macro_forecaster",
