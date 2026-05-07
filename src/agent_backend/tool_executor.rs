@@ -466,12 +466,21 @@ impl AgentExecutor for ToolAwareExecutor {
         // The tool loop sends all platform tools (search_knowledge, etc.) which
         // confuses the LLM into calling tools and returning narrative instead of
         // following the system prompt's JSON schema. Delegate to inner executor.
-        let prompt_demands_format = context
+        // Meta-agents (tagged "meta-agent") always bypass — they return structured
+        // JSON decompositions that the tool loop would corrupt.
+        let is_meta_agent = context
             .agent_card
-            .system_prompt
-            .as_ref()
-            .map(|p| p.contains("ONLY") || p.contains("raw JSON"))
-            .unwrap_or(false);
+            .metadata
+            .tags
+            .iter()
+            .any(|t| t == "meta-agent");
+        let prompt_demands_format = is_meta_agent
+            || context
+                .agent_card
+                .system_prompt
+                .as_ref()
+                .map(|p| p.contains("ONLY") || p.contains("raw JSON"))
+                .unwrap_or(false);
         if prompt_demands_format {
             return self.inner.execute(agent, context).await;
         }

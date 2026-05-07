@@ -692,11 +692,12 @@ impl CockpitState {
             reasoning.chars().take(100).collect::<String>()
         );
 
-        // Update agent status
+        // Update agent status — matches either "fermi" (orchestration path) or
+        // "macro_forecaster" (direct call path)
         if let Some(run) = self
             .agent_runs
             .iter_mut()
-            .find(|r| r.agent_name == "macro_forecaster")
+            .find(|r| r.agent_name == "macro_forecaster" || r.agent_name == "fermi")
         {
             run.status = AgentRunStatus::Completed;
             run.completed_at = Some(

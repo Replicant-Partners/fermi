@@ -115,11 +115,16 @@ pub async fn execute_agent_stream_handler(
 
     // ── Build executor ─────────────────────────────────────────────
     // JSON-format agents (fermi) bypass tool loop via inner executor directly.
-    let prompt_demands_format = card
-        .system_prompt
-        .as_ref()
-        .map(|p| p.contains("ONLY") || p.contains("raw JSON"))
-        .unwrap_or(false);
+    // Meta-agents (tagged "meta-agent") return structured JSON decompositions —
+    // the tool loop would inject search tools that make the LLM return narrative
+    // instead of the JSON schema. Bypass on tag OR legacy string heuristic.
+    let is_meta_agent = card.metadata.tags.iter().any(|t| t == "meta-agent");
+    let prompt_demands_format = is_meta_agent
+        || card
+            .system_prompt
+            .as_ref()
+            .map(|p| p.contains("ONLY") || p.contains("raw JSON"))
+            .unwrap_or(false);
 
     let executor: Arc<dyn AgentExecutor> = if prompt_demands_format {
         state.registry.executor_arc()
