@@ -58,7 +58,24 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": ["BASE RATE", "SENTIMENT SCORE", "INDICATOR", "CONTRARIAN", "MULTIPLIER"],
+      "multiplier_range": [0.3, 2.5],
+      "kg_fact_categories": ["sentiment_base_rate", "contrarian_signal", "indicator_threshold"],
+      "seed_facts": [
+        {"entity_type": "cep_base_rate", "name": "Analyst consensus 12-month forecast accuracy", "description": "Proportion of sell-side consensus estimates that come within 10% of actual outcome at 12 months", "properties": {"value": 0.55, "source": "I/B/E/S historical data"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Expert vs public divergence resolution (6mo)", "description": "Rate at which expert view prevails over public sentiment when they diverge, at 6-month horizon", "properties": {"value": 0.62, "source": "Philip Tetlock / academic forecasting research"}, "confidence": 0.82},
+        {"entity_type": "cep_base_rate", "name": "Contrarian signal: >90% bulls precedes correction", "description": "Historical rate at which AAII bulls >90th percentile is followed by market correction within 3 months", "properties": {"value": 0.65, "source": "AAII sentiment data 1987-2024", "direction": "bearish"}, "confidence": 0.80},
+        {"entity_type": "cep_base_rate", "name": "Contrarian signal: <20% bulls precedes rally", "description": "Historical rate at which AAII bulls <20% is followed by market rally within 3 months", "properties": {"value": 0.70, "source": "AAII sentiment data 1987-2024", "direction": "bullish"}, "confidence": 0.80},
+        {"entity_type": "cep_base_rate", "name": "News sentiment persistence half-life (days)", "description": "Average number of days before news sentiment reverts halfway to baseline", "properties": {"value_days": 7, "source": "Academic NLP/finance research"}, "confidence": 0.75},
+        {"entity_type": "cep_base_rate", "name": "Earnings sentiment shift duration (days)", "description": "Average days earnings-driven sentiment persists before fading", "properties": {"value_days": 14, "source": "Academic NLP/finance research"}, "confidence": 0.78},
+        {"entity_type": "cep_base_rate", "name": "AAII bullish sentiment long-run average", "description": "Long-run average proportion of AAII survey respondents reporting bullish sentiment", "properties": {"value": 0.375, "source": "AAII 1987-2024"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "VIX mean reversion target", "description": "Long-run mean of the VIX (S&P 500 implied volatility index)", "properties": {"value": 19.5, "source": "CBOE VIX data 1990-2024"}, "confidence": 0.90},
+        {"entity_type": "cep_base_rate", "name": "Put/call ratio neutral range", "description": "CBOE equity put/call ratio range associated with neutral (non-extreme) sentiment", "properties": {"low": 0.7, "high": 1.0, "source": "CBOE historical data"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Social media sentiment lead time for retail stocks (days)", "description": "Average days social media sentiment leads price movement in retail-heavy stocks", "properties": {"value_days": 1.5, "range_days": [1, 3], "source": "Academic Twitter/Reddit finance research"}, "confidence": 0.68}
+      ]
+    }
   },
   "performance": {
     "forecasts_contributed": 0,

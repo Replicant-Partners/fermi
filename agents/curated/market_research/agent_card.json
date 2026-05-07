@@ -39,7 +39,23 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": ["BASE RATE", "MARKET SIZE", "COMPETITIVE", "ADOPTION", "MULTIPLIER"],
+      "multiplier_range": [0.1, 3.0],
+      "kg_fact_categories": ["market_base_rate", "adoption_curve", "competitive_dynamics"],
+      "seed_facts": [
+        {"entity_type": "cep_base_rate", "name": "New market entrant 5-year survival", "description": "Probability a new market entrant survives 5 years", "properties": {"value": 0.48, "source": "BLS/SBA historical data"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Startup reaching $100M revenue", "description": "Probability a venture-backed startup reaches $100M ARR", "properties": {"value": 0.01, "source": "PitchBook/Crunchbase cohort data"}, "confidence": 0.82},
+        {"entity_type": "cep_base_rate", "name": "TAM estimate accuracy vs actual (5yr)", "description": "Proportion of analyst TAM estimates that come within 50% of actual market size at 5 years", "properties": {"value": 0.35, "source": "McKinsey/academic meta-analysis"}, "confidence": 0.75},
+        {"entity_type": "cep_base_rate", "name": "Market leader share retention (5yr)", "description": "Probability a market leader retains #1 position after 5 years", "properties": {"value": 0.72, "source": "HBR/industry meta-analysis"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Technology adoption S-curve inflection point", "description": "Consumer penetration rate at which technology adoption transitions from early adopter to mass market", "properties": {"low_pct": 15, "high_pct": 20, "source": "Rogers Diffusion of Innovations / Gartner"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Disruptive tech market capture (decade)", "description": "Average market share a disruptive entrant achieves within 10 years of launch", "properties": {"value": 0.40, "source": "Christensen disruption research"}, "confidence": 0.72},
+        {"entity_type": "cep_base_rate", "name": "M&A synergy realization rate", "description": "Proportion of M&A deals that realise stated synergies within 3 years", "properties": {"value": 0.60, "source": "McKinsey/BCG M&A research"}, "confidence": 0.80},
+        {"entity_type": "cep_multiplier", "name": "Analyst TAM overestimate bias", "description": "Average ratio of analyst TAM estimate to actual market size (analysts typically overestimate)", "properties": {"multiplier": 1.8, "direction": "overestimate", "source": "Meta-analysis of tech forecasts"}, "confidence": 0.78},
+        {"entity_type": "cep_base_rate", "name": "Industry consolidation top-3 share", "description": "Average revenue share held by top 3 players in mature consolidated industries", "properties": {"value": 0.55, "source": "Bain/industry research"}, "confidence": 0.82}
+      ]
+    }
   },
   "performance": {
     "forecasts_contributed": 0,

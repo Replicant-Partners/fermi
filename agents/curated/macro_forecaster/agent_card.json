@@ -58,7 +58,26 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": ["BASE RATE", "INDICATOR", "POLICY", "CURRENT DATA", "MULTIPLIER"],
+      "multiplier_range": [0.1, 3.0],
+      "kg_fact_categories": ["recession_base_rate", "market_cycle", "indicator_signal", "policy_benchmark"],
+      "seed_facts": [
+        {"entity_type": "cep_base_rate", "name": "US recession base rate (any year)", "description": "Probability of US recession in any given year, postwar average", "properties": {"value": 0.15, "source": "NBER postwar data", "unit": "annual_probability"}, "confidence": 0.90},
+        {"entity_type": "cep_base_rate", "name": "PMI below 50 recession signal accuracy", "description": "Accuracy of ISM PMI below 50 as recession predictor within 12 months", "properties": {"value": 0.72, "source": "ISM/NBER historical", "indicator": "ISM_PMI", "threshold": 50}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Yield curve inversion false positive rate", "description": "Rate at which 10Y-2Y yield curve inversion does NOT precede recession within 24 months", "properties": {"value": 0.25, "source": "Fed/NBER 1955-2023", "indicator": "10Y_2Y_spread"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Yield curve inversion → recession avg lag (months)", "description": "Average months from yield curve inversion to NBER recession start", "properties": {"value_months": 16, "source": "Fed/NBER 1955-2023", "min_months": 6, "max_months": 24}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Bear market avg duration (months)", "description": "Average duration of S&P 500 bear markets (peak to trough)", "properties": {"value_months": 14, "source": "S&P 500 history 1950-2023"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Bull market avg duration (months)", "description": "Average duration of S&P 500 bull markets", "properties": {"value_months": 50, "source": "S&P 500 history 1950-2023"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "US postwar avg GDP growth", "description": "Average annualised real US GDP growth rate, postwar", "properties": {"value_pct": 3.2, "source": "BEA 1950-2023", "unit": "annual_pct"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "US postwar avg inflation", "description": "Average annual CPI inflation rate, postwar", "properties": {"value_pct": 3.6, "source": "BLS 1950-2023", "unit": "annual_pct"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "Fed rate hike cycle avg duration (months)", "description": "Average duration of Federal Reserve rate hiking cycles", "properties": {"value_months": 18, "source": "Fed 1954-2023"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Fed rate cut cycle avg duration (months)", "description": "Average duration of Federal Reserve rate cutting cycles", "properties": {"value_months": 12, "source": "Fed 1954-2023"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Unemployment trough to recession (months)", "description": "Average months from unemployment rate trough to NBER recession start", "properties": {"value_months": 10, "source": "BLS/NBER 1950-2023"}, "confidence": 0.83},
+        {"entity_type": "cep_base_rate", "name": "Fed funds neutral rate estimate", "description": "Estimated neutral Fed funds rate range (r*) as of 2024", "properties": {"low_pct": 2.5, "high_pct": 3.0, "source": "Fed SEP 2024"}, "confidence": 0.70}
+      ]
+    }
   },
   "performance": {
     "forecasts_contributed": 0,

@@ -121,7 +121,36 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": ["BASE RATE", "TRIAL DATA", "FDA STATUS", "COMPETITIVE", "MECHANISTIC", "MULTIPLIER"],
+      "multiplier_range": [0.05, 4.0],
+      "kg_fact_categories": ["phase_success_rate", "designation_multiplier", "modality_adjustment"],
+      "seed_facts": [
+        {"entity_type": "cep_base_rate", "name": "Ph1→Approval all areas", "description": "Phase 1 to approval POS, all therapeutic areas (BIO/QLS 2011-2020)", "properties": {"value": 0.079, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase1", "phase_to": "approval", "area": "all"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "Ph1→Approval oncology", "description": "Phase 1 to approval POS, oncology (BIO/QLS 2011-2020)", "properties": {"value": 0.057, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase1", "phase_to": "approval", "area": "oncology"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "Ph1→Approval rare disease", "description": "Phase 1 to approval POS, rare disease (BIO/QLS 2011-2020)", "properties": {"value": 0.172, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase1", "phase_to": "approval", "area": "rare_disease"}, "confidence": 0.90},
+        {"entity_type": "cep_base_rate", "name": "Ph2→Approval all areas", "description": "Phase 2 to approval POS, all therapeutic areas (BIO/QLS 2011-2020)", "properties": {"value": 0.154, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase2", "phase_to": "approval", "area": "all"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "Ph2→Approval oncology", "description": "Phase 2 to approval POS, oncology (BIO/QLS 2011-2020)", "properties": {"value": 0.121, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase2", "phase_to": "approval", "area": "oncology"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "Ph2→Approval infectious disease", "description": "Phase 2 to approval POS, infectious disease (BIO/QLS 2011-2020)", "properties": {"value": 0.199, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase2", "phase_to": "approval", "area": "infectious"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Ph3→Approval all areas", "description": "Phase 3 to approval POS, all therapeutic areas (BIO/QLS 2011-2020)", "properties": {"value": 0.579, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase3", "phase_to": "approval", "area": "all"}, "confidence": 0.93},
+        {"entity_type": "cep_base_rate", "name": "Ph3→Approval oncology", "description": "Phase 3 to approval POS, oncology (BIO/QLS 2011-2020)", "properties": {"value": 0.506, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase3", "phase_to": "approval", "area": "oncology"}, "confidence": 0.93},
+        {"entity_type": "cep_base_rate", "name": "Ph3→Approval rare disease", "description": "Phase 3 to approval POS, rare disease (BIO/QLS 2011-2020)", "properties": {"value": 0.72, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase3", "phase_to": "approval", "area": "rare_disease"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Ph2→Ph3 transition all areas", "description": "Phase 2 to Phase 3 transition rate, all areas (BIO/QLS 2011-2020)", "properties": {"value": 0.35, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase2", "phase_to": "phase3", "area": "all"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Ph3→NDA/BLA submission all areas", "description": "Phase 3 to NDA/BLA submission rate (BIO/QLS 2011-2020)", "properties": {"value": 0.68, "source": "BIO/QLS Advisors 2011-2020", "phase_from": "phase3", "phase_to": "nda_bla", "area": "all"}, "confidence": 0.90},
+        {"entity_type": "cep_multiplier", "name": "FDA Breakthrough Therapy Designation multiplier", "description": "BTD multiplier on base approval rate vs no designation", "properties": {"multiplier": 2.3, "type": "designation", "reference": "FDA/BIO 2013-2023"}, "confidence": 0.87},
+        {"entity_type": "cep_multiplier", "name": "FDA Fast Track Designation multiplier", "description": "Fast Track multiplier on base approval rate vs no designation", "properties": {"multiplier": 1.5, "type": "designation", "reference": "FDA/BIO 2013-2023"}, "confidence": 0.85},
+        {"entity_type": "cep_multiplier", "name": "Orphan Drug Designation multiplier", "description": "ODD multiplier vs non-orphan in same phase", "properties": {"multiplier": 1.8, "type": "designation", "reference": "FDA/BIO 2013-2023"}, "confidence": 0.87},
+        {"entity_type": "cep_multiplier", "name": "FDA Priority Review multiplier", "description": "Priority Review multiplier vs standard review", "properties": {"multiplier": 1.4, "type": "designation", "reference": "FDA/BIO 2013-2023"}, "confidence": 0.85},
+        {"entity_type": "cep_multiplier", "name": "RMAT designation multiplier", "description": "Regenerative Medicine Advanced Therapy vs standard biologic", "properties": {"multiplier": 2.1, "type": "designation", "reference": "FDA/BIO 2013-2023"}, "confidence": 0.83},
+        {"entity_type": "cep_multiplier", "name": "Monoclonal antibody modality adjustment", "description": "mAb Ph3→approval rate relative to small molecule baseline", "properties": {"multiplier": 1.05, "type": "modality", "modality": "monoclonal_antibody"}, "confidence": 0.85},
+        {"entity_type": "cep_multiplier", "name": "ADC modality adjustment", "description": "Antibody-drug conjugate Ph3→approval vs small molecule (higher safety scrutiny)", "properties": {"multiplier": 0.92, "type": "modality", "modality": "adc"}, "confidence": 0.82},
+        {"entity_type": "cep_multiplier", "name": "CAR-T modality adjustment", "description": "CAR-T cell therapy Ph3→approval vs small molecule (hematologic malignancies)", "properties": {"multiplier": 1.15, "type": "modality", "modality": "car_t"}, "confidence": 0.82},
+        {"entity_type": "cep_multiplier", "name": "Gene therapy modality adjustment", "description": "Gene therapy Ph3→approval vs small molecule (rare/orphan with unmet need)", "properties": {"multiplier": 1.30, "type": "modality", "modality": "gene_therapy"}, "confidence": 0.80},
+        {"entity_type": "cep_multiplier", "name": "mRNA modality adjustment", "description": "mRNA Ph3→approval vs small molecule (regulatory novelty discount)", "properties": {"multiplier": 0.88, "type": "modality", "modality": "mrna"}, "confidence": 0.78},
+        {"entity_type": "cep_multiplier", "name": "Bispecific antibody modality adjustment", "description": "Bispecific antibody Ph3→approval vs small molecule baseline", "properties": {"multiplier": 0.95, "type": "modality", "modality": "bispecific"}, "confidence": 0.80}
+      ]
+    }
   },
   "performance": {
     "forecasts_contributed": 0,

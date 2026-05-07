@@ -75,7 +75,29 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": ["BASE RATE", "MATCH STATS", "ELO", "INJURY IMPACT", "MULTIPLIER"],
+      "multiplier_range": [0.1, 3.0],
+      "kg_fact_categories": ["match_base_rate", "elo_parameter", "injury_impact", "competition_structure"],
+      "seed_facts": [
+        {"entity_type": "cep_base_rate", "name": "Home win rate top-5 leagues", "description": "Average home team win probability across Premier League, La Liga, Bundesliga, Serie A, Ligue 1", "properties": {"value": 0.46, "source": "FBref/StatsBomb top-5 leagues 2015-2024"}, "confidence": 0.95},
+        {"entity_type": "cep_base_rate", "name": "Draw rate top-5 leagues", "description": "Average draw rate across top-5 European leagues", "properties": {"value": 0.26, "source": "FBref/StatsBomb top-5 leagues 2015-2024"}, "confidence": 0.95},
+        {"entity_type": "cep_base_rate", "name": "Away win rate top-5 leagues", "description": "Average away team win probability across top-5 European leagues", "properties": {"value": 0.28, "source": "FBref/StatsBomb top-5 leagues 2015-2024"}, "confidence": 0.95},
+        {"entity_type": "cep_base_rate", "name": "Both teams score rate (Premier League)", "description": "Proportion of Premier League matches where both teams score at least one goal", "properties": {"value": 0.52, "source": "FBref Premier League 2015-2024", "league": "premier_league"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "Over 2.5 goals rate (Premier League)", "description": "Proportion of Premier League matches with more than 2.5 total goals", "properties": {"value": 0.55, "source": "FBref Premier League 2015-2024", "league": "premier_league"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "Over 2.5 goals rate (Serie A)", "description": "Proportion of Serie A matches with more than 2.5 total goals", "properties": {"value": 0.50, "source": "FBref Serie A 2015-2024", "league": "serie_a"}, "confidence": 0.90},
+        {"entity_type": "cep_base_rate", "name": "UCL home win rate (group stage)", "description": "Home team win probability in Champions League group stage matches", "properties": {"value": 0.52, "source": "UEFA/StatsBomb UCL 2010-2024", "context": "ucl_group_stage"}, "confidence": 0.90},
+        {"entity_type": "cep_base_rate", "name": "Title leader after 20 games wins league", "description": "Proportion of teams leading their league table after 20 games that win the title", "properties": {"value": 0.65, "source": "FBref top-5 leagues 2000-2024"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Relegation zone at 20 games gets relegated", "description": "Proportion of teams in the relegation zone after 20 games that are ultimately relegated", "properties": {"value": 0.80, "source": "FBref top-5 leagues 2000-2024"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Two-leg first-leg home team progresses", "description": "Probability a team playing first leg at home progresses in a two-leg knockout tie", "properties": {"value": 0.62, "source": "UEFA/StatsBomb 2000-2024", "context": "two_leg_knockout"}, "confidence": 0.88},
+        {"entity_type": "cep_multiplier", "name": "Elo home advantage (points)", "description": "Elo rating points added to home team's effective Elo in football win probability calculation", "properties": {"value_elo_pts": 65, "implied_win_pct_equal_teams": 0.55, "k_factor": 20}, "confidence": 0.90},
+        {"entity_type": "cep_multiplier", "name": "World-class striker absence (xG/90 loss)", "description": "Expected xG per 90 lost when world-class striker (Haaland/Mbappé/Kane tier) is absent", "properties": {"value_xg_per90": -0.45, "tier": "world_class_striker"}, "confidence": 0.80},
+        {"entity_type": "cep_multiplier", "name": "Quality striker absence (xG/90 loss)", "description": "Expected xG per 90 lost when a quality top-10 striker is absent", "properties": {"value_xg_per90": -0.25, "tier": "quality_striker"}, "confidence": 0.78},
+        {"entity_type": "cep_multiplier", "name": "First-choice GK absence (xGA/90 increase)", "description": "Expected xGA per 90 increase when first-choice goalkeeper is absent", "properties": {"value_xga_per90": 0.30, "tier": "first_choice_gk"}, "confidence": 0.78},
+        {"entity_type": "cep_multiplier", "name": "First-choice CB absence (xGA/90 increase)", "description": "Expected xGA per 90 increase when a first-choice centre-back is absent", "properties": {"value_xga_per90": 0.25, "tier": "first_choice_cb"}, "confidence": 0.76}
+      ]
+    }
   },
   "performance": {
     "forecasts_contributed": 0,

@@ -76,7 +76,26 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": ["BASE RATE", "GAME STATS", "ELO", "INJURY IMPACT", "MULTIPLIER"],
+      "multiplier_range": [0.2, 3.0],
+      "kg_fact_categories": ["game_base_rate", "elo_parameter", "injury_impact"],
+      "seed_facts": [
+        {"entity_type": "cep_base_rate", "name": "NBA regular season home win rate", "description": "Historical home team win percentage in NBA regular season games", "properties": {"value": 0.58, "source": "Basketball-Reference 2000-2024", "context": "regular_season"}, "confidence": 0.95},
+        {"entity_type": "cep_base_rate", "name": "NBA playoff home win rate", "description": "Historical home team win percentage in NBA playoff games", "properties": {"value": 0.64, "source": "Basketball-Reference 2000-2024", "context": "playoffs"}, "confidence": 0.95},
+        {"entity_type": "cep_base_rate", "name": "NBA 3-1 series leader closes out", "description": "Historical rate at which a team leading 3-1 in a best-of-7 series wins the series", "properties": {"value": 0.97, "source": "Basketball-Reference all-time playoff data"}, "confidence": 0.97},
+        {"entity_type": "cep_base_rate", "name": "8-seed upsets 1-seed in first round", "description": "Historical rate at which a #8 seed eliminates a #1 seed in NBA playoffs first round", "properties": {"value": 0.04, "source": "Basketball-Reference 1984-2024"}, "confidence": 0.93},
+        {"entity_type": "cep_base_rate", "name": "Top-5 NetRtg team wins championship", "description": "Proportion of NBA champions that were top-5 in Net Rating entering playoffs", "properties": {"value": 0.40, "source": "Basketball-Reference 2000-2024"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Regular season to playoff Net Rating correlation", "description": "Pearson correlation between regular season and playoff Net Rating", "properties": {"value": 0.45, "source": "Basketball-Reference 2000-2024"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Back-to-back win rate drop", "description": "Average reduction in win probability on the second game of a back-to-back", "properties": {"value": -0.06, "source": "NBA schedule analysis 2010-2024"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Rest advantage win rate (2+ days vs B2B)", "description": "Win rate when one team has 2+ days rest vs opponent on back-to-back", "properties": {"value": 0.65, "source": "NBA schedule analysis 2010-2024"}, "confidence": 0.85},
+        {"entity_type": "cep_multiplier", "name": "Elo home court advantage (points)", "description": "Elo rating points added to home team's effective Elo for win probability calculation", "properties": {"value_elo_pts": 100, "implied_win_pct_equal_teams": 0.60, "k_factor": 20}, "confidence": 0.90},
+        {"entity_type": "cep_multiplier", "name": "MVP-calibre player injury impact (NetRtg)", "description": "Expected Net Rating swing when MVP-calibre player (LeBron, Jokic, Giannis, Luka tier) is absent", "properties": {"value_netrtg": -6.0, "tier": "mvp_candidate"}, "confidence": 0.82},
+        {"entity_type": "cep_multiplier", "name": "All-Star player injury impact (NetRtg)", "description": "Expected Net Rating swing when All-Star (Tatum, Edwards, Brunson tier) is absent", "properties": {"value_netrtg": -3.5, "tier": "all_star"}, "confidence": 0.82},
+        {"entity_type": "cep_multiplier", "name": "Quality starter injury impact (NetRtg)", "description": "Expected Net Rating swing when a quality starter (solid starter, 3-and-D wing) is absent", "properties": {"value_netrtg": -1.5, "tier": "quality_starter"}, "confidence": 0.80}
+      ]
+    }
   },
   "performance": {
     "forecasts_contributed": 0,

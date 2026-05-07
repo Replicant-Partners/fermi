@@ -321,7 +321,26 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": ["BASE RATE", "VALUATION", "EARNINGS", "SECTOR", "MULTIPLIER"],
+      "multiplier_range": [0.1, 3.0],
+      "kg_fact_categories": ["valuation_base_rate", "sector_multiple", "earnings_pattern"],
+      "seed_facts": [
+        {"entity_type": "cep_base_rate", "name": "S&P 500 quarterly earnings beat rate", "description": "Proportion of S&P 500 companies that beat consensus EPS estimates in a given quarter", "properties": {"value": 0.73, "source": "FactSet/I/B/E/S 2010-2024"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "S&P 500 average earnings surprise", "description": "Average percentage by which S&P 500 EPS beats consensus estimate", "properties": {"value_pct": 6.5, "source": "FactSet Earnings Insight 2010-2024"}, "confidence": 0.90},
+        {"entity_type": "cep_base_rate", "name": "S&P 500 avg annual total return", "description": "Average annual total return of the S&P 500 including dividends, long-run", "properties": {"value_pct": 10.4, "source": "S&P 500 history 1928-2023"}, "confidence": 0.92},
+        {"entity_type": "cep_base_rate", "name": "S&P 500 avg annual earnings growth", "description": "Average annual EPS growth rate of the S&P 500, long-run", "properties": {"value_pct": 7.0, "source": "S&P 500 history 1950-2023"}, "confidence": 0.90},
+        {"entity_type": "cep_base_rate", "name": "IPO first-year market outperformance rate", "description": "Proportion of IPOs that outperform the S&P 500 in their first year", "properties": {"value": 0.38, "source": "Jay Ritter IPO data 2000-2023"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Dividend cut 12-month underperformance", "description": "Average 12-month return drag for stocks that cut dividends vs benchmark", "properties": {"value_pct": -15.0, "source": "S&P/academic dividend research"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "S&P 500 median trailing P/E", "description": "Long-run median trailing 12-month P/E ratio for the S&P 500", "properties": {"value": 21.5, "source": "Shiller CAPE data / Yardeni Research 2024"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "S&P 500 median forward P/E", "description": "Long-run median forward 12-month P/E ratio for the S&P 500", "properties": {"value": 18.5, "source": "FactSet / Yardeni Research 2024"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "S&P 500 median ROE", "description": "Median return on equity for S&P 500 companies", "properties": {"value_pct": 15.5, "source": "FactSet 2020-2024"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Buyback announcement 30-day return premium", "description": "Average excess return in 30 days following buyback announcement", "properties": {"value_pct": 2.5, "source": "Academic buyback research"}, "confidence": 0.80},
+        {"entity_type": "cep_base_rate", "name": "Stock split 6-month outperformance", "description": "Average excess return vs S&P 500 in 6 months following stock split announcement", "properties": {"value_pct": 5.0, "source": "Academic event-study research"}, "confidence": 0.75},
+        {"entity_type": "cep_base_rate", "name": "S&P 500 avg revenue growth", "description": "Average annual revenue growth rate of the S&P 500, long-run", "properties": {"value_pct": 5.0, "source": "S&P 500 history 1950-2023"}, "confidence": 0.88}
+      ]
+    }
   },
   "performance": {
     "forecasts_contributed": 0,

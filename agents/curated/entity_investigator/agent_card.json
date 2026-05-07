@@ -62,7 +62,23 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": ["BASE RATE", "ENTITY RISK", "OWNERSHIP", "JURISDICTION", "MULTIPLIER"],
+      "multiplier_range": [0.2, 4.0],
+      "kg_fact_categories": ["entity_risk_base_rate", "jurisdiction_risk", "regulatory_frequency"],
+      "seed_facts": [
+        {"entity_type": "cep_base_rate", "name": "Fortune 500 regulatory action rate (any year)", "description": "Annual probability a Fortune 500 company faces a material regulatory action", "properties": {"value": 0.12, "source": "SEC/FTC/DOJ enforcement records 2010-2023", "universe": "Fortune500"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "SEC enforcement action rate (public company)", "description": "Annual probability a US public company faces an SEC enforcement action", "properties": {"value": 0.03, "source": "SEC enforcement statistics 2010-2023"}, "confidence": 0.88},
+        {"entity_type": "cep_base_rate", "name": "Beneficial ownership opacity rate (global)", "description": "Proportion of global companies with opaque beneficial ownership structures", "properties": {"value": 0.25, "source": "FATF/Global Financial Integrity research"}, "confidence": 0.78},
+        {"entity_type": "cep_base_rate", "name": "PEP connection elevated risk rate", "description": "Proportion of entities with PEP connections that present elevated compliance risk", "properties": {"value": 0.35, "source": "Transparency International / AML research"}, "confidence": 0.75},
+        {"entity_type": "cep_base_rate", "name": "Sanctions designation false positive screening rate", "description": "Rate of false positive hits in standard sanctions screening (name-matching)", "properties": {"value": 0.04, "source": "OFAC/compliance industry data"}, "confidence": 0.82},
+        {"entity_type": "cep_base_rate", "name": "Corporate fraud detection rate", "description": "Proportion of ongoing corporate frauds that are detected and disclosed in a given year", "properties": {"value": 0.42, "source": "ACFE Report to the Nations 2022"}, "confidence": 0.80},
+        {"entity_type": "cep_base_rate", "name": "M&A antitrust challenge rate", "description": "Proportion of M&A deals that face material antitrust challenge or second request", "properties": {"value": 0.08, "source": "FTC/DOJ merger review statistics 2010-2023"}, "confidence": 0.85},
+        {"entity_type": "cep_base_rate", "name": "Board interlock conflict rate (S&P 500)", "description": "Proportion of S&P 500 companies with board interlock presenting potential conflict of interest", "properties": {"value": 0.18, "source": "ISS/GMI governance data"}, "confidence": 0.82},
+        {"entity_type": "cep_base_rate", "name": "MNC subsidiary in secrecy jurisdiction rate", "description": "Proportion of multinational corporations with at least one subsidiary in a secrecy jurisdiction", "properties": {"value": 0.34, "source": "ICIJ/Tax Justice Network research"}, "confidence": 0.80}
+      ]
+    }
   },
   "performance": {
     "forecasts_contributed": 0,
