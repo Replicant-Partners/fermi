@@ -2376,16 +2376,19 @@ impl FermiConsole {
                         })
                 }))
             })
-            .when(self.portfolios.is_empty() && self.connected, |el| {
-                el.child(
-                    div()
-                        .px(px(16.0))
-                        .py(px(12.0))
-                        .text_size(px(12.0))
-                        .text_color(theme::fg_faint())
-                        .child("No portfolios yet — create one to group your forecasts."),
-                )
-            })
+            .when(
+                self.portfolios.is_empty() && self.connected && !self.portfolio_create_showing,
+                |el| {
+                    el.child(
+                        div()
+                            .px(px(16.0))
+                            .py(px(12.0))
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_faint())
+                            .child("No portfolios yet — create one to group your forecasts."),
+                    )
+                },
+            )
     }
 
     fn render_forecast_portfolio_row(

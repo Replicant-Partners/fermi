@@ -462,6 +462,11 @@ async fn run_migrations(db: &PgPool) {
         "migrations/100_cognition_tier.sql",
         "migrations/101_model_ladder.sql",
         "migrations/102_cognition_tier_nullable.sql",
+        "migrations/103_observability_foundations.sql",
+        "migrations/104_cep_kg_columns.sql",
+        "migrations/105_cep_fermi_contract.sql",
+        "migrations/106_model_params.sql",
+        "migrations/107_fermi_tables_catchup.sql",
     ];
 
     for file in &migration_files {
@@ -2144,6 +2149,7 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
                 .fermi_contract
                 .as_ref()
                 .and_then(|fc| serde_json::to_value(fc).ok()),
+            model_params: card.capabilities.model_params.clone(),
         };
 
         match memory_store.upsert_agent(agent).await {
@@ -2275,6 +2281,7 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
                 .fermi_contract
                 .as_ref()
                 .and_then(|v| serde_json::from_value(v.clone()).ok()),
+            model_params: agent.model_params.clone(),
         },
         performance: AgentPerformance {
             forecasts_contributed: 0,
