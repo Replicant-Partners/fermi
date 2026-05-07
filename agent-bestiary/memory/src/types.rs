@@ -350,6 +350,7 @@ pub struct AgentUpdate {
     pub workflow_template: Option<serde_json::Value>,
     pub prompt_template: Option<String>,
     pub requires_secrets: Option<serde_json::Value>,
+    pub llm_provider: Option<String>,
     // ADR-011: cognition economy
     pub model_ladder: Option<serde_json::Value>,
     pub min_tier: Option<String>,

@@ -234,7 +234,8 @@ pub async fn dispatch_rabble_action(
         .and_then(|t| match t.as_str() {
             "standard" => Some(CognitionTier::Standard),
             "premium" => Some(CognitionTier::Premium),
-            _ => Some(CognitionTier::Free),
+            "free" => Some(CognitionTier::Free),
+            _ => None,
         })
     } else {
         None

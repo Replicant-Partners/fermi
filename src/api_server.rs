@@ -461,6 +461,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/099_polymarket_observations.sql",
         "migrations/100_cognition_tier.sql",
         "migrations/101_model_ladder.sql",
+        "migrations/102_cognition_tier_nullable.sql",
     ];
 
     for file in &migration_files {

@@ -456,6 +456,10 @@ impl MemoryStore {
             set_clauses.push(format!("requires_secrets = ${}", param_idx));
             param_idx += 1;
         }
+        if updates.llm_provider.is_some() {
+            set_clauses.push(format!("llm_provider = ${}", param_idx));
+            param_idx += 1;
+        }
         if updates.model_ladder.is_some() {
             set_clauses.push(format!("model_ladder = ${}", param_idx));
             param_idx += 1;
@@ -523,6 +527,9 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.requires_secrets {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.llm_provider {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.model_ladder {
