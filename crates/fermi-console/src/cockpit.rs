@@ -586,14 +586,26 @@ impl CockpitState {
              IGNORE any other format instructions. Respond with ONLY this JSON (no markdown, no code fences):\n\
              {{\n\
                \"base_rate\": {{\"reference_class\": \"...\", \"historical_frequency\": 0.0-1.0, \"sample_size\": N, \"reasoning\": \"...\"}},\n\
-               \"drivers\": [{{\"name\": \"snake_case\", \"display_name\": \"Human Name\", \"type\": \"continuous\"|\"binary\", \"p5\": 0.8, \"p50\": 1.0, \"p95\": 1.3, \"unit\": \"multiplier\", \"rationale\": \"...\"}}],\n\
+               \"drivers\": [{{\
+                 \"name\": \"snake_case\", \
+                 \"display_name\": \"Human Name\", \
+                 \"type\": \"continuous\"|\"binary\", \
+                 \"p5\": 0.8, \"p50\": 1.0, \"p95\": 1.3, \
+                 \"unit\": \"multiplier\", \
+                 \"rationale\": \"...\", \
+                 \"suggested_agent\": \"agent_id from your orchestra\", \
+                 \"suggested_query\": \"precise query for that agent — name the exact metric, include context, ask for p5/p50/p95 multipliers\"\
+               }}],\n\
                \"evidence\": [{{\"source\": \"...\", \"summary\": \"...\", \"key_findings\": [\"...\"], \"relevance\": 0.0-1.0}}],\n\
                \"model_expression\": \"base_rate * driver_a * driver_b\",\n\
                \"confidence\": 0.0-1.0,\n\
                \"reasoning\": \"your analysis\"\n\
              }}\n\
              All continuous drivers MUST be probability multipliers near 1.0 (1.2 = +20%, 0.7 = -30%). \
-             Include 3-6 independent drivers. Start from a real base rate with reference class.",
+             Include 3-6 independent drivers. Start from a real base rate with reference class. \
+             For each driver set suggested_agent to one of: macro_forecaster, market_research, \
+             sentiment_analyzer, entity_investigator, equity_analyst, biotech_analyst, \
+             nba_analyst, football_analyst.",
             question
         );
 
@@ -706,6 +718,10 @@ impl CockpitState {
             .and_then(|m| m.get("reasoning"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
+
+        // Fermi suggestions: driver_name -> (suggested_agent, suggested_query)
+        // Populated during driver parsing; consumed by the auto-assign block below.
+        let mut fermi_suggestions: HashMap<String, (String, String)> = HashMap::new();
 
         // Try parsing reasoning as JSON (works when agent returns structured output)
         // Strip markdown code fences if present (agent often wraps JSON in ```json ... ```)
@@ -871,6 +887,24 @@ impl CockpitState {
                         "[composer] DRIVER ADDED from agent: {}",
                         sanitize_name(name)
                     );
+
+                    // Capture fermi's agent suggestion for this driver
+                    if let (Some(agent), Some(query)) = (
+                        drv.get("suggested_agent").and_then(|v| v.as_str()),
+                        drv.get("suggested_query").and_then(|v| v.as_str()),
+                    ) {
+                        if !agent.is_empty() && !query.is_empty() {
+                            fermi_suggestions.insert(
+                                sanitize_name(name),
+                                (agent.to_string(), query.to_string()),
+                            );
+                            log::info!(
+                                "[composer] Fermi suggests {} → {}",
+                                sanitize_name(name),
+                                agent
+                            );
+                        }
+                    }
 
                     self.messages.push(AssistantMessage {
                         node: format!("driver:{}", sanitize_name(name)),
@@ -1047,97 +1081,118 @@ impl CockpitState {
                     .unwrap_or((0.8, 1.0, 1.2));
 
                 // ── Per-driver agent selection ────────────────────
-                // Pick the BEST agent for THIS driver based on driver name,
-                // rationale, and forecast domain. Not one-size-fits-all.
-                let dl = driver_name.to_lowercase();
-                let rl = rationale.to_lowercase();
-                let combined = format!("{} {}", dl, rl);
-
-                let agent_to_use = if combined.contains("sentiment")
-                    || combined.contains("opinion")
-                    || combined.contains("perception")
-                    || combined.contains("buzz")
-                    || combined.contains("narrative")
-                {
-                    "sentiment_analyzer"
-                } else if combined.contains("entity")
-                    || combined.contains("ownership")
-                    || combined.contains("leadership")
-                    || combined.contains("management")
-                    || combined.contains("regulatory")
-                    || combined.contains("legal")
-                    || combined.contains("compliance")
-                    || combined.contains("investigation")
-                {
-                    "entity_investigator"
-                } else if combined.contains("market")
-                    || combined.contains("competition")
-                    || combined.contains("competitor")
-                    || combined.contains("partnership")
-                    || combined.contains("revenue")
-                    || combined.contains("pricing")
-                    || combined.contains("demand")
-                    || combined.contains("adoption")
-                    || combined.contains("customer")
-                    || combined.contains("commercial")
-                    || combined.contains("sales")
-                {
-                    "market_research"
-                } else if combined.contains("macro")
-                    || combined.contains("economic")
-                    || combined.contains("gdp")
-                    || combined.contains("inflation")
-                    || combined.contains("interest rate")
-                    || combined.contains("fed")
-                    || combined.contains("policy")
-                    || combined.contains("recession")
-                    || combined.contains("valuation")
-                {
-                    "macro_forecaster"
-                } else if combined.contains("clinical")
-                    || combined.contains("trial")
-                    || combined.contains("fda")
-                    || combined.contains("drug")
-                    || combined.contains("pipeline")
-                    || combined.contains("approval")
-                {
-                    "biotech_analyst"
-                } else if combined.contains("nba")
-                    || combined.contains("basketball")
-                    || combined.contains("elo")
-                    || combined.contains("home court")
-                    || combined.contains("injury")
-                        && (domain.contains("nba") || domain.contains("basketball"))
-                {
-                    "nba_analyst"
-                } else {
-                    // Fall back to domain agent, or macro_forecaster
-                    let has_domain = self.registry.get(domain_agent).is_ok();
-                    if has_domain {
-                        domain_agent
+                // Use fermi's suggestion if present and the agent exists in the
+                // registry; fall back to keyword heuristics otherwise.
+                let (agent_to_use, query) =
+                    if let Some((suggested_agent, suggested_query)) =
+                        fermi_suggestions.get(driver_name)
+                    {
+                        let agent = if self.registry.get(suggested_agent.as_str()).is_ok() {
+                            log::info!(
+                                "[composer] Using fermi suggestion for {}: {}",
+                                driver_name,
+                                suggested_agent
+                            );
+                            suggested_agent.as_str()
+                        } else {
+                            log::warn!(
+                                "[composer] Fermi suggested {} for {} but agent not in registry — falling back",
+                                suggested_agent,
+                                driver_name
+                            );
+                            domain_agent
+                        };
+                        let agent = if self.registry.get(agent).is_ok() {
+                            agent
+                        } else {
+                            "macro_forecaster"
+                        };
+                        (agent.to_string(), suggested_query.clone())
                     } else {
-                        "macro_forecaster"
-                    }
-                };
+                        // Keyword heuristics — fermi didn't provide a suggestion
+                        let dl = driver_name.to_lowercase();
+                        let rl = rationale.to_lowercase();
+                        let combined = format!("{} {}", dl, rl);
 
-                // Verify agent exists
-                let agent_to_use = if self.registry.get(agent_to_use).is_ok() {
-                    agent_to_use
-                } else {
-                    "macro_forecaster"
-                };
+                        let heuristic_agent = if combined.contains("sentiment")
+                            || combined.contains("opinion")
+                            || combined.contains("perception")
+                            || combined.contains("buzz")
+                            || combined.contains("narrative")
+                        {
+                            "sentiment_analyzer"
+                        } else if combined.contains("entity")
+                            || combined.contains("ownership")
+                            || combined.contains("leadership")
+                            || combined.contains("management")
+                            || combined.contains("regulatory")
+                            || combined.contains("legal")
+                            || combined.contains("compliance")
+                            || combined.contains("investigation")
+                        {
+                            "entity_investigator"
+                        } else if combined.contains("market")
+                            || combined.contains("competition")
+                            || combined.contains("competitor")
+                            || combined.contains("partnership")
+                            || combined.contains("revenue")
+                            || combined.contains("pricing")
+                            || combined.contains("demand")
+                            || combined.contains("adoption")
+                            || combined.contains("customer")
+                            || combined.contains("commercial")
+                            || combined.contains("sales")
+                        {
+                            "market_research"
+                        } else if combined.contains("macro")
+                            || combined.contains("economic")
+                            || combined.contains("gdp")
+                            || combined.contains("inflation")
+                            || combined.contains("interest rate")
+                            || combined.contains("fed")
+                            || combined.contains("policy")
+                            || combined.contains("recession")
+                            || combined.contains("valuation")
+                        {
+                            "macro_forecaster"
+                        } else if combined.contains("clinical")
+                            || combined.contains("trial")
+                            || combined.contains("fda")
+                            || combined.contains("drug")
+                            || combined.contains("pipeline")
+                            || combined.contains("approval")
+                        {
+                            "biotech_analyst"
+                        } else if combined.contains("nba")
+                            || combined.contains("basketball")
+                            || combined.contains("elo")
+                            || combined.contains("home court")
+                            || combined.contains("injury")
+                                && (domain.contains("nba") || domain.contains("basketball"))
+                        {
+                            "nba_analyst"
+                        } else {
+                            let has_domain = self.registry.get(domain_agent).is_ok();
+                            if has_domain { domain_agent } else { "macro_forecaster" }
+                        };
 
-                // Formulate a domain-specific query
-                let query = formulate_research_query(
-                    &question_text,
-                    &driver_display,
-                    &rationale,
-                    agent_to_use,
-                    &domain,
-                    p5,
-                    p50,
-                    p95,
-                );
+                        let agent = if self.registry.get(heuristic_agent).is_ok() {
+                            heuristic_agent
+                        } else {
+                            "macro_forecaster"
+                        };
+                        let q = formulate_research_query(
+                            &question_text,
+                            &driver_display,
+                            &rationale,
+                            agent,
+                            &domain,
+                            p5,
+                            p50,
+                            p95,
+                        );
+                        (agent.to_string(), q)
+                    };
 
                 // Create compound agent name for this driver
                 let compound_name = format!("{}_{}", agent_to_use, sanitize_name(driver_name));
@@ -1462,6 +1517,8 @@ impl CockpitState {
                     let context = ExecutionContext {
                         program,
                         agent_card: card.clone(),
+                        creature_id: None,
+                        cognition_tier: None,
                     };
 
                     // Also use tokio::spawn for local execution (it uses reqwest too)
