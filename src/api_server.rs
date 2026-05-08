@@ -467,6 +467,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/105_cep_fermi_contract.sql",
         "migrations/106_model_params.sql",
         "migrations/107_fermi_tables_catchup.sql",
+        "migrations/109_forecast_agent_schedules.sql",
     ];
 
     for file in &migration_files {
@@ -768,6 +769,10 @@ async fn main() {
         .route(
             "/api/observatory/hitl/:event_id/action",
             post(handlers::observatory::record_hitl_action_handler),
+        )
+        .route(
+            "/api/observatory/hitl/consensus/:request_id",
+            post(handlers::observatory::confirm_two_reviewer_handler),
         )
         .route(
             "/api/agents/:agent_id/dependencies",
