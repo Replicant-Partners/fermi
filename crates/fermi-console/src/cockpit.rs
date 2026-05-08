@@ -66,6 +66,7 @@ pub enum RightTab {
     Edit,
     Fpl,
     Wiki,
+    Schedules,
 }
 
 /// A live event from an SSE agent execution stream.
@@ -4670,6 +4671,9 @@ impl Render for CockpitState {
                                 RightTab::Edit => render_right_panel(self, &focused, cx),
                                 RightTab::Fpl => render_fpl_tab(self).into_any_element(),
                                 RightTab::Wiki => render_wiki_tab(self, cx).into_any_element(),
+                                RightTab::Schedules => {
+                                    render_schedules_tab(self, cx).into_any_element()
+                                }
                             }),
                     )
             )
@@ -7890,6 +7894,7 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
         (RightTab::Edit, "Edit"),
         (RightTab::Fpl, "FPL"),
         (RightTab::Wiki, "Wiki"),
+        (RightTab::Schedules, "Schedules"),
     ];
 
     div()
@@ -7931,6 +7936,246 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                 }))
                 .child(label.to_string())
         }))
+}
+
+fn render_schedules_tab(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let has_forecast_id = state.forecast_id.is_some();
+    let schedules = state.schedules.clone();
+    let now = chrono::Utc::now();
+
+    let body = if !has_forecast_id {
+        div()
+            .p(px(20.0))
+            .text_size(px(11.0))
+            .text_color(rgb(theme::FG_DIM))
+            .child(
+                "Publish this forecast first (Ctrl+P) to enable scheduled auto-research.\n\
+                 Once published, the 📅 Daily and 📅 Weekly buttons in each driver's research panel \
+                 will persist schedules to the cloud.",
+            )
+            .into_any_element()
+    } else if schedules.is_empty() {
+        div()
+            .p(px(20.0))
+            .text_size(px(11.0))
+            .text_color(rgb(theme::FG_DIM))
+            .child(
+                "No scheduled agents yet.\n\n\
+                 Click a driver in the program tree, then 📅 Daily or 📅 Weekly to schedule \
+                 recurring research. Overdue schedules auto-fire when this forecast is reopened.",
+            )
+            .into_any_element()
+    } else {
+        // Group schedules by driver for clearer display
+        let mut by_driver: std::collections::BTreeMap<String, Vec<ForecastSchedule>> =
+            std::collections::BTreeMap::new();
+        for s in &schedules {
+            by_driver
+                .entry(s.driver_name.clone())
+                .or_default()
+                .push(s.clone());
+        }
+
+        let groups: Vec<AnyElement> = by_driver
+            .into_iter()
+            .map(|(driver, scheds)| {
+                let rows: Vec<AnyElement> = scheds
+                    .into_iter()
+                    .map(|sched| {
+                        let sid_run = sched.id.clone();
+                        let sid_del = sched.id.clone();
+                        let label = if sched.interval_hours >= 168 {
+                            format!("every {} week", sched.interval_hours / 168)
+                        } else if sched.interval_hours >= 24 {
+                            format!("every {} day", sched.interval_hours / 24)
+                        } else {
+                            format!("every {}h", sched.interval_hours)
+                        };
+                        let next_str = sched
+                            .next_run_at
+                            .get(..16)
+                            .unwrap_or(&sched.next_run_at)
+                            .replace('T', " ");
+                        let last_str = sched
+                            .last_run_at
+                            .as_ref()
+                            .map(|t| t.get(..16).unwrap_or(t).replace('T', " "))
+                            .unwrap_or_else(|| "never".into());
+                        let is_overdue = chrono::DateTime::parse_from_rfc3339(&sched.next_run_at)
+                            .map(|t| t.with_timezone(&chrono::Utc) <= now)
+                            .unwrap_or(false);
+                        let next_color = if is_overdue {
+                            rgb(theme::GOLD)
+                        } else {
+                            rgb(theme::FG_DIM)
+                        };
+
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .px(px(10.0))
+                            .py(px(8.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG_ACTIVE))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::CYAN))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(sched.agent_id.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_DIM))
+                                            .child(label),
+                                    )
+                                    .child(div().flex_grow())
+                                    .child(
+                                        div()
+                                            .id(ElementId::Name(
+                                                format!("schedules-tab-run-{}", sid_run).into(),
+                                            ))
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::CYAN))
+                                            .px(px(8.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .border_1()
+                                            .border_color(rgb(theme::CYAN))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.run_now_schedule(&sid_run, cx);
+                                            }))
+                                            .child("▶ Run Now"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(ElementId::Name(
+                                                format!("schedules-tab-del-{}", sid_del).into(),
+                                            ))
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .px(px(8.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .cursor_pointer()
+                                            .hover(|s| s.text_color(rgb(theme::RED)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.delete_schedule(&sid_del, cx);
+                                            }))
+                                            .child("× Delete"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(12.0))
+                                    .text_size(px(9.0))
+                                    .child(
+                                        div()
+                                            .text_color(rgb(theme::FG_FAINT))
+                                            .child(format!("last: {}", last_str)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(next_color)
+                                            .child(format!(
+                                                "next: {}{}",
+                                                next_str,
+                                                if is_overdue { " (overdue)" } else { "" }
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child(
+                                        sched
+                                            .query
+                                            .chars()
+                                            .take(120)
+                                            .collect::<String>()
+                                            + if sched.query.len() > 120 { "…" } else { "" },
+                                    ),
+                            )
+                            .into_any_element()
+                    })
+                    .collect();
+
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::FG))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("Driver: {}", driver)),
+                    )
+                    .children(rows)
+                    .into_any_element()
+            })
+            .collect();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .p(px(14.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::FG_DIM))
+                            .child(format!(
+                                "{} active schedule{} • auto-fires on cockpit open when overdue",
+                                schedules.len(),
+                                if schedules.len() == 1 { "" } else { "s" }
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("schedules-tab-refresh")
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::CYAN))
+                            .px(px(8.0))
+                            .py(px(3.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(rgb(theme::FG_FAINT))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.load_schedules(cx);
+                            }))
+                            .child("⟳ Refresh"),
+                    ),
+            )
+            .children(groups)
+            .into_any_element()
+    };
+
+    div().flex().flex_col().size_full().child(body)
 }
 
 fn render_fpl_tab(state: &CockpitState) -> impl IntoElement {

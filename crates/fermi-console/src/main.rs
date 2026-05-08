@@ -1246,7 +1246,8 @@ impl FermiConsole {
                 cockpit.right_tab = match cockpit.right_tab {
                     crate::cockpit::RightTab::Edit => crate::cockpit::RightTab::Fpl,
                     crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Wiki,
-                    crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Edit,
+                    crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Schedules,
+                    crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Edit,
                 };
             });
             cx.notify();
