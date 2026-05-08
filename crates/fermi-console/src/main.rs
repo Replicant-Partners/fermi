@@ -2682,6 +2682,7 @@ impl FermiConsole {
                                                     } else {
                                                         this.selected_portfolio_id = Some(pid_sel.clone());
                                                         this.fetch_portfolio_forecasts(pid_sel.clone(), cx);
+                                                        this.fetch_portfolio_stats_if_needed(pid_sel.clone(), cx);
                                                     }
                                                     this.portfolio_confirm_delete_id = None;
                                                     this.portfolio_rename_id = None;
@@ -2823,6 +2824,11 @@ impl FermiConsole {
                                                 )
                                             }),
                                     )
+                                    // Stats + calibration curve (when stats fetched)
+                                    .when(self.portfolio_stats_cache.contains_key(&pid), |el| {
+                                        let stats = self.portfolio_stats_cache.get(&pid).unwrap().clone();
+                                        el.child(render_portfolio_stats_panel(&stats))
+                                    })
                                     // Loading spinner
                                     .when(is_loading, |el| {
                                         el.child(
