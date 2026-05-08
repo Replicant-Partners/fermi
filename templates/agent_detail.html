@@ -2092,10 +2092,21 @@
                 </div>
               </div>
               <div class="section">
-                <div class="section-title">Run History</div>
+                <div class="section-title">
+                  Run History
+                  <a id="eval-observatory-link" href="#" style="float:right;color:var(--blue);font-size:0.8em;text-decoration:none">Observatory →</a>
+                </div>
                 <div id="eval-runs-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
               </div>
             </div>`;
+            // Wire the Observatory link to the agent UUID — needed because
+            // the link is rendered before the agent payload arrives.
+            queueMicrotask(() => {
+              const link = document.getElementById("eval-observatory-link");
+              if (link && agent && agent.agent_id) {
+                link.href = `/observatory?agent=${encodeURIComponent(agent.agent_id)}`;
+              }
+            });
         }
 
         // --- Populate Intelligence tab ---
@@ -2446,6 +2457,38 @@
                 const durStr = r.duration_ms
                   ? ` | ${(r.duration_ms / 1000).toFixed(1)}s`
                   : "";
+                // Phase 2 — registry aggregate + conflict flags
+                let signalHtml = "";
+                const conflicts = Array.isArray(r.conflict_flags) ? r.conflict_flags : [];
+                if (r.aggregated_signal && r.aggregated_signal.per_dimension) {
+                  const dims = r.aggregated_signal.per_dimension
+                    .slice(0, 4)
+                    .map((d) => {
+                      const pct = Math.round(d.mean * 100);
+                      const color =
+                        d.mean >= 0.75
+                          ? "var(--green)"
+                          : d.mean >= 0.55
+                            ? "var(--yellow)"
+                            : "var(--red)";
+                      const conf = d.conflict
+                        ? '<span style="color:var(--yellow);margin-left:3px">⚠</span>'
+                        : "";
+                      return `<span style="margin-right:10px"><span style="color:var(--fg4)">${d.dimension}</span> <span style="color:${color}">${pct}%</span>${conf}</span>`;
+                    })
+                    .join("");
+                  const blocked = r.prefilter_blocked
+                    ? ' <span style="color:var(--red);font-size:0.75em">prefilter blocked</span>'
+                    : "";
+                  const conflictPill =
+                    conflicts.length > 0
+                      ? ` <span style="color:var(--yellow);font-weight:bold">⚠ ${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"}</span>`
+                      : "";
+                  signalHtml = `
+                  <div style="color:var(--fg3);font-size:0.8em;margin-top:3px">
+                    ${dims}${conflictPill}${blocked}
+                  </div>`;
+                }
                 return `
                 <div style="padding:6px 0;border-bottom:1px solid var(--bg2)">
                   <div style="display:flex;justify-content:space-between">
@@ -2454,7 +2497,7 @@
                   </div>
                   <div style="color:var(--fg1)">
                     Pass: ${r.passed}/${r.total_cases} (${passRate}%)${judgeStr}${regFlag}
-                  </div>
+                  </div>${signalHtml}
                   <div style="color:var(--fg4);font-size:0.85em">
                     Cost: ${r.total_cost_credits} credits${durStr}
                   </div>

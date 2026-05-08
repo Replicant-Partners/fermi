@@ -201,3 +201,36 @@ pub async fn admin_view() -> Html<String> {
     };
     Html(html)
 }
+
+// ─── Phase 4 — Observatory pages (Plane D) ─────────────────────────
+
+pub async fn observatory_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/observatory.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/observatory.html: {}", e);
+            format!(
+                "<h1>Observatory</h1><p>Error loading template: {}</p>",
+                e
+            )
+        }
+    };
+    Html(html)
+}
+
+pub async fn observatory_hitl_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/observatory_hitl.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!(
+                "Error loading templates/observatory_hitl.html: {}",
+                e
+            );
+            format!(
+                "<h1>Review Queue</h1><p>Error loading template: {}</p>",
+                e
+            )
+        }
+    };
+    Html(html)
+}

@@ -1123,6 +1123,160 @@ pub async fn remove_forecast_from_portfolio_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// DELETE /api/portfolios/:id
+pub async fn delete_portfolio_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(portfolio_id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM fermi_portfolios WHERE id = $1")
+            .bind(&portfolio_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match owner {
+        Some(oid) if oid == user_id => {}
+        Some(_) => return Err((StatusCode::FORBIDDEN, "Not your portfolio".into())),
+        None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
+    }
+
+    sqlx::query("DELETE FROM fermi_portfolios WHERE id = $1")
+        .bind(&portfolio_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchPortfolioRequest {
+    pub title: Option<String>,
+    pub description: Option<String>,
+}
+
+/// PATCH /api/portfolios/:id
+pub async fn patch_portfolio_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(portfolio_id): Path<String>,
+    Json(req): Json<PatchPortfolioRequest>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM fermi_portfolios WHERE id = $1")
+            .bind(&portfolio_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match owner {
+        Some(oid) if oid == user_id => {}
+        Some(_) => return Err((StatusCode::FORBIDDEN, "Not your portfolio".into())),
+        None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
+    }
+
+    sqlx::query(
+        "UPDATE fermi_portfolios
+         SET title       = COALESCE($2, title),
+             description = COALESCE($3, description),
+             updated_at  = NOW()
+         WHERE id = $1",
+    )
+    .bind(&portfolio_id)
+    .bind(&req.title)
+    .bind(&req.description)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "id": portfolio_id, "status": "updated" })))
+}
+
+/// GET /api/portfolios/:id/forecasts
+///
+/// Returns forecasts in a portfolio with question, probability, status,
+/// Brier score (if resolved), and when they were added.
+pub async fn list_portfolio_forecasts_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(portfolio_id): Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    // Allow access if owner OR portfolio is public/team
+    let portfolio = sqlx::query(
+        "SELECT owner_id, visibility FROM fermi_portfolios WHERE id = $1",
+    )
+    .bind(&portfolio_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match portfolio {
+        None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
+        Some(row) => {
+            let owner: String = row.get("owner_id");
+            let visibility: String = row.get("visibility");
+            if owner != user_id && visibility == "private" {
+                return Err((StatusCode::FORBIDDEN, "Not your portfolio".into()));
+            }
+        }
+    }
+
+    let rows = sqlx::query(
+        "SELECT f.id,
+                f.question_text,
+                f.predicted_probability,
+                f.status,
+                f.brier_score,
+                f.actual_outcome,
+                f.resolved_at,
+                f.visibility,
+                pf.added_at
+         FROM fermi_portfolio_forecasts pf
+         JOIN fermi_forecasts f ON f.id = pf.forecast_id
+         WHERE pf.portfolio_id = $1
+         ORDER BY pf.added_at DESC",
+    )
+    .bind(&portfolio_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let forecasts: Vec<JsonValue> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id":                   r.get::<String, _>("id"),
+                "question_text":        r.get::<String, _>("question_text"),
+                "predicted_probability":r.get::<f64, _>("predicted_probability"),
+                "status":               r.get::<String, _>("status"),
+                "brier_score":          r.get::<Option<f64>, _>("brier_score"),
+                "actual_outcome":       r.get::<Option<bool>, _>("actual_outcome"),
+                "resolved_at":          r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at")
+                                         .map(|d| d.to_rfc3339()),
+                "visibility":           r.get::<String, _>("visibility"),
+                "added_at":             r.get::<chrono::DateTime<chrono::Utc>, _>("added_at").to_rfc3339(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "portfolio_id": portfolio_id,
+        "forecasts": forecasts,
+        "count": forecasts.len(),
+    })))
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // LEADERBOARD
 // ═══════════════════════════════════════════════════════════════════
@@ -1401,4 +1555,222 @@ pub async fn public_forecasts_handler(
         "forecasts": forecasts,
         "count": forecasts.len(),
     })))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Forecast Agent Schedules
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertScheduleRequest {
+    pub agent_id: String,
+    pub driver_name: String,
+    pub query: String,
+    pub interval_hours: i32,
+}
+
+/// GET /api/forecasts/:id/schedules — list active schedules for this forecast.
+pub async fn list_forecast_schedules_handler(
+    Path(forecast_id): Path<String>,
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+            .bind(&forecast_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match owner {
+        None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
+        Some(ref oid) if oid != &user_id => {
+            return Err((StatusCode::FORBIDDEN, "Not your forecast".into()))
+        }
+        _ => {}
+    }
+
+    let rows = sqlx::query(
+        "SELECT id::text, forecast_id, agent_id, driver_name, query, interval_hours,
+                last_run_at, next_run_at, enabled, created_at
+         FROM fermi_forecast_schedules
+         WHERE forecast_id = $1
+         ORDER BY created_at ASC",
+    )
+    .bind(&forecast_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let schedules: Vec<JsonValue> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.try_get::<String, _>("id").unwrap_or_default(),
+                "forecast_id": r.try_get::<String, _>("forecast_id").unwrap_or_default(),
+                "agent_id": r.try_get::<String, _>("agent_id").unwrap_or_default(),
+                "driver_name": r.try_get::<String, _>("driver_name").unwrap_or_default(),
+                "query": r.try_get::<String, _>("query").unwrap_or_default(),
+                "interval_hours": r.try_get::<i32, _>("interval_hours").unwrap_or(24),
+                "last_run_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_run_at")
+                    .ok().flatten().map(|t| t.to_rfc3339()),
+                "next_run_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("next_run_at")
+                    .ok().map(|t| t.to_rfc3339()).unwrap_or_default(),
+                "enabled": r.try_get::<bool, _>("enabled").unwrap_or(true),
+                "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                    .ok().map(|t| t.to_rfc3339()).unwrap_or_default(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "schedules": schedules })))
+}
+
+/// PUT /api/forecasts/:id/schedules — upsert a schedule (one per agent+driver).
+pub async fn upsert_forecast_schedule_handler(
+    Path(forecast_id): Path<String>,
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<UpsertScheduleRequest>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+            .bind(&forecast_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match owner {
+        None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
+        Some(ref oid) if oid != &user_id => {
+            return Err((StatusCode::FORBIDDEN, "Not your forecast".into()))
+        }
+        _ => {}
+    }
+
+    if req.interval_hours < 1 || req.interval_hours > 8760 {
+        return Err((StatusCode::BAD_REQUEST, "interval_hours must be 1–8760".into()));
+    }
+
+    let next_run_at = chrono::Utc::now() + chrono::Duration::hours(req.interval_hours as i64);
+
+    let row = sqlx::query(
+        "INSERT INTO fermi_forecast_schedules
+             (forecast_id, agent_id, driver_name, query, interval_hours, next_run_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (forecast_id, agent_id, driver_name) DO UPDATE SET
+             query          = EXCLUDED.query,
+             interval_hours = EXCLUDED.interval_hours,
+             next_run_at    = EXCLUDED.next_run_at,
+             enabled        = true,
+             updated_at     = NOW()
+         RETURNING id::text, next_run_at",
+    )
+    .bind(&forecast_id)
+    .bind(&req.agent_id)
+    .bind(&req.driver_name)
+    .bind(&req.query)
+    .bind(req.interval_hours)
+    .bind(next_run_at)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "id": row.try_get::<String, _>("id").unwrap_or_default(),
+        "next_run_at": row.try_get::<chrono::DateTime<chrono::Utc>, _>("next_run_at")
+            .ok().map(|t| t.to_rfc3339()),
+    })))
+}
+
+/// DELETE /api/forecasts/:id/schedules/:schedule_id
+pub async fn delete_forecast_schedule_handler(
+    Path((forecast_id, schedule_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+            .bind(&forecast_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match owner {
+        None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
+        Some(ref oid) if oid != &user_id => {
+            return Err((StatusCode::FORBIDDEN, "Not your forecast".into()))
+        }
+        _ => {}
+    }
+
+    let sid = Uuid::parse_str(&schedule_id)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid schedule ID".into()))?;
+
+    sqlx::query("DELETE FROM fermi_forecast_schedules WHERE id = $1 AND forecast_id = $2")
+        .bind(sid)
+        .bind(&forecast_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({ "deleted": true })))
+}
+
+/// POST /api/forecasts/:id/schedules/:schedule_id/run
+/// Records a completed run — bumps last_run_at, advances next_run_at by interval.
+pub async fn record_schedule_run_handler(
+    Path((forecast_id, schedule_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+            .bind(&forecast_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match owner {
+        None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
+        Some(ref oid) if oid != &user_id => {
+            return Err((StatusCode::FORBIDDEN, "Not your forecast".into()))
+        }
+        _ => {}
+    }
+
+    let sid = Uuid::parse_str(&schedule_id)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid schedule ID".into()))?;
+
+    let row = sqlx::query(
+        "UPDATE fermi_forecast_schedules
+         SET last_run_at = NOW(),
+             next_run_at = NOW() + (interval_hours * INTERVAL '1 hour'),
+             updated_at  = NOW()
+         WHERE id = $1 AND forecast_id = $2
+         RETURNING next_run_at",
+    )
+    .bind(sid)
+    .bind(&forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let next_run_at = row
+        .and_then(|r| r.try_get::<chrono::DateTime<chrono::Utc>, _>("next_run_at").ok())
+        .map(|t| t.to_rfc3339());
+
+    Ok(Json(json!({ "recorded": true, "next_run_at": next_run_at })))
 }

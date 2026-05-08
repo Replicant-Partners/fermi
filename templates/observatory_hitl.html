@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Review Queue — Observatory</title>
+    <link rel="stylesheet" href="/static/css/variables.css" />
+    <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
+    <style>
+      body {
+        font-family: "Berkeley Mono", "JetBrains Mono", monospace;
+        line-height: 1.6;
+      }
+      .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+      header { margin-bottom: 24px; }
+      header h1 { font-size: 1.4rem; color: var(--yellow); }
+      header a { color: var(--fg3); text-decoration: none; font-size: 0.8rem; }
+      header a:hover { color: var(--yellow); }
+      .badge {
+        display: inline-block; font-size: 0.7rem;
+        padding: 2px 8px; border: 1px solid var(--bg3);
+      }
+      .badge.drift  { color: var(--blue);   border-color: var(--blue); }
+      .badge.rolling_conflict { color: var(--yellow); border-color: var(--yellow); }
+      .badge.rupture { color: var(--purple); border-color: var(--purple); }
+      .badge.safety  { color: var(--red);    border-color: var(--red); }
+      .event {
+        background: var(--bg0); border: 1px solid var(--bg2);
+        padding: 14px; margin-bottom: 12px;
+      }
+      .event-head {
+        display: flex; gap: 12px; align-items: center;
+        margin-bottom: 8px;
+      }
+      .event-meta {
+        font-size: 0.75rem; color: var(--fg4);
+        margin-left: auto;
+      }
+      .event-payload {
+        font-size: 0.8rem; color: var(--fg3);
+        background: var(--bg1); padding: 8px;
+        margin: 8px 0;
+        font-family: "JetBrains Mono", monospace;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .actions {
+        display: flex; gap: 8px; margin-top: 8px;
+      }
+      .btn {
+        background: transparent; border: 1px solid var(--bg3);
+        padding: 5px 12px; cursor: pointer;
+        font-size: 0.78rem; color: var(--fg3); font-family: inherit;
+      }
+      .btn-approve { border-color: var(--green); color: var(--green); }
+      .btn-approve:hover { background: var(--green); color: var(--bg0-hard); }
+      .btn-relabel { border-color: var(--yellow); color: var(--yellow); }
+      .btn-relabel:hover { background: var(--yellow); color: var(--bg0-hard); }
+      .btn-intervene { border-color: var(--red); color: var(--red); opacity: 0.65; cursor: not-allowed; }
+      .btn-intervene[title]:hover::after { content: attr(title); }
+      .empty { color: var(--fg4); font-style: italic; padding: 24px; text-align: center; }
+      .summary {
+        display: flex; gap: 24px;
+        padding: 12px; margin-bottom: 16px;
+        background: var(--bg0); border: 1px solid var(--bg2);
+        font-size: 0.85rem;
+      }
+      .summary strong { color: var(--green); }
+      details summary { cursor: pointer; color: var(--fg4); font-size: 0.75rem; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Review Queue</h1>
+        <div style="margin-top: 6px; font-size: 0.8rem">
+          <a href="/dashboard">← Dashboard</a>
+          <span style="margin: 0 12px; color: var(--bg3)">·</span>
+          <a href="/observatory">Per-agent observatory →</a>
+        </div>
+      </header>
+
+      <div id="summary-bar" class="summary" style="display:none">
+        <div>Pending events: <strong id="s-count">0</strong></div>
+        <div>Highest severity: <strong id="s-severity">—</strong></div>
+      </div>
+
+      <div id="queue"></div>
+    </div>
+
+    <script>
+      async function fetchJson(url, opts = {}) {
+        const resp = await fetch(url, opts);
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(`${resp.status} ${text}`);
+        }
+        return resp.json();
+      }
+
+      function severityRank(s) {
+        return { critical: 3, warning: 2, info: 1 }[s] ?? 0;
+      }
+
+      async function loadQueue() {
+        const queue = document.getElementById("queue");
+        queue.innerHTML = '<div class="empty">Loading…</div>';
+        try {
+          const data = await fetchJson("/api/observatory/hitl?limit=50");
+          render(data.queue || []);
+        } catch (e) {
+          queue.innerHTML = `<div class="empty">Failed to load: ${e.message}</div>`;
+        }
+      }
+
+      function render(events) {
+        const queue = document.getElementById("queue");
+        const bar = document.getElementById("summary-bar");
+        if (!events.length) {
+          queue.innerHTML = '<div class="empty">No events pending review. Nothing to do here.</div>';
+          bar.style.display = "none";
+          return;
+        }
+
+        const highest = events.reduce(
+          (acc, e) => (severityRank(e.severity) > severityRank(acc) ? e.severity : acc),
+          "info",
+        );
+        document.getElementById("s-count").textContent = events.length;
+        document.getElementById("s-severity").textContent = highest;
+        bar.style.display = "";
+
+        queue.innerHTML = events.map(e => {
+          const when = new Date(e.created_at).toLocaleString();
+          const payload = JSON.stringify(e.payload || {}, null, 2);
+          return `<div class="event" data-event-id="${e.event_id}">
+            <div class="event-head">
+              <span class="badge ${e.kind}">${e.kind}</span>
+              <span class="badge">${e.severity}</span>
+              <span style="font-size:0.85rem">
+                <a href="/observatory?agent=${e.agent_id}" style="color:var(--fg3); text-decoration:none">agent ${e.agent_id.substring(0, 8)}…</a>
+              </span>
+              <span class="event-meta">${when}</span>
+            </div>
+            <details>
+              <summary>payload</summary>
+              <pre class="event-payload">${payload}</pre>
+            </details>
+            <div class="actions">
+              <button class="btn btn-approve" onclick="action('${e.event_id}', 'approve')">Approve</button>
+              <button class="btn btn-relabel" onclick="action('${e.event_id}', 'relabel')">Relabel</button>
+              <button class="btn btn-intervene" disabled title="Phase 5 — coherence gate + two-write memory pattern not yet implemented">Intervene (Phase 5)</button>
+            </div>
+          </div>`;
+        }).join("");
+      }
+
+      async function action(eventId, kind) {
+        const notes = prompt(`Notes for ${kind} (optional):`, "") ?? "";
+        try {
+          await fetchJson(`/api/observatory/hitl/${eventId}/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: kind, notes, score_overrides: {} }),
+          });
+          // Remove the row optimistically; full reload to refresh the count.
+          const node = document.querySelector(`[data-event-id="${eventId}"]`);
+          if (node) node.remove();
+          loadQueue();
+        } catch (e) {
+          alert(`Action failed: ${e.message}`);
+        }
+      }
+
+      loadQueue();
+    </script>
+  </body>
+</html>

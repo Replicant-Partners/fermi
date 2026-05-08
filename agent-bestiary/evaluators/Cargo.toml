@@ -1,0 +1,22 @@
+[package]
+name = "agent-bestiary-evaluators"
+version = "0.1.0"
+edition = "2021"
+description = "Evaluator registry and EvalModel trait for the Social Agent Observability Platform (Plane B). See docs/architecture/social_agent_observability_architecture.html and docs/architecture/OBSERVABILITY_IMPL.md."
+
+[dependencies]
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["sync", "macros", "rt"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+
+# We consume EpisodeBundle and the related types from the memory crate.
+agent-bestiary-memory = { path = "../memory" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

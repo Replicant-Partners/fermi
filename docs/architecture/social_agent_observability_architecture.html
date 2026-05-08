@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Social Agent Observability Platform — Architecture</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=DM+Sans:wght@300;400;500;600;700&family=DM+Serif+Display&display=swap');
+
+:root {
+  --bg:        #0b0c10;
+  --surface:   #13141a;
+  --surface2:  #1a1c24;
+  --surface3:  #20222d;
+  --border:    rgba(255,255,255,0.06);
+  --border-hi: rgba(255,255,255,0.14);
+  --text:      #dde1ec;
+  --muted:     #5a6070;
+  --muted2:    #7a8090;
+
+  --teal:    #1ec8a4;  --teal-dim:    rgba(30,200,164,0.10);  --teal-mid:  rgba(30,200,164,0.25);
+  --purple:  #9b7ef8;  --purple-dim:  rgba(155,126,248,0.10); --purple-mid: rgba(155,126,248,0.25);
+  --amber:   #e8a030;  --amber-dim:   rgba(232,160,48,0.10);  --amber-mid:  rgba(232,160,48,0.25);
+  --coral:   #e86060;  --coral-dim:   rgba(232,96,96,0.10);   --coral-mid:  rgba(232,96,96,0.25);
+  --blue:    #5ba8f5;  --blue-dim:    rgba(91,168,245,0.10);  --blue-mid:   rgba(91,168,245,0.25);
+  --green:   #52c97a;  --green-dim:   rgba(82,201,122,0.10);  --green-mid:  rgba(82,201,122,0.25);
+  --gray-dim: rgba(255,255,255,0.04);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin:0; padding:0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── NAV ── */
+.nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(11,12,16,0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 32px;
+  display: flex; align-items: center; gap: 0;
+  height: 52px;
+}
+.nav-logo {
+  font-family: 'DM Serif Display', serif;
+  font-size: 15px;
+  color: var(--teal);
+  margin-right: 32px;
+  white-space: nowrap;
+}
+.nav-links { display: flex; gap: 0; flex: 1; overflow-x: auto; }
+.nav-link {
+  padding: 0 16px;
+  height: 52px;
+  display: flex; align-items: center;
+  font-size: 12px;
+  color: var(--muted2);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.nav-link:hover { color: var(--text); }
+.nav-link.active { color: var(--teal); border-bottom-color: var(--teal); }
+
+/* ── LAYOUT ── */
+.page { display: flex; min-height: calc(100vh - 52px); }
+
+.sidebar {
+  width: 240px; flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: 24px 0;
+  position: sticky; top: 52px; height: calc(100vh - 52px);
+  overflow-y: auto;
+}
+.sidebar-section { padding: 0 20px; margin-bottom: 24px; }
+.sidebar-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--muted);
+  margin-bottom: 8px; padding: 0 4px;
+}
+.sidebar-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 7px;
+  font-size: 12px; color: var(--muted2);
+  cursor: pointer; transition: all 0.15s;
+  margin-bottom: 2px;
+}
+.sidebar-item:hover { background: var(--surface); color: var(--text); }
+.sidebar-item.active { background: var(--teal-dim); color: var(--teal); }
+.sidebar-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+
+.main { flex: 1; padding: 40px 48px; max-width: 1100px; overflow-x: hidden; }
+
+/* ── SECTION SHELL ── */
+.arch-section { margin-bottom: 56px; }
+.section-header { margin-bottom: 24px; }
+.section-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted2);
+  margin-bottom: 6px;
+}
+.section-title {
+  font-family: 'DM Serif Display', serif;
+  font-size: 26px; color: var(--text);
+  margin-bottom: 8px;
+}
+.section-desc { font-size: 13px; color: var(--muted2); max-width: 600px; line-height: 1.7; }
+
+/* ── PLANE CONTAINER ── */
+.plane {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.plane-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+.plane-header:hover { background: var(--surface2); }
+.plane-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.plane-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--muted);
+  margin-right: 4px;
+}
+.plane-name { font-size: 13px; font-weight: 600; }
+.plane-desc { font-size: 11px; color: var(--muted2); margin-left: auto; font-family: 'JetBrains Mono', monospace; }
+.plane-chevron { color: var(--muted); font-size: 12px; transition: transform 0.2s; margin-left: 8px; }
+.plane-chevron.open { transform: rotate(180deg); }
+.plane-body { padding: 18px; display: none; }
+.plane-body.open { display: block; }
+
+/* ── NODE GRIDS ── */
+.node-grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
+.node-grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+.node-grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
+.node-full   { margin-top: 10px; }
+
+.cap-node {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.18s;
+  position: relative;
+}
+.cap-node:hover { border-color: var(--border-hi); transform: translateY(-1px); }
+.cap-node.expanded { border-color: var(--teal); }
+.cap-node-title { font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+.cap-node-sub { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); line-height: 1.4; }
+
+.cap-teal   { border-color: rgba(30,200,164,0.25); }
+.cap-teal:hover   { border-color: var(--teal);   background: var(--teal-dim); }
+.cap-teal .cap-node-title   { color: var(--teal); }
+.cap-teal.expanded   { background: var(--teal-dim); border-color: var(--teal); }
+
+.cap-purple { border-color: rgba(155,126,248,0.25); }
+.cap-purple:hover { border-color: var(--purple); background: var(--purple-dim); }
+.cap-purple .cap-node-title { color: var(--purple); }
+.cap-purple.expanded { background: var(--purple-dim); border-color: var(--purple); }
+
+.cap-amber  { border-color: rgba(232,160,48,0.25); }
+.cap-amber:hover  { border-color: var(--amber);  background: var(--amber-dim); }
+.cap-amber .cap-node-title  { color: var(--amber); }
+.cap-amber.expanded  { background: var(--amber-dim); border-color: var(--amber); }
+
+.cap-coral  { border-color: rgba(232,96,96,0.25); }
+.cap-coral:hover  { border-color: var(--coral);  background: var(--coral-dim); }
+.cap-coral .cap-node-title  { color: var(--coral); }
+.cap-coral.expanded  { background: var(--coral-dim); border-color: var(--coral); }
+
+.cap-blue   { border-color: rgba(91,168,245,0.25); }
+.cap-blue:hover   { border-color: var(--blue);   background: var(--blue-dim); }
+.cap-blue .cap-node-title   { color: var(--blue); }
+.cap-blue.expanded   { background: var(--blue-dim); border-color: var(--blue); }
+
+.cap-green  { border-color: rgba(82,201,122,0.2); }
+.cap-green:hover  { border-color: var(--green);  background: var(--green-dim); }
+.cap-green .cap-node-title  { color: var(--green); }
+.cap-green.expanded  { background: var(--green-dim); border-color: var(--green); }
+
+/* ── NODE DETAIL PANEL ── */
+.node-detail {
+  display: none;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 14px 16px;
+  margin-top: 10px;
+  font-size: 12px;
+  animation: slideDown 0.15s ease;
+}
+.node-detail.open { display: block; }
+@keyframes slideDown { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+.node-detail p { color: var(--muted2); line-height: 1.7; margin-bottom: 6px; }
+.node-detail p:last-child { margin-bottom: 0; }
+
+/* ── EVAL REGISTRY GRID ── */
+.eval-tier-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted);
+  margin: 14px 0 8px;
+  display: flex; align-items: center; gap: 8px;
+}
+.eval-tier-label::after { content:''; flex:1; height:1px; background: var(--border); }
+
+.eval-node {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+}
+.eval-node:hover { border-color: var(--border-hi); }
+.eval-node.toggled { opacity: 0.38; }
+.eval-node-name { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+.eval-node-dim  { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
+.eval-node-tags { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+.etag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+}
+.etag-social  { background: var(--teal-dim);   color: var(--teal); }
+.etag-drift   { background: var(--purple-dim); color: var(--purple); }
+.etag-safety  { background: var(--green-dim);  color: var(--green); }
+.etag-forecast{ background: var(--amber-dim);  color: var(--amber); }
+.etag-persona { background: var(--blue-dim);   color: var(--blue); }
+
+/* ── AGGREGATOR ── */
+.agg-bar {
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 10px;
+  display: flex; align-items: center; gap: 16px;
+}
+.agg-label { font-size: 12px; font-weight: 600; color: var(--muted2); white-space: nowrap; }
+.agg-scores { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; }
+.agg-dim { display: flex; flex-direction: column; gap: 3px; min-width: 100px; }
+.agg-dim-name { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
+.agg-bar-bg { height: 4px; background: var(--surface); border-radius: 2px; width: 100%; }
+.agg-bar-fill { height: 4px; border-radius: 2px; transition: width 0.4s; }
+.conflict-flag {
+  display: flex; align-items: center; gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--amber);
+  background: var(--amber-dim);
+  border: 1px solid var(--amber-mid);
+  border-radius: 6px; padding: 4px 10px;
+  white-space: nowrap;
+}
+
+/* ── FLOW ARROWS ── */
+.flow-arrow {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 4px 0; gap: 0;
+}
+.flow-line { width: 1px; height: 18px; }
+.flow-head { width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; }
+.flow-label { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); margin-bottom:2px; }
+
+/* ── INTERVENTION FLOW (embedded) ── */
+.intervention-section {
+  background: var(--surface);
+  border: 1px solid var(--amber-mid);
+  border-radius: 14px;
+  padding: 20px;
+  margin-top: 10px;
+}
+.intervention-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--amber);
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+.intervention-title::after { content:''; flex:1; height:1px; background: var(--amber-dim); }
+
+.step-flow { display: flex; flex-direction: column; gap: 8px; }
+.step-row {
+  display: grid; grid-template-columns: 24px 1fr auto;
+  align-items: start; gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.step-row:hover { border-color: var(--border-hi); }
+.step-row.active { border-color: var(--amber); background: var(--amber-dim); }
+.step-num {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--surface3); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--muted);
+  flex-shrink: 0; margin-top: 1px;
+}
+.step-row.active .step-num { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
+.step-body { min-width: 0; }
+.step-title { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+.step-desc { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); line-height: 1.5; }
+.step-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; padding: 2px 8px; border-radius: 4px;
+  align-self: center; white-space: nowrap; flex-shrink: 0;
+}
+
+/* ── SCOPE PILLS ── */
+.scope-pills { display: flex; gap: 8px; margin: 10px 0; }
+.scope-pill {
+  flex: 1; padding: 7px 10px; border-radius: 999px;
+  border: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--muted);
+  text-align: center; cursor: pointer; transition: all 0.15s;
+}
+.scope-pill:hover { border-color: var(--border-hi); color: var(--text); }
+.scope-pill.ep   { border-color: var(--blue);   color: var(--blue);   background: var(--blue-dim); }
+.scope-pill.dyad { border-color: var(--purple); color: var(--purple); background: var(--purple-dim); }
+.scope-pill.agent{ border-color: var(--coral);  color: var(--coral);  background: var(--coral-dim); }
+.scope-detail {
+  display: none; padding: 10px 14px; border-radius: 7px;
+  font-size: 12px; color: var(--muted2); line-height: 1.6;
+  margin-bottom: 8px;
+}
+.scope-detail.open { display: block; }
+.scope-ep   { background: var(--blue-dim);   border: 1px solid rgba(91,168,245,0.25); }
+.scope-dyad { background: var(--purple-dim); border: 1px solid rgba(155,126,248,0.25); }
+.scope-agent{ background: var(--coral-dim);  border: 1px solid rgba(232,96,96,0.25); }
+
+/* ── BELIEF/BEHAV ── */
+.bb-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+.bb-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.15s;
+}
+.bb-card:hover { border-color: var(--border-hi); }
+.bb-card.sel-belief { border-color: var(--teal);  background: var(--teal-dim); }
+.bb-card.sel-behav  { border-color: var(--amber); background: var(--amber-dim); }
+.bb-card h4 { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+.bb-card p  { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); line-height: 1.5; }
+.bb-target {
+  display: none; padding: 10px 14px; border-radius: 7px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.6;
+  margin-bottom: 8px;
+}
+.bb-target.open { display: block; }
+.bb-belief-target { background: var(--teal-dim);  border:1px solid var(--teal-mid);  color: var(--teal); }
+.bb-behav-target  { background: var(--amber-dim); border:1px solid var(--amber-mid); color: var(--amber); }
+
+/* ── MEMORY WRITES ── */
+.write-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+.write-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px;
+}
+.write-card h4 { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+.write-card ul { list-style: none; }
+.write-card li {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--muted); padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex; gap: 6px;
+}
+.write-card li:last-child { border-bottom: none; }
+.write-card li::before { content: '→'; flex-shrink: 0; }
+
+/* ── TIMELINE / OBSERVATORY ── */
+.obs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.obs-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 9px; padding: 14px; cursor: pointer; transition: all 0.15s;
+}
+.obs-card:hover { border-color: var(--border-hi); }
+.obs-card h4 { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.obs-card p  { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.obs-metric {
+  margin-top: 10px; display: flex; align-items: baseline; gap: 6px;
+}
+.obs-number { font-family: 'DM Serif Display', serif; font-size: 28px; }
+.obs-unit   { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
+
+/* ── FEEDBACK ARC DIAGRAM (SVG) ── */
+.feedback-arc-wrap { margin: 20px 0 0; }
+
+/* ── SIGNAL STORE ── */
+.signal-row {
+  display: grid; grid-template-columns: 140px 80px 90px 1fr auto;
+  gap: 12px; align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--muted2);
+}
+.signal-row:last-child { border-bottom: none; }
+.signal-row:hover { background: var(--surface2); }
+.prov-badge {
+  font-size: 10px; padding: 2px 7px; border-radius: 4px;
+}
+.prov-auto   { background: var(--blue-dim);   color: var(--blue); }
+.prov-happrv { background: var(--green-dim);  color: var(--green); }
+.prov-hcorr  { background: var(--amber-dim);  color: var(--amber); }
+.conf-bar { height: 4px; border-radius: 2px; }
+
+/* ── ROUTING BAR ── */
+.routing-bar {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 16px;
+  display: flex; align-items: center; gap: 14px; margin-top: 10px;
+}
+.r-dot { width:8px; height:8px; border-radius:50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+.r-text { font-size: 13px; font-weight: 600; }
+.r-sub  { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); margin-top:2px; }
+.r-right{ margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); }
+
+/* ── EVAL TOGGLE HINT ── */
+.hint { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); margin-bottom:8px; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="nav-logo">Agent Observatory</div>
+  <div class="nav-links">
+    <div class="nav-link active" onclick="showSection('overview')">Overview</div>
+    <div class="nav-link" onclick="showSection('capabilities')">Agent Capabilities</div>
+    <div class="nav-link" onclick="showSection('registry')">Evaluator Registry</div>
+    <div class="nav-link" onclick="showSection('longitudinal')">Longitudinal Observability</div>
+    <div class="nav-link" onclick="showSection('intervention')">Intervention Feedback</div>
+    <div class="nav-link" onclick="showSection('signals')">Signal Store</div>
+  </div>
+</nav>
+
+<div class="page">
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-section">
+    <div class="sidebar-label">Architecture planes</div>
+    <div class="sidebar-item active" onclick="showSection('capabilities')">
+      <div class="sidebar-dot" style="background:var(--teal)"></div>A — Agent capabilities
+    </div>
+    <div class="sidebar-item" onclick="showSection('registry')">
+      <div class="sidebar-dot" style="background:var(--purple)"></div>B — Evaluator registry
+    </div>
+    <div class="sidebar-item" onclick="showSection('longitudinal')">
+      <div class="sidebar-dot" style="background:var(--coral)"></div>C — Longitudinal observability
+    </div>
+    <div class="sidebar-item" onclick="showSection('intervention')">
+      <div class="sidebar-dot" style="background:var(--amber)"></div>D — Intervention feedback
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Key interfaces</div>
+    <div class="sidebar-item" onclick="showSection('registry')">
+      <div class="sidebar-dot" style="background:var(--purple)"></div>EvalModel trait
+    </div>
+    <div class="sidebar-item" onclick="showSection('capabilities')">
+      <div class="sidebar-dot" style="background:var(--teal)"></div>EpisodeBundle
+    </div>
+    <div class="sidebar-item" onclick="showSection('signals')">
+      <div class="sidebar-dot" style="background:var(--blue)"></div>Signal store schema
+    </div>
+    <div class="sidebar-item" onclick="showSection('intervention')">
+      <div class="sidebar-dot" style="background:var(--amber)"></div>Coherence check
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Evaluator models</div>
+    <div class="sidebar-item"><div class="sidebar-dot" style="background:var(--teal)"></div>Sotopia</div>
+    <div class="sidebar-item"><div class="sidebar-dot" style="background:var(--purple)"></div>LifelongBench</div>
+    <div class="sidebar-item"><div class="sidebar-dot" style="background:var(--blue)"></div>CharacterEval</div>
+    <div class="sidebar-item"><div class="sidebar-dot" style="background:var(--green)"></div>WildGuard</div>
+    <div class="sidebar-item"><div class="sidebar-dot" style="background:var(--amber)"></div>Brier (existing)</div>
+    <div class="sidebar-item"><div class="sidebar-dot" style="background:var(--muted)"></div>+ custom</div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main" id="main-content">
+
+<!-- ═══ OVERVIEW ═══ -->
+<div id="sec-overview" class="arch-section">
+  <div class="section-header">
+    <div class="section-eyebrow">Architecture overview</div>
+    <div class="section-title">Social Agent Observability Platform</div>
+    <div class="section-desc">A four-plane architecture for observing long-running social agents that evolve and personalise over time. Episode-level evaluation feeds upward into longitudinal tracking; human interventions feed back down through the coherence agent — closing the loop.</div>
+  </div>
+
+  <!-- Four planes summary -->
+  <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:24px">
+    <div class="plane" id="plane-a">
+      <div class="plane-header" onclick="togglePlane('plane-a')">
+        <div class="plane-dot" style="background:var(--teal)"></div>
+        <span class="plane-label">Plane A</span>
+        <span class="plane-name">Agent capabilities</span>
+        <span class="plane-desc">LLM judge · Brier · coherence agent · episodic memory → EpisodeBundle</span>
+        <span class="plane-chevron" id="chev-plane-a">▾</span>
+      </div>
+      <div class="plane-body" id="body-plane-a">
+        <div class="node-grid-4">
+          <div class="cap-node cap-teal" onclick="toggleDetail('d-judge')">
+            <div class="cap-node-title">LLM judge loop</div>
+            <div class="cap-node-sub">Q&amp;A vs expectation<br>verdict + flags</div>
+          </div>
+          <div class="cap-node cap-teal" onclick="toggleDetail('d-brier')">
+            <div class="cap-node-title">Brier scoring</div>
+            <div class="cap-node-sub">multi-agent forecast<br>calibration</div>
+          </div>
+          <div class="cap-node cap-teal" onclick="toggleDetail('d-coherence')">
+            <div class="cap-node-title">Coherence agent</div>
+            <div class="cap-node-sub">formal lang eval<br>world model maintenance</div>
+          </div>
+          <div class="cap-node cap-teal" onclick="toggleDetail('d-memory')">
+            <div class="cap-node-title">Episodic memory</div>
+            <div class="cap-node-sub">interaction history<br>persona versioning</div>
+          </div>
+        </div>
+        <div id="d-judge"    class="node-detail"><p>Existing capability. Runs Q&amp;A-style evaluation against expectations. Produces a verdict and flag set per episode. This is your current naive eval loop — it becomes one input into the EpisodeBundle that the evaluator registry consumes.</p></div>
+        <div id="d-brier"   class="node-detail"><p>Existing capability. Scores multi-agent forecast accuracy using Brier scoring. Currently domain-specific; generalises into the evaluator registry as a registered EvalModel covering the forecast_calibration dimension.</p></div>
+        <div id="d-coherence" class="node-detail"><p>Existing capability. Maintains formal language evaluation and a coherent world model of the agent's identity, relationships, and beliefs. This is the gatekeeper for all memory writes — including human interventions. Nothing writes to memory without passing the coherence check.</p></div>
+        <div id="d-memory"  class="node-detail"><p>Existing capability. Stores episodic interaction history and drives persona evolution. Receives two writes per intervention: an annotation on the original episode (immutable), and a synthetic corrected episode at HumanAuthority weight. Both feed the personalisation loop.</p></div>
+        <div style="margin-top:12px;padding:10px 14px;background:var(--surface3);border:1px solid var(--border);border-radius:8px;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.1em">Output interface</div>
+          <div style="font-size:12px;color:var(--muted2)"><strong style="color:var(--teal)">EpisodeBundle</strong> — normalised signal consumed by all evaluator models: transcript · goal spec · persona_version · context snapshot · source enum</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="plane" id="plane-b">
+      <div class="plane-header" onclick="togglePlane('plane-b')">
+        <div class="plane-dot" style="background:var(--purple)"></div>
+        <span class="plane-label">Plane B</span>
+        <span class="plane-name">Evaluator registry</span>
+        <span class="plane-desc">EvalModel interface · parallel execution · conflict detection</span>
+        <span class="plane-chevron" id="chev-plane-b">▾</span>
+      </div>
+      <div class="plane-body" id="body-plane-b">
+        <div class="hint">Click models to toggle active/inactive — see aggregated signal update</div>
+        <div class="eval-tier-label">pre-filters — cheap, runs first</div>
+        <div class="node-grid-3">
+          <div class="eval-node cap-green" id="en-wildguard" onclick="toggleEval('wildguard')">
+            <div class="eval-node-name" style="color:var(--green)">WildGuard</div>
+            <div class="eval-node-dim">safety · hard constraints</div>
+            <div class="eval-node-tags"><span class="etag etag-safety">safety</span></div>
+          </div>
+          <div class="eval-node cap-green" id="en-faithful" onclick="toggleEval('faithful')">
+            <div class="eval-node-name" style="color:var(--green)">Faithfulness check</div>
+            <div class="eval-node-dim">grounding · consistency</div>
+            <div class="eval-node-tags"><span class="etag etag-safety">grounding</span></div>
+          </div>
+          <div class="eval-node cap-green" id="en-rule" onclick="toggleEval('rule')">
+            <div class="eval-node-name" style="color:var(--green)">Custom pre-filter</div>
+            <div class="eval-node-dim">impl EvalModel</div>
+            <div class="eval-node-tags"><span class="etag etag-safety">domain</span></div>
+          </div>
+        </div>
+        <div class="eval-tier-label">dimensional evaluators — parallel execution</div>
+        <div class="node-grid-4">
+          <div class="eval-node cap-purple" id="en-sotopia" onclick="toggleEval('sotopia')">
+            <div class="eval-node-name" style="color:var(--purple)">Sotopia</div>
+            <div class="eval-node-dim">social goals · capital</div>
+            <div class="eval-node-tags"><span class="etag etag-social">social</span><span class="etag etag-drift">persona</span></div>
+          </div>
+          <div class="eval-node cap-purple" id="en-lifelong" onclick="toggleEval('lifelong')">
+            <div class="eval-node-name" style="color:var(--purple)">LifelongBench</div>
+            <div class="eval-node-dim">drift over sessions</div>
+            <div class="eval-node-tags"><span class="etag etag-drift">drift</span></div>
+          </div>
+          <div class="eval-node cap-blue" id="en-chareval" onclick="toggleEval('chareval')">
+            <div class="eval-node-name" style="color:var(--blue)">CharacterEval</div>
+            <div class="eval-node-dim">persona fidelity</div>
+            <div class="eval-node-tags"><span class="etag etag-persona">persona</span></div>
+          </div>
+          <div class="eval-node cap-amber" id="en-brier" onclick="toggleEval('brier')">
+            <div class="eval-node-name" style="color:var(--amber)">Brier (existing)</div>
+            <div class="eval-node-dim">forecast calibration</div>
+            <div class="eval-node-tags"><span class="etag etag-forecast">forecast</span></div>
+          </div>
+        </div>
+        <div id="agg-panel" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <div class="plane" id="plane-c">
+      <div class="plane-header" onclick="togglePlane('plane-c')">
+        <div class="plane-dot" style="background:var(--coral)"></div>
+        <span class="plane-label">Plane C</span>
+        <span class="plane-name">Longitudinal observability</span>
+        <span class="plane-desc">social tracker · drift monitor · agent timeline store · anomaly detection</span>
+        <span class="plane-chevron" id="chev-plane-c">▾</span>
+      </div>
+      <div class="plane-body" id="body-plane-c">
+        <div class="node-grid-3">
+          <div class="cap-node cap-coral" onclick="toggleDetail('d-social')">
+            <div class="cap-node-title">Social interaction tracker</div>
+            <div class="cap-node-sub">rapport · trust · reciprocity<br>per human–agent dyad</div>
+          </div>
+          <div class="cap-node cap-coral" onclick="toggleDetail('d-drift')">
+            <div class="cap-node-title">Persona drift monitor</div>
+            <div class="cap-node-sub">embedding Δ · value Δ · tone Δ<br>version-to-version</div>
+          </div>
+          <div class="cap-node cap-coral" onclick="toggleDetail('d-scorer')">
+            <div class="cap-node-title">Episode scorer</div>
+            <div class="cap-node-sub">per-episode verdict<br>flags → timeline store</div>
+          </div>
+        </div>
+        <div id="d-social" class="node-detail"><p>Accumulates relational state per human–agent dyad across sessions. Records rapport, reciprocity, trust evolution, and relationship rupture events. This is the primary source for the observatory dashboard's social arc charts. Feeds into the agent timeline store keyed by (agent_id, human_id, session).</p></div>
+        <div id="d-drift"  class="node-detail"><p>Computes persona drift by embedding agent outputs at each persona_version and computing cosine distance between versions. Also tracks value-laden language shift (trust language, hedging, assertiveness) as qualitative signal. High variance in rolling std is itself an anomaly signal — not just low scores.</p></div>
+        <div id="d-scorer" class="node-detail"><p>Writes per-episode verdicts to the agent timeline store including the aggregated score, per-dimension scores, conflict flags, and routing decision. This is what the trend analyser and anomaly detector consume.</p></div>
+
+        <div style="margin:14px 0 8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em">Agent timeline store</div>
+        <div style="background:var(--surface3);border:1px solid var(--border);border-radius:9px;overflow:hidden">
+          <div class="signal-row" style="color:var(--muted);font-size:10px;border-bottom:1px solid var(--border-hi)">
+            <span>agent_id · version</span><span>session</span><span>provenance</span><span>scores by dimension</span><span>drift_vector</span>
+          </div>
+          <div class="signal-row"><span style="color:var(--text)">agent-7f2a · v12</span><span>sess-0041</span><span class="prov-badge prov-auto">auto_pass</span><span style="font-size:10px">goal:0.82 social:0.74 drift:0.61</span><span style="color:var(--green)">stable</span></div>
+          <div class="signal-row"><span style="color:var(--text)">agent-7f2a · v12</span><span>sess-0043</span><span class="prov-badge prov-hcorr">human_corrected</span><span style="font-size:10px">social:0.55 ← corrected</span><span style="color:var(--amber)">⚠ conflict</span></div>
+          <div class="signal-row"><span style="color:var(--text)">agent-7f2a · v13</span><span>sess-0044</span><span class="prov-badge prov-happrv">human_approved</span><span style="font-size:10px">goal:0.88 social:0.81 drift:0.77</span><span style="color:var(--teal)">improving</span></div>
+        </div>
+
+        <div style="margin:14px 0 8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em">Anomaly detector + trend analyser</div>
+        <div class="node-grid-2">
+          <div class="cap-node cap-coral" onclick="toggleDetail('d-anomaly')">
+            <div class="cap-node-title">Anomaly detector</div>
+            <div class="cap-node-sub">sudden drift · value conflict<br>relationship rupture · conflict spike</div>
+          </div>
+          <div class="cap-node cap-coral" onclick="toggleDetail('d-trend')">
+            <div class="cap-node-title">Trend analyser</div>
+            <div class="cap-node-sub">persona arc · social capital curve<br>calibration over time</div>
+          </div>
+        </div>
+        <div id="d-anomaly" class="node-detail"><p>Triggers human review queue when: drift vector exceeds threshold between consecutive persona versions; evaluator conflict persists across 3+ episodes; a relationship rupture event is detected (sharp drop in rapport/trust within a dyad); or safety pre-filter fires. Anomaly events are the primary HITL trigger.</p></div>
+        <div id="d-trend"   class="node-detail"><p>Computes rolling means and std devs per dimension across the agent timeline store. Surfaces persona arcs (is the agent becoming more or less socially adept over time?), social capital curves per dyad, and forecast calibration trajectory. Powers the observatory dashboard charts.</p></div>
+      </div>
+    </div>
+
+    <div class="plane" id="plane-d">
+      <div class="plane-header" onclick="togglePlane('plane-d')">
+        <div class="plane-dot" style="background:var(--amber)"></div>
+        <span class="plane-label">Plane D</span>
+        <span class="plane-name">Human surfacing + intervention feedback</span>
+        <span class="plane-desc">observatory · HITL queue · corrective signal → coherence agent</span>
+        <span class="plane-chevron" id="chev-plane-d">▾</span>
+      </div>
+      <div class="plane-body" id="body-plane-d">
+        <div class="node-grid-3" style="margin-bottom:16px">
+          <div class="cap-node cap-amber" onclick="toggleDetail('d-obs')">
+            <div class="cap-node-title">Observatory dashboard</div>
+            <div class="cap-node-sub">drift charts · social arcs<br>evaluator agreement · anomaly feed</div>
+          </div>
+          <div class="cap-node cap-amber" onclick="toggleDetail('d-hitl')">
+            <div class="cap-node-title">HITL review queue</div>
+            <div class="cap-node-sub">anomaly-triggered<br>approve · relabel · intervene</div>
+          </div>
+          <div class="cap-node cap-amber" onclick="toggleDetail('d-corrective')">
+            <div class="cap-node-title">Corrective signal</div>
+            <div class="cap-node-sub">verified label + provenance<br>→ coherence agent</div>
+          </div>
+        </div>
+        <div id="d-obs" class="node-detail"><p>Surfaces the agent timeline store visually. Shows: per-agent persona arc over time, drift vector magnitude chart, social capital curves per dyad, evaluator agreement/conflict history, and live anomaly feed. Two triggers into HITL queue: anomaly events from the detector, and evaluator conflicts from the registry.</p></div>
+        <div id="d-hitl" class="node-detail"><p>Receives flagged episodes from two sources: anomaly detector (longitudinal drift events) and evaluator registry (per-episode conflicts). Reviewer sees: episode transcript, per-evaluator score breakdown, judge explanation, conflict highlighting. Three actions: approve (confirms verdict), relabel (corrects scores), intervene (substantive correction triggering full feedback flow).</p></div>
+        <div id="d-corrective" class="node-detail"><p>The output of a reviewer intervention. Encoded as a high-authority EpisodeBundle with provenance: HumanAuthority and confidence: 1.0. Carries dimension, scope, correction, and belief-vs-behaviour classification. Enters the coherence agent — not as a database patch but as a structured signal subject to the same coherence check as any other episode.</p></div>
+
+        <!-- INTERVENTION FLOW -->
+        <div class="intervention-section">
+          <div class="intervention-title">Intervention feedback flow — how corrections re-enter the system</div>
+
+          <div class="step-flow">
+            <div class="step-row" onclick="toggleStep(this, 'step-d1')">
+              <div class="step-num">1</div>
+              <div class="step-body">
+                <div class="step-title">Reviewer acts in HITL queue</div>
+                <div class="step-desc">approve · relabel · intervene — action triggers encoding</div>
+              </div>
+              <div class="step-badge" style="background:var(--amber-dim);color:var(--amber)">HITL</div>
+            </div>
+            <div id="step-d1" style="display:none;padding:0 0 6px 36px">
+              <div style="font-size:12px;color:var(--muted2);line-height:1.6">Three action types: <strong style="color:var(--teal)">approve</strong> confirms the evaluator verdict and writes to signal store. <strong style="color:var(--amber)">relabel</strong> corrects specific dimension scores. <strong style="color:var(--coral)">intervene</strong> triggers the full feedback flow below.</div>
+            </div>
+
+            <div class="step-row" onclick="toggleStep(this, 'step-d2')">
+              <div class="step-num">2</div>
+              <div class="step-body">
+                <div class="step-title">Intervention encoder — scope selection</div>
+                <div class="step-desc">dimension · scope · correction · authority_weight · provenance: HumanAuthority</div>
+              </div>
+              <div class="step-badge" style="background:var(--surface3);color:var(--muted)">encode</div>
+            </div>
+            <div id="step-d2" style="display:none;padding:0 0 8px 36px">
+              <div class="scope-pills">
+                <div class="scope-pill" id="sp-ep"   onclick="selectSc('ep')">scope: this episode</div>
+                <div class="scope-pill" id="sp-dyad" onclick="selectSc('dyad')">scope: this dyad</div>
+                <div class="scope-pill" id="sp-agt"  onclick="selectSc('agt')">scope: agent-wide ⚠</div>
+              </div>
+              <div class="scope-detail scope-ep"   id="sd-ep">  <strong style="color:var(--blue)">Episode</strong> — annotates single record only. No relationship or persona update. Use for isolated incidents.</div>
+              <div class="scope-detail scope-dyad"  id="sd-dyad"><strong style="color:var(--purple)">Dyad</strong> — updates relationship state for this human–agent pair. Persona baseline unchanged. Use for relationship-specific issues.</div>
+              <div class="scope-detail scope-agent" id="sd-agt"> <strong style="color:var(--coral)">Agent-wide</strong> — updates persona baseline and belief model globally. Requires two-reviewer consensus. Most destructive scope — use only for confirmed systemic drift.</div>
+            </div>
+
+            <div class="step-row" onclick="toggleStep(this, 'step-d3')">
+              <div class="step-num">3</div>
+              <div class="step-body">
+                <div class="step-title">Coherence check — contradiction scan</div>
+                <div class="step-desc">minimum update set · tension flagging · no silent overwrites</div>
+              </div>
+              <div class="step-badge" style="background:var(--purple-dim);color:var(--purple)">coherence</div>
+            </div>
+            <div id="step-d3" style="display:none;padding:0 0 8px 36px">
+              <div style="font-size:12px;color:var(--muted2);margin-bottom:8px;line-height:1.6">Three checks run before any write. The coherence agent determines minimum update set — only that set is updated, never everything downstream.</div>
+              <div class="bb-cards">
+                <div class="bb-card" id="bb-b" onclick="selBB('belief')">
+                  <h4 style="color:var(--teal)">Belief revision</h4>
+                  <p>Agent held incorrect belief. Target: world model, relationship beliefs, factual grounding.</p>
+                </div>
+                <div class="bb-card" id="bb-v" onclick="selBB('behav')">
+                  <h4 style="color:var(--amber)">Behavioural correction</h4>
+                  <p>Agent acted wrongly despite correct beliefs. Target: action tendencies, response style.</p>
+                </div>
+              </div>
+              <div class="bb-target bb-belief-target" id="bbt-belief">→ world model + relationship beliefs updated. Action tendencies unchanged. Overwriting action tendencies here would cause the agent to lose correct behavioural patterns.</div>
+              <div class="bb-target bb-behav-target"  id="bbt-behav"> → action tendencies + response style updated. World model unchanged. Overwriting beliefs here would cause the agent to forget correct knowledge about the relationship.</div>
+            </div>
+
+            <div class="step-row" onclick="toggleStep(this, 'step-d4')">
+              <div class="step-num">4</div>
+              <div class="step-body">
+                <div class="step-title">Episodic memory — two writes</div>
+                <div class="step-desc">original annotation (immutable) + synthetic corrected episode (HumanAuthority weight)</div>
+              </div>
+              <div class="step-badge" style="background:var(--teal-dim);color:var(--teal)">memory</div>
+            </div>
+            <div id="step-d4" style="display:none;padding:0 0 8px 36px">
+              <div class="write-cards">
+                <div class="write-card" style="border-color:rgba(91,168,245,0.35)">
+                  <h4 style="color:var(--blue)">Write 1 — Annotation</h4>
+                  <ul>
+                    <li>Original episode stays immutable</li>
+                    <li>corrections[] field appended</li>
+                    <li>Reviewer identity + timestamp</li>
+                    <li>belief/behavioural classification</li>
+                    <li>scope + justification logged</li>
+                  </ul>
+                </div>
+                <div class="write-card" style="border-color:var(--teal-mid)">
+                  <h4 style="color:var(--teal)">Write 2 — Synthetic episode</h4>
+                  <ul>
+                    <li>Corrected version of interaction</li>
+                    <li>provenance: human_corrected</li>
+                    <li>authority: HumanAuthority (max)</li>
+                    <li>Structurally identical to real episode</li>
+                    <li>Not overridable by lower-conf signals</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="step-row" onclick="toggleStep(this, 'step-d5')">
+              <div class="step-num">5</div>
+              <div class="step-body">
+                <div class="step-title">Loop closes — next episode evaluated against updated baseline</div>
+                <div class="step-desc">persona_version incremented · drift monitor baseline updated · corrective signal persists</div>
+              </div>
+              <div class="step-badge" style="background:var(--green-dim);color:var(--green)">↺ loop</div>
+            </div>
+            <div id="step-d5" style="display:none;padding:0 0 6px 36px">
+              <div style="font-size:12px;color:var(--muted2);line-height:1.6">The next episode generated by this agent is evaluated against the updated persona baseline. The drift monitor now has a corrected checkpoint. The synthetic episode participates in the episodic learning loop at full HumanAuthority weight — it cannot be averaged down by subsequent lower-confidence observations. The full loop from agent capability → evaluator registry → longitudinal store → human surface → coherence agent → episodic memory is now closed.</div>
+            </div>
+          </div>
+
+          <div class="routing-bar" style="margin-top:12px">
+            <div class="r-dot" style="background:var(--teal)"></div>
+            <div>
+              <div class="r-text">Feedback loop closed</div>
+              <div class="r-sub">agent capabilities ← coherence agent ← episodic memory ← human intervention</div>
+            </div>
+            <div class="r-right">provenance: human_corrected · conf: 1.0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<script>
+// ── NAV ──
+function showSection(id) {
+  document.querySelectorAll('.nav-link').forEach((l,i) => {
+    const ids = ['overview','capabilities','registry','longitudinal','intervention','signals'];
+    l.classList.toggle('active', ids[i] === id);
+  });
+  // map to planes
+  const map = {
+    overview: null,
+    capabilities: 'plane-a',
+    registry: 'plane-b',
+    longitudinal: 'plane-c',
+    intervention: 'plane-d',
+    signals: 'plane-c'
+  };
+  const target = map[id];
+  if (target) {
+    openPlane(target);
+    setTimeout(() => document.getElementById(target).scrollIntoView({behavior:'smooth',block:'start'}), 100);
+  }
+}
+
+// ── PLANES ──
+const openPlanes = new Set(['plane-a']);
+function togglePlane(id) {
+  if (openPlanes.has(id)) { openPlanes.delete(id); } else { openPlanes.add(id); }
+  renderPlanes();
+}
+function openPlane(id) { openPlanes.add(id); renderPlanes(); }
+function renderPlanes() {
+  ['plane-a','plane-b','plane-c','plane-d'].forEach(id => {
+    const open = openPlanes.has(id);
+    document.getElementById('body-'+id).classList.toggle('open', open);
+    const chev = document.getElementById('chev-'+id);
+    if (chev) chev.classList.toggle('open', open);
+  });
+}
+renderPlanes();
+
+// ── NODE DETAILS ──
+function toggleDetail(id) {
+  const el = document.getElementById(id);
+  const wasOpen = el.classList.contains('open');
+  document.querySelectorAll('.node-detail').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.cap-node').forEach(n => n.classList.remove('expanded'));
+  if (!wasOpen) {
+    el.classList.add('open');
+    el.previousElementSibling?.classList.add('expanded');
+  }
+}
+
+// ── EVAL REGISTRY ──
+const evalState = { wildguard:true, faithful:true, rule:false, sotopia:true, lifelong:true, chareval:true, brier:true };
+const evalDims = {
+  sotopia:   { goal_completion:0.82, social_capital:0.74, rapport:0.68 },
+  lifelong:  { persona_consistency:0.61, retention:0.77 },
+  chareval:  { persona_fidelity:0.55, value_alignment:0.79 },
+  brier:     { forecast_calibration:0.71 },
+};
+const dimColors = {
+  goal_completion:'var(--teal)', social_capital:'var(--teal)', rapport:'var(--blue)',
+  persona_consistency:'var(--purple)', retention:'var(--purple)',
+  persona_fidelity:'var(--blue)', value_alignment:'var(--blue)',
+  forecast_calibration:'var(--amber)'
+};
+
+function toggleEval(id) {
+  evalState[id] = !evalState[id];
+  const el = document.getElementById('en-'+id);
+  if (el) el.classList.toggle('toggled', !evalState[id]);
+  renderAgg();
+}
+
+function renderAgg() {
+  const active = ['sotopia','lifelong','chareval','brier'].filter(k => evalState[k]);
+  const merged = {}, perDim = {};
+  active.forEach(id => {
+    Object.entries(evalDims[id]).forEach(([dim,score]) => {
+      if (!merged[dim]) { merged[dim] = {sum:0,n:0}; perDim[dim] = []; }
+      merged[dim].sum += score; merged[dim].n++;
+      perDim[dim].push({id,score});
+    });
+  });
+  const conflicts = Object.entries(perDim)
+    .filter(([,scores]) => scores.length > 1 && (Math.max(...scores.map(s=>s.score)) - Math.min(...scores.map(s=>s.score))) > 0.2)
+    .map(([dim]) => dim);
+
+  const panel = document.getElementById('agg-panel');
+  if (!active.length) { panel.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0">No dimensional evaluators active.</div>'; return; }
+
+  let html = '<div style="background:var(--surface3);border:1px solid var(--border);border-radius:9px;padding:14px 16px">';
+  html += '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">Aggregated signal — active evaluators</div>';
+  html += '<div style="display:flex;flex-direction:column;gap:8px">';
+  Object.entries(merged).forEach(([dim,{sum,n}]) => {
+    const agg = sum/n, pct = Math.round(agg*100);
+    const conflict = conflicts.includes(dim);
+    const color = agg < 0.6 ? 'var(--coral)' : agg < 0.75 ? 'var(--amber)' : 'var(--teal)';
+    html += `<div style="display:grid;grid-template-columns:160px 1fr 36px auto;gap:10px;align-items:center">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted2)">${dim.replace(/_/g,' ')}</span>
+      <div style="height:4px;background:var(--surface);border-radius:2px"><div style="height:4px;border-radius:2px;background:${color};width:${pct}%;transition:width 0.4s"></div></div>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:${color};text-align:right">${pct}%</span>
+      ${conflict ? '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;background:var(--amber-dim);color:var(--amber);padding:2px 6px;border-radius:4px;white-space:nowrap">conflict</span>' : '<span></span>'}
+    </div>`;
+  });
+  html += '</div>';
+  if (conflicts.length) {
+    html += `<div style="margin-top:12px;padding:8px 12px;background:var(--amber-dim);border:1px solid var(--amber-mid);border-radius:7px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--amber)">⚠ Evaluator conflict on ${conflicts.length} dimension(s) — episode flagged for human review</div>`;
+  }
+  html += '</div>';
+  panel.innerHTML = html;
+}
+renderAgg();
+
+// ── STEP ROWS ──
+function toggleStep(row, detailId) {
+  const detail = document.getElementById(detailId);
+  const isOpen = detail.style.display === 'block';
+  document.querySelectorAll('.step-row').forEach(r => r.classList.remove('active'));
+  document.querySelectorAll('[id^="step-d"]').forEach(d => d.style.display = 'none');
+  if (!isOpen) {
+    row.classList.add('active');
+    detail.style.display = 'block';
+  }
+}
+
+// ── SCOPE ──
+function selectSc(scope) {
+  ['ep','dyad','agt'].forEach(s => {
+    document.getElementById('sp-'+s).className = 'scope-pill';
+    document.getElementById('sd-'+s.replace('agt','agt')).classList.remove('open');
+  });
+  document.getElementById('sp-'+scope).classList.add(scope === 'ep' ? 'ep' : scope === 'dyad' ? 'dyad' : 'agent');
+  document.getElementById('sd-'+scope).classList.add('open');
+}
+
+// ── BELIEF/BEHAV ──
+function selBB(type) {
+  document.getElementById('bb-b').className = 'bb-card';
+  document.getElementById('bb-v').className = 'bb-card';
+  document.getElementById('bbt-belief').classList.remove('open');
+  document.getElementById('bbt-behav').classList.remove('open');
+  if (type === 'belief') {
+    document.getElementById('bb-b').classList.add('sel-belief');
+    document.getElementById('bbt-belief').classList.add('open');
+  } else {
+    document.getElementById('bb-v').classList.add('sel-behav');
+    document.getElementById('bbt-behav').classList.add('open');
+  }
+}
+</script>
+</body>
+</html>

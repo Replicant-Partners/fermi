@@ -11,10 +11,10 @@ mod text_input;
 
 use api::client::{
     ApiClient, ApiConfig, ApiError, CalibrationData, CreatePortfolioRequest, Forecast,
-    ForecastQuery, LeaderboardEntry, LeaderboardQuery, LeaderboardResponse, MyStats, Portfolio,
-    PortfolioStats,
+    ForecastQuery, LeaderboardEntry, LeaderboardQuery, LeaderboardResponse, MyStats,
+    PatchPortfolioRequest, Portfolio, PortfolioForecast, PortfolioStats,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use cockpit::CockpitState;
 use composer::ComposerState;
 use fermi::agent_backend::{
@@ -340,12 +340,25 @@ struct FermiConsole {
     portfolio_create_error: Option<String>,
     selected_portfolio_id: Option<String>,
     portfolio_stats_cache: HashMap<String, PortfolioStats>,
+    portfolio_forecasts: HashMap<String, Vec<PortfolioForecast>>,
+    portfolio_forecasts_loading: HashSet<String>,
+    portfolio_rename_id: Option<String>,
+    portfolio_rename_input: Entity<TextInput>,
+    portfolio_confirm_delete_id: Option<String>,
 
     // Commit sheet (shown on ⌘P before publishing)
     commit_sheet_showing: bool,
     commit_sheet_visibility: String,
     commit_sheet_question: String,
     commit_sheet_probability: f64,
+
+    // Resolve sheet (record actual outcome of an active forecast)
+    resolve_sheet_showing: bool,
+    resolve_forecast_id: Option<String>,
+    resolve_forecast_question: String,
+    resolve_outcome: Option<bool>,
+    resolve_loading: bool,
+    resolve_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -375,6 +388,12 @@ impl FermiConsole {
             TextInput::new(cx)
                 .with_placeholder("Portfolio name…")
                 .with_label("New Portfolio")
+        });
+
+        let portfolio_rename_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("New name…")
+                .with_label("Rename Portfolio")
         });
 
         let mut console = Self {
@@ -421,10 +440,21 @@ impl FermiConsole {
             portfolio_create_error: None,
             selected_portfolio_id: None,
             portfolio_stats_cache: HashMap::new(),
+            portfolio_forecasts: HashMap::new(),
+            portfolio_forecasts_loading: HashSet::new(),
+            portfolio_rename_id: None,
+            portfolio_rename_input,
+            portfolio_confirm_delete_id: None,
             commit_sheet_showing: false,
             commit_sheet_visibility: "private".into(),
             commit_sheet_question: String::new(),
             commit_sheet_probability: 0.5,
+            resolve_sheet_showing: false,
+            resolve_forecast_id: None,
+            resolve_forecast_question: String::new(),
+            resolve_outcome: None,
+            resolve_loading: false,
+            resolve_error: None,
         };
 
         // Try to load API key from environment (fallback for dev)
@@ -2104,7 +2134,11 @@ impl FermiConsole {
                 Ok(_) => {
                     this.update(cx, |this, cx| {
                         this.portfolio_stats_cache.remove(&pid);
+                        this.portfolio_forecasts.remove(&pid);
                         this.fetch_portfolios(cx);
+                        if this.selected_portfolio_id.as_deref() == Some(&pid) {
+                            this.fetch_portfolio_forecasts(pid.clone(), cx);
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -2116,6 +2150,169 @@ impl FermiConsole {
                         pid,
                         e
                     );
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn fetch_portfolio_forecasts(&mut self, portfolio_id: String, cx: &mut Context<Self>) {
+        if self.portfolio_forecasts_loading.contains(&portfolio_id) {
+            return;
+        }
+        self.portfolio_forecasts_loading.insert(portfolio_id.clone());
+        let api = self.api.clone();
+        let pid = portfolio_id.clone();
+
+        cx.spawn(async move |this, cx| {
+            match api.list_portfolio_forecasts(&pid).await {
+                Ok(resp) => {
+                    this.update(cx, |this, cx| {
+                        this.portfolio_forecasts.insert(pid.clone(), resp.forecasts);
+                        this.portfolio_forecasts_loading.remove(&pid);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!("Failed to fetch portfolio forecasts {}: {}", pid, e);
+                    this.update(cx, |this, cx| {
+                        this.portfolio_forecasts_loading.remove(&pid);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn remove_from_portfolio(
+        &mut self,
+        portfolio_id: String,
+        forecast_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let api = self.api.clone();
+        let pid = portfolio_id.clone();
+        let fid = forecast_id.clone();
+
+        cx.spawn(async move |this, cx| {
+            match api.remove_from_portfolio(&portfolio_id, &forecast_id).await {
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        if let Some(list) = this.portfolio_forecasts.get_mut(&pid) {
+                            list.retain(|f| f.id != fid);
+                        }
+                        this.portfolio_stats_cache.remove(&pid);
+                        this.fetch_portfolios(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => log::warn!("Failed to remove forecast from portfolio: {}", e),
+            }
+        })
+        .detach();
+    }
+
+    fn delete_portfolio(&mut self, portfolio_id: String, cx: &mut Context<Self>) {
+        let api = self.api.clone();
+        let pid = portfolio_id.clone();
+
+        cx.spawn(async move |this, cx| {
+            match api.delete_portfolio(&portfolio_id).await {
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.portfolios.retain(|p| p.id != pid);
+                        this.portfolio_forecasts.remove(&pid);
+                        this.portfolio_stats_cache.remove(&pid);
+                        if this.selected_portfolio_id.as_deref() == Some(&pid) {
+                            this.selected_portfolio_id = None;
+                        }
+                        this.portfolio_confirm_delete_id = None;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => log::warn!("Failed to delete portfolio {}: {}", pid, e),
+            }
+        })
+        .detach();
+    }
+
+    fn rename_portfolio(&mut self, portfolio_id: String, new_title: String, cx: &mut Context<Self>) {
+        let api = self.api.clone();
+        let pid = portfolio_id.clone();
+        let title = new_title.clone();
+
+        cx.spawn(async move |this, cx| {
+            let req = PatchPortfolioRequest { title: Some(title), description: None };
+            match api.patch_portfolio(&portfolio_id, &req).await {
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        if let Some(p) = this.portfolios.iter_mut().find(|p| p.id == pid) {
+                            p.title = new_title;
+                        }
+                        this.portfolio_rename_id = None;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => log::warn!("Failed to rename portfolio {}: {}", pid, e),
+            }
+        })
+        .detach();
+    }
+
+    fn submit_resolve(&mut self, cx: &mut Context<Self>) {
+        let outcome = match self.resolve_outcome {
+            Some(v) => v,
+            None => return,
+        };
+        let forecast_id = match self.resolve_forecast_id.clone() {
+            Some(id) => id,
+            None => return,
+        };
+
+        self.resolve_loading = true;
+        self.resolve_error = None;
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| {
+            use api::client::ResolveForecastRequest;
+            let req = ResolveForecastRequest {
+                actual_outcome: outcome,
+                resolution_notes: None,
+            };
+            match api.resolve_forecast(&forecast_id, &req).await {
+                Ok(resp) => {
+                    this.update(cx, |this, cx| {
+                        this.resolve_sheet_showing = false;
+                        this.resolve_forecast_id = None;
+                        this.resolve_loading = false;
+                        // Move forecast from active to resolved in local state
+                        if let Some(pos) = this.active_forecasts.iter().position(|f| f.id == forecast_id) {
+                            let mut f = this.active_forecasts.remove(pos);
+                            f.status = "resolved".into();
+                            f.brier_score = Some(resp.brier_score);
+                            f.actual_outcome = Some(resp.actual_outcome);
+                            this.resolved_forecasts.insert(0, f);
+                        }
+                        // Invalidate portfolio caches so Brier scores refresh
+                        this.portfolio_forecasts.clear();
+                        this.portfolio_stats_cache.clear();
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    this.update(cx, |this, cx| {
+                        this.resolve_loading = false;
+                        this.resolve_error = Some(format!("{}", e));
+                        cx.notify();
+                    })
+                    .ok();
                 }
             }
         })
@@ -2199,6 +2396,8 @@ impl FermiConsole {
     // ── Portfolio Panel ───────────────────────────────────────────────────
 
     fn render_portfolios_section(&self, cx: &Context<Self>) -> impl IntoElement {
+        let selected = self.selected_portfolio_id.clone();
+
         div()
             .flex()
             .flex_col()
@@ -2206,7 +2405,7 @@ impl FermiConsole {
             .rounded(px(8.0))
             .border_1()
             .border_color(theme::fg_faint())
-            // Section header
+            // ── Header ───────────────────────────────────────────────
             .child(
                 div()
                     .px(px(16.0))
@@ -2221,7 +2420,7 @@ impl FermiConsole {
                             .text_size(px(13.0))
                             .text_color(rgb(theme::BLUE))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("Named Portfolios ({})", self.portfolios.len())),
+                            .child(format!("Portfolios ({})", self.portfolios.len())),
                     )
                     .child(
                         div()
@@ -2240,10 +2439,10 @@ impl FermiConsole {
                                 this.portfolio_create_error = None;
                                 cx.notify();
                             }))
-                            .child("+ New Portfolio"),
+                            .child("+ New"),
                     ),
             )
-            // Inline create form
+            // ── Create form (inline, collapsible) ────────────────────
             .when(self.portfolio_create_showing, |el| {
                 el.child(
                     div()
@@ -2314,108 +2513,418 @@ impl FermiConsole {
                         }),
                 )
             })
-            // Portfolio list
-            .when(!self.portfolios.is_empty(), |el| {
-                el.children(self.portfolios.iter().map(|p| {
-                    let is_selected =
-                        self.selected_portfolio_id.as_deref() == Some(p.id.as_str());
-                    let pid = p.id.clone();
-                    let stats = self.portfolio_stats_cache.get(&p.id).cloned();
-                    let count = p.forecast_count.unwrap_or(0);
-                    let brier_text = p
-                        .avg_brier
-                        .map(|b| format!(" · Brier {:.3}", b))
-                        .unwrap_or_default();
+            // ── Two-column body ───────────────────────────────────────
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .min_h(px(200.0))
+                    // ── Left: portfolio list ──────────────────────────
+                    .child(
+                        div()
+                            .w(px(220.0))
+                            .flex_shrink_0()
+                            .flex()
+                            .flex_col()
+                            .border_r_1()
+                            .border_color(theme::fg_faint())
+                            .when(self.portfolios.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .px(px(14.0))
+                                        .py(px(12.0))
+                                        .text_size(px(11.0))
+                                        .text_color(theme::fg_faint())
+                                        .child("No portfolios yet."),
+                                )
+                            })
+                            .children(self.portfolios.iter().map(|p| {
+                                let is_selected = selected.as_deref() == Some(p.id.as_str());
+                                let is_rename = self.portfolio_rename_id.as_deref() == Some(p.id.as_str());
+                                let is_confirm_delete = self.portfolio_confirm_delete_id.as_deref() == Some(p.id.as_str());
+                                let pid = p.id.clone();
+                                let pid2 = p.id.clone();
+                                let pid3 = p.id.clone();
+                                let pid4 = p.id.clone();
+                                let count = p.forecast_count.unwrap_or(0);
+                                let title = p.title.clone();
 
-                    div()
-                        .flex()
-                        .flex_col()
-                        .border_b_1()
-                        .border_color(theme::fg_faint())
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("portfolio-toggle-{}", pid)))
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .px(px(16.0))
-                                .py(px(10.0))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(theme::bg_hover()))
-                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                    if this.selected_portfolio_id.as_deref() == Some(&pid) {
-                                        this.selected_portfolio_id = None;
-                                    } else {
-                                        this.selected_portfolio_id = Some(pid.clone());
-                                        this.fetch_portfolio_stats_if_needed(pid.clone(), cx);
-                                    }
-                                    cx.notify();
-                                }))
-                                .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .border_b_1()
+                                    .border_color(theme::fg_faint())
+                                    .when(is_selected, |el| el.bg(theme::bg_hover()))
+                                    // Rename row
+                                    .when(is_rename, |el| {
+                                        el.child(
+                                            div()
+                                                .px(px(10.0))
+                                                .py(px(6.0))
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(6.0))
+                                                .child(div().flex_grow().child(self.portfolio_rename_input.clone()))
+                                                .child(
+                                                    div()
+                                                        .id(SharedString::from(format!("rename-ok-{}", pid4)))
+                                                        .px(px(8.0))
+                                                        .py(px(3.0))
+                                                        .rounded(px(3.0))
+                                                        .bg(rgb(theme::CYAN))
+                                                        .text_size(px(10.0))
+                                                        .text_color(rgb(theme::BG))
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.opacity(0.8))
+                                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                            let new_title = this.portfolio_rename_input.read(cx).text().trim().to_string();
+                                                            if !new_title.is_empty() {
+                                                                this.rename_portfolio(pid4.clone(), new_title, cx);
+                                                            } else {
+                                                                this.portfolio_rename_id = None;
+                                                                cx.notify();
+                                                            }
+                                                        }))
+                                                        .child("✓"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id(SharedString::from(format!("rename-cancel-{}", pid3)))
+                                                        .px(px(6.0))
+                                                        .py(px(3.0))
+                                                        .text_size(px(10.0))
+                                                        .text_color(theme::fg_dim())
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.bg(theme::bg_hover()))
+                                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                                            this.portfolio_rename_id = None;
+                                                            cx.notify();
+                                                        }))
+                                                        .child("✕"),
+                                                ),
+                                        )
+                                    })
+                                    // Confirm-delete row
+                                    .when(is_confirm_delete && !is_rename, |el| {
+                                        el.child(
+                                            div()
+                                                .px(px(12.0))
+                                                .py(px(8.0))
+                                                .flex()
+                                                .flex_col()
+                                                .gap(px(4.0))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(10.0))
+                                                        .text_color(theme::red())
+                                                        .child("Delete this portfolio?"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap(px(6.0))
+                                                        .child(
+                                                            div()
+                                                                .id(SharedString::from(format!("del-confirm-{}", pid2)))
+                                                                .px(px(8.0))
+                                                                .py(px(3.0))
+                                                                .rounded(px(3.0))
+                                                                .bg(theme::red())
+                                                                .text_size(px(10.0))
+                                                                .text_color(rgb(theme::BG))
+                                                                .font_weight(FontWeight::SEMIBOLD)
+                                                                .cursor_pointer()
+                                                                .hover(|s| s.opacity(0.8))
+                                                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                                    this.delete_portfolio(pid2.clone(), cx);
+                                                                }))
+                                                                .child("Delete"),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .id(SharedString::from(format!("del-cancel-{}", pid)))
+                                                                .px(px(8.0))
+                                                                .py(px(3.0))
+                                                                .text_size(px(10.0))
+                                                                .text_color(theme::fg_dim())
+                                                                .cursor_pointer()
+                                                                .hover(|s| s.bg(theme::bg_hover()))
+                                                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                                                    this.portfolio_confirm_delete_id = None;
+                                                                    cx.notify();
+                                                                }))
+                                                                .child("Cancel"),
+                                                        ),
+                                                ),
+                                        )
+                                    })
+                                    // Normal portfolio card row
+                                    .when(!is_rename && !is_confirm_delete, |el| {
+                                        let pid_sel = p.id.clone();
+                                        let pid_ren = p.id.clone();
+                                        let pid_del = p.id.clone();
+                                        let title_ren = title.clone();
+                                        el.child(
+                                            div()
+                                                .id(SharedString::from(format!("portfolio-card-{}", pid_sel)))
+                                                .px(px(12.0))
+                                                .py(px(8.0))
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(6.0))
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(theme::bg_hover()))
+                                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                    if this.selected_portfolio_id.as_deref() == Some(&pid_sel) {
+                                                        this.selected_portfolio_id = None;
+                                                    } else {
+                                                        this.selected_portfolio_id = Some(pid_sel.clone());
+                                                        this.fetch_portfolio_forecasts(pid_sel.clone(), cx);
+                                                    }
+                                                    this.portfolio_confirm_delete_id = None;
+                                                    this.portfolio_rename_id = None;
+                                                    cx.notify();
+                                                }))
+                                                // Portfolio icon
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.0))
+                                                        .text_color(rgb(theme::BLUE))
+                                                        .child("◈"),
+                                                )
+                                                // Title + count
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .flex_grow()
+                                                        .overflow_hidden()
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(12.0))
+                                                                .text_color(theme::fg())
+                                                                .font_weight(FontWeight::SEMIBOLD)
+                                                                .overflow_hidden()
+                                                                .child(truncate(&title, 22)),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(10.0))
+                                                                .text_color(theme::fg_faint())
+                                                                .child(format!("{} forecast{}", count, if count == 1 { "" } else { "s" })),
+                                                        ),
+                                                )
+                                                // Action icons (pencil + trash)
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap(px(4.0))
+                                                        .child(
+                                                            div()
+                                                                .id(SharedString::from(format!("portfolio-rename-btn-{}", pid_ren)))
+                                                                .text_size(px(10.0))
+                                                                .text_color(theme::fg_faint())
+                                                                .cursor_pointer()
+                                                                .hover(|s| s.text_color(rgb(theme::BLUE)))
+                                                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                                    this.portfolio_rename_id = Some(pid_ren.clone());
+                                                                    let title_clone = title_ren.clone();
+                                                                    this.portfolio_rename_input.update(cx, |input, cx| {
+                                                                        input.set_text(title_clone, cx);
+                                                                    });
+                                                                    cx.notify();
+                                                                }))
+                                                                .child("✎"),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .id(SharedString::from(format!("portfolio-delete-btn-{}", pid_del)))
+                                                                .text_size(px(10.0))
+                                                                .text_color(theme::fg_faint())
+                                                                .cursor_pointer()
+                                                                .hover(|s| s.text_color(theme::red()))
+                                                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                                    this.portfolio_confirm_delete_id = Some(pid_del.clone());
+                                                                    this.portfolio_rename_id = None;
+                                                                    cx.notify();
+                                                                }))
+                                                                .child("⌫"),
+                                                        ),
+                                                ),
+                                        )
+                                    })
+                            })),
+                    )
+                    // ── Right: selected portfolio detail ──────────────
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_grow()
+                            .when(selected.is_none(), |el| {
+                                el.child(
                                     div()
                                         .flex()
+                                        .flex_grow()
                                         .items_center()
-                                        .gap(px(8.0))
+                                        .justify_center()
+                                        .p(px(24.0))
                                         .child(
                                             div()
                                                 .text_size(px(12.0))
-                                                .text_color(rgb(theme::BLUE))
-                                                .child("◈"),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(13.0))
-                                                .text_color(theme::fg())
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .child(p.title.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(11.0))
-                                                .text_color(theme::fg_dim())
-                                                .child(format!(
-                                                    "{} forecast{}{}",
-                                                    count,
-                                                    if count == 1 { "" } else { "s" },
-                                                    brier_text
-                                                )),
+                                                .text_color(theme::fg_faint())
+                                                .child("Select a portfolio to view its forecasts"),
                                         ),
                                 )
-                                .child(
-                                    div()
-                                        .text_size(px(10.0))
-                                        .text_color(theme::fg_faint())
-                                        .child(if is_selected { "▾" } else { "▸" }),
-                                ),
-                        )
-                        .when(is_selected, move |el| {
-                            if let Some(s) = stats {
-                                el.child(render_portfolio_stats_panel(&s))
-                            } else {
-                                el.child(
-                                    div()
-                                        .px(px(24.0))
-                                        .py(px(10.0))
-                                        .text_size(px(11.0))
-                                        .text_color(theme::fg_dim())
-                                        .child("Loading stats…"),
-                                )
-                            }
-                        })
-                }))
-            })
-            .when(
-                self.portfolios.is_empty() && self.connected && !self.portfolio_create_showing,
-                |el| {
-                    el.child(
-                        div()
-                            .px(px(16.0))
-                            .py(px(12.0))
-                            .text_size(px(12.0))
-                            .text_color(theme::fg_faint())
-                            .child("No portfolios yet — create one to group your forecasts."),
-                    )
-                },
+                            })
+                            .when(selected.is_some(), |el| {
+                                let pid = selected.clone().unwrap_or_default();
+                                let is_loading = self.portfolio_forecasts_loading.contains(&pid);
+                                let forecasts = self.portfolio_forecasts.get(&pid).cloned().unwrap_or_default();
+                                let portfolio_title = self.portfolios.iter()
+                                    .find(|p| p.id == pid)
+                                    .map(|p| p.title.clone())
+                                    .unwrap_or_default();
+                                let avg_brier = self.portfolios.iter()
+                                    .find(|p| p.id == pid)
+                                    .and_then(|p| p.avg_brier);
+
+                                el
+                                    // Portfolio detail header
+                                    .child(
+                                        div()
+                                            .px(px(14.0))
+                                            .py(px(8.0))
+                                            .border_b_1()
+                                            .border_color(theme::fg_faint())
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.0))
+                                                    .text_color(theme::fg())
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .child(portfolio_title),
+                                            )
+                                            .when(avg_brier.is_some(), move |el| {
+                                                el.child(
+                                                    div()
+                                                        .px(px(6.0))
+                                                        .py(px(2.0))
+                                                        .rounded(px(4.0))
+                                                        .bg(theme::bg_hover())
+                                                        .text_size(px(10.0))
+                                                        .text_color(rgb(theme::CYAN))
+                                                        .child(format!("avg Brier {:.3}", avg_brier.unwrap())),
+                                                )
+                                            }),
+                                    )
+                                    // Loading spinner
+                                    .when(is_loading, |el| {
+                                        el.child(
+                                            div()
+                                                .p(px(14.0))
+                                                .text_size(px(11.0))
+                                                .text_color(theme::fg_faint())
+                                                .child("Loading forecasts…"),
+                                        )
+                                    })
+                                    // Empty state
+                                    .when(!is_loading && forecasts.is_empty(), |el| {
+                                        el.child(
+                                            div()
+                                                .p(px(14.0))
+                                                .text_size(px(11.0))
+                                                .text_color(theme::fg_faint())
+                                                .child("No forecasts in this portfolio yet."),
+                                        )
+                                    })
+                                    // Forecast rows
+                                    .when(!is_loading && !forecasts.is_empty(), move |el| {
+                                        el.children(forecasts.into_iter().map(|f| {
+                                            let fid = f.id.clone();
+                                            let pid_rm = pid.clone();
+                                            let prob_pct = (f.predicted_probability * 100.0).round() as u32;
+                                            let prob_color = if prob_pct >= 70 { theme::CYAN }
+                                                else if prob_pct >= 40 { theme::BLUE }
+                                                else { theme::FG_DIM };
+                                            let status_color = match f.status.as_str() {
+                                                "active" => theme::CYAN,
+                                                "resolved" => theme::GREEN,
+                                                _ => theme::FG_DIM,
+                                            };
+                                            let brier_str = f.brier_score
+                                                .map(|b| format!("{:.3}", b))
+                                                .unwrap_or_default();
+
+                                            div()
+                                                .id(SharedString::from(format!("pf-row-{}", fid)))
+                                                .px(px(14.0))
+                                                .py(px(7.0))
+                                                .border_b_1()
+                                                .border_color(theme::fg_faint())
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(8.0))
+                                                .hover(|s| s.bg(theme::bg_hover()))
+                                                // Question text
+                                                .child(
+                                                    div()
+                                                        .flex_grow()
+                                                        .overflow_hidden()
+                                                        .text_size(px(11.0))
+                                                        .text_color(theme::fg())
+                                                        .child(truncate(&f.question_text, 52)),
+                                                )
+                                                // Probability pill
+                                                .child(
+                                                    div()
+                                                        .px(px(6.0))
+                                                        .py(px(2.0))
+                                                        .rounded(px(4.0))
+                                                        .bg(theme::bg_hover())
+                                                        .text_size(px(10.0))
+                                                        .text_color(rgb(prob_color))
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .child(format!("{}%", prob_pct)),
+                                                )
+                                                // Status badge
+                                                .child(
+                                                    div()
+                                                        .text_size(px(10.0))
+                                                        .text_color(rgb(status_color))
+                                                        .child(f.status.clone()),
+                                                )
+                                                // Brier score (resolved only)
+                                                .when(!brier_str.is_empty(), move |el| {
+                                                    el.child(
+                                                        div()
+                                                            .text_size(px(10.0))
+                                                            .text_color(theme::fg_dim())
+                                                            .child(brier_str),
+                                                    )
+                                                })
+                                                // Remove button
+                                                .child(
+                                                    div()
+                                                        .id(SharedString::from(format!("rm-pf-{}", fid)))
+                                                        .text_size(px(11.0))
+                                                        .text_color(theme::fg_faint())
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.text_color(theme::red()))
+                                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                            this.remove_from_portfolio(pid_rm.clone(), fid.clone(), cx);
+                                                        }))
+                                                        .child("×"),
+                                                )
+                                        }))
+                                    })
+                            }),
+                    ),
             )
     }
 
@@ -2444,22 +2953,43 @@ impl FermiConsole {
                 el.children(self.portfolios.iter().map(|p| {
                     let pid = p.id.clone();
                     let fid2 = fid.clone();
-                    let label = truncate(&p.title, 22);
-                    div()
-                        .id(SharedString::from(format!("add-to-{}-{}", pid, fid)))
-                        .px(px(8.0))
-                        .py(px(3.0))
-                        .rounded(px(4.0))
-                        .border_1()
-                        .border_color(rgb(theme::CYAN))
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::CYAN))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::bg_hover()))
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            this.add_forecast_to_portfolio(fid2.clone(), pid.clone(), cx);
-                        }))
-                        .child(format!("+ {}", label))
+                    let label = truncate(&p.title, 18);
+                    // Check if this forecast is already in this portfolio (from cache)
+                    let already_in = self.portfolio_forecasts
+                        .get(&p.id)
+                        .map(|fs| fs.iter().any(|f| f.id == fid))
+                        .unwrap_or(false);
+
+                    if already_in {
+                        div()
+                            .id(SharedString::from(format!("already-in-{}-{}", pid, fid)))
+                            .px(px(8.0))
+                            .py(px(3.0))
+                            .rounded(px(4.0))
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child(format!("✓ {}", label))
+                            .into_any_element()
+                    } else {
+                        div()
+                            .id(SharedString::from(format!("add-to-{}-{}", pid, fid)))
+                            .px(px(8.0))
+                            .py(px(3.0))
+                            .rounded(px(4.0))
+                            .border_1()
+                            .border_color(rgb(theme::CYAN))
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::CYAN))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.add_forecast_to_portfolio(fid2.clone(), pid.clone(), cx);
+                            }))
+                            .child(format!("+ {}", label))
+                            .into_any_element()
+                    }
                 }))
             })
             .when(self.portfolios.is_empty(), |el| {
@@ -3385,8 +3915,54 @@ impl FermiConsole {
             )
             // ── Detail panel (visible when selected) ──────────────
             .when(is_selected, |el| {
+                let is_active = forecast.status == "active";
+                let fid = forecast.id.clone();
+                let fq = forecast.question_text.clone();
+                let fprob = forecast.predicted_probability;
                 el.child(render_forecast_detail(forecast))
                     .child(self.render_forecast_portfolio_row(&forecast.id, cx))
+                    .when(is_active, |el| {
+                        el.child(
+                            div()
+                                .px(px(24.0))
+                                .py(px(10.0))
+                                .border_t_1()
+                                .border_color(theme::fg_faint())
+                                .flex()
+                                .items_center()
+                                .gap(px(10.0))
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(theme::fg_faint())
+                                        .child("Outcome known?"),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("resolve-btn-{}", fid)))
+                                        .px(px(14.0))
+                                        .py(px(5.0))
+                                        .rounded(px(5.0))
+                                        .border_1()
+                                        .border_color(rgb(theme::GREEN))
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(theme::GREEN))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme::bg_hover()))
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.resolve_forecast_id = Some(fid.clone());
+                                            this.resolve_forecast_question = fq.clone();
+                                            this.resolve_outcome = None;
+                                            this.resolve_error = None;
+                                            this.resolve_loading = false;
+                                            this.resolve_sheet_showing = true;
+                                            cx.notify();
+                                        }))
+                                        .child("⚡ Resolve"),
+                                ),
+                        )
+                    })
             })
     }
 
@@ -3999,6 +4575,245 @@ impl FermiConsole {
                     ),
             )
     }
+
+    fn render_resolve_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let question = truncate(&self.resolve_forecast_question, 80);
+        let selected = self.resolve_outcome;
+        let has_selection = selected.is_some();
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E1499))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(20.0))
+                    .w(px(480.0))
+                    .p(px(28.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::GREEN))
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_size(px(18.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(theme::GREEN))
+                                    .child("Resolve Forecast"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_faint())
+                                    .child("Record the actual outcome. This locks in your Brier score."),
+                            ),
+                    )
+                    // Question summary
+                    .child(
+                        div()
+                            .p(px(12.0))
+                            .rounded(px(6.0))
+                            .bg(rgb(theme::BG))
+                            .text_size(px(13.0))
+                            .text_color(rgb(theme::FG))
+                            .child(question),
+                    )
+                    // Outcome picker
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_faint())
+                                    .child("WHAT HAPPENED?"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(12.0))
+                                    // YES tile
+                                    .child({
+                                        let is_sel = selected == Some(true);
+                                        div()
+                                            .id("resolve-yes")
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .gap(px(6.0))
+                                            .flex_1()
+                                            .p(px(16.0))
+                                            .rounded(px(8.0))
+                                            .border_1()
+                                            .border_color(if is_sel {
+                                                rgb(theme::GREEN)
+                                            } else {
+                                                rgb(theme::FG_FAINT)
+                                            })
+                                            .bg(if is_sel {
+                                                rgb(theme::BG_ACTIVE)
+                                            } else {
+                                                rgb(theme::BG)
+                                            })
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.resolve_outcome = Some(true);
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_size(px(24.0))
+                                                    .child("✓"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.0))
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(rgb(theme::GREEN))
+                                                    .child("YES"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(theme::fg_faint())
+                                                    .child("it happened"),
+                                            )
+                                    })
+                                    // NO tile
+                                    .child({
+                                        let is_sel = selected == Some(false);
+                                        div()
+                                            .id("resolve-no")
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .gap(px(6.0))
+                                            .flex_1()
+                                            .p(px(16.0))
+                                            .rounded(px(8.0))
+                                            .border_1()
+                                            .border_color(if is_sel {
+                                                rgb(theme::RED)
+                                            } else {
+                                                rgb(theme::FG_FAINT)
+                                            })
+                                            .bg(if is_sel {
+                                                rgb(theme::BG_ACTIVE)
+                                            } else {
+                                                rgb(theme::BG)
+                                            })
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.resolve_outcome = Some(false);
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_size(px(24.0))
+                                                    .child("✗"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.0))
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(rgb(theme::RED))
+                                                    .child("NO"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(theme::fg_faint())
+                                                    .child("it didn't happen"),
+                                            )
+                                    }),
+                            ),
+                    )
+                    // Error message
+                    .when(self.resolve_error.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::red())
+                                .child(
+                                    self.resolve_error
+                                        .as_deref()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                ),
+                        )
+                    })
+                    // Action buttons
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(12.0))
+                            .justify_end()
+                            // Cancel
+                            .child(
+                                div()
+                                    .id("resolve-cancel")
+                                    .px(px(16.0))
+                                    .py(px(8.0))
+                                    .rounded(px(6.0))
+                                    .border_1()
+                                    .border_color(rgb(theme::FG_FAINT))
+                                    .text_size(px(13.0))
+                                    .text_color(theme::fg_dim())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.resolve_sheet_showing = false;
+                                        this.resolve_forecast_id = None;
+                                        cx.notify();
+                                    }))
+                                    .child("Cancel"),
+                            )
+                            // Confirm
+                            .child(
+                                div()
+                                    .id("resolve-confirm")
+                                    .px(px(20.0))
+                                    .py(px(8.0))
+                                    .rounded(px(6.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(13.0))
+                                    .when(has_selection && !self.resolve_loading, |el| {
+                                        el.bg(rgb(theme::GREEN))
+                                            .text_color(rgb(theme::BG))
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.submit_resolve(cx);
+                                            }))
+                                    })
+                                    .when(!has_selection || self.resolve_loading, |el| {
+                                        el.bg(theme::bg_hover())
+                                            .text_color(theme::fg_faint())
+                                    })
+                                    .child(if self.resolve_loading {
+                                        "Resolving…"
+                                    } else {
+                                        "Confirm"
+                                    }),
+                            ),
+                    ),
+            )
+    }
 }
 
 impl Focusable for FermiConsole {
@@ -4009,10 +4824,13 @@ impl Focusable for FermiConsole {
 
 impl Render for FermiConsole {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Pre-compute commit sheet overlay before chaining to avoid borrow conflicts
+        // Pre-compute overlays before chaining to avoid borrow conflicts
         let commit_overlay = self
             .commit_sheet_showing
             .then(|| self.render_commit_sheet(cx).into_any_element());
+        let resolve_overlay = self
+            .resolve_sheet_showing
+            .then(|| self.render_resolve_sheet(cx).into_any_element());
 
         div()
             .key_context("FermiConsole")
@@ -4064,6 +4882,8 @@ impl Render for FermiConsole {
             )
             // Commit sheet overlay (⌘P)
             .children(commit_overlay)
+            // Resolve sheet overlay
+            .children(resolve_overlay)
     }
 }
 

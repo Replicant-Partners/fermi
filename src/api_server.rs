@@ -743,6 +743,32 @@ async fn main() {
             "/api/agents/:agent_id/eval/runs",
             get(handlers::eval::list_eval_runs_handler),
         )
+        // ─── Phase 4 — Observatory (Plane D) ─────────────────────────
+        // See docs/architecture/OBSERVABILITY_IMPL.md
+        .route(
+            "/api/observatory/agents/:agent_id/timeline",
+            get(handlers::observatory::get_agent_timeline_handler),
+        )
+        .route(
+            "/api/observatory/agents/:agent_id/dyads",
+            get(handlers::observatory::list_agent_dyads_handler),
+        )
+        .route(
+            "/api/observatory/agents/:agent_id/anomalies",
+            get(handlers::observatory::list_agent_anomalies_handler),
+        )
+        .route(
+            "/api/observatory/agents/:agent_id/scan",
+            post(handlers::observatory::trigger_agent_scan_handler),
+        )
+        .route(
+            "/api/observatory/hitl",
+            get(handlers::observatory::list_hitl_queue_handler),
+        )
+        .route(
+            "/api/observatory/hitl/:event_id/action",
+            post(handlers::observatory::record_hitl_action_handler),
+        )
         .route(
             "/api/agents/:agent_id/dependencies",
             get(handlers::agents::get_agent_dependencies_handler),
@@ -945,6 +971,12 @@ async fn main() {
         .route("/settings", get(handlers::pages::settings_view))
         .route("/marketplace", get(handlers::pages::marketplace_view))
         .route("/admin", get(handlers::pages::admin_view))
+        // Phase 4 — Observatory pages
+        .route("/observatory", get(handlers::pages::observatory_view))
+        .route(
+            "/observatory/hitl",
+            get(handlers::pages::observatory_hitl_view),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit_middleware,
@@ -1333,6 +1365,20 @@ async fn main() {
             "/api/forecasts/:forecast_id/update-probability",
             post(handlers::forecasts::update_probability_handler),
         )
+        // ── Schedule routes ────────────────────────────────────────────
+        .route(
+            "/api/forecasts/:forecast_id/schedules",
+            get(handlers::forecasts::list_forecast_schedules_handler)
+                .put(handlers::forecasts::upsert_forecast_schedule_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/schedules/:schedule_id",
+            delete(handlers::forecasts::delete_forecast_schedule_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/schedules/:schedule_id/run",
+            post(handlers::forecasts::record_schedule_run_handler),
+        )
         // ── Portfolio routes ───────────────────────────────────────────
         .route(
             "/api/portfolios",
@@ -1347,8 +1393,14 @@ async fn main() {
             get(handlers::forecasts::portfolio_stats_handler),
         )
         .route(
+            "/api/portfolios/:portfolio_id",
+            delete(handlers::forecasts::delete_portfolio_handler)
+                .patch(handlers::forecasts::patch_portfolio_handler),
+        )
+        .route(
             "/api/portfolios/:portfolio_id/forecasts",
-            post(handlers::forecasts::add_forecast_to_portfolio_handler),
+            get(handlers::forecasts::list_portfolio_forecasts_handler)
+                .post(handlers::forecasts::add_forecast_to_portfolio_handler),
         )
         .route(
             "/api/portfolios/:portfolio_id/forecasts/:forecast_id",

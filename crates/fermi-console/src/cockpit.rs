@@ -32,7 +32,10 @@ use fermi::ast::{
     GeneratedBy, ModelStmt, Program, QuestionStmt, Schedule, SimulateStmt, Statement,
 };
 
-use crate::api::client::{AgentExecutionResult, ApiClient, CreateForecastRequest};
+use crate::api::client::{
+    AgentExecutionResult, ApiClient, CreateForecastRequest, ForecastSchedule,
+    UpsertScheduleRequest,
+};
 use crate::text_input::TextInput;
 use crate::theme;
 
@@ -235,6 +238,10 @@ pub struct CockpitState {
     pub sse_rx: std_mpsc::Receiver<SseEvent>,
     /// Sender cloned into each fire_agent background task.
     pub sse_tx: std_mpsc::Sender<SseEvent>,
+
+    // ── Agent Schedules (persisted via API) ───────────────────────
+    pub schedules: Vec<ForecastSchedule>,
+    pub schedules_loading: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +390,8 @@ impl CockpitState {
             selected_version: None,
             sse_rx: rx,
             sse_tx: tx,
+            schedules: Vec::new(),
+            schedules_loading: false,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -2214,6 +2223,125 @@ impl CockpitState {
 
         cx.notify();
     }
+    /// Load persisted schedules from the API and auto-fire any that are overdue.
+    pub fn load_schedules(&mut self, cx: &mut Context<Self>) {
+        let forecast_id = match &self.forecast_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let api = self.api.clone();
+        self.schedules_loading = true;
+        cx.spawn(async move |this, cx| {
+            match api.list_forecast_schedules(&forecast_id).await {
+                Ok(schedules) => {
+                    let now = chrono::Utc::now();
+                    let overdue: Vec<ForecastSchedule> = schedules
+                        .iter()
+                        .filter(|s| {
+                            s.enabled
+                                && chrono::DateTime::parse_from_rfc3339(&s.next_run_at)
+                                    .map(|t| t.with_timezone(&chrono::Utc) <= now)
+                                    .unwrap_or(false)
+                        })
+                        .cloned()
+                        .collect();
+
+                    this.update(cx, |state, cx| {
+                        state.schedules = schedules;
+                        state.schedules_loading = false;
+                        for sched in &overdue {
+                            let agent_id = sched.agent_id.clone();
+                            let query = sched.query.clone();
+                            state.fire_agent(&agent_id, &query, cx);
+                            state.messages.push(AssistantMessage {
+                                node: format!("driver:{}", sched.driver_name),
+                                kind: MessageKind::Info,
+                                text: format!(
+                                    "⏰ Auto-running {} for '{}' (scheduled every {}h)",
+                                    sched.agent_id, sched.driver_name, sched.interval_hours
+                                ),
+                            });
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                    // Record runs for overdue schedules
+                    for sched in overdue {
+                        let api2 = api.clone();
+                        let fid = forecast_id.clone();
+                        let sid = sched.id.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = api2.record_schedule_run(&fid, &sid).await {
+                                log::warn!("[schedule] record_run failed: {}", e);
+                            }
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[schedule] load_schedules failed: {}", e);
+                    this.update(cx, |state, cx| {
+                        state.schedules_loading = false;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Manually trigger a scheduled agent now and bump its next_run_at.
+    pub fn run_now_schedule(&mut self, schedule_id: &str, cx: &mut Context<Self>) {
+        let sid = schedule_id.to_string();
+        let sched = match self.schedules.iter().find(|s| s.id == sid) {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let forecast_id = match &self.forecast_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+
+        self.fire_agent(&sched.agent_id, &sched.query, cx);
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", sched.driver_name),
+            kind: MessageKind::Info,
+            text: format!("▶ Running {} for '{}'…", sched.agent_id, sched.driver_name),
+        });
+
+        let api = self.api.clone();
+        let fid = forecast_id.clone();
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = api.record_schedule_run(&fid, &sid).await {
+                log::warn!("[schedule] record_run failed: {}", e);
+            }
+            // Reload schedules to reflect updated next_run_at
+            this.update(cx, |state, cx| {
+                state.load_schedules(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Delete a persisted schedule.
+    pub fn delete_schedule(&mut self, schedule_id: &str, cx: &mut Context<Self>) {
+        let sid = schedule_id.to_string();
+        let forecast_id = match &self.forecast_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        self.schedules.retain(|s| s.id != sid);
+        let api = self.api.clone();
+        cx.spawn(async move |_, _| {
+            if let Err(e) = api.delete_forecast_schedule(&forecast_id, &sid).await {
+                log::warn!("[schedule] delete failed: {}", e);
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub fn assign_agent_to_driver(
         &mut self,
         driver_name: &str,
@@ -2242,6 +2370,21 @@ impl CockpitState {
             Schedule::Once => "once".to_string(),
             Schedule::Every { interval, unit } => format!("every {} {:?}", interval, unit),
             Schedule::Cron(c) => format!("cron: {}", c),
+        };
+
+        // Extract interval before schedule is moved into AST
+        let interval_hours: Option<i32> = match &schedule {
+            Schedule::Every { interval, unit } => {
+                let h = match unit {
+                    fermi::ast::TimeUnit::Minute => 1,
+                    fermi::ast::TimeUnit::Hour => *interval as i32,
+                    fermi::ast::TimeUnit::Day => *interval as i32 * 24,
+                    fermi::ast::TimeUnit::Week => *interval as i32 * 168,
+                    fermi::ast::TimeUnit::Month => *interval as i32 * 720,
+                };
+                Some(h)
+            }
+            _ => None,
         };
 
         self.program.add_agent(AgentStmt {
@@ -2282,6 +2425,26 @@ impl CockpitState {
         });
 
         self.fire_agent(agent_id, &query, cx);
+
+        // Persist recurring schedules to the backend (Once is fire-and-forget)
+        if let (Some(fid), Some(hours)) = (self.forecast_id.clone(), interval_hours) {
+            let req = UpsertScheduleRequest {
+                agent_id: agent_id.to_string(),
+                driver_name: driver_name.to_string(),
+                query: query.clone(),
+                interval_hours: hours,
+            };
+            let api = self.api.clone();
+            cx.spawn(async move |this, cx| {
+                match api.upsert_forecast_schedule(&fid, &req).await {
+                    Ok(_) => {
+                        this.update(cx, |state, cx| state.load_schedules(cx)).ok();
+                    }
+                    Err(e) => log::warn!("[schedule] upsert failed: {}", e),
+                }
+            })
+            .detach();
+        }
 
         self.focused_node = FocusedNode::Driver(driver_name.to_string());
         self.populate_editor_from_driver(driver_name, cx);
@@ -3525,6 +3688,10 @@ impl CockpitState {
         // Always try state.json — it has evidence, versions, base rate
         if let Ok(state_text) = std::fs::read_to_string(&state_path) {
             if let Ok(state_json) = serde_json::from_str::<JsonValue>(&state_text) {
+                // Restore forecast_id (set when forecast was previously published)
+                if let Some(fid) = state_json.get("forecast_id").and_then(|v| v.as_str()) {
+                    self.forecast_id = Some(fid.to_string());
+                }
                 // Restore probability
                 if let Some(prob) = state_json
                     .get("predicted_probability")
@@ -3768,6 +3935,8 @@ impl CockpitState {
 
         self.focused_node = FocusedNode::Question;
         self.right_tab = RightTab::Wiki;
+        // Load persisted schedules if this forecast was previously published
+        self.load_schedules(cx);
         cx.notify();
     }
     pub fn save_forecast(&mut self, cx: &mut Context<Self>) {
@@ -3884,6 +4053,7 @@ impl CockpitState {
                 // Save state.json (versions, probability, sim results)
                 let state_path = format!("forecasts/{}.state.json", filename);
                 let state_json = serde_json::json!({
+                    "forecast_id": self.forecast_id,
                     "current_version": self.current_version,
                     "predicted_probability": self.predicted_probability,
                     "inside_view_explanation": self.inside_view_explanation,
@@ -4081,6 +4251,8 @@ impl CockpitState {
                                 state.current_version, fid
                             ),
                         });
+                        // Load any existing schedules now that we have a forecast_id
+                        state.load_schedules(cx);
                         cx.notify();
                     })
                     .ok();
@@ -5604,6 +5776,14 @@ fn render_agent_picker(
         })
         .collect();
 
+    // ── Persisted schedules for this driver ───────────────────────
+    let driver_schedules: Vec<ForecastSchedule> = state
+        .schedules
+        .iter()
+        .filter(|s| s.driver_name == driver_name && s.enabled)
+        .cloned()
+        .collect();
+
     // ── Recommended agent (domain-first routing) ──────────────────
     let question_text = state
         .program
@@ -6010,6 +6190,105 @@ fn render_agent_picker(
                                 .child("📅 Weekly")
                         }),
                 )
+        })
+        // ── Active schedules for this driver ─────────────────────
+        .when(!driver_schedules.is_empty(), |el| {
+            el.child({
+                let rows: Vec<AnyElement> = driver_schedules
+                    .iter()
+                    .map(|sched| {
+                        let sid_run = sched.id.clone();
+                        let sid_del = sched.id.clone();
+                        let label = if sched.interval_hours >= 168 {
+                            format!("every {} week", sched.interval_hours / 168)
+                        } else {
+                            format!("every {}h", sched.interval_hours)
+                        };
+                        let next = sched
+                            .next_run_at
+                            .get(..16)
+                            .unwrap_or(&sched.next_run_at)
+                            .replace('T', " ");
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .px(px(4.0))
+                            .py(px(3.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(theme::BG_ACTIVE))
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::GREEN))
+                                    .child("🔁"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .flex_grow()
+                                    .child(format!(
+                                        "{} {} — next: {}",
+                                        sched.agent_id, label, next
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(ElementId::Name(
+                                        format!("run-now-{}", sid_run).into(),
+                                    ))
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::CYAN))
+                                    .px(px(6.0))
+                                    .py(px(2.0))
+                                    .rounded(px(3.0))
+                                    .bg(rgb(theme::BG))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.run_now_schedule(&sid_run, cx);
+                                    }))
+                                    .child("▶"),
+                            )
+                            .child(
+                                div()
+                                    .id(ElementId::Name(
+                                        format!("del-sched-{}", sid_del).into(),
+                                    ))
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .px(px(6.0))
+                                    .py(px(2.0))
+                                    .rounded(px(3.0))
+                                    .bg(rgb(theme::BG))
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(rgb(theme::RED)))
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.delete_schedule(&sid_del, cx);
+                                    }))
+                                    .child("×"),
+                            )
+                            .into_any_element()
+                    })
+                    .collect();
+
+                div()
+                    .px(px(10.0))
+                    .py(px(6.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.0))
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .mb(px(2.0))
+                            .child("SCHEDULED AUTO-RESEARCH"),
+                    )
+                    .children(rows)
+            })
         })
         // ── Driver research question ──────────────────────────────
         // The user types what they want to know — the system enriches

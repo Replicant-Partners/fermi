@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Observatory — Agent Bestiary</title>
+    <link rel="stylesheet" href="/static/css/variables.css" />
+    <link rel="stylesheet" href="/static/css/common.css" />
+    <link rel="stylesheet" href="/static/css/components.css" />
+    <style>
+      body {
+        font-family: "Berkeley Mono", "JetBrains Mono", monospace;
+        line-height: 1.6;
+      }
+      .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+      .toolbar {
+        display: flex; align-items: center; gap: 12px;
+        margin-bottom: 16px; flex-wrap: wrap;
+      }
+      .toolbar input, .toolbar select {
+        background: var(--bg0); color: var(--fg3);
+        border: 1px solid var(--bg2);
+        padding: 6px 10px; font-family: inherit; font-size: 0.85rem;
+      }
+      .toolbar .btn {
+        background: transparent; border: 1px solid var(--bg3);
+        padding: 6px 14px; cursor: pointer;
+        font-size: 0.8rem; color: var(--fg3); font-family: inherit;
+        text-decoration: none;
+      }
+      .toolbar .btn:hover { border-color: var(--yellow); color: var(--yellow); }
+      .toolbar .btn-primary { border-color: var(--yellow); color: var(--yellow); }
+      .toolbar .btn-primary:hover { background: var(--yellow); color: var(--bg0-hard); }
+      .badge {
+        display: inline-block; font-size: 0.7rem;
+        padding: 2px 8px; border: 1px solid var(--bg3);
+      }
+      .badge-good { color: var(--green); border-color: var(--green); }
+      .badge-warn { color: var(--yellow); border-color: var(--yellow); }
+      .badge-bad  { color: var(--red); border-color: var(--red); }
+      .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+      .section {
+        background: var(--bg0); border: 1px solid var(--bg2);
+        padding: 16px; margin-bottom: 16px;
+      }
+      .section-title {
+        font-size: 0.85rem; color: var(--yellow);
+        text-transform: uppercase; letter-spacing: 1px;
+        margin-bottom: 12px;
+      }
+      .dim-row {
+        display: grid; grid-template-columns: 160px 1fr 50px auto;
+        gap: 10px; align-items: center;
+        padding: 6px 0; border-bottom: 1px dashed var(--bg2);
+      }
+      .dim-row:last-child { border-bottom: none; }
+      .dim-name { font-size: 0.8rem; color: var(--fg3); }
+      .dim-bar-bg { height: 6px; background: var(--bg2); }
+      .dim-bar-fill { height: 6px; transition: width 0.4s; }
+      .dim-num { font-size: 0.75rem; text-align: right; color: var(--fg3); }
+      .dim-spread {
+        font-size: 0.65rem; padding: 2px 6px;
+        border: 1px solid var(--bg3); color: var(--fg3);
+      }
+      .anomaly {
+        display: grid; grid-template-columns: 90px 90px 1fr auto;
+        gap: 10px; padding: 8px 4px;
+        border-bottom: 1px dashed var(--bg2); font-size: 0.8rem;
+      }
+      .anomaly-kind { color: var(--yellow); text-transform: uppercase; }
+      .anomaly-kind.drift { color: var(--blue); }
+      .anomaly-kind.rolling_conflict { color: var(--yellow); }
+      .anomaly-kind.rupture { color: var(--purple); }
+      .anomaly-kind.safety { color: var(--red); }
+      .timeline-row {
+        display: grid; grid-template-columns: 140px 70px 80px 1fr 80px;
+        gap: 10px; padding: 6px 4px;
+        border-bottom: 1px dashed var(--bg2); font-size: 0.75rem;
+      }
+      .prov-auto { color: var(--blue); }
+      .prov-human-approved { color: var(--green); }
+      .prov-human-corrected { color: var(--yellow); }
+      .prov-synthetic-correction { color: var(--purple); }
+      .empty {
+        color: var(--fg4); font-style: italic;
+        padding: 12px 4px; font-size: 0.85rem;
+      }
+      .summary-row {
+        display: flex; gap: 24px; flex-wrap: wrap;
+        padding-bottom: 8px; margin-bottom: 12px;
+        border-bottom: 1px solid var(--bg2);
+      }
+      .summary-cell { font-size: 0.8rem; }
+      .summary-cell strong { color: var(--green); display: block; font-size: 1.05rem; }
+      .dyad-row {
+        display: grid; grid-template-columns: 180px 80px 80px 80px 60px;
+        gap: 10px; padding: 4px;
+        border-bottom: 1px dashed var(--bg2); font-size: 0.75rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header style="margin-bottom: 24px">
+        <h1 style="font-size: 1.4rem; color: var(--yellow)">
+          Observatory <span style="color: var(--fg4); font-weight: normal; font-size: 0.85rem">— per-agent longitudinal view</span>
+        </h1>
+        <div style="margin-top: 6px; font-size: 0.8rem">
+          <a href="/dashboard" style="color: var(--fg3); text-decoration: none">← Dashboard</a>
+          <span style="margin: 0 12px; color: var(--bg3)">·</span>
+          <a href="/observatory/hitl" style="color: var(--fg3); text-decoration: none">Review queue →</a>
+        </div>
+      </header>
+
+      <div class="toolbar">
+        <label>Agent ID:&nbsp;
+          <input id="agent-input" type="text" placeholder="agent uuid or name" style="width: 280px" />
+        </label>
+        <label>Window:&nbsp;
+          <select id="window-select">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" onclick="loadAgent()">Load</button>
+        <button class="btn" onclick="triggerScan()">Trigger Scan</button>
+      </div>
+
+      <div id="agent-summary" class="section" style="display: none">
+        <div class="summary-row">
+          <div class="summary-cell">Agent <strong id="s-name">—</strong></div>
+          <div class="summary-cell">Persona version <strong id="s-pv">—</strong></div>
+          <div class="summary-cell">Window <strong id="s-window">—</strong></div>
+          <div class="summary-cell">Active dimensions <strong id="s-dims">—</strong></div>
+        </div>
+        <div id="s-status"></div>
+      </div>
+
+      <div id="charts-area" style="display: none">
+        <div class="grid-2">
+          <div class="section">
+            <div class="section-title">Per-dimension trend (rolling)</div>
+            <div id="dims-list"></div>
+          </div>
+          <div class="section">
+            <div class="section-title">Anomalies (recent)</div>
+            <div id="anomalies-list"></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Dyad state</div>
+          <div id="dyads-list"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Timeline (latest entries)</div>
+          <div id="timeline-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const initialId = params.get("agent");
+      if (initialId) {
+        document.getElementById("agent-input").value = initialId;
+      }
+
+      function colorForScore(v) {
+        if (v >= 0.75) return "var(--green)";
+        if (v >= 0.55) return "var(--yellow)";
+        return "var(--red)";
+      }
+
+      function pct(v) {
+        return Math.round((v ?? 0) * 100);
+      }
+
+      async function fetchJson(url, opts = {}) {
+        const resp = await fetch(url, opts);
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(`${resp.status} ${text}`);
+        }
+        return resp.json();
+      }
+
+      async function loadAgent() {
+        const id = document.getElementById("agent-input").value.trim();
+        if (!id) return;
+        const window = document.getElementById("window-select").value;
+
+        try {
+          const [tl, dyads, anoms] = await Promise.all([
+            fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/timeline?window=${window}`),
+            fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/dyads`),
+            fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/anomalies?limit=20`),
+          ]);
+
+          renderAgent(tl, dyads, anoms);
+          document.getElementById("agent-summary").style.display = "";
+          document.getElementById("charts-area").style.display = "";
+          // Update URL so the view is shareable
+          const u = new URL(window.location.href);
+          u.searchParams.set("agent", id);
+          history.replaceState(null, "", u.toString());
+        } catch (e) {
+          alert(`Failed to load: ${e.message}`);
+        }
+      }
+
+      async function triggerScan() {
+        const id = document.getElementById("agent-input").value.trim();
+        if (!id) return;
+        try {
+          const r = await fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/scan`, {
+            method: "POST",
+          });
+          const rep = r.report;
+          alert(
+            `Scan complete: ${rep.entries_scanned} entries, ${rep.anomalies_detected} anomalies, ${rep.drift_computations} drift computations (${rep.duration_ms}ms)`
+          );
+          loadAgent();
+        } catch (e) {
+          alert(`Scan failed: ${e.message}`);
+        }
+      }
+
+      function renderAgent(tl, dyads, anoms) {
+        // Summary
+        document.getElementById("s-name").textContent = tl.agent_name || "—";
+        document.getElementById("s-pv").textContent = `v${tl.persona_version}`;
+        document.getElementById("s-window").textContent = tl.window;
+        document.getElementById("s-dims").textContent = Object.keys(tl.trend?.series || {}).length;
+
+        const blocked = (tl.entries || []).some(e => Array.isArray(e.anomaly_flags) && e.anomaly_flags.length > 0);
+        const status = document.getElementById("s-status");
+        if (anoms.anomalies.some(a => !a.resolved_at && a.requires_review)) {
+          status.innerHTML = `<span class="badge badge-warn">${anoms.anomalies.filter(a => !a.resolved_at && a.requires_review).length} pending review</span>`;
+        } else if (blocked) {
+          status.innerHTML = `<span class="badge badge-warn">Anomaly flags present</span>`;
+        } else {
+          status.innerHTML = `<span class="badge badge-good">Stable</span>`;
+        }
+
+        // Per-dimension trends
+        const dimsEl = document.getElementById("dims-list");
+        const series = tl.trend?.series || {};
+        const dimNames = Object.keys(series).sort();
+        if (!dimNames.length) {
+          dimsEl.innerHTML = '<div class="empty">No scored dimensions yet.</div>';
+        } else {
+          dimsEl.innerHTML = dimNames.map(name => {
+            const s = series[name];
+            const p = pct(s.mean);
+            const color = colorForScore(s.mean);
+            const trend = s.latest != null && s.latest < s.mean - 0.05 ? "↓" : s.latest != null && s.latest > s.mean + 0.05 ? "↑" : "→";
+            return `<div class="dim-row">
+              <span class="dim-name">${name}</span>
+              <div class="dim-bar-bg"><div class="dim-bar-fill" style="background:${color};width:${p}%"></div></div>
+              <span class="dim-num" style="color:${color}">${p}%</span>
+              <span class="dim-spread">σ ${s.std_dev.toFixed(2)} ${trend}</span>
+            </div>`;
+          }).join("");
+        }
+
+        // Anomalies
+        const anEl = document.getElementById("anomalies-list");
+        const events = (anoms.anomalies || []).slice(0, 12);
+        if (!events.length) {
+          anEl.innerHTML = '<div class="empty">No anomalies recorded.</div>';
+        } else {
+          anEl.innerHTML = events.map(a => {
+            const status = a.resolved_at ? '<span class="badge badge-good">resolved</span>' :
+                          a.requires_review ? '<span class="badge badge-warn">review</span>' :
+                          '<span class="badge">noted</span>';
+            const when = new Date(a.created_at).toLocaleString();
+            return `<div class="anomaly">
+              <span class="anomaly-kind ${a.kind}">${a.kind}</span>
+              <span class="dim-num">${a.severity}</span>
+              <span style="color:var(--fg4); font-size:0.75rem">${when}</span>
+              <span>${status}</span>
+            </div>`;
+          }).join("");
+        }
+
+        // Dyads
+        const dEl = document.getElementById("dyads-list");
+        const dyadList = dyads.dyads || [];
+        if (!dyadList.length) {
+          dEl.innerHTML = '<div class="empty">No dyads tracked yet.</div>';
+        } else {
+          dEl.innerHTML = `<div class="dyad-row" style="font-weight:600; color:var(--yellow)">
+            <span>dyad</span><span>rapport</span><span>trust</span><span>reciprocity</span><span>n</span>
+          </div>` + dyadList.map(d => `<div class="dyad-row">
+              <span style="color:var(--fg3); overflow:hidden; text-overflow:ellipsis">${d.dyad_id}</span>
+              <span style="color:${colorForScore(d.rapport)}">${d.rapport.toFixed(2)}</span>
+              <span style="color:${colorForScore(d.trust)}">${d.trust.toFixed(2)}</span>
+              <span style="color:${colorForScore(d.reciprocity)}">${d.reciprocity.toFixed(2)}</span>
+              <span style="color:var(--fg4)">${d.episode_count}</span>
+            </div>`).join("");
+        }
+
+        // Timeline
+        const tEl = document.getElementById("timeline-list");
+        const entries = (tl.entries || []).slice(0, 20);
+        if (!entries.length) {
+          tEl.innerHTML = '<div class="empty">No timeline entries yet.</div>';
+        } else {
+          tEl.innerHTML = `<div class="timeline-row" style="font-weight:600; color:var(--yellow)">
+            <span>when</span><span>persona</span><span>provenance</span><span>flags</span><span>drift</span>
+          </div>` + entries.map(e => {
+            const when = new Date(e.created_at).toLocaleTimeString();
+            const flags = Array.isArray(e.anomaly_flags) && e.anomaly_flags.length ? e.anomaly_flags.join(", ") : "—";
+            const drift = e.drift_norm != null ? e.drift_norm.toFixed(3) : "—";
+            const provClass = "prov-" + e.provenance.replace(/_/g, "-");
+            return `<div class="timeline-row">
+              <span style="color:var(--fg4)">${when}</span>
+              <span>v${e.persona_version}</span>
+              <span class="${provClass}">${e.provenance}</span>
+              <span style="color:var(--fg4)">${flags}</span>
+              <span style="color:var(--fg3)">${drift}</span>
+            </div>`;
+          }).join("");
+        }
+      }
+
+      // Auto-load if agent specified in URL
+      if (initialId) {
+        loadAgent();
+      }
+    </script>
+  </body>
+</html>

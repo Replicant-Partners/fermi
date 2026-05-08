@@ -1,8 +1,9 @@
 use crate::{
-    Agent, AgentUpdate, AgentVersion, CoherenceEvaluation, Community, ConsolidationJob,
-    CorrectionClassification, CorrectionScope, Entity, Episode, EpisodeCorrection, EvalRun,
-    EvalTestCase, Fact, MarketplaceListing, MarketplaceTransaction, MemoryError, Provenance,
-    Result, ReviewerAction, SemanticRule, ShoppingProfile, VerificationStatus, WorkspaceMessage,
+    Agent, AgentObservabilityState, AgentUpdate, AgentVersion, AnomalyEvent, CoherenceEvaluation,
+    Community, ConsolidationJob, CorrectionClassification, DyadState, Entity, Episode,
+    EpisodeCorrection, EvalRun, EvalSignal, EvalTestCase, Fact, HitlAction, MarketplaceListing,
+    MarketplaceTransaction, MemoryError, Result, SemanticRule, ShoppingProfile, TimelineEntry,
+    VerificationStatus, WorkspaceMessage,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
@@ -97,30 +98,6 @@ impl MemoryStore {
         .await?;
 
         Ok(row.try_get("episode_id")?)
-    }
-
-    /// Read the Phase 0 observability fields from a `pg` row, falling
-    /// back to the type defaults when the columns are missing (defensive
-    /// against rows fetched by SELECTs written before migration 103
-    /// shipped).
-    fn read_episode_observability_fields(
-        row: &sqlx::postgres::PgRow,
-    ) -> (Provenance, f64, Option<String>, Option<i32>) {
-        let provenance = row
-            .try_get::<String, _>("provenance")
-            .ok()
-            .and_then(|s| s.parse::<Provenance>().ok())
-            .unwrap_or_default();
-        let authority_weight = row
-            .try_get::<f64, _>("authority_weight")
-            .ok()
-            .unwrap_or(0.5);
-        let dyad_id = row.try_get::<Option<String>, _>("dyad_id").ok().flatten();
-        let persona_version_at_write = row
-            .try_get::<Option<i32>, _>("persona_version_at_write")
-            .ok()
-            .flatten();
-        (provenance, authority_weight, dyad_id, persona_version_at_write)
     }
 
     /// Get an episode by ID
@@ -2037,6 +2014,7 @@ impl MemoryStore {
                 avg_latency_ms = $6, avg_tokens = $7, avg_judge_score = $8,
                 total_cost_credits = $9, case_results = $10,
                 regression_detected = $11, regression_details = $12,
+                aggregated_signal = $13, conflict_flags = $14, prefilter_blocked = $15,
                 completed_at = NOW(),
                 duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at))::BIGINT * 1000
                WHERE run_id = $1"#,
@@ -2053,6 +2031,9 @@ impl MemoryStore {
         .bind(&run.case_results)
         .bind(run.regression_detected)
         .bind(&run.regression_details)
+        .bind(&run.aggregated_signal)
+        .bind(&run.conflict_flags)
+        .bind(run.prefilter_blocked)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -2064,6 +2045,7 @@ impl MemoryStore {
                       total_cases, passed, failed, avg_latency_ms, avg_tokens,
                       avg_judge_score, total_cost_credits, case_results,
                       regression_detected, regression_details,
+                      aggregated_signal, conflict_flags, prefilter_blocked,
                       started_at, completed_at, duration_ms
                FROM eval_runs
                WHERE agent_id = $1
@@ -2095,6 +2077,11 @@ impl MemoryStore {
                     .unwrap_or(serde_json::json!([])),
                 regression_detected: r.try_get("regression_detected").unwrap(),
                 regression_details: r.try_get("regression_details").unwrap_or(None),
+                aggregated_signal: r.try_get("aggregated_signal").ok().flatten(),
+                conflict_flags: r
+                    .try_get::<serde_json::Value, _>("conflict_flags")
+                    .unwrap_or(serde_json::json!([])),
+                prefilter_blocked: r.try_get("prefilter_blocked").unwrap_or(false),
                 started_at: r.try_get("started_at").unwrap(),
                 completed_at: r.try_get("completed_at").unwrap_or(None),
                 duration_ms: r.try_get("duration_ms").unwrap_or(None),
@@ -2456,6 +2443,111 @@ impl MemoryStore {
         Ok(rows.iter().map(row_to_marketplace_transaction).collect())
     }
 
+    // ─── Phase 2 — eval_signals (per-evaluator scoring history) ─────
+    //
+    // The evaluator registry (Plane B, see agent-bestiary-evaluators)
+    // writes one row here per (run, episode, evaluator, dimension).
+    // Phase 3 trend analyser reads from this table; Phase 4 HITL
+    // surfaces dimension-level breakdowns.
+
+    /// Insert a single evaluator signal row.
+    pub async fn create_eval_signal(&self, signal: &EvalSignal) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"INSERT INTO eval_signals (
+                signal_id, run_id, episode_id, agent_id,
+                evaluator_name, evaluator_version, evaluator_tier,
+                dimension, score, confidence, flags,
+                bundle_provenance, persona_version,
+                model_used, cost_credits, latency_ms, rationale
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            RETURNING signal_id"#,
+        )
+        .bind(signal.signal_id)
+        .bind(signal.run_id)
+        .bind(signal.episode_id)
+        .bind(signal.agent_id)
+        .bind(&signal.evaluator_name)
+        .bind(&signal.evaluator_version)
+        .bind(&signal.evaluator_tier)
+        .bind(&signal.dimension)
+        .bind(signal.score)
+        .bind(signal.confidence)
+        .bind(&signal.flags)
+        .bind(&signal.bundle_provenance)
+        .bind(signal.persona_version)
+        .bind(&signal.model_used)
+        .bind(signal.cost_credits)
+        .bind(signal.latency_ms)
+        .bind(&signal.rationale)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("signal_id")?)
+    }
+
+    /// Bulk insert — used by the eval pipeline to persist all signals
+    /// for one run in a single round-trip when feasible. Fails atomically.
+    pub async fn create_eval_signals(&self, signals: &[EvalSignal]) -> Result<usize> {
+        if signals.is_empty() {
+            return Ok(0);
+        }
+        // Phase 2 ships a simple loop; if this becomes a hotspot we
+        // can swap to UNNEST-based bulk insert.
+        let mut inserted = 0usize;
+        for s in signals {
+            self.create_eval_signal(s).await?;
+            inserted += 1;
+        }
+        Ok(inserted)
+    }
+
+    /// All signals for a given run (eval-run dashboard).
+    pub async fn list_eval_signals_for_run(&self, run_id: Uuid) -> Result<Vec<EvalSignal>> {
+        let rows = sqlx::query(
+            r#"SELECT signal_id, run_id, episode_id, agent_id,
+                      evaluator_name, evaluator_version, evaluator_tier,
+                      dimension, score, confidence, flags,
+                      bundle_provenance, persona_version,
+                      model_used, cost_credits, latency_ms, rationale,
+                      created_at
+               FROM eval_signals
+               WHERE run_id = $1
+               ORDER BY evaluator_name, dimension"#,
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_eval_signal).collect()
+    }
+
+    /// All signals for an agent on a single dimension, newest first
+    /// (used by the Phase 3 trend analyser).
+    pub async fn list_eval_signals_for_dimension(
+        &self,
+        agent_id: Uuid,
+        dimension: &str,
+        limit: i64,
+    ) -> Result<Vec<EvalSignal>> {
+        let rows = sqlx::query(
+            r#"SELECT signal_id, run_id, episode_id, agent_id,
+                      evaluator_name, evaluator_version, evaluator_tier,
+                      dimension, score, confidence, flags,
+                      bundle_provenance, persona_version,
+                      model_used, cost_credits, latency_ms, rationale,
+                      created_at
+               FROM eval_signals
+               WHERE agent_id = $1 AND dimension = $2
+               ORDER BY created_at DESC
+               LIMIT $3"#,
+        )
+        .bind(agent_id)
+        .bind(dimension)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_eval_signal).collect()
+    }
+
     // ─── Phase 0 — episode_corrections (HITL audit trail) ────────────
     //
     // Append-only. The DB enforces immutability via a row-level trigger
@@ -2579,6 +2671,571 @@ impl MemoryStore {
 
         row.map(|r| row_to_episode_correction(&r)).transpose()
     }
+
+    // ─── Phase 3 — agent_timeline_entries ───────────────────────────
+
+    /// Insert a timeline entry. Returns the assigned `entry_id`.
+    pub async fn create_timeline_entry(&self, entry: &TimelineEntry) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"INSERT INTO agent_timeline_entries (
+                entry_id, agent_id, episode_id, run_id,
+                persona_version, dyad_id, session_id,
+                provenance, dim_scores, drift_norm,
+                within_version_cosine, anomaly_flags
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING entry_id"#,
+        )
+        .bind(entry.entry_id)
+        .bind(entry.agent_id)
+        .bind(entry.episode_id)
+        .bind(entry.run_id)
+        .bind(entry.persona_version)
+        .bind(&entry.dyad_id)
+        .bind(&entry.session_id)
+        .bind(&entry.provenance)
+        .bind(&entry.dim_scores)
+        .bind(entry.drift_norm)
+        .bind(entry.within_version_cosine)
+        .bind(&entry.anomaly_flags)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("entry_id")?)
+    }
+
+    /// List the most-recent timeline entries for an agent.
+    pub async fn list_timeline_entries(
+        &self,
+        agent_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<TimelineEntry>> {
+        let rows = sqlx::query(
+            r#"SELECT entry_id, agent_id, episode_id, run_id,
+                      persona_version, dyad_id, session_id,
+                      provenance, dim_scores, drift_norm,
+                      within_version_cosine, anomaly_flags, created_at
+               FROM agent_timeline_entries
+               WHERE agent_id = $1
+               ORDER BY created_at DESC
+               LIMIT $2"#,
+        )
+        .bind(agent_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_timeline_entry).collect()
+    }
+
+    /// List timeline entries written since a checkpoint (used by the
+    /// background scanner). Returns rows ordered ascending so the
+    /// scanner processes them in episode order.
+    pub async fn list_timeline_entries_since(
+        &self,
+        agent_id: Uuid,
+        after: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<TimelineEntry>> {
+        let rows = match after {
+            Some(checkpoint) => sqlx::query(
+                r#"SELECT entry_id, agent_id, episode_id, run_id,
+                          persona_version, dyad_id, session_id,
+                          provenance, dim_scores, drift_norm,
+                          within_version_cosine, anomaly_flags, created_at
+                   FROM agent_timeline_entries
+                   WHERE agent_id = $1
+                     AND created_at > (
+                         SELECT created_at FROM agent_timeline_entries WHERE entry_id = $2
+                     )
+                   ORDER BY created_at ASC
+                   LIMIT $3"#,
+            )
+            .bind(agent_id)
+            .bind(checkpoint)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?,
+            None => sqlx::query(
+                r#"SELECT entry_id, agent_id, episode_id, run_id,
+                          persona_version, dyad_id, session_id,
+                          provenance, dim_scores, drift_norm,
+                          within_version_cosine, anomaly_flags, created_at
+                   FROM agent_timeline_entries
+                   WHERE agent_id = $1
+                   ORDER BY created_at ASC
+                   LIMIT $2"#,
+            )
+            .bind(agent_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?,
+        };
+        rows.iter().map(row_to_timeline_entry).collect()
+    }
+
+    /// Update an already-persisted timeline entry's drift / anomaly
+    /// fields. Used by the background scanner after computing
+    /// drift_norm and anomaly_flags for a row inserted inline.
+    pub async fn update_timeline_drift_anomaly(
+        &self,
+        entry_id: Uuid,
+        drift_norm: Option<f64>,
+        within_version_cosine: Option<f64>,
+        anomaly_flags: &serde_json::Value,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE agent_timeline_entries
+               SET drift_norm = $2,
+                   within_version_cosine = $3,
+                   anomaly_flags = $4
+               WHERE entry_id = $1"#,
+        )
+        .bind(entry_id)
+        .bind(drift_norm)
+        .bind(within_version_cosine)
+        .bind(anomaly_flags)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    // ─── Phase 3 — dyad_state ───────────────────────────────────────
+
+    /// Upsert a dyad state row. Recompute-or-create — caller has
+    /// already merged the new observation into the running state.
+    pub async fn upsert_dyad_state(&self, state: &DyadState) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO dyad_state (
+                dyad_id, agent_id, human_id,
+                rapport, trust, reciprocity,
+                episode_count, recent_rapport, last_updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (dyad_id) DO UPDATE SET
+                rapport         = EXCLUDED.rapport,
+                trust           = EXCLUDED.trust,
+                reciprocity     = EXCLUDED.reciprocity,
+                episode_count   = EXCLUDED.episode_count,
+                recent_rapport  = EXCLUDED.recent_rapport,
+                last_updated_at = NOW()"#,
+        )
+        .bind(&state.dyad_id)
+        .bind(state.agent_id)
+        .bind(&state.human_id)
+        .bind(state.rapport)
+        .bind(state.trust)
+        .bind(state.reciprocity)
+        .bind(state.episode_count)
+        .bind(&state.recent_rapport)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_dyad_state(&self, dyad_id: &str) -> Result<Option<DyadState>> {
+        let row = sqlx::query(
+            r#"SELECT dyad_id, agent_id, human_id, rapport, trust, reciprocity,
+                      episode_count, recent_rapport, last_updated_at, created_at
+               FROM dyad_state
+               WHERE dyad_id = $1"#,
+        )
+        .bind(dyad_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|r| row_to_dyad_state(&r)).transpose()
+    }
+
+    pub async fn list_dyads_for_agent(&self, agent_id: Uuid) -> Result<Vec<DyadState>> {
+        let rows = sqlx::query(
+            r#"SELECT dyad_id, agent_id, human_id, rapport, trust, reciprocity,
+                      episode_count, recent_rapport, last_updated_at, created_at
+               FROM dyad_state
+               WHERE agent_id = $1
+               ORDER BY last_updated_at DESC"#,
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_dyad_state).collect()
+    }
+
+    // ─── Phase 3 — anomaly_events ────────────────────────────────────
+
+    pub async fn create_anomaly_event(&self, event: &AnomalyEvent) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"INSERT INTO anomaly_events (
+                event_id, agent_id, episode_id, run_id, dyad_id,
+                kind, severity, payload, requires_review
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING event_id"#,
+        )
+        .bind(event.event_id)
+        .bind(event.agent_id)
+        .bind(event.episode_id)
+        .bind(event.run_id)
+        .bind(&event.dyad_id)
+        .bind(&event.kind)
+        .bind(&event.severity)
+        .bind(&event.payload)
+        .bind(event.requires_review)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("event_id")?)
+    }
+
+    pub async fn list_anomaly_events_for_agent(
+        &self,
+        agent_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<AnomalyEvent>> {
+        let rows = sqlx::query(
+            r#"SELECT event_id, agent_id, episode_id, run_id, dyad_id,
+                      kind, severity, payload, requires_review,
+                      resolved_at, resolved_by, created_at
+               FROM anomaly_events
+               WHERE agent_id = $1
+               ORDER BY created_at DESC
+               LIMIT $2"#,
+        )
+        .bind(agent_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_anomaly_event).collect()
+    }
+
+    /// HITL queue read path — events flagged `requires_review` and not
+    /// yet `resolved_at`. Phase 4 consumes this.
+    pub async fn list_pending_anomaly_events(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<AnomalyEvent>> {
+        let rows = sqlx::query(
+            r#"SELECT event_id, agent_id, episode_id, run_id, dyad_id,
+                      kind, severity, payload, requires_review,
+                      resolved_at, resolved_by, created_at
+               FROM anomaly_events
+               WHERE requires_review = TRUE AND resolved_at IS NULL
+               ORDER BY created_at DESC
+               LIMIT $1"#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_anomaly_event).collect()
+    }
+
+    // ─── Phase 3 — agent_observability_state (worker checkpoint) ────
+
+    /// Upsert (and bump update timestamp). Caller mutates the state
+    /// in-memory and then writes it back.
+    pub async fn upsert_agent_observability_state(
+        &self,
+        state: &AgentObservabilityState,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO agent_observability_state (
+                agent_id, last_scanned_entry_id,
+                last_scan_started_at, last_scan_completed_at, last_scan_duration_ms,
+                timeline_entry_count, anomaly_event_count, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            ON CONFLICT (agent_id) DO UPDATE SET
+                last_scanned_entry_id  = EXCLUDED.last_scanned_entry_id,
+                last_scan_started_at   = EXCLUDED.last_scan_started_at,
+                last_scan_completed_at = EXCLUDED.last_scan_completed_at,
+                last_scan_duration_ms  = EXCLUDED.last_scan_duration_ms,
+                timeline_entry_count   = EXCLUDED.timeline_entry_count,
+                anomaly_event_count    = EXCLUDED.anomaly_event_count,
+                updated_at             = NOW()"#,
+        )
+        .bind(state.agent_id)
+        .bind(state.last_scanned_entry_id)
+        .bind(state.last_scan_started_at)
+        .bind(state.last_scan_completed_at)
+        .bind(state.last_scan_duration_ms)
+        .bind(state.timeline_entry_count)
+        .bind(state.anomaly_event_count)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_agent_observability_state(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<Option<AgentObservabilityState>> {
+        let row = sqlx::query(
+            r#"SELECT agent_id, last_scanned_entry_id,
+                      last_scan_started_at, last_scan_completed_at, last_scan_duration_ms,
+                      timeline_entry_count, anomaly_event_count, created_at, updated_at
+               FROM agent_observability_state
+               WHERE agent_id = $1"#,
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|r| row_to_agent_observability_state(&r)).transpose()
+    }
+
+    /// Read the embedding mean for a specific persona_version of an
+    /// agent over the last `limit` episodes. Used by
+    /// PersonaDriftMonitor to compare across versions.
+    ///
+    /// Returns `None` when no episodes with embeddings exist for that
+    /// version yet.
+    pub async fn mean_embedding_for_persona_version(
+        &self,
+        agent_id: Uuid,
+        persona_version: i32,
+        limit: i64,
+    ) -> Result<Option<Vec<f32>>> {
+        let rows = sqlx::query(
+            r#"SELECT embedding
+               FROM episodes
+               WHERE agent_id = $1
+                 AND persona_version_at_write = $2
+                 AND embedding IS NOT NULL
+               ORDER BY timestamp_ref DESC
+               LIMIT $3"#,
+        )
+        .bind(agent_id)
+        .bind(persona_version)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let mut acc: Option<Vec<f32>> = None;
+        let mut count = 0usize;
+        for row in &rows {
+            let v: Option<pgvector::Vector> = row.try_get("embedding")?;
+            let Some(v) = v else { continue };
+            let v = v.to_vec();
+            match acc.as_mut() {
+                None => {
+                    acc = Some(v);
+                    count = 1;
+                }
+                Some(a) if a.len() == v.len() => {
+                    for (a, b) in a.iter_mut().zip(v.iter()) {
+                        *a += b;
+                    }
+                    count += 1;
+                }
+                _ => continue, // dimension mismatch — skip defensively
+            }
+        }
+        if count == 0 {
+            return Ok(None);
+        }
+        let mut a = acc.unwrap();
+        let n = count as f32;
+        for x in a.iter_mut() {
+            *x /= n;
+        }
+        Ok(Some(a))
+    }
+
+    // ─── Phase 4 — hitl_actions (reviewer audit trail) ──────────────
+
+    /// Record a HITL reviewer action. Append-only; the DB-level
+    /// trigger blocks UPDATEs.
+    pub async fn create_hitl_action(&self, action: &HitlAction) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"INSERT INTO hitl_actions (
+                action_id, anomaly_event_id, agent_id, reviewer_id,
+                action, notes, score_overrides, correction_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING action_id"#,
+        )
+        .bind(action.action_id)
+        .bind(action.anomaly_event_id)
+        .bind(action.agent_id)
+        .bind(&action.reviewer_id)
+        .bind(action.action.to_string())
+        .bind(&action.notes)
+        .bind(&action.score_overrides)
+        .bind(action.correction_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("action_id")?)
+    }
+
+    /// All actions for a specific anomaly event, newest first.
+    pub async fn list_hitl_actions_for_anomaly(
+        &self,
+        anomaly_event_id: Uuid,
+    ) -> Result<Vec<HitlAction>> {
+        let rows = sqlx::query(
+            r#"SELECT action_id, anomaly_event_id, agent_id, reviewer_id,
+                      action, notes, score_overrides, correction_id, created_at
+               FROM hitl_actions
+               WHERE anomaly_event_id = $1
+               ORDER BY created_at DESC"#,
+        )
+        .bind(anomaly_event_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_hitl_action).collect()
+    }
+
+    /// Mark an anomaly event resolved. Called after a HITL action is
+    /// recorded; the anomaly's `resolved_at` / `resolved_by` are
+    /// updated so the queue stops surfacing it.
+    pub async fn resolve_anomaly_event(
+        &self,
+        event_id: Uuid,
+        reviewer_id: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE anomaly_events
+               SET resolved_at = NOW(), resolved_by = $2
+               WHERE event_id = $1"#,
+        )
+        .bind(event_id)
+        .bind(reviewer_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get an anomaly event by id.
+    pub async fn get_anomaly_event(&self, event_id: Uuid) -> Result<Option<AnomalyEvent>> {
+        let row = sqlx::query(
+            r#"SELECT event_id, agent_id, episode_id, run_id, dyad_id,
+                      kind, severity, payload, requires_review,
+                      resolved_at, resolved_by, created_at
+               FROM anomaly_events
+               WHERE event_id = $1"#,
+        )
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|r| row_to_anomaly_event(&r)).transpose()
+    }
+}
+
+fn row_to_hitl_action(row: &sqlx::postgres::PgRow) -> Result<HitlAction> {
+    Ok(HitlAction {
+        action_id: row.try_get("action_id")?,
+        anomaly_event_id: row.try_get("anomaly_event_id")?,
+        agent_id: row.try_get("agent_id")?,
+        reviewer_id: row.try_get("reviewer_id")?,
+        action: row
+            .try_get::<String, _>("action")?
+            .parse()
+            .map_err(MemoryError::InvalidData)?,
+        notes: row.try_get("notes").ok().flatten(),
+        score_overrides: row
+            .try_get::<serde_json::Value, _>("score_overrides")
+            .unwrap_or_else(|_| serde_json::json!({})),
+        correction_id: row.try_get("correction_id").ok().flatten(),
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn row_to_eval_signal(row: &sqlx::postgres::PgRow) -> Result<EvalSignal> {
+    Ok(EvalSignal {
+        signal_id: row.try_get("signal_id")?,
+        run_id: row.try_get("run_id").ok().flatten(),
+        episode_id: row.try_get("episode_id").ok().flatten(),
+        agent_id: row.try_get("agent_id")?,
+        evaluator_name: row.try_get("evaluator_name")?,
+        evaluator_version: row.try_get("evaluator_version")?,
+        evaluator_tier: row.try_get("evaluator_tier")?,
+        dimension: row.try_get("dimension")?,
+        score: row.try_get("score")?,
+        confidence: row.try_get("confidence")?,
+        flags: row
+            .try_get::<serde_json::Value, _>("flags")
+            .unwrap_or_else(|_| serde_json::json!([])),
+        bundle_provenance: row.try_get("bundle_provenance")?,
+        persona_version: row.try_get("persona_version").ok().flatten(),
+        model_used: row.try_get("model_used").ok().flatten(),
+        cost_credits: row.try_get("cost_credits")?,
+        latency_ms: row.try_get("latency_ms")?,
+        rationale: row.try_get("rationale").ok().flatten(),
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn row_to_timeline_entry(row: &sqlx::postgres::PgRow) -> Result<TimelineEntry> {
+    Ok(TimelineEntry {
+        entry_id: row.try_get("entry_id")?,
+        agent_id: row.try_get("agent_id")?,
+        episode_id: row.try_get("episode_id").ok().flatten(),
+        run_id: row.try_get("run_id").ok().flatten(),
+        persona_version: row.try_get("persona_version")?,
+        dyad_id: row.try_get("dyad_id").ok().flatten(),
+        session_id: row.try_get("session_id").ok().flatten(),
+        provenance: row.try_get("provenance")?,
+        dim_scores: row
+            .try_get::<serde_json::Value, _>("dim_scores")
+            .unwrap_or_else(|_| serde_json::json!({})),
+        drift_norm: row.try_get("drift_norm").ok().flatten(),
+        within_version_cosine: row.try_get("within_version_cosine").ok().flatten(),
+        anomaly_flags: row
+            .try_get::<serde_json::Value, _>("anomaly_flags")
+            .unwrap_or_else(|_| serde_json::json!([])),
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn row_to_dyad_state(row: &sqlx::postgres::PgRow) -> Result<DyadState> {
+    Ok(DyadState {
+        dyad_id: row.try_get("dyad_id")?,
+        agent_id: row.try_get("agent_id")?,
+        human_id: row.try_get("human_id")?,
+        rapport: row.try_get("rapport")?,
+        trust: row.try_get("trust")?,
+        reciprocity: row.try_get("reciprocity")?,
+        episode_count: row.try_get("episode_count")?,
+        recent_rapport: row
+            .try_get::<serde_json::Value, _>("recent_rapport")
+            .unwrap_or_else(|_| serde_json::json!([])),
+        last_updated_at: row.try_get("last_updated_at")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn row_to_anomaly_event(row: &sqlx::postgres::PgRow) -> Result<AnomalyEvent> {
+    Ok(AnomalyEvent {
+        event_id: row.try_get("event_id")?,
+        agent_id: row.try_get("agent_id")?,
+        episode_id: row.try_get("episode_id").ok().flatten(),
+        run_id: row.try_get("run_id").ok().flatten(),
+        dyad_id: row.try_get("dyad_id").ok().flatten(),
+        kind: row.try_get("kind")?,
+        severity: row.try_get("severity")?,
+        payload: row
+            .try_get::<serde_json::Value, _>("payload")
+            .unwrap_or_else(|_| serde_json::json!({})),
+        requires_review: row.try_get("requires_review")?,
+        resolved_at: row.try_get("resolved_at").ok().flatten(),
+        resolved_by: row.try_get("resolved_by").ok().flatten(),
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn row_to_agent_observability_state(
+    row: &sqlx::postgres::PgRow,
+) -> Result<AgentObservabilityState> {
+    Ok(AgentObservabilityState {
+        agent_id: row.try_get("agent_id")?,
+        last_scanned_entry_id: row.try_get("last_scanned_entry_id").ok().flatten(),
+        last_scan_started_at: row.try_get("last_scan_started_at").ok().flatten(),
+        last_scan_completed_at: row.try_get("last_scan_completed_at").ok().flatten(),
+        last_scan_duration_ms: row.try_get("last_scan_duration_ms").ok().flatten(),
+        timeline_entry_count: row.try_get("timeline_entry_count")?,
+        anomaly_event_count: row.try_get("anomaly_event_count")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
 }
 
 fn row_to_episode_correction(row: &sqlx::postgres::PgRow) -> Result<EpisodeCorrection> {

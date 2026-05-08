@@ -2,6 +2,8 @@
 members = [
     ".",
     "agent-bestiary/memory",
+    "agent-bestiary/evaluators",
+    "agent-bestiary/observability",
     "agent-bestiary/ontology",
     "agent-bestiary/consolidate",
     "agent-bestiary/projector",
@@ -75,6 +77,14 @@ http-body-util = "0.1"
 agent-bestiary-memory = { path = "agent-bestiary/memory" }
 agent-bestiary-ontology = { path = "agent-bestiary/ontology" }
 agent-bestiary-projector = { path = "agent-bestiary/projector" }
+
+# Social Agent Observability — Plane B evaluator registry
+# (see docs/architecture/OBSERVABILITY_IMPL.md, Phase 1+2)
+agent-bestiary-evaluators = { path = "agent-bestiary/evaluators" }
+
+# Social Agent Observability — Plane C longitudinal observability
+# (see docs/architecture/OBSERVABILITY_IMPL.md, Phase 3)
+agent-bestiary-observability = { path = "agent-bestiary/observability" }
 rust_decimal = { version = "1", features = ["serde-float"] }
 sha2 = "0.10"
 

@@ -728,6 +728,159 @@ pub struct EvalRun {
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub duration_ms: Option<i64>,
+    // Phase 2 — evaluator-registry aggregated outputs (migration 104)
+    /// Serialized `AggregatedSignal` from the evaluator registry.
+    /// Renders the per-dimension breakdown without re-aggregating
+    /// from `eval_signals`. `None` for runs that pre-date Phase 2.
+    #[serde(default)]
+    pub aggregated_signal: Option<serde_json::Value>,
+    /// Conflict flags from the registry's aggregator. Always an
+    /// array (possibly empty). One entry per dimension where
+    /// evaluators disagreed beyond the conflict threshold.
+    #[serde(default = "default_json_array")]
+    pub conflict_flags: serde_json::Value,
+    /// True when the registry pre-filter short-circuited dimensional
+    /// evaluators on this run (e.g. safety filter fired).
+    #[serde(default)]
+    pub prefilter_blocked: bool,
+}
+
+/// One per-evaluator, per-dimension scoring signal — see
+/// migration 104 (`eval_signals` table). Phase 3 trend analyser
+/// reads from here; Phase 4 HITL surfaces the dimension breakdown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalSignal {
+    pub signal_id: Uuid,
+    /// `None` when the registry was invoked outside the eval pipeline
+    /// (Phase 3 longitudinal scoring path).
+    pub run_id: Option<Uuid>,
+    /// `None` when the underlying execution didn't store an episode.
+    pub episode_id: Option<Uuid>,
+    pub agent_id: Uuid,
+
+    pub evaluator_name: String,
+    pub evaluator_version: String,
+    pub evaluator_tier: String, // 'pre_filter' | 'dimensional'
+
+    pub dimension: String,
+    pub score: f64,
+    pub confidence: f64,
+
+    pub flags: serde_json::Value,
+    pub bundle_provenance: String,
+    pub persona_version: Option<i32>,
+
+    pub model_used: Option<String>,
+    pub cost_credits: i32,
+    pub latency_ms: i64,
+
+    pub rationale: Option<String>,
+
+    pub created_at: DateTime<Utc>,
+}
+
+// ─── Phase 3 — longitudinal observability (migration 105) ────────────
+
+/// One row per scored episode in `agent_timeline_entries` — the
+/// per-agent timeline that powers the observatory dashboard charts.
+///
+/// Mostly a denormalized projection of `(Episode, AggregatedSignal,
+/// persona_version, dyad_id)` for fast chart reads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineEntry {
+    pub entry_id: Uuid,
+    pub agent_id: Uuid,
+    pub episode_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+
+    pub persona_version: i32,
+    pub dyad_id: Option<String>,
+    pub session_id: Option<String>,
+
+    pub provenance: String,
+
+    /// Per-dimension means as `{ dim_name: f64 }`.
+    pub dim_scores: serde_json::Value,
+
+    /// Drift vector magnitude vs. the previous persona_version baseline.
+    /// `None` when no prior baseline exists yet.
+    pub drift_norm: Option<f64>,
+    /// Cosine similarity vs. the rolling-mean embedding of the same
+    /// persona_version (within-version cohesion).
+    pub within_version_cosine: Option<f64>,
+
+    pub anomaly_flags: serde_json::Value,
+
+    pub created_at: DateTime<Utc>,
+}
+
+/// Per-(agent, human) running rapport / trust / reciprocity.
+///
+/// Phase 3 ships the schema and the running update math; values
+/// stay scaffolding-quality until multi-turn workspace data flows in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DyadState {
+    pub dyad_id: String,
+    pub agent_id: Uuid,
+    pub human_id: String,
+    pub rapport: f64,
+    pub trust: f64,
+    pub reciprocity: f64,
+    pub episode_count: i32,
+    /// Bounded JSON array of recent rapport scores for rupture detection.
+    pub recent_rapport: serde_json::Value,
+    pub last_updated_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Anomaly event — drift / rolling_conflict / rupture / safety.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnomalyEvent {
+    pub event_id: Uuid,
+    pub agent_id: Uuid,
+    pub episode_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+    pub dyad_id: Option<String>,
+    pub kind: String,
+    pub severity: String,
+    pub payload: serde_json::Value,
+    pub requires_review: bool,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub resolved_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// HITL action record — see `hitl_actions` table (Phase 4).
+///
+/// Append-only audit trail of reviewer decisions on anomaly events.
+/// One row per reviewer-action; an anomaly may have multiple rows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HitlAction {
+    pub action_id: Uuid,
+    pub anomaly_event_id: Uuid,
+    pub agent_id: Uuid,
+    pub reviewer_id: String,
+    pub action: ReviewerAction,
+    pub notes: Option<String>,
+    pub score_overrides: serde_json::Value,
+    pub correction_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Per-agent observability worker checkpoint — drives the Phase 3
+/// hybrid scheduling model (timeline written inline, drift + anomaly
+/// scanned in the background).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentObservabilityState {
+    pub agent_id: Uuid,
+    pub last_scanned_entry_id: Option<Uuid>,
+    pub last_scan_started_at: Option<DateTime<Utc>>,
+    pub last_scan_completed_at: Option<DateTime<Utc>>,
+    pub last_scan_duration_ms: Option<i64>,
+    pub timeline_entry_count: i32,
+    pub anomaly_event_count: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Workspace chat message

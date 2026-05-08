@@ -288,6 +288,34 @@ pub struct RecentResolution {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortfolioForecast {
+    pub id: String,
+    pub question_text: String,
+    pub predicted_probability: f64,
+    pub status: String,
+    pub brier_score: Option<f64>,
+    pub actual_outcome: Option<bool>,
+    pub resolved_at: Option<String>,
+    pub visibility: Option<String>,
+    pub added_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortfolioForecastsResponse {
+    pub portfolio_id: String,
+    pub forecasts: Vec<PortfolioForecast>,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchPortfolioRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePortfolioRequest {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -298,6 +326,30 @@ pub struct CreatePortfolioRequest {
     pub visibility: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
+}
+
+// ── Schedules ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForecastSchedule {
+    pub id: String,
+    pub forecast_id: String,
+    pub agent_id: String,
+    pub driver_name: String,
+    pub query: String,
+    pub interval_hours: i32,
+    pub last_run_at: Option<String>,
+    pub next_run_at: String,
+    pub enabled: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertScheduleRequest {
+    pub agent_id: String,
+    pub driver_name: String,
+    pub query: String,
+    pub interval_hours: i32,
 }
 
 // ── Leaderboard ────────────────────────────────────────────────────
@@ -705,6 +757,36 @@ impl ApiClient {
         Ok(())
     }
 
+    async fn patch<B: Serialize, R: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R, ApiError> {
+        let url = self.url(path).await;
+        let mut headers = self.headers().await?;
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let response = self
+            .http
+            .patch(&url)
+            .headers(headers)
+            .json(body)
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        if !response.status().is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiError::from_status(status, &body));
+        }
+
+        let text = response.text().await?;
+        serde_json::from_str(&text).map_err(ApiError::Json)
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Auth
     // ═══════════════════════════════════════════════════════════════
@@ -848,6 +930,31 @@ impl ApiClient {
         .await
     }
 
+    /// Delete a portfolio.
+    pub async fn delete_portfolio(&self, portfolio_id: &str) -> Result<(), ApiError> {
+        self.delete(&format!("/api/portfolios/{}", portfolio_id))
+            .await
+    }
+
+    /// Rename or update a portfolio's description.
+    pub async fn patch_portfolio(
+        &self,
+        portfolio_id: &str,
+        req: &PatchPortfolioRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.patch(&format!("/api/portfolios/{}", portfolio_id), req)
+            .await
+    }
+
+    /// List forecasts in a portfolio.
+    pub async fn list_portfolio_forecasts(
+        &self,
+        portfolio_id: &str,
+    ) -> Result<PortfolioForecastsResponse, ApiError> {
+        self.get(&format!("/api/portfolios/{}/forecasts", portfolio_id))
+            .await
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Polymarket
     // ═══════════════════════════════════════════════════════════════
@@ -930,6 +1037,60 @@ impl ApiClient {
     /// Get a specific team.
     pub async fn get_team(&self, team_id: &str) -> Result<JsonValue, ApiError> {
         self.get(&format!("/api/teams/{}", team_id)).await
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Schedules
+    // ═══════════════════════════════════════════════════════════════
+
+    pub async fn list_forecast_schedules(
+        &self,
+        forecast_id: &str,
+    ) -> Result<Vec<ForecastSchedule>, ApiError> {
+        let resp: JsonValue = self
+            .get(&format!("/api/forecasts/{}/schedules", forecast_id))
+            .await?;
+        let schedules = resp
+            .get("schedules")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        Ok(schedules)
+    }
+
+    pub async fn upsert_forecast_schedule(
+        &self,
+        forecast_id: &str,
+        req: &UpsertScheduleRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.put(&format!("/api/forecasts/{}/schedules", forecast_id), req)
+            .await
+    }
+
+    pub async fn delete_forecast_schedule(
+        &self,
+        forecast_id: &str,
+        schedule_id: &str,
+    ) -> Result<(), ApiError> {
+        self.delete(&format!(
+            "/api/forecasts/{}/schedules/{}",
+            forecast_id, schedule_id
+        ))
+        .await
+    }
+
+    pub async fn record_schedule_run(
+        &self,
+        forecast_id: &str,
+        schedule_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            &format!(
+                "/api/forecasts/{}/schedules/{}/run",
+                forecast_id, schedule_id
+            ),
+            &json!({}),
+        )
+        .await
     }
 
     // ═══════════════════════════════════════════════════════════════
