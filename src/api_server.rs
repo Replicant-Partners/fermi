@@ -771,10 +771,6 @@ async fn main() {
             post(handlers::observatory::record_hitl_action_handler),
         )
         .route(
-            "/api/observatory/hitl/consensus/:request_id",
-            post(handlers::observatory::confirm_two_reviewer_handler),
-        )
-        .route(
             "/api/agents/:agent_id/dependencies",
             get(handlers::agents::get_agent_dependencies_handler),
         )
