@@ -31,6 +31,7 @@
       .toolbar .btn:hover { border-color: var(--yellow); color: var(--yellow); }
       .toolbar .btn-primary { border-color: var(--yellow); color: var(--yellow); }
       .toolbar .btn-primary:hover { background: var(--yellow); color: var(--bg0-hard); }
+      .toolbar .btn-active { border-color: var(--green); color: var(--green); }
       .badge {
         display: inline-block; font-size: 0.7rem;
         padding: 2px 8px; border: 1px solid var(--bg3);
@@ -44,10 +45,20 @@
         padding: 16px; margin-bottom: 16px;
       }
       .section-title {
+        display: flex; align-items: center; justify-content: space-between;
         font-size: 0.85rem; color: var(--yellow);
         text-transform: uppercase; letter-spacing: 1px;
         margin-bottom: 12px;
       }
+      .section-title-text { flex: 1; }
+      .live-dot {
+        width: 7px; height: 7px; border-radius: 50%;
+        background: var(--green); margin-right: 6px;
+        display: inline-block; vertical-align: middle;
+      }
+      .live-dot.paused { background: var(--fg4); animation: none; }
+      @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+      .live-dot.active { animation: blink 2s infinite; }
       .dim-row {
         display: grid; grid-template-columns: 160px 1fr 50px auto;
         gap: 10px; align-items: center;
@@ -97,13 +108,34 @@
         gap: 10px; padding: 4px;
         border-bottom: 1px dashed var(--bg2); font-size: 0.75rem;
       }
+      /* scan status strip */
+      .scan-status {
+        font-size: 0.75rem; color: var(--fg4);
+        padding: 4px 0; margin-bottom: 4px;
+        min-height: 1.4em;
+      }
+      .scan-status.scanning { color: var(--yellow); }
+      .scan-status.done     { color: var(--green); }
+      .scan-status.error    { color: var(--red); }
+      /* refresh controls */
+      .refresh-controls {
+        display: flex; align-items: center; gap: 8px;
+        font-size: 0.75rem; color: var(--fg4);
+      }
+      .refresh-controls select {
+        background: var(--bg0); color: var(--fg3);
+        border: 1px solid var(--bg2);
+        padding: 3px 6px; font-family: inherit; font-size: 0.75rem;
+      }
+      .last-updated { font-size: 0.72rem; color: var(--fg4); margin-left: auto; }
     </style>
   </head>
   <body>
     <div class="container">
       <header style="margin-bottom: 24px">
         <h1 style="font-size: 1.4rem; color: var(--yellow)">
-          Observatory <span style="color: var(--fg4); font-weight: normal; font-size: 0.85rem">— per-agent longitudinal view</span>
+          Observatory
+          <span style="color: var(--fg4); font-weight: normal; font-size: 0.85rem">— per-agent longitudinal view</span>
         </h1>
         <div style="margin-top: 6px; font-size: 0.8rem">
           <a href="/dashboard" style="color: var(--fg3); text-decoration: none">← Dashboard</a>
@@ -125,8 +157,22 @@
           </select>
         </label>
         <button class="btn btn-primary" onclick="loadAgent()">Load</button>
-        <button class="btn" onclick="triggerScan()">Trigger Scan</button>
+        <button class="btn" id="scan-btn" onclick="triggerScan()">Trigger Scan</button>
+        <div class="refresh-controls">
+          <span class="live-dot paused" id="live-dot"></span>
+          Auto-refresh:
+          <select id="refresh-select" onchange="onRefreshChange()">
+            <option value="0">Off</option>
+            <option value="15">15 s</option>
+            <option value="30" selected>30 s</option>
+            <option value="60">60 s</option>
+            <option value="120">2 min</option>
+          </select>
+        </div>
+        <span class="last-updated" id="last-updated"></span>
       </div>
+
+      <div class="scan-status" id="scan-status"></div>
 
       <div id="agent-summary" class="section" style="display: none">
         <div class="summary-row">
@@ -141,43 +187,55 @@
       <div id="charts-area" style="display: none">
         <div class="grid-2">
           <div class="section">
-            <div class="section-title">Per-dimension trend (rolling)</div>
+            <div class="section-title">
+              <span class="section-title-text">Per-dimension trend (rolling)</span>
+            </div>
             <div id="dims-list"></div>
           </div>
           <div class="section">
-            <div class="section-title">Anomalies (recent)</div>
+            <div class="section-title">
+              <span class="section-title-text">Anomalies (recent)</span>
+            </div>
             <div id="anomalies-list"></div>
           </div>
         </div>
 
         <div class="section">
-          <div class="section-title">Dyad state</div>
+          <div class="section-title">
+            <span class="section-title-text">Dyad state</span>
+          </div>
           <div id="dyads-list"></div>
         </div>
 
         <div class="section">
-          <div class="section-title">Timeline (latest entries)</div>
+          <div class="section-title">
+            <span class="section-title-text">Timeline (latest entries)</span>
+          </div>
           <div id="timeline-list"></div>
         </div>
       </div>
     </div>
 
     <script>
-      const params = new URLSearchParams(window.location.search);
+      // ── State ────────────────────────────────────────────────────────────
+      let _refreshTimer = null;
+      let _isLoading = false;
+      let _currentAgent = null;
+
+      const params = new URLSearchParams(location.search);
       const initialId = params.get("agent");
       if (initialId) {
         document.getElementById("agent-input").value = initialId;
       }
 
+      // ── Helpers ──────────────────────────────────────────────────────────
       function colorForScore(v) {
         if (v >= 0.75) return "var(--green)";
         if (v >= 0.55) return "var(--yellow)";
         return "var(--red)";
       }
 
-      function pct(v) {
-        return Math.round((v ?? 0) * 100);
-      }
+      function pct(v) { return Math.round((v ?? 0) * 100); }
 
       async function fetchJson(url, opts = {}) {
         const resp = await fetch(url, opts);
@@ -188,59 +246,139 @@
         return resp.json();
       }
 
+      function setScanStatus(msg, cls = "") {
+        const el = document.getElementById("scan-status");
+        el.textContent = msg;
+        el.className = "scan-status " + cls;
+      }
+
+      function setLastUpdated() {
+        document.getElementById("last-updated").textContent =
+          "Last updated: " + new Date().toLocaleTimeString();
+      }
+
+      // ── Auto-refresh ─────────────────────────────────────────────────────
+      function onRefreshChange() {
+        clearInterval(_refreshTimer);
+        _refreshTimer = null;
+        const secs = parseInt(document.getElementById("refresh-select").value, 10);
+        const dot = document.getElementById("live-dot");
+
+        if (secs > 0 && _currentAgent) {
+          dot.className = "live-dot active";
+          _refreshTimer = setInterval(() => {
+            if (!_isLoading) silentRefresh();
+          }, secs * 1000);
+        } else {
+          dot.className = "live-dot paused";
+        }
+      }
+
+      // Silent refresh — updates charts without showing loading state.
+      async function silentRefresh() {
+        if (!_currentAgent) return;
+        const agentId = _currentAgent;
+        const winSize = document.getElementById("window-select").value;
+        try {
+          const [tl, dyads, anoms] = await Promise.all([
+            fetchJson(`/api/observatory/agents/${encodeURIComponent(agentId)}/timeline?window=${winSize}`),
+            fetchJson(`/api/observatory/agents/${encodeURIComponent(agentId)}/dyads`),
+            fetchJson(`/api/observatory/agents/${encodeURIComponent(agentId)}/anomalies?limit=20`),
+          ]);
+          renderAgent(tl, dyads, anoms);
+          setLastUpdated();
+        } catch (_) {
+          // Swallow silent-refresh errors; the user can manually reload.
+        }
+      }
+
+      // ── Load (user-initiated) ────────────────────────────────────────────
       async function loadAgent() {
         const id = document.getElementById("agent-input").value.trim();
-        if (!id) return;
-        const window = document.getElementById("window-select").value;
+        if (!id || _isLoading) return;
+        const winSize = document.getElementById("window-select").value;
+
+        _isLoading = true;
+        setScanStatus("Loading…", "scanning");
 
         try {
           const [tl, dyads, anoms] = await Promise.all([
-            fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/timeline?window=${window}`),
+            fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/timeline?window=${winSize}`),
             fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/dyads`),
             fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/anomalies?limit=20`),
           ]);
 
+          _currentAgent = id;
           renderAgent(tl, dyads, anoms);
+          setLastUpdated();
+          setScanStatus("", "");
+
           document.getElementById("agent-summary").style.display = "";
           document.getElementById("charts-area").style.display = "";
-          // Update URL so the view is shareable
-          const u = new URL(window.location.href);
+
+          // Update URL so the view is shareable / deep-linkable.
+          const u = new URL(location.href);
           u.searchParams.set("agent", id);
           history.replaceState(null, "", u.toString());
+
+          // (Re-)arm auto-refresh now that we have an agent.
+          onRefreshChange();
         } catch (e) {
-          alert(`Failed to load: ${e.message}`);
+          setScanStatus(`Failed to load: ${e.message}`, "error");
+        } finally {
+          _isLoading = false;
         }
       }
 
+      // ── Trigger Scan ─────────────────────────────────────────────────────
       async function triggerScan() {
         const id = document.getElementById("agent-input").value.trim();
         if (!id) return;
+
+        const btn = document.getElementById("scan-btn");
+        btn.disabled = true;
+        btn.textContent = "Scanning…";
+        setScanStatus("Running observability scan…", "scanning");
+
         try {
-          const r = await fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/scan`, {
-            method: "POST",
-          });
-          const rep = r.report;
-          alert(
-            `Scan complete: ${rep.entries_scanned} entries, ${rep.anomalies_detected} anomalies, ${rep.drift_computations} drift computations (${rep.duration_ms}ms)`
+          const r = await fetchJson(
+            `/api/observatory/agents/${encodeURIComponent(id)}/scan`,
+            { method: "POST" }
           );
-          loadAgent();
+          const rep = r.report;
+          setScanStatus(
+            `Scan complete — ${rep.entries_scanned} entries · ` +
+            `${rep.anomalies_detected} anomalies · ` +
+            `${rep.drift_computations} drift computations · ` +
+            `${rep.duration_ms}ms`,
+            "done"
+          );
+          // Reload data after scan so charts reflect new results.
+          if (_currentAgent) silentRefresh();
         } catch (e) {
-          alert(`Scan failed: ${e.message}`);
+          setScanStatus(`Scan failed: ${e.message}`, "error");
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Trigger Scan";
         }
       }
 
+      // ── Render ───────────────────────────────────────────────────────────
       function renderAgent(tl, dyads, anoms) {
-        // Summary
+        // Summary row
         document.getElementById("s-name").textContent = tl.agent_name || "—";
         document.getElementById("s-pv").textContent = `v${tl.persona_version}`;
         document.getElementById("s-window").textContent = tl.window;
         document.getElementById("s-dims").textContent = Object.keys(tl.trend?.series || {}).length;
 
-        const blocked = (tl.entries || []).some(e => Array.isArray(e.anomaly_flags) && e.anomaly_flags.length > 0);
+        const pendingReview = (anoms.anomalies || []).filter(a => !a.resolved_at && a.requires_review);
+        const hasFlags = (tl.entries || []).some(e =>
+          Array.isArray(e.anomaly_flags) && e.anomaly_flags.length > 0
+        );
         const status = document.getElementById("s-status");
-        if (anoms.anomalies.some(a => !a.resolved_at && a.requires_review)) {
-          status.innerHTML = `<span class="badge badge-warn">${anoms.anomalies.filter(a => !a.resolved_at && a.requires_review).length} pending review</span>`;
-        } else if (blocked) {
+        if (pendingReview.length) {
+          status.innerHTML = `<span class="badge badge-warn">${pendingReview.length} pending review</span>`;
+        } else if (hasFlags) {
           status.innerHTML = `<span class="badge badge-warn">Anomaly flags present</span>`;
         } else {
           status.innerHTML = `<span class="badge badge-good">Stable</span>`;
@@ -257,7 +395,8 @@
             const s = series[name];
             const p = pct(s.mean);
             const color = colorForScore(s.mean);
-            const trend = s.latest != null && s.latest < s.mean - 0.05 ? "↓" : s.latest != null && s.latest > s.mean + 0.05 ? "↑" : "→";
+            const trend = s.latest != null && s.latest < s.mean - 0.05 ? "↓"
+                        : s.latest != null && s.latest > s.mean + 0.05 ? "↑" : "→";
             return `<div class="dim-row">
               <span class="dim-name">${name}</span>
               <div class="dim-bar-bg"><div class="dim-bar-fill" style="background:${color};width:${p}%"></div></div>
@@ -274,15 +413,17 @@
           anEl.innerHTML = '<div class="empty">No anomalies recorded.</div>';
         } else {
           anEl.innerHTML = events.map(a => {
-            const status = a.resolved_at ? '<span class="badge badge-good">resolved</span>' :
-                          a.requires_review ? '<span class="badge badge-warn">review</span>' :
-                          '<span class="badge">noted</span>';
+            const badge = a.resolved_at
+              ? '<span class="badge badge-good">resolved</span>'
+              : a.requires_review
+              ? '<span class="badge badge-warn">review</span>'
+              : '<span class="badge">noted</span>';
             const when = new Date(a.created_at).toLocaleString();
             return `<div class="anomaly">
               <span class="anomaly-kind ${a.kind}">${a.kind}</span>
               <span class="dim-num">${a.severity}</span>
               <span style="color:var(--fg4); font-size:0.75rem">${when}</span>
-              <span>${status}</span>
+              <span>${badge}</span>
             </div>`;
           }).join("");
         }
@@ -293,9 +434,11 @@
         if (!dyadList.length) {
           dEl.innerHTML = '<div class="empty">No dyads tracked yet.</div>';
         } else {
-          dEl.innerHTML = `<div class="dyad-row" style="font-weight:600; color:var(--yellow)">
-            <span>dyad</span><span>rapport</span><span>trust</span><span>reciprocity</span><span>n</span>
-          </div>` + dyadList.map(d => `<div class="dyad-row">
+          dEl.innerHTML =
+            `<div class="dyad-row" style="font-weight:600; color:var(--yellow)">
+              <span>dyad</span><span>rapport</span><span>trust</span><span>reciprocity</span><span>n</span>
+            </div>` +
+            dyadList.map(d => `<div class="dyad-row">
               <span style="color:var(--fg3); overflow:hidden; text-overflow:ellipsis">${d.dyad_id}</span>
               <span style="color:${colorForScore(d.rapport)}">${d.rapport.toFixed(2)}</span>
               <span style="color:${colorForScore(d.trust)}">${d.trust.toFixed(2)}</span>
@@ -310,28 +453,29 @@
         if (!entries.length) {
           tEl.innerHTML = '<div class="empty">No timeline entries yet.</div>';
         } else {
-          tEl.innerHTML = `<div class="timeline-row" style="font-weight:600; color:var(--yellow)">
-            <span>when</span><span>persona</span><span>provenance</span><span>flags</span><span>drift</span>
-          </div>` + entries.map(e => {
-            const when = new Date(e.created_at).toLocaleTimeString();
-            const flags = Array.isArray(e.anomaly_flags) && e.anomaly_flags.length ? e.anomaly_flags.join(", ") : "—";
-            const drift = e.drift_norm != null ? e.drift_norm.toFixed(3) : "—";
-            const provClass = "prov-" + e.provenance.replace(/_/g, "-");
-            return `<div class="timeline-row">
-              <span style="color:var(--fg4)">${when}</span>
-              <span>v${e.persona_version}</span>
-              <span class="${provClass}">${e.provenance}</span>
-              <span style="color:var(--fg4)">${flags}</span>
-              <span style="color:var(--fg3)">${drift}</span>
-            </div>`;
-          }).join("");
+          tEl.innerHTML =
+            `<div class="timeline-row" style="font-weight:600; color:var(--yellow)">
+              <span>when</span><span>persona</span><span>provenance</span><span>flags</span><span>drift</span>
+            </div>` +
+            entries.map(e => {
+              const when = new Date(e.created_at).toLocaleTimeString();
+              const flags = Array.isArray(e.anomaly_flags) && e.anomaly_flags.length
+                ? e.anomaly_flags.join(", ") : "—";
+              const drift = e.drift_norm != null ? e.drift_norm.toFixed(3) : "—";
+              const provClass = "prov-" + e.provenance.replace(/_/g, "-");
+              return `<div class="timeline-row">
+                <span style="color:var(--fg4)">${when}</span>
+                <span>v${e.persona_version}</span>
+                <span class="${provClass}">${e.provenance}</span>
+                <span style="color:var(--fg4)">${flags}</span>
+                <span style="color:var(--fg3)">${drift}</span>
+              </div>`;
+            }).join("");
         }
       }
 
-      // Auto-load if agent specified in URL
-      if (initialId) {
-        loadAgent();
-      }
+      // ── Bootstrap ────────────────────────────────────────────────────────
+      if (initialId) loadAgent();
     </script>
   </body>
 </html>

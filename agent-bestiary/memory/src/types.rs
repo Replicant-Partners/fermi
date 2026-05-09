@@ -883,6 +883,46 @@ pub struct AgentObservabilityState {
     pub updated_at: DateTime<Utc>,
 }
 
+// ─── Phase 5 — two-reviewer consensus (migration 108) ────────────────
+
+/// Pending two-reviewer consensus request for `agent_wide` interventions.
+///
+/// Created by the first reviewer when they submit an `intervene` action
+/// on an `agent_wide`-scope anomaly. The second reviewer must confirm
+/// (via the same endpoint passing the `request_id`) before the coherence
+/// gate + two-write memory pattern executes.
+///
+/// See `migrations/108_intervention_feedback_loop.sql`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TwoReviewerRequest {
+    pub request_id: Uuid,
+    pub anomaly_event_id: Uuid,
+    pub agent_id: Uuid,
+
+    /// Full serialized `EncodedIntervention` so the second reviewer sees
+    /// exactly what the first reviewer submitted.
+    pub encoded_intervention: serde_json::Value,
+
+    pub first_reviewer_id: String,
+    pub first_reviewed_at: DateTime<Utc>,
+
+    pub second_reviewer_id: Option<String>,
+    pub second_reviewed_at: Option<DateTime<Utc>>,
+    /// `None` = awaiting, `true` = approved, `false` = rejected.
+    pub second_approved: Option<bool>,
+
+    /// `pending` | `approved` | `rejected` | `expired`
+    pub status: String,
+
+    /// Populated after the two-write pattern executes.
+    pub correction_id: Option<Uuid>,
+    pub synthetic_episode_id: Option<Uuid>,
+
+    pub notes: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Workspace chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceMessage {

@@ -359,6 +359,10 @@ struct FermiConsole {
     resolve_outcome: Option<bool>,
     resolve_loading: bool,
     resolve_error: Option<String>,
+
+    // Toast notification (auto-dismiss after 3 s)
+    // (message, icon, color)
+    toast: Option<(String, &'static str, u32)>,
 }
 
 #[derive(Clone)]
@@ -455,6 +459,7 @@ impl FermiConsole {
             resolve_outcome: None,
             resolve_loading: false,
             resolve_error: None,
+            toast: None,
         };
 
         // Try to load API key from environment (fallback for dev)
@@ -593,6 +598,25 @@ impl FermiConsole {
                     .ok();
                 }
             }
+        })
+        .detach();
+    }
+
+    /// Show a transient toast notification. Auto-dismisses after 3 seconds.
+    /// `icon` is a short emoji/symbol, `color` is a theme constant.
+    fn show_toast(&mut self, message: impl Into<String>, icon: &'static str, color: u32, cx: &mut Context<Self>) {
+        self.toast = Some((message.into(), icon, color));
+        cx.notify();
+        // Schedule dismissal after 3 s.
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(3))
+                .await;
+            this.update(cx, |console, cx| {
+                console.toast = None;
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
@@ -1066,7 +1090,17 @@ impl FermiConsole {
         // Create cockpit Entity on first visit to Composer
         if panel == Panel::Composer && self.cockpit.is_none() {
             let api = self.api.clone();
-            self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
+            let cockpit_entity = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
+            // Observe cockpit changes to drain toast notifications.
+            cx.observe(&cockpit_entity, |this, cockpit_ref, cx| {
+                let toasts: Vec<String> = cockpit_ref.update(cx, |state, _| {
+                    std::mem::take(&mut state.pending_toasts)
+                });
+                for msg in toasts {
+                    this.show_toast(msg, "✓", theme::GREEN, cx);
+                }
+            }).detach();
+            self.cockpit = Some(cockpit_entity);
         }
         // Refresh data when switching to agent fleet or leaderboard
         if changed && self.connected {
@@ -3659,7 +3693,7 @@ impl FermiConsole {
                                                             .child(label),
                                                     )
                                                 })
-                                                // Mini index sparkline
+                                                 // Mini inside/outside view comparison sparkline
                                                 .when(forecast.version_probs.len() > 1, |el| {
                                                     let history: Vec<crate::charts::IndexPoint> =
                                                         forecast
@@ -3688,12 +3722,65 @@ impl FermiConsole {
                                                         crate::charts::rgb_to_render_image(
                                                             &rgb_buf, chart_w, chart_h,
                                                         );
+                                                    // Divergence label: show how far inside is from outside
+                                                    let latest = forecast.version_probs.last().copied().unwrap_or(0.0);
+                                                    let base = forecast.base_rate;
+                                                    let divergence_pp = ((latest - base) * 100.0).round() as i32;
+                                                    let div_label = if divergence_pp.abs() < 2 {
+                                                        "≈ base rate".to_string()
+                                                    } else if divergence_pp > 0 {
+                                                        format!("+{}pp vs base", divergence_pp)
+                                                    } else {
+                                                        format!("{}pp vs base", divergence_pp)
+                                                    };
+                                                    let div_color = if divergence_pp.abs() < 5 {
+                                                        theme::FG_FAINT
+                                                    } else if divergence_pp.abs() < 15 {
+                                                        theme::GOLD
+                                                    } else {
+                                                        theme::RED
+                                                    };
                                                     el.child(
-                                                        gpui::img(gpui::ImageSource::Render(
-                                                            render_img,
-                                                        ))
-                                                        .w(gpui::px(chart_w as f32))
-                                                        .h(gpui::px(chart_h as f32)),
+                                                        div()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap(px(2.0))
+                                                            .child(
+                                                                gpui::img(gpui::ImageSource::Render(render_img))
+                                                                    .w(gpui::px(chart_w as f32))
+                                                                    .h(gpui::px(chart_h as f32)),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap(px(4.0))
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(px(8.0))
+                                                                            .text_color(theme::cyan())
+                                                                            .child("in"),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(px(8.0))
+                                                                            .text_color(rgb(theme::FG_FAINT))
+                                                                            .child("↔"),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(px(8.0))
+                                                                            .text_color(theme::gold())
+                                                                            .child("out"),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(px(8.0))
+                                                                            .text_color(rgb(div_color))
+                                                                            .min_w(px(0.0))
+                                                                            .child(div_label),
+                                                                    ),
+                                                            )
                                                     )
                                                 })
                                         }
@@ -3975,12 +4062,47 @@ impl FermiConsole {
 
     // ── Agent Fleet Panel ─────────────────────────────────────────────────
 
-    fn render_agent_fleet_panel(&self) -> impl IntoElement {
+    fn render_agent_fleet_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let cards = self.registry.list_cards().unwrap_or_default();
         let fermi_agents: Vec<_> = cards
             .iter()
             .filter(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
             .collect();
+
+        // Pull live cockpit data if we're in a forecast session.
+        let (agent_runs, session_cost, assigned_map) =
+            if let Some(ref cockpit_entity) = self.cockpit {
+                let state = cockpit_entity.read(cx);
+                let runs = state.agent_runs.clone();
+                let cost = state.session_cost;
+                // Build a map: agent_name → Vec<driver_name>
+                let mut amap: std::collections::HashMap<String, Vec<String>> =
+                    std::collections::HashMap::new();
+                for agent_stmt in state.program.agents() {
+                    for driver_ref in &agent_stmt.driver_refs {
+                        amap.entry(agent_stmt.name.clone())
+                            .or_default()
+                            .push(driver_ref.clone());
+                    }
+                }
+                (runs, cost, amap)
+            } else {
+                (vec![], 0.0, std::collections::HashMap::new())
+            };
+
+        // Session credit summary
+        let running_count = agent_runs
+            .iter()
+            .filter(|r| r.status == cockpit::AgentRunStatus::Running)
+            .count();
+        let completed_count = agent_runs
+            .iter()
+            .filter(|r| r.status == cockpit::AgentRunStatus::Completed)
+            .count();
+        let failed_count = agent_runs
+            .iter()
+            .filter(|r| r.status == cockpit::AgentRunStatus::Failed)
+            .count();
 
         div()
             .id("agent-fleet-panel")
@@ -3988,6 +4110,7 @@ impl FermiConsole {
             .flex_col()
             .size_full()
             .overflow_y_scroll()
+            // ── Header ────────────────────────────────────────────────
             .child(
                 div()
                     .px(px(24.0))
@@ -4002,26 +4125,75 @@ impl FermiConsole {
                             .text_size(px(20.0))
                             .text_color(theme::cyan())
                             .font_weight(FontWeight::BOLD)
-                            .child("My Research Team"),
+                            .child("⚙ Research Fleet"),
                     )
                     .child(
                         div()
                             .text_size(px(12.0))
                             .text_color(theme::fg_dim())
                             .child(format!("{} fermi-orchestra agents", fermi_agents.len())),
-                    ),
+                    )
+                    // Session credit cost
+                    .when(session_cost > 0.0, |el| {
+                        el.child(
+                            div()
+                                .ml_auto()
+                                .text_size(px(11.0))
+                                .text_color(theme::fg_dim())
+                                .child(format!("⚡ {:.1} credits this session", session_cost)),
+                        )
+                    }),
             )
+            // ── Status summary bar ────────────────────────────────────
+            .when(!agent_runs.is_empty(), |el| {
+                el.child(
+                    div()
+                        .px(px(24.0))
+                        .py(px(8.0))
+                        .border_b_1()
+                        .border_color(theme::fg_faint())
+                        .flex()
+                        .items_center()
+                        .gap(px(16.0))
+                        .when(running_count > 0, |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::gold())
+                                    .child(format!("⟳ {} running", running_count)),
+                            )
+                        })
+                        .when(completed_count > 0, |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::green())
+                                    .child(format!("✓ {} done", completed_count)),
+                            )
+                        })
+                        .when(failed_count > 0, |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::red())
+                                    .child(format!("✗ {} failed", failed_count)),
+                            )
+                        }),
+                )
+            })
+            // ── Agent cards ───────────────────────────────────────────
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
-                    .gap(px(12.0))
+                    .flex_col()
+                    .gap(px(8.0))
                     .p(px(16.0))
-                    .children(
-                        fermi_agents
-                            .iter()
-                            .map(|card| render_local_agent_card(card)),
-                    )
+                    .children(fermi_agents.iter().map(|card| {
+                        let agent_id = &card.agent_id;
+                        let run = agent_runs.iter().find(|r| r.agent_name == *agent_id);
+                        let drivers = assigned_map.get(agent_id).cloned().unwrap_or_default();
+                        render_fleet_agent_row(card, run, &drivers)
+                    }))
                     .when(fermi_agents.is_empty(), |el| {
                         el.child(
                             div()
@@ -4042,7 +4214,7 @@ impl FermiConsole {
                                         .text_size(px(12.0))
                                         .text_color(theme::fg_faint())
                                         .mt(px(4.0))
-                                        .child("Check agents/curated/ directory"),
+                                        .child("Open a forecast in the Composer to assign agents"),
                                 ),
                         )
                     }),
@@ -4874,7 +5046,7 @@ impl Render for FermiConsole {
                     match self.active_panel {
                         Panel::Dashboard => self.render_dashboard(cx).into_any_element(),
                         Panel::Portfolio => self.render_portfolio(cx).into_any_element(),
-                        Panel::AgentFleet => self.render_agent_fleet_panel().into_any_element(),
+                        Panel::AgentFleet => self.render_agent_fleet_panel(cx).into_any_element(),
                         Panel::Composer => {
                             if let Some(ref cockpit_entity) = self.cockpit {
                                 cockpit::render_cockpit(cockpit_entity).into_any_element()
@@ -4891,6 +5063,43 @@ impl Render for FermiConsole {
             .children(commit_overlay)
             // Resolve sheet overlay
             .children(resolve_overlay)
+            // Toast notification overlay (bottom-right, auto-dismiss)
+            .when(self.toast.is_some(), |el| {
+                if let Some((ref msg, icon, color)) = self.toast {
+                    el.child(
+                        div()
+                            // Fixed to bottom-right corner
+                            .absolute()
+                            .bottom(px(24.0))
+                            .right(px(24.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .px(px(16.0))
+                            .py(px(10.0))
+                            .rounded(px(8.0))
+                            .bg(theme::bg_elevated())
+                            .border_1()
+                            .border_color(rgb(color))
+                            .shadow_lg()
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .text_color(rgb(color))
+                                    .child(icon),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg())
+                                    .min_w(px(0.0))
+                                    .child(msg.clone()),
+                            ),
+                    )
+                } else {
+                    el
+                }
+            })
     }
 }
 
@@ -5088,6 +5297,212 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
 }
 
 /// Render a key-value pair for the forecast detail view.
+/// Full-width fleet row: agent identity + live run status + driver assignments + credits.
+fn render_fleet_agent_row(
+    card: &AgentCard,
+    run: Option<&cockpit::AgentExecution>,
+    assigned_drivers: &[String],
+) -> impl IntoElement {
+    use cockpit::AgentRunStatus;
+
+    let tier_color = match card.tier {
+        fermi::agent_backend::agent_card::AgentTier::Curated => theme::CYAN,
+        _ => theme::FG_DIM,
+    };
+
+    let (status_icon, status_text, status_color) = match run.map(|r| &r.status) {
+        Some(AgentRunStatus::Running) => ("⟳", "Running", theme::GOLD),
+        Some(AgentRunStatus::Completed) => ("✓", "Completed", theme::GREEN),
+        Some(AgentRunStatus::Failed) => ("✗", "Failed", theme::RED),
+        Some(AgentRunStatus::Idle) | None => ("○", "Idle", theme::FG_FAINT),
+    };
+
+    div()
+        .w_full()
+        .bg(theme::bg_elevated())
+        .border_1()
+        .border_color(theme::fg_faint())
+        .rounded(px(6.0))
+        .p(px(14.0))
+        .flex()
+        .gap(px(12.0))
+        // Left: status indicator column
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(4.0))
+                .w(px(48.0))
+                .child(
+                    div()
+                        .text_size(px(18.0))
+                        .text_color(rgb(status_color))
+                        .child(status_icon),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(status_color))
+                        .child(status_text),
+                ),
+        )
+        // Center: agent details
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .flex_grow()
+                .min_w(px(0.0))
+                // Name + tier badge
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .text_color(theme::fg())
+                                .font_weight(FontWeight::BOLD)
+                                .min_w(px(0.0))
+                                .child(card.agent_id.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(rgb(tier_color))
+                                .px(px(5.0))
+                                .py(px(1.0))
+                                .rounded(px(3.0))
+                                .bg(theme::bg_active())
+                                .child(card.agent_type.clone()),
+                        ),
+                )
+                // Description
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_dim())
+                        .min_w(px(0.0))
+                        .child(card.metadata.description.clone()),
+                )
+                // Driver assignments
+                .when(!assigned_drivers.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .flex_wrap()
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(theme::fg_faint())
+                                    .child("Assigned to:"),
+                            )
+                            .children(assigned_drivers.iter().map(|d| {
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(theme::cyan())
+                                    .px(px(4.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .bg(theme::bg())
+                                    .child(d.clone())
+                            })),
+                    )
+                })
+                .when(assigned_drivers.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child("Not assigned to any driver"),
+                    )
+                })
+                // Latest finding
+                .when(
+                    run.and_then(|r| r.latest_finding.as_ref()).is_some(),
+                    |el| {
+                        let finding = run
+                            .and_then(|r| r.latest_finding.as_deref())
+                            .unwrap_or("");
+                        el.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_dim())
+                                .bg(theme::bg())
+                                .px(px(6.0))
+                                .py(px(3.0))
+                                .rounded(px(3.0))
+                                .min_w(px(0.0))
+                                .child(format!("💬 {}", finding)),
+                        )
+                    },
+                )
+                // Error
+                .when(run.and_then(|r| r.error.as_ref()).is_some(), |el| {
+                    let err = run.and_then(|r| r.error.as_deref()).unwrap_or("");
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::red())
+                            .min_w(px(0.0))
+                            .child(format!("Error: {}", err)),
+                    )
+                }),
+        )
+        // Right: stats column
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(px(4.0))
+                .w(px(80.0))
+                .flex_shrink_0()
+                // Evidence count
+                .when(run.is_some(), |el| {
+                    let ev = run.map(|r| r.evidence_count).unwrap_or(0);
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!("{} evidence", ev)),
+                    )
+                })
+                // Credits charged
+                .when(
+                    run.and_then(|r| r.credits_charged).is_some(),
+                    |el| {
+                        let c = run.and_then(|r| r.credits_charged).unwrap_or(0.0);
+                        el.child(
+                            div()
+                                .text_size(px(9.0))
+                                .text_color(theme::fg_faint())
+                                .child(format!("⚡ {:.1} cr", c)),
+                        )
+                    },
+                )
+                // Model
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_faint())
+                        .child(card.capabilities.model.clone()),
+                )
+                // Total runs (lifetime)
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_faint())
+                        .child(format!("{} runs", card.usage.total_executions)),
+                ),
+        )
+}
+
 fn render_local_agent_card(card: &AgentCard) -> impl IntoElement {
     let tier_color = match card.tier {
         fermi::agent_backend::agent_card::AgentTier::Curated => theme::CYAN,
@@ -5580,6 +5995,12 @@ fn main() {
             KeyBinding::new("secondary-e", ToggleFplSource, Some("FermiConsole")),
             KeyBinding::new("secondary-m", MinimizeWindow, Some("FermiConsole")),
             KeyBinding::new("ctrl-shift-f", ToggleFullscreen, Some("FermiConsole")),
+        ]);
+
+        // Driver arrow navigation (up/down arrow keys while in the Composer)
+        cx.bind_keys([
+            KeyBinding::new("up", cockpit::NavigateDriverUp, Some("FermiConsole")),
+            KeyBinding::new("down", cockpit::NavigateDriverDown, Some("FermiConsole")),
         ]);
 
         // Set native application menu bar

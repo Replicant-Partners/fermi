@@ -4,6 +4,12 @@ members = [
     "agent-bestiary/memory",
     "agent-bestiary/evaluators",
     "agent-bestiary/observability",
+    "agent-bestiary/coherence-gate",
+    "agent-bestiary/evaluator-wildguard",
+    "agent-bestiary/evaluator-faithfulness",
+    "agent-bestiary/evaluator-sotopia",
+    "agent-bestiary/evaluator-lifelong",
+    "agent-bestiary/evaluator-character",
     "agent-bestiary/ontology",
     "agent-bestiary/consolidate",
     "agent-bestiary/projector",
@@ -85,6 +91,17 @@ agent-bestiary-evaluators = { path = "agent-bestiary/evaluators" }
 # Social Agent Observability — Plane C longitudinal observability
 # (see docs/architecture/OBSERVABILITY_IMPL.md, Phase 3)
 agent-bestiary-observability = { path = "agent-bestiary/observability" }
+
+# Social Agent Observability — Phase 5 intervention feedback loop
+# (coherence gate + two-write memory pattern)
+agent-bestiary-coherence-gate = { path = "agent-bestiary/coherence-gate" }
+
+# Track B — native Rust evaluator family (5 evaluators)
+evaluator-wildguard    = { path = "agent-bestiary/evaluator-wildguard" }
+evaluator-faithfulness = { path = "agent-bestiary/evaluator-faithfulness" }
+evaluator-sotopia      = { path = "agent-bestiary/evaluator-sotopia" }
+evaluator-lifelong     = { path = "agent-bestiary/evaluator-lifelong" }
+evaluator-character    = { path = "agent-bestiary/evaluator-character" }
 rust_decimal = { version = "1", features = ["serde-float"] }
 sha2 = "0.10"
 

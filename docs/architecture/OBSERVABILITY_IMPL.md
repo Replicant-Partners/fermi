@@ -35,8 +35,8 @@ See [`EVALUATOR_DESIGN.md`](./EVALUATOR_DESIGN.md) for Track B.
 | 2 — Wire registry into eval | ✅ done | `104_evaluator_signals.sql` | `agent-bestiary-memory`, `fermi` (`src/handlers/eval.rs`, `eval_judge.rs`, `eval_brier.rs`) | `cargo check --workspace` |
 | 3 — Longitudinal observability | ✅ done | `105_longitudinal_observability.sql` | new `agent-bestiary-observability`, `agent-bestiary-memory`, `fermi` | `cargo check --workspace`, 24 unit/integration tests |
 | 4 — HITL + observatory UI | ✅ done | `106_hitl_actions.sql` | `agent-bestiary-memory`, `fermi` (`src/handlers/observatory.rs`, `pages.rs`), templates | `cargo check --workspace` |
-| 5 — Intervention feedback loop | ⏳ next | – | `agent-bestiary-coherence`, `agent-bestiary-memory`, `fermi` | – |
-| 6 — Telemetry + docs cleanup | ⏳ pending | – | – | – |
+| 5 — Intervention feedback loop | ✅ done | `108_intervention_feedback_loop.sql` | new `agent-bestiary-coherence-gate`, `agent-bestiary-memory`, `fermi` (`src/handlers/observatory.rs`) | `cargo check --workspace`, 11 unit/integration tests |
+| 6 — Telemetry + docs cleanup | ✅ done | – | `templates/observatory.html` | visual inspection |
 
 ## Decision log
 
@@ -142,10 +142,10 @@ lives in the repo. Each phase fills more rows.
 | `hitl_actions` table (append-only audit trail) | ✅ Phase 4 | `migrations/106_hitl_actions.sql` |
 | Manual observability scan trigger | ✅ Phase 4 | `src/handlers/observatory.rs::trigger_agent_scan_handler` |
 | Per-agent timeline / dyad / anomaly read endpoints | ✅ Phase 4 | `src/handlers/observatory.rs` |
-| Intervention encoder (scope, classification) | ⏳ Phase 5 | (planned) `agent-bestiary/observability/src/intervention.rs` |
-| Coherence check (gatekeeper for `agent_wide`, settler for others) | ⏳ Phase 5 | (planned) `agent-bestiary/coherence/...` integration |
-| Two-write memory pattern (annotation + synthetic episode) | ⏳ Phase 5 | builds on `episode_corrections` (Phase 0) |
-| Two-reviewer consensus for `agent_wide` interventions | ⏳ Phase 5 | (planned) — Phase 4 surfaces but does not enforce |
+| Intervention encoder (scope, classification) | ✅ Phase 5 | `agent-bestiary/coherence-gate/src/encoder.rs::InterventionEncoder` |
+| Coherence check (gatekeeper for `agent_wide`, settler for others) | ✅ Phase 5 | `agent-bestiary/coherence-gate/src/gate.rs::CoherenceGate` |
+| Two-write memory pattern (annotation + synthetic episode) | ✅ Phase 5 | `agent-bestiary/coherence-gate/src/two_write.rs::TwoWriteMemory` |
+| Two-reviewer consensus for `agent_wide` interventions | ✅ Phase 5 | `migrations/108_intervention_feedback_loop.sql`, `MemoryStore::create_two_reviewer_request`, `POST /api/observatory/hitl/consensus/:id` |
 | `corrections[]` audit trail | ✅ Phase 0 | `episode_corrections` table |
 | Provenance enum on episodes | ✅ Phase 0 | `agent-bestiary/memory/src/types.rs::Provenance` |
 | `persona_version` field on agents | ✅ Phase 0 | `agent-bestiary/memory/src/types.rs::Agent` |
@@ -538,6 +538,117 @@ After deploying Phase 4:
 - A reviewer can `Approve` a noted anomaly (records to `hitl_actions`, marks `resolved_at` on the event) or `Relabel` it (same plus `score_overrides` payload). The queue refreshes; resolved events drop off.
 - `Intervene` is visibly present but disabled until Phase 5.
 - `Trigger Scan` on the observatory page invokes the worker on demand and returns the report inline.
+
+## Phase 5 — Intervention Feedback Loop (shipped)
+
+### Migration
+
+`migrations/108_intervention_feedback_loop.sql` — idempotent. Adds:
+
+- `two_reviewer_requests` — pending two-reviewer consensus records for `agent_wide`
+  interventions. Unique-partial index ensures only one pending request per anomaly.
+  `updated_at` maintained by trigger. Status: `pending` | `approved` | `rejected` | `expired`.
+
+### New crate `agent-bestiary-coherence-gate`
+
+```
+agent-bestiary/coherence-gate/
+├── Cargo.toml
+└── src/
+    ├── lib.rs         # re-exports
+    ├── error.rs       # GateError (Blocked, AwaitingSecondReviewer, Storage, ...)
+    ├── encoder.rs     # InterventionEncoder + InterventionRequest + EncodedIntervention
+    ├── gate.rs        # CoherenceGate + GateOutcome + GateVerdict
+    ├── two_write.rs   # TwoWriteMemory + TwoWriteReceipt
+    └── tests.rs       # 11 unit tests
+```
+
+### Intervention encoder (step 2)
+
+`InterventionEncoder::encode(req)` validates and stamps:
+- `authority_weight = 1.0` (HumanAuthority)
+- `provenance = HumanCorrected`
+- `gate_is_synchronous = true` for `AgentWide`; `false` for `Episode`/`Dyad`
+- Enforces `classification` + `correction_text` required for `AgentWide`
+
+### Coherence gate (step 3)
+
+`CoherenceGate::check(&encoded)` builds a minimal two-utterance `CoherenceSystem`:
+- U0 = existing agent response, U1 = proposed correction
+- `Contradicts` incoherence relation between them
+- Runs `SettlingEngine::settle` → reads `system.global_coherence.score` (Γ(C))
+- **Synchronous** (`AgentWide`): Γ(C) < 0.5 → `Err(GateError::Blocked)`
+- **Settler** (`Episode`/`Dyad`): always approves, stores outcome for audit
+- Returns `GateOutcome` with `gamma`, `principle_scores`, `tensions`, `minimum_update_set`
+
+Threshold configurable via `CoherenceGate::new(threshold)`. Default 0.5 (OQ-5).
+
+### Two-write memory pattern (step 4)
+
+`TwoWriteMemory::execute(&encoded, &gate_outcome, original_episode)`:
+
+1. **Write 1 — Synthetic episode**: new `Episode` row with `provenance = SyntheticCorrection`,
+   `authority_weight = 1.0`, context carries `corrected_response` + reviewer metadata.
+2. **Write 2 — Annotation**: `episode_corrections` row linking original episode, reviewer,
+   scope, classification, `coherence_check` (full `GateOutcome`), `minimum_update_set`,
+   `tensions_flagged`, and `synthetic_episode_id`.
+3. **Persona version bump** (AgentWide only): `MemoryStore::bump_persona_version` increments
+   `agents.persona_version` and returns the new value.
+
+### Two-reviewer consensus (step 4a for AgentWide)
+
+For `agent_wide` scope:
+1. First reviewer submits `POST /api/observatory/hitl/:event_id/action`
+   `{action:"intervene", scope:"agent_wide", ...}`.
+2. Encoder validates, gate approves (or blocks with 422). If approved:
+   - A `two_reviewer_requests` row is created (status=`pending`).
+   - Response: 200 with `status:"awaiting_second_reviewer"` + `request_id`.
+3. Second reviewer (must be a different user) confirms via
+   `POST /api/observatory/hitl/consensus/:request_id` `{approved:true}`.
+4. Handler verifies reviewer differs, re-runs gate, executes `TwoWriteMemory`, marks anomaly resolved.
+
+### HTTP API changes
+
+New route: `POST /api/observatory/hitl/consensus/:request_id` → `confirm_two_reviewer_handler`
+
+`record_hitl_action_handler` now accepts additional fields for `intervene`:
+- `scope` ("episode" | "dyad" | "agent_wide")
+- `classification` ("belief" | "behaviour")
+- `dimension`, `correction_text`, `justification`
+
+### UI changes
+
+`templates/observatory_hitl.html`:
+- `Intervene` button is now active (no longer disabled).
+- Clicking opens a modal with scope/classification/dimension/correction fields.
+- `agent_wide` submissions show a consensus-pending banner with the `request_id`
+  and instructions for the second reviewer.
+
+### Memory store additions
+
+- `MemoryStore::bump_persona_version(agent_id)` — direct persona_version increment
+- `MemoryStore::create_two_reviewer_request`
+- `MemoryStore::get_pending_two_reviewer_request(anomaly_event_id)`
+- `MemoryStore::get_two_reviewer_request(request_id)`
+- `MemoryStore::confirm_two_reviewer_request(request_id, reviewer, approved, ...)`
+
+### Tests
+
+11 tests, all passing:
+
+| File | Tests |
+|---|---|
+| `encoder.rs` / `tests.rs` | 4 — episode minimal, agent_wide requires classification, agent_wide requires correction_text, agent_wide gate_is_synchronous |
+| `gate.rs` / `tests.rs` | 7 — episode settles, dyad settles, agent_wide approves threshold=0, agent_wide blocks threshold=1, principle scores present, minimum_update_set is Vec, threshold constant |
+
+### Decisions captured
+
+| # | Decision |
+|---|---|
+| D30 | Phase 5 coherence gate uses a minimal two-utterance system (U0=existing, U1=correction) with `Contradicts` incoherence. Simple, deterministic, no LLM call needed for the gate itself. |
+| D31 | Write order: synthetic episode first (to get `synthetic_episode_id`), then annotation. Avoids a separate UPDATE on the correction row. |
+| D32 | `bump_persona_version` is a direct SQL UPDATE (not via `agent_versions` INSERT) because HITL interventions create a synthetic episode, not an agent version row. |
+| D33 | Two-reviewer flow: first reviewer creates the `two_reviewer_requests` row; second reviewer calls a separate endpoint. Row stores the full `EncodedIntervention` as JSONB so the second reviewer sees exactly what was proposed. |
 
 ## Open questions deferred to later phases
 

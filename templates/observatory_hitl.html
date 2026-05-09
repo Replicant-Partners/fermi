@@ -57,8 +57,19 @@
       .btn-approve:hover { background: var(--green); color: var(--bg0-hard); }
       .btn-relabel { border-color: var(--yellow); color: var(--yellow); }
       .btn-relabel:hover { background: var(--yellow); color: var(--bg0-hard); }
-      .btn-intervene { border-color: var(--red); color: var(--red); opacity: 0.65; cursor: not-allowed; }
-      .btn-intervene[title]:hover::after { content: attr(title); }
+      .btn-intervene { border-color: var(--red); color: var(--red); }
+      .btn-intervene:hover { background: var(--red); color: var(--bg0-hard); }
+      /* intervene modal */
+      .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center; }
+      .modal-overlay.open { display:flex; }
+      .modal { background:var(--bg1); border:1px solid var(--bg3); padding:24px; min-width:420px; max-width:580px; }
+      .modal h3 { margin:0 0 16px; font-size:1rem; color:var(--red); }
+      .modal label { display:block; font-size:0.8rem; color:var(--fg3); margin-bottom:4px; }
+      .modal select, .modal textarea, .modal input { width:100%; background:var(--bg0); border:1px solid var(--bg3); color:var(--fg1); padding:6px 8px; font-family:inherit; font-size:0.85rem; box-sizing:border-box; margin-bottom:12px; }
+      .modal textarea { resize:vertical; min-height:72px; }
+      .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+      .modal-note { font-size:0.75rem; color:var(--fg4); margin-bottom:12px; padding:8px; background:var(--bg0); border-left:3px solid var(--red); }
+      .consensus-banner { background:var(--bg0); border:1px solid var(--yellow); color:var(--yellow); padding:12px; font-size:0.82rem; margin-top:8px; display:none; }
       .empty { color: var(--fg4); font-style: italic; padding: 24px; text-align: center; }
       .summary {
         display: flex; gap: 24px;
@@ -150,7 +161,8 @@
             <div class="actions">
               <button class="btn btn-approve" onclick="action('${e.event_id}', 'approve')">Approve</button>
               <button class="btn btn-relabel" onclick="action('${e.event_id}', 'relabel')">Relabel</button>
-              <button class="btn btn-intervene" disabled title="Phase 5 — coherence gate + two-write memory pattern not yet implemented">Intervene (Phase 5)</button>
+              <button class="btn btn-intervene" onclick="openIntervenModal('${e.event_id}')">Intervene</button>
+              <div class="consensus-banner" id="consensus-${e.event_id}"></div>
             </div>
           </div>`;
         }).join("");
@@ -173,7 +185,115 @@
         }
       }
 
+      // ── Intervene modal ───────────────────────────────────────────────────
+
+      let _currentIntervenEventId = null;
+
+      function openIntervenModal(eventId) {
+        _currentIntervenEventId = eventId;
+        document.getElementById("intervene-event-id").textContent = eventId.substring(0, 8) + "…";
+        document.getElementById("intervene-modal").classList.add("open");
+      }
+
+      function closeIntervenModal() {
+        _currentIntervenEventId = null;
+        document.getElementById("intervene-modal").classList.remove("open");
+        document.getElementById("intervene-form").reset();
+      }
+
+      async function submitIntervene() {
+        const eventId = _currentIntervenEventId;
+        if (!eventId) return;
+
+        const scope = document.getElementById("iv-scope").value;
+        const classification = document.getElementById("iv-class").value || undefined;
+        const dimension = document.getElementById("iv-dim").value || undefined;
+        const correction_text = document.getElementById("iv-correction").value;
+        const justification = document.getElementById("iv-justification").value || undefined;
+        const notes = document.getElementById("iv-notes").value || undefined;
+
+        if (!correction_text) { alert("Correction text is required."); return; }
+        if (scope === "agent_wide" && !classification) {
+          alert("Classification (belief/behaviour) is required for agent_wide interventions.");
+          return;
+        }
+
+        try {
+          const result = await fetchJson(`/api/observatory/hitl/${eventId}/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "intervene", scope, classification, dimension,
+              correction_text, justification, notes, score_overrides: {},
+            }),
+          });
+
+          closeIntervenModal();
+
+          if (result.status === "awaiting_second_reviewer") {
+            // Show consensus banner instead of removing the row.
+            const banner = document.getElementById(`consensus-${eventId}`);
+            if (banner) {
+              banner.style.display = "block";
+              banner.innerHTML = `⏳ <strong>Agent-wide intervention pending second reviewer.</strong><br>
+                Request ID: <code>${result.request_id}</code><br>
+                Share this with a second reviewer: they must POST to
+                <code>/api/observatory/hitl/consensus/${result.request_id}</code>`;
+            }
+          } else {
+            // Intervention complete — remove the row.
+            const node = document.querySelector(`[data-event-id="${eventId}"]`);
+            if (node) node.remove();
+            loadQueue();
+          }
+        } catch (e) {
+          alert(`Intervention failed: ${e.message}`);
+        }
+      }
+
       loadQueue();
     </script>
+
+    <!-- Intervene modal (Phase 5) -->
+    <div class="modal-overlay" id="intervene-modal">
+      <div class="modal">
+        <h3>Intervene on anomaly <span id="intervene-event-id"></span></h3>
+        <div class="modal-note">
+          Intervention triggers the <strong>coherence gate + two-write memory pattern</strong>.<br>
+          <code>agent_wide</code> scope requires a second reviewer to confirm before writes execute.
+        </div>
+        <form id="intervene-form">
+          <label>Scope</label>
+          <select id="iv-scope">
+            <option value="episode">episode — annotate this episode only</option>
+            <option value="dyad">dyad — update relationship state for this human–agent pair</option>
+            <option value="agent_wide">agent_wide ⚠ — update persona baseline globally (requires 2 reviewers)</option>
+          </select>
+
+          <label>Classification</label>
+          <select id="iv-class">
+            <option value="">— optional for episode/dyad, required for agent_wide —</option>
+            <option value="belief">belief — agent held incorrect belief</option>
+            <option value="behaviour">behaviour — agent acted wrongly despite correct beliefs</option>
+          </select>
+
+          <label>Dimension (optional)</label>
+          <input type="text" id="iv-dim" placeholder="e.g. relevance, persona_fidelity, social_capital" />
+
+          <label>Correction text <span style="color:var(--red)">*</span></label>
+          <textarea id="iv-correction" placeholder="Describe what the corrected response should have been…"></textarea>
+
+          <label>Justification (optional)</label>
+          <textarea id="iv-justification" placeholder="Why is this correction warranted?"></textarea>
+
+          <label>Notes (optional)</label>
+          <input type="text" id="iv-notes" placeholder="Internal notes for the audit trail" />
+        </form>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeIntervenModal()">Cancel</button>
+          <button class="btn btn-intervene" onclick="submitIntervene()">Submit Intervention</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

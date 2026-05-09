@@ -1,0 +1,21 @@
+[package]
+name = "evaluator-lifelong"
+version = "0.1.0"
+edition = "2021"
+description = "LifelongBench dimensional evaluator — persona consistency + retention across sessions"
+
+[dependencies]
+agent-bestiary-evaluators = { path = "../evaluators" }
+agent-bestiary-memory     = { path = "../memory" }
+
+async-trait = "0.1"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+thiserror   = "1"
+tokio       = { version = "1", features = ["time"] }
+tracing     = "0.1"
+
+[dev-dependencies]
+tokio  = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid   = { version = "1.0", features = ["v4"] }

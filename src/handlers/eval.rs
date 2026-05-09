@@ -34,6 +34,13 @@ use crate::handlers::eval_brier::{AgentNameResolver, BrierLookupSqlx};
 use crate::handlers::eval_judge::LlmJudgeAnthropic;
 use crate::{agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState};
 
+// Track B — native evaluator family (registered per eval run)
+use evaluator_character::CharacterEvaluator;
+use evaluator_faithfulness::FaithfulnessEvaluator;
+use evaluator_lifelong::LifelongBenchEvaluator;
+use evaluator_sotopia::SotopiaEvaluator;
+use evaluator_wildguard::WildGuardEvaluator;
+
 // ─── Eval Framework Handlers ────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -695,12 +702,33 @@ fn build_registry(
 ) -> EvaluatorRegistry {
     let mut registry = EvaluatorRegistry::new();
 
+    // ── Pre-filters (run serially, can short-circuit) ────────────────────
+    // Track B: WildGuard safety pre-filter (pattern-only; LLM fallback opt-in).
+    registry.register(Arc::new(WildGuardEvaluator::new()));
+
+    // Track B: Faithfulness grounding pre-filter.
+    registry.register(Arc::new(FaithfulnessEvaluator::new()));
+
+    // ── Dimensional evaluators (run in parallel) ─────────────────────────
     if judge_enabled {
         let judge: Arc<dyn agent_bestiary_evaluators::LlmJudge> =
             Arc::new(LlmJudgeAnthropic::new());
         registry.register(Arc::new(LlmJudgeEvaluator::new(judge)));
     }
 
+    // Track B: Sotopia — social goals (requires goal_spec; returns Inapplicable otherwise).
+    registry.register(Arc::new(SotopiaEvaluator::new()));
+
+    // Track B: LifelongBench — persona consistency across sessions.
+    // No signal injected at this stage — the evaluator returns Inapplicable
+    // for the first episode. The eval pipeline injects a signal when it has
+    // timeline data available (Phase 3 integration).
+    registry.register(Arc::new(LifelongBenchEvaluator::new()));
+
+    // Track B: CharacterEval — persona fidelity + value alignment.
+    registry.register(Arc::new(CharacterEvaluator::new()));
+
+    // Brier calibration (existing).
     let resolver: Arc<dyn AgentNameResolver> = Arc::new(StaticAgentNameResolver {
         agent_id: db_agent.agent_id,
         agent_name: agent_name.to_string(),

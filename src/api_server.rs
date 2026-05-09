@@ -476,6 +476,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/104_evaluator_signals.sql",
         "migrations/105_longitudinal_observability.sql",
         "migrations/106_hitl_actions.sql",
+        // Phase 5 — two-reviewer consensus for agent_wide interventions
+        "migrations/108_intervention_feedback_loop.sql",
     ];
 
     for file in &migration_files {
@@ -777,6 +779,11 @@ async fn main() {
         .route(
             "/api/observatory/hitl/:event_id/action",
             post(handlers::observatory::record_hitl_action_handler),
+        )
+        // Phase 5 — two-reviewer consensus for agent_wide interventions
+        .route(
+            "/api/observatory/hitl/consensus/:request_id",
+            post(handlers::observatory::confirm_two_reviewer_handler),
         )
         .route(
             "/api/agents/:agent_id/dependencies",
@@ -1336,6 +1343,15 @@ async fn main() {
         .route(
             "/api/notebooks/:notebook_id/execute",
             post(handlers::notebooks::execute_notebook_handler),
+        )
+        // ── Stateless FPL execution (thick client ⌘R, external integrations)
+        .route(
+            "/api/fpl/execute",
+            post(handlers::notebooks::fpl_execute_handler),
+        )
+        .route(
+            "/api/fpl/health",
+            get(handlers::notebooks::fpl_health_handler),
         )
         // ── Forecast routes ────────────────────────────────────────────
         .route(

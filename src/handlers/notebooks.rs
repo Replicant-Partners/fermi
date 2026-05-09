@@ -1,9 +1,23 @@
-/**
- * Notebook API Handlers
- *
- * RESTful endpoints for Fermi Notebook CRUD and execution.
- * Integrates with FPL executor and agent system.
- */
+//! Fermi FPL API Handlers
+//!
+//! Two categories of endpoints:
+//!
+//! **1. Stateless FPL execution** — `POST /api/fpl/execute`
+//!    Submit raw FPL source, get back simulation results immediately.
+//!    Used by the Fermi thick client's ⌘R simulation and any external
+//!    integrations. No persistence; credits charged per run.
+//!
+//! **2. Notebook CRUD** — `/api/notebooks/*`
+//!    Persistent FPL programs ("notebooks") owned by a user.
+//!    The thick client writes `.fpl` files locally; notebooks are the
+//!    server-side counterpart used by the web dashboard and sharing flows.
+//!    Originally conceived as a browser-based FPL editor — that role is
+//!    now fully covered by the GPUI thick client, but the table / API
+//!    remain useful as a publish/share target.
+//!
+//! Both paths share the same FPL lexer → parser → executor pipeline.
+//! The `execute_notebook_handler` also converts cell-based JSON into FPL
+//! before executing, for legacy compatibility.
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -619,4 +633,142 @@ fn cells_to_fpl(cells: &[JsonValue]) -> Result<String, String> {
     }
 
     Ok(fpl_lines.join("\n"))
+}
+
+// ─── Stateless FPL Execution ────────────────────────────────────────────────
+//
+// POST /api/fpl/execute
+//
+// Execute a raw FPL program without storing it. Used by the Fermi thick client
+// for ⌘R simulation and by any external integrations that want server-side
+// Monte Carlo without managing notebook state.
+//
+// Input:  { "fpl_source": "...", "iterations": 10000, "seed": null }
+// Output: same ExecuteNotebookResponse shape
+
+#[derive(Debug, Deserialize)]
+pub struct FplExecuteRequest {
+    /// The raw FPL source text to execute.
+    pub fpl_source: String,
+    /// Number of Monte Carlo iterations (default 10 000, max 100 000).
+    pub iterations: Option<usize>,
+    /// Optional deterministic seed for reproducible results.
+    pub seed: Option<u32>,
+}
+
+/// Response for the stateless FPL execution endpoint.
+#[derive(Debug, Serialize)]
+pub struct FplExecuteResponse {
+    pub mean: f64,
+    pub median: f64,
+    pub std_dev: f64,
+    pub p5: f64,
+    pub p25: f64,
+    pub p75: f64,
+    pub p95: f64,
+    pub min: f64,
+    pub max: f64,
+    pub base_rate: Option<f64>,
+    pub divergence_relative: Option<f64>,
+    pub divergence_absolute: Option<f64>,
+    pub iterations: usize,
+    pub execution_time_ms: i64,
+    pub credits_charged: i32,
+}
+
+pub async fn fpl_execute_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<FplExecuteRequest>,
+) -> Result<Json<FplExecuteResponse>, (StatusCode, String)> {
+    let start_time = Instant::now();
+    let user_id = principal.user_id();
+    let pool = state.memory_store.pool();
+
+    // Charge credits: 1 base + 1 per 1 000 iterations.
+    let iterations = req.iterations.unwrap_or(10_000).clamp(100, 100_000);
+    let cost = 1 + (iterations / 1_000).max(1) as i32;
+
+    let wallet = get_or_create_wallet(pool, "user", &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    charge_gas(
+        pool,
+        wallet.wallet_id,
+        cost,
+        "fpl_execute",
+        &format!("Stateless FPL execution ({} iterations)", iterations),
+        None,
+    )
+    .await
+    .map_err(|e| e)?;
+
+    // Parse FPL.
+    let lexer = Lexer::new(&req.fpl_source);
+    let tokens = lexer
+        .tokenize()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Tokenization failed: {:?}", e)))?;
+
+    let parser = Parser::new(tokens);
+    let program = parser
+        .parse()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Parse failed: {}", e)))?;
+
+    // Execute FPL.
+    let mut executor = if let Some(seed_val) = req.seed {
+        Executor::with_seed(iterations, seed_val as u64)
+    } else {
+        Executor::new(iterations)
+    };
+
+    let results = executor
+        .execute(&program)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Execution failed: {}", e)))?;
+
+    let elapsed_ms = start_time.elapsed().as_millis() as i64;
+
+    Ok(Json(FplExecuteResponse {
+        mean: results.mean,
+        median: results.median,
+        std_dev: results.std_dev,
+        p5: results.p5,
+        p25: results.p25,
+        p75: results.p75,
+        p95: results.p95,
+        min: results.min,
+        max: results.max,
+        base_rate: results.base_rate,
+        divergence_relative: results.divergence_relative,
+        divergence_absolute: results.divergence_absolute,
+        iterations: results.iterations,
+        execution_time_ms: elapsed_ms,
+        credits_charged: cost,
+    }))
+}
+
+/// GET /api/fpl/health — lightweight liveness probe for the FPL execution path.
+/// Parses and executes a trivial FPL program to verify the engine is working.
+pub async fn fpl_health_handler() -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    use fermi::{executor::Executor, lexer::Lexer, parser::Parser};
+
+    let source = "question \"health check\" ~ 0.5\nmodel 0.5";
+    let lexer = Lexer::new(source);
+    let tokens = lexer
+        .tokenize()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)))?;
+    let parser = Parser::new(tokens);
+    let program = parser
+        .parse()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut executor = Executor::new(100);
+    executor
+        .execute(&program)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(axum::Json(serde_json::json!({
+        "status": "ok",
+        "engine": "fermi-fpl",
+        "version": env!("CARGO_PKG_VERSION"),
+    })))
 }

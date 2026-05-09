@@ -71,6 +71,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-bestiary-coherence-gate"
+version = "0.1.0"
+dependencies = [
+ "agent-bestiary-memory",
+ "async-trait",
+ "chrono",
+ "coherence-core",
+ "coherence-engine",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid 1.20.0",
+]
+
+[[package]]
 name = "agent-bestiary-consolidate"
 version = "0.1.0"
 dependencies = [
@@ -3278,6 +3295,92 @@ dependencies = [
 ]
 
 [[package]]
+name = "evaluator-character"
+version = "0.1.0"
+dependencies = [
+ "agent-bestiary-evaluators",
+ "agent-bestiary-memory",
+ "async-trait",
+ "chrono",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid 1.20.0",
+]
+
+[[package]]
+name = "evaluator-faithfulness"
+version = "0.1.0"
+dependencies = [
+ "agent-bestiary-evaluators",
+ "agent-bestiary-memory",
+ "async-trait",
+ "chrono",
+ "regex",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid 1.20.0",
+]
+
+[[package]]
+name = "evaluator-lifelong"
+version = "0.1.0"
+dependencies = [
+ "agent-bestiary-evaluators",
+ "agent-bestiary-memory",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid 1.20.0",
+]
+
+[[package]]
+name = "evaluator-sotopia"
+version = "0.1.0"
+dependencies = [
+ "agent-bestiary-evaluators",
+ "agent-bestiary-memory",
+ "async-trait",
+ "chrono",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid 1.20.0",
+]
+
+[[package]]
+name = "evaluator-wildguard"
+version = "0.1.0"
+dependencies = [
+ "agent-bestiary-evaluators",
+ "agent-bestiary-memory",
+ "async-trait",
+ "chrono",
+ "regex",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid 1.20.0",
+]
+
+[[package]]
 name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3405,6 +3508,7 @@ dependencies = [
 name = "fermi"
 version = "0.1.0"
 dependencies = [
+ "agent-bestiary-coherence-gate",
  "agent-bestiary-evaluators",
  "agent-bestiary-memory",
  "agent-bestiary-observability",
@@ -3427,6 +3531,11 @@ dependencies = [
  "criterion",
  "dashmap 6.1.0",
  "ecdsa",
+ "evaluator-character",
+ "evaluator-faithfulness",
+ "evaluator-lifelong",
+ "evaluator-sotopia",
+ "evaluator-wildguard",
  "fermi-auth",
  "futures-core",
  "h3o",

@@ -3,7 +3,7 @@ use crate::{
     Community, ConsolidationJob, CorrectionClassification, DyadState, Entity, Episode,
     EpisodeCorrection, EvalRun, EvalSignal, EvalTestCase, Fact, HitlAction, MarketplaceListing,
     MarketplaceTransaction, MemoryError, Result, SemanticRule, ShoppingProfile, TimelineEntry,
-    VerificationStatus, WorkspaceMessage,
+    TwoReviewerRequest, VerificationStatus, WorkspaceMessage,
 };
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::str::FromStr;
@@ -3118,6 +3118,167 @@ impl MemoryStore {
         .await?;
         row.map(|r| row_to_anomaly_event(&r)).transpose()
     }
+
+    // ─── Phase 5 — persona version bump ─────────────────────────────────
+
+    /// Increment `agents.persona_version` for the given agent and return
+    /// the new value.
+    ///
+    /// Called by `TwoWriteMemory` after an `agent_wide` intervention
+    /// completes successfully so the drift monitor has a fresh baseline.
+    ///
+    /// The DB-level trigger on `agent_versions` INSERT also bumps the
+    /// counter (migration 103), but we need a direct bump here because
+    /// HITL interventions do not necessarily create an `agent_versions`
+    /// row — they create a synthetic episode instead.
+    pub async fn bump_persona_version(&self, agent_id: Uuid) -> Result<i32> {
+        let row = sqlx::query(
+            r#"UPDATE agents
+               SET persona_version = persona_version + 1
+               WHERE agent_id = $1
+               RETURNING persona_version"#,
+        )
+        .bind(agent_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("persona_version")?)
+    }
+
+    // ─── Phase 5 — two-reviewer consensus ───────────────────────────────
+
+    /// Create a pending two-reviewer-consensus request.
+    /// Returns the new `request_id`.
+    pub async fn create_two_reviewer_request(
+        &self,
+        req: &TwoReviewerRequest,
+    ) -> Result<Uuid> {
+        let row = sqlx::query(
+            r#"INSERT INTO two_reviewer_requests (
+                request_id, anomaly_event_id, agent_id,
+                encoded_intervention,
+                first_reviewer_id, first_reviewed_at,
+                status, notes
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING request_id"#,
+        )
+        .bind(req.request_id)
+        .bind(req.anomaly_event_id)
+        .bind(req.agent_id)
+        .bind(&req.encoded_intervention)
+        .bind(&req.first_reviewer_id)
+        .bind(req.first_reviewed_at)
+        .bind(&req.status)
+        .bind(&req.notes)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.try_get("request_id")?)
+    }
+
+    /// Look up a pending two-reviewer-consensus request by anomaly event id.
+    pub async fn get_pending_two_reviewer_request(
+        &self,
+        anomaly_event_id: Uuid,
+    ) -> Result<Option<TwoReviewerRequest>> {
+        let row = sqlx::query(
+            r#"SELECT request_id, anomaly_event_id, agent_id,
+                      encoded_intervention,
+                      first_reviewer_id, first_reviewed_at,
+                      second_reviewer_id, second_reviewed_at, second_approved,
+                      status, correction_id, synthetic_episode_id,
+                      notes, created_at, updated_at
+               FROM two_reviewer_requests
+               WHERE anomaly_event_id = $1 AND status = 'pending'
+               LIMIT 1"#,
+        )
+        .bind(anomaly_event_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|r| row_to_two_reviewer_request(&r)).transpose()
+    }
+
+    /// Get a two-reviewer-consensus request by id.
+    pub async fn get_two_reviewer_request(
+        &self,
+        request_id: Uuid,
+    ) -> Result<Option<TwoReviewerRequest>> {
+        let row = sqlx::query(
+            r#"SELECT request_id, anomaly_event_id, agent_id,
+                      encoded_intervention,
+                      first_reviewer_id, first_reviewed_at,
+                      second_reviewer_id, second_reviewed_at, second_approved,
+                      status, correction_id, synthetic_episode_id,
+                      notes, created_at, updated_at
+               FROM two_reviewer_requests
+               WHERE request_id = $1"#,
+        )
+        .bind(request_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|r| row_to_two_reviewer_request(&r)).transpose()
+    }
+
+    /// Record the second reviewer's decision and update the request status.
+    ///
+    /// `approved = true` → status becomes `approved`, writes can proceed.
+    /// `approved = false` → status becomes `rejected`.
+    pub async fn confirm_two_reviewer_request(
+        &self,
+        request_id: Uuid,
+        second_reviewer_id: &str,
+        approved: bool,
+        correction_id: Option<Uuid>,
+        synthetic_episode_id: Option<Uuid>,
+    ) -> Result<TwoReviewerRequest> {
+        let new_status = if approved { "approved" } else { "rejected" };
+        let row = sqlx::query(
+            r#"UPDATE two_reviewer_requests
+               SET second_reviewer_id    = $2,
+                   second_reviewed_at    = NOW(),
+                   second_approved       = $3,
+                   status                = $4,
+                   correction_id         = $5,
+                   synthetic_episode_id  = $6
+               WHERE request_id = $1
+               RETURNING request_id, anomaly_event_id, agent_id,
+                         encoded_intervention,
+                         first_reviewer_id, first_reviewed_at,
+                         second_reviewer_id, second_reviewed_at, second_approved,
+                         status, correction_id, synthetic_episode_id,
+                         notes, created_at, updated_at"#,
+        )
+        .bind(request_id)
+        .bind(second_reviewer_id)
+        .bind(approved)
+        .bind(new_status)
+        .bind(correction_id)
+        .bind(synthetic_episode_id)
+        .fetch_one(&self.pool)
+        .await?;
+        row_to_two_reviewer_request(&row)
+    }
+}
+
+fn row_to_two_reviewer_request(row: &sqlx::postgres::PgRow) -> Result<TwoReviewerRequest> {
+    Ok(TwoReviewerRequest {
+        request_id: row.try_get("request_id")?,
+        anomaly_event_id: row.try_get("anomaly_event_id")?,
+        agent_id: row.try_get("agent_id")?,
+        encoded_intervention: row
+            .try_get::<serde_json::Value, _>("encoded_intervention")
+            .unwrap_or(serde_json::Value::Null),
+        first_reviewer_id: row.try_get("first_reviewer_id")?,
+        first_reviewed_at: row.try_get("first_reviewed_at")?,
+        second_reviewer_id: row.try_get("second_reviewer_id").ok().flatten(),
+        second_reviewed_at: row.try_get("second_reviewed_at").ok().flatten(),
+        second_approved: row.try_get("second_approved").ok().flatten(),
+        status: row.try_get("status")?,
+        correction_id: row.try_get("correction_id").ok().flatten(),
+        synthetic_episode_id: row.try_get("synthetic_episode_id").ok().flatten(),
+        notes: row.try_get("notes").ok().flatten(),
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
 }
 
 fn row_to_hitl_action(row: &sqlx::postgres::PgRow) -> Result<HitlAction> {

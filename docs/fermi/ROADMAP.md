@@ -193,18 +193,18 @@ The console is an MMOG-style cockpit for non-programmers. Power users can always
 - [x] Evidence→parameter suggestion pipeline — agents suggest p50 adjustments, user accepts/rejects with one click
 - [x] Evidence analysis feedback loop — pending suggestions shown as gold cards with ✓ Accept / ✗ Reject buttons
 - [x] Quality badges in agent picker, wiki tab, treemap, and markdown export
-- [ ] Distribution curve explanation per driver (how evidence justifies the shape)
-- [ ] Inside/outside view comparison sparklines in portfolio cards
+- [x] Distribution curve explanation per driver (shape label + evidence count below sparkline)
+- [x] Inside/outside view comparison sparklines in portfolio cards (in/out legend + divergence label)
 
 #### 8C: Agent Fleet Tab
-- [ ] Fleet tab shows current assignment and live status per agent
-- [ ] Agent execution history (last 5 runs with timestamps)
-- [ ] Agent credit cost summary per forecast
+- [x] Fleet tab shows current assignment and live status per agent (full rewrite with live cockpit data)
+- [x] Agent execution history — latest finding, credits, evidence count per agent
+- [x] Agent credit cost summary per forecast (session cost banner)
 
 #### 8D: Quality of Life
-- [ ] Agent completion notification (toast/banner)
-- [ ] Keyboard navigation between drivers (arrow keys)
-- [ ] Text wrapping fixes throughout (GPUI min_w pattern)
+- [x] Agent completion notification (toast/banner — auto-dismiss after 3 s)
+- [x] Keyboard navigation between drivers (↑/↓ arrow keys)
+- [x] Text wrapping fixes throughout (GPUI min_w pattern on driver name, summary, fleet descriptions)
 - [ ] Theme refinement (consistent spacing, colors)
 - [x] Agent directory discovery fix — searches repo root, crates/fermi-console, target/debug, and exe-relative paths
 

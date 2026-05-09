@@ -24,6 +24,10 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+// ─── Cockpit-scoped actions ────────────────────────────────────────────────────
+
+gpui::actions!(fermi_console, [NavigateDriverUp, NavigateDriverDown]);
+
 use fermi::agent_backend::{
     llm_executor::LLMExecutor, registry::AgentRegistry, AgentOutput, ExecutionContext,
 };
@@ -243,6 +247,10 @@ pub struct CockpitState {
     // ── Agent Schedules (persisted via API) ───────────────────────
     pub schedules: Vec<ForecastSchedule>,
     pub schedules_loading: bool,
+
+    /// Agent completion notifications queued for the parent (FermiConsole) to
+    /// drain and display as toasts. Each entry is an agent display name.
+    pub pending_toasts: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -393,6 +401,7 @@ impl CockpitState {
             sse_tx: tx,
             schedules: Vec::new(),
             schedules_loading: false,
+            pending_toasts: Vec::new(),
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -709,6 +718,7 @@ impl CockpitState {
             .iter_mut()
             .find(|r| r.agent_name == "macro_forecaster" || r.agent_name == "fermi")
         {
+            let completed_name = run.agent_name.clone();
             run.status = AgentRunStatus::Completed;
             run.completed_at = Some(
                 std::time::SystemTime::now()
@@ -721,6 +731,7 @@ impl CockpitState {
             if let Some(c) = run.credits_charged {
                 self.session_cost += c;
             }
+            self.pending_toasts.push(format!("✓ {} finished", completed_name));
         }
 
         // Try to parse structured JSON from the agent's reasoning
@@ -1880,6 +1891,7 @@ impl CockpitState {
                 || base_agent_name(&r.agent_name) == agent_id
                 || r.agent_name.starts_with(agent_id)
         }) {
+            let completed_name = run.agent_name.clone();
             run.status = AgentRunStatus::Completed;
             run.completed_at = Some(
                 std::time::SystemTime::now()
@@ -1893,6 +1905,7 @@ impl CockpitState {
                 self.session_cost += c;
             }
             run.latest_finding = first_finding;
+            self.pending_toasts.push(format!("✓ {} finished research", completed_name));
         }
 
         if let Some(evidence_arr) = result.get("evidence").and_then(|v| v.as_array()) {
@@ -4294,6 +4307,26 @@ impl Render for CockpitState {
             .flex_col()
             .size_full()
             .bg(rgb(theme::BG))
+            .on_action(cx.listener(|this, _: &NavigateDriverUp, _window, cx| {
+                let drivers: Vec<String> = this.program.drivers().iter().map(|d| d.name.clone()).collect();
+                if drivers.is_empty() { return; }
+                let current_idx = if let FocusedNode::Driver(ref n) = this.focused_node {
+                    drivers.iter().position(|d| d == n).unwrap_or(0)
+                } else { 0 };
+                let prev_idx = if current_idx == 0 { drivers.len() - 1 } else { current_idx - 1 };
+                let name = drivers[prev_idx].clone();
+                this.focus_driver(&name, cx);
+            }))
+            .on_action(cx.listener(|this, _: &NavigateDriverDown, _window, cx| {
+                let drivers: Vec<String> = this.program.drivers().iter().map(|d| d.name.clone()).collect();
+                if drivers.is_empty() { return; }
+                let current_idx = if let FocusedNode::Driver(ref n) = this.focused_node {
+                    drivers.iter().position(|d| d == n).unwrap_or(0)
+                } else { 0 };
+                let next_idx = (current_idx + 1) % drivers.len();
+                let name = drivers[next_idx].clone();
+                this.focus_driver(&name, cx);
+            }))
             // ── Fermi Banner (top, always visible) ────────────────
             .child(render_fermi_banner(&self.messages, &self.agent_runs))
             // ── Main content (left + right panels) ────────────────
@@ -5289,6 +5322,7 @@ fn render_driver_card(
                         .text_size(px(13.0))
                         .text_color(rgb(theme::FG))
                         .font_weight(FontWeight::SEMIBOLD)
+                        .min_w(px(0.0))
                         .child(
                             driver
                                 .display_name
@@ -5305,6 +5339,7 @@ fn render_driver_card(
                         .py(px(1.0))
                         .rounded(px(2.0))
                         .bg(rgb(theme::BG))
+                        .flex_shrink_0()
                         .child(type_label),
                 )
                 .child(
@@ -5312,9 +5347,10 @@ fn render_driver_card(
                         .flex_grow()
                         .text_size(px(11.0))
                         .text_color(rgb(theme::FG_DIM))
+                        .min_w(px(0.0))
                         .child(summary),
                 )
-                // Distribution sparkline for continuous drivers
+                // Distribution sparkline + curve explanation for continuous drivers
                 .when(driver.driver_type == DriverType::Continuous, |el| {
                     if let Some(Distribution::Triangular {
                         ref p5,
@@ -5333,10 +5369,48 @@ fn render_driver_card(
                             );
                             let render_img =
                                 crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+
+                            // Build a brief shape explanation from evidence count + skew.
+                            let ev_count = evidence_items.len();
+                            let spread = v95 - v5;
+                            let skew = (v50 - v5) / spread - 0.5; // negative = left-skewed, positive = right-skewed
+                            let shape_label = if skew.abs() < 0.08 {
+                                "symmetric"
+                            } else if skew > 0.0 {
+                                "right-skewed"
+                            } else {
+                                "left-skewed"
+                            };
+                            let width_label = if spread > v50 * 0.5 {
+                                "wide"
+                            } else if spread < v50 * 0.1 {
+                                "narrow"
+                            } else {
+                                "moderate"
+                            };
+                            let evidence_label = if ev_count == 0 {
+                                "no evidence yet — using prior".to_string()
+                            } else if ev_count == 1 {
+                                "1 evidence item".to_string()
+                            } else {
+                                format!("{} evidence items", ev_count)
+                            };
+                            let explanation = format!(
+                                "{} {} spread · {}",
+                                width_label, shape_label, evidence_label
+                            );
+
                             el.child(
                                 gpui::img(gpui::ImageSource::Render(render_img))
                                     .w(gpui::px(chart_w as f32))
                                     .h(gpui::px(chart_h as f32)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .min_w(px(0.0))
+                                    .child(explanation),
                             )
                         } else {
                             el
