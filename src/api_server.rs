@@ -478,6 +478,9 @@ async fn run_migrations(db: &PgPool) {
         "migrations/106_hitl_actions.sql",
         // Phase 5 — two-reviewer consensus for agent_wide interventions
         "migrations/108_intervention_feedback_loop.sql",
+        // Repair curated agents wrongly assigned to first user by old
+        // migration 006 backfill (now removed).
+        "migrations/110_unassign_curated_agents.sql",
     ];
 
     for file in &migration_files {
