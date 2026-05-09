@@ -468,6 +468,14 @@ async fn run_migrations(db: &PgPool) {
         "migrations/106_model_params.sql",
         "migrations/107_fermi_tables_catchup.sql",
         "migrations/109_forecast_agent_schedules.sql",
+        // Social Agent Observability tables (Phases 2–4) — were shipped
+        // in commit b234722 alongside the handler/store code but never
+        // registered, so the eval_signals / timeline / dyads / anomaly /
+        // hitl_actions tables don't exist in prod and every observatory
+        // query 500s. Adding here in dependency order.
+        "migrations/104_evaluator_signals.sql",
+        "migrations/105_longitudinal_observability.sql",
+        "migrations/106_hitl_actions.sql",
     ];
 
     for file in &migration_files {
