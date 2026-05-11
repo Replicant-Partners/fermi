@@ -481,6 +481,9 @@ async fn run_migrations(db: &PgPool) {
         // Repair curated agents wrongly assigned to first user by old
         // migration 006 backfill (now removed).
         "migrations/110_unassign_curated_agents.sql",
+        // Reassign curated/system agents to the sys admin so they
+        // retain Eval / Intelligence / Manage tab access.
+        "migrations/111_restore_admin_ownership_of_curated.sql",
     ];
 
     for file in &migration_files {
