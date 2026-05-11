@@ -1242,6 +1242,47 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
         // Consumed by observability_coordinator, eval_runner,
         // anomaly_triager, dyad_observer. See docs/AGENT_MODEL.md §3.
         BuiltinToolDef {
+            name: "classify_anomaly",
+            description: "Read context to inform anomaly severity classification: the event row, related eval_signals from the same run, the agent's persona_version, and any prior hitl_actions. Returns a JSON bundle the caller synthesises into a severity (L0-L3) and routing recommendation.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "anomaly_id": { "type": "string", "description": "UUID of the anomaly_event to classify." }
+                },
+                "required": ["anomaly_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "route_to_hitl",
+            description: "Mark an anomaly_event as requires_review with the agent's recommended action. Stores the recommendation in payload.agent_recommendation but does NOT execute the action — that remains the reviewer's prerogative. Use after classify_anomaly to formally route an L2/L3 event.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "anomaly_id": { "type": "string", "description": "UUID of the anomaly_event." },
+                    "recommended_action": {
+                        "type": "string",
+                        "enum": ["approve", "relabel", "intervene"],
+                        "description": "Action the agent recommends a reviewer take."
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["episode", "agent", "agent_wide"],
+                        "default": "episode",
+                        "description": "Scope of the recommended action. agent_wide triggers two-reviewer consensus on reviewer-side."
+                    },
+                    "justification": {
+                        "type": "string",
+                        "description": "Why the agent is routing this event — surfaced to reviewers."
+                    }
+                },
+                "required": ["anomaly_id", "recommended_action", "justification"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
             name: "query_eval_signals",
             description: "Read per-evaluator, per-dimension scores from eval_signals. Required: run_id. Returns one row per (evaluator, dimension) with score, confidence, persona_version, model_used, rationale.",
             input_schema: json!({
@@ -1534,6 +1575,8 @@ impl ToolRegistry {
             "query_hitl_queue"   => execute_query_hitl_queue(input, ctx).await,
             "query_timeline"     => execute_query_timeline(input, ctx).await,
             "query_dyad_state"   => execute_query_dyad_state(input, ctx).await,
+            "classify_anomaly"   => execute_classify_anomaly(input, ctx).await,
+            "route_to_hitl"      => execute_route_to_hitl(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -5317,6 +5360,139 @@ async fn execute_query_dyad_state(
         "agent_id": agent_id,
         "count": dyads.len(),
         "dyads": dyads,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_classify_anomaly(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let anomaly_id = parse_uuid_field(input, "anomaly_id")?;
+
+    let event = ctx
+        .memory_store
+        .get_anomaly_event(anomaly_id)
+        .await
+        .map_err(|e| format!("Failed to get anomaly: {}", e))?
+        .ok_or_else(|| format!("Anomaly {} not found", anomaly_id))?;
+
+    // Related signals from the same run, if any.
+    let related_signals = match event.run_id {
+        Some(rid) => ctx
+            .memory_store
+            .list_eval_signals_for_run(rid)
+            .await
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    // Agent persona version + prior HITL actions on this event.
+    let agent = ctx
+        .memory_store
+        .get_agent(event.agent_id)
+        .await
+        .map_err(|e| format!("Failed to get agent: {}", e))?;
+
+    let prior_actions = ctx
+        .memory_store
+        .list_hitl_actions_for_anomaly(anomaly_id)
+        .await
+        .unwrap_or_default();
+
+    serde_json::to_string_pretty(&json!({
+        "event": event,
+        "related_signals": related_signals,
+        "related_signal_count": related_signals.len(),
+        "agent_persona_version": agent.as_ref().map(|a| a.persona_version),
+        "agent_name": agent.as_ref().map(|a| &a.agent_name),
+        "prior_hitl_actions": prior_actions,
+        "prior_action_count": prior_actions.len(),
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_route_to_hitl(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let anomaly_id = parse_uuid_field(input, "anomaly_id")?;
+    let recommended_action = input
+        .get("recommended_action")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: recommended_action")?;
+    if !matches!(recommended_action, "approve" | "relabel" | "intervene") {
+        return Err(format!(
+            "Invalid recommended_action '{}' — must be approve|relabel|intervene",
+            recommended_action
+        ));
+    }
+    let scope = input
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .unwrap_or("episode");
+    if !matches!(scope, "episode" | "agent" | "agent_wide") {
+        return Err(format!(
+            "Invalid scope '{}' — must be episode|agent|agent_wide",
+            scope
+        ));
+    }
+    let justification = input
+        .get("justification")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: justification")?;
+
+    let db = ctx
+        .db
+        .as_ref()
+        .ok_or("route_to_hitl requires database context")?;
+
+    // Refuse to route an already-resolved event.
+    let event = ctx
+        .memory_store
+        .get_anomaly_event(anomaly_id)
+        .await
+        .map_err(|e| format!("Failed to get anomaly: {}", e))?
+        .ok_or_else(|| format!("Anomaly {} not found", anomaly_id))?;
+    if event.resolved_at.is_some() {
+        return Err(format!(
+            "Anomaly {} is already resolved — cannot route",
+            anomaly_id
+        ));
+    }
+
+    let by_agent = ctx
+        .current_agent_id
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| "unknown".into());
+    let recommendation = json!({
+        "action": recommended_action,
+        "scope": scope,
+        "justification": justification,
+        "by_agent": by_agent,
+        "at": chrono::Utc::now().to_rfc3339(),
+    });
+
+    // Merge agent_recommendation into payload jsonb, set requires_review=true.
+    // jsonb || jsonb is the merge operator; existing keys in payload are
+    // preserved unless the right-hand side overrides them.
+    sqlx::query(
+        r#"UPDATE anomaly_events
+           SET payload = COALESCE(payload, '{}'::jsonb)
+                        || jsonb_build_object('agent_recommendation', $2::jsonb),
+               requires_review = TRUE
+           WHERE event_id = $1"#,
+    )
+    .bind(anomaly_id)
+    .bind(&recommendation)
+    .execute(db)
+    .await
+    .map_err(|e| format!("Failed to update anomaly: {}", e))?;
+
+    serde_json::to_string_pretty(&json!({
+        "routed": true,
+        "anomaly_id": anomaly_id,
+        "recommendation": recommendation,
     }))
     .map_err(|e| format!("Serialization error: {}", e))
 }
