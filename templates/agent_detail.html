@@ -2489,6 +2489,10 @@
                     ${dims}${conflictPill}${blocked}
                   </div>`;
                 }
+                const signalsToggle =
+                  r.status === "completed"
+                    ? `<span style="color:var(--aqua);cursor:pointer;font-size:0.8em;margin-left:6px" onclick="toggleRunSignals('${r.run_id}', '${agentId}')">▶ per-evaluator</span>`
+                    : "";
                 return `
                 <div style="padding:6px 0;border-bottom:1px solid var(--bg2)">
                   <div style="display:flex;justify-content:space-between">
@@ -2496,11 +2500,12 @@
                     <span style="color:var(--fg4)">${new Date(r.started_at).toLocaleDateString()}</span>
                   </div>
                   <div style="color:var(--fg1)">
-                    Pass: ${r.passed}/${r.total_cases} (${passRate}%)${judgeStr}${regFlag}
+                    Pass: ${r.passed}/${r.total_cases} (${passRate}%)${judgeStr}${regFlag}${signalsToggle}
                   </div>${signalHtml}
                   <div style="color:var(--fg4);font-size:0.85em">
                     Cost: ${r.total_cost_credits} credits${durStr}
                   </div>
+                  <div id="run-signals-${r.run_id}" style="display:none;margin-top:6px;padding:8px;background:var(--bg0);border-left:2px solid var(--aqua);font-size:0.82em"></div>
                 </div>`;
               })
               .join("");
@@ -2626,6 +2631,105 @@
           alert("Error: " + e.message);
         }
       }
+
+      // Toggle the per-evaluator breakdown panel under a run row.
+      // Lazy-fetches signals on first open; cached on the element.
+      window.toggleRunSignals = async function (runId, agentId) {
+        const el = document.getElementById(`run-signals-${runId}`);
+        if (!el) return;
+        if (el.style.display !== "none") {
+          el.style.display = "none";
+          return;
+        }
+        el.style.display = "block";
+        if (el.dataset.loaded === "1") return;
+        el.innerHTML =
+          '<span style="color:var(--fg4)">Loading signals…</span>';
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/eval/runs/${encodeURIComponent(runId)}/signals`,
+          );
+          if (!res.ok) {
+            el.innerHTML =
+              '<span style="color:var(--red)">Failed to load: ' +
+              res.status +
+              "</span>";
+            return;
+          }
+          const data = await res.json();
+          const signals = data.signals || [];
+          if (signals.length === 0) {
+            el.innerHTML =
+              '<span style="color:var(--fg4)">No per-evaluator signals stored for this run.</span>';
+            el.dataset.loaded = "1";
+            return;
+          }
+          // Group by evaluator name → dimensions table.
+          const byEval = {};
+          signals.forEach((s) => {
+            if (!byEval[s.evaluator_name]) {
+              byEval[s.evaluator_name] = {
+                tier: s.evaluator_tier,
+                version: s.evaluator_version,
+                rows: [],
+              };
+            }
+            byEval[s.evaluator_name].rows.push(s);
+          });
+          const blocks = Object.keys(byEval)
+            .sort()
+            .map((name) => {
+              const grp = byEval[name];
+              const rows = grp.rows
+                .map((s) => {
+                  const scorePct = Math.round((s.score || 0) * 100);
+                  const color =
+                    s.score >= 0.75
+                      ? "var(--green)"
+                      : s.score >= 0.55
+                        ? "var(--yellow)"
+                        : "var(--red)";
+                  const conf =
+                    s.confidence != null
+                      ? `<span style="color:var(--fg4);margin-left:8px">conf ${(s.confidence * 100).toFixed(0)}%</span>`
+                      : "";
+                  const flagsStr =
+                    s.flags && Object.keys(s.flags).length > 0
+                      ? `<div style="color:var(--yellow);font-size:0.85em;margin-top:2px">flags: ${escapeHtml(JSON.stringify(s.flags))}</div>`
+                      : "";
+                  const rat = s.rationale
+                    ? `<div style="color:var(--fg3);font-size:0.85em;margin-top:2px;font-style:italic">${escapeHtml(s.rationale.length > 200 ? s.rationale.slice(0, 200) + "…" : s.rationale)}</div>`
+                    : "";
+                  return `
+                    <div style="padding:4px 0">
+                      <span style="color:var(--fg4);width:140px;display:inline-block">${escapeHtml(s.dimension)}</span>
+                      <span style="color:${color};font-weight:bold">${scorePct}%</span>${conf}
+                      ${flagsStr}
+                      ${rat}
+                    </div>`;
+                })
+                .join("");
+              const tierBadge = `<span style="color:var(--fg4);font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;margin-left:6px">${escapeHtml(grp.tier || "")} v${escapeHtml(grp.version || "")}</span>`;
+              return `
+                <div style="margin-bottom:10px">
+                  <div style="color:var(--aqua);font-weight:bold">${escapeHtml(name)}${tierBadge}</div>
+                  ${rows}
+                </div>`;
+            })
+            .join("");
+          el.innerHTML = `
+            <div style="color:var(--fg3);font-size:0.8em;margin-bottom:6px">
+              ${data.count} signal${data.count === 1 ? "" : "s"} from ${Object.keys(byEval).length} evaluator${Object.keys(byEval).length === 1 ? "" : "s"}
+            </div>
+            ${blocks}`;
+          el.dataset.loaded = "1";
+        } catch (e) {
+          el.innerHTML =
+            '<span style="color:var(--red)">Error: ' +
+            escapeHtml(e.message) +
+            "</span>";
+        }
+      };
 
       async function runEval(agentId, withJudge) {
         try {
