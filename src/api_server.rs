@@ -757,6 +757,10 @@ async fn main() {
             "/api/agents/:agent_id/eval/runs",
             get(handlers::eval::list_eval_runs_handler),
         )
+        .route(
+            "/api/agents/:agent_id/eval/runs/:run_id/signals",
+            get(handlers::eval::list_eval_signals_handler),
+        )
         // ─── Phase 4 — Observatory (Plane D) ─────────────────────────
         // See docs/architecture/OBSERVABILITY_IMPL.md
         .route(

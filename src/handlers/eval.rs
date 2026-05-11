@@ -294,6 +294,47 @@ pub async fn list_eval_runs_handler(
     Ok(Json(json!({ "runs": runs })))
 }
 
+/// GET /api/agents/:agent_id/eval/runs/:run_id/signals
+///
+/// Returns the per-evaluator, per-dimension `EvalSignal` rows for a
+/// single run. Used by:
+///   - the agent detail page's Eval tab (per-evaluator breakdown view)
+///   - the eval_runner agent's `query_eval_signals` MCP tool
+///   - the observability_coordinator's quick lookups
+///
+/// Public — matches `list_eval_runs_handler`'s read model (the same
+/// data, just disaggregated).
+pub async fn list_eval_signals_handler(
+    State(state): State<AppState>,
+    Path((agent_id, run_id_str)): Path<(String, String)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    let run_id = uuid::Uuid::parse_str(&run_id_str)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid run_id".into()))?;
+
+    let signals = state
+        .memory_store
+        .list_eval_signals_for_run(run_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Guard against cross-agent leakage: a run_id always belongs to one
+    // agent. Surface the mismatch as 404, not silent empty.
+    if let Some(first) = signals.first() {
+        if first.agent_id != db_agent.agent_id {
+            return Err((StatusCode::NOT_FOUND, "Run not found for this agent".into()));
+        }
+    }
+
+    Ok(Json(json!({
+        "agent_id": db_agent.agent_id,
+        "run_id": run_id,
+        "signals": signals,
+        "count": signals.len(),
+    })))
+}
+
 // ─── Background Eval Runner ─────────────────────────────────────────
 
 /// Trivial `AgentNameResolver` keyed on a single agent — the eval
