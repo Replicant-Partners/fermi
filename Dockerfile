@@ -1,60 +1,39 @@
 # ─── Stage 1: Build the api-server binary ──────────────────────────
 #
-# We only copy the crates that api-server actually depends on.
-# fermi-console and fermi-lsp are EXCLUDED because they depend on gpui
-# (a GPU-accelerated UI framework that requires macOS Metal / system
-# graphics libraries) and will never compile on a Linux Docker build.
-# They are native-desktop-only crates and are NOT needed by the server.
+# fermi-console and fermi-lsp are workspace members that depend on gpui,
+# which requires macOS Metal / Cocoa / CoreFoundation system frameworks.
+# Even though `cargo build --bin api-server` does NOT compile those crates,
+# cargo still resolves their full dependency graph and some of those crates
+# (cocoa, core-graphics, cbindgen, bindgen) have build.rs scripts that
+# fail or download things that don't exist on Linux.
+#
+# Solution: remove fermi-console and fermi-lsp from the workspace members
+# list in a server-side copy of Cargo.toml before running the build.
+# The sed command strips those two entries from the members array.
+# All other workspace members (simops, agent-bestiary/*) are pure Rust
+# and compile cleanly on Linux.
 #
 FROM rust:1.85 AS builder
 WORKDIR /app
 
-# Copy workspace manifest and lock file first (layer-cache friendly).
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+# Copy everything (nixpacks-style — simpler and correct).
+COPY . .
 
-# Copy all server-side source trees.
-# Ordering: dependencies before dependents for better layer caching.
-COPY src ./src
-COPY fermi-auth ./fermi-auth
-COPY fermi-memory ./fermi-memory
+# Strip the desktop-only workspace members from Cargo.toml so cargo
+# never touches their dependencies. Uses a simple in-place sed that
+# removes the exact line added by the console commits.
+# The line is: "    \"fermi-lsp\", \"crates/fermi-console\","
+# After removal the workspace members list is still valid.
+RUN sed -i '/"fermi-lsp", "crates\/fermi-console"/d' Cargo.toml && \
+    sed -i '/"crates\/fermi-console"/d' Cargo.toml && \
+    sed -i '/^    "fermi-lsp",$/d' Cargo.toml
 
-# Agent Bestiary crates (server-side: memory, evaluators, observability,
-# coherence-gate, and the 5 Track B evaluators — all pure Rust, no GPU deps).
-COPY agent-bestiary/memory            ./agent-bestiary/memory
-COPY agent-bestiary/evaluators        ./agent-bestiary/evaluators
-COPY agent-bestiary/observability     ./agent-bestiary/observability
-COPY agent-bestiary/coherence-gate    ./agent-bestiary/coherence-gate
-COPY agent-bestiary/evaluator-wildguard    ./agent-bestiary/evaluator-wildguard
-COPY agent-bestiary/evaluator-faithfulness ./agent-bestiary/evaluator-faithfulness
-COPY agent-bestiary/evaluator-sotopia      ./agent-bestiary/evaluator-sotopia
-COPY agent-bestiary/evaluator-lifelong     ./agent-bestiary/evaluator-lifelong
-COPY agent-bestiary/evaluator-character    ./agent-bestiary/evaluator-character
-COPY agent-bestiary/ontology          ./agent-bestiary/ontology
-COPY agent-bestiary/consolidate       ./agent-bestiary/consolidate
-COPY agent-bestiary/projector         ./agent-bestiary/projector
-COPY agent-bestiary/coherence/crates  ./agent-bestiary/coherence/crates
-
-# SimOps crate (server-side).
-COPY crates/simops ./crates/simops
-
-# NOTE: fermi-lsp and crates/fermi-console are intentionally NOT copied.
-# They depend on gpui and cannot compile on Linux.
-# The workspace Cargo.toml lists them as members but cargo build --bin
-# api-server does NOT compile workspace members that aren't dependencies
-# of the target binary.
-#
-# We provide stub Cargo.toml files so the workspace resolver doesn't error
-# on missing members. The stubs declare no source files — cargo sees them
-# as empty library crates and skips them.
-RUN mkdir -p fermi-lsp/src crates/fermi-console/src && \
-    echo '[package]\nname = "fermi-lsp"\nversion = "0.1.0"\nedition = "2021"' > fermi-lsp/Cargo.toml && \
-    echo '' > fermi-lsp/src/lib.rs && \
-    echo '[package]\nname = "fermi-console"\nversion = "0.1.0"\nedition = "2021"' > crates/fermi-console/Cargo.toml && \
-    echo '' > crates/fermi-console/src/lib.rs
+# Also remove the desktop crate path dependencies from [dependencies]
+# (fermi-console is not a [dependency], but fermi-lsp might add one later).
+# This is a no-op if the lines aren't present.
 
 # Build only the api-server binary in release mode.
-RUN cargo build --release --bin api-server && \
-    ls -la /app/target/release/ | grep api-server
+RUN cargo build --release --bin api-server
 
 # ─── Stage 2: Minimal runtime image ───────────────────────────────
 FROM debian:bookworm-slim
@@ -75,6 +54,8 @@ COPY templates /app/templates
 COPY static /app/static
 
 # Copy Flutter web build (Rabble SPA).
+# rabble-web is tracked in git (39 files); static/rabble/ is gitignored
+# because it's a Flutter build artifact copied from rabble-web at deploy time.
 COPY rabble-web /app/static/rabble
 
 # Copy agents directory.
