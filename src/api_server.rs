@@ -1499,6 +1499,14 @@ async fn main() {
             put(handlers::admin::admin_flag_agent_handler),
         )
         .route(
+            "/api/admin/agent-ownership-audit",
+            get(handlers::admin::admin_agent_ownership_audit_handler),
+        )
+        .route(
+            "/api/admin/agent-ownership-reassign",
+            post(handlers::admin::admin_agent_ownership_reassign_handler),
+        )
+        .route(
             "/api/admin/waitlist",
             get(handlers::admin::admin_list_waitlist_handler)
                 .post(handlers::admin::admin_add_waitlist_handler),

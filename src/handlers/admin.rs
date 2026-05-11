@@ -901,3 +901,164 @@ pub async fn admin_update_swarm_status_handler(
         "status": req.status,
     })))
 }
+
+// ─── Agent ownership audit ──────────────────────────────────────────
+//
+// GET /api/admin/agent-ownership-audit
+//
+// Admin-only. Returns every agent grouped by ownership status to help
+// diagnose ownership drift (the main symptom that surfaces after a
+// buggy backfill: agents nulled or assigned to the wrong user).
+//
+// Buckets:
+//   - mine:    agents currently owned by the caller (admin)
+//   - others:  agents owned by other users (community agents in normal flow)
+//   - orphan:  agents with user_id IS NULL (system-owned, no manager)
+//
+// Per-row data: agent_name, tier, current owner user_id + display_name,
+// visibility, status, created_at. Sorted by tier then name within each
+// bucket. No pagination — this is a diagnostic surface, not a hot path.
+
+pub async fn admin_agent_ownership_audit_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+    let caller_id = principal.user_id();
+
+    let rows = sqlx::query(
+        "SELECT a.agent_name, a.tier, a.user_id, a.visibility, a.status,
+                a.created_at,
+                COALESCE(u.display_name, u.email, u.user_id) AS owner_display
+           FROM agents a
+           LEFT JOIN users u ON u.user_id = a.user_id
+           WHERE a.agent_name NOT LIKE 'test_agent_%'
+           ORDER BY a.tier, a.agent_name",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut mine: Vec<Value> = Vec::new();
+    let mut others: Vec<Value> = Vec::new();
+    let mut orphan: Vec<Value> = Vec::new();
+
+    for r in &rows {
+        let owner_id: Option<String> = r.try_get("user_id").ok().flatten();
+        let row_json = json!({
+            "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+            "tier": r.try_get::<String, _>("tier").unwrap_or_default(),
+            "owner_id": owner_id.clone(),
+            "owner_display": r.try_get::<Option<String>, _>("owner_display").ok().flatten(),
+            "visibility": r.try_get::<String, _>("visibility").unwrap_or_default(),
+            "status": r.try_get::<String, _>("status").unwrap_or_default(),
+            "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                .ok().map(|t| t.to_rfc3339()),
+        });
+
+        match owner_id {
+            None => orphan.push(row_json),
+            Some(ref id) if id == &caller_id => mine.push(row_json),
+            Some(_) => others.push(row_json),
+        }
+    }
+
+    // Tier counts within each bucket — fast spot-check for over-corrections.
+    let count_by_tier = |bucket: &[Value]| -> Value {
+        let mut counts: std::collections::BTreeMap<String, i32> =
+            std::collections::BTreeMap::new();
+        for row in bucket {
+            let tier = row.get("tier").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+            *counts.entry(tier).or_insert(0) += 1;
+        }
+        json!(counts)
+    };
+
+    Ok(Json(json!({
+        "caller_user_id": caller_id,
+        "summary": {
+            "mine": {
+                "count": mine.len(),
+                "by_tier": count_by_tier(&mine),
+            },
+            "others": {
+                "count": others.len(),
+                "by_tier": count_by_tier(&others),
+            },
+            "orphan": {
+                "count": orphan.len(),
+                "by_tier": count_by_tier(&orphan),
+            },
+        },
+        "mine": mine,
+        "others": others,
+        "orphan": orphan,
+    })))
+}
+
+// ─── Agent ownership reassignment ───────────────────────────────────
+//
+// POST /api/admin/agent-ownership-reassign
+// Body: { agent_names: ["foo", "bar"], new_owner_user_id: "<uuid>" | null }
+//
+// Admin-only. Reassign one or more agents to a different user (or NULL
+// to make them system-owned). Use after the audit to fix specific
+// drifters without needing a one-off SQL session.
+//
+// Returns a per-agent {agent_name, status: updated | not_found}.
+
+#[derive(serde::Deserialize)]
+pub struct ReassignRequest {
+    pub agent_names: Vec<String>,
+    /// `None` means "set user_id to NULL" (system-owned).
+    #[serde(default)]
+    pub new_owner_user_id: Option<String>,
+}
+
+pub async fn admin_agent_ownership_reassign_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<ReassignRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    if req.agent_names.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "agent_names is empty".into()));
+    }
+
+    // If a new owner is specified, verify the user exists — otherwise
+    // a typo would silently orphan the agents.
+    if let Some(ref uid) = req.new_owner_user_id {
+        let exists: Option<String> =
+            sqlx::query_scalar("SELECT user_id FROM users WHERE user_id = $1")
+                .bind(uid)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if exists.is_none() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("new_owner_user_id {} not found in users", uid),
+            ));
+        }
+    }
+
+    let mut results: Vec<Value> = Vec::new();
+    for name in &req.agent_names {
+        let rows = sqlx::query("UPDATE agents SET user_id = $2 WHERE agent_name = $1 RETURNING agent_name")
+            .bind(name)
+            .bind(&req.new_owner_user_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        results.push(json!({
+            "agent_name": name,
+            "status": if rows.is_empty() { "not_found" } else { "updated" },
+        }));
+    }
+
+    Ok(Json(json!({
+        "new_owner_user_id": req.new_owner_user_id,
+        "results": results,
+    })))
+}
