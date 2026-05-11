@@ -1238,6 +1238,90 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: false,
             is_delegation: false,
         },
+        // ─── Observability composition tools ───────────────────────
+        // Consumed by observability_coordinator, eval_runner,
+        // anomaly_triager, dyad_observer. See docs/AGENT_MODEL.md §3.
+        BuiltinToolDef {
+            name: "query_eval_signals",
+            description: "Read per-evaluator, per-dimension scores from eval_signals. Required: run_id. Returns one row per (evaluator, dimension) with score, confidence, persona_version, model_used, rationale.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "run_id": { "type": "string", "description": "UUID of the eval_run to read signals for." }
+                },
+                "required": ["run_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "query_eval_runs",
+            description: "List recent eval_runs for an agent. Returns run metadata including aggregated_signal, regression_detected, judge_enabled, pass/fail counts.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string", "description": "UUID of the agent." },
+                    "limit": { "type": "integer", "default": 20, "description": "Max runs to return (default 20, max 100)." }
+                },
+                "required": ["agent_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "query_anomalies",
+            description: "Read anomaly_events rows for an agent (drift / conflict / rupture / safety). Used by anomaly_triager and observability_coordinator.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string", "description": "UUID of the agent." },
+                    "limit": { "type": "integer", "default": 50, "description": "Max events to return (default 50, max 500)." }
+                },
+                "required": ["agent_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "query_hitl_queue",
+            description: "Read pending HITL events — anomaly_events where requires_review=true and resolved_at is null. Returns up to N events ordered by severity then recency.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "default": 50, "description": "Max events to return (default 50, max 200)." }
+                },
+                "required": []
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "query_timeline",
+            description: "Read agent_timeline_entries — per-episode rolled-up scoring view with persona_version_at_write and aggregated scores. Used by dyad_observer for longitudinal narrative.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string", "description": "UUID of the agent." },
+                    "limit": { "type": "integer", "default": 100, "description": "Max entries to return (default 100, max 500)." }
+                },
+                "required": ["agent_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "query_dyad_state",
+            description: "Read dyad_state rows — per-(agent, human) running rapport / trust / reciprocity. Used by dyad_observer.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string", "description": "UUID of the agent." }
+                },
+                "required": ["agent_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
     ]
 }
 
@@ -1443,6 +1527,13 @@ impl ToolRegistry {
             "simops_predictor_forecast"    => crate::agent_backend::simops_tools::execute_simops_predictor_forecast(input).await,
             "simops_optimize_scale"        => crate::agent_backend::simops_tools::execute_simops_optimize_scale(input).await,
             "simops_optimize_single_input" => crate::agent_backend::simops_tools::execute_simops_optimize_single_input(input).await,
+            // ─── Observability composition tools ───────────────
+            "query_eval_signals" => execute_query_eval_signals(input, ctx).await,
+            "query_eval_runs"    => execute_query_eval_runs(input, ctx).await,
+            "query_anomalies"    => execute_query_anomalies(input, ctx).await,
+            "query_hitl_queue"   => execute_query_hitl_queue(input, ctx).await,
+            "query_timeline"     => execute_query_timeline(input, ctx).await,
+            "query_dyad_state"   => execute_query_dyad_state(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -5073,4 +5164,159 @@ async fn execute_run_sensitivity_analysis(input: &serde_json::Value) -> Result<S
     });
 
     serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Observability composition tools ───────────────────────────────
+//
+// Read-side wrappers around MemoryStore methods for the observability
+// composition (observability_coordinator + eval_runner + anomaly_triager
+// + dyad_observer). See docs/AGENT_MODEL.md §3 and §4.2.2.
+//
+// All six are pure reads — no gas charged, no writes. Action tools
+// (run_evaluator_registry, route_to_hitl, classify_anomaly) will be
+// added in a follow-up commit since they have larger blast radius.
+
+fn parse_uuid_field(input: &serde_json::Value, field: &str) -> Result<Uuid, String> {
+    let s = input
+        .get(field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("Missing required parameter: {}", field))?;
+    Uuid::parse_str(s).map_err(|e| format!("Invalid UUID for {}: {}", field, e))
+}
+
+async fn execute_query_eval_signals(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let run_id = parse_uuid_field(input, "run_id")?;
+    let signals = ctx
+        .memory_store
+        .list_eval_signals_for_run(run_id)
+        .await
+        .map_err(|e| format!("Failed to list eval_signals: {}", e))?;
+
+    serde_json::to_string_pretty(&json!({
+        "run_id": run_id,
+        "count": signals.len(),
+        "signals": signals,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_query_eval_runs(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let limit = input
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(20)
+        .clamp(1, 100);
+
+    let runs = ctx
+        .memory_store
+        .list_eval_runs(agent_id, limit)
+        .await
+        .map_err(|e| format!("Failed to list eval_runs: {}", e))?;
+
+    serde_json::to_string_pretty(&json!({
+        "agent_id": agent_id,
+        "count": runs.len(),
+        "runs": runs,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_query_anomalies(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let limit = input
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50)
+        .clamp(1, 500);
+
+    let events = ctx
+        .memory_store
+        .list_anomaly_events_for_agent(agent_id, limit)
+        .await
+        .map_err(|e| format!("Failed to list anomalies: {}", e))?;
+
+    serde_json::to_string_pretty(&json!({
+        "agent_id": agent_id,
+        "count": events.len(),
+        "anomalies": events,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_query_hitl_queue(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let limit = input
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50)
+        .clamp(1, 200);
+
+    let events = ctx
+        .memory_store
+        .list_pending_anomaly_events(limit)
+        .await
+        .map_err(|e| format!("Failed to list HITL queue: {}", e))?;
+
+    serde_json::to_string_pretty(&json!({
+        "count": events.len(),
+        "pending": events,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_query_timeline(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let limit = input
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(100)
+        .clamp(1, 500);
+
+    let entries = ctx
+        .memory_store
+        .list_timeline_entries(agent_id, limit)
+        .await
+        .map_err(|e| format!("Failed to list timeline: {}", e))?;
+
+    serde_json::to_string_pretty(&json!({
+        "agent_id": agent_id,
+        "count": entries.len(),
+        "timeline": entries,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_query_dyad_state(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_id = parse_uuid_field(input, "agent_id")?;
+
+    let dyads = ctx
+        .memory_store
+        .list_dyads_for_agent(agent_id)
+        .await
+        .map_err(|e| format!("Failed to list dyads: {}", e))?;
+
+    serde_json::to_string_pretty(&json!({
+        "agent_id": agent_id,
+        "count": dyads.len(),
+        "dyads": dyads,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
 }
