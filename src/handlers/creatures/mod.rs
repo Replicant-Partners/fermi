@@ -348,6 +348,9 @@ pub(crate) async fn trigger_swarm_host_welcome(
         gas_fees: Some(state.gas_fees.clone()),
         user_id: None,
         user_secrets: None,
+        eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
+            state: state.clone(),
+        })),
     });
 
     let tool_executor = ToolAwareExecutor::new(

@@ -67,6 +67,32 @@ pub struct ToolContext {
     pub gas_fees: Option<crate::gas::GasFees>,
     pub user_id: Option<String>,
     pub user_secrets: Option<std::collections::HashMap<String, String>>,
+    /// Optional eval-trigger bridge. The library can't reach AppState
+    /// (it lives in the bin), so handlers that have AppState build an
+    /// EvalTriggerImpl and stash it here. The MCP tool
+    /// `run_evaluator_registry` calls into this. Sites that pass `None`
+    /// get a graceful tool error instead of a trigger.
+    pub eval_trigger: Option<Arc<dyn EvalTrigger>>,
+}
+
+/// Bridge for triggering an eval run from inside a tool handler.
+///
+/// Implemented in `src/handlers/eval.rs` (where AppState is in scope).
+/// The library-side tools.rs can't see AppState directly, so we abstract
+/// the trigger behind this trait. ToolContexts that have access to
+/// AppState (workspace chat, /api/agents/:id/execute) populate it.
+#[async_trait::async_trait]
+pub trait EvalTrigger: Send + Sync {
+    /// Trigger an eval run for the given agent. Returns the new run_id.
+    /// `user_id` is required to charge the wallet; `judge` toggles the
+    /// LlmJudgeEvaluator inside the registry; `tags` filters test cases.
+    async fn trigger_eval(
+        &self,
+        agent_id: Uuid,
+        user_id: String,
+        judge: bool,
+        tags: Vec<String>,
+    ) -> Result<Uuid, String>;
 }
 
 /// A built-in tool definition
@@ -1242,6 +1268,25 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
         // Consumed by observability_coordinator, eval_runner,
         // anomaly_triager, dyad_observer. See docs/AGENT_MODEL.md §3.
         BuiltinToolDef {
+            name: "run_evaluator_registry",
+            description: "Trigger a fresh eval run for an agent — invokes the full EvaluatorRegistry (WildGuard / Faithfulness / LlmJudge / Sotopia / LifelongBench / CharacterEval / Brier) against the agent's eval test cases. Charges eval_run gas. Returns the new run_id; results stream into eval_signals and can be read with query_eval_signals.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string", "description": "UUID of the agent to evaluate." },
+                    "judge": { "type": "boolean", "default": true, "description": "Include LlmJudgeEvaluator (Anthropic; adds LLM cost)." },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional tag filter — only run test cases that carry any of these tags."
+                    }
+                },
+                "required": ["agent_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
             name: "classify_anomaly",
             description: "Read context to inform anomaly severity classification: the event row, related eval_signals from the same run, the agent's persona_version, and any prior hitl_actions. Returns a JSON bundle the caller synthesises into a severity (L0-L3) and routing recommendation.",
             input_schema: json!({
@@ -1577,6 +1622,7 @@ impl ToolRegistry {
             "query_dyad_state"   => execute_query_dyad_state(input, ctx).await,
             "classify_anomaly"   => execute_classify_anomaly(input, ctx).await,
             "route_to_hitl"      => execute_route_to_hitl(input, ctx).await,
+            "run_evaluator_registry" => execute_run_evaluator_registry(input, ctx).await,
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -4066,6 +4112,8 @@ async fn execute_delegate_to_agent(
         gas_fees: ctx.gas_fees.clone(),
         user_id: ctx.user_id.clone(),
         user_secrets: ctx.user_secrets.clone(),
+        // Delegated child agents inherit the parent's trigger capability.
+        eval_trigger: ctx.eval_trigger.clone(),
     });
 
     let tool_executor = ToolAwareExecutor::new(
@@ -5493,6 +5541,48 @@ async fn execute_route_to_hitl(
         "routed": true,
         "anomaly_id": anomaly_id,
         "recommendation": recommendation,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+async fn execute_run_evaluator_registry(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let trigger = ctx
+        .eval_trigger
+        .as_ref()
+        .ok_or("run_evaluator_registry is not available in this execution context (no eval_trigger plumbed). Use the agent detail page's Run + Judge button or POST /api/agents/:id/eval/run.")?;
+
+    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let user_id = ctx
+        .user_id
+        .clone()
+        .ok_or("run_evaluator_registry requires user_id in ToolContext")?;
+    let judge = input
+        .get("judge")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let tags: Vec<String> = input
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let run_id = trigger
+        .trigger_eval(agent_id, user_id, judge, tags)
+        .await
+        .map_err(|e| format!("Failed to trigger eval: {}", e))?;
+
+    serde_json::to_string_pretty(&json!({
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "status": "running",
+        "note": "Run started in background. Poll with query_eval_runs or query_eval_signals once it completes.",
     }))
     .map_err(|e| format!("Serialization error: {}", e))
 }

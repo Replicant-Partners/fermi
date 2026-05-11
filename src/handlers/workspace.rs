@@ -792,6 +792,11 @@ pub async fn post_workspace_message_handler(
                             gas_fees: Some(state2.gas_fees.clone()),
                             user_id: Some(user_id2.clone()),
                             user_secrets,
+                            eval_trigger: Some(Arc::new(
+                                crate::handlers::eval::EvalTriggerImpl {
+                                    state: state2.clone(),
+                                },
+                            )),
                         });
                         let tool_executor = ToolAwareExecutor::new(
                             state2.registry.executor_arc(),

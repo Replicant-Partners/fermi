@@ -290,6 +290,9 @@ pub async fn dispatch_rabble_action(
         gas_fees: Some(state.gas_fees.clone()),
         user_id: Some(user_id.to_string()),
         user_secrets: None,
+        eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
+            state: state.clone(),
+        })),
     });
 
     // Execute with tool-aware executor

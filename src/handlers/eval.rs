@@ -191,15 +191,37 @@ pub async fn trigger_eval_run_handler(
     if db_agent.owner_id.as_deref() != Some(&user_id) && db_agent.tier != "curated" {
         return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
     }
+    let agent_name = agent_id.clone();
+    let (run_id, total_cases) =
+        trigger_eval_run_core(&state, db_agent, agent_name, user_id, body.judge, body.tags)
+            .await?;
+    Ok(Json(json!({
+        "run_id": run_id,
+        "status": "running",
+        "total_cases": total_cases,
+    })))
+}
 
+/// Shared trigger logic used by both the HTTP handler above and the
+/// `run_evaluator_registry` MCP tool (via `EvalTriggerImpl`). Loads test
+/// cases, charges gas, creates the eval_run row, and spawns the
+/// background runner. Returns (run_id, total_cases).
+pub async fn trigger_eval_run_core(
+    state: &AppState,
+    db_agent: Agent,
+    agent_name: String,
+    user_id: String,
+    judge: bool,
+    tag_filter: Vec<String>,
+) -> Result<(uuid::Uuid, usize), (StatusCode, String)> {
     // Load test cases (filter by tags if provided)
     let mut cases = state
         .memory_store
         .list_eval_test_cases(db_agent.agent_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if !body.tags.is_empty() {
-        cases.retain(|c| c.tags.iter().any(|t| body.tags.contains(t)));
+    if !tag_filter.is_empty() {
+        cases.retain(|c| c.tags.iter().any(|t| tag_filter.contains(t)));
     }
     if cases.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "No test cases found".into()));
@@ -219,7 +241,7 @@ pub async fn trigger_eval_run_handler(
         wallet.wallet_id,
         state.gas_fees.eval_run,
         "eval_fee",
-        &format!("Eval run for {}", agent_id),
+        &format!("Eval run for {}", agent_name),
         None,
     )
     .await?;
@@ -231,7 +253,7 @@ pub async fn trigger_eval_run_handler(
         agent_id: db_agent.agent_id,
         triggered_by: user_id.clone(),
         status: "running".into(),
-        judge_enabled: body.judge,
+        judge_enabled: judge,
         total_cases: cases.len() as i32,
         passed: 0,
         failed: 0,
@@ -242,7 +264,6 @@ pub async fn trigger_eval_run_handler(
         case_results: json!([]),
         regression_detected: false,
         regression_details: None,
-        // Phase 2 — registry aggregated outputs (filled in by completion)
         aggregated_signal: None,
         conflict_flags: json!([]),
         prefilter_blocked: false,
@@ -259,8 +280,6 @@ pub async fn trigger_eval_run_handler(
     // Spawn background task
     let total_cases = cases.len();
     let state_clone = state.clone();
-    let agent_name = agent_id.clone();
-    let judge = body.judge;
     tokio::spawn(async move {
         run_eval_cases(
             state_clone,
@@ -273,12 +292,44 @@ pub async fn trigger_eval_run_handler(
         )
         .await;
     });
+    Ok((run_id, total_cases))
+}
 
-    Ok(Json(json!({
-        "run_id": run_id,
-        "status": "running",
-        "total_cases": total_cases,
-    })))
+/// Bridge so the `run_evaluator_registry` MCP tool can trigger an eval
+/// from inside the library-side tool dispatcher (which can't reach
+/// AppState directly). Construction sites that have AppState in scope
+/// build one of these and stash it in ToolContext::eval_trigger.
+pub struct EvalTriggerImpl {
+    pub state: AppState,
+}
+
+#[async_trait::async_trait]
+impl fermi::agent_backend::tools::EvalTrigger for EvalTriggerImpl {
+    async fn trigger_eval(
+        &self,
+        agent_id: uuid::Uuid,
+        user_id: String,
+        judge: bool,
+        tags: Vec<String>,
+    ) -> Result<uuid::Uuid, String> {
+        let db_agent = self
+            .state
+            .memory_store
+            .get_agent(agent_id)
+            .await
+            .map_err(|e| format!("Failed to load agent: {}", e))?
+            .ok_or_else(|| format!("Agent {} not found", agent_id))?;
+        // Ownership check — tool caller must own the agent OR the agent is curated.
+        if db_agent.owner_id.as_deref() != Some(&user_id) && db_agent.tier != "curated" {
+            return Err("Not the agent owner".into());
+        }
+        let agent_name = db_agent.agent_name.clone();
+        let (run_id, _) =
+            trigger_eval_run_core(&self.state, db_agent, agent_name, user_id, judge, tags)
+                .await
+                .map_err(|(_, msg)| msg)?;
+        Ok(run_id)
+    }
 }
 
 pub async fn list_eval_runs_handler(
@@ -422,6 +473,9 @@ pub async fn run_eval_cases(
             gas_fees: Some(state.gas_fees.clone()),
             user_id: None,
             user_secrets: None,
+            // Inside the eval loop itself we deliberately omit the
+            // trigger — agents under eval should not trigger more evals.
+            eval_trigger: None,
         });
         let tool_executor = ToolAwareExecutor::new(
             state.registry.executor_arc(),

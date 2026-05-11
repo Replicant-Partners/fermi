@@ -141,6 +141,9 @@ pub async fn execute_agent_stream_handler(
             gas_fees: Some(state.gas_fees.clone()),
             user_id: Some(caller_id.clone()),
             user_secrets: None,
+            eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
+                state: state.clone(),
+            })),
         });
         Arc::new(ToolAwareExecutor::new(
             state.registry.executor_arc(),
