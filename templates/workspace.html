@@ -1269,6 +1269,62 @@
           </div>
         </div>
 
+        <!-- Observability -->
+        <div class="shelf-section">
+          <div class="shelf-label">Observability</div>
+          <div
+            style="font-size: 0.7rem; color: var(--fg3); margin-bottom: 6px"
+          >
+            Ask the observability composition about agent state, anomalies, drift, or eval results in this workspace.
+          </div>
+          <div
+            style="
+              display: flex;
+              flex-direction: column;
+              gap: 4px;
+            "
+          >
+            <button
+              class="btn"
+              onclick="invokeObservability('state')"
+              style="font-size: 0.7rem"
+              title="State snapshot — anomaly counts, HITL queue, recent scores, persona changes"
+            >
+              State snapshot
+            </button>
+            <button
+              class="btn"
+              onclick="invokeObservability('triage')"
+              style="font-size: 0.7rem"
+              title="Triage pending anomalies → severity classification + HITL routing"
+            >
+              Triage anomalies
+            </button>
+            <button
+              class="btn"
+              onclick="invokeObservability('drift')"
+              style="font-size: 0.7rem"
+              title="Drift narrative for workspace agents over the last 30 days"
+            >
+              Drift report
+            </button>
+            <button
+              class="btn"
+              onclick="invokeObservability('eval')"
+              style="font-size: 0.7rem"
+              title="Per-evaluator scores from the most recent runs"
+            >
+              Eval breakdown
+            </button>
+          </div>
+          <div
+            style="font-size: 0.65rem; color: var(--fg3); margin-top: 6px"
+          >
+            Pay-as-the-agent-works: short summaries cost ~1cr,
+            deep-dives more. Output shows in chat.
+          </div>
+        </div>
+
         <!-- Budget -->
         <div class="shelf-section">
           <div class="shelf-label">Budget</div>
@@ -2787,6 +2843,48 @@
       }
 
       // Tiered coherence evaluation
+      // ─── Observability shelf ───
+      // Posts an @observability_coordinator message to the workspace
+      // chat. The existing chat flow handles agent invocation, gas
+      // charging, and SSE broadcast — the shelf is just a pre-filled
+      // shortcut for the four most common queries.
+      window.invokeObservability = async function (tier) {
+        const queries = {
+          state: "@observability_coordinator Give me a state snapshot of this workspace: any active anomalies, HITL queue depth, recent eval scores per agent, and any persona_version changes in the last 24 hours.",
+          triage: "@observability_coordinator Triage all pending anomalies in this workspace. For each, classify severity (L0–L3) and route the L2/L3 ones to HITL with a recommended action and justification.",
+          drift: "@observability_coordinator Generate a drift narrative for the agents in this workspace over the last 30 days. Cite specific persona_version changes, evaluator score trends, and dyad-state inflection points.",
+          eval: "@observability_coordinator For each agent in this workspace, fetch the most recent eval_run and report per-evaluator scores. Flag conflicts (max-min > 0.20) and any regressions.",
+        };
+        const content = queries[tier];
+        if (!content) return;
+
+        const btns = document.querySelectorAll(".panel-shelf .btn");
+        btns.forEach((b) => (b.disabled = true));
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content,
+              message_type: "agent_invocation",
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Failed to invoke: " + err);
+            return;
+          }
+          // The agent's response will arrive via the chat SSE stream.
+          // Switch to the chat tab so the user sees it.
+          if (typeof switchTab === "function") switchTab("chat");
+          refreshBudget();
+        } catch (e) {
+          alert("Failed to invoke observability: " + e.message);
+        } finally {
+          btns.forEach((b) => (b.disabled = false));
+        }
+      };
+
       window.evaluateCoherenceTier = async function (depth) {
         const btns = document.querySelectorAll(".panel-shelf .btn");
         btns.forEach((b) => (b.disabled = true));
