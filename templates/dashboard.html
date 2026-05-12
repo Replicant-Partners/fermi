@@ -648,13 +648,31 @@
                   archived: "var(--gray)",
                 };
                 const sc = statusColors[a.status || "draft"] || "var(--fg3)";
+                // ABW workspace memberships → pills (named).
+                // Other-origin (rabble swarms etc.) → rolled-up counts so
+                // a system agent in 50 rabble swarms doesn't blow up the
+                // tile with 50 pills.
+                const abwPills = (a.workspace_names || [])
+                  .map(
+                    (n) =>
+                      `<span style="font-size:0.6em;padding:1px 5px;border:1px solid var(--bg3);color:var(--purple)">${n}</span>`,
+                  )
+                  .join("");
+                const otherCounts = a.workspace_counts_by_origin || {};
+                const otherPills = Object.keys(otherCounts)
+                  .map(
+                    (origin) =>
+                      `<span style="font-size:0.6em;padding:1px 5px;border:1px solid var(--bg3);color:var(--fg4);text-transform:uppercase;letter-spacing:0.05em" title="${origin}">${origin.replace(/_/g, " ")} &times;${otherCounts[origin]}</span>`,
+                  )
+                  .join("");
                 return `
                 <a href="/agent/${a.agent_name}" class="tile" style="border-left:3px solid ${sc}">
                   <div class="tile-name">${a.display_alias || a.agent_name}${a.fork_count > 0 ? ` <span style="font-size:0.8em;color:var(--blue)">&#9906;${a.fork_count}</span>` : ""}</div>
                   <div class="tile-meta">${a.agent_type || "agent"} &middot; ${a.total_executions || 0} exec</div>
                   <div class="tile-badges">
                     <span class="badge badge-${a.visibility || "private"}" style="font-size:0.6em">${a.visibility || "private"}</span>
-                    ${(a.workspace_names || []).map((n) => `<span style="font-size:0.6em;padding:1px 5px;border:1px solid var(--bg3);color:var(--purple)">${n}</span>`).join("")}
+                    ${abwPills}
+                    ${otherPills}
                   </div>
                   <div id="wallet-${a.agent_id}" style="font-size:0.7em;color:var(--fg4);margin-top:4px"></div>
                 </a>`;

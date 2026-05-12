@@ -1071,10 +1071,15 @@ pub async fn list_my_agents_handler(
             )
         })?;
 
-    // Batch-load workspace memberships for all owned agents
+    // Batch-load workspace memberships, segmented by origin so the
+    // harness Collection UI shows ABW workspaces as pills and rolls
+    // up rabble / fermi / other-vertical memberships into counts.
+    // Previously this returned every workspace name regardless of
+    // origin, which produced 50+ rabble pills on system agents like
+    // enemy_sensor that get auto-hired into every swarm.
     let agent_ids: Vec<uuid::Uuid> = agents.iter().map(|a| a.agent_id).collect();
     let ws_rows = sqlx::query(
-        "SELECT wa.agent_id, t.name
+        "SELECT wa.agent_id, t.name, t.origin
          FROM workspace_agents wa
          JOIN teams t ON t.id = wa.workspace_id
          WHERE wa.agent_id = ANY($1)",
@@ -1084,17 +1089,41 @@ pub async fn list_my_agents_handler(
     .await
     .unwrap_or_default();
 
-    let mut ws_map: std::collections::HashMap<uuid::Uuid, Vec<String>> =
+    // ABW workspaces → pills (full names listed).
+    // Other origins → roll up to {origin: count}.
+    let mut ws_names_abw: std::collections::HashMap<uuid::Uuid, Vec<String>> =
         std::collections::HashMap::new();
+    let mut ws_counts_by_origin: std::collections::HashMap<
+        uuid::Uuid,
+        std::collections::BTreeMap<String, i32>,
+    > = std::collections::HashMap::new();
     for r in &ws_rows {
         let aid: uuid::Uuid = r.get("agent_id");
         let name: String = r.get("name");
-        ws_map.entry(aid).or_default().push(name);
+        let origin: String = r
+            .try_get::<String, _>("origin")
+            .unwrap_or_else(|_| "bestiary_workspace".into());
+        if origin == "bestiary_workspace" {
+            ws_names_abw.entry(aid).or_default().push(name);
+        } else {
+            *ws_counts_by_origin
+                .entry(aid)
+                .or_default()
+                .entry(origin)
+                .or_insert(0) += 1;
+        }
     }
 
     let agent_list: Vec<Value> = agents
         .iter()
         .map(|a| {
+            let abw_names = ws_names_abw.get(&a.agent_id).cloned().unwrap_or_default();
+            let other_counts = ws_counts_by_origin
+                .get(&a.agent_id)
+                .cloned()
+                .unwrap_or_default();
+            let total_count = abw_names.len() as i32
+                + other_counts.values().sum::<i32>();
             json!({
                 "agent_id": a.agent_id,
                 "agent_name": a.agent_name,
@@ -1111,8 +1140,9 @@ pub async fn list_my_agents_handler(
                 "fork_pricing": a.fork_pricing,
                 "forked_from": a.forked_from,
                 "fork_count": a.fork_count,
-                "workspace_names": ws_map.get(&a.agent_id).cloned().unwrap_or_default(),
-                "workspace_count": ws_map.get(&a.agent_id).map(|v| v.len()).unwrap_or(0),
+                "workspace_names": abw_names,
+                "workspace_counts_by_origin": other_counts,
+                "workspace_count": total_count,
             })
         })
         .collect();
