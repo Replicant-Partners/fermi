@@ -1,8 +1,0 @@
-[phases.setup]
-providers = ["rust"]
-
-[phases.build]
-cmds = ["cargo build --release --bin api-server"]
-
-[phases.start]
-cmd = "./target/release/api-server"
