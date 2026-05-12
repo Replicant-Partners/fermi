@@ -336,6 +336,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="users">Users</button>
         <button class="tab" data-tab="agents">Agents</button>
+        <button class="tab" data-tab="ownership">Ownership</button>
         <button class="tab" data-tab="waitlist">Waitlist</button>
         <button class="tab" data-tab="ledger">Credit Ledger</button>
       </div>
@@ -540,6 +541,24 @@
             z-index: 200;
           "
         ></div>
+      </div>
+
+      <!-- Ownership Tab -->
+      <div class="tab-content" id="tab-ownership">
+        <div style="margin-bottom: 14px; color: var(--fg3); font-size: 0.85rem">
+          Agent ownership audit. Use after a migration to verify curated
+          agents are correctly assigned to you (the admin) and to spot
+          any community agents that got mis-owned.
+          <button
+            class="btn"
+            onclick="loadOwnershipAudit()"
+            style="margin-left: 12px; font-size: 0.75rem"
+          >
+            ⟳ Refresh
+          </button>
+        </div>
+        <div id="ownership-summary" style="margin-bottom: 16px"></div>
+        <div id="ownership-buckets"></div>
       </div>
 
       <!-- Ledger Tab -->
@@ -830,6 +849,7 @@
       }
 
       // --- Tabs ---
+      let ownershipLoaded = false;
       document.querySelectorAll(".tab").forEach((tab) => {
         tab.addEventListener("click", () => {
           document
@@ -842,8 +862,149 @@
           document
             .getElementById("tab-" + tab.dataset.tab)
             .classList.add("active");
+          if (tab.dataset.tab === "ownership" && !ownershipLoaded) {
+            loadOwnershipAudit();
+          }
         });
       });
+
+      // --- Ownership audit ---
+      function esc(s) {
+        return String(s == null ? "" : s).replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      }
+
+      function renderTierCounts(byTier) {
+        const keys = Object.keys(byTier || {});
+        if (keys.length === 0) return "<em>none</em>";
+        return keys
+          .sort()
+          .map(
+            (k) =>
+              `<span style="margin-right:10px"><span style="color:var(--fg3)">${esc(k)}</span> <strong>${byTier[k]}</strong></span>`,
+          )
+          .join("");
+      }
+
+      function renderBucket(name, bucket, callerUserId) {
+        if (!bucket.count) {
+          return `<div style="margin-bottom:14px"><h4 style="margin:0 0 6px 0;color:var(--fg3)">${esc(name)} — empty</h4></div>`;
+        }
+        const showActions = name === "others" || name === "orphan";
+        const action = (row) => {
+          if (!showActions) return "";
+          return `<button class="btn" style="font-size:0.7rem;padding:2px 8px" onclick="reassignToMe('${esc(row.agent_name)}', '${esc(callerUserId)}')">Reassign to me</button>`;
+        };
+        const rows = bucket
+          .map(
+            (row) => `
+            <tr>
+              <td><a href="/agents/${esc(row.agent_name)}" style="color:var(--aqua)">${esc(row.agent_name)}</a></td>
+              <td>${esc(row.tier)}</td>
+              <td>${esc(row.owner_display || row.owner_id || "<em>NULL</em>")}</td>
+              <td>${esc(row.visibility)}</td>
+              <td>${esc(row.status)}</td>
+              <td>${action(row)}</td>
+            </tr>`,
+          )
+          .join("");
+        return `
+          <div style="margin-bottom:20px">
+            <h4 style="margin:0 0 6px 0">${esc(name)} (${bucket.count})</h4>
+            <table>
+              <thead><tr>
+                <th>Agent</th><th>Tier</th><th>Owner</th><th>Visibility</th><th>Status</th><th></th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+      }
+
+      window.loadOwnershipAudit = async function () {
+        const summary = document.getElementById("ownership-summary");
+        const buckets = document.getElementById("ownership-buckets");
+        summary.innerHTML = '<span style="color:var(--fg3)">Loading…</span>';
+        buckets.innerHTML = "";
+        try {
+          const res = await fetch("/api/admin/agent-ownership-audit");
+          if (!res.ok) {
+            summary.innerHTML =
+              '<span style="color:var(--red)">Failed: ' +
+              res.status +
+              " " +
+              (await res.text()) +
+              "</span>";
+            return;
+          }
+          const data = await res.json();
+          const s = data.summary;
+          summary.innerHTML = `
+            <div style="display:flex;gap:24px;flex-wrap:wrap">
+              <div>
+                <div style="color:var(--fg3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Mine (${s.mine.count})</div>
+                <div style="font-size:0.85rem">${renderTierCounts(s.mine.by_tier)}</div>
+              </div>
+              <div>
+                <div style="color:var(--fg3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Others (${s.others.count})</div>
+                <div style="font-size:0.85rem">${renderTierCounts(s.others.by_tier)}</div>
+              </div>
+              <div>
+                <div style="color:var(--fg3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Orphan (${s.orphan.count})</div>
+                <div style="font-size:0.85rem">${renderTierCounts(s.orphan.by_tier)}</div>
+              </div>
+            </div>`;
+          buckets.innerHTML =
+            renderBucket("orphan", data.orphan, data.caller_user_id) +
+            renderBucket("others", data.others, data.caller_user_id) +
+            renderBucket("mine", data.mine, data.caller_user_id);
+          ownershipLoaded = true;
+        } catch (e) {
+          summary.innerHTML =
+            '<span style="color:var(--red)">Error: ' +
+            esc(e.message) +
+            "</span>";
+        }
+      };
+
+      window.reassignToMe = async function (agentName, callerUserId) {
+        if (
+          !confirm(
+            `Reassign "${agentName}" to you (${callerUserId})?`,
+          )
+        )
+          return;
+        try {
+          const res = await fetch(
+            "/api/admin/agent-ownership-reassign",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                agent_names: [agentName],
+                new_owner_user_id: callerUserId,
+              }),
+            },
+          );
+          if (!res.ok) {
+            alert("Reassign failed: " + (await res.text()));
+            return;
+          }
+          // Refresh
+          ownershipLoaded = false;
+          await loadOwnershipAudit();
+        } catch (e) {
+          alert("Reassign error: " + e.message);
+        }
+      };
 
       // --- Search ---
       let userSearchTimeout, agentSearchTimeout;
