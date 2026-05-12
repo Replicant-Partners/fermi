@@ -113,8 +113,16 @@
       "coordination",
       "orchestration",
       "compound-agent",
-      "workspace"
+      "workspace",
+      "coordination_strategy"
     ],
+    "strategy": {
+      "rsi_modes": ["cascade"],
+      "member_count_min": 2,
+      "member_count_max": null,
+      "member_role_requirements": [],
+      "intended_for": "Discourse coherence — multi-party explanatory reasoning with TEC-based diagnosis and role assignment. Best when members produce reasoning chains that should fit together coherently (research synthesis, integrated analysis, hypothesis evaluation)."
+    },
     "sample_queries": [
       "How coherent is this workspace right now? What should we fix?",
       "Evaluate the conversation and tell each agent what to focus on next",

@@ -487,6 +487,9 @@ async fn run_migrations(db: &PgPool) {
         // Vertical decoupling Step 1: teams.origin column + rabble
         // auto-gen backfill (docs/VERTICAL_HARNESS_SPLIT.md §6).
         "migrations/112_workspace_origin.sql",
+        // Composition as first-class: teams.mission + strategist_id
+        // + composition_versions table (docs/COMPOSITION_AS_FIRST_CLASS.md §10).
+        "migrations/113_composition_as_first_class.sql",
     ];
 
     for file in &migration_files {
