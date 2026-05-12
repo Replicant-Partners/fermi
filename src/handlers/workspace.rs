@@ -8,7 +8,7 @@ use axum::{
 };
 use fermi::gas::charge_gas;
 use fermi_auth::{
-    credit_charge_purchased_only, get_or_create_wallet, teams, AuthPrincipal,
+    credit_charge, credit_charge_purchased_only, get_or_create_wallet, teams, AuthPrincipal,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -393,21 +393,41 @@ pub async fn fund_workspace_handler(
         ));
     }
 
-    // Charge user's wallet — purchased balance only (funding a workspace = moving credits out)
+    // Charge user's wallet. Funding a workspace = transferring credits
+    // out of the user's wallet into the workspace's wallet, so by default
+    // we require purchased balance (granted credits aren't transferable —
+    // prevents granted-credit leakage into the broader economy).
+    //
+    // Admin exemption: sys admins can fund workspaces using any balance
+    // (purchased OR granted) so they can spin up test workspaces without
+    // first going through Stripe. This is gated on can_admin() so it
+    // doesn't widen the surface for regular users.
     let user_wallet = get_or_create_wallet(&state.db, "user", &principal.user_id())
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    credit_charge_purchased_only(
-        &state.db,
-        user_wallet.wallet_id,
-        req.amount,
-        "transfer_out",
-        &format!("Fund workspace {}", team.name),
-        Some(&workspace_id),
-    )
-    .await
-    .map_err(|e| (StatusCode::PAYMENT_REQUIRED, e.to_string()))?;
+    let charge_result = if principal.can_admin() {
+        credit_charge(
+            &state.db,
+            user_wallet.wallet_id,
+            req.amount,
+            "transfer_out",
+            &format!("Fund workspace {} (admin)", team.name),
+            Some(&workspace_id),
+        )
+        .await
+    } else {
+        credit_charge_purchased_only(
+            &state.db,
+            user_wallet.wallet_id,
+            req.amount,
+            "transfer_out",
+            &format!("Fund workspace {}", team.name),
+            Some(&workspace_id),
+        )
+        .await
+    };
+    charge_result.map_err(|e| (StatusCode::PAYMENT_REQUIRED, e.to_string()))?;
 
     // Credit workspace budget in teams table (display)
     sqlx::query("UPDATE teams SET workspace_budget = workspace_budget + $1 WHERE id = $2")

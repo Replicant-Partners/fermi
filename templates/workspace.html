@@ -2736,9 +2736,13 @@
             const err = await res.text();
             fundInput.style.borderColor = "var(--red)";
             fundInput.value = "";
-            fundInput.placeholder = err.slice(0, 30);
+            fundInput.placeholder = "Failed (see alert)";
             fundConfirm.disabled = false;
             fundConfirm.textContent = "Add";
+            // Show the actual error — the previous 30-char placeholder
+            // truncated useful diagnostic info like "Invalid input:
+            // Insufficient transferable balance: have X, need Y".
+            alert("Funding failed:\n\n" + err);
             return;
           }
           refreshBudget();
