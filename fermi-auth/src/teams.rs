@@ -14,11 +14,12 @@ pub async fn create_team(
     slug: &str,
     description: Option<&str>,
     owner_id: &str,
+    origin: &str,
 ) -> Result<Team, AuthError> {
     let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String)>(
         r#"
-        INSERT INTO teams (name, slug, description, owner_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO teams (name, slug, description, owner_id, origin)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING id, name, slug, description, owner_id
         "#,
     )
@@ -26,6 +27,7 @@ pub async fn create_team(
     .bind(slug)
     .bind(description)
     .bind(owner_id)
+    .bind(origin)
     .fetch_one(pool)
     .await
     .map_err(|e| AuthError::DatabaseError(e.to_string()))?;

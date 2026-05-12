@@ -67,6 +67,7 @@ pub async fn create_rabble_workspace(
         &slug,
         Some("Auto-created workspace for rabble"),
         creator_id,
+        "rabble_swarm",
     )
     .await
     .map_err(|e| {

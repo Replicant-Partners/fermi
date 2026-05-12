@@ -34,6 +34,7 @@ pub async fn create_team_handler(
         &body.slug,
         body.description.as_deref(),
         &principal.user_id(),
+        "bestiary_workspace",
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

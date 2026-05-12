@@ -484,6 +484,9 @@ async fn run_migrations(db: &PgPool) {
         // Reassign curated/system agents to the sys admin so they
         // retain Eval / Intelligence / Manage tab access.
         "migrations/111_restore_admin_ownership_of_curated.sql",
+        // Vertical decoupling Step 1: teams.origin column + rabble
+        // auto-gen backfill (docs/VERTICAL_HARNESS_SPLIT.md §6).
+        "migrations/112_workspace_origin.sql",
     ];
 
     for file in &migration_files {

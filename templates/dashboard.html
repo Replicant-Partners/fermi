@@ -459,7 +459,25 @@
       <div class="section" style="margin-bottom: 24px">
         <div class="section-title">
           Compositions
-          <button class="btn btn-primary" id="create-ws-btn">+ New</button>
+          <span style="float: right; display: flex; gap: 6px; align-items: center">
+            <select
+              id="ws-origin-filter"
+              style="
+                background: var(--bg1);
+                border: 1px solid var(--bg3);
+                color: var(--fg1);
+                padding: 4px 8px;
+                font-size: 0.8em;
+                border-radius: 3px;
+              "
+              onchange="loadWorkspaces()"
+            >
+              <option value="bestiary_workspace">Mine (ABW)</option>
+              <option value="rabble_swarm">Rabble swarms</option>
+              <option value="">All origins</option>
+            </select>
+            <button class="btn btn-primary" id="create-ws-btn">+ New</button>
+          </span>
         </div>
         <div id="workspaces-list">
           <div class="empty-state">Loading...</div>
@@ -684,56 +702,71 @@
           }
         } catch {}
 
-        // Load workspaces
-        try {
-          const res = await fetch("/api/workspaces");
-          if (res.ok) {
+        // Load workspaces — uses the dropdown's current value for origin
+        // filter. Default is "bestiary_workspace" so rabble auto-gens
+        // are hidden from the harness dashboard by default.
+        window.loadWorkspaces = async function () {
+          const origin =
+            document.getElementById("ws-origin-filter")?.value ??
+            "bestiary_workspace";
+          const url = origin
+            ? "/api/workspaces?origin=" + encodeURIComponent(origin)
+            : "/api/workspaces";
+          try {
+            const res = await fetch(url);
+            if (!res.ok) return;
             const data = await res.json();
             const el = document.getElementById("workspaces-list");
-            // Portfolio counter
             document.getElementById("portfolio-compositions").textContent = (
               data.workspaces || []
             ).length;
             if (!data.workspaces || data.workspaces.length === 0) {
               el.innerHTML =
-                '<div class="empty-state">No compositions yet. Assemble agents into a workspace.</div>';
-            } else {
-              const hues = [200, 140, 30, 340, 270, 50, 170, 10];
-              el.innerHTML =
-                '<div class="tile-scroll"><div class="tile-grid">' +
-                data.workspaces
-                  .map((w) => {
-                    const pct =
-                      w.workspace_budget > 0
-                        ? Math.min(
-                            100,
-                            (w.workspace_spent / w.workspace_budget) * 100,
-                          )
-                        : 0;
-                    const previews = w.agent_previews || [];
-                    const avatars = previews
-                      .map((ap, i) => {
-                        const nm = ap.display_alias || ap.agent_name;
-                        const init = (ap.initial || nm.charAt(0)).toUpperCase();
-                        const h =
-                          hues[ap.agent_name.charCodeAt(0) % hues.length];
-                        return `<div style="width:20px;height:20px;border-radius:50%;background:hsl(${h},45%,35%);color:#fff;font-size:0.5rem;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg0);margin-left:${i > 0 ? "-6px" : "0"};position:relative;z-index:${5 - i}">${init}</div>`;
-                      })
-                      .join("");
-                    const more = (w.agent_count || 0) - previews.length;
-                    return `
+                '<div class="empty-state">No compositions for the selected origin.</div>';
+              return;
+            }
+            const hues = [200, 140, 30, 340, 270, 50, 170, 10];
+            el.innerHTML =
+              '<div class="tile-scroll"><div class="tile-grid">' +
+              data.workspaces
+                .map((w) => {
+                  const pct =
+                    w.workspace_budget > 0
+                      ? Math.min(
+                          100,
+                          (w.workspace_spent / w.workspace_budget) * 100,
+                        )
+                      : 0;
+                  const previews = w.agent_previews || [];
+                  const avatars = previews
+                    .map((ap, i) => {
+                      const nm = ap.display_alias || ap.agent_name;
+                      const init = (ap.initial || nm.charAt(0)).toUpperCase();
+                      const h =
+                        hues[ap.agent_name.charCodeAt(0) % hues.length];
+                      return `<div style="width:20px;height:20px;border-radius:50%;background:hsl(${h},45%,35%);color:#fff;font-size:0.5rem;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg0);margin-left:${i > 0 ? "-6px" : "0"};position:relative;z-index:${5 - i}">${init}</div>`;
+                    })
+                    .join("");
+                  const more = (w.agent_count || 0) - previews.length;
+                  // Show origin badge for non-default origins so it's
+                  // clear which vertical owns a workspace.
+                  const originBadge =
+                    w.origin && w.origin !== "bestiary_workspace"
+                      ? `<span style="font-size:0.55rem;color:var(--fg3);background:var(--bg1);padding:1px 5px;border-radius:2px;margin-left:6px;text-transform:uppercase;letter-spacing:0.05em">${w.origin}</span>`
+                      : "";
+                  return `
                   <a href="/workspace/${w.id}" class="tile">
-                    <div class="tile-name">${w.name || "Unnamed"}</div>
+                    <div class="tile-name">${w.name || "Unnamed"}${originBadge}</div>
                     <div class="tile-meta">${w.agent_count || 0} agent${(w.agent_count || 0) !== 1 ? "s" : ""} &middot; ${w.workspace_remaining || 0}/${w.workspace_budget || 0} cr</div>
                     <div class="tile-avatar-stack">${avatars}${more > 0 ? `<span style="font-size:0.6em;color:var(--fg3);margin-left:4px">+${more}</span>` : ""}</div>
                     <div class="tile-budget"><div class="tile-budget-fill" style="width:${pct}%"></div></div>
                   </a>`;
-                  })
-                  .join("") +
-                "</div></div>";
-            }
-          }
-        } catch {}
+                })
+                .join("") +
+              "</div></div>";
+          } catch {}
+        };
+        await loadWorkspaces();
 
         // Load pricing tiers
         try {

@@ -34,9 +34,18 @@ use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState
 
 // ─── Workspace handlers ────────────────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+pub struct ListWorkspacesQuery {
+    /// Filter to workspaces created by this vertical (e.g.
+    /// `bestiary_workspace`, `rabble_swarm`, `fermi_forecast`). Omit
+    /// to see all origins. See docs/VERTICAL_HARNESS_SPLIT.md §2.
+    pub origin: Option<String>,
+}
+
 pub async fn list_workspaces_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
+    axum::extract::Query(q): axum::extract::Query<ListWorkspacesQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
 
@@ -44,23 +53,33 @@ pub async fn list_workspaces_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Enrich with budget info from DB
+    // Enrich with budget info + origin from DB
     let mut workspaces = Vec::new();
     for team in &user_teams {
-        let budget_row =
-            sqlx::query("SELECT workspace_budget, workspace_spent FROM teams WHERE id = $1")
-                .bind(team.id)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let row = sqlx::query(
+            "SELECT workspace_budget, workspace_spent, origin FROM teams WHERE id = $1",
+        )
+        .bind(team.id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        let (budget, spent) = match budget_row {
-            Some(row) => (
-                row.try_get::<i32, _>("workspace_budget").unwrap_or(0),
-                row.try_get::<i32, _>("workspace_spent").unwrap_or(0),
+        let (budget, spent, origin) = match row {
+            Some(r) => (
+                r.try_get::<i32, _>("workspace_budget").unwrap_or(0),
+                r.try_get::<i32, _>("workspace_spent").unwrap_or(0),
+                r.try_get::<String, _>("origin")
+                    .unwrap_or_else(|_| "bestiary_workspace".into()),
             ),
-            None => (0, 0),
+            None => (0, 0, "bestiary_workspace".into()),
         };
+
+        // Apply origin filter if requested.
+        if let Some(ref want) = q.origin {
+            if &origin != want {
+                continue;
+            }
+        }
 
         // Agent previews for this workspace
         let agent_rows = sqlx::query(
@@ -107,6 +126,7 @@ pub async fn list_workspaces_handler(
             "name": team.name,
             "slug": team.slug,
             "description": team.description,
+            "origin": origin,
             "workspace_budget": budget,
             "workspace_spent": spent,
             "workspace_remaining": budget - spent,
