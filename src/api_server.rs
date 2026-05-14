@@ -501,6 +501,10 @@ async fn run_migrations(db: &PgPool) {
         "migrations/114_agent_valence_column.sql",
         // Xaman Ek working sessions (migration 115)
         "migrations/115_xaman_sessions.sql",
+        // App primitive — registered platform artifacts with workspace templates (Doc 1)
+        "migrations/116_apps.sql",
+        // Extend object_shares.object_type to include 'workspace' (Doc 1 §6.2)
+        "migrations/117_object_type_workspace.sql",
     ];
 
     for file in &migration_files {
@@ -1172,6 +1176,17 @@ async fn main() {
             "/api/agents/:agent_id/consolidate",
             post(handlers::consolidation::consolidate_agent_handler),
         )
+        // ── App registry (Doc 1 — App primitive) ──────────────────────────────
+        .route("/api/apps", get(handlers::apps::list_apps_handler))
+        .route("/api/apps", post(handlers::apps::create_app_handler))
+        .route("/api/apps/:slug", get(handlers::apps::get_app_handler))
+        .route("/api/apps/:slug", put(handlers::apps::update_app_handler_full))
+        .route("/api/apps/:slug/workspaces", post(handlers::apps::spawn_workspace_handler))
+        .route("/api/apps/:slug/workspaces", get(handlers::apps::list_app_workspaces_handler))
+        .route("/api/apps/:slug/publish", post(handlers::apps::publish_app_handler))
+        .route("/api/apps/:slug/archive", post(handlers::apps::archive_app_handler))
+        // ── SimOps direct computation (no LLM — for Compose mode live feedback) ─
+        .route("/api/simops/cascade", post(handlers::simops::cascade_handler))
         // Workspace routes
         .route(
             "/api/workspaces",

@@ -205,6 +205,8 @@ mod tests {
                     output: Resource { name: "biomass".into(), unit: "kg".into(), energy_density: Some(5.5), density_unit: Some("kcal/g".into()) },
                     capex: Some(CapexProfile { total_usd: 25.0, lifespan_years: 1.0 }),
                     opex_per_input_unit: Some(0.12),
+                    sidestreams: None,
+                    sensors: None,
                 },
                 Stage {
                     id: "fermentation".into(),
@@ -214,6 +216,8 @@ mod tests {
                     output: Resource { name: "hydrogen".into(), unit: "kWh".into(), energy_density: None, density_unit: None },
                     capex: None,
                     opex_per_input_unit: None,
+                    sidestreams: None,
+                    sensors: None,
                 },
                 Stage {
                     id: "fuel_cell".into(),
@@ -223,6 +227,8 @@ mod tests {
                     output: Resource { name: "electricity".into(), unit: "kWh".into(), energy_density: None, density_unit: None },
                     capex: None,
                     opex_per_input_unit: None,
+                    sidestreams: None,
+                    sensors: None,
                 },
             ],
         }

@@ -5,6 +5,8 @@
 //! live in api_server.rs as pub(crate) functions.
 
 pub mod admin;
+pub mod apps;
+pub mod simops;
 pub mod agent_wallet;
 pub mod agents;
 pub mod auth;

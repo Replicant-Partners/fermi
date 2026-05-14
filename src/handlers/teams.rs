@@ -21,6 +21,10 @@ pub struct CreateTeamRequest {
     name: String,
     slug: String,
     description: Option<String>,
+    /// Optional origin tag. Defaults to `"bestiary_workspace"`.
+    /// Pass `"kask_simops"` (or any `kask_*` slug) to attribute the workspace
+    /// to a specific App. Must not collide with reserved system tags.
+    origin: Option<String>,
 }
 
 pub async fn create_team_handler(
@@ -28,13 +32,14 @@ pub async fn create_team_handler(
     principal: AuthPrincipal,
     Json(body): Json<CreateTeamRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    let origin = body.origin.as_deref().unwrap_or("bestiary_workspace");
     let team = teams::create_team(
         &state.db,
         &body.name,
         &body.slug,
         body.description.as_deref(),
         &principal.user_id(),
-        "bestiary_workspace",
+        origin,
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

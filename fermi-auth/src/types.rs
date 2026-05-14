@@ -138,6 +138,8 @@ pub enum ObjectType {
     Index,
     Repo,
     File,
+    /// Added migration 117 — workspace-level sharing for App workspaces.
+    Workspace,
 }
 
 impl ObjectType {
@@ -149,6 +151,7 @@ impl ObjectType {
             ObjectType::Index => "index",
             ObjectType::Repo => "repo",
             ObjectType::File => "file",
+            ObjectType::Workspace => "workspace",
         }
     }
 
@@ -161,6 +164,7 @@ impl ObjectType {
             "index" => Some(ObjectType::Index),
             "repo" => Some(ObjectType::Repo),
             "file" => Some(ObjectType::File),
+            "workspace" => Some(ObjectType::Workspace),
             _ => None,
         }
     }

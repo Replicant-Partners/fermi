@@ -44,4 +44,4 @@ pub use error::SimOpsError;
 pub use kpi::{compute_kpis, BatchObservation, EnergyStatus, KpiReport, KCAL_PER_KWH};
 pub use optimizer::{scale_from_reference, single_input_solve, OptimizationResult};
 pub use predictor::{Predictor, TrainingObservation};
-pub use process::{CapexProfile, ProcessConfig, Resource, Stage};
+pub use process::{CapexProfile, ProcessConfig, Resource, Sensor, Sidestream, Stage};

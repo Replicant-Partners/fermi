@@ -88,6 +88,48 @@ impl CapexProfile {
     }
 }
 
+// ─── Sidestream ───────────────────────────────────────────────────────────────
+
+/// A secondary output from a stage — waste, by-product, or recoverable
+/// resource. Sidestreams don't affect the primary mass/energy balance
+/// (the cascade engine ignores them for NER/SEC/LCC calculations) but are
+/// surfaced to the `sidestream_miner` agent and the kask Compose UI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Sidestream {
+    /// Unique identifier within the stage, e.g. "co2", "pellicle"
+    pub id: String,
+    /// Human-readable name, e.g. "CO₂", "SCOBY pellicle"
+    pub name: String,
+    /// The resource that constitutes this sidestream
+    pub resource: Resource,
+    /// Fraction of total sidestream produced that we're capturing (0.0–1.0).
+    /// 0.0 = all vented/discarded; 1.0 = fully captured.
+    pub capture_fraction: f64,
+    /// Market value per unit of resource (USD). `None` = unknown / not valued.
+    pub value_per_unit_usd: Option<f64>,
+    /// Current handling: "vented" | "captured" | "sold" | "discarded" | "recycled"
+    pub current_disposition: Option<String>,
+}
+
+// ─── Sensor ───────────────────────────────────────────────────────────────────
+
+/// An instrument attached to a stage that produces SOSA observations.
+/// Sensors are metadata for the `sensor_advisor` agent and for wiring
+/// stage outputs into the SOSA observation store.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Sensor {
+    /// Unique identifier within the stage, e.g. "tea_temp", "ph_probe"
+    pub id: String,
+    /// Human-readable name, e.g. "Brew temperature", "pH probe"
+    pub name: String,
+    /// What the sensor measures, e.g. "temperature", "pH", "dissolved_oxygen"
+    pub measures: String,
+    /// SI unit of the observed property, e.g. "degC", "dimensionless", "mg/L"
+    pub unit: String,
+    /// Optional SOSA ObservableProperty URI for semantic provenance
+    pub sosa_property_uri: Option<String>,
+}
+
 // ─── Stage ────────────────────────────────────────────────────────────────────
 
 /// A single transformation stage in a process chain.
@@ -115,6 +157,14 @@ pub struct Stage {
     pub capex: Option<CapexProfile>,
     /// Optional per-unit opex (e.g. $/kWh electricity, $/kg nutrients)
     pub opex_per_input_unit: Option<f64>,
+    /// Secondary outputs (waste, by-products, recoverable resources).
+    /// Optional — existing YAML/JSON without this field deserialises fine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidestreams: Option<Vec<Sidestream>>,
+    /// Measurement instruments attached to this stage.
+    /// Optional — existing YAML/JSON without this field deserialises fine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensors: Option<Vec<Sensor>>,
 }
 
 impl Stage {
@@ -210,6 +260,8 @@ mod tests {
             output: Resource { name: "biomass".into(), unit: "kg".into(), energy_density: Some(5.5), density_unit: Some("kcal/g".into()) },
             capex: Some(CapexProfile { total_usd: 25.0, lifespan_years: 1.0 }),
             opex_per_input_unit: Some(0.12),
+            sidestreams: None,
+            sensors: None,
         }
     }
 

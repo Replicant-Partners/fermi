@@ -119,6 +119,8 @@ fn ambu_bioreactor_config() -> ProcessConfig {
                 lifespan_years: 2.0,
             }),
             opex_per_input_unit: Some(0.22),
+            sidestreams: None,
+            sensors: None,
         }],
     }
 }
@@ -152,6 +154,8 @@ fn scoby_kombucha_config() -> ProcessConfig {
                     lifespan_years: 5.0,
                 }),
                 opex_per_input_unit: Some(0.60),
+                sidestreams: None,
+                sensors: None,
             },
             Stage {
                 id: "secondary_fermentation".into(),
@@ -174,6 +178,8 @@ fn scoby_kombucha_config() -> ProcessConfig {
                     lifespan_years: 3.0,
                 }),
                 opex_per_input_unit: Some(0.10),
+                sidestreams: None,
+                sensors: None,
             },
         ],
     }
