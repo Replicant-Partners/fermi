@@ -1510,6 +1510,83 @@
         btn.textContent = "Create Agent";
       }
 
+      // ─── Prefill from xamanEK session ───────────────────────────
+      //
+      // When arriving from a xamanEK agent_design session, the URL has
+      // ?prefill=<url-encoded JSON> containing partial agent card fields.
+      // We populate the form and show a banner so the user knows why
+      // fields are pre-filled.
+
+      function prefillFromXaman() {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get("prefill");
+        if (!raw) return;
+
+        let draft;
+        try { draft = JSON.parse(decodeURIComponent(raw)); } catch { return; }
+        if (!draft || typeof draft !== "object") return;
+
+        // Show banner
+        const banner = document.createElement("div");
+        banner.style.cssText = "background:color-mix(in srgb,var(--yellow) 12%,transparent);border:1px solid var(--yellow);color:var(--fg1);font-size:0.8em;padding:8px 14px;margin-bottom:12px;display:flex;align-items:center;gap:8px";
+        banner.innerHTML = `<span style="color:var(--yellow)">★</span> <span>Continuing from a xamanEK session — fields pre-filled from your draft.</span>`;
+        const container = document.querySelector(".wizard-container");
+        if (container) container.insertBefore(banner, container.firstChild);
+
+        // Field mapping: draft key → element id + optional transform
+        const setVal = (id, val) => {
+          if (val == null || val === "") return;
+          const el = document.getElementById(id);
+          if (!el) return;
+          if (el.tagName === "SELECT") {
+            // Only set if the option exists
+            if ([...el.options].some(o => o.value === String(val))) el.value = String(val);
+          } else {
+            el.value = String(val);
+          }
+        };
+
+        setVal("agent-name",    draft.agent_id || draft.agent_name);
+        setVal("display-alias", draft.display_alias);
+        setVal("description",   draft.description);
+        setVal("agent-type",    draft.agent_type);
+        setVal("system-prompt", draft.system_prompt);
+        setVal("tags",
+          Array.isArray(draft.tags) ? draft.tags.join(", ") :
+          (draft.metadata?.tags ? draft.metadata.tags.join(", ") : null));
+
+        // Sample queries → textarea if it exists
+        const sq = draft.sample_queries || draft.metadata?.sample_queries;
+        if (Array.isArray(sq) && sq.length) {
+          const sqEl = document.getElementById("sample-queries");
+          if (sqEl) sqEl.value = sq.join("\n");
+        }
+
+        // Provider / model if set
+        if (draft.model_ladder && Array.isArray(draft.model_ladder) && draft.model_ladder.length) {
+          const top = draft.model_ladder.find(r => r.tier === "premium") || draft.model_ladder[0];
+          if (top) {
+            if (top.provider) { selectedProvider = top.provider; }
+            if (top.model) {
+              selectedModel = top.model;
+              const modelEl = document.getElementById("model-id");
+              if (modelEl) modelEl.value = top.model;
+            }
+          }
+        }
+
+        // Strip the prefill param from the URL without reload
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, "", cleanUrl);
+      }
+
+      // Run prefill after DOM is ready
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", prefillFromXaman);
+      } else {
+        prefillFromXaman();
+      }
+
       // ─── Helpers ───
       function esc(str) {
         if (!str) return "";

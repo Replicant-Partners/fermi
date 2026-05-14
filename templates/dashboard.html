@@ -1357,12 +1357,47 @@
       }
     </style>
     <script>
-      function openWsModal() {
-        document.getElementById("ws-name-input").value = "";
-        document.getElementById("ws-desc-input").value = "";
+      function openWsModal(prefillName, prefillDesc) {
+        document.getElementById("ws-name-input").value = prefillName || "";
+        document.getElementById("ws-desc-input").value = prefillDesc || "";
         document.getElementById("ws-modal").classList.add("active");
         setTimeout(() => document.getElementById("ws-name-input").focus(), 100);
       }
+
+      // ─── Prefill from xamanEK composition_design session ────────
+      // URL: /dashboard?newworkspace=1&prefill=<json>
+      // The prefill JSON is a composition plan from xamanEK in_progress:
+      //   { mission, members: [{agent_id, role}], strategist_id, ... }
+      (function prefillCompositionFromXaman() {
+        const params = new URLSearchParams(window.location.search);
+        if (!params.get("newworkspace")) return;
+
+        let draft = null;
+        const raw = params.get("prefill");
+        if (raw) { try { draft = JSON.parse(decodeURIComponent(raw)); } catch {} }
+
+        // Derive workspace name from mission
+        const name = draft?.mission
+          ? draft.mission.slice(0, 50)
+          : "New Composition";
+        const desc = draft?.diff_summary || "";
+
+        // Auto-open modal when page loads — slight delay for DOM
+        setTimeout(() => openWsModal(name, desc), 400);
+
+        // Store draft for post-create member auto-hire
+        if (draft?.members?.length) {
+          window._xamanCompositionDraft = draft;
+        }
+
+        // Clean URL
+        window.history.replaceState({}, "", "/dashboard");
+      })();
+
+      // After workspace creation: if we have a draft with members, show a
+      // prompt to auto-hire them into the new workspace.
+      const _origSubmitCreateWs = window.submitCreateWs;
+      // (patched below after submitCreateWs is defined)
       function closeWsModal() {
         document.getElementById("ws-modal").classList.remove("active");
       }
@@ -1392,7 +1427,27 @@
             return;
           }
           const team = await res.json();
-          window.location.href = "/workspace/" + team.id;
+          const wsId = team.id;
+
+          // If a composition plan has member agents, offer to auto-hire them
+          if (window._xamanCompositionDraft?.members?.length) {
+            const members = window._xamanCompositionDraft.members;
+            const names = members.map(m => m.agent_id).join(", ");
+            if (confirm(`xamanEK planned these members:\n${names}\n\nAuto-hire them into the workspace?`)) {
+              for (const m of members) {
+                try {
+                  await fetch(`/api/workspaces/${wsId}/add`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ agent_id: m.agent_id }),
+                  });
+                } catch (_) {}
+              }
+            }
+            window._xamanCompositionDraft = null;
+          }
+
+          window.location.href = "/workspace/" + wsId;
         } catch (e) {
           alert("Failed to create workspace");
         }

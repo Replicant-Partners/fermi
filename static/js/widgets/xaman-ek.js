@@ -165,18 +165,27 @@ const XamanEk = {
     `).join("");
   },
 
-  async newSession(type) {
+  _detectSessionType(message) {
+    const m = message.toLowerCase();
+    if (/build.*(agent|card)|design.*(agent|card)|create.*(agent|card)|new agent|agent design/.test(m)) return "agent_design";
+    if (/composition|team|workspace|members|strategist|multi.agent/.test(m)) return "composition_design";
+    if (/workspace|help with|what's happening|anomal|coherence/.test(m)) return "workspace_help";
+    return "free";
+  },
+
+  async newSession(type, initialMessage) {
     if (!this._currentUser) {
       this.openSpotlight();
       return;
     }
     const ctx = this._pageContext();
+    const sessionType = type || (initialMessage ? this._detectSessionType(initialMessage) : "free");
     try {
       const res = await fetch("/api/xaman/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          session_type: type || "free",
+          session_type: sessionType,
           page_context: ctx.path,
         }),
       });
@@ -229,13 +238,17 @@ const XamanEk = {
     if (!messagesEl) return;
     const messages = session.messages || [];
     if (messages.length === 0) {
+      const sessionType = session.session_type || "free";
+      const prompts = {
+        agent_design:      "Tell me what your agent should do and I'll help you build the card — purpose, persona, I/O contract, valence, model ladder.",
+        composition_design:"Describe the goal for this team and I'll recommend agents, check I/O compatibility, and flag valence homophily.",
+        workspace_help:    "I can see which workspace you're in. Ask me what's happening — coherence state, anomalies, agent performance, anything.",
+        free:              "I know every agent, every composition pattern, and how the primitives fit together. What are you building?",
+      };
       messagesEl.innerHTML = `<div class="xaman-sidebar-empty-chat">
         <div style="color:var(--yellow);font-size:1.2em;margin-bottom:8px">★</div>
         <div style="color:var(--fg3);font-size:0.78em;line-height:1.5">
-          I'm xamanEK — the Bestiary's dungeon master.<br>
-          I know every agent, every composition pattern, and<br>
-          how the primitives fit together.<br><br>
-          What are you building?
+          ${this._esc(prompts[sessionType] || prompts.free)}
         </div>
       </div>`;
       return;
@@ -393,15 +406,15 @@ const XamanEk = {
 
     // Create action when ready
     if (isReady) {
+      const encoded = encodeURIComponent(JSON.stringify(inProgress));
       if (sessionType === "agent_design") {
-        const agentId = inProgress.agent_id || "";
-        html += `<a href="/agents/new?prefill=${encodeURIComponent(JSON.stringify(inProgress))}"
-          class="xaman-create-btn" target="_blank">
+        html += `<a href="/agents/new?prefill=${encoded}"
+          class="xaman-create-btn">
           Create agent →
         </a>`;
       } else if (sessionType === "composition_design") {
-        html += `<a href="/dashboard?newworkspace=1&prefill=${encodeURIComponent(JSON.stringify(inProgress))}"
-          class="xaman-create-btn" target="_blank">
+        html += `<a href="/dashboard?newworkspace=1&prefill=${encoded}"
+          class="xaman-create-btn">
           Create composition →
         </a>`;
       }
