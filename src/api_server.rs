@@ -537,7 +537,8 @@ async fn main() {
         .statement_cache_capacity(0);
 
     let db = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(25)   // raised from 10 — headroom for concurrent LLM + API requests
+        .min_connections(2)    // keep warm connections for fast cold starts
         .acquire_timeout(std::time::Duration::from_secs(30))
         .test_before_acquire(true)
         .after_connect(|conn, _meta| {

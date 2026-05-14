@@ -213,7 +213,7 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
             api_key,
             model,
             base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string()),
@@ -367,7 +367,7 @@ pub struct MistralProvider {
 impl MistralProvider {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
             api_key,
             model,
             base_url: base_url.unwrap_or_else(|| "https://api.mistral.ai".to_string()),
@@ -509,7 +509,7 @@ pub struct QwenProvider {
 impl QwenProvider {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
             api_key,
             model,
             base_url: base_url
@@ -653,7 +653,7 @@ pub struct OpenRouterProvider {
 impl OpenRouterProvider {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
             api_key,
             model,
             base_url: base_url.unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string()),

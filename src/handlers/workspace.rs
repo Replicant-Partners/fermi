@@ -575,10 +575,29 @@ pub fn parse_at_mention(content: &str) -> Option<(String, String)> {
 }
 
 /// Broadcast a workspace message to SSE subscribers.
+///
+/// Two-layer delivery:
+/// 1. In-process Tokio broadcast — sub-millisecond, same replica only.
+/// 2. Postgres NOTIFY — cross-replica fan-out so multiple api-server
+///    instances can serve SSE streams for the same workspace.
+///    Channel name: "ws_<workspace_uuid_hex>" (no hyphens, max 63 chars).
 fn broadcast_message(state: &AppState, workspace_id: uuid::Uuid, msg_json: &Value) {
+    // Layer 1: in-process
     let _ = state.ws_broadcast.send(crate::WorkspaceEvent {
         workspace_id,
         message: msg_json.clone(),
+    });
+
+    // Layer 2: Postgres NOTIFY (fire-and-forget, best-effort)
+    let pool = state.db.clone();
+    let channel = format!("ws_{}", workspace_id.as_simple());
+    let payload = serde_json::to_string(msg_json).unwrap_or_default();
+    tokio::spawn(async move {
+        let _ = sqlx::query("SELECT pg_notify($1, $2)")
+            .bind(&channel)
+            .bind(&payload)
+            .execute(&pool)
+            .await;
     });
 }
 
@@ -1268,9 +1287,31 @@ pub async fn workspace_messages_stream_handler(
 
     let mut rx = state.ws_broadcast.subscribe();
 
+    // Postgres LISTEN for cross-replica delivery.
+    // Uses a dedicated connection (not the pool) because LISTEN is connection-scoped.
+    let pg_channel = format!("ws_{}", ws_uuid.as_simple());
+    let pg_listener = {
+        let db_url = std::env::var("DATABASE_URL").unwrap_or_default();
+        sqlx::postgres::PgListener::connect(&db_url).await.ok()
+    };
+    let mut pg_listener = if let Some(mut listener) = pg_listener {
+        let _ = listener.listen(&pg_channel).await;
+        Some(listener)
+    } else {
+        None
+    };
+
+    // Track message_ids seen to deduplicate in-process + pg_notify for same message.
+    // In practice the same message will arrive on at most one channel per replica,
+    // but guard against edge cases during deploy.
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     let stream = async_stream::stream! {
         // Send backfill messages first (catch-up on reconnect)
         for msg_json in backfill {
+            if let Some(id) = msg_json.get("message_id").and_then(|v| v.as_str()) {
+                seen_ids.insert(id.to_string());
+            }
             let data = serde_json::to_string(&msg_json).unwrap_or_default();
             yield Ok(Event::default().data(data));
         }
@@ -1280,26 +1321,80 @@ pub async fn workspace_messages_stream_handler(
         keepalive.tick().await; // skip first immediate tick
 
         loop {
-            tokio::select! {
-                result = rx.recv() => {
-                    match result {
-                        Ok(event) => {
-                            if event.workspace_id == ws_uuid {
-                                let data = serde_json::to_string(&event.message).unwrap_or_default();
-                                yield Ok(Event::default().data(data));
+            // Build select branches depending on whether pg_listener is available
+            if let Some(ref mut listener) = pg_listener {
+                tokio::select! {
+                    // In-process broadcast (same replica)
+                    result = rx.recv() => {
+                        match result {
+                            Ok(event) => {
+                                if event.workspace_id == ws_uuid {
+                                    let id = event.message.get("message_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    if !id.is_empty() && seen_ids.contains(&id) {
+                                        // Already delivered via pg_notify on this connection — skip
+                                    } else {
+                                        if !id.is_empty() { seen_ids.insert(id); }
+                                        let data = serde_json::to_string(&event.message).unwrap_or_default();
+                                        yield Ok(Event::default().data(data));
+                                    }
+                                }
                             }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            // Buffer overflow — tell client to refetch
-                            yield Ok(Event::default().event("lagged").data("refetch"));
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            break;
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                yield Ok(Event::default().event("lagged").data("refetch"));
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
+                    // Postgres NOTIFY (cross-replica)
+                    pg_result = listener.recv() => {
+                        match pg_result {
+                            Ok(notification) => {
+                                let payload = notification.payload();
+                                if let Ok(msg_json) = serde_json::from_str::<Value>(payload) {
+                                    let id = msg_json.get("message_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    if !id.is_empty() && seen_ids.contains(&id) {
+                                        // Already delivered via in-process broadcast — skip
+                                    } else {
+                                        if !id.is_empty() { seen_ids.insert(id); }
+                                        yield Ok(Event::default().data(payload.to_string()));
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // LISTEN connection lost — fall back gracefully, keepalive continues
+                            }
+                        }
+                    }
+                    _ = keepalive.tick() => {
+                        yield Ok(Event::default().comment("keepalive"));
+                    }
                 }
-                _ = keepalive.tick() => {
-                    yield Ok(Event::default().comment("keepalive"));
+            } else {
+                // No pg_listener available — in-process only (single replica mode)
+                tokio::select! {
+                    result = rx.recv() => {
+                        match result {
+                            Ok(event) => {
+                                if event.workspace_id == ws_uuid {
+                                    let data = serde_json::to_string(&event.message).unwrap_or_default();
+                                    yield Ok(Event::default().data(data));
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                yield Ok(Event::default().event("lagged").data("refetch"));
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                    _ = keepalive.tick() => {
+                        yield Ok(Event::default().comment("keepalive"));
+                    }
                 }
             }
         }
@@ -1860,10 +1955,11 @@ pub async fn evaluate_coherence_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // For premium tiers, run coherence_consultant agent
+    // For premium tiers, invoke cohere_and_coordinate directly.
+    // This replaces the former coherence_consultant sub-call per
+    // docs/architecture/LEARNING_MECHANICS_SIMPLIFICATION.md.
     let consultant_output = if depth == "recommendations" || depth == "dream_notes" {
-        let consultant_id = "coherence_consultant";
-        match state.registry.get(consultant_id) {
+        match state.registry.get("cohere_and_coordinate") {
             Ok(card) => {
                 let msg_summary: String = messages
                     .iter()
@@ -1881,25 +1977,30 @@ pub async fn evaluate_coherence_handler(
 
                 let query_text = if depth == "recommendations" {
                     format!(
-                        "Coherence score: {:.0}% ({}). Principles: {:?}. Health: {:?}.\n\n\
-                         Recent messages:\n{}\n\n\
-                         Provide specific, actionable recommendations for improving workspace coherence.",
+                        "Coherence score: {:.0}% ({}). Principle scores: {:?}. Health indicators: {:?}.\n\n\
+                         Recent conversation:\n{}\n\n\
+                         Run Stage 2 (Diagnose) and Stage 3 (Coordinate): identify which TEC principles \
+                         are weak, classify any incoherence as destructive vs productive, and provide \
+                         specific actionable recommendations for improving workspace coherence. \
+                         Distinguish productive tension (protect it) from destructive incoherence (fix it).",
                         eval.global_score * 100.0, eval.quality_label,
                         principle_scores, health_indicators, msg_summary,
                     )
                 } else {
                     format!(
-                        "Coherence score: {:.0}% ({}). Principles: {:?}. Health: {:?}.\n\n\
+                        "Coherence score: {:.0}% ({}). Principle scores: {:?}. Health indicators: {:?}.\n\n\
                          Full workspace conversation:\n{}\n\n\
-                         Write dream notes: a narrative synthesis of what this workspace has learned, \
-                         connections made, knowledge gaps identified, and emerging themes.",
+                         Write dream notes for this workspace session: a narrative synthesis of what \
+                         this team has learned together, connections made between ideas, knowledge gaps \
+                         identified, recurring coherence patterns, and emerging themes. \
+                         Write in first person as the workspace strategist reflecting on the session.",
                         eval.global_score * 100.0, eval.quality_label,
                         principle_scores, health_indicators, msg_summary,
                     )
                 };
 
                 let agent_stmt = ast::AgentStmt {
-                    name: consultant_id.to_string(),
+                    name: "cohere_and_coordinate".to_string(),
                     agent_type: Some(card.agent_type.clone()),
                     query: query_text,
                     executor: Some(ast::ExecutorType::LLM),
@@ -1920,12 +2021,12 @@ pub async fn evaluate_coherence_handler(
                 match state.registry.execute_agent(&agent_stmt, &context).await {
                     Ok(output) => output.metadata.reasoning,
                     Err(e) => {
-                        eprintln!("Coherence consultant failed: {:?}", e);
-                        Some(format!("Consultant unavailable: {:?}", e))
+                        eprintln!("cohere_and_coordinate failed: {:?}", e);
+                        Some(format!("Strategist unavailable: {:?}", e))
                     }
                 }
             }
-            Err(_) => Some("Coherence consultant agent not available".to_string()),
+            Err(_) => Some("cohere_and_coordinate agent not available".to_string()),
         }
     } else {
         None
@@ -1951,12 +2052,18 @@ pub async fn evaluate_coherence_handler(
         )
     };
 
+    let (sender_id, sender_name) = if consultant_output.is_some() {
+        ("cohere_and_coordinate".to_string(), "Cohere & Coordinate".to_string())
+    } else {
+        ("coherence_evaluator".to_string(), "Coherence Evaluator".to_string())
+    };
+
     let update_msg = WorkspaceMessage {
         message_id: uuid::Uuid::new_v4(),
         workspace_id: ws_uuid,
         sender_type: "system".to_string(),
-        sender_id: "coherence_evaluator".to_string(),
-        sender_name: Some("Coherence Evaluator".to_string()),
+        sender_id,
+        sender_name: Some(sender_name),
         content: chat_content,
         message_type: "coherence_update".to_string(),
         metadata: json!({

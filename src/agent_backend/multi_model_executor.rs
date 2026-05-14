@@ -124,7 +124,7 @@ impl MultiModelExecutor {
         Ok(Self {
             anthropic,
             providers,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
         })
     }
 

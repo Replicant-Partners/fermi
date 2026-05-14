@@ -21,7 +21,7 @@ impl LLMExecutor {
     pub fn new(api_key: String) -> Self {
         LLMExecutor {
             api_key,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
         }
     }
 
