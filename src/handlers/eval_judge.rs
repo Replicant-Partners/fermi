@@ -1,16 +1,10 @@
-//! Phase 2 — adapter from the Phase 1 `LlmJudge` trait to the
-//! existing Anthropic-Haiku-backed scoring loop in `eval.rs`.
+//! Phase 2 — production `LlmJudge` implementation backed by Anthropic Haiku.
 //!
-//! The legacy `score_with_judge` function takes
-//! `(EvalTestCase, Option<&str>)` and returns a parsed JSON `Value`
-//! with `{relevance, accuracy, completeness, overall, reasoning}`.
-//!
-//! `LlmJudgeAnthropic` accepts an `EpisodeBundle` (the new Phase 0
-//! contract) and produces a typed `JudgeOutcome` so it can be
-//! registered with the `EvaluatorRegistry`.
+//! `LlmJudgeAnthropic` accepts an `EpisodeBundle` (Phase 0 contract)
+//! and produces a typed `JudgeOutcome` registered with the `EvaluatorRegistry`.
 //!
 //! See:
-//! - `agent-bestiary/evaluators/src/judge.rs` for the trait
+//! - `agent-bestiary/evaluators/src/judge.rs` for the `LlmJudge` trait
 //! - `docs/architecture/OBSERVABILITY_IMPL.md` Phase 2
 
 use agent_bestiary_evaluators::{EpisodeBundle, EvalError, JudgeOutcome, LlmJudge};

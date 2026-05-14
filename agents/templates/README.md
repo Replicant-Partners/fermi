@@ -1,352 +1,219 @@
-# Fermi Agent Development Templates
-
-Welcome to the Fermi Agent Bestiary! This directory contains everything you need to design and develop your own forecasting agents optimized for the Fermi Active Dreaming Memory (ADM) platform.
-
-## 🚀 Quick Start
-
-**New to agent development?** Start here:
-
-1. Read [GETTING_STARTED.md](./GETTING_STARTED.md) for step-by-step instructions
-2. Review [DESIGN_CHECKLIST.md](./DESIGN_CHECKLIST.md) to plan your agent
-3. Study [example agents](./examples/) to see complete implementations
-4. Copy [agent_card.json](./agent_card.json) template to start building
-
-## 📁 What's Inside
-
-```
-agents/templates/
-├── README.md                    # You are here
-├── GETTING_STARTED.md           # Step-by-step tutorial for first agent
-├── DESIGN_CHECKLIST.md          # 10-step planning guide
-├── PROMPT_ENGINEERING_GUIDE.md  # AI prompts to generate agent designs
-├── agent_card.json              # Fully documented template
-└── examples/
-    ├── market_research/         # Example: LLM + MCP, market data analysis
-    ├── sentiment_analyzer/      # Example: LLM-only, simple sentiment classification
-    └── risk_monitor/            # Example: MCP-heavy, security risk assessment
-```
-
-## 🎯 What is a Fermi Agent?
-
-A **Fermi agent** is an AI-powered research specialist that:
-
-1. **Gathers evidence** from APIs, databases, web sources, or LLM analysis
-2. **Builds ontologies** encoding its evolving worldview as versioned ER diagrams
-3. **Provides forecasts** with confidence scores and justifications
-4. **Learns over time** through episodic → semantic memory consolidation
-
-### Key Characteristics
-
-- **Specialized:** Each agent focuses on one domain (markets, sentiment, risks, etc.)
-- **Evidence-based:** All claims backed by sources and confidence scores
-- **Self-aware:** Tracks its own performance and uncertainty
-- **Compositional:** Agents combine to form comprehensive forecasting systems
-
-## 📚 Documentation
-
-### Core Guides
-
-- **[GETTING_STARTED.md](./GETTING_STARTED.md)** - Your first agent in 30 minutes
-- **[DESIGN_CHECKLIST.md](./DESIGN_CHECKLIST.md)** - 10 questions to answer before building
-- **[PROMPT_ENGINEERING_GUIDE.md](./PROMPT_ENGINEERING_GUIDE.md)** - AI prompts for agent generation (NEW!)
-- **[Agent Card Specification](../../docs/guides/AGENT_CARD_SPECIFICATION.md)** - Complete JSON schema reference
-- **[ADM Architecture](../../docs/ARCHITECTURE_ADM.md)** - How memory consolidation works
-- **[Agent Bestiary Design](../../docs/AGENT_BESTIARY_DESIGN.md)** - System overview and philosophy
-
-### Example Agents
-
-Each example includes:
-- ✅ Complete `agent_card.json`
-- ✅ Ontology ER diagram (`ontology.mermaid`)
-- ✅ Full documentation (`README.md`)
-- ✅ Usage examples and performance metrics
-
-#### 1. [Market Research Agent](./examples/market_research/)
-- **Type:** Market Analysis
-- **Executor:** LLM + MCP (Yahoo Finance, SEC API)
-- **Use Case:** Track AMD's datacenter GPU market share
-- **Complexity:** ⭐⭐⭐ (Medium - requires API integration)
-
-#### 2. [Sentiment Analyzer Agent](./examples/sentiment_analyzer/)
-- **Type:** Sentiment Classification
-- **Executor:** LLM-only (Claude Haiku)
-- **Use Case:** Analyze text sentiment (product reviews, social media)
-- **Complexity:** ⭐ (Simple - great for beginners)
-
-#### 3. [Risk Monitor Agent](./examples/risk_monitor/)
-- **Type:** Security Risk Assessment
-- **Executor:** MCP-heavy (NVD, MITRE ATT&CK, GitHub)
-- **Use Case:** CVE vulnerability tracking and threat intelligence
-- **Complexity:** ⭐⭐⭐⭐ (Advanced - multiple APIs, complex ontology)
-
-## 🛠️ Development Workflow
-
-```mermaid
-graph TD
-    A[Define Agent Purpose] --> B[Complete Design Checklist]
-    B --> C[Design Ontology]
-    C --> D[Create Agent Card]
-    D --> E[Write Documentation]
-    E --> F[Test with Example Queries]
-    F --> G{Ready?}
-    G -->|No| B
-    G -->|Yes| H[Wait for Backend]
-    H --> I[Deploy & Monitor]
-```
-
-### Current Status: ⏳ Pre-Runtime
-
-**You can do NOW:**
-- ✅ Design agent cards
-- ✅ Plan ontologies
-- ✅ Write documentation
-- ✅ Define test queries
-
-**Coming soon:**
-- ⏳ Agent execution runtime
-- ⏳ Ontology versioning system
-- ⏳ Memory consolidation pipeline
-- ⏳ Performance monitoring dashboard
-
-## 🎨 Agent Types
-
-### By Executor
-
-| Type | Description | When to Use | Example |
-|------|-------------|-------------|---------|
-| **LLM** | AI model analyzes/generates | Analysis, reasoning, text generation | Sentiment Analyzer |
-| **MCP** | Calls external APIs/tools | Structured data, real-time info | Market Research |
-| **Manual** | Human-in-the-loop | Rare events, expert judgment | Geopolitical Analyst |
-| **Skill** | Complex workflows | Multi-step processes | Research Pipeline |
-
-### By Domain
-
-| Domain | Focus Area | Typical Questions |
-|--------|-----------|-------------------|
-| **Market Analysis** | Revenue, competitors, trends | "What's AMD's market share?" |
-| **Sentiment** | Opinions, emotions, attitudes | "How do customers feel about X?" |
-| **Risk Assessment** | Threats, vulnerabilities, impact | "What CVEs affect our stack?" |
-| **Technical** | Specs, performance, capabilities | "Does AMD's MI300 support FP64?" |
-| **Financial** | Revenue, costs, margins | "What's NVIDIA's datacenter revenue?" |
-
-## 🏗️ Agent Architecture
-
-### Agent Card Structure
-
-```json
-{
-  "agent_id": "unique-uuid",
-  "agent_name": "my_agent",
-  "agent_type": "market_analysis",
-  "version": "1.0.0",
-  "tier": "specialist",
-  "executor": {
-    "type": "llm",           // or "mcp", "manual", "skill"
-    "primary_action": "...",
-    "fallback_strategy": "..."
-  },
-  "mcp_servers": [...],      // External APIs/tools
-  "llm_config": {...},       // Model, temperature, prompt
-  "ontology": {...},         // Entity-relationship schema
-  "performance": {...}       // Accuracy, confidence, speed
-}
-```
-
-### Ontology Evolution
-
-Agents learn through **Active Dreaming Memory (ADM)**:
-
-1. **Episodic Memory:** Raw observations stored with timestamps
-2. **Consolidation:** LLM extracts semantic rules from episodes
-3. **Semantic Memory:** Persistent knowledge graph (ER diagram)
-4. **Versioning:** Git-like versioning tracks ontology evolution
-
-Example: Market Research Agent
-
-```
-Episode: "AMD announced MI300X with 192GB HBM3"
-         ↓ (consolidation)
-Rule: "AMD's MI300X uses HBM3 memory technology"
-         ↓ (integration)
-Ontology: PRODUCT(MI300X) --uses--> TECHNOLOGY(HBM3)
-```
-
-## 🧪 Testing Your Agent
-
-### Before Runtime Available
-
-**Design validation:**
-1. Write 5-10 example queries your agent should answer
-2. Document expected outputs with confidence scores
-3. Identify potential failure modes
-4. Plan fallback strategies
-
-**Peer review:**
-- Share agent card with team
-- Get feedback on ontology design
-- Validate data source availability
-- Confirm API access and rate limits
-
-### After Runtime Available
-
-**Execution testing:**
-1. Run agent with test queries
-2. Validate output structure and confidence
-3. Monitor execution time and cost
-4. Review generated ontology
-5. Test error handling and fallbacks
-
-## 🚨 Common Pitfalls
-
-### 1. Overly Broad Scope
-❌ "Agent that analyzes everything about tech companies"  
-✅ "Agent that tracks AMD's datacenter GPU market share"
-
-### 2. Undefined Success Criteria
-❌ "Agent provides insights"  
-✅ "Agent achieves >85% accuracy, <5s response time, <$0.10/query"
-
-### 3. Missing Error Handling
-❌ Agent crashes when API is down  
-✅ Agent degrades gracefully, flags low confidence, queues retry
-
-### 4. No Confidence Scoring
-❌ "AMD has 25% market share"  
-✅ "AMD has 25% market share (confidence: 0.82, source: Mercury Research Q3 2024)"
-
-### 5. Ontology Over-Engineering
-❌ 500 entity types for simple sentiment analysis  
-✅ 5-10 core entities that cover 80% of use cases
-
-## 🎓 Learning Resources
-
-### Recommended Reading Order
-
-1. **Start:** [GETTING_STARTED.md](./GETTING_STARTED.md)
-2. **Plan:** [DESIGN_CHECKLIST.md](./DESIGN_CHECKLIST.md)
-3. **Study:** Example agents in [examples/](./examples/)
-4. **Deep Dive:** [Agent Card Specification](../../docs/guides/AGENT_CARD_SPECIFICATION.md)
-5. **Theory:** [ADM Architecture](../../docs/ARCHITECTURE_ADM.md)
-
-### External Resources
-
-- **Mermaid ER Diagrams:** https://mermaid.js.org/syntax/entityRelationshipDiagram.html
-- **MCP Specification:** https://modelcontextprotocol.io/
-- **JSON Schema:** https://json-schema.org/
-- **Claude API:** https://docs.anthropic.com/
-
-## 🤝 Contributing
-
-### Adding Your Agent
-
-Once the runtime is available:
-
-1. Complete agent card, ontology, and README
-2. Test with at least 10 diverse queries
-3. Document performance metrics
-4. Submit PR with agent in `agents/bestiary/<your_agent>/`
-
-### Improving Templates
-
-Found an issue or have a suggestion?
-
-- File an issue in the repository
-- Submit a PR with improvements
-- Share feedback with the Fermi team
-
-## 💡 Best Practices
-
-### Agent Design
-
-- **Single Responsibility:** One agent, one domain
-- **Evidence-Based:** Always cite sources and provide confidence
-- **Graceful Degradation:** Handle errors elegantly
-- **Semantic Clarity:** Clear naming, well-documented fields
-- **Version Everything:** Track ontology and agent card changes
-
-### Ontology Design
-
-- **Start Simple:** 5-10 entities, add more as needed
-- **Normalize Relationships:** Avoid redundant connections
-- **Use Standard Types:** Company, Person, Product, Technology, etc.
-- **Document Cardinality:** One-to-one, one-to-many, many-to-many
-- **Plan for Growth:** Ontologies evolve, design for extensibility
-
-### Performance Optimization
-
-- **Choose Right Model:**
-  - Haiku: Fast, cheap, simple tasks
-  - Sonnet: Balanced, most use cases
-  - Opus: Complex reasoning, expensive
-- **Temperature Tuning:**
-  - 0.0-0.3: Facts, structured data
-  - 0.4-0.7: Analysis, reasoning
-  - 0.7-1.0: Creative tasks (rarely needed)
-- **Caching:** Cache API responses, reuse semantic memory
-- **Rate Limits:** Respect API limits, implement backoff
-
-## 📞 Getting Help
-
-### Questions?
-
-- **Documentation:** Check [docs/](../../docs/) first
-- **Examples:** Study the three example agents
-- **Community:** Ask in project discussions
-- **Team:** Contact Fermi development team
-
-### Issues?
-
-- **Template bugs:** File issue with "template" label
-- **Documentation unclear:** File issue with "docs" label
-- **Feature request:** File issue with "enhancement" label
-
-## 🗺️ Roadmap
-
-### Phase 1: Templates (Current - Complete! ✅)
-- ✅ Agent card template
-- ✅ Design checklist
-- ✅ Example agents
-- ✅ Documentation
-
-### Phase 2: Runtime (In Progress)
-- ⏳ Agent executor implementation
-- ⏳ MCP server integration
-- ⏳ LLM provider abstraction
-- ⏳ Error handling framework
-
-### Phase 3: Memory System
-- ⏳ Episodic memory storage (PostgreSQL + pgvector)
-- ⏳ Semantic memory consolidation
-- ⏳ Ontology versioning (Git-like)
-- ⏳ Vector similarity search
-
-### Phase 4: Observability
-- ⏳ Performance monitoring
-- ⏳ Confidence calibration
-- ⏳ Execution logging
-- ⏳ Cost tracking
-
-### Phase 5: Collaboration
-- ⏳ Agent composition
-- ⏳ Evidence aggregation
-- ⏳ Confidence propagation
-- ⏳ Multi-agent forecasting
-
-## 🎉 You're Ready!
-
-You now have everything you need to design world-class Fermi agents. Start with [GETTING_STARTED.md](./GETTING_STARTED.md) and build your first agent!
-
-**Remember:**
-- Start simple, iterate
-- Evidence-based always
-- Document everything
-- Test thoroughly
-- Have fun! 🚀
+# Agent Development Templates
+
+> **Ground truth:** `src/agent_backend/agent_card.rs`  
+> **Design rationale:** `docs/AGENT_MODEL.md`  
+> **Last reconciled:** 2026-05-13
 
 ---
 
-**Questions?** Contact the Fermi team or check the [documentation](../../docs/).
+## Quick start
 
-**Ready to build?** See [GETTING_STARTED.md](./GETTING_STARTED.md)!
+1. Read [DESIGN_CHECKLIST.md](./DESIGN_CHECKLIST.md) — answer all questions before touching JSON
+2. Copy and fill [agent_card.json](./agent_card.json)
+3. Study a worked [example](./examples/) close to your domain
+4. Read [GETTING_STARTED.md](./GETTING_STARTED.md) for a step-by-step walkthrough
 
-**Last Updated:** 2026-02-07
+---
+
+## What is an ABW agent?
+
+An **ABW agent** is the atomic unit of the Agent Bestiary. Concretely: a row in
+the `agents` table plus an `agent_card.json` that travels with it. Every agent has:
+
+| Component | What it encodes |
+|---|---|
+| **Identity** (`agent_id`, `agent_type`, `version`, `tier`) | Who this agent is |
+| **Capabilities** (`executor`, `model_ladder`, `capability_gates`, `model_params`) | What it can do and at what cognitive bandwidth |
+| **Persona** (`system_prompt`, `valence`) | How it thinks and collaborates |
+| **Identity contract** (`accepts`, `produces`, `dependencies`) | What it takes and returns — machine-readable |
+| **Ontology** (external `ontology.mermaid`) | What it learns and accumulates over time |
+| **Performance** (system-managed) | How it has performed — auto-updated at runtime |
+
+---
+
+## File layout
+
+```
+agents/templates/
+├── README.md                    — you are here
+├── GETTING_STARTED.md           — step-by-step tutorial (beginner)
+├── DESIGN_CHECKLIST.md          — planning checklist (all levels)
+├── PROMPT_ENGINEERING_GUIDE.md  — AI prompts to generate agent designs
+├── agent_card.json              — fully documented template
+└── examples/
+    ├── sentiment_analyzer/      — LLM-only, simple (beginner)
+    ├── market_research/         — LLM + MCP, market data (intermediate)
+    └── risk_monitor/            — MCP-heavy, multiple APIs (advanced)
+```
+
+Each example includes a complete `agent_card.json`, `ontology.mermaid`, and `README.md`.
+
+---
+
+## Agent types
+
+### By executor
+
+| Executor | When to use | Runtime behaviour |
+|---|---|---|
+| `llm` | Analysis, reasoning, generation — no live data needed | Routes to `MultiModelExecutor` |
+| `mcp` | Live APIs, databases, web tools | Routes to `ToolExecutor` via MCP servers |
+| `manual` | Human-in-the-loop for rare high-stakes events | Queues for human response |
+| `skill` | Multi-step orchestration workflows | Runs staged `WorkflowTemplate` |
+
+### By tier
+
+| Tier | Who creates it | Trust level |
+|---|---|---|
+| `curated` | Fermi team, formally reviewed | Maximum — used in platform defaults |
+| `community` | Any authenticated user | Standard — user-owned |
+| `system` | Infrastructure, internal only | Infrastructure — no `owner_id` |
+
+---
+
+## The cognition economy (ADR-011)
+
+Agents serve users at three tiers: `free`, `standard`, `premium`. The
+**model ladder** (`capabilities.model_ladder`) maps each tier to a specific
+`(provider, model)` pair. When a request arrives with a cognition tier, the
+runtime picks the highest rung whose tier ≤ the request's tier and uses that
+model — same prompt, same persona, different cognitive bandwidth.
+
+**Capability gates** (`capabilities.capability_gates`) layer on top: a gate like
+`{ "deep_reasoning": "premium" }` means free-tier users can invoke the agent but
+the `deep_reasoning` capability returns a graceful "not available at your tier"
+message instead of silently degrading or failing.
+
+```json
+"model_ladder": [
+  { "tier": "free",     "provider": "anthropic", "model": "claude-3-haiku-20240307" },
+  { "tier": "standard", "provider": "anthropic", "model": "claude-sonnet-4-5" },
+  { "tier": "premium",  "provider": "anthropic", "model": "claude-opus-4" }
+],
+"capability_gates": {
+  "deep_reasoning": "premium"
+}
+```
+
+---
+
+## Valence — the affective signature
+
+`metadata.valence` is a first-class field, not a system-prompt decoration. It
+encodes the agent's emotional register and personality:
+
+```json
+"valence": {
+  "primary_affect": "analytical",
+  "arousal": 0.4,
+  "valence": 0.7,
+  "personality_traits": ["precise", "evidence-driven", "collaborative"]
+}
+```
+
+| Field | Range | Meaning |
+|---|---|---|
+| `primary_affect` | enum | `alignment` · `curious` · `vigilant` · `analytical` · `diplomatic` · `integrative` |
+| `arousal` | 0.0–1.0 | 0.0 calm/deliberate → 1.0 urgent/reactive |
+| `valence` | 0.0–1.0 | 0.0 critical/challenging → 1.0 constructive/affirming |
+| `personality_traits` | string[] | Adjectives shaping collaboration style |
+
+In multi-agent compositions, **valence diversity matters as much as skill
+diversity**. An echo chamber of analytical agents won't surface the same
+things as a mix of analytical, diplomatic, and integrative ones.
+
+---
+
+## The identity contract
+
+`accepts`, `produces`, and `dependencies` are the machine-readable projection of
+what the system prompt declares. Every other surface (composition planner, eval
+framework, xamanEK discovery, marketplace) reasons about this agent using these
+fields — not by parsing the prompt.
+
+```json
+"accepts": ["evidence-set", "forecast-question"],
+"produces": ["multiplier-suggestion", "forecast-adjustment"],
+"dependencies": {
+  "required": ["base_rate_agent"],
+  "optional": ["news_monitor"]
+}
+```
+
+Write these fields with the precision of an API contract. If the system prompt
+changes, update these fields to match.
+
+---
+
+## Agent development workflow
+
+```mermaid
+graph TD
+    A[Answer DESIGN_CHECKLIST questions] --> B[Draft system_prompt and valence]
+    B --> C[Define accepts / produces]
+    C --> D[Configure model_ladder and capability_gates]
+    D --> E[Design ontology.mermaid]
+    E --> F[Complete agent_card.json]
+    F --> G[Write README.md with sample queries]
+    G --> H[Place in agents/curated/<name>/ or agents/community/<name>/]
+    H --> I[Run cargo check — card loads on startup]
+    I --> J[Trigger eval run — observability stack starts collecting]
+    J --> K[Review observatory dashboard]
+    K -->|Anomaly or drift| L[HITL review → intervention if needed]
+    L --> J
+```
+
+---
+
+## Observability and the improvement loop
+
+From the first eval run, the observability stack collects signals on every
+execution. Understanding this at design time makes agents more maintainable:
+
+- **Persona drift** is measured by comparing embedding means across
+  `persona_version` boundaries. Each time you edit the system prompt (or an
+  agent-wide HITL intervention is approved), `persona_version` increments and
+  a new drift baseline begins.
+
+- **Dyad state** (rapport, trust, reciprocity) accumulates per
+  `(agent_id, user_id)` pair. Agents with consistent, specific personas produce
+  more meaningful dyad signals.
+
+- **Anomaly events** fire on drift, repeated evaluator conflicts, social
+  ruptures, and safety flags. These appear in the HITL review queue
+  (`/observatory/hitl`).
+
+- **Capability gate for drift threshold**: agents expected to evolve rapidly
+  (e.g. fresh community agents under active development) should set a looser
+  threshold in `capability_gates`:
+  ```json
+  "capability_gates": { "drift_threshold": 0.35 }
+  ```
+  The platform default is `0.20`.
+
+---
+
+## Common pitfalls
+
+| Pitfall | Wrong | Right |
+|---|---|---|
+| Scope too broad | "Analyzes everything about tech" | "Tracks AMD datacenter GPU market share" |
+| Generic persona | "You are a helpful assistant" | Named agent, specific domain, explicit output contract |
+| Valence omitted | `"valence": null` | Filled deliberately to shape collaboration |
+| No model ladder | Only `model` field set | At minimum one `free` rung |
+| `accepts`/`produces` left empty | `[]` | Specific typed I/O contract |
+| sample_queries too vague | "What is market share?" | "What is AMD's Q1 2026 datacenter GPU market share, and how has it trended over the last four quarters?" |
+
+---
+
+## Resources
+
+| Document | What it covers |
+|---|---|
+| `docs/AGENT_MODEL.md` | Authoritative conceptual model — every field explained |
+| `docs/COMPOSITION_AS_FIRST_CLASS.md` | Compound agents, strategists, dual RSI loops |
+| `docs/architecture/OBSERVABILITY_ARCHITECTURE_SPEC.md` | Full observability stack reference |
+| `docs/architecture/OBSERVABILITY_LOGICAL_ARCHITECTURE.md` | Logical diagrams of the observability system |
+| `agents/templates/DESIGN_CHECKLIST.md` | Step-by-step planning guide |
+| `agents/templates/GETTING_STARTED.md` | 30-minute tutorial |
+| `agents/templates/examples/` | Three complete worked examples |

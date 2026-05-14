@@ -4,6 +4,16 @@ use agent_bestiary_memory::{
 };
 use std::sync::Arc;
 
+fn get_deepseek_key() -> Option<String> {
+    dotenvy::dotenv().ok();
+    std::env::var("DEEPSEEK_API_KEY").ok()
+}
+
+fn get_kimi_key() -> Option<String> {
+    dotenvy::dotenv().ok();
+    std::env::var("KIMI_API_KEY").ok()
+}
+
 // Helper to skip tests if API keys are not available
 fn get_anthropic_key() -> Option<String> {
     std::env::var("ANTHROPIC_API_KEY").ok()
@@ -274,6 +284,108 @@ async fn test_provider_multi_turn() {
     );
 }
 
+// ── DeepSeek provider tests ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_deepseek_provider_via_factory() {
+    // Tests provider registration and factory routing.
+    // Uses OpenRouterProvider internally with DeepSeek's base URL.
+    // Skips the actual API call if no key is set — but verifies
+    // the factory correctly constructs and routes the provider.
+    dotenvy::dotenv().ok();
+    let api_key = match get_deepseek_key() {
+        Some(k) => k,
+        None => {
+            println!("⏭️  Skipping DeepSeek test (no DEEPSEEK_API_KEY)");
+            // Structural check: parse the provider type even without a key
+            use std::str::FromStr;
+            assert_eq!(
+                ProviderType::from_str("deepseek").unwrap(),
+                ProviderType::DeepSeek
+            );
+            println!("✅ DeepSeek ProviderType parses correctly");
+            return;
+        }
+    };
+
+    let config = LLMProviderConfig {
+        provider_type: ProviderType::DeepSeek,
+        api_key,
+        model: "deepseek-chat".to_string(),
+        base_url: None, // defaults to https://api.deepseek.com/v1
+    };
+
+    let provider = LLMProviderFactory::create(&config).unwrap();
+    // DeepSeek uses OpenRouterProvider internally
+    assert_eq!(provider.model_name(), "deepseek-chat");
+
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: "What is 2+2? Answer with just the number.".to_string(),
+    }];
+
+    let config = GenerationConfig {
+        temperature: 0.0,
+        max_tokens: Some(10),
+        ..Default::default()
+    };
+
+    let response = provider.generate_raw(messages, &config).await.unwrap();
+    assert!(!response.content.is_empty());
+    println!(
+        "✅ DeepSeek provider works! Response: {}",
+        response.content
+    );
+}
+
+#[tokio::test]
+async fn test_kimi_provider_via_factory() {
+    // Kimi (Moonshot AI) — OpenAI-compatible, routed via OpenRouterProvider.
+    dotenvy::dotenv().ok();
+    let api_key = match get_kimi_key() {
+        Some(k) => k,
+        None => {
+            println!("⏭️  Skipping Kimi test (no KIMI_API_KEY)");
+            use std::str::FromStr;
+            assert_eq!(
+                ProviderType::from_str("kimi").unwrap(),
+                ProviderType::Kimi
+            );
+            assert_eq!(
+                ProviderType::from_str("moonshot").unwrap(),
+                ProviderType::Kimi
+            );
+            println!("✅ Kimi ProviderType parses correctly (both 'kimi' and 'moonshot')");
+            return;
+        }
+    };
+
+    let config = LLMProviderConfig {
+        provider_type: ProviderType::Kimi,
+        api_key,
+        model: "moonshot-v1-8k".to_string(),
+        base_url: None, // defaults to https://api.moonshot.cn/v1
+    };
+
+    let provider = LLMProviderFactory::create(&config).unwrap();
+    assert_eq!(provider.model_name(), "moonshot-v1-8k");
+
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: "What is 2+2? Answer with just the number.".to_string(),
+    }];
+
+    let config = GenerationConfig {
+        temperature: 0.0,
+        max_tokens: Some(10),
+        ..Default::default()
+    };
+
+    let response = provider.generate_raw(messages, &config).await.unwrap();
+    assert!(!response.content.is_empty());
+    println!("✅ Kimi provider works! Response: {}", response.content);
+}
+
 #[test]
 fn test_provider_type_parsing() {
     use std::str::FromStr;
@@ -295,17 +407,33 @@ fn test_provider_type_parsing() {
         ProviderType::from_str("openrouter").unwrap(),
         ProviderType::OpenRouter
     );
+    assert_eq!(
+        ProviderType::from_str("deepseek").unwrap(),
+        ProviderType::DeepSeek
+    );
+    assert_eq!(
+        ProviderType::from_str("kimi").unwrap(),
+        ProviderType::Kimi
+    );
+    assert_eq!(
+        ProviderType::from_str("moonshot").unwrap(),
+        ProviderType::Kimi
+    );
 
     // Case insensitive
     assert_eq!(
         ProviderType::from_str("ANTHROPIC").unwrap(),
         ProviderType::Anthropic
     );
+    assert_eq!(
+        ProviderType::from_str("DEEPSEEK").unwrap(),
+        ProviderType::DeepSeek
+    );
 
     // Invalid provider
     assert!(ProviderType::from_str("invalid").is_err());
 
-    println!("✅ ProviderType parsing works!");
+    println!("✅ ProviderType parsing works for all providers including DeepSeek and Kimi!");
 }
 
 #[tokio::test]

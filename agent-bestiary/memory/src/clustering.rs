@@ -217,6 +217,10 @@ mod tests {
                 embedding: Some(embedding),
                 consolidated: false,
                 tags: vec![],
+                provenance: crate::Provenance::AutoPass,
+                authority_weight: 0.5,
+                dyad_id: None,
+                persona_version_at_write: None,
             });
         }
 
@@ -237,6 +241,10 @@ mod tests {
                 context: json!({}),
                 execution_status: ExecutionStatus::Failure,
                 error_details: Some("Test error".to_string()),
+                provenance: crate::Provenance::AutoPass,
+                authority_weight: 0.5,
+                dyad_id: None,
+                persona_version_at_write: None,
                 execution_time_ms: 1000,
                 tokens_used: Some(100),
                 cost_usd: Some(Decimal::new(1, 3)),

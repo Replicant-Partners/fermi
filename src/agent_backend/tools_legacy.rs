@@ -96,13 +96,13 @@ pub trait EvalTrigger: Send + Sync {
 }
 
 /// A built-in tool definition
-struct BuiltinToolDef {
-    name: &'static str,
-    description: &'static str,
-    input_schema: serde_json::Value,
-    requires_workspace: bool,
+pub struct BuiltinToolDef {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub input_schema: serde_json::Value,
+    pub requires_workspace: bool,
     /// True for tools that invoke other agents (execute_agent, delegate_to_agent)
-    is_delegation: bool,
+    pub is_delegation: bool,
 }
 
 impl Default for BuiltinToolDef {
@@ -1264,6 +1264,123 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: false,
             is_delegation: false,
         },
+        // ─── SimOps ABW-integrated tools ────────────────────────────
+        // Consumed by simops_cascade, simops_predictor, simops_optimizer,
+        // simops_advisor, simops_narrator. Bridge between the deterministic
+        // simops crate and the ABW SOSA observation store.
+        BuiltinToolDef {
+            name: "simops_load_process",
+            description: "Load a SimOps process configuration by name or from agent memory. Returns the full ProcessConfig JSON. Sources: built-ins (ambu_bioreactor, scoby_kombucha), inline process_json, or a config saved in agent episodic memory.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "process_name": { "type": "string", "description": "Named process: ambu_bioreactor | scoby_kombucha | any custom name saved in memory." },
+                    "process_json": { "type": "object", "description": "Inline ProcessConfig JSON (takes priority over process_name)." }
+                }
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_write_observation",
+            description: "Write a SOSA observation to the platform store. Use after each measurement cycle to build training data for simops_predictor and the session history.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id":            { "type": "string", "description": "UUID of the observation session." },
+                    "observable_property":   { "type": "string", "description": "What was measured: e.g. 'biomass_dw_g', 'od600', 'titratable_acidity'." },
+                    "result_value":          { "type": "number", "description": "Measured value." },
+                    "result_unit":           { "type": "string", "description": "Unit of measurement: g/L, kg, pH, etc." },
+                    "feature_of_interest":   { "type": "string", "description": "SOSA FeatureOfInterest URI, e.g. xid:platform/ambu-001." },
+                    "phenomenon_time":       { "type": "integer", "description": "Unix milliseconds of measurement (defaults to now)." },
+                    "extra":                 { "type": "object", "description": "Any additional metadata." }
+                },
+                "required": ["session_id", "observable_property", "result_value"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_fetch_training_data",
+            description: "Fetch SOSA observations for a session as structured training data. Groups by phenomenon_time into feature vectors ready for simops_predictor_train.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id":          { "type": "string", "description": "UUID of the observation session." },
+                    "feature_properties":  { "type": "array", "items": { "type": "string" }, "description": "observable_property names to use as X input features." },
+                    "target_property":     { "type": "string", "description": "observable_property name to use as y prediction target." },
+                    "limit":              { "type": "integer", "default": 1000, "description": "Max observations per property." }
+                },
+                "required": ["session_id", "feature_properties", "target_property"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "get_observations",
+            description: "Read recent SOSA observations for a session. Returns per-property summary statistics and the raw observation list.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id":           { "type": "string", "description": "UUID of the observation session." },
+                    "observable_property":  { "type": "string", "description": "Filter to one property (optional)." },
+                    "limit":               { "type": "integer", "default": 100, "description": "Max observations to return." },
+                    "from_ms":             { "type": "integer", "description": "Unix ms lower bound (optional)." },
+                    "to_ms":              { "type": "integer", "description": "Unix ms upper bound (optional)." }
+                },
+                "required": ["session_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "describe_session",
+            description: "Summarise an observation session: metadata, per-property statistics, and any saved process config snapshot. Used by simops_advisor and simops_narrator for context.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "UUID of the observation session." }
+                },
+                "required": ["session_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_check_constraints",
+            description: "Validate that an optimizer or cascade result is physically feasible: non-negative quantities, stage efficiency bounds, unit compatibility, and any user-supplied min/max constraints.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "process_name":     { "type": "string" },
+                    "process_json":     { "type": "object" },
+                    "optimizer_result": { "type": "object", "description": "Output of simops_optimize_* or simops_cascade_*." },
+                    "constraints":      { "type": "object", "description": "Optional bounds: { feature_name: { min?: f64, max?: f64 } }", "additionalProperties": { "type": "object" } }
+                },
+                "required": ["optimizer_result"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "simops_write_actuation_plan",
+            description: "Persist an optimizer recommendation as an actuation plan in agent episodic memory. Creates a durable record of what was recommended, the rationale, and the operator decision. Feeds the agent's dreaming/consolidation cycle.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id":       { "type": "string", "description": "UUID of the observation session this plan addresses." },
+                    "process_name":     { "type": "string" },
+                    "optimizer_result": { "type": "object", "description": "The optimizer output being recorded." },
+                    "rationale":        { "type": "string", "description": "Why this plan was chosen." },
+                    "decision":         { "type": "string", "enum": ["proposed", "accept", "reject", "modify"], "default": "proposed" },
+                    "modifications":    { "type": "object", "description": "Operator-applied changes, if any." },
+                    "target_output":    { "type": "number", "description": "The production target this plan addresses." }
+                },
+                "required": ["session_id", "optimizer_result", "rationale"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
         // ─── Observability composition tools ───────────────────────
         // Consumed by observability_coordinator, eval_runner,
         // anomaly_triager, dyad_observer. See docs/AGENT_MODEL.md §3.
@@ -1613,6 +1730,14 @@ impl ToolRegistry {
             "simops_predictor_forecast"    => crate::agent_backend::simops_tools::execute_simops_predictor_forecast(input).await,
             "simops_optimize_scale"        => crate::agent_backend::simops_tools::execute_simops_optimize_scale(input).await,
             "simops_optimize_single_input" => crate::agent_backend::simops_tools::execute_simops_optimize_single_input(input).await,
+            // ─── SimOps ABW-integrated tools ────────────────────
+            "simops_load_process"        => crate::agent_backend::simops_tools::execute_simops_load_process(input, ctx).await,
+            "simops_write_observation"   => crate::agent_backend::simops_tools::execute_simops_write_observation(input, ctx).await,
+            "simops_fetch_training_data" => crate::agent_backend::simops_tools::execute_simops_fetch_training_data(input, ctx).await,
+            "get_observations"           => crate::agent_backend::simops_tools::execute_get_observations(input, ctx).await,
+            "describe_session"           => crate::agent_backend::simops_tools::execute_describe_session(input, ctx).await,
+            "simops_check_constraints"   => crate::agent_backend::simops_tools::execute_simops_check_constraints(input, ctx).await,
+            "simops_write_actuation_plan"=> crate::agent_backend::simops_tools::execute_simops_write_actuation_plan(input, ctx).await,
             // ─── Observability composition tools ───────────────
             "query_eval_signals" => execute_query_eval_signals(input, ctx).await,
             "query_eval_runs"    => execute_query_eval_runs(input, ctx).await,

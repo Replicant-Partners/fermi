@@ -104,21 +104,31 @@ pub async fn mcp_agent_rpc(
                 }
             })))
         }
-        "tools/call" => {
+        // Some MCP clients call method:"execute" directly (treating the tool
+        // name as the JSON-RPC method) rather than method:"tools/call" with
+        // params.name:"execute". Accept both forms.
+        "execute" | "tools/call" => {
             let params = req.params.unwrap_or(Value::Null);
-            let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            if tool_name != "execute" {
-                return Ok(Json(json!({
-                    "jsonrpc": "2.0",
-                    "id": rpc_id,
-                    "error": { "code": -32602, "message": format!("Unknown tool: {}", tool_name) }
-                })));
+
+            // tools/call: validate name == "execute"
+            if req.method == "tools/call" {
+                let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                if tool_name != "execute" {
+                    return Ok(Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": rpc_id,
+                        "error": { "code": -32602, "message": format!("Unknown tool: {}", tool_name) }
+                    })));
+                }
             }
 
+            // Query may be under params.arguments.query (tools/call)
+            // or directly at params.query (direct execute call)
             let query = params
                 .get("arguments")
                 .and_then(|a| a.get("query"))
                 .and_then(|q| q.as_str())
+                .or_else(|| params.get("query").and_then(|q| q.as_str()))
                 .unwrap_or("")
                 .to_string();
 

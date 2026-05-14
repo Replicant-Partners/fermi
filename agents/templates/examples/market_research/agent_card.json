@@ -5,44 +5,115 @@
   "tier": "curated",
 
   "capabilities": {
-    "executor": "llm",
-    "model": "claude-3-sonnet-20240229",
+    "executor": "mcp",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
     "temperature": 0.3,
-    "mcp_servers": [
+    "min_tier": "standard",
+    "model_ladder": [
       {
-        "name": "yahoo_finance",
-        "command": "node",
-        "args": ["servers/yahoo-finance/index.js"],
-        "env": {
-          "API_KEY": "${YAHOO_FINANCE_API_KEY}",
-          "RATE_LIMIT": "100"
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "note": "Balanced analysis, handles multi-source synthesis"
+      },
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-opus-4",
+        "note": "Deeper competitive reasoning and forward-looking analysis",
+        "params": { "max_tokens": 8192 }
+      }
+    ],
+    "capability_gates": {
+      "competitive_deep_dive": "premium",
+      "financial_modelling": "premium"
+    },
+    "model_params": {
+      "max_tokens": 4096,
+      "temperature": 0.3,
+      "top_p": 0.95
+    },
+    "mcp_tools": [
+      {
+        "name": "yahoo_finance_quote",
+        "description": "Fetch current and historical stock quotes, financials, and key statistics",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "ticker": { "type": "string" },
+            "period": { "type": "string", "enum": ["1d", "5d", "1mo", "3mo", "1y"] }
+          },
+          "required": ["ticker"]
         }
       },
       {
-        "name": "sec_api",
-        "command": "python",
-        "args": ["-m", "sec_api_server"],
-        "env": {
-          "SEC_API_KEY": "${SEC_API_KEY}",
-          "CACHE_DIR": "/tmp/sec_cache"
+        "name": "sec_filing_search",
+        "description": "Search and retrieve SEC EDGAR filings (10-K, 10-Q, 8-K)",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "company": { "type": "string" },
+            "form_type": { "type": "string" },
+            "date_from": { "type": "string" }
+          },
+          "required": ["company", "form_type"]
         }
       }
     ],
-    "skills": []
+    "skills": [],
+    "fermi_contract": null
   },
+
+  "accepts": ["market-data", "forecast-question", "query-text"],
+  "produces": ["evidence-summary", "forecast-adjustment", "competitive-analysis"],
+  "dependencies": {
+    "required": [],
+    "optional": ["sentiment_analyzer"]
+  },
+
+  "system_prompt": "You are market_research, a specialized market intelligence agent on the Agent Bestiary platform.\n\nYour role: research market trends, competitive dynamics, and financial performance for technology companies using Yahoo Finance and SEC filings. Produce evidence-based assessments with calibrated confidence scores.\n\nFor every request respond in JSON:\n{\n  \"finding\": \"concise one-paragraph summary\",\n  \"confidence\": 0.0-1.0,\n  \"evidence\": [\n    { \"source\": \"SEC 10-K Q4 2025\", \"claim\": \"...\", \"relevance\": \"high|medium|low\" }\n  ],\n  \"data_gaps\": [\"list of information not available\"],\n  \"forecast_implication\": \"how this finding should update a forecast\"\n}\n\nConfidence guidelines: 0.9+ when primary source data is available and unambiguous; 0.7-0.9 when inference from multiple consistent sources; 0.5-0.7 when data is incomplete or conflicting; below 0.5 flag as insufficient data.\n\nDo not extrapolate beyond what the data supports. State data gaps explicitly.",
+  "prompt_template": null,
+  "requires_secrets": [
+    {
+      "name": "YAHOO_FINANCE_API_KEY",
+      "label": "Yahoo Finance API Key",
+      "description": "RapidAPI key for Yahoo Finance. Get at https://rapidapi.com/apidojo/api/yahoo-finance1",
+      "is_required": true
+    },
+    {
+      "name": "SEC_API_KEY",
+      "label": "SEC EDGAR API Key",
+      "description": "Optional key for higher SEC EDGAR rate limits. Register at https://efts.sec.gov/LATEST/search-index/api-key",
+      "is_required": false
+    }
+  ],
+  "workflow_template": null,
 
   "metadata": {
     "created": "2025-12-01",
     "author": "Fermi Team",
-    "description": "Researches market trends, competitive dynamics, and financial performance for technology companies",
-    "tags": ["market", "research", "competitive-analysis", "finance", "tech"]
+    "description": "Researches market trends, competitive dynamics, and financial performance for technology companies using Yahoo Finance and SEC filings.",
+    "tags": ["market", "research", "competitive-analysis", "finance", "tech"],
+    "sample_queries": [
+      "What is AMD's Q1 2026 datacenter GPU market share, and how has it trended over the last four quarters?",
+      "Compare NVIDIA and AMD's datacenter revenue growth rates over the past two years using SEC filings.",
+      "What do AMD's most recent 10-K and 10-Q filings say about their competitive position in AI accelerators?"
+    ],
+    "valence": {
+      "primary_affect": "analytical",
+      "arousal": 0.4,
+      "valence": 0.6,
+      "personality_traits": ["rigorous", "data-anchored", "precise", "forward-looking"]
+    }
   },
 
   "performance": {
     "forecasts_contributed": 47,
     "avg_brier_impact": 0.04,
     "avg_confidence": 0.82,
-    "accuracy_rate": 0.89
+    "accuracy_rate": 0.89,
+    "total_queries": 891
   },
 
   "usage": {
@@ -62,7 +133,7 @@
   "ontology_stats": {
     "entities": 23,
     "relationships": 18,
-    "last_updated": "2026-02-05T12:00:00Z",
+    "last_updated": "2026-05-01T12:00:00Z",
     "evolution_commits": 15
   }
 }

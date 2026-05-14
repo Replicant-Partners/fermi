@@ -8,6 +8,27 @@
     "executor": "llm",
     "mcp_tools": [
       {
+        "name": "execute_agent",
+        "description": "Invoke a member agent with a query and receive its response. Use to delegate specialised sub-tasks to required or optional dependency agents.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "The agent_id of the member agent to invoke"
+            },
+            "query": {
+              "type": "string",
+              "description": "The query or task to send to the agent"
+            }
+          },
+          "required": [
+            "agent_id",
+            "query"
+          ]
+        }
+      },
+      {
         "name": "fmp_company_profile",
         "description": "Get company profile including price, market cap, sector, industry, beta, 52-week range, CEO, description. Use this first to identify the company and get current market data.",
         "input_schema": {
@@ -661,5 +682,11 @@
     "data_services": [
       "financialmodelingprep.com"
     ]
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "USD",
+    "budget": 200.0
   }
 }

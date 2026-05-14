@@ -1,12 +1,8 @@
-//! `LLMJudgeEvaluator` — reference dimensional evaluator that wraps
-//! the legacy "score with judge" pattern from
-//! `src/handlers/eval.rs::score_with_judge`.
+//! `LLMJudgeEvaluator` — reference dimensional evaluator.
 //!
-//! Phase 1 keeps this provider-agnostic: the actual LLM call is
-//! abstracted behind the [`LlmJudge`] trait so we don't take a
-//! dependency on a particular HTTP client / model SDK at the registry
-//! layer. Phase 2 will adapt the existing Anthropic-backed
-//! `score_with_judge` to implement [`LlmJudge`].
+//! Provider-agnostic: the actual LLM call is abstracted behind the
+//! [`LlmJudge`] trait. The production implementation is
+//! `LlmJudgeAnthropic` in `src/handlers/eval_judge.rs`.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

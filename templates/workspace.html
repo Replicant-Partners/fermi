@@ -1269,6 +1269,24 @@
           </div>
         </div>
 
+        <!-- Composition -->
+        <div class="shelf-section" id="composition-shelf-section">
+          <div class="shelf-label">Composition</div>
+          <div style="font-size:0.7rem;color:var(--fg3);margin-bottom:6px">
+            Dreaming reviews session history, valence distribution, and
+            coherence patterns — then proposes structural improvements.
+          </div>
+          <button
+            class="btn"
+            onclick="runCompositionDreaming()"
+            style="font-size:0.7rem;width:100%"
+            title="Composition dreaming — tension audit + tune-team RSI (5 cr)"
+          >
+            Dreaming (5 cr)
+          </button>
+          <div id="composition-proposals" style="margin-top:8px"></div>
+        </div>
+
         <!-- Observability -->
         <div class="shelf-section">
           <div class="shelf-label">Observability</div>
@@ -2852,6 +2870,146 @@
       // chat. The existing chat flow handles agent invocation, gas
       // charging, and SSE broadcast — the shelf is just a pre-filled
       // shortcut for the four most common queries.
+      // ── Composition dreaming + proposals ──────────────────────────
+
+      async function loadCompositionProposals() {
+        const el = document.getElementById("composition-proposals");
+        if (!el) return;
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/composition/versions`);
+          if (!res.ok) return;
+          const data = await res.json();
+          const pending = (data.versions || []).filter(
+            (v) => !v.accepted_by && !v.rejected_by
+          );
+          if (pending.length === 0) {
+            el.innerHTML = "";
+            return;
+          }
+          el.innerHTML = `
+            <div style="font-size:0.7rem;color:var(--yellow);font-weight:600;margin-bottom:4px">
+              ${pending.length} pending proposal${pending.length > 1 ? "s" : ""}
+            </div>
+            ${pending.map((v) => `
+            <div style="border:1px solid var(--bg3);border-radius:3px;padding:8px;margin-bottom:6px;font-size:0.72rem">
+              <div style="color:var(--fg2);margin-bottom:4px">
+                <strong>v${v.version_number}</strong>
+                <span style="color:var(--fg3);margin-left:6px">by ${v.proposed_by || "strategist"}</span>
+              </div>
+              <div style="color:var(--fg1);margin-bottom:6px;line-height:1.4">${v.diff_summary || "(no summary)"}</div>
+              <div style="display:flex;gap:4px">
+                <button class="btn" style="font-size:0.65rem;padding:3px 8px;border-color:var(--green);color:var(--green)"
+                  onclick="acceptCompositionVersion('${v.composition_version_id}')">Accept</button>
+                <button class="btn" style="font-size:0.65rem;padding:3px 8px;border-color:var(--red);color:var(--red)"
+                  onclick="rejectCompositionVersion('${v.composition_version_id}')">Reject</button>
+              </div>
+            </div>
+          `).join("")}`;
+        } catch (e) {
+          console.error("Failed to load composition proposals:", e);
+        }
+      }
+
+      window.runCompositionDreaming = async function () {
+        const btn = document.querySelector("#composition-shelf-section .btn");
+        if (btn) btn.disabled = true;
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/composition/dream`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            alert("Composition dreaming failed: " + err);
+            return;
+          }
+          if (typeof switchTab === "function") switchTab("chat");
+          refreshBudget();
+          // Reload proposals after a short delay — strategist may propose during session
+          setTimeout(loadCompositionProposals, 3000);
+        } catch (e) {
+          alert("Failed to start dreaming: " + e.message);
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      };
+
+      window.acceptCompositionVersion = async function (versionId) {
+        if (!confirm("Accept this composition proposal? The team structure will be updated.")) return;
+        try {
+          const res = await fetch(
+            `/api/workspaces/${wsId}/composition/versions/${versionId}/accept`,
+            { method: "POST", headers: { "Content-Type": "application/json" } }
+          );
+          if (res.ok) {
+            loadCompositionProposals();
+          } else {
+            alert("Accept failed: " + (await res.text()));
+          }
+        } catch (e) {
+          alert("Network error: " + e.message);
+        }
+      };
+
+      window.rejectCompositionVersion = async function (versionId) {
+        const note = prompt("Rejection note (optional — helps the strategist learn):");
+        try {
+          const res = await fetch(
+            `/api/workspaces/${wsId}/composition/versions/${versionId}/reject`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ note: note || null }),
+            }
+          );
+          if (res.ok) {
+            loadCompositionProposals();
+          } else {
+            alert("Reject failed: " + (await res.text()));
+          }
+        } catch (e) {
+          alert("Network error: " + e.message);
+        }
+      };
+
+      // Load proposals on page init
+      loadCompositionProposals();
+
+      // ── Composition version history (for workspace detail views) ──
+
+      window.loadCompositionHistory = async function (containerEl) {
+        if (!containerEl) return;
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/composition/versions`);
+          if (!res.ok) { containerEl.innerHTML = "<div>No history.</div>"; return; }
+          const data = await res.json();
+          const versions = data.versions || [];
+          if (versions.length === 0) {
+            containerEl.innerHTML = '<div style="color:var(--fg3);font-size:0.8rem">No composition versions yet.</div>';
+            return;
+          }
+          containerEl.innerHTML = versions.map((v) => {
+            const status = v.accepted_by
+              ? `<span style="color:var(--green)">Accepted by ${v.accepted_by}</span>`
+              : v.rejected_by
+              ? `<span style="color:var(--red)">Rejected by ${v.rejected_by}</span>`
+              : `<span style="color:var(--yellow)">Pending</span>`;
+            return `
+            <div style="padding:8px 0;border-bottom:1px solid var(--bg2);font-size:0.8rem">
+              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                <span style="color:var(--fg1);font-weight:600">v${v.version_number}</span>
+                ${status}
+                <span style="color:var(--fg3);font-size:0.7rem">${new Date(v.created_at).toLocaleDateString()}</span>
+              </div>
+              <div style="color:var(--fg2)">${v.diff_summary || "(no summary)"}</div>
+              ${v.rejection_note && v.rejected_by ? `<div style="color:var(--gray);font-size:0.72rem;margin-top:3px">Rejection note: ${v.rejection_note}</div>` : ""}
+            </div>`;
+          }).join("");
+        } catch (e) {
+          containerEl.innerHTML = "<div>Failed to load history.</div>";
+        }
+      };
+
       window.invokeObservability = async function (tier) {
         const queries = {
           state: "@observability_coordinator Give me a state snapshot of this workspace: any active anomalies, HITL queue depth, recent eval scores per agent, and any persona_version changes in the last 24 hours.",

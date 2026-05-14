@@ -508,6 +508,12 @@ fn resolve_openai_provider(provider: &str) -> Result<(String, String), Execution
         "qwen" => std::env::var("QWEN_BASE_URL")
             .unwrap_or_else(|_| "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
         "openrouter" => "https://openrouter.ai/api/v1".to_string(),
+        "glm" => std::env::var("GLM_BASE_URL")
+            .unwrap_or_else(|_| "https://open.bigmodel.cn/api/paas/v4".to_string()),
+        "deepseek" => std::env::var("DEEPSEEK_BASE_URL")
+            .unwrap_or_else(|_| "https://api.deepseek.com/v1".to_string()),
+        "kimi" => std::env::var("KIMI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.moonshot.cn/v1".to_string()),
         other => {
             return Err(ExecutionError::ExecutionFailed(format!(
                 "Unknown provider: {}",

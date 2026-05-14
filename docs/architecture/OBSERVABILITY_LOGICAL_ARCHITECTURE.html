@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="Ferrite">
+    <title>OBSERVABILITY_LOGICAL_ARCHITECTURE</title>
+    <style>
+
+/* Reset and base styles */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+}
+
+/* Article container */
+.markdown-body {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 32px 24px;
+}
+
+/* Headings */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    margin-top: 24px;
+    margin-bottom: 16px;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+.markdown-body h1 { font-size: 2em; border-bottom: 1px solid; padding-bottom: 0.3em; }
+.markdown-body h2 { font-size: 1.5em; border-bottom: 1px solid; padding-bottom: 0.3em; }
+.markdown-body h3 { font-size: 1.25em; }
+.markdown-body h4 { font-size: 1em; }
+.markdown-body h5 { font-size: 0.875em; }
+.markdown-body h6 { font-size: 0.85em; }
+
+/* Paragraphs */
+.markdown-body p {
+    margin-top: 0;
+    margin-bottom: 16px;
+}
+
+/* Links */
+.markdown-body a {
+    text-decoration: none;
+}
+
+.markdown-body a:hover {
+    text-decoration: underline;
+}
+
+/* Lists */
+.markdown-body ul,
+.markdown-body ol {
+    margin-top: 0;
+    margin-bottom: 16px;
+    padding-left: 2em;
+}
+
+.markdown-body li {
+    margin-bottom: 4px;
+}
+
+.markdown-body li + li {
+    margin-top: 4px;
+}
+
+/* Task lists */
+.markdown-body ul.contains-task-list {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.markdown-body .task-list-item {
+    padding-left: 1.5em;
+    position: relative;
+}
+
+.markdown-body .task-list-item input[type="checkbox"] {
+    position: absolute;
+    left: 0;
+    top: 0.3em;
+}
+
+/* Blockquotes */
+.markdown-body blockquote {
+    margin: 0 0 16px 0;
+    padding: 0 1em;
+    border-left: 4px solid;
+}
+
+.markdown-body blockquote > :first-child {
+    margin-top: 0;
+}
+
+.markdown-body blockquote > :last-child {
+    margin-bottom: 0;
+}
+
+/* Code */
+.markdown-body code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+    font-size: 0.9em;
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+}
+
+.markdown-body pre {
+    margin-top: 0;
+    margin-bottom: 16px;
+    padding: 16px;
+    overflow: auto;
+    border-radius: 6px;
+    line-height: 1.45;
+}
+
+.markdown-body pre code {
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    font-size: 0.875em;
+}
+
+/* Tables */
+.markdown-body table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 16px;
+}
+
+.markdown-body th,
+.markdown-body td {
+    padding: 8px 12px;
+    border: 1px solid;
+}
+
+.markdown-body th {
+    font-weight: 600;
+    text-align: left;
+}
+
+.markdown-body tr:nth-child(even) td {
+    background-color: rgba(128, 128, 128, 0.05);
+}
+
+/* Horizontal rule */
+.markdown-body hr {
+    height: 2px;
+    margin: 24px 0;
+    border: none;
+}
+
+/* Images */
+.markdown-body img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+}
+
+/* Strong and emphasis */
+.markdown-body strong {
+    font-weight: 600;
+}
+
+.markdown-body em {
+    font-style: italic;
+}
+
+/* Strikethrough */
+.markdown-body del {
+    text-decoration: line-through;
+}
+
+
+
+/* Theme colors */
+:root {
+    color-scheme: dark;
+}
+
+body {
+    background-color: rgb(30, 30, 30);
+    color: rgb(220, 220, 220);
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    color: rgb(100, 180, 255);
+}
+
+.markdown-body h1,
+.markdown-body h2 {
+    border-bottom-color: rgb(60, 60, 60);
+}
+
+.markdown-body a {
+    color: rgb(100, 180, 255);
+}
+
+.markdown-body blockquote {
+    color: rgb(180, 180, 180);
+    border-left-color: rgb(80, 80, 80);
+}
+
+.markdown-body code {
+    background-color: rgb(45, 45, 45);
+    color: rgb(200, 200, 150);
+}
+
+.markdown-body pre {
+    background-color: rgb(35, 39, 46);
+    border: 1px solid rgb(55, 60, 68);
+}
+
+.markdown-body th,
+.markdown-body td {
+    border-color: rgb(60, 65, 75);
+}
+
+.markdown-body th {
+    background-color: rgb(45, 50, 60);
+}
+
+.markdown-body hr {
+    background-color: rgb(80, 80, 80);
+}
+
+
+
+/* Syntax highlighting */
+.markdown-body pre code .keyword { color: rgb(198, 120, 221); }
+.markdown-body pre code .string { color: rgb(152, 195, 121); }
+.markdown-body pre code .number { color: rgb(209, 154, 102); }
+.markdown-body pre code .comment { color: rgb(92, 99, 112); font-style: italic; }
+.markdown-body pre code .function { color: rgb(97, 175, 239); }
+.markdown-body pre code .type { color: rgb(229, 192, 123); }
+.markdown-body pre code .variable { color: rgb(224, 108, 117); }
+.markdown-body pre code .operator { color: rgb(171, 178, 191); }
+.markdown-body pre code .punctuation { color: rgb(150, 150, 150); }
+
+
+
+    </style>
+</head>
+<body>
+    <article class="markdown-body">
+<h1><a href="#social-agent-observability-platform--logical-architecture" aria-hidden="true" class="anchor" id="social-agent-observability-platform--logical-architecture"></a>Social Agent Observability Platform — Logical Architecture</h1>
+<p><strong>Audience:</strong> Technical leads, architects, senior contributors<br />
+<strong>Companion to:</strong> <code>OBSERVABILITY_ARCHITECTURE_SPEC.md</code> (physical implementation detail)<br />
+<strong>Purpose:</strong> Defines the system in logical terms — what the components <em>are</em>,
+what domain concepts they own, and how they interact — independent of language,
+crate boundaries, or SQL schema particulars.</p>
+<hr />
+<h2><a href="#1-system-overview" aria-hidden="true" class="anchor" id="1-system-overview"></a>1. System Overview</h2>
+<p>The Social Agent Observability Platform is a <strong>closed-loop behavioral monitoring
+system</strong> for AI agents. It continuously evaluates agent behavior across multiple
+dimensions, builds a longitudinal record of how an agent's behavior evolves over
+time, surfaces anomalies to human reviewers, and — when reviewers intervene —
+feeds corrective signals back into the agent's behavioral baseline through a
+coherence-gated memory write.</p>
+<p>The system is organized into four logical planes. Each plane transforms the
+outputs of the plane below it into richer, more actionable information.</p>
+<pre><code class="language-mermaid">graph TD
+    A[&quot;Plane A · Agent &amp; Memory\nFoundation&quot;]
+    B[&quot;Plane B · Evaluator Registry\nMulti-dimensional scoring&quot;]
+    C[&quot;Plane C · Longitudinal Observer\nTrend · Drift · Anomaly&quot;]
+    D[&quot;Plane D · Human Interface\nHITL · Intervention · Feedback&quot;]
+
+    A --&gt;|EpisodeBundle| B
+    B --&gt;|AggregatedSignal| C
+    C --&gt;|AnomalyEvent| D
+    D --&gt;|SyntheticEpisode + Correction| A
+
+    style A fill:#2d4a3e,color:#cfe8cf,stroke:#4a7c59
+    style B fill:#2d3a4a,color:#cfe0ef,stroke:#4a6a8c
+    style C fill:#4a3a2d,color:#efe0cf,stroke:#8c6a4a
+    style D fill:#4a2d3a,color:#efcfe0,stroke:#8c4a6a
+</code></pre>
+<p>The feedback arrow from Plane D back to Plane A is the defining feature of the
+system: it is not a one-way monitoring pipeline but a <strong>recursive improvement
+loop</strong> in which human review decisions are re-injected as high-authority
+behavioral evidence.</p>
+<hr />
+<h2><a href="#2-domain-ontology-entity-relationship" aria-hidden="true" class="anchor" id="2-domain-ontology-entity-relationship"></a>2. Domain Ontology (Entity-Relationship)</h2>
+<p>The following ER diagram expresses the domain model — the <em>concepts</em> and their
+relationships — not the physical schema columns.</p>
+<pre><code class="language-mermaid">erDiagram
+    AGENT {
+        id agent_id
+        string name
+        string system_prompt
+        int persona_version
+        enum tier
+    }
+
+    EPISODE {
+        id episode_id
+        string query
+        string response
+        enum provenance
+        float authority_weight
+        int persona_version_at_write
+    }
+
+    DYAD {
+        id dyad_id
+        float rapport
+        float trust
+        float reciprocity
+        int episode_count
+    }
+
+    EVAL_RUN {
+        id run_id
+        json aggregated_signal
+        bool prefilter_blocked
+    }
+
+    EVAL_SIGNAL {
+        id signal_id
+        string evaluator_name
+        string dimension
+        float score
+        float confidence
+    }
+
+    TIMELINE_ENTRY {
+        id entry_id
+        json dim_scores
+        float drift_norm
+        list anomaly_flags
+        enum provenance
+    }
+
+    ANOMALY_EVENT {
+        id event_id
+        enum kind
+        enum severity
+        json payload
+        bool requires_review
+        datetime resolved_at
+    }
+
+    HITL_ACTION {
+        id action_id
+        string reviewer_id
+        enum action
+        json score_overrides
+    }
+
+    EPISODE_CORRECTION {
+        id correction_id
+        enum scope
+        enum classification
+        string correction_text
+        float authority_weight
+        json coherence_check
+        json minimum_update_set
+    }
+
+    SYNTHETIC_EPISODE {
+        id episode_id
+        string corrected_response
+        float authority_weight
+        enum provenance
+    }
+
+    TWO_REVIEWER_REQUEST {
+        id request_id
+        string first_reviewer_id
+        string second_reviewer_id
+        enum status
+        json encoded_intervention
+    }
+
+    AGENT ||--o{ EPISODE : &quot;executes&quot;
+    AGENT ||--o{ DYAD : &quot;participates in&quot;
+    AGENT ||--o{ EVAL_RUN : &quot;is evaluated by&quot;
+    AGENT ||--o{ TIMELINE_ENTRY : &quot;has timeline&quot;
+    AGENT ||--o{ ANOMALY_EVENT : &quot;triggers&quot;
+
+    EPISODE }o--|| DYAD : &quot;belongs to&quot;
+    EPISODE ||--o{ EVAL_SIGNAL : &quot;scored by&quot;
+    EPISODE ||--o{ TIMELINE_ENTRY : &quot;projected into&quot;
+    EPISODE ||--o{ EPISODE_CORRECTION : &quot;corrected by&quot;
+
+    EVAL_RUN ||--o{ EVAL_SIGNAL : &quot;contains&quot;
+    EVAL_RUN ||--o{ TIMELINE_ENTRY : &quot;feeds&quot;
+
+    TIMELINE_ENTRY ||--o{ ANOMALY_EVENT : &quot;triggers&quot;
+
+    ANOMALY_EVENT ||--o{ HITL_ACTION : &quot;reviewed via&quot;
+    ANOMALY_EVENT ||--o| TWO_REVIEWER_REQUEST : &quot;escalated to&quot;
+
+    HITL_ACTION ||--o| EPISODE_CORRECTION : &quot;produces&quot;
+
+    EPISODE_CORRECTION ||--o| SYNTHETIC_EPISODE : &quot;creates&quot;
+    SYNTHETIC_EPISODE }o--|| AGENT : &quot;re-injected into&quot;
+    EPISODE_CORRECTION }o--|| AGENT : &quot;may bump persona version of&quot;
+</code></pre>
+<h3><a href="#key-ontological-relationships" aria-hidden="true" class="anchor" id="key-ontological-relationships"></a>Key ontological relationships</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AGENT</code> → <code>EPISODE</code></td>
+<td>An agent's execution history. Every interaction produces an episode.</td>
+</tr>
+<tr>
+<td><code>EPISODE</code> → <code>DYAD</code></td>
+<td>Episodes between the same agent and human are grouped into a dyad, which tracks relational dynamics over time.</td>
+</tr>
+<tr>
+<td><code>EPISODE</code> → <code>EVAL_SIGNAL</code></td>
+<td>One episode may be scored by multiple evaluators across multiple dimensions.</td>
+</tr>
+<tr>
+<td><code>EVAL_SIGNAL</code> → <code>TIMELINE_ENTRY</code></td>
+<td>Scores are projected into a denormalized timeline entry, the primary read surface for trend analysis.</td>
+</tr>
+<tr>
+<td><code>TIMELINE_ENTRY</code> → <code>ANOMALY_EVENT</code></td>
+<td>When the timeline reveals drift, conflict, rupture, or safety issues, an anomaly event is raised.</td>
+</tr>
+<tr>
+<td><code>ANOMALY_EVENT</code> → <code>HITL_ACTION</code></td>
+<td>A human reviewer acts on the anomaly — approving, relabelling, or intervening.</td>
+</tr>
+<tr>
+<td><code>HITL_ACTION</code> → <code>EPISODE_CORRECTION</code></td>
+<td>An intervention produces an immutable correction record.</td>
+</tr>
+<tr>
+<td><code>EPISODE_CORRECTION</code> → <code>SYNTHETIC_EPISODE</code></td>
+<td>The correction is materialized as a new high-authority episode that feeds back into the agent's behavioral baseline.</td>
+</tr>
+<tr>
+<td><code>AGENT.persona_version</code></td>
+<td>Increments on system-prompt edits and agent-wide interventions, creating version boundaries that the drift monitor tracks across.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2><a href="#3-logical-module-map" aria-hidden="true" class="anchor" id="3-logical-module-map"></a>3. Logical Module Map</h2>
+<p>The following diagram shows the logical modules of the system and their
+dependency relationships. Each logical module is named on the left; its
+implementing Rust crate is shown on the right.</p>
+<pre><code class="language-mermaid">graph LR
+    subgraph Foundation [&quot;Plane A — Foundation&quot;]
+        AM[&quot;Agent Model\n(identity, persona version,\ncapability gates)&quot;]
+        EM[&quot;Episode Store\n(provenance, authority weight,\ndyad identity)&quot;]
+        EB[&quot;Episode Bundle\n(normalized evaluator input)&quot;]
+        AM --- EM
+        EM --&gt; EB
+    end
+
+    subgraph Registry [&quot;Plane B — Evaluator Registry&quot;]
+        PF[&quot;Pre-filter Tier\n(serial, can short-circuit)&quot;]
+        DT[&quot;Dimensional Tier\n(concurrent, multi-score)&quot;]
+        AG[&quot;Aggregator\n(confidence-weighted mean,\nconflict detection)&quot;]
+        PF --&gt; DT
+        DT --&gt; AG
+    end
+
+    subgraph Observer [&quot;Plane C — Longitudinal Observer&quot;]
+        SC[&quot;Episode Scorer\n(inline timeline writer)&quot;]
+        DM[&quot;Persona Drift Monitor\n(cosine distance,\nthreshold classification)&quot;]
+        ST[&quot;Social Tracker\n(EWMA rapport/trust/reciprocity,\nrupture detection)&quot;]
+        AD[&quot;Anomaly Detector\n(drift · conflict · rupture · safety)&quot;]
+        TA[&quot;Trend Analyser\n(on-demand window statistics)&quot;]
+        BW[&quot;Background Worker\n(two-pass incremental scan)&quot;]
+        SC --&gt; DM
+        SC --&gt; ST
+        DM --&gt; AD
+        ST --&gt; AD
+        BW --&gt; DM
+        BW --&gt; AD
+        BW --&gt; TA
+    end
+
+    subgraph HITL [&quot;Plane D — Human Interface&quot;]
+        OB[&quot;Observatory UI\n(timeline · anomalies · dyads)&quot;]
+        RQ[&quot;Review Queue\n(pending anomalies)&quot;]
+        IE[&quot;Intervention Encoder\n(scope · classification · authority)&quot;]
+        CG[&quot;Coherence Gate\n(TEC settling, Γ(C) threshold)&quot;]
+        TW[&quot;Two-Write Memory\n(synthetic episode + annotation)&quot;]
+        TR[&quot;Two-Reviewer Consensus\n(agent-wide escalation)&quot;]
+        OB --&gt; RQ
+        RQ --&gt; IE
+        IE --&gt; CG
+        CG --&gt; TW
+        CG --&gt; TR
+        TR --&gt; TW
+    end
+
+    EB --&gt; PF
+    EB --&gt; DT
+    AG --&gt; SC
+    AD --&gt;|AnomalyEvent| RQ
+    TW --&gt;|SyntheticEpisode| EM
+    TW --&gt;|Correction| EM
+    TW --&gt;|Bump persona version| AM
+</code></pre>
+<h3><a href="#logical--physical-crate-mapping" aria-hidden="true" class="anchor" id="logical--physical-crate-mapping"></a>Logical → physical crate mapping</h3>
+<table>
+<thead>
+<tr>
+<th>Logical Module</th>
+<th>Rust Crate</th>
+<th>Key Types</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent Model, Episode Store, Episode Bundle</td>
+<td><code>agent-bestiary-memory</code></td>
+<td><code>Agent</code>, <code>Episode</code>, <code>EpisodeBundle</code>, <code>MemoryStore</code></td>
+</tr>
+<tr>
+<td>Pre-filter Tier, Dimensional Tier, Aggregator</td>
+<td><code>agent-bestiary-evaluators</code></td>
+<td><code>EvalModel</code>, <code>EvalTier</code>, <code>EvaluatorRegistry</code>, <code>Aggregator</code>, <code>AggregatedSignal</code></td>
+</tr>
+<tr>
+<td>Episode Scorer, Drift Monitor, Social Tracker, Anomaly Detector, Trend Analyser, Background Worker</td>
+<td><code>agent-bestiary-observability</code></td>
+<td><code>EpisodeScorer</code>, <code>PersonaDriftMonitor</code>, <code>SocialInteractionTracker</code>, <code>AnomalyDetector</code>, <code>TrendAnalyzer</code>, <code>ObservabilityWorker</code></td>
+</tr>
+<tr>
+<td>Intervention Encoder, Coherence Gate, Two-Write Memory</td>
+<td><code>agent-bestiary-coherence-gate</code></td>
+<td><code>InterventionEncoder</code>, <code>CoherenceGate</code>, <code>TwoWriteMemory</code></td>
+</tr>
+<tr>
+<td>Observatory UI, Review Queue (HTTP handlers)</td>
+<td><code>fermi</code> (application)</td>
+<td><code>src/handlers/observatory.rs</code></td>
+</tr>
+<tr>
+<td>LLM Judge, Brier Lookup (production EvalModel adapters)</td>
+<td><code>fermi</code> (application)</td>
+<td><code>src/handlers/eval_judge.rs</code>, <code>src/handlers/eval_brier.rs</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2><a href="#4-interaction-diagrams" aria-hidden="true" class="anchor" id="4-interaction-diagrams"></a>4. Interaction Diagrams</h2>
+<h3><a href="#41-eval-pipeline--evaluator-registry--timeline-write-hot-path" aria-hidden="true" class="anchor" id="41-eval-pipeline--evaluator-registry--timeline-write-hot-path"></a>4.1 Eval pipeline → evaluator registry → timeline write (hot path)</h3>
+<p>This is the primary data ingestion path. It runs synchronously for every eval
+case and ends with a non-blocking background worker spawn.</p>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor User
+    participant EP as Eval Pipeline&lt;br/&gt;(fermi handler)
+    participant EX as Agent Executor
+    participant ES as Episode Store
+    participant EB as Episode Bundle
+    participant REG as Evaluator Registry
+    participant PF as Pre-filter Tier
+    participant DT as Dimensional Tier
+    participant AGG as Aggregator
+    participant SC as Episode Scorer&lt;br/&gt;(inline writer)
+    participant BW as Background Worker
+
+    User-&gt;&gt;EP: POST /api/agents/:id/eval
+    EP-&gt;&gt;EX: execute(agent, query)
+    EX--&gt;&gt;EP: AgentOutput { response, tokens }
+
+    EP-&gt;&gt;ES: store_episode(provenance=auto_pass, authority_weight=0.5,&lt;br/&gt;dyad_id, persona_version_at_write)
+    ES--&gt;&gt;EP: episode_id
+
+    EP-&gt;&gt;EB: from_parts(episode, agent, transcript, goal_spec)
+    EB--&gt;&gt;EP: EpisodeBundle
+
+    EP-&gt;&gt;REG: run(bundle)
+
+    REG-&gt;&gt;PF: evaluate(bundle) [serial]
+    alt pre-filter blocks
+        PF--&gt;&gt;REG: score &lt; 0.5 → short-circuit
+        REG--&gt;&gt;EP: RegistryOutcome { prefilter_blocked=true }
+    else pre-filter passes
+        PF--&gt;&gt;REG: EvalResult (safety/grounding OK)
+        REG-&gt;&gt;DT: evaluate(bundle) [concurrent: judge, brier, sotopia, ...]
+        DT--&gt;&gt;REG: Vec&lt;EvalResult&gt;
+        REG-&gt;&gt;AGG: aggregate(results)
+        AGG--&gt;&gt;REG: AggregatedSignal { per_dimension, conflicts, flags }
+        REG--&gt;&gt;EP: RegistryOutcome { signal: AggregatedSignal }
+    end
+
+    EP-&gt;&gt;ES: bulk_insert eval_signals (per evaluator × dimension)
+    EP-&gt;&gt;ES: update eval_runs (aggregated_signal, conflict_flags, prefilter_blocked)
+
+    EP-&gt;&gt;SC: write_inline(episode, signal, run_id)
+    SC-&gt;&gt;ES: insert agent_timeline_entries&lt;br/&gt;(dim_scores, provenance, persona_version, dyad_id)
+
+    EP--&gt;&gt;EP: tokio::spawn
+    EP-&gt;&gt;BW: scan_agent(agent_id) [non-blocking]
+    Note over BW: runs asynchronously — see §4.2
+
+    EP--&gt;&gt;User: EvalRunResult { run_id, aggregated_signal, case_results }
+</code></pre>
+<hr />
+<h3><a href="#42-background-worker-scan-drift--anomaly-detection" aria-hidden="true" class="anchor" id="42-background-worker-scan-drift--anomaly-detection"></a>4.2 Background worker scan (drift + anomaly detection)</h3>
+<p>The worker runs after the hot path completes. It is also triggered on-demand
+via the observatory UI's &quot;Trigger Scan&quot; button.</p>
+<pre><code class="language-mermaid">sequenceDiagram
+    participant BW as Background Worker
+    participant ES as Episode Store
+    participant DM as Persona Drift Monitor
+    participant ST as Social Tracker
+    participant AD as Anomaly Detector
+
+    BW-&gt;&gt;ES: get_agent_observability_state(agent_id)
+    ES--&gt;&gt;BW: ObservabilityState { last_scanned_entry_id, ... }
+
+    BW-&gt;&gt;ES: list_timeline_entries_since(last_scanned_entry_id, batch=200)
+    ES--&gt;&gt;BW: Vec&lt;TimelineEntry&gt; [oldest-first]
+
+    loop Pass 1 — Drift computation
+        BW-&gt;&gt;DM: compute(prev_persona_version, curr_persona_version, recent_norms)
+        Note over DM: cosine_similarity(mean_embedding_vN, mean_embedding_vN+1)&lt;br/&gt;drift_norm = 1.0 − cosine_similarity
+        DM--&gt;&gt;BW: DriftVector { norm, anomalous }
+        alt drift is anomalous
+            BW-&gt;&gt;ES: update_timeline_entry(drift_norm, flags += &quot;drift:anomalous&quot;)
+        else not anomalous
+            BW-&gt;&gt;ES: update_timeline_entry(drift_norm)
+        end
+    end
+
+    BW-&gt;&gt;ES: re-fetch updated entries [Pass 1 flags now visible]
+    ES--&gt;&gt;BW: Vec&lt;TimelineEntry&gt; [refreshed]
+
+    loop Pass 2 — Anomaly detection
+        BW-&gt;&gt;AD: detect_in_window(agent_id, entries)
+        Note over AD: Safety   → any entry with safety:* flag&lt;br/&gt;Drift    → any entry with drift:anomalous flag&lt;br/&gt;Conflict → same conflict:&lt;dim&gt; in N consecutive entries&lt;br/&gt;Rupture  → any entry with rupture:&lt;dyad_id&gt; flag
+        AD--&gt;&gt;BW: Vec&lt;DetectedAnomaly&gt;
+        loop for each anomaly
+            BW-&gt;&gt;ES: insert anomaly_events (kind, severity, payload, requires_review=true)
+        end
+    end
+
+    BW-&gt;&gt;ES: upsert agent_observability_state&lt;br/&gt;(last_scanned_entry_id, counters, timestamps)
+</code></pre>
+<hr />
+<h3><a href="#43-hitl-action--coherence-gate--two-write-feedback-loop" aria-hidden="true" class="anchor" id="43-hitl-action--coherence-gate--two-write-feedback-loop"></a>4.3 HITL action → coherence gate → two-write feedback loop</h3>
+<p>This diagram covers the full intervention path from a reviewer's action in the
+observatory UI to the memory write that closes the improvement loop. It shows
+both the <code>episode</code>/<code>dyad</code> path (immediate write) and the <code>agent_wide</code> path
+(two-reviewer consensus required).</p>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor R1 as Reviewer 1
+    actor R2 as Reviewer 2
+    participant RQ as Review Queue API
+    participant IE as Intervention Encoder
+    participant CG as Coherence Gate&lt;br/&gt;(TEC Settling Engine)
+    participant TR as Two-Reviewer&lt;br/&gt;Consensus Store
+    participant TW as Two-Write Memory
+    participant ES as Episode Store
+    participant AM as Agent Model
+
+    R1-&gt;&gt;RQ: POST /hitl/:event_id/action&lt;br/&gt;{ action: &quot;intervene&quot;, scope, classification,&lt;br/&gt;correction_text, dimension, justification }
+
+    RQ-&gt;&gt;IE: encode(InterventionRequest)
+    Note over IE: Validates: agent_wide requires classification + correction_text&lt;br/&gt;Stamps: authority_weight=1.0, provenance=HumanCorrected&lt;br/&gt;Sets: gate_is_synchronous = (scope == AgentWide)
+    IE--&gt;&gt;RQ: EncodedIntervention
+
+    RQ-&gt;&gt;CG: check(encoded)
+    Note over CG: Builds 2-utterance TEC system:&lt;br/&gt;U0 = existing agent response&lt;br/&gt;U1 = proposed correction&lt;br/&gt;Relation: Contradicts(U0, U1)&lt;br/&gt;Runs SettlingEngine → computes Γ(C)
+
+    alt AgentWide AND Γ(C) &lt; 0.5
+        CG--&gt;&gt;RQ: Err(Blocked { gamma, tensions })
+        RQ--&gt;&gt;R1: HTTP 422 — coherence gate blocked
+    else Episode/Dyad OR Γ(C) ≥ 0.5
+        CG--&gt;&gt;RQ: GateOutcome { verdict, gamma, principle_scores,&lt;br/&gt;tensions, minimum_update_set }
+
+        alt scope == AgentWide
+            RQ-&gt;&gt;TR: create_two_reviewer_request&lt;br/&gt;(encoded_intervention as JSONB, first_reviewer_id)
+            TR--&gt;&gt;RQ: request_id
+            RQ--&gt;&gt;R1: HTTP 200 — awaiting_second_reviewer { request_id }
+
+            R2-&gt;&gt;RQ: POST /hitl/consensus/:request_id { approved: true }
+            Note over RQ: Enforces: second_reviewer ≠ first_reviewer
+            RQ-&gt;&gt;CG: re-check(encoded) [fresh gate run]
+            CG--&gt;&gt;RQ: GateOutcome
+            RQ-&gt;&gt;TW: execute(encoded, gate_outcome, original_episode)
+        else scope == Episode or Dyad
+            RQ-&gt;&gt;TW: execute(encoded, gate_outcome, original_episode)
+        end
+
+        TW-&gt;&gt;ES: store_episode(SyntheticEpisode)&lt;br/&gt;provenance=SyntheticCorrection, authority_weight=1.0
+        ES--&gt;&gt;TW: synthetic_episode_id
+
+        TW-&gt;&gt;ES: create_episode_correction&lt;br/&gt;(coherence_check, minimum_update_set,&lt;br/&gt;tensions_flagged, synthetic_episode_id)
+        ES--&gt;&gt;TW: correction_id
+
+        alt scope == AgentWide
+            TW-&gt;&gt;AM: bump_persona_version(agent_id)
+            AM--&gt;&gt;TW: new_persona_version
+        end
+
+        TW--&gt;&gt;RQ: TwoWriteReceipt { correction_id, synthetic_episode_id,&lt;br/&gt;persona_version_bumped, new_persona_version }
+
+        RQ-&gt;&gt;ES: resolve_anomaly_event(event_id)
+        RQ--&gt;&gt;R1: HTTP 200 — intervention_complete { correction_id, synthetic_episode_id, gate }
+    end
+</code></pre>
+<hr />
+<h3><a href="#44-two-reviewer-consensus-flow-agent-wide-scope-detail" aria-hidden="true" class="anchor" id="44-two-reviewer-consensus-flow-agent-wide-scope-detail"></a>4.4 Two-reviewer consensus flow (agent-wide scope detail)</h3>
+<p>This diagram isolates the two-reviewer workflow to show the state machine of
+a <code>two_reviewer_requests</code> record across its lifecycle.</p>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor R1 as Reviewer 1
+    actor R2 as Reviewer 2
+    participant API as Observatory API
+    participant TR as Consensus Store
+    participant TW as Two-Write Memory
+    participant ES as Episode Store
+    participant AM as Agent Model
+
+    Note over TR: Precondition: Coherence gate approved (Γ(C) ≥ 0.5)
+
+    R1-&gt;&gt;API: POST /hitl/:event_id/action { scope: &quot;agent_wide&quot;, ... }
+    API-&gt;&gt;TR: create_two_reviewer_request&lt;br/&gt;{ status: pending, encoded_intervention: JSONB,&lt;br/&gt;first_reviewer_id, first_reviewed_at }
+    TR--&gt;&gt;API: request_id
+    Note over TR: Unique partial index: one pending request per anomaly
+    API--&gt;&gt;R1: { status: awaiting_second_reviewer, request_id }
+
+    Note over R2: R2 independently reviews the pending request
+
+    alt R2 rejects
+        R2-&gt;&gt;API: POST /hitl/consensus/:request_id { approved: false }
+        API-&gt;&gt;TR: update status = rejected
+        TR--&gt;&gt;API: ok
+        API--&gt;&gt;R2: { status: rejected }
+        Note over TR: Anomaly remains open in the HITL queue
+    else R2 approves
+        R2-&gt;&gt;API: POST /hitl/consensus/:request_id { approved: true }
+        Note over API: Enforces R2 ≠ R1
+        API-&gt;&gt;TR: deserialize stored EncodedIntervention
+        API-&gt;&gt;TW: execute(encoded, gate_outcome, original_episode)
+
+        TW-&gt;&gt;ES: Write 1 — store synthetic episode&lt;br/&gt;(SyntheticCorrection, authority_weight=1.0)
+        TW-&gt;&gt;ES: Write 2 — create episode_correction&lt;br/&gt;(coherence_check, minimum_update_set)
+        TW-&gt;&gt;AM: bump_persona_version(agent_id)
+        AM--&gt;&gt;TW: new_persona_version
+        TW--&gt;&gt;API: TwoWriteReceipt
+
+        API-&gt;&gt;TR: update status = approved&lt;br/&gt;{ correction_id, synthetic_episode_id,&lt;br/&gt;second_reviewer_id, second_reviewed_at }
+        API-&gt;&gt;ES: resolve_anomaly_event
+        API--&gt;&gt;R2: { status: intervention_complete, correction_id,&lt;br/&gt;synthetic_episode_id, new_persona_version }
+    end
+</code></pre>
+<hr />
+<h2><a href="#5-state-machine--anomaly-event-lifecycle" aria-hidden="true" class="anchor" id="5-state-machine--anomaly-event-lifecycle"></a>5. State Machine — Anomaly Event Lifecycle</h2>
+<p>An anomaly event passes through a well-defined set of states from detection to
+resolution. This state machine is the operational contract between Plane C
+(which creates events) and Plane D (which resolves them).</p>
+<pre><code class="language-mermaid">stateDiagram-v2
+    [*] --&gt; Detected : AnomalyDetector fires\n(requires_review = true)
+
+    Detected --&gt; Approved : Reviewer approves\n(hitl_action: approve)
+    Detected --&gt; Relabelled : Reviewer corrects scores\n(hitl_action: relabel)
+    Detected --&gt; InterventionPending : Reviewer intervenes\n(Episode / Dyad scope)
+    Detected --&gt; AwaitingSecondReviewer : Reviewer intervenes\n(AgentWide scope)
+
+    AwaitingSecondReviewer --&gt; Rejected : Second reviewer rejects
+    AwaitingSecondReviewer --&gt; InterventionPending : Second reviewer approves
+    Rejected --&gt; Detected : Anomaly re-enters queue\n(resolved_at remains null)
+
+    InterventionPending --&gt; Intervened : TwoWriteMemory executes\n(synthetic episode + correction)
+
+    Approved --&gt; [*] : resolved_at set
+    Relabelled --&gt; [*] : resolved_at set
+    Intervened --&gt; [*] : resolved_at set
+</code></pre>
+<hr />
+<h2><a href="#6-logical-data-flow--end-to-end" aria-hidden="true" class="anchor" id="6-logical-data-flow--end-to-end"></a>6. Logical Data Flow — End to End</h2>
+<p>This diagram shows how a single agent execution event flows through the entire
+system and loops back as a corrective signal.</p>
+<pre><code class="language-mermaid">flowchart TD
+    EX[&quot;Agent Execution\n(query → response)&quot;]
+    EP[&quot;Episode\n(provenance · authority_weight\ndyad_id · persona_version_at_write)&quot;]
+    BND[&quot;Episode Bundle\n(transcript · agent card · goal spec)&quot;]
+
+    subgraph Eval [&quot;Evaluator Registry&quot;]
+        PF2[&quot;Pre-filter Tier\n(WildGuard · Faithfulness)&quot;]
+        DT2[&quot;Dimensional Tier\n(Sotopia · CharacterEval\nLifelongBench · Brier)&quot;]
+        SIG[&quot;AggregatedSignal\n(per-dimension means · conflicts · flags)&quot;]
+        PF2 --&gt;|pass| DT2
+        PF2 --&gt;|block| SIG
+        DT2 --&gt; SIG
+    end
+
+    subgraph Longitudinal [&quot;Longitudinal Observer&quot;]
+        TL[&quot;Timeline Entry\n(dim_scores · drift_norm · anomaly_flags)&quot;]
+        DS[&quot;Dyad State\n(rapport · trust · reciprocity)&quot;]
+        AE[&quot;Anomaly Events\n(drift · conflict · rupture · safety)&quot;]
+        TL --&gt; AE
+        DS --&gt; AE
+    end
+
+    subgraph Human [&quot;Human Interface&quot;]
+        HQ[&quot;HITL Review Queue&quot;]
+        HA[&quot;Reviewer Decision\n(approve · relabel · intervene)&quot;]
+        GC[&quot;Coherence Gate\nΓ(C) check&quot;]
+        TRC[&quot;Two-Reviewer Consensus\n(agent_wide only)&quot;]
+        HQ --&gt; HA
+        HA --&gt; GC
+        GC --&gt;|agent_wide| TRC
+        TRC --&gt;|approved| TW2
+        GC --&gt;|episode / dyad| TW2
+    end
+
+    subgraph Feedback [&quot;Memory Feedback&quot;]
+        TW2[&quot;Two-Write Memory&quot;]
+        SE[&quot;Synthetic Episode\n(SyntheticCorrection · authority_weight=1.0)&quot;]
+        CR[&quot;Correction Record\n(coherence_check · minimum_update_set)&quot;]
+        PV[&quot;Persona Version Bump\n(agent_wide only)&quot;]
+        TW2 --&gt; SE
+        TW2 --&gt; CR
+        TW2 --&gt;|agent_wide| PV
+    end
+
+    EX --&gt; EP
+    EP --&gt; BND
+    BND --&gt; Eval
+    SIG --&gt; TL
+    SIG --&gt; DS
+    AE --&gt; HQ
+    SE --&gt;|re-injected into memory| EP
+    PV --&gt;|new baseline for drift monitor| TL
+
+    style Eval fill:#1a2a3a,color:#cde,stroke:#4a7aaa
+    style Longitudinal fill:#2a1a0a,color:#edc,stroke:#aa7a4a
+    style Human fill:#1a0a2a,color:#dce,stroke:#7a4aaa
+    style Feedback fill:#0a2a1a,color:#ced,stroke:#4aaa7a
+</code></pre>
+<hr />
+<h2><a href="#7-module-responsibilities-summary" aria-hidden="true" class="anchor" id="7-module-responsibilities-summary"></a>7. Module Responsibilities Summary</h2>
+<table>
+<thead>
+<tr>
+<th>Logical Module</th>
+<th>Owns</th>
+<th>Consumes</th>
+<th>Produces</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Agent Model</strong></td>
+<td>Agent identity, <code>persona_version</code>, capability gates</td>
+<td>—</td>
+<td>Agent metadata for all planes</td>
+</tr>
+<tr>
+<td><strong>Episode Store</strong></td>
+<td>Episode history, provenance, authority weight, dyad identity</td>
+<td>Agent execution output</td>
+<td>Episodes, EpisodeBundles, MemoryStore R/W</td>
+</tr>
+<tr>
+<td><strong>Episode Bundle</strong></td>
+<td>Normalized evaluator input contract</td>
+<td>Raw episode + agent card</td>
+<td><code>EpisodeBundle</code> for the registry</td>
+</tr>
+<tr>
+<td><strong>Pre-filter Tier</strong></td>
+<td>Safety + grounding checks</td>
+<td><code>EpisodeBundle</code></td>
+<td><code>EvalResult</code> or short-circuit signal</td>
+</tr>
+<tr>
+<td><strong>Dimensional Tier</strong></td>
+<td>Multi-dimensional behavioral scoring</td>
+<td><code>EpisodeBundle</code></td>
+<td><code>Vec&lt;EvalResult&gt;</code></td>
+</tr>
+<tr>
+<td><strong>Aggregator</strong></td>
+<td>Confidence-weighted mean, conflict detection</td>
+<td><code>Vec&lt;EvalResult&gt;</code></td>
+<td><code>AggregatedSignal</code></td>
+</tr>
+<tr>
+<td><strong>Episode Scorer</strong></td>
+<td>Inline timeline write</td>
+<td><code>AggregatedSignal</code> + episode</td>
+<td><code>TimelineEntry</code> (hot path)</td>
+</tr>
+<tr>
+<td><strong>Persona Drift Monitor</strong></td>
+<td>Cross-version embedding distance</td>
+<td>Episode embeddings per persona version</td>
+<td><code>DriftVector</code> (norm, anomalous flag)</td>
+</tr>
+<tr>
+<td><strong>Social Tracker</strong></td>
+<td>Per-dyad relational state (rapport/trust/reciprocity)</td>
+<td><code>AggregatedSignal</code> per dyad</td>
+<td>Updated <code>DyadState</code>, rupture flags</td>
+</tr>
+<tr>
+<td><strong>Anomaly Detector</strong></td>
+<td>Four anomaly kinds (drift/conflict/rupture/safety)</td>
+<td><code>Vec&lt;TimelineEntry&gt;</code></td>
+<td><code>Vec&lt;DetectedAnomaly&gt;</code></td>
+</tr>
+<tr>
+<td><strong>Trend Analyser</strong></td>
+<td>On-demand window statistics per dimension</td>
+<td><code>Vec&lt;TimelineEntry&gt;</code></td>
+<td><code>TrendReport</code></td>
+</tr>
+<tr>
+<td><strong>Background Worker</strong></td>
+<td>Two-pass incremental scan, checkpoint management</td>
+<td>Timeline entries since last scan</td>
+<td>Updated drift fields, <code>AnomalyEvent</code> rows, checkpoint</td>
+</tr>
+<tr>
+<td><strong>Observatory UI</strong></td>
+<td>Dashboard and HITL queue rendering</td>
+<td>Timeline, dyad, anomaly, trend APIs</td>
+<td>Human-readable views</td>
+</tr>
+<tr>
+<td><strong>Intervention Encoder</strong></td>
+<td>Validation and stamping of reviewer intent</td>
+<td>Raw <code>InterventionRequest</code></td>
+<td><code>EncodedIntervention</code> (authority_weight=1.0)</td>
+</tr>
+<tr>
+<td><strong>Coherence Gate</strong></td>
+<td>TEC constraint satisfaction, Γ(C) threshold</td>
+<td><code>EncodedIntervention</code></td>
+<td><code>GateOutcome</code> (approved/settled/blocked)</td>
+</tr>
+<tr>
+<td><strong>Two-Reviewer Consensus</strong></td>
+<td>Four-eyes enforcement for agent-wide scope</td>
+<td><code>EncodedIntervention</code> from first reviewer</td>
+<td>Confirmed or rejected consensus record</td>
+</tr>
+<tr>
+<td><strong>Two-Write Memory</strong></td>
+<td>Synthetic episode + immutable correction annotation</td>
+<td><code>EncodedIntervention</code> + <code>GateOutcome</code></td>
+<td><code>SyntheticEpisode</code>, <code>EpisodeCorrection</code>, optional persona version bump</td>
+</tr>
+</tbody>
+</table>
+
+    </article>
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+    mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        securityLevel: 'loose',
+        flowchart: { curve: 'basis' },
+        sequence: { useMaxWidth: true },
+    });
+
+    // Convert every <pre><code class="language-mermaid"> block into a
+    // <div class="mermaid"> that Mermaid can render.
+    document.querySelectorAll('pre code.language-mermaid').forEach((code) => {
+        const pre = code.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = code.textContent;
+        pre.replaceWith(div);
+    });
+
+    await mermaid.run();
+</script>
+</body>
+</html>

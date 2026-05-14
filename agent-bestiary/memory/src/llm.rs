@@ -145,6 +145,22 @@ impl LLMProviderFactory {
                 config.model.clone(),
                 config.base_url.clone(),
             )?)),
+            // DeepSeek and Kimi are OpenAI-compatible — reuse OpenRouterProvider
+            // with their respective base URLs.
+            ProviderType::DeepSeek => Ok(Arc::new(OpenRouterProvider::new(
+                config.api_key.clone(),
+                config.model.clone(),
+                Some(config.base_url.clone().unwrap_or_else(|| {
+                    "https://api.deepseek.com/v1".to_string()
+                })),
+            )?)),
+            ProviderType::Kimi => Ok(Arc::new(OpenRouterProvider::new(
+                config.api_key.clone(),
+                config.model.clone(),
+                Some(config.base_url.clone().unwrap_or_else(|| {
+                    "https://api.moonshot.cn/v1".to_string()
+                })),
+            )?)),
         }
     }
 }
@@ -165,6 +181,8 @@ pub enum ProviderType {
     Mistral,
     Qwen,
     OpenRouter,
+    DeepSeek,
+    Kimi,
 }
 
 impl std::str::FromStr for ProviderType {
@@ -176,6 +194,8 @@ impl std::str::FromStr for ProviderType {
             "mistral" => Ok(ProviderType::Mistral),
             "qwen" => Ok(ProviderType::Qwen),
             "openrouter" => Ok(ProviderType::OpenRouter),
+            "deepseek" => Ok(ProviderType::DeepSeek),
+            "kimi" | "moonshot" => Ok(ProviderType::Kimi),
             _ => Err(format!("Unknown provider type: {}", s)),
         }
     }

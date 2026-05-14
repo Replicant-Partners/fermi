@@ -7,6 +7,8 @@
 ///   - qwen (OpenAI-compatible)
 ///   - openrouter (OpenAI-compatible proxy)
 ///   - glm (Zhipu AI GLM, OpenAI-compatible — GLM_API_KEY / GLM_BASE_URL)
+///   - deepseek (DeepSeek, OpenAI-compatible — DEEPSEEK_API_KEY)
+///   - kimi (Moonshot AI Kimi, OpenAI-compatible — KIMI_API_KEY)
 use crate::agent_backend::executor::{
     AgentExecutor, AgentMetadata, AgentOutput, AgentStatus, ExecutionContext, ExecutionError,
 };
@@ -86,6 +88,32 @@ impl MultiModelExecutor {
                 },
             );
             println!("  Multi-model: Zhipu AI GLM provider available");
+        }
+
+        if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
+            providers.insert(
+                "deepseek".to_string(),
+                ProviderConfig {
+                    api_key: key,
+                    base_url: std::env::var("DEEPSEEK_BASE_URL").unwrap_or_else(|_| {
+                        "https://api.deepseek.com/v1".to_string()
+                    }),
+                },
+            );
+            println!("  Multi-model: DeepSeek provider available");
+        }
+
+        if let Ok(key) = std::env::var("KIMI_API_KEY") {
+            providers.insert(
+                "kimi".to_string(),
+                ProviderConfig {
+                    api_key: key,
+                    base_url: std::env::var("KIMI_BASE_URL").unwrap_or_else(|_| {
+                        "https://api.moonshot.cn/v1".to_string()
+                    }),
+                },
+            );
+            println!("  Multi-model: Kimi (Moonshot AI) provider available");
         }
 
         println!(

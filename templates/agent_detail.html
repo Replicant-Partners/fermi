@@ -1058,7 +1058,7 @@
                       return "";
                     return `
                   <div class="section valence-section">
-                    <div class="section-title">Agent Valence</div>
+                    <div class="section-title">I/O Contract</div>
                     ${accepts.length > 0 ? `<div class="valence-label">Accepts</div><div class="valence-pills">${accepts.map((a) => `<span class="valence-pill valence-in">${a}</span>`).join("")}</div>` : ""}
                     ${produces.length > 0 ? `<div class="valence-label">Produces</div><div class="valence-pills">${produces.map((p) => `<span class="valence-pill valence-out">${p}</span>`).join("")}</div>` : ""}
                   </div>`;
@@ -1120,12 +1120,15 @@
                   </div>
 
                   <div class="section">
-                    <div class="section-title">Performance Coach</div>
-                    <div style="display:flex;align-items:center;gap:12px">
-                      <button class="owner-btn" onclick="askPerformanceCoach('${agentId}')" id="coach-btn" style="border-color:var(--aqua);color:var(--aqua)">Ask Performance Coach</button>
-                      <span id="coach-status" style="color:var(--gray);font-size:0.8em"></span>
+                    <div class="section-title">Observatory</div>
+                    <div style="font-size:0.8em;color:var(--fg3);margin-bottom:10px">
+                      Eval dimension scores, persona drift, dyad state, anomaly events,
+                      and HITL review queue for this agent.
                     </div>
-                    <div id="coach-response" style="display:none;margin-top:12px;padding:16px;background:var(--bg0);border:1px solid var(--bg2);border-radius:6px;font-size:0.85em;line-height:1.6;white-space:pre-wrap;max-height:400px;overflow-y:auto"></div>
+                    <a href="/observatory?agent=${agentId}" class="owner-btn"
+                       style="display:inline-block;border-color:var(--aqua);color:var(--aqua);text-decoration:none">
+                      Open Observatory →
+                    </a>
                   </div>
 
                   <div class="section">
@@ -2277,9 +2280,63 @@
                 </select>
 
                 <div style="display:flex;gap:8px;margin-top:12px">
-                  <button class="owner-btn" onclick="saveAgentEdits('${agentId}')" style="border-color:var(--green);color:var(--green)">Save Changes</button>
-                </div>
-              </div>
+                   <button class="owner-btn" onclick="saveAgentEdits('${agentId}')" style="border-color:var(--green);color:var(--green)">Save Changes</button>
+                 </div>
+               </div>
+
+               <!-- Agent Valence -->
+               <div class="section" id="valence-section">
+                 <div class="section-title">Agent Valence</div>
+                 <div style="color:var(--fg3);font-size:0.8em;margin-bottom:14px;line-height:1.5">
+                   The affective signature — emotional register and personality. Shapes how this agent collaborates in compositions.<br>
+                   <span style="color:var(--gray)">arousal: 0.0 calm → 1.0 urgent &nbsp;·&nbsp; valence: 0.0 critical → 1.0 constructive</span>
+                 </div>
+
+                 <div class="field-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+                   <div class="field-item">
+                     <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Primary Affect</label>
+                     <input type="text" id="valence-affect"
+                       value="${((agent.valence||{}).primary_affect)||''}"
+                       placeholder="analytical, vigilant, guidance, curious…"
+                       style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:7px 10px;font-family:inherit;font-size:0.9em" />
+                   </div>
+                   <div class="field-item">
+                     <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Personality Traits <span style="color:var(--gray)">(comma-separated)</span></label>
+                     <input type="text" id="valence-traits"
+                       value="${((agent.valence||{}).personality_traits||[]).join(', ')}"
+                       placeholder="precise, evidence-driven, diplomatic…"
+                       style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:7px 10px;font-family:inherit;font-size:0.9em" />
+                   </div>
+                 </div>
+
+                 <div class="field-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+                   <div class="field-item">
+                     <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">
+                       Arousal &nbsp;<span id="valence-arousal-val" style="color:var(--yellow);font-weight:600">${((agent.valence||{}).arousal ?? 0.5).toFixed(2)}</span>
+                     </label>
+                     <input type="range" id="valence-arousal" min="0" max="1" step="0.05"
+                       value="${((agent.valence||{}).arousal ?? 0.5)}"
+                       oninput="document.getElementById('valence-arousal-val').textContent=parseFloat(this.value).toFixed(2)"
+                       style="width:100%;accent-color:var(--yellow)" />
+                     <div style="display:flex;justify-content:space-between;font-size:0.7em;color:var(--gray);margin-top:2px"><span>calm</span><span>urgent</span></div>
+                   </div>
+                   <div class="field-item">
+                     <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">
+                       Valence &nbsp;<span id="valence-score-val" style="color:var(--aqua);font-weight:600">${((agent.valence||{}).valence ?? 0.6).toFixed(2)}</span>
+                     </label>
+                     <input type="range" id="valence-score" min="0" max="1" step="0.05"
+                       value="${((agent.valence||{}).valence ?? 0.6)}"
+                       oninput="document.getElementById('valence-score-val').textContent=parseFloat(this.value).toFixed(2)"
+                       style="width:100%;accent-color:var(--aqua)" />
+                     <div style="display:flex;justify-content:space-between;font-size:0.7em;color:var(--gray);margin-top:2px"><span>critical</span><span>constructive</span></div>
+                   </div>
+                 </div>
+
+                 <div style="display:flex;align-items:center;gap:12px">
+                   <button class="owner-btn" onclick="saveAgentValence('${agentId}')" style="border-color:var(--aqua);color:var(--aqua)">Save Valence</button>
+                   <span id="valence-status" style="font-size:0.8em;color:var(--gray)"></span>
+                 </div>
+               </div>
 
               ${
                 status === "published"
@@ -3282,6 +3339,44 @@
 
       // ── End Intelligence Tab ────────────────────────────────────────
 
+      async function saveAgentValence(agentId) {
+        const affect = document.getElementById("valence-affect").value.trim();
+        const traitsRaw = document.getElementById("valence-traits").value;
+        const arousal = parseFloat(document.getElementById("valence-arousal").value);
+        const valenceScore = parseFloat(document.getElementById("valence-score").value);
+        const statusEl = document.getElementById("valence-status");
+
+        const traits = traitsRaw.split(",").map(t => t.trim()).filter(Boolean);
+
+        if (!affect) {
+          statusEl.textContent = "Primary affect is required.";
+          statusEl.style.color = "var(--red)";
+          return;
+        }
+
+        const valence = { primary_affect: affect, arousal, valence: valenceScore, personality_traits: traits };
+
+        try {
+          const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ valence }),
+          });
+          if (res.ok) {
+            statusEl.textContent = "Saved.";
+            statusEl.style.color = "var(--green)";
+            if (_agentData) _agentData.valence = valence;
+            setTimeout(() => { statusEl.textContent = ""; }, 3000);
+          } else {
+            statusEl.textContent = "Error: " + (await res.text());
+            statusEl.style.color = "var(--red)";
+          }
+        } catch (e) {
+          statusEl.textContent = "Network error.";
+          statusEl.style.color = "var(--red)";
+        }
+      }
+
       async function saveAgentEdits(agentId) {
         const desc = document.getElementById("edit-description").value;
         const prompt = document.getElementById("edit-system-prompt").value;
@@ -3623,52 +3718,7 @@
         return div.innerHTML;
       }
 
-      async function askPerformanceCoach(agentId) {
-        const btn = document.getElementById("coach-btn");
-        const status = document.getElementById("coach-status");
-        const responseEl = document.getElementById("coach-response");
-        btn.disabled = true;
-        status.textContent = "Analyzing...";
-        responseEl.style.display = "none";
 
-        // Gather stats from the rendered page
-        const stats = {};
-        document.querySelectorAll(".stat-card").forEach((card) => {
-          const label = card.querySelector(".stat-label")?.textContent?.trim();
-          const value = card.querySelector(".stat-value")?.textContent?.trim();
-          if (label && value) stats[label] = value;
-        });
-
-        const query = `Analyze this agent's performance stats and provide coaching recommendations.\n\nAgent: ${document.title.replace(" - Agent Bestiary", "")}\nStats: ${JSON.stringify(stats)}`;
-
-        try {
-          const res = await fetch("/api/agents/performance_coach/execute", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query }),
-          });
-          if (!res.ok) {
-            const errText = await res.text();
-            status.textContent = "";
-            responseEl.style.display = "block";
-            responseEl.style.color = "var(--red)";
-            responseEl.textContent = "Error: " + errText;
-          } else {
-            const data = await res.json();
-            status.textContent = "";
-            responseEl.style.display = "block";
-            responseEl.style.color = "var(--fg1)";
-            responseEl.textContent =
-              data.response || data.content || JSON.stringify(data, null, 2);
-          }
-        } catch (e) {
-          status.textContent = "";
-          responseEl.style.display = "block";
-          responseEl.style.color = "var(--red)";
-          responseEl.textContent = "Network error: " + e.message;
-        }
-        btn.disabled = false;
-      }
 
       async function loadAgentWallet(agentId) {
         const el = document.getElementById("agent-wallet-content");

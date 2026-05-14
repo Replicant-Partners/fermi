@@ -996,68 +996,6 @@ fn format_conflict_body(conflicts: &[ConflictFlag]) -> String {
     lines.join("\n")
 }
 
-// ─── LLM-as-Judge (legacy) ──────────────────────────────────────────
-//
-// Phase 2 supersedes this with `LlmJudgeAnthropic` (see
-// `src/handlers/eval_judge.rs`) which is registered with the
-// `EvaluatorRegistry`. The function below is retained only for
-// backward compatibility with any out-of-tree callers and may be
-// removed in a future phase.
-
-#[deprecated(
-    since = "0.2.0",
-    note = "Use `LlmJudgeAnthropic` via the EvaluatorRegistry instead. \
-            See `src/handlers/eval_judge.rs`."
-)]
-pub async fn score_with_judge(
-    test_case: &EvalTestCase,
-    reasoning: Option<&str>,
-) -> Option<serde_json::Value> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
-    let judge_prompt = format!(
-        "You are an evaluation judge. Score the following agent output on three dimensions.\n\
-         Each score is 1-5 (1=terrible, 5=excellent).\n\n\
-         QUERY: {}\n\
-         {}\
-         {}\
-         AGENT OUTPUT:\n{}\n\n\
-         Respond with ONLY valid JSON:\n\
-         {{\"relevance\": N, \"accuracy\": N, \"completeness\": N, \"overall\": N.N, \"reasoning\": \"...\"}}\n\
-         where overall = average of the three scores.",
-        test_case.query,
-        test_case
-            .expected_output
-            .as_ref()
-            .map(|e| format!("EXPECTED OUTPUT: {}\n", e))
-            .unwrap_or_default(),
-        test_case
-            .rubric
-            .as_ref()
-            .map(|r| format!("SCORING RUBRIC: {}\n", r))
-            .unwrap_or_default(),
-        reasoning.unwrap_or("(no output)")
-    );
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&json!({
-            "model": "claude-3-haiku-20240307",
-            "max_tokens": 300,
-            "messages": [{"role": "user", "content": judge_prompt}]
-        }))
-        .send()
-        .await
-        .ok()?;
-
-    let body: Value = resp.json().await.ok()?;
-    let text = body["content"][0]["text"].as_str()?;
-    serde_json::from_str(text).ok()
-}
-
 // ─── Regression Detection ───────────────────────────────────────────
 
 pub async fn detect_regression(

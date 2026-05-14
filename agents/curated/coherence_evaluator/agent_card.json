@@ -2,7 +2,7 @@
   "agent_id": "coherence_evaluator",
   "agent_type": "coherence",
   "version": "0.1.0",
-  "tier": "curated",
+  "tier": "system",
   "capabilities": {
     "executor": "mcp",
     "mcp_tools": [
@@ -130,5 +130,7 @@
   "dependencies": {
     "required": [],
     "optional": []
-  }
+  },
+  "status": "archived",
+  "visibility": "private"
 }

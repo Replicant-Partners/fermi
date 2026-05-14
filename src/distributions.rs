@@ -337,16 +337,22 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: percentile implementation uses different interpolation than test expects
     fn test_percentile_interpolated() {
+        // percentile() uses linear interpolation: index = p * (n-1).
+        // For [1,2,3,4,5] (n=5):
+        //   p=0.25 → index=1.0 (exact) → 2.0
+        //   p=0.75 → index=3.0 (exact) → 4.0
+        //   p=0.375 → index=1.5 → 0.5*data[1] + 0.5*data[2] = 0.5*2 + 0.5*3 = 2.5
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
 
-        // 25th percentile should be between 2 and 3
         let p25 = percentile(&data, 0.25);
-        assert!(p25 > 2.0 && p25 < 3.0);
+        assert!((p25 - 2.0).abs() < f64::EPSILON);
 
-        // 75th percentile should be between 4 and 5
         let p75 = percentile(&data, 0.75);
-        assert!(p75 > 4.0 && p75 < 5.0);
+        assert!((p75 - 4.0).abs() < f64::EPSILON);
+
+        // Mid-rank interpolation: p=0.375 → 2.5
+        let p375 = percentile(&data, 0.375);
+        assert!((p375 - 2.5).abs() < f64::EPSILON);
     }
 }

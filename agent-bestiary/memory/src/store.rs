@@ -24,7 +24,8 @@ const AGENT_COLUMNS: &str = r#"
     status, fork_pricing, forked_from, fork_count,
     accepts, produces, workflow_template, prompt_template, requires_secrets,
     model_ladder, min_tier, capability_gates,
-    persona_version, fermi_contract, model_params
+    persona_version, fermi_contract, model_params,
+    valence
 "#;
 
 pub struct MemoryStore {
@@ -515,6 +516,10 @@ impl MemoryStore {
         }
         if updates.model_params.is_some() {
             set_clauses.push(format!("model_params = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.valence.is_some() {
+            set_clauses.push(format!("valence = ${}", param_idx));
             let _ = param_idx;
         }
 
@@ -587,6 +592,9 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.model_params {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.valence {
             query = query.bind(v);
         }
 
@@ -804,6 +812,7 @@ impl MemoryStore {
             model_params: row
                 .try_get("model_params")
                 .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new())),
+            valence: row.try_get("valence").unwrap_or(None),
         })
     }
 
@@ -1908,6 +1917,182 @@ impl MemoryStore {
         .await?;
 
         Ok(row.try_get::<i64, _>("cnt").unwrap_or(0))
+    }
+
+    // ========================================================================
+    // COMPOSITION VERSIONS (tune-team RSI)
+    // ========================================================================
+
+    /// Create a new composition version proposal.
+    /// Returns the new `composition_version_id`.
+    pub async fn create_composition_version(
+        &self,
+        version: &crate::CompositionVersion,
+    ) -> Result<Uuid> {
+        // Compute next version_number for this workspace
+        let next_num: i32 = sqlx::query(
+            "SELECT COALESCE(MAX(version_number), 0) + 1 AS n \
+             FROM composition_versions WHERE workspace_id = $1",
+        )
+        .bind(version.workspace_id)
+        .fetch_one(&self.pool)
+        .await?
+        .try_get("n")
+        .unwrap_or(1);
+
+        let id = version.composition_version_id;
+
+        sqlx::query(
+            r#"INSERT INTO composition_versions (
+                composition_version_id, workspace_id, version_number,
+                mission, coordination_strategist_id,
+                member_agent_ids, member_weights,
+                diff_summary, proposed_by,
+                accepted_by, rejected_by, rejection_note,
+                created_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+        )
+        .bind(id)
+        .bind(version.workspace_id)
+        .bind(next_num)
+        .bind(&version.mission)
+        .bind(version.coordination_strategist_id)
+        .bind(&version.member_agent_ids)
+        .bind(&version.member_weights)
+        .bind(&version.diff_summary)
+        .bind(&version.proposed_by)
+        .bind(&version.accepted_by)
+        .bind(&version.rejected_by)
+        .bind(&version.rejection_note)
+        .bind(version.created_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(id)
+    }
+
+    /// List all composition versions for a workspace, newest first.
+    pub async fn list_composition_versions(
+        &self,
+        workspace_id: Uuid,
+    ) -> Result<Vec<crate::CompositionVersion>> {
+        let rows = sqlx::query(
+            r#"SELECT composition_version_id, workspace_id, version_number,
+                      mission, coordination_strategist_id,
+                      member_agent_ids, member_weights,
+                      diff_summary, proposed_by,
+                      accepted_by, rejected_by, rejection_note,
+                      created_at
+               FROM composition_versions
+               WHERE workspace_id = $1
+               ORDER BY version_number DESC"#,
+        )
+        .bind(workspace_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.iter()
+            .map(|r| {
+                Ok(crate::CompositionVersion {
+                    composition_version_id: r.try_get("composition_version_id")?,
+                    workspace_id: r.try_get("workspace_id")?,
+                    version_number: r.try_get("version_number")?,
+                    mission: r.try_get("mission").unwrap_or(None),
+                    coordination_strategist_id: r
+                        .try_get("coordination_strategist_id")
+                        .unwrap_or(None),
+                    member_agent_ids: r.try_get("member_agent_ids").unwrap_or(None),
+                    member_weights: r.try_get("member_weights").unwrap_or(None),
+                    diff_summary: r.try_get("diff_summary").unwrap_or(None),
+                    proposed_by: r.try_get("proposed_by").unwrap_or(None),
+                    accepted_by: r.try_get("accepted_by").unwrap_or(None),
+                    rejected_by: r.try_get("rejected_by").unwrap_or(None),
+                    rejection_note: r.try_get("rejection_note").unwrap_or(None),
+                    created_at: r.try_get("created_at")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Accept or reject a pending composition version.
+    ///
+    /// When `accepted = true`:
+    ///   - Sets `accepted_by`
+    ///   - Applies `member_agent_ids` and `member_weights` back to the
+    ///     `teams` row so the new composition is live immediately.
+    ///
+    /// When `accepted = false`:
+    ///   - Sets `rejected_by` and `rejection_note`
+    ///   - Does NOT modify the `teams` row.
+    pub async fn resolve_composition_version(
+        &self,
+        version_id: Uuid,
+        resolved_by: &str,
+        accepted: bool,
+        rejection_note: Option<&str>,
+    ) -> Result<()> {
+        if accepted {
+            // Fetch the version to get member_agent_ids + member_weights
+            let row = sqlx::query(
+                "SELECT workspace_id, member_agent_ids, member_weights \
+                 FROM composition_versions WHERE composition_version_id = $1",
+            )
+            .bind(version_id)
+            .fetch_one(&self.pool)
+            .await?;
+
+            let workspace_id: Uuid = row.try_get("workspace_id")?;
+            let member_agent_ids: Option<Vec<Uuid>> =
+                row.try_get("member_agent_ids").unwrap_or(None);
+            let member_weights: Option<serde_json::Value> =
+                row.try_get("member_weights").unwrap_or(None);
+
+            // Mark accepted
+            sqlx::query(
+                "UPDATE composition_versions \
+                 SET accepted_by = $1 \
+                 WHERE composition_version_id = $2",
+            )
+            .bind(resolved_by)
+            .bind(version_id)
+            .execute(&self.pool)
+            .await?;
+
+            // Apply member_agent_ids to teams if present
+            if let Some(ids) = member_agent_ids {
+                sqlx::query(
+                    "UPDATE teams SET member_weights = $1 WHERE id = $2",
+                )
+                .bind(serde_json::to_value(&ids).unwrap_or_default())
+                .bind(workspace_id)
+                .execute(&self.pool)
+                .await?;
+            }
+
+            // Apply member_weights to composition_versions row (also persisted on teams)
+            if let Some(weights) = member_weights {
+                sqlx::query(
+                    "UPDATE teams SET member_weights = $1 WHERE id = $2",
+                )
+                .bind(weights)
+                .bind(workspace_id)
+                .execute(&self.pool)
+                .await?;
+            }
+        } else {
+            sqlx::query(
+                "UPDATE composition_versions \
+                 SET rejected_by = $1, rejection_note = $2 \
+                 WHERE composition_version_id = $3",
+            )
+            .bind(resolved_by)
+            .bind(rejection_note)
+            .bind(version_id)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
     }
 
     // ========================================================================
@@ -3595,6 +3780,9 @@ mod tests {
             min_tier: "free".to_string(),
             capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             persona_version: 1,
+            fermi_contract: None,
+            model_params: serde_json::Value::Object(serde_json::Map::new()),
+            valence: None,
         }
     }
 
@@ -3916,6 +4104,7 @@ mod tests {
             source_episodes: vec![Uuid::new_v4()],
             extraction_confidence: 0.95,
             embedding: None,
+            properties: None,
         };
 
         let datacenter_entity = Entity {
@@ -3929,6 +4118,7 @@ mod tests {
             source_episodes: vec![Uuid::new_v4()],
             extraction_confidence: 0.90,
             embedding: None,
+            properties: None,
         };
 
         // Store entities
@@ -3956,6 +4146,7 @@ mod tests {
             t_valid: Utc::now(),
             t_invalid: None,
             source_episodes: vec![Uuid::new_v4()],
+            data: None,
         };
 
         // Store fact

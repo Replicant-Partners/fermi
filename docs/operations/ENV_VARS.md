@@ -49,7 +49,14 @@ Comprehensive reference for all environment variables used by the Agent Bestiary
 | `MISTRAL_API_KEY` | No | - | Mistral AI API key. Enables Mistral models (Large, Medium, Nemo) and `mistral-embed` embeddings in the model catalogue. |
 | `OPENROUTER_API_KEY` | No | - | OpenRouter API key. Enables routing to various models (Claude, Llama, Gemini, Mixtral) via OpenRouter in the model catalogue. |
 | `QWEN_API_KEY` | No | - | Qwen (Alibaba Cloud) API key. Enables Qwen models (Max, Plus, Turbo) and `text-embedding-v3` embeddings in the model catalogue. |
+| `QWEN_BASE_URL` | No | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Override base URL for Qwen API (e.g. for private deployments). |
 | `OPENAI_API_KEY` | No | - | OpenAI API key. Enables `text-embedding-3-large` embeddings in the model catalogue. |
+| `GLM_API_KEY` | No | - | Zhipu AI GLM API key. Enables GLM models in the model catalogue. |
+| `GLM_BASE_URL` | No | `https://open.bigmodel.cn/api/paas/v4` | Override base URL for GLM API. |
+| `DEEPSEEK_API_KEY` | No | - | DeepSeek API key. Enables DeepSeek V3 (`deepseek-chat`) and DeepSeek R1 (`deepseek-reasoner`) in the model catalogue. Both are OpenAI-compatible. |
+| `DEEPSEEK_BASE_URL` | No | `https://api.deepseek.com/v1` | Override base URL for DeepSeek API (e.g. for Azure-hosted DeepSeek). |
+| `KIMI_API_KEY` | No | - | Moonshot AI API key. Enables Kimi models (128k, 32k, 8k context variants) in the model catalogue. OpenAI-compatible. |
+| `KIMI_BASE_URL` | No | `https://api.moonshot.cn/v1` | Override base URL for Kimi API. |
 | `REDUCT_API_KEY` | No | - | Reduct.video API key (v3). Enables video transcript analysis and highlight reel creation tools (`reduct_*`). Auth via `X-Auth-Key` header. |
 
 ---

@@ -28,6 +28,7 @@ pub mod metrics;
 pub mod misc;
 pub mod notebooks;
 pub mod observations;
+pub mod composition;
 pub mod observatory;
 pub mod ontology;
 pub mod pages;

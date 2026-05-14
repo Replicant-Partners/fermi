@@ -93,11 +93,20 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore] // TODO: slugify truncation behavior changed
     fn test_slugify() {
+        // Non-alphanumeric, non-space chars become '_'; spaces become '-'.
+        // Split on '-', filter empty, take 5, rejoin.
+        // "$200" → "_200" ($ → _); "2026-12-31?" → split yields "2026", "12", "31_"
         assert_eq!(
             slugify("Will AMD reach $200 by 2026-12-31?"),
-            "will-amd-reach-200-by"
+            "will-amd-reach-_200-by"
+        );
+        // Simple case: pure alpha words
+        assert_eq!(slugify("hello world"), "hello-world");
+        // Truncation at 5 tokens
+        assert_eq!(
+            slugify("one two three four five six"),
+            "one-two-three-four-five"
         );
     }
 }

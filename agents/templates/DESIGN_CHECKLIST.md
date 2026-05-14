@@ -1,327 +1,231 @@
 # Agent Design Checklist
 
-Use this checklist to plan your Fermi agent before implementation. Answer each question to ensure your agent is well-designed and ready for the Fermi ecosystem.
+Use this checklist to plan your agent before writing a single line of JSON. Answer every question — the answers map directly to fields in `agent_card.json`.
+
+> **Ground truth:** `src/agent_backend/agent_card.rs`  
+> **Design rationale:** `docs/AGENT_MODEL.md`  
+> **Last reconciled:** 2026-05-13
 
 ---
 
-## ✅ Step 1: Purpose & Scope
+## Step 1 — Purpose and scope
 
 ### What does your agent do?
 
-- [ ] **One-sentence description:**  
+- [ ] **One-sentence description** (becomes `metadata.description`):  
   _"My agent ________________________________________"_
 
-- [ ] **Primary question it answers:**  
-  _Example: "What is AMD's current market share in datacenter GPUs?"_
+- [ ] **`agent_type`** — pick the closest domain tag:  
+  `research` | `creative` | `coherence` | `social` | `coordination` | `composition`
 
-- [ ] **Type of evidence it generates:**  
-  - [ ] Quantitative data (numbers, percentages, trends)
-  - [ ] Qualitative insights (sentiment, opinions, analysis)
-  - [ ] Events (announcements, releases, changes)
-  - [ ] Relationships (connections between entities)
+- [ ] **`accepts`** — what typed inputs does it consume?  
+  _Examples: `workspace-state`, `evidence-set`, `forecast-question`, `review-text`, `query-text`_
 
-- [ ] **Which forecast drivers does it inform?**  
-  _Example: market_share, competitive_position, revenue_growth_
+- [ ] **`produces`** — what typed outputs does it emit?  
+  _Examples: `evidence-summary`, `forecast-adjustment`, `coordination-plan`, `sentiment-score`_
 
----
+> `accepts` and `produces` are the machine-readable contract that the composition
+> planner, eval framework, and xamanEK use to reason about this agent. Write them
+> before the system prompt — they should determine the prompt, not the other way around.
 
-## ✅ Step 2: Execution Strategy
-
-### How will your agent execute?
-
-- [ ] **Executor type:**
-  - [ ] **LLM** (recommended for starting) - Agent uses AI to analyze/generate insights
-  - [ ] **MCP** (requires external tools) - Agent calls APIs, databases, web scrapers
-  - [ ] **Manual** (human-in-loop) - Agent requests info from humans
-  - [ ] **Skill** (advanced) - Agent invokes complex workflows
-
-- [ ] **If using LLM:**
-  - [ ] **Model choice:**
-    - [ ] Haiku (fast, cheap, good for simple tasks)
-    - [ ] Sonnet (balanced, good for analysis)
-    - [ ] Opus (powerful, expensive, for complex reasoning)
-  - [ ] **Temperature:** _______ (0.0-0.3 for facts, 0.4-0.7 for analysis, 0.7-1.0 for creative)
-  - [ ] **Query design:** _"What will you ask the LLM?"_
-
-- [ ] **If using MCP:**
-  - [ ] **Which MCP servers do you need?** (APIs, databases, tools)
-    1. _________________________________________
-    2. _________________________________________
-    3. _________________________________________
-  - [ ] **What credentials/API keys are required?**
-  - [ ] **Where will credentials be stored?** (environment variables recommended)
+- [ ] **`sample_queries`** — 3–5 canonical questions this agent answers well.  
+  These become the default eval test cases. Be specific, not generic.
 
 ---
 
-## ✅ Step 3: Data Sources
+## Step 2 — Persona and valence
 
-### Where does your agent get information?
+The system prompt is the agent's voice and decision policy. It is also the
+target of the recursive improvement loop — everything the observability stack
+measures is ultimately measured against what the prompt declares the agent to be.
 
-- [ ] **Primary data sources:**
-  - [ ] Web APIs (which ones?)
-  - [ ] Databases (which ones?)
-  - [ ] Web scraping (which sites?)
-  - [ ] RSS feeds
-  - [ ] Social media
-  - [ ] Financial data providers
-  - [ ] Other: _________________________________________
+- [ ] **`system_prompt`** drafted:
+  - [ ] Names the agent and states its role clearly in the first sentence
+  - [ ] Specifies output format (JSON fields, confidence score, evidence citation)
+  - [ ] Defines scope — what it will and won't answer
+  - [ ] Is behavioral, not generic ("You are helpful" is not a persona)
 
-- [ ] **Data freshness requirements:**
-  - [ ] Real-time (< 1 minute)
-  - [ ] Near real-time (1-15 minutes)
-  - [ ] Hourly
-  - [ ] Daily
-  - [ ] Weekly
-  - [ ] On-demand only
+- [ ] **`valence`** — the affective signature (shapes collaboration in compositions):
 
-- [ ] **Rate limits & costs:**
-  - [ ] Free tier sufficient?
-  - [ ] Paid API costs: $_________/month
-  - [ ] Request limits: _________/day or /month
+  | Field | Your choice | Guidance |
+  |---|---|---|
+  | `primary_affect` | _______ | `analytical` · `curious` · `vigilant` · `diplomatic` · `alignment` · `integrative` |
+  | `arousal` | 0.___ | 0.0 calm/deliberate → 1.0 urgent/reactive |
+  | `valence` | 0.___ | 0.0 critical/challenging → 1.0 constructive/affirming |
+  | `personality_traits` | _______ | 2–4 adjectives; e.g. `["precise", "evidence-driven"]` |
 
----
-
-## ✅ Step 4: Output Structure
-
-### What does your agent produce?
-
-- [ ] **Output format:**
-  ```json
-  {
-    "// Define your expected output structure here": "",
-    "example_field": "value",
-    "confidence": 0.85
-  }
-  ```
-
-- [ ] **Confidence scoring:**
-  - [ ] How will you calculate confidence? (data quality, source reliability, etc.)
-  - [ ] What's your minimum acceptable confidence? _________
-
-- [ ] **Evidence format:**
-  - [ ] Numeric (e.g., "Market share: 22%")
-  - [ ] Qualitative (e.g., "Sentiment: Positive")
-  - [ ] Categorical (e.g., "Risk level: Medium")
-  - [ ] Time-series (e.g., "Trend over 6 months")
+  > Valence is not decoration. In multi-agent compositions, valence diversity
+  > produces better collective outputs than a team of identical personalities.
+  > Design your agent's affective signature deliberately.
 
 ---
 
-## ✅ Step 5: Embedding Configuration
+## Step 3 — Execution strategy
 
-### How will your agent store and retrieve knowledge?
+### Executor and model
 
-Fermi ADM uses embeddings to store episodic and semantic memory. You can choose the embedding provider that best fits your agent's needs.
+- [ ] **`capabilities.executor`:**
+  - [ ] `llm` — LLM analyzes and generates (recommended starting point)
+  - [ ] `mcp` — calls external tools (requires MCP server config)
+  - [ ] `manual` — human-in-the-loop
+  - [ ] `skill` — multi-step workflow
 
-- [ ] **Embedding provider:**
-  - [ ] **Anthropic (Default)** - Voyage AI embeddings, optimized for retrieval
-  - [ ] **OpenAI** - Widely tested, flexible dimensionality
-  - [ ] **Mistral** - European data residency, open architecture
-  - [ ] **Qwen** - Strong multilingual support, cost-effective
+- [ ] **`capabilities.provider`:** `anthropic` | `mistral` | `openrouter` | `qwen` | `glm`
 
-- [ ] **Model selection:**
-  - [ ] Using default model for provider
-  - [ ] Custom model: _________________________________________
+- [ ] **`capabilities.model`** (default/fallback): _________
 
-- [ ] **Embedding dimensions:**
-  - [ ] **1024 (REQUIRED - matches current PostgreSQL schema)** ✅
-  - [ ] 1536 (requires schema migration)
-  - [ ] 3072 (requires schema migration, OpenAI only)
-  
-  ⚠️ **Note**: The database schema currently uses 1024-dimensional vectors. All embedding models must output 1024 dimensions. OpenAI models can be configured to 1024d via the API. If you need different dimensions, see the [Embedding Migration Guide](../../docs/guides/EMBEDDING_MIGRATION.md).
+### Cognition economy (ADR-011)
 
-- [ ] **Language considerations:**
-  - [ ] English-only → Anthropic or OpenAI recommended
-  - [ ] Multilingual → Consider Qwen
-  - [ ] Chinese content → Qwen strongly recommended
-  - [ ] Code-heavy → Consider Voyage-code-2 (Anthropic)
+The model ladder lets the same agent serve different user tiers with different
+models — same prompt and persona, different cognitive bandwidth.
 
-- [ ] **Cost considerations:**
-  - [ ] Budget-friendly → Mistral or OpenAI text-embedding-3-small
-  - [ ] Quality-focused → Anthropic voyage-large-2 or OpenAI text-embedding-3-large
-  - [ ] Balanced → Anthropic voyage-2 (default)
+- [ ] **`capabilities.min_tier`**: `free` | `standard` | `premium`  
+  _The lowest tier this agent will accept. Below this it fails gracefully._
 
-- [ ] **Data residency requirements:**
-  - [ ] No specific requirements → Any provider
-  - [ ] European data residency → Mistral
-  - [ ] Asian deployment → Qwen
-  - [ ] US-based → Anthropic or OpenAI
+- [ ] **`capabilities.model_ladder`** — one rung per tier you want to support:
 
-### Configuration Example
+  | Tier | Provider | Model | Notes |
+  |---|---|---|---|
+  | `free` | | | Fast, cheap baseline |
+  | `standard` | | | Balanced |
+  | `premium` | | | Frontier — only if the task warrants it |
 
-```toml
-[knowledge]
-# Choose your embedding provider
-embeddings_provider = "anthropic"  # or "openai", "mistral", "qwen"
-embeddings_model = "voyage-2"      # provider-specific model
-dimensions = 1024                  # must match model's output
+  _Remove rungs you don't need. At minimum include a `free` rung._
 
-# Provider-specific examples:
-# Anthropic: voyage-2, voyage-large-2, voyage-code-2
-# OpenAI: text-embedding-3-small, text-embedding-3-large
-# Mistral: mistral-embed
-# Qwen: text-embedding-v3, text-embedding-v2
-```
+- [ ] **`capabilities.capability_gates`** — any features that should only activate
+  at a given tier?  
+  _Example: `{ "deep_reasoning": "premium", "extended_context": "standard" }`_  
+  _Leave empty `{}` if all capabilities are available at all tiers._
 
-### Important Notes
+### Sampling parameters
 
-⚠️ **Migration Warning:** Once you choose an embedding provider for your agent, changing it later requires re-embedding all existing memories. Choose carefully at design time.
+- [ ] **`capabilities.model_params`** configured:
 
-✅ **Best Practice:** Use the default (Anthropic voyage-2) unless you have specific requirements for language support, data residency, or cost optimization.
+  | Parameter | Value | Guidance |
+  |---|---|---|
+  | `max_tokens` | _____ | Set explicitly; don't rely on provider defaults |
+  | `temperature` | _____ | Prefer this over the legacy top-level `temperature` field |
+  | `top_p` | _____ | Optional; `0.95` is a safe default |
+  | `extended_thinking` | false | Only for Anthropic; forces `temperature=1.0` |
+  | `random_seed` | _____ | Set for reproducible eval runs |
 
-📚 **For detailed provider comparison:** See [Agent Cards - Embedding Configuration](../../docs/api/agent-cards.md#embedding-configuration)
+  > Temperature is a **collaboration knob**, not a creativity dial:
+  > - `0.0–0.3` — rigid, deterministic; good for stable agent-to-agent interfaces
+  > - `0.4–0.7` — analysis sweet spot
+  > - `0.7+` — generative, exploratory; use when surfacing options for humans
 
 ---
 
-## ✅ Step 6: Ontology Design
+## Step 4 — Identity contract
 
-### What will your agent learn?
+These fields let every other system surface reason about this agent without
+parsing its system prompt. Write them as if you were documenting an API.
 
-- [ ] **Entities** (nouns your agent tracks):
-  1. _________________________________________ (type: Company, Person, Product, etc.)
-  2. _________________________________________
-  3. _________________________________________
-  4. _________________________________________
-
-- [ ] **Relationships** (connections between entities):
-  - [ ] Entity A → ___________ → Entity B (example: AMD competes_with NVIDIA)
-  - [ ] Entity C → ___________ → Entity D
-  - [ ] Entity E → ___________ → Entity F
-
-- [ ] **Cardinality** (relationship types):
-  - [ ] One-to-One: `||--||` (example: COMPANY has CEO)
-  - [ ] One-to-Many: `||--o{` (example: COMPANY has PRODUCTS)
-  - [ ] Many-to-One: `}o--||` (example: PRODUCTS belong_to CATEGORY)
-  - [ ] Many-to-Many: `}o--o{` (example: PRODUCTS use TECHNOLOGIES)
-
-- [ ] **Evolution strategy:**
-  - [ ] How will ontology grow over time?
-  - [ ] What triggers adding new entities?
-  - [ ] How will relationships evolve?
+- [ ] **`accepts`** lists the types of input this agent can meaningfully process
+- [ ] **`produces`** lists the types of output a caller can rely on receiving
+- [ ] **`dependencies.required`** lists agent IDs that must exist for this agent to work
+- [ ] **`dependencies.optional`** lists agent IDs that enhance but aren't required
 
 ---
 
-## ✅ Step 7: Error Handling
+## Step 5 — Secrets and tools
 
-### What could go wrong?
+- [ ] **`requires_secrets`** — does this agent need credentials?  
+  For each: name (env var), label (display name), description (what it is / where to get it), is_required
 
-- [ ] **Failure scenarios:**
-  - [ ] API unavailable → ___________ (fallback strategy)
-  - [ ] Rate limit exceeded → ___________ (queue? wait?)
-  - [ ] Invalid data → ___________ (skip? retry? alert?)
-  - [ ] Parsing error → ___________ (log? fallback?)
-  - [ ] Timeout → ___________ (retry? reduce scope?)
-
-- [ ] **Graceful degradation:**
-  - [ ] Can agent provide partial results?
-  - [ ] What's minimum viable output?
-  - [ ] How to communicate confidence in degraded mode?
+- [ ] **`capabilities.mcp_tools`** — if executor is `mcp`, what tools does it call?  
+  For each tool: name, description, input_schema
 
 ---
 
-## ✅ Step 8: Verification & Quality
+## Step 6 — Ontology design
 
-### How will you verify your agent works?
+Agents learn through ADM (Active Dreaming Memory). The ontology defines what
+they accumulate and how it evolves.
 
-- [ ] **Test inputs:**
-  1. _________________________________________
-  2. _________________________________________
-  3. _________________________________________
+- [ ] **Core entities** (aim for 5–10; add more as needed):
 
-- [ ] **Expected outputs:**
-  1. _________________________________________
-  2. _________________________________________
-  3. _________________________________________
+  | Entity | Type | Why it matters |
+  |---|---|---|
+  | _______ | Company / Person / Product / Event / Concept / ... | |
+  | _______ | | |
+  | _______ | | |
 
-- [ ] **Success criteria:**
-  - [ ] Confidence > _________ %
-  - [ ] Response time < _________ seconds
-  - [ ] Accuracy rate > _________ %
-  - [ ] Cost < $_________ per execution
+- [ ] **Core relationships** (how entities connect):
 
-- [ ] **Quality checks:**
-  - [ ] How will you validate agent output?
-  - [ ] Who reviews results initially?
-  - [ ] What triggers a manual review?
+  | From | Relationship | To | Cardinality |
+  |---|---|---|---|
+  | _______ | _______ | _______ | `\|\|--o{` one-to-many |
+  | _______ | _______ | _______ | `}o--\|\|` many-to-one |
+  | _______ | _______ | _______ | `}o--o{` many-to-many |
 
----
+- [ ] **`ontology.mermaid` created** — validate at https://mermaid.live/
 
-## ✅ Step 9: Deployment Planning
-
-### How will your agent run?
-
-- [ ] **Execution schedule:**
-  - [ ] On-demand (manual trigger)
-  - [ ] Hourly
-  - [ ] Daily at _________ UTC
-  - [ ] Weekly on _________
-  - [ ] Event-driven (when X happens)
-
-- [ ] **Dependencies:**
-  - [ ] Depends on other agents: _________________________________________
-  - [ ] Required before agents: _________________________________________
-  - [ ] No dependencies (can run independently)
-
-- [ ] **Resource requirements:**
-  - [ ] Estimated tokens per run: _________
-  - [ ] Estimated cost per run: $_________
-  - [ ] Estimated time per run: _________ seconds
-  - [ ] Memory/CPU requirements: _________
+- [ ] **Evolution strategy**: what triggers new entities or relationships?  
+  _The dreaming worker extracts these from episode clusters; design entities that
+  will naturally appear in your agent's query/response transcripts._
 
 ---
 
-## ✅ Step 10: Documentation
+## Step 7 — Compound agent (skip for atomic agents)
 
-### Have you documented your agent?
+Only fill this section if `agent_type` is `composition` or a domain compound type.
 
-- [ ] **README.md created** with:
-  - [ ] Agent description
-  - [ ] Setup instructions
-  - [ ] Configuration requirements
-  - [ ] Example usage
-  - [ ] Troubleshooting guide
-
-- [ ] **Query examples documented**
-- [ ] **Output examples documented**
-- [ ] **Known limitations listed**
+- [ ] **`dependencies.required`** lists all member agent IDs
+- [ ] **`workflow_template`** designed:
+  - [ ] `mermaid` stage flow diagram drawn
+  - [ ] Each `stage` has: name, assigned agent, accepts, produces
+  - [ ] `description` explains what the compound agent orchestrates
+- [ ] Does this composition need a **coordination strategist**?  
+  _See `docs/COMPOSITION_AS_FIRST_CLASS.md` for the strategist pattern._
 
 ---
 
-## ✅ Step 11: Ready to Build
+## Step 8 — Observability readiness
 
-### Final checks before implementation:
+The observability stack starts collecting signals from the first eval run.
+Design for it from the start.
 
-- [ ] Agent card JSON drafted
-- [ ] Ontology designed (entities + relationships)
-- [ ] Data sources identified and accessible
-- [ ] Output format defined
-- [ ] Error handling planned
-- [ ] Test cases written
-- [ ] Documentation complete
+- [ ] **Eval test cases**: are the `sample_queries` specific enough to use as
+  automated eval test cases? (They will be by default.)
 
----
+- [ ] **Drift baseline**: the system uses the system_prompt + embedding of early
+  episodes to establish a persona baseline. Does your prompt have enough
+  specificity that a meaningful baseline can be established?
 
-## 🎯 Next Steps
+- [ ] **Dyad identity**: if this agent will have repeated interactions with the
+  same users, the social tracker will build `rapport`/`trust`/`reciprocity`
+  metrics per dyad. Is the agent's persona consistent enough to make those
+  metrics meaningful?
 
-Once you've completed this checklist:
-
-1. ✅ Copy `agent_card.json` template
-2. ✅ Fill in all fields based on your answers above
-3. ✅ Create `ontology.mermaid` with your entity-relationship diagram
-4. ✅ Write `README.md` documenting your agent
-5. ✅ Study example agents in `templates/examples/`
-6. ⏳ **Wait for agent backend** (coming soon - you'll be notified when ready!)
+- [ ] **Capability gate for drift threshold**: if this agent is expected to
+  evolve rapidly (e.g. a learning agent undergoing frequent HITL interventions),
+  set a looser drift threshold:  
+  `capability_gates: { "drift_threshold": 0.35 }`  
+  Default is `0.20`.
 
 ---
 
-## 📚 Resources
+## Step 9 — Final pre-build checks
 
-- [Agent Card Specification](../../docs/guides/AGENT_CARD_SPECIFICATION.md)
-- [Active Dreaming Memory Architecture](../../docs/ARCHITECTURE_ADM.md)
-- [Agent Bestiary Design](../../docs/AGENT_BESTIARY_DESIGN.md)
-- [Example Agents](./examples/)
+- [ ] `agent_card.json` valid JSON (check at https://jsonlint.com/)
+- [ ] All ALL_CAPS placeholders replaced
+- [ ] All comment lines (`//`) removed
+- [ ] `system_prompt` is specific and behavioral
+- [ ] `accepts` / `produces` accurately describe the I/O contract
+- [ ] `valence` filled in deliberately (not left at defaults)
+- [ ] `model_ladder` has at least a `free` rung
+- [ ] `sample_queries` has at least 3 specific, diverse queries
+- [ ] `ontology.mermaid` created and validated
+- [ ] `README.md` written (agent description, queries, limitations, performance targets)
 
 ---
 
-**Questions?** Contact the Fermi team or check the documentation.
+## Resources
 
-**Ready to build?** See [GETTING_STARTED.md](./GETTING_STARTED.md) for step-by-step instructions!
+- **Agent model and design rationale:** `docs/AGENT_MODEL.md`
+- **Composition and strategist patterns:** `docs/COMPOSITION_AS_FIRST_CLASS.md`
+- **Observability stack:** `docs/architecture/OBSERVABILITY_ARCHITECTURE_SPEC.md`
+- **Worked examples:** `agents/templates/examples/`
+- **Getting started tutorial:** `agents/templates/GETTING_STARTED.md`
+- **Mermaid ER syntax:** https://mermaid.js.org/syntax/entityRelationshipDiagram.html

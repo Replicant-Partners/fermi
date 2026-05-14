@@ -137,12 +137,13 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore] // TODO: sparkline char assertion mismatch
     fn test_sparkline() {
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 4.0, 3.0, 2.0, 1.0];
         let spark = generate(&values);
-        assert_eq!(spark.len(), 9);
-        assert!(spark.contains('█')); // Should have max marker
+        // Unicode block chars are multi-byte; use chars().count() not .len()
+        assert_eq!(spark.chars().count(), 9);
+        assert!(spark.contains('█')); // max value (5) maps to '█'
+        assert!(spark.contains('▁')); // min value (1) maps to '▁'
     }
 
     #[test]

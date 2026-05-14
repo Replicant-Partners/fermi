@@ -835,14 +835,18 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: comment token count mismatch (includes EOF)
     fn test_comment() {
         let source = "driver market_size # This is a comment\ntriangular";
         let lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
 
-        // Comments are ignored
-        assert_eq!(tokens.len(), 3); // driver, market_size, triangular, EOF
+        // Comments are stripped; lexer always appends EOF.
+        // tokens: driver, market_size, triangular, EOF = 4
+        assert_eq!(tokens.len(), 4);
+        // No token lexeme should contain comment text
+        assert!(tokens.iter().all(|t| !t.lexeme.contains("comment")));
+        // Last token is EOF
+        assert!(matches!(tokens.last().unwrap().token_type, TokenType::EOF));
     }
 
     #[test]

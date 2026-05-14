@@ -604,6 +604,7 @@ pub async fn create_agent_handler(
         persona_version: 1,
         fermi_contract: None,
         model_params: serde_json::Value::Object(serde_json::Map::new()),
+                valence: None,
     };
 
     // If education budget requested, debit from user's wallet
@@ -698,6 +699,31 @@ pub async fn model_catalogue_handler(State(_state): State<AppState>) -> Json<Val
                 ],
                 "env_var": "QWEN_API_KEY",
                 "available": check_env("QWEN_API_KEY")
+            },
+            {
+                "id": "deepseek",
+                "name": "DeepSeek",
+                "models": [
+                    {"id": "deepseek-chat", "name": "DeepSeek V3", "speed": "fast", "cost_tier": "low", "description": "DeepSeek's flagship chat model — strong reasoning, low cost"},
+                    {"id": "deepseek-reasoner", "name": "DeepSeek R1", "speed": "slow", "cost_tier": "low", "description": "Chain-of-thought reasoning model — comparable to o1 at fraction of cost"}
+                ],
+                "env_var": "DEEPSEEK_API_KEY",
+                "base_url_env": "DEEPSEEK_BASE_URL",
+                "default_base_url": "https://api.deepseek.com/v1",
+                "available": check_env("DEEPSEEK_API_KEY")
+            },
+            {
+                "id": "kimi",
+                "name": "Kimi (Moonshot AI)",
+                "models": [
+                    {"id": "moonshot-v1-128k", "name": "Kimi 128k", "speed": "balanced", "cost_tier": "low", "description": "128k context window — strong at long-document analysis"},
+                    {"id": "moonshot-v1-32k", "name": "Kimi 32k", "speed": "fast", "cost_tier": "low", "description": "32k context, faster and cheaper"},
+                    {"id": "moonshot-v1-8k", "name": "Kimi 8k", "speed": "fast", "cost_tier": "low", "description": "8k context, lowest latency"}
+                ],
+                "env_var": "KIMI_API_KEY",
+                "base_url_env": "KIMI_BASE_URL",
+                "default_base_url": "https://api.moonshot.cn/v1",
+                "available": check_env("KIMI_API_KEY")
             }
         ],
         "embedding_providers": [
@@ -874,6 +900,10 @@ pub async fn import_agent_handler(
             .and_then(|c| c.get("model_params"))
             .cloned()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+        valence: card
+            .get("metadata")
+            .and_then(|m| m.get("valence"))
+            .cloned(),
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {

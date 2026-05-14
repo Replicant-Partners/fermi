@@ -369,6 +369,7 @@ async fn run_migrations(db: &PgPool) {
     let migration_files = [
         "migrations/004_add_users_table.sql",
         "migrations/004_migrate_users_for_auth.sql",
+        "migrations/004b_migrate_users_for_auth.sql",
         "migrations/005_add_api_keys.sql",
         "migrations/006_add_user_id_to_agents.sql",
         "migrations/007_add_user_id_to_memory.sql",
@@ -413,6 +414,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/046_rabble_visibility.sql",
         "migrations/047_flight_path_samples.sql",
         "migrations/048_voice_assets.sql",
+        "migrations/048b_voice_assets.sql",
         "migrations/050_fix_tx_type_constraint_rabble.sql",
         "migrations/051_swarm_telemetry.sql",
         "migrations/052_sosa_observations.sql",
@@ -458,6 +460,11 @@ async fn run_migrations(db: &PgPool) {
         "migrations/091_swarm_participants.sql",
         "migrations/092_fix_social_layer.sql",
         "migrations/094_fermi_forecasting.sql",
+        "migrations/094_rabble_follows.sql",
+        "migrations/095_saved_locations.sql",
+        "migrations/096_performance_indexes.sql",
+        "migrations/097_governance.sql",
+        "migrations/098_push_subscriptions.sql",
         "migrations/099_polymarket_observations.sql",
         "migrations/100_cognition_tier.sql",
         "migrations/101_model_ladder.sql",
@@ -490,6 +497,8 @@ async fn run_migrations(db: &PgPool) {
         // Composition as first-class: teams.mission + strategist_id
         // + composition_versions table (docs/COMPOSITION_AS_FIRST_CLASS.md §10).
         "migrations/113_composition_as_first_class.sql",
+        // Agent valence column on agents table (migration 114)
+        "migrations/114_agent_valence_column.sql",
     ];
 
     for file in &migration_files {
@@ -1215,6 +1224,27 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/agents/:agent_id",
             delete(handlers::workspace::remove_workspace_agent_handler),
+        )
+        // Composition version lifecycle (tune-team RSI)
+        .route(
+            "/api/workspaces/:workspace_id/composition/versions",
+            get(handlers::composition::list_composition_versions_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/composition/versions/:version_id/accept",
+            post(handlers::composition::accept_composition_version_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/composition/versions/:version_id/reject",
+            post(handlers::composition::reject_composition_version_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/composition/propose",
+            post(handlers::composition::propose_composition_version_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/composition/dream",
+            post(handlers::composition::composition_dream_handler),
         )
         // Wallet / credits
         .route("/api/wallet", get(handlers::wallet::get_wallet_handler))
@@ -2251,7 +2281,22 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
                 .as_ref()
                 .and_then(|fc| serde_json::to_value(fc).ok()),
             model_params: card.capabilities.model_params.clone(),
+            valence: card
+                .metadata
+                .valence
+                .as_ref()
+                .and_then(|v| serde_json::to_value(v).ok()),
         };
+
+        // Log any executable skills this card declares — these are dispatchable
+        // by name via ToolRegistry::execute() at runtime.
+        let executable_skills = crate::agent_backend::tools::validate_card_skills(card);
+        if !executable_skills.is_empty() {
+            println!(
+                "  Agent '{}' has {} executable skill(s): {:?}",
+                card.agent_id, executable_skills.len(), executable_skills
+            );
+        }
 
         match memory_store.upsert_agent(agent).await {
             Ok(id) => {

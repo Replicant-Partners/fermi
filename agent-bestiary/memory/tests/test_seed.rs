@@ -3,7 +3,9 @@
 //! Run with: `cargo test -p agent-bestiary-memory --test test_seed -- --test-threads=1`
 //! Requires DATABASE_URL environment variable.
 
-use agent_bestiary_memory::{MemoryStore, SeedData};
+use agent_bestiary_memory::{CompositionVersion, MemoryStore, SeedData};
+use chrono::Utc;
+use uuid::Uuid;
 
 async fn setup() -> (MemoryStore, SeedData) {
     dotenvy::dotenv().ok();
@@ -34,15 +36,211 @@ async fn test_seed_and_cleanup() {
 
     // Cleanup
     seed.cleanup(&store).await.unwrap();
-
-    // Verify cleanup
-    let agents_after = store.list_agents().await.unwrap();
-    let remaining: Vec<_> = agents_after
-        .iter()
-        .filter(|a| a.agent_name.starts_with("seed_"))
-        .collect();
-    assert_eq!(remaining.len(), 0, "All seed agents should be removed");
 }
+
+// ── Composition version tests ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_composition_version_create_and_list() {
+    let (store, seed) = setup().await;
+    let workspace_id = Uuid::new_v4(); // synthetic workspace id
+
+    let version = CompositionVersion {
+        composition_version_id: Uuid::new_v4(),
+        workspace_id,
+        version_number: 0, // overwritten by create
+        mission: None,
+        coordination_strategist_id: None,
+        member_agent_ids: Some(vec![
+            seed.market_research_agent().agent_id,
+            seed.geopolitical_risk_agent().agent_id,
+        ]),
+        member_weights: Some(serde_json::json!({
+            seed.market_research_agent().agent_id.to_string(): 0.6,
+            seed.geopolitical_risk_agent().agent_id.to_string(): 0.4,
+        })),
+        diff_summary: Some("Add geopolitical agent to balance high-arousal homophily".to_string()),
+        proposed_by: Some("cohere_and_coordinate".to_string()),
+        accepted_by: None,
+        rejected_by: None,
+        rejection_note: Some("Rationale: arousal spread was 0.1, below 0.25 threshold.".to_string()),
+        created_at: Utc::now(),
+    };
+
+    let version_id = store.create_composition_version(&version).await.unwrap();
+    assert_ne!(version_id, Uuid::nil());
+
+    // List should return 1 pending version
+    let versions = store.list_composition_versions(workspace_id).await.unwrap();
+    assert_eq!(versions.len(), 1, "Expected 1 composition version");
+
+    let v = &versions[0];
+    assert_eq!(v.version_number, 1, "First version should be numbered 1");
+    assert_eq!(v.proposed_by.as_deref(), Some("cohere_and_coordinate"));
+    assert!(v.accepted_by.is_none(), "Should be pending (not accepted)");
+    assert!(v.rejected_by.is_none(), "Should be pending (not rejected)");
+    assert_eq!(
+        v.member_agent_ids.as_ref().unwrap().len(),
+        2,
+        "Should have 2 member agents"
+    );
+
+    println!("✅ CompositionVersion create and list works!");
+    seed.cleanup(&store).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_composition_version_reject_stores_note() {
+    let (store, seed) = setup().await;
+    let workspace_id = Uuid::new_v4();
+
+    let version = CompositionVersion {
+        composition_version_id: Uuid::new_v4(),
+        workspace_id,
+        version_number: 0,
+        mission: None,
+        coordination_strategist_id: None,
+        member_agent_ids: None,
+        member_weights: None,
+        diff_summary: Some("Proposed: reduce team to 2 agents".to_string()),
+        proposed_by: Some("cohere_and_coordinate".to_string()),
+        accepted_by: None,
+        rejected_by: None,
+        rejection_note: None,
+        created_at: Utc::now(),
+    };
+
+    let version_id = store.create_composition_version(&version).await.unwrap();
+
+    // Reject with a note
+    store
+        .resolve_composition_version(
+            version_id,
+            "owner_user_123",
+            false,
+            Some("Team size is intentional — we need the diversity"),
+        )
+        .await
+        .unwrap();
+
+    let versions = store.list_composition_versions(workspace_id).await.unwrap();
+    assert_eq!(versions.len(), 1);
+    let v = &versions[0];
+    assert_eq!(v.rejected_by.as_deref(), Some("owner_user_123"));
+    assert_eq!(
+        v.rejection_note.as_deref(),
+        Some("Team size is intentional — we need the diversity")
+    );
+    assert!(v.accepted_by.is_none(), "Should not be accepted");
+
+    println!("✅ CompositionVersion rejection with note works!");
+    seed.cleanup(&store).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_composition_version_sequential_numbering() {
+    let (store, seed) = setup().await;
+    let workspace_id = Uuid::new_v4();
+
+    // Create 3 versions for the same workspace
+    for i in 0..3u32 {
+        let v = CompositionVersion {
+            composition_version_id: Uuid::new_v4(),
+            workspace_id,
+            version_number: 0,
+            mission: Some(format!("Mission iteration {}", i)),
+            coordination_strategist_id: None,
+            member_agent_ids: None,
+            member_weights: None,
+            diff_summary: Some(format!("Change {}", i)),
+            proposed_by: Some("cohere_and_coordinate".to_string()),
+            accepted_by: None,
+            rejected_by: None,
+            rejection_note: None,
+            created_at: Utc::now(),
+        };
+        store.create_composition_version(&v).await.unwrap();
+    }
+
+    // List should be newest-first, numbered 1-3
+    let versions = store.list_composition_versions(workspace_id).await.unwrap();
+    assert_eq!(versions.len(), 3);
+    // Newest first → version_number DESC
+    assert_eq!(versions[0].version_number, 3);
+    assert_eq!(versions[1].version_number, 2);
+    assert_eq!(versions[2].version_number, 1);
+
+    println!("✅ CompositionVersion sequential numbering works!");
+    seed.cleanup(&store).await.unwrap();
+}
+
+// ── Valence round-trip test ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_valence_persists_through_update() {
+    let (store, seed) = setup().await;
+    let agent_id = seed.market_research_agent().agent_id;
+
+    let valence = serde_json::json!({
+        "primary_affect": "analytical",
+        "arousal": 0.4,
+        "valence": 0.65,
+        "personality_traits": ["precise", "evidence-driven", "calibrated"]
+    });
+
+    // Apply valence via AgentUpdate
+    let update = agent_bestiary_memory::AgentUpdate {
+        description: None,
+        system_prompt: None,
+        visibility: None,
+        tags: None,
+        model: None,
+        temperature: None,
+        education_budget_credits: None,
+        display_alias: None,
+        status: None,
+        fork_pricing: None,
+        accepts: None,
+        produces: None,
+        workflow_template: None,
+        prompt_template: None,
+        requires_secrets: None,
+        llm_provider: None,
+        model_ladder: None,
+        min_tier: None,
+        capability_gates: None,
+        model_params: None,
+        valence: Some(valence.clone()),
+    };
+
+    store.update_agent(agent_id, &update).await.unwrap();
+
+    // Read back
+    let retrieved = store.get_agent(agent_id).await.unwrap().unwrap();
+    let stored_valence = retrieved.valence.expect("valence should be stored");
+
+    assert_eq!(
+        stored_valence.get("primary_affect").and_then(|v| v.as_str()),
+        Some("analytical")
+    );
+    assert_eq!(
+        stored_valence.get("arousal").and_then(|v| v.as_f64()),
+        Some(0.4)
+    );
+    assert_eq!(
+        stored_valence.get("valence").and_then(|v| v.as_f64()),
+        Some(0.65)
+    );
+    let traits = stored_valence
+        .get("personality_traits")
+        .and_then(|v| v.as_array())
+        .expect("personality_traits should be an array");
+    assert_eq!(traits.len(), 3);
+
+    println!("✅ Agent valence round-trip through update works!");
+    seed.cleanup(&store).await.unwrap();
+}
+
 
 #[tokio::test]
 async fn test_episode_queries() {

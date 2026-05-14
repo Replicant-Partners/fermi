@@ -563,6 +563,9 @@ pub struct Agent {
     // ADR-011 Phase 4: provider-agnostic sampling configuration (migration 106)
     #[serde(default = "default_json_object")]
     pub model_params: serde_json::Value,
+    // Affective signature (migration 114) — {primary_affect, arousal, valence, personality_traits}
+    #[serde(default)]
+    pub valence: Option<serde_json::Value>,
 }
 
 fn default_persona_version() -> i32 {
@@ -625,6 +628,8 @@ pub struct AgentUpdate {
     pub capability_gates: Option<serde_json::Value>,
     // ADR-011 Phase 4: provider-agnostic sampling config
     pub model_params: Option<serde_json::Value>,
+    // Affective signature — primary_affect, arousal, valence, personality_traits
+    pub valence: Option<serde_json::Value>,
 }
 
 /// Snapshot of mutable agent fields at a point in time
@@ -641,6 +646,36 @@ pub struct AgentVersion {
     pub visibility: Option<String>,
     pub display_alias: Option<String>,
     pub changed_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A versioned snapshot of a composition's structure — members, weights,
+/// strategist assignment. Created by the strategist (tune-team RSI) or by
+/// the user directly. Pending until accepted or rejected by the workspace owner.
+///
+/// Maps to the `composition_versions` table (migration 113).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompositionVersion {
+    pub composition_version_id: Uuid,
+    pub workspace_id: Uuid,
+    pub version_number: i32,
+    pub mission: Option<String>,
+    pub coordination_strategist_id: Option<Uuid>,
+    /// Proposed member roster as agent UUIDs. None = no change to current roster.
+    pub member_agent_ids: Option<Vec<Uuid>>,
+    /// Proposed weights as `{ agent_id_string: f64 }`. None = no change.
+    pub member_weights: Option<serde_json::Value>,
+    /// Plain-language description of what changed and why.
+    pub diff_summary: Option<String>,
+    /// "user" or the strategist's agent_id as a string.
+    pub proposed_by: Option<String>,
+    /// user_id of the human who approved. None = pending or rejected.
+    pub accepted_by: Option<String>,
+    /// user_id of the human who rejected. None = pending or accepted.
+    pub rejected_by: Option<String>,
+    /// Reviewer's rejection note — stored as correction material for
+    /// the strategist's next dreaming cycle.
+    pub rejection_note: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
