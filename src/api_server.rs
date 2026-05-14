@@ -2290,7 +2290,7 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
 
         // Log any executable skills this card declares — these are dispatchable
         // by name via ToolRegistry::execute() at runtime.
-        let executable_skills = crate::agent_backend::tools::validate_card_skills(card);
+        let executable_skills = fermi::agent_backend::tools::validate_card_skills(card);
         if !executable_skills.is_empty() {
             println!(
                 "  Agent '{}' has {} executable skill(s): {:?}",
