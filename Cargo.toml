@@ -149,17 +149,19 @@ criterion = "0.5"
 name = "fermi"
 path = "src/main.rs"
 
-[[bin]]
-name = "agent-server"
-path = "src/bin/agent-server.rs"
+# agent-server archived — superseded by api-server
+# [[bin]]
+# name = "agent-server"
+# path = "src/bin/legacy/agent-server.rs"
 
 [[bin]]
 name = "agent-mcp-server"
 path = "src/bin/agent-mcp-server.rs"
 
-[[bin]]
-name = "agent-web-ui"
-path = "src/bin/agent-web-ui.rs"
+# agent-web-ui archived — superseded by current template system
+# [[bin]]
+# name = "agent-web-ui"
+# path = "src/bin/legacy/agent-web-ui.rs"
 
 [[bin]]
 name = "migrate-embedding-dimensions"
