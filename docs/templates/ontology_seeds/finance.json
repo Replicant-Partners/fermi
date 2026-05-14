@@ -1,0 +1,9 @@
+{
+  "template_id": "finance",
+  "name": "Financial Markets & Analysis",
+  "description": "Instruments, exchanges, sectors, indicators, and economic events",
+  "mermaid": "erDiagram\n    INSTRUMENT }o--|| EXCHANGE : traded_on\n    INSTRUMENT }o--|| SECTOR : belongs_to\n    SECTOR ||--o{ COMPANY : contains\n    COMPANY ||--o{ EARNINGS_REPORT : publishes\n    INDICATOR ||--o{ SIGNAL : generates\n    ECONOMIC_EVENT ||--o{ IMPACT : affects\n    IMPACT }o--|| SECTOR : targets\n",
+  "tags": ["finance", "markets", "trading", "economics"],
+  "entity_count": 7,
+  "suggested_type": "forecasting"
+}

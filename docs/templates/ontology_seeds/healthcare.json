@@ -1,0 +1,9 @@
+{
+  "template_id": "healthcare",
+  "name": "Healthcare & Life Sciences",
+  "description": "Conditions, treatments, clinical trials, drugs, and outcomes",
+  "mermaid": "erDiagram\n    CONDITION ||--o{ TREATMENT : treated_by\n    TREATMENT }o--|| DRUG : uses\n    DRUG }o--|| MANUFACTURER : produced_by\n    CLINICAL_TRIAL }o--|| DRUG : evaluates\n    CLINICAL_TRIAL ||--o{ OUTCOME : produces\n    PATIENT_COHORT ||--o{ CLINICAL_TRIAL : participates_in\n",
+  "tags": ["healthcare", "pharma", "clinical", "medical"],
+  "entity_count": 6,
+  "suggested_type": "research"
+}

@@ -1,0 +1,171 @@
+erDiagram
+    VULNERABILITY ||--o{ AFFECTED_PRODUCT : "affects"
+    VULNERABILITY ||--o{ MITIGATION : "has"
+    VULNERABILITY }o--o{ THREAT_ACTOR : "exploited_by"
+    VULNERABILITY ||--|| CVE : "identified_by"
+    VULNERABILITY }o--|| CWE : "categorized_as"
+
+    AFFECTED_PRODUCT ||--o{ VERSION : "has"
+    AFFECTED_PRODUCT }o--|| VENDOR : "developed_by"
+    AFFECTED_PRODUCT }o--o{ DEPENDENCY : "depends_on"
+
+    THREAT_ACTOR ||--o{ ATTACK_TECHNIQUE : "uses"
+    ATTACK_TECHNIQUE }o--|| TACTIC : "implements"
+    ATTACK_TECHNIQUE ||--o{ INDICATOR : "leaves"
+
+    MITIGATION }o--|| MITIGATION_TYPE : "classified_as"
+    MITIGATION }o--o{ CONTROL : "implemented_via"
+
+    RISK_ASSESSMENT ||--|| VULNERABILITY : "evaluates"
+    RISK_ASSESSMENT }o--|| SEVERITY_LEVEL : "rated_as"
+    RISK_ASSESSMENT ||--o{ EVIDENCE : "supported_by"
+
+    VULNERABILITY {
+        uuid id PK
+        string cve_id UK
+        string title
+        text description
+        float cvss_score
+        string cvss_vector
+        date published_date
+        date last_modified
+        float exploitability_score
+        float impact_score
+    }
+
+    CVE {
+        string cve_id PK
+        string state
+        string assigner
+        date date_published
+        date date_reserved
+    }
+
+    CWE {
+        int cwe_id PK
+        string name
+        string category
+        text description
+    }
+
+    AFFECTED_PRODUCT {
+        uuid id PK
+        string product_name
+        string vendor_name
+        string product_type
+        bool is_infrastructure
+        bool is_dependency
+    }
+
+    VERSION {
+        uuid id PK
+        string version_number
+        string version_type
+        bool is_vulnerable
+        bool has_patch
+        date patch_date
+    }
+
+    VENDOR {
+        uuid id PK
+        string vendor_name
+        string website
+        string contact_email
+        bool has_bug_bounty
+    }
+
+    DEPENDENCY {
+        uuid id PK
+        string package_name
+        string package_manager
+        string version_constraint
+        bool is_direct
+        int dependency_depth
+    }
+
+    THREAT_ACTOR {
+        uuid id PK
+        string actor_name
+        string actor_type
+        string sophistication
+        string motivation
+        text description
+    }
+
+    ATTACK_TECHNIQUE {
+        string technique_id PK
+        string technique_name
+        text description
+        string detection_difficulty
+        float prevalence
+    }
+
+    TACTIC {
+        string tactic_id PK
+        string tactic_name
+        text description
+        int attack_phase
+    }
+
+    INDICATOR {
+        uuid id PK
+        string indicator_type
+        string indicator_value
+        float confidence
+        date first_seen
+        date last_seen
+    }
+
+    MITIGATION {
+        uuid id PK
+        string mitigation_name
+        text description
+        float effectiveness
+        string implementation_cost
+        string deployment_time
+        date available_since
+    }
+
+    MITIGATION_TYPE {
+        int type_id PK
+        string type_name
+        string category
+    }
+
+    CONTROL {
+        uuid id PK
+        string control_name
+        string control_type
+        bool is_implemented
+        date implementation_date
+    }
+
+    RISK_ASSESSMENT {
+        uuid id PK
+        uuid vulnerability_id FK
+        float risk_score
+        string risk_level
+        float likelihood
+        float impact
+        float confidence
+        text justification
+        date assessed_at
+        string assessed_by
+    }
+
+    SEVERITY_LEVEL {
+        int level_id PK
+        string level_name
+        string level_description
+        float min_score
+        float max_score
+    }
+
+    EVIDENCE {
+        uuid id PK
+        string evidence_type
+        text evidence_content
+        string source
+        date collected_at
+        float reliability
+    }

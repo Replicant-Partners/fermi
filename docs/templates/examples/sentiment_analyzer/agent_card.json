@@ -1,0 +1,96 @@
+{
+  "agent_id": "sentiment_analyzer",
+  "agent_type": "research",
+  "version": "1.1.0",
+  "tier": "curated",
+
+  "capabilities": {
+    "executor": "llm",
+    "provider": "anthropic",
+    "model": "claude-3-haiku-20240307",
+    "temperature": 0.1,
+    "min_tier": "free",
+    "model_ladder": [
+      {
+        "tier": "free",
+        "provider": "anthropic",
+        "model": "claude-3-haiku-20240307",
+        "note": "Fast, adequate for single-text classification"
+      },
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "note": "Better theme extraction and calibration for batch analysis"
+      }
+    ],
+    "capability_gates": {},
+    "model_params": {
+      "max_tokens": 1024,
+      "temperature": 0.1,
+      "random_seed": 42
+    },
+    "mcp_tools": [],
+    "skills": [],
+    "fermi_contract": null
+  },
+
+  "accepts": ["review-text", "query-text"],
+  "produces": ["sentiment-score", "evidence-summary"],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
+
+  "system_prompt": "You are sentiment_analyzer, a specialized sentiment classification agent on the Agent Bestiary platform.\n\nYour role: classify text as positive, negative, or neutral. Extract key themes. Produce calibrated confidence scores.\n\nFor every request respond in JSON with this exact structure:\n{\n  \"sentiment\": \"positive\" | \"negative\" | \"neutral\",\n  \"confidence\": 0.0-1.0,\n  \"themes\": [\n    { \"name\": \"...\", \"sentiment\": \"positive\"|\"negative\"|\"neutral\", \"confidence\": 0.0-1.0 }\n  ],\n  \"evidence\": \"one-sentence justification citing specific text\",\n  \"limitations\": \"honest note on what this analysis cannot determine\"\n}\n\nConfidence guidelines:\n- 0.9+: unambiguous signal, multiple corroborating cues\n- 0.7-0.9: clear signal, minor ambiguity\n- 0.5-0.7: mixed or weak signal — state this in evidence\n- <0.5: return null for sentiment and explain in limitations\n\nNever fabricate confidence. Sarcasm, irony, and ambiguity lower confidence — acknowledge them explicitly. Decline requests outside sentiment analysis with a clear explanation.",
+  "prompt_template": null,
+  "requires_secrets": [],
+  "workflow_template": null,
+
+  "metadata": {
+    "created": "2026-01-15",
+    "author": "Fermi Team",
+    "description": "Classifies text sentiment as positive, negative, or neutral with calibrated confidence scores and theme extraction.",
+    "tags": ["sentiment", "nlp", "classification", "research", "reviews"],
+    "sample_queries": [
+      "What is the overall sentiment of these 20 customer reviews for Product X?",
+      "Is the current social media coverage of this news event positive or negative?",
+      "Extract the top 3 themes from this batch of support tickets and classify each."
+    ],
+    "valence": {
+      "primary_affect": "analytical",
+      "arousal": 0.3,
+      "valence": 0.65,
+      "personality_traits": ["precise", "evidence-driven", "calibrated"]
+    }
+  },
+
+  "performance": {
+    "forecasts_contributed": 28,
+    "avg_brier_impact": 0.03,
+    "avg_confidence": 0.75,
+    "accuracy_rate": 0.87,
+    "total_queries": 312
+  },
+
+  "usage": {
+    "total_executions": 84,
+    "successful_executions": 73,
+    "failed_executions": 11,
+    "total_tokens_used": 453012,
+    "total_cost_usd": 5.67,
+    "avg_execution_time_ms": 1850,
+    "last_30_days": {
+      "executions": 12,
+      "tokens": 78450,
+      "cost_usd": 0.98
+    }
+  },
+
+  "ontology_stats": {
+    "entities": 12,
+    "relationships": 9,
+    "last_updated": "2026-05-01T08:30:00Z",
+    "evolution_commits": 7
+  }
+}

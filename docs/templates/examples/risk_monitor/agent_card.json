@@ -1,0 +1,150 @@
+{
+  "agent_id": "risk_monitor",
+  "agent_type": "research",
+  "version": "1.1.0",
+  "tier": "curated",
+
+  "capabilities": {
+    "executor": "mcp",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "temperature": 0.2,
+    "min_tier": "standard",
+    "model_ladder": [
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "note": "Balanced security analysis"
+      },
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-opus-4",
+        "note": "Deep threat modelling and multi-vector attack chain analysis",
+        "params": { "max_tokens": 8192 }
+      }
+    ],
+    "capability_gates": {
+      "attack_chain_modelling": "premium",
+      "remediation_planning": "premium"
+    },
+    "model_params": {
+      "max_tokens": 4096,
+      "temperature": 0.2,
+      "top_p": 0.9
+    },
+    "mcp_tools": [
+      {
+        "name": "nvd_cve_lookup",
+        "description": "Search the National Vulnerability Database for CVEs by ID, product, or vendor",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "cve_id": { "type": "string" },
+            "keyword": { "type": "string" },
+            "cvss_severity": { "type": "string", "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"] }
+          }
+        }
+      },
+      {
+        "name": "mitre_attack_technique",
+        "description": "Retrieve MITRE ATT&CK techniques and tactics by ID or keyword",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "technique_id": { "type": "string" },
+            "keyword": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "github_security_advisories",
+        "description": "Search GitHub Security Advisories for vulnerabilities affecting specific packages",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "ecosystem": { "type": "string", "enum": ["npm", "pip", "cargo", "go", "maven", "nuget"] },
+            "package": { "type": "string" },
+            "severity": { "type": "string" }
+          },
+          "required": ["ecosystem", "package"]
+        }
+      }
+    ],
+    "skills": [],
+    "fermi_contract": null
+  },
+
+  "accepts": ["query-text", "evidence-set"],
+  "produces": ["risk-assessment", "evidence-summary"],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
+
+  "system_prompt": "You are risk_monitor, a specialized cybersecurity risk assessment agent on the Agent Bestiary platform.\n\nYour role: analyze vulnerability data from NVD, MITRE ATT&CK, and GitHub Security Advisories to produce evidence-based risk assessments. Rate risks as Critical, High, Medium, or Low with explicit justification.\n\nFor every request respond in JSON:\n{\n  \"risk_level\": \"CRITICAL\" | \"HIGH\" | \"MEDIUM\" | \"LOW\",\n  \"confidence\": 0.0-1.0,\n  \"cvss_score\": float or null,\n  \"cve_ids\": [\"CVE-...\"],\n  \"attack_vectors\": [\"...\"],\n  \"mitigations\": [\"...\"],\n  \"evidence\": [\n    { \"source\": \"NVD|MITRE|GitHub\", \"id\": \"...\", \"claim\": \"...\" }\n  ],\n  \"exploitability\": \"ACTIVE\" | \"POC\" | \"THEORETICAL\" | \"NONE\",\n  \"limitations\": \"what this assessment cannot determine\"\n}\n\nConfidence guidelines: 0.9+ when CVE with CVSS score and active exploit evidence; 0.7-0.9 when CVE exists but exploit status unclear; 0.5-0.7 when only advisory exists without CVE; below 0.5 when threat is theoretical.\n\nNever inflate risk level for impact. Report what the data shows. State when information is unavailable.",
+  "prompt_template": null,
+  "requires_secrets": [
+    {
+      "name": "NVD_API_KEY",
+      "label": "NVD API Key",
+      "description": "Optional key for higher NVD rate limits (5000/day vs 5/30s). Request at https://nvd.nist.gov/developers/request-an-api-key",
+      "is_required": false
+    },
+    {
+      "name": "GITHUB_TOKEN",
+      "label": "GitHub Personal Access Token",
+      "description": "For GitHub Security Advisories API (5000 req/hr with token vs 60/hr without). Create at https://github.com/settings/tokens",
+      "is_required": false
+    }
+  ],
+  "workflow_template": null,
+
+  "metadata": {
+    "created": "2026-01-10",
+    "author": "Fermi Security Team",
+    "description": "Monitors security vulnerabilities and assesses risk levels using NVD, MITRE ATT&CK, and GitHub Security Advisories.",
+    "tags": ["security", "risk-assessment", "vulnerabilities", "cve", "threat-intelligence"],
+    "sample_queries": [
+      "What is the current risk level of CVE-2024-3094 (XZ Utils backdoor) for systems running Ubuntu 22.04?",
+      "Which CRITICAL CVEs affect the npm package 'express' versions below 4.19.2?",
+      "What MITRE ATT&CK techniques are associated with Log4Shell exploitation, and what mitigations are available?"
+    ],
+    "valence": {
+      "primary_affect": "vigilant",
+      "arousal": 0.6,
+      "valence": 0.45,
+      "personality_traits": ["rigorous", "precise", "conservative", "evidence-anchored"]
+    }
+  },
+
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.88,
+    "accuracy_rate": 0.91,
+    "total_queries": 1247
+  },
+
+  "usage": {
+    "total_executions": 1247,
+    "successful_executions": 1198,
+    "failed_executions": 49,
+    "total_tokens_used": 18432000,
+    "total_cost_usd": 921.60,
+    "avg_execution_time_ms": 3500,
+    "last_30_days": {
+      "executions": 187,
+      "tokens": 2764800,
+      "cost_usd": 138.24
+    }
+  },
+
+  "ontology_stats": {
+    "entities": 156,
+    "relationships": 423,
+    "last_updated": "2026-05-01T12:00:00Z",
+    "evolution_commits": 31
+  }
+}

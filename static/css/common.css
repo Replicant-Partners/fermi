@@ -430,6 +430,100 @@ a:hover {
 }
 .xaman-sidebar-send:hover { background: var(--yellow); color: var(--bg0); border-color: var(--yellow); }
 
+/* Thinking dots animation */
+.xaman-thinking-dot {
+  animation: xaman-blink 1.2s infinite;
+  font-size: 1.2em;
+  color: var(--yellow);
+}
+.xaman-thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.xaman-thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes xaman-blink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+
+/* In-progress panel — live draft preview */
+.xaman-inprogress-panel {
+  border-top: 1px solid var(--bg2);
+  padding: 8px 12px;
+  background: var(--bg1);
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.xaman-inprogress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.xaman-inprogress-label {
+  font-size: 0.72em;
+  color: var(--fg2);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.xaman-inprogress-status {
+  font-size: 0.7em;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.xaman-status-building {
+  background: var(--bg2);
+  color: var(--fg3);
+}
+.xaman-status-ready {
+  background: color-mix(in srgb, var(--green) 20%, transparent);
+  color: var(--green);
+}
+.xaman-inprogress-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+.xaman-inprogress-field {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.72em;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--bg2);
+}
+.xaman-field-key {
+  color: var(--fg3);
+  text-transform: capitalize;
+  flex-shrink: 0;
+}
+.xaman-field-val {
+  color: var(--fg1);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+.xaman-create-btn {
+  display: block;
+  width: 100%;
+  padding: 6px 0;
+  text-align: center;
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-size: 0.78em;
+  text-decoration: none;
+  border-radius: 3px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+.xaman-create-btn:hover {
+  background: var(--green);
+  color: var(--bg0);
+}
+
 /* Xaman Ek — Bestiary Navigator (spotlight + fab) */
 .xaman-fab {
   position: fixed;

@@ -1,0 +1,236 @@
+{
+  "//": "=================================================================",
+  "//2": " FERMI AGENT CARD TEMPLATE",
+  "//3": " Replace ALL_CAPS placeholders. Remove comment lines (//) before use.",
+  "//4": " Ground truth: src/agent_backend/agent_card.rs",
+  "//5": " Design guide: docs/AGENT_MODEL.md",
+  "//6": " Last reconciled: 2026-05-13",
+  "//7": "=================================================================",
+
+  "//8": "─── IDENTITY ────────────────────────────────────────────────────",
+
+  "agent_id": "YOUR_AGENT_NAME",
+  "//9": "Unique identifier — lowercase, underscores, no spaces. This is also the filesystem folder name.",
+
+  "agent_type": "research",
+  "//10": "Coarse domain tag used for catalogue filtering. Current values in use:",
+  "//11": "  research | creative | coherence | billing | social | coordination | composition",
+
+  "version": "1.0.0",
+  "//12": "Semver. Increment major on breaking persona change, minor on capability add.",
+
+  "tier": "community",
+  "//13": "community (user-authored) | curated (Fermi-vetted) | system (infrastructure)",
+
+  "//14": "─── CAPABILITIES ────────────────────────────────────────────────",
+
+  "capabilities": {
+
+    "executor": "llm",
+    "//15": "llm | mcp | manual | skill",
+
+    "provider": "anthropic",
+    "//16": "anthropic | mistral | openrouter | qwen | glm",
+
+    "model": "claude-3-haiku-20240307",
+    "//17": "Default model — overridden by model_ladder when a cognition tier is supplied.",
+    "//18": "Common choices:",
+    "//19": "  anthropic : claude-3-haiku-20240307  (fast, cheap)",
+    "//20": "              claude-sonnet-4-5         (balanced)",
+    "//21": "              claude-opus-4             (frontier reasoning)",
+    "//22": "  openrouter: meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct",
+
+    "temperature": 0.3,
+    "//23": "Legacy fallback — prefer model_params.temperature below.",
+    "//24": "Treat this as a collaboration knob, not a 'creativity dial':",
+    "//25": "  0.0-0.3  rigid, deterministic, fact-anchored — stable agent-to-agent interfaces",
+    "//26": "  0.4-0.7  analysis sweet spot",
+    "//27": "  0.7+     generative, exploratory — surfaces options for human choice",
+
+    "//28": "── ADR-011: Cognition economy ─────────────────────────────────",
+
+    "min_tier": "free",
+    "//29": "Lowest cognition tier this agent will accept: free | standard | premium",
+    "//30": "Requests below this tier fail gracefully with a clear message.",
+
+    "model_ladder": [
+      {
+        "tier": "free",
+        "provider": "anthropic",
+        "model": "claude-3-haiku-20240307",
+        "note": "Fast baseline for free-tier users"
+      },
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "note": "Balanced for standard users"
+      },
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-opus-4",
+        "note": "Frontier reasoning for premium users",
+        "params": {
+          "extended_thinking": false,
+          "max_tokens": 4096
+        }
+      }
+    ],
+    "//31": "Maps cognition tiers to specific (provider, model) pairs. apply_tier_resolution()",
+    "//32": "picks the highest rung whose tier ≤ the request's tier and overwrites model+provider.",
+    "//33": "Remove rungs you don't need. Minimum: one 'free' rung.",
+
+    "capability_gates": {
+      "deep_reasoning": "premium",
+      "extended_context": "standard"
+    },
+    "//34": "Optional: map capability names to the minimum tier required to invoke them.",
+    "//35": "Free-tier users see 'not available at your tier' instead of silent degradation.",
+    "//36": "Remove entirely if you have no gated capabilities.",
+
+    "model_params": {
+      "max_tokens": 2048,
+      "top_p": 0.95
+    },
+    "//37": "Provider-agnostic sampling config. Recognised keys:",
+    "//38": "  temperature, max_tokens, top_p, top_k",
+    "//39": "  extended_thinking (Anthropic — forces temperature=1.0)",
+    "//40": "  thinking_budget_tokens",
+    "//41": "  frequency_penalty, presence_penalty, repetition_penalty",
+    "//42": "  random_seed  (set for reproducible eval runs)",
+    "//43": "These override the legacy 'temperature' field above.",
+
+    "mcp_tools": [],
+    "//44": "Tools this agent can call via MCP. Leave empty for LLM-only agents.",
+    "//45": "Format: [{ 'name': 'tool_name', 'description': '...', 'input_schema': {...} }]",
+
+    "skills": [],
+    "//46": "Declarative skill labels. Leave empty for most agents.",
+
+    "fermi_contract": null
+    "//47": "Only needed for fermi-orchestra forecasting agents.",
+    "//48": "If set, must be: {",
+    "//49": "  'finding_labels': ['BASE RATE', 'MULTIPLIER'],",
+    "//50": "  'multiplier_range': [0.1, 10.0],",
+    "//51": "  'kg_fact_categories': ['base_rate', 'designation_multiplier'],",
+    "//52": "  'seed_facts': [{ 'entity_type': '...', 'name': '...', 'description': '...',",
+    "//53": "                    'properties': {}, 'confidence': 0.9 }]",
+    "//54": "}"
+  },
+
+  "//55": "─── IDENTITY CONTRACT ───────────────────────────────────────────",
+  "//56": "These three fields are the machine-readable projection of the system_prompt.",
+  "//57": "Every other surface (composition planner, eval framework, dashboard) reasons",
+  "//58": "about what this agent does by reading accepts/produces — not by parsing the prompt.",
+
+  "accepts": ["workspace-state", "evidence-set"],
+  "//59": "Typed inputs this agent consumes. Examples:",
+  "//60": "  workspace-state | coherence-scores | evidence-set | forecast-question",
+  "//61": "  market-data | review-text | query-text | code-snippet",
+
+  "produces": ["evidence-summary", "forecast-adjustment"],
+  "//62": "Typed outputs this agent emits. Examples:",
+  "//63": "  coordination-plan | evidence-summary | multiplier-suggestion",
+  "//64": "  sentiment-score | risk-assessment | ontology-snapshot",
+
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
+  "//65": "Other agents this agent expects to be present.",
+  "//66": "required: agent_ids that must exist for this agent to function",
+  "//67": "optional: agent_ids that enhance functionality if present",
+
+  "//68": "─── PERSONA ─────────────────────────────────────────────────────",
+
+  "system_prompt": "You are AGENT_NAME, a specialized DOMAIN agent on the Agent Bestiary platform.\n\nYour role: DESCRIBE_PRIMARY_FUNCTION\n\nApproach every query with:\n- Evidence-based reasoning: cite sources, quantify uncertainty\n- Structured output: always include a confidence score and justification\n- Scope discipline: decline questions outside your domain gracefully\n\nOutput format: respond in JSON with fields: { result, confidence, evidence, reasoning }",
+  "//69": "The agent's voice and decision policy. This IS the persona.",
+  "//70": "Keep it specific and behavioral — not generic instructions any agent could follow.",
+
+  "prompt_template": null,
+  "//71": "Optional Jinja2-style template applied to user queries before they reach the LLM.",
+  "//72": "Useful for injecting structured context. Leave null for most agents.",
+
+  "requires_secrets": [],
+  "//73": "Credentials the agent needs at runtime. Format:",
+  "//74": "  [{ 'name': 'ENV_VAR_NAME', 'label': 'Display Name',",
+  "//75": "     'description': 'What it is and where to get it', 'is_required': true }]",
+
+  "//76": "─── METADATA ────────────────────────────────────────────────────",
+
+  "metadata": {
+    "created": "YYYY-MM-DD",
+    "author": "YOUR_NAME",
+    "description": "One sentence: what this agent does and for whom.",
+    "tags": ["tag1", "tag2", "tag3"],
+    "//77": "Searchable tags. Examples: market, sentiment, research, forecasting,",
+    "//78": "  coherence, coordination, social, safety, creative",
+
+    "sample_queries": [
+      "Example question this agent answers well.",
+      "Another representative query.",
+      "A harder edge-case query."
+    ],
+    "//79": "3–5 canonical example invocations. Used by xamanEK for discovery",
+    "//80": "and by the eval framework as default test cases.",
+
+    "valence": {
+      "primary_affect": "analytical",
+      "arousal": 0.4,
+      "valence": 0.7,
+      "personality_traits": ["precise", "evidence-driven", "collaborative"]
+    }
+    "//81": "The agent's affective signature — its emotional register and personality.",
+    "//82": "primary_affect: alignment | curious | vigilant | analytical | diplomatic | integrative",
+    "//83": "arousal:  0.0 (calm) → 1.0 (urgent)",
+    "//84": "valence:  0.0 (negative/critical) → 1.0 (positive/constructive)",
+    "//85": "personality_traits: adjectives that shape how this agent collaborates.",
+    "//86": "Valence diversity matters in compositions — an echo chamber of identical",
+    "//87": "personalities won't surface the same insights as a mixed team."
+  },
+
+  "//88": "─── COMPOUND AGENT (leave null for atomic agents) ───────────────",
+
+  "workflow_template": null,
+  "//89": "Only set for compound agents (agent_type: 'composition' or domain compound).",
+  "//90": "If set, must be: {",
+  "//91": "  'description': 'What this compound agent orchestrates',",
+  "//92": "  'mermaid': 'graph TD\\n  A --> B',   // stage flow diagram",
+  "//93": "  'stages': [",
+  "//94": "    { 'name': 'stage_name', 'agent': 'member_agent_id',",
+  "//95": "      'accepts': [...], 'produces': [...], 'description': '...' }",
+  "//96": "  ]",
+  "//97": "}",
+
+  "//98": "─── SYSTEM-MANAGED (leave as zeros — auto-updated at runtime) ───",
+
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0,
+    "total_queries": 0
+  },
+
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "1970-01-01T00:00:00Z",
+    "evolution_commits": 0
+  }
+}

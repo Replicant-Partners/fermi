@@ -1,0 +1,9 @@
+{
+  "template_id": "technology",
+  "name": "Technology & Software Landscape",
+  "description": "Technologies, frameworks, vendors, vulnerabilities, and adoption trends",
+  "mermaid": "erDiagram\n    TECHNOLOGY ||--o{ FRAMEWORK : implements\n    VENDOR ||--o{ PRODUCT : develops\n    PRODUCT }o--|| TECHNOLOGY : uses\n    VULNERABILITY }o--|| PRODUCT : affects\n    ADOPTION_TREND }o--|| TECHNOLOGY : tracks\n    TECHNOLOGY ||--o{ INTEGRATION : connects_to\n",
+  "tags": ["technology", "software", "cybersecurity", "trends"],
+  "entity_count": 6,
+  "suggested_type": "research"
+}

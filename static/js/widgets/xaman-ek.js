@@ -269,7 +269,9 @@ const XamanEk = {
           <div class="xaman-sidebar-message-content">${this._esc(message)}</div>
         </div>
         <div class="xaman-sidebar-message xaman-sidebar-message--assistant" id="xaman-thinking">
-          <div class="xaman-sidebar-message-content" style="color:var(--fg3)">Thinking...</div>
+          <div class="xaman-sidebar-message-content" style="color:var(--fg3)">
+            <span class="xaman-thinking-dot">·</span><span class="xaman-thinking-dot">·</span><span class="xaman-thinking-dot">·</span>
+          </div>
         </div>`;
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
@@ -282,6 +284,7 @@ const XamanEk = {
         body: JSON.stringify({
           message,
           page_context: ctx.description,
+          in_progress: this._activeSession.in_progress || null,
         }),
       });
 
@@ -290,12 +293,18 @@ const XamanEk = {
 
       if (res.ok) {
         const data = await res.json();
-        // Update active session title if auto-named
+
+        // Update active session state
         if (data.title && !this._activeSession.title) {
           this._activeSession.title = data.title;
           const titleEl = document.getElementById("xaman-sidebar-chat-title");
           if (titleEl) titleEl.textContent = data.title;
         }
+        if (data.in_progress) {
+          this._activeSession.in_progress = data.in_progress;
+          this._activeSession.session_type = data.session_type;
+        }
+
         if (messagesEl) {
           messagesEl.innerHTML += `
             <div class="xaman-sidebar-message xaman-sidebar-message--assistant">
@@ -303,15 +312,16 @@ const XamanEk = {
             </div>`;
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
-        // Refresh session list in background
+
+        // Render in_progress preview panel
+        this._renderInProgressPanel(data.in_progress, data.session_type, data.ready_to_create);
+
         this._loadSessions();
       } else {
         if (messagesEl) {
           messagesEl.innerHTML += `
             <div class="xaman-sidebar-message xaman-sidebar-message--assistant">
-              <div class="xaman-sidebar-message-content" style="color:var(--red)">
-                Something went wrong. Try again.
-              </div>
+              <div class="xaman-sidebar-message-content" style="color:var(--red)">Something went wrong. Try again.</div>
             </div>`;
         }
       }
@@ -324,6 +334,80 @@ const XamanEk = {
         </div>`;
       }
     }
+  },
+
+  // ── In-progress preview panel ──────────────────────────────────────────────
+  _renderInProgressPanel(inProgress, sessionType, readyToCreate) {
+    // Find or create the preview panel below the chat
+    let panel = document.getElementById("xaman-inprogress-panel");
+    if (!panel) {
+      const chat = document.getElementById("xaman-sidebar-chat");
+      if (!chat) return;
+      panel = document.createElement("div");
+      panel.id = "xaman-inprogress-panel";
+      panel.className = "xaman-inprogress-panel";
+      // Insert before the input row
+      const inputRow = chat.querySelector(".xaman-sidebar-input-row");
+      if (inputRow) chat.insertBefore(panel, inputRow);
+      else chat.appendChild(panel);
+    }
+
+    if (!inProgress || Object.keys(inProgress).length === 0) {
+      panel.innerHTML = "";
+      panel.style.display = "none";
+      return;
+    }
+
+    panel.style.display = "";
+    const status = inProgress.status || "in_progress";
+    const isReady = readyToCreate || status === "ready_to_create";
+
+    let html = `<div class="xaman-inprogress-header">
+      <span class="xaman-inprogress-label">
+        ${sessionType === "agent_design" ? "🃏 Agent Draft" : sessionType === "composition_design" ? "🧩 Composition Plan" : "📝 Draft"}
+      </span>
+      <span class="xaman-inprogress-status ${isReady ? "xaman-status-ready" : "xaman-status-building"}">
+        ${isReady ? "✓ Ready" : "Building..."}
+      </span>
+    </div>`;
+
+    // Show filled fields as chips
+    const skip = new Set(["status"]);
+    const fields = Object.entries(inProgress).filter(([k]) => !skip.has(k));
+
+    if (fields.length > 0) {
+      html += `<div class="xaman-inprogress-fields">`;
+      for (const [key, val] of fields) {
+        const display = Array.isArray(val)
+          ? `${val.length} items`
+          : typeof val === "object" && val !== null
+          ? Object.keys(val).length > 0 ? "set" : "—"
+          : String(val).slice(0, 40);
+        html += `<div class="xaman-inprogress-field">
+          <span class="xaman-field-key">${this._esc(key.replace(/_/g, " "))}</span>
+          <span class="xaman-field-val">${this._esc(display)}</span>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
+    // Create action when ready
+    if (isReady) {
+      if (sessionType === "agent_design") {
+        const agentId = inProgress.agent_id || "";
+        html += `<a href="/agents/new?prefill=${encodeURIComponent(JSON.stringify(inProgress))}"
+          class="xaman-create-btn" target="_blank">
+          Create agent →
+        </a>`;
+      } else if (sessionType === "composition_design") {
+        html += `<a href="/dashboard?newworkspace=1&prefill=${encodeURIComponent(JSON.stringify(inProgress))}"
+          class="xaman-create-btn" target="_blank">
+          Create composition →
+        </a>`;
+      }
+    }
+
+    panel.innerHTML = html;
   },
 
   _sidebarKeydown(e) {

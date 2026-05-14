@@ -153,9 +153,9 @@ pub async fn xaman_session_message_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
 
-    // Verify session belongs to user
+    // Load full session state
     let row = sqlx::query(
-        "SELECT messages, title FROM xaman_sessions
+        "SELECT messages, title, session_type, in_progress, page_context FROM xaman_sessions
          WHERE session_id = $1 AND user_id = $2 AND status = 'active'",
     )
     .bind(session_id)
@@ -172,25 +172,48 @@ pub async fn xaman_session_message_handler(
         .cloned()
         .unwrap_or_default();
     let existing_title: Option<String> = row.try_get("title").unwrap_or(None);
+    let session_type: String = row.try_get("session_type").unwrap_or_else(|_| "free".into());
+    let mut in_progress: Value = row.try_get::<Value,_>("in_progress").unwrap_or(json!({}));
+    let stored_page_ctx: Option<String> = row.try_get("page_context").unwrap_or(None);
 
-    // Build context-aware query for xaman_ek agent
-    let page_ctx = body.page_context.as_deref().unwrap_or("");
-    let context_prefix = if !page_ctx.is_empty() {
-        format!("[Page context: {}]\n\n", page_ctx)
-    } else {
-        String::new()
-    };
+    // Merge any client-supplied in_progress patch first
+    if let Some(ref patch) = body.in_progress {
+        merge_json(&mut in_progress, patch);
+    }
 
-    let full_query = format!("{}{}", context_prefix, body.message);
+    // Build the session-context prefix injected into the query so xamanEK
+    // knows it is in a session and what has been built so far.
+    let page_ctx = body.page_context.as_deref()
+        .or(stored_page_ctx.as_deref())
+        .unwrap_or("");
+
+    let in_progress_str = serde_json::to_string_pretty(&in_progress)
+        .unwrap_or_else(|_| "{}".to_string());
+
+    let session_prefix = format!(
+        "[SESSION type={} id={}]\n[IN_PROGRESS]\n{}\n[/IN_PROGRESS]\n[PAGE] {} [/PAGE]\n\n",
+        session_type,
+        session_id,
+        in_progress_str,
+        page_ctx,
+    );
+
+    let full_query = format!("{}{}", session_prefix, body.message);
 
     // Call xaman_ek agent
-    let agent_response = call_xaman_ek(&state, &user_id, &full_query).await;
+    let raw_response = call_xaman_ek(&state, &user_id, &full_query)
+        .await
+        .unwrap_or_else(|e| format!("I encountered an error: {}. Please try again.", e));
 
-    let response_text = agent_response.unwrap_or_else(|e| {
-        format!("I encountered an error: {}. Please try again.", e)
-    });
+    // Parse and strip any __UPDATE__ block from the response
+    let (display_response, update_patch) = extract_update_block(&raw_response);
 
-    // Append turn to messages (keep last 20)
+    // Apply update patch to in_progress if present
+    if let Some(ref patch) = update_patch {
+        merge_json(&mut in_progress, patch);
+    }
+
+    // Append turn to messages (keep last 40 = 20 turns)
     let now = Utc::now();
     messages.push(json!({
         "role": "user",
@@ -199,26 +222,27 @@ pub async fn xaman_session_message_handler(
     }));
     messages.push(json!({
         "role": "assistant",
-        "content": response_text.clone(),
+        "content": display_response.clone(),
         "timestamp": now.to_rfc3339(),
     }));
-    if messages.len() > 40 { // 20 turns × 2 messages
+    if messages.len() > 40 {
         messages = messages.into_iter().rev().take(40).rev().collect();
     }
 
     // Auto-title from first user message if not yet set
     let new_title = if existing_title.is_none() {
-        Some(
-            body.message
-                .chars()
-                .take(60)
-                .collect::<String>()
-        )
+        Some(body.message.chars().take(60).collect::<String>())
     } else {
         None
     };
 
-    // Update session
+    // Check if session is ready to create (status field in in_progress)
+    let ready_to_create = in_progress.get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s == "ready_to_create")
+        .unwrap_or(false);
+
+    // Persist
     let messages_json = Value::Array(messages);
     sqlx::query(
         "UPDATE xaman_sessions SET
@@ -226,14 +250,14 @@ pub async fn xaman_session_message_handler(
             last_active_at = $2,
             title = COALESCE($3, title),
             page_context = COALESCE($4, page_context),
-            in_progress = COALESCE($5, in_progress)
+            in_progress = $5
          WHERE session_id = $6",
     )
     .bind(&messages_json)
     .bind(now)
     .bind(&new_title)
     .bind(&body.page_context)
-    .bind(body.in_progress.as_ref())
+    .bind(&in_progress)
     .bind(session_id)
     .execute(&state.db)
     .await
@@ -241,8 +265,11 @@ pub async fn xaman_session_message_handler(
 
     Ok(Json(json!({
         "session_id": session_id,
-        "response": response_text,
+        "response": display_response,
         "title": new_title.or(existing_title),
+        "in_progress": in_progress,
+        "ready_to_create": ready_to_create,
+        "session_type": session_type,
     })))
 }
 
@@ -284,6 +311,53 @@ pub async fn abandon_xaman_session_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({ "status": "abandoned" })))
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Extract and parse a `__UPDATE__ { ... } __END_UPDATE__` block from xamanEK's
+/// response. Returns (display_text, Option<patch_json>).
+/// The update block is stripped from the display text so it never reaches the UI.
+fn extract_update_block(raw: &str) -> (String, Option<Value>) {
+    const START: &str = "__UPDATE__";
+    const END: &str = "__END_UPDATE__";
+
+    if let (Some(start_idx), Some(end_idx)) = (raw.find(START), raw.find(END)) {
+        if start_idx < end_idx {
+            let json_str = raw[start_idx + START.len()..end_idx].trim();
+            let patch: Option<Value> = serde_json::from_str(json_str).ok();
+
+            // Build display text with the block removed and whitespace cleaned up
+            let before = raw[..start_idx].trim_end();
+            let after = raw[end_idx + END.len()..].trim_start();
+            let display = if after.is_empty() {
+                before.to_string()
+            } else {
+                format!("{}\n\n{}", before, after)
+            };
+            return (display, patch);
+        }
+    }
+    (raw.to_string(), None)
+}
+
+/// Shallow-merge `patch` into `target`. Patch keys overwrite target keys.
+/// Handles dot-notation keys like "nested.field" by recursing one level.
+fn merge_json(target: &mut Value, patch: &Value) {
+    if let (Some(target_obj), Some(patch_obj)) = (target.as_object_mut(), patch.as_object()) {
+        for (key, val) in patch_obj {
+            if key.contains('.') {
+                // dot-notation: split on first dot
+                let mut parts = key.splitn(2, '.');
+                let outer = parts.next().unwrap();
+                let inner = parts.next().unwrap();
+                let nested = target_obj.entry(outer).or_insert(json!({}));
+                merge_json(nested, &json!({ inner: val }));
+            } else {
+                target_obj.insert(key.clone(), val.clone());
+            }
+        }
+    }
 }
 
 // ─── Internal: call xaman_ek agent ───────────────────────────────────────────

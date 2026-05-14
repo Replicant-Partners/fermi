@@ -1,0 +1,9 @@
+{
+  "template_id": "ecommerce",
+  "name": "E-Commerce & Product Analysis",
+  "description": "Products, reviews, customers, orders, and market categories",
+  "mermaid": "erDiagram\n    PRODUCT ||--o{ REVIEW : has\n    PRODUCT }o--|| CATEGORY : belongs_to\n    CUSTOMER ||--o{ ORDER : places\n    ORDER ||--|{ ORDER_ITEM : contains\n    ORDER_ITEM }o--|| PRODUCT : references\n    CUSTOMER ||--o{ REVIEW : writes\n",
+  "tags": ["ecommerce", "retail", "product", "market"],
+  "entity_count": 6,
+  "suggested_type": "research"
+}
