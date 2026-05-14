@@ -30,6 +30,7 @@ pub mod notebooks;
 pub mod observations;
 pub mod composition;
 pub mod observatory;
+pub mod xaman;
 pub mod ontology;
 pub mod pages;
 pub mod polymarket;

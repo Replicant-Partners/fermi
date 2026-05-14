@@ -499,6 +499,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/113_composition_as_first_class.sql",
         // Agent valence column on agents table (migration 114)
         "migrations/114_agent_valence_column.sql",
+        // Xaman Ek working sessions (migration 115)
+        "migrations/115_xaman_sessions.sql",
     ];
 
     for file in &migration_files {
@@ -1225,6 +1227,13 @@ async fn main() {
             "/api/workspaces/:workspace_id/agents/:agent_id",
             delete(handlers::workspace::remove_workspace_agent_handler),
         )
+        // Xaman Ek session API
+        .route("/api/xaman/sessions", get(handlers::xaman::list_xaman_sessions_handler))
+        .route("/api/xaman/sessions", post(handlers::xaman::create_xaman_session_handler))
+        .route("/api/xaman/sessions/:id", get(handlers::xaman::get_xaman_session_handler))
+        .route("/api/xaman/sessions/:id/message", post(handlers::xaman::xaman_session_message_handler))
+        .route("/api/xaman/sessions/:id/complete", post(handlers::xaman::complete_xaman_session_handler))
+        .route("/api/xaman/sessions/:id", delete(handlers::xaman::abandon_xaman_session_handler))
         // Composition version lifecycle (tune-team RSI)
         .route(
             "/api/workspaces/:workspace_id/composition/versions",
