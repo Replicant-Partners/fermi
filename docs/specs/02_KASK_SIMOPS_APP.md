@@ -1,8 +1,8 @@
 # Doc 2 — SimOps as the first App
 
 **Audience:** kask development (you and the kask-side agent) and whoever ships SimOps v2.
-**Status:** spec — ready to implement after Doc 1 lands on ABW.
-**Depends on:** Doc 1 (App primitive on ABW).
+**Status:** ✅ **Phase 1 shipped** — kask commit `ce6daa9`. Phase 2–4 pending.
+**Depends on:** ~~Doc 1 (App primitive on ABW)~~ — Doc 1 is live (`3832d65`).
 **Goal:** ship SimOps v2 as the first concrete instance of the App primitive — a four-mode workspace (Intake / Compose / Scenarios / Experiments) for designing process pipelines, persistent across sessions, with real forecasting and A/B comparison.
 
 ---

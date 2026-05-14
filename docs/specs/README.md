@@ -1,30 +1,40 @@
 # SimOps v2 — Spec Pack
 
-Three specs that together describe the SimOps v2 build and the platform primitive it depends on. Read in order.
+> **Status: Phase 1 shipped.** Both sides are live.
+> - Doc 1 (ABW App primitive): committed `3832d65` + `d98b82a` on fermi/main
+> - Doc 2 (kask SimOps v2): committed `ce6daa9` on kask/main
+> - App auto-seeded at startup — no manual registration needed
+>
+> Remaining work: Phase 2 (Scenarios), Phase 3 (Experiments), Phase 4 (Sharing).
 
-| # | File | Audience | Read first if you are… |
-|---|---|---|---|
-| 1 | [`01_APP_PRIMITIVE.md`](./01_APP_PRIMITIVE.md) | ABW codebase (`/home/ilabra/fermi`) — the engineer who ships the platform PR | working on ABW backend |
-| 2 | [`02_KASK_SIMOPS_APP.md`](./02_KASK_SIMOPS_APP.md) | kask codebase (`/home/ilabra/kask`) — the engineer who ships SimOps v2 | working on the kask UI |
-| 3 | [`03_BUILDING_NEW_APPS.md`](./03_BUILDING_NEW_APPS.md) | future app builders (kask or external) | designing a new app on ABW |
+Three specs that together describe the SimOps v2 build and the platform primitive it depends on.
 
-## Dependency order
+| # | File | Status |
+|---|---|---|
+| 1 | [`01_APP_PRIMITIVE.md`](./01_APP_PRIMITIVE.md) | ✅ **Shipped** — `/api/apps`, `/api/simops/cascade`, `apps/kask_simops.json` auto-seeded |
+| 2 | [`02_KASK_SIMOPS_APP.md`](./02_KASK_SIMOPS_APP.md) | ✅ **Phase 1 shipped** — `kask-sim-client.js`, wizard + composer migrated, shell live |
+| 3 | [`03_BUILDING_NEW_APPS.md`](./03_BUILDING_NEW_APPS.md) | 📖 Reference — pattern documented from SimOps |
+
+## What's live
 
 ```
-Doc 1 (ABW platform PR)
-   ↓ unlocks
-Doc 2 (kask SimOps build)
-   ↓ documents the pattern as
-Doc 3 (recipe for future apps)
+POST /api/apps/kask_simops/workspaces  →  provisions workspace (250cr, 3 agents, 4 files)
+GET  /api/apps/kask_simops/workspaces  →  list caller's SimOps workspaces
+POST /api/simops/cascade               →  deterministic cascade, no LLM, <1ms
+kask.bio/projects/simops?workspace=X  →  four-mode shell (Intake / Compose / — / —)
 ```
 
-Doc 1 ships first. Doc 2 cannot start until Doc 1 is live. Doc 3 is reference material, can be written/read anytime.
+## What's still to build (Phase 2–4)
 
-## Source material this pack is built on
+- Scenarios mode — side-by-side parameter variants, git diff view
+- Experiments mode — FPL engine, distribution comparison, Decision recorder
+- Sharing — `POST /api/shares` with `object_type: "workspace"`
+- `sidestream_miner`, `comparator`, `sensor_advisor` agents
 
-- [`../ABW_CAPABILITY_BRIEF.md`](../ABW_CAPABILITY_BRIEF.md) — the questions we asked the ABW codebase
-- [`../ABW_CAPABILITY_BRIEF_ANSWERS.md`](../ABW_CAPABILITY_BRIEF_ANSWERS.md) — the source-grounded answers
-- Long design conversation between user and assistant that resulted in the three-layer mental model: **Composition** (recipe) / **Compound agent** (actor) / **App** (product wrapper)
+## Source material
+
+- [`../ABW_CAPABILITY_BRIEF.md`](../ABW_CAPABILITY_BRIEF.md) — questions asked of the ABW codebase
+- [`../ABW_CAPABILITY_BRIEF_ANSWERS.md`](../ABW_CAPABILITY_BRIEF_ANSWERS.md) — source-grounded answers
 
 ## Glossary (locked)
 
@@ -34,9 +44,9 @@ Doc 1 ships first. Doc 2 cannot start until Doc 1 is live. Doc 3 is reference ma
 | **Compound agent** | An agent that internally orchestrates sub-agents. |
 | **Composition** | A named recipe: list of agent IDs that work well together. |
 | **Fleet** | Informal synonym for "the agents an App composes." Prose only, not code. |
-| **App** | A registered platform artifact: schema + composition + workspace template + UI pointer + economics. Spawns workspaces. *(new — introduced by Doc 1)* |
+| **App** | A registered platform artifact: schema + composition + workspace template + UI pointer + economics. Spawns workspaces. |
 | **Workspace** | A team row. Runtime container: budget, files, chat, members. |
-| **Origin** | A workspace tag identifying which App created it. Already exists. |
+| **Origin** | A workspace tag identifying which App created it. |
 | **Project** | kask homepage usage. User-facing listing. Often 1:1 with an App. |
 
 `Vertical`, `Studio`, `Lab`, `Workbench`, `Surface` are NOT in the platform's lexicon.

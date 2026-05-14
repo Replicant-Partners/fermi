@@ -1,7 +1,7 @@
 # Doc 1 — App Primitive on ABW
 
 **Audience:** the ABW-side codebase agent (`/home/ilabra/fermi`) and the engineer who ships this PR.
-**Status:** spec — ready to implement.
+**Status:** ✅ **shipped** — fermi commits `3832d65` (App primitive) + `d98b82a` (auto-seed).
 **Scope:** add a new first-class concept called **App** to the ABW platform. Backwards-compatible — existing workspaces, compositions, and compound agents continue to work unchanged.
 
 ---
