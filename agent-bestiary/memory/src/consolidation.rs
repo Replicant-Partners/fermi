@@ -887,6 +887,7 @@ mod tests {
             capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             persona_version: 1,
             fermi_contract: None,
+                    output_contract: None,
             model_params: serde_json::Value::Object(serde_json::Map::new()),
             valence: None,
         };

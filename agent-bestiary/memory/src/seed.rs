@@ -187,6 +187,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
+                output_contract: None,
             },
             Agent {
                 agent_id: make_uuid(1, 0, 0),
@@ -245,6 +246,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
+                output_contract: None,
             },
             Agent {
                 agent_id: make_uuid(2, 0, 0),
@@ -298,6 +300,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
+                output_contract: None,
             },
         ]
     }

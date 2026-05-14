@@ -189,6 +189,37 @@ pub struct AgentCapabilities {
     #[serde(default)]
     pub fermi_contract: Option<FermiContract>,
 
+    /// Domain output contract — the typed schema every member of a
+    /// domain-constrained MoE must produce.
+    ///
+    /// This generalises `fermi_contract` to arbitrary domains. Where
+    /// `fermi_contract` is forecasting-specific (finding_labels, multiplier_range,
+    /// p50/p5/p95), `output_contract` is domain-agnostic. The orchestrator agent
+    /// declares what it expects from members; member agents declare what they
+    /// produce against this contract.
+    ///
+    /// Shape:
+    /// ```json
+    /// {
+    ///   "domain": "process_optimisation",      // human-readable domain name
+    ///   "produces": ["risk-assessment"],        // semantic labels (mirrors agent.produces)
+    ///   "schema": { ... },                      // JSON Schema for the output document
+    ///   "calibration": {                        // how to evaluate correctness over time
+    ///     "signal": "sosa_observation" | "hitl_review" | "brier_forecast" | "user_rating",
+    ///     "observable_property": "...",         // for sosa_observation
+    ///     "resolution_delay_hours": 72,         // how long before ground truth arrives
+    ///     "comparison": "continuous_mse" | "binary_accuracy" | "brier_score" | "max_risk"
+    ///   },
+    ///   "synthesis": "aggregation" | "pipeline" | "selection" | "max_risk" | "cep_weighted"
+    /// }
+    /// ```
+    ///
+    /// For Fermi: domain="forecasting", calibration.signal="brier_forecast",
+    ///            synthesis="cep_weighted". fermi_contract holds the finding_labels
+    ///            and multiplier details; output_contract holds the calibration spec.
+    #[serde(default)]
+    pub output_contract: Option<serde_json::Value>,
+
     /// Provider-agnostic sampling configuration. Keys override the legacy
     /// `temperature` field and add provider-specific params (top_p, top_k,
     /// extended_thinking, thinking_budget_tokens, frequency_penalty, etc.).
@@ -440,6 +471,7 @@ impl AgentCard {
                 min_tier: CognitionTier::Free,
                 capability_gates: HashMap::new(),
                 fermi_contract: None,
+                output_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
             },
             performance: AgentPerformance {

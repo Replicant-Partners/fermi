@@ -25,7 +25,7 @@ const AGENT_COLUMNS: &str = r#"
     accepts, produces, workflow_template, prompt_template, requires_secrets,
     model_ladder, min_tier, capability_gates,
     persona_version, fermi_contract, model_params,
-    valence
+    valence, output_contract
 "#;
 
 pub struct MemoryStore {
@@ -520,6 +520,10 @@ impl MemoryStore {
         }
         if updates.valence.is_some() {
             set_clauses.push(format!("valence = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.output_contract.is_some() {
+            set_clauses.push(format!("output_contract = ${}", param_idx));
             let _ = param_idx;
         }
 
@@ -595,6 +599,9 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.valence {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.output_contract {
             query = query.bind(v);
         }
 
@@ -813,6 +820,7 @@ impl MemoryStore {
                 .try_get("model_params")
                 .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new())),
             valence: row.try_get("valence").unwrap_or(None),
+            output_contract: row.try_get("output_contract").unwrap_or(None),
         })
     }
 
@@ -3781,6 +3789,7 @@ mod tests {
             capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             persona_version: 1,
             fermi_contract: None,
+            output_contract: None,
             model_params: serde_json::Value::Object(serde_json::Map::new()),
             valence: None,
         }

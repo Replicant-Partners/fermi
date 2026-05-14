@@ -566,6 +566,9 @@ pub struct Agent {
     // Affective signature (migration 114) — {primary_affect, arousal, valence, personality_traits}
     #[serde(default)]
     pub valence: Option<serde_json::Value>,
+    // Domain output contract (migration 117) — typed schema for domain-constrained MoE
+    #[serde(default)]
+    pub output_contract: Option<serde_json::Value>,
 }
 
 fn default_persona_version() -> i32 {
@@ -630,6 +633,8 @@ pub struct AgentUpdate {
     pub model_params: Option<serde_json::Value>,
     // Affective signature — primary_affect, arousal, valence, personality_traits
     pub valence: Option<serde_json::Value>,
+    // Domain output contract — typed schema for domain-constrained MoE members
+    pub output_contract: Option<serde_json::Value>,
 }
 
 /// Snapshot of mutable agent fields at a point in time

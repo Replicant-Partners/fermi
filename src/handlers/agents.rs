@@ -605,6 +605,7 @@ pub async fn create_agent_handler(
         fermi_contract: None,
         model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
+            output_contract: None,
     };
 
     // If education budget requested, debit from user's wallet
@@ -903,6 +904,10 @@ pub async fn import_agent_handler(
         valence: card
             .get("metadata")
             .and_then(|m| m.get("valence"))
+            .cloned(),
+        output_contract: card
+            .get("capabilities")
+            .and_then(|c| c.get("output_contract"))
             .cloned(),
     };
 

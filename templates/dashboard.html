@@ -1250,7 +1250,10 @@
           style="width:100%;background:var(--bg1);border:1px solid var(--bg2);color:var(--fg1);padding:8px 12px;font-family:inherit;font-size:0.85rem;margin-bottom:4px">
           <option value="">— assign later —</option>
           <option value="cohere_and_coordinate" selected>
-            cohere_and_coordinate — TEC coherence + intention coordination + valence homophily detection
+            cohere_and_coordinate — TEC coherence + intention coordination + valence homophily
+          </option>
+          <option value="moe_router_strategist">
+            moe_router_strategist — MoE routing: classify input → route to best expert → synthesise
           </option>
         </select>
         <div id="ws-strategist-hint" style="font-size:0.72rem;color:var(--fg3);margin-bottom:14px;line-height:1.4;padding:0 2px">
@@ -1337,11 +1340,11 @@
     <script>
       // Strategist descriptions shown as contextual hint when user changes selection
       const STRATEGIST_HINTS = {
-        "": "No strategist assigned. You can add one later from the workspace settings. Without a strategist, there is no automatic coherence coordination.",
-        "cohere_and_coordinate": "Runs TEC coherence analysis after each session, detects valence homophily, coordinates via intention pre-flight checks, and proposes composition changes when patterns accumulate. Best for multi-agent research, analysis, and reasoning teams. Supports cascade RSI (members learn) and tune-team RSI (composition evolves).",
-        "debate_strategist": "Assigns opposing positions to members and runs a judge pass. Best when you want structured adversarial evaluation of a hypothesis. (Coming soon)",
-        "pipeline_strategist": "Enforces strict sequential execution: each agent's output feeds the next. Best for deterministic multi-step workflows. (Coming soon)",
-        "moe_router_strategist": "Routes each input to the most capable member based on input classification. Learns routing patterns over time. Best for high-volume diverse inputs. (Coming soon)",
+        "": "No strategist assigned. You can add one later from the workspace settings. Without a strategist, there is no automatic coherence coordination or routing.",
+        "cohere_and_coordinate": "TEC coherence + valence diversity. Runs intention pre-flight (Stage 0), diagnoses productive vs destructive incoherence (Stage 2), and proposes composition changes when patterns accumulate (Dreaming). Best when team outputs need to fit together coherently. RSI: cascade + tune_team.",
+        "moe_router_strategist": "Mixture-of-Experts routing. Classifies each input against member capabilities (accepts/produces/skills/history), routes to the most accurate expert(s), synthesises outputs. Best when different members excel at different sub-domains and outputs need to be accurate independently rather than coherent together. Becomes a domain-constrained MoE (like Fermi for forecasting) when you define an output_contract + calibration signal. RSI: tune_team (learns routing accuracy via Brier scoring).",
+        "debate_strategist": "Assigns opposing positions to members and runs a judge pass. Best for adversarial hypothesis evaluation. (Coming soon)",
+        "pipeline_strategist": "Enforces strict sequential execution. Best for deterministic multi-step workflows. (Coming soon)",
       };
 
       function updateStrategistHint() {

@@ -394,6 +394,7 @@ pub async fn create_workspace_agent_handler(
         fermi_contract: None,
         model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
+            output_contract: None,
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
