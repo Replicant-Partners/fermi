@@ -152,21 +152,45 @@ pub async fn get_workspace_handler(
         .await
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
 
-    // Get budget
-    let budget_row =
-        sqlx::query("SELECT workspace_budget, workspace_spent FROM teams WHERE id = $1")
-            .bind(ws_uuid)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Get budget + composition identity fields
+    let budget_row = sqlx::query(
+        "SELECT workspace_budget, workspace_spent, mission, coordination_strategist_id
+         FROM teams WHERE id = $1",
+    )
+    .bind(ws_uuid)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let (budget, spent) = match budget_row {
-        Some(row) => (
+    let (budget, spent, mission, strategist_uuid) = match budget_row {
+        Some(ref row) => (
             row.try_get::<i32, _>("workspace_budget").unwrap_or(0),
             row.try_get::<i32, _>("workspace_spent").unwrap_or(0),
+            row.try_get::<Option<String>, _>("mission").unwrap_or(None),
+            row.try_get::<Option<uuid::Uuid>, _>("coordination_strategist_id").unwrap_or(None),
         ),
-        None => (0, 0),
+        None => (0, 0, None, None),
     };
+
+    // Resolve strategist name for display
+    let strategist_name: Option<String> = if let Some(sid) = strategist_uuid {
+        sqlx::query("SELECT agent_name, display_alias FROM agents WHERE agent_id = $1")
+            .bind(sid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| {
+                r.try_get::<Option<String>, _>("display_alias")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| r.try_get::<String, _>("agent_name").unwrap_or_default())
+            })
+    } else {
+        None
+    };
+
+    let is_composition = mission.is_some() || strategist_uuid.is_some();
 
     // Get workspace agents from junction table
     let agent_rows = sqlx::query(
@@ -238,6 +262,12 @@ pub async fn get_workspace_handler(
         "name": team.name,
         "slug": team.slug,
         "description": team.description,
+        // Composition identity
+        "mission": mission,
+        "coordination_strategist_id": strategist_uuid,
+        "coordination_strategist_name": strategist_name,
+        "is_composition": is_composition,
+        // Budget
         "workspace_budget": budget,
         "workspace_spent": spent,
         "workspace_remaining": budget - spent,
@@ -579,4 +609,83 @@ pub async fn get_workspace_slug(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Workspace not found".to_string()))?;
     Ok(row.get::<String, _>("slug"))
+}
+
+// ─── Set composition identity ─────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct SetCompositionIdentityRequest {
+    pub mission: Option<String>,
+    /// Strategist agent_name or UUID string.
+    pub coordination_strategist_id: Option<String>,
+}
+
+/// POST /api/workspaces/:id/composition/identity
+///
+/// Set or update the mission and coordination strategist for a workspace,
+/// upgrading a plain group workspace to a named composition.
+/// Owner or admin only.
+pub async fn set_composition_identity_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(body): Json<SetCompositionIdentityRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    // Auth: owner or admin
+    let user_id = principal.user_id();
+    let owner_row = sqlx::query("SELECT owner_id FROM teams WHERE id = $1")
+        .bind(ws_uuid)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Workspace not found".into()))?;
+
+    let owner_id: String = owner_row.try_get("owner_id")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if owner_id != user_id && !principal.can_admin() {
+        return Err((StatusCode::FORBIDDEN, "Owner or admin required".into()));
+    }
+
+    // Resolve strategist name → UUID
+    let strategist_uuid: Option<uuid::Uuid> = if let Some(ref sid) = body.coordination_strategist_id {
+        if sid.is_empty() {
+            None
+        } else if let Ok(uuid) = sid.parse::<uuid::Uuid>() {
+            Some(uuid)
+        } else {
+            sqlx::query("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
+                .bind(sid)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|r| r.try_get::<uuid::Uuid, _>("agent_id").ok())
+        }
+    } else {
+        None
+    };
+
+    sqlx::query(
+        "UPDATE teams SET
+            mission = COALESCE($1, mission),
+            coordination_strategist_id = COALESCE($2, coordination_strategist_id)
+         WHERE id = $3",
+    )
+    .bind(&body.mission)
+    .bind(strategist_uuid)
+    .bind(ws_uuid)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "workspace_id": ws_uuid,
+        "mission": body.mission,
+        "coordination_strategist_id": body.coordination_strategist_id,
+        "status": "updated",
+    })))
 }

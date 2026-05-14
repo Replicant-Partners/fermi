@@ -22,9 +22,12 @@ pub struct CreateTeamRequest {
     slug: String,
     description: Option<String>,
     /// Optional origin tag. Defaults to `"bestiary_workspace"`.
-    /// Pass `"kask_simops"` (or any `kask_*` slug) to attribute the workspace
-    /// to a specific App. Must not collide with reserved system tags.
     origin: Option<String>,
+    /// Composition mission — what this team is working toward.
+    mission: Option<String>,
+    /// Coordination strategist agent_id (e.g. "cohere_and_coordinate").
+    /// Resolved to UUID via agents table on create.
+    coordination_strategist_id: Option<String>,
 }
 
 pub async fn create_team_handler(
@@ -43,6 +46,44 @@ pub async fn create_team_handler(
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Apply composition identity fields (mission + strategist) if provided.
+    // Resolved separately from fermi-auth create_team so fermi-auth stays clean.
+    if body.mission.is_some() || body.coordination_strategist_id.is_some() {
+        // Resolve strategist agent_id string → UUID if provided
+        let strategist_uuid: Option<uuid::Uuid> = if let Some(ref sid) = body.coordination_strategist_id {
+            if sid.is_empty() {
+                None
+            } else {
+                // Try as UUID first, then as agent_name
+                if let Ok(uuid) = sid.parse::<uuid::Uuid>() {
+                    Some(uuid)
+                } else {
+                    sqlx::query("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
+                        .bind(sid)
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|r| r.try_get::<uuid::Uuid, _>("agent_id").ok())
+                }
+            }
+        } else {
+            None
+        };
+
+        let _ = sqlx::query(
+            "UPDATE teams SET
+                mission = COALESCE($1, mission),
+                coordination_strategist_id = COALESCE($2, coordination_strategist_id)
+             WHERE id = $3",
+        )
+        .bind(&body.mission)
+        .bind(strategist_uuid)
+        .bind(team.id)
+        .execute(&state.db)
+        .await;
+    }
 
     // Seed workspace with 100 starter credits
     let ws_id_str = team.id.to_string();
@@ -65,7 +106,18 @@ pub async fn create_team_handler(
         }
     }
 
-    Ok((StatusCode::CREATED, Json(json!(team))))
+    // Return enriched response including composition fields
+    let is_composition = body.mission.is_some() || body.coordination_strategist_id.is_some();
+    Ok((StatusCode::CREATED, Json(json!({
+        "id": team.id,
+        "name": team.name,
+        "slug": team.slug,
+        "description": team.description,
+        "owner_id": team.owner_id,
+        "mission": body.mission,
+        "coordination_strategist_id": body.coordination_strategist_id,
+        "is_composition": is_composition,
+    }))))
 }
 
 pub async fn list_teams_handler(

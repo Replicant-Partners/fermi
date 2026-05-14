@@ -1250,6 +1250,11 @@ async fn main() {
         .route("/api/xaman/sessions/:id/message", post(handlers::xaman::xaman_session_message_handler))
         .route("/api/xaman/sessions/:id/complete", post(handlers::xaman::complete_xaman_session_handler))
         .route("/api/xaman/sessions/:id", delete(handlers::xaman::abandon_xaman_session_handler))
+        // Set workspace composition identity (mission + strategist)
+        .route(
+            "/api/workspaces/:workspace_id/composition/identity",
+            post(handlers::workspace::set_composition_identity_handler),
+        )
         // Composition version lifecycle (tune-team RSI)
         .route(
             "/api/workspaces/:workspace_id/composition/versions",

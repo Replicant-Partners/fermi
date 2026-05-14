@@ -1226,63 +1226,41 @@
           padding: 24px;
         "
       >
-        <h3 style="color: var(--fg0); margin-bottom: 16px">New Composition</h3>
-        <label
-          style="
-            display: block;
-            color: var(--fg3);
-            font-size: 0.8rem;
-            margin-bottom: 4px;
-          "
-          >Name</label
-        >
-        <input
-          type="text"
-          id="ws-name-input"
-          placeholder="e.g. Market Research Team"
-          style="
-            width: 100%;
-            background: var(--bg1);
-            border: 1px solid var(--bg2);
-            color: var(--fg1);
-            padding: 8px 12px;
-            font-family: inherit;
-            font-size: 0.85rem;
-            margin-bottom: 12px;
-          "
-        />
-        <label
-          style="
-            display: block;
-            color: var(--fg3);
-            font-size: 0.8rem;
-            margin-bottom: 4px;
-          "
-          >Description
-          <span style="color: var(--fg3); font-size: 0.75rem"
-            >(optional)</span
-          ></label
-        >
-        <input
-          type="text"
-          id="ws-desc-input"
-          placeholder="What will this workspace do?"
-          style="
-            width: 100%;
-            background: var(--bg1);
-            border: 1px solid var(--bg2);
-            color: var(--fg1);
-            padding: 8px 12px;
-            font-family: inherit;
-            font-size: 0.85rem;
-            margin-bottom: 16px;
-          "
-        />
-        <div style="display: flex; gap: 8px; justify-content: flex-end">
+        <h3 style="color: var(--fg0); margin-bottom: 4px">New Composition</h3>
+        <div style="color:var(--fg3);font-size:0.75rem;margin-bottom:14px;line-height:1.4">
+          A composition is a goal-bearing team of agents coordinated by a strategist.
+          The mission is what the team is working toward; the strategist decides how.
+        </div>
+
+        <label style="display:block;color:var(--fg3);font-size:0.8rem;margin-bottom:4px">Name</label>
+        <input type="text" id="ws-name-input" placeholder="e.g. Market Research Team"
+          style="width:100%;background:var(--bg1);border:1px solid var(--bg2);color:var(--fg1);padding:8px 12px;font-family:inherit;font-size:0.85rem;margin-bottom:12px" />
+
+        <label style="display:block;color:var(--fg3);font-size:0.8rem;margin-bottom:4px">
+          Mission <span style="color:var(--fg3);font-size:0.75rem">(recommended)</span>
+        </label>
+        <input type="text" id="ws-mission-input"
+          placeholder="What will this team accomplish? e.g. Synthesise AMD GPU market signals for forecasting"
+          style="width:100%;background:var(--bg1);border:1px solid var(--bg2);color:var(--fg1);padding:8px 12px;font-family:inherit;font-size:0.85rem;margin-bottom:12px" />
+
+        <label style="display:block;color:var(--fg3);font-size:0.8rem;margin-bottom:4px">
+          Coordination Strategist
+        </label>
+        <select id="ws-strategist-input" onchange="updateStrategistHint()"
+          style="width:100%;background:var(--bg1);border:1px solid var(--bg2);color:var(--fg1);padding:8px 12px;font-family:inherit;font-size:0.85rem;margin-bottom:4px">
+          <option value="">— assign later —</option>
+          <option value="cohere_and_coordinate" selected>
+            cohere_and_coordinate — TEC coherence + intention coordination + valence homophily detection
+          </option>
+        </select>
+        <div id="ws-strategist-hint" style="font-size:0.72rem;color:var(--fg3);margin-bottom:14px;line-height:1.4;padding:0 2px">
+          The strategist runs Stage 0 (pre-flight intention check) and Stages 1–3 (assess → diagnose → coordinate)
+          on every session. Over time it learns team patterns and can propose composition changes.
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end">
           <button class="btn" onclick="closeWsModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="submitCreateWs()">
-            Create
-          </button>
+          <button class="btn btn-primary" onclick="submitCreateWs()">Create</button>
         </div>
       </div>
     </div>
@@ -1357,9 +1335,28 @@
       }
     </style>
     <script>
-      function openWsModal(prefillName, prefillDesc) {
+      // Strategist descriptions shown as contextual hint when user changes selection
+      const STRATEGIST_HINTS = {
+        "": "No strategist assigned. You can add one later from the workspace settings. Without a strategist, there is no automatic coherence coordination.",
+        "cohere_and_coordinate": "Runs TEC coherence analysis after each session, detects valence homophily, coordinates via intention pre-flight checks, and proposes composition changes when patterns accumulate. Best for multi-agent research, analysis, and reasoning teams. Supports cascade RSI (members learn) and tune-team RSI (composition evolves).",
+        "debate_strategist": "Assigns opposing positions to members and runs a judge pass. Best when you want structured adversarial evaluation of a hypothesis. (Coming soon)",
+        "pipeline_strategist": "Enforces strict sequential execution: each agent's output feeds the next. Best for deterministic multi-step workflows. (Coming soon)",
+        "moe_router_strategist": "Routes each input to the most capable member based on input classification. Learns routing patterns over time. Best for high-volume diverse inputs. (Coming soon)",
+      };
+
+      function updateStrategistHint() {
+        const val = document.getElementById("ws-strategist-input")?.value || "";
+        const hint = document.getElementById("ws-strategist-hint");
+        if (hint) hint.textContent = STRATEGIST_HINTS[val] || "";
+      }
+
+      function openWsModal(prefillName, prefillMission) {
         document.getElementById("ws-name-input").value = prefillName || "";
-        document.getElementById("ws-desc-input").value = prefillDesc || "";
+        document.getElementById("ws-mission-input").value = prefillMission || "";
+        // Default strategist to cohere_and_coordinate
+        const strat = document.getElementById("ws-strategist-input");
+        if (strat) strat.value = "cohere_and_coordinate";
+        updateStrategistHint();
         document.getElementById("ws-modal").classList.add("active");
         setTimeout(() => document.getElementById("ws-name-input").focus(), 100);
       }
@@ -1383,7 +1380,7 @@
         const desc = draft?.diff_summary || "";
 
         // Auto-open modal when page loads — slight delay for DOM
-        setTimeout(() => openWsModal(name, desc), 400);
+        setTimeout(() => openWsModal(name, draft?.mission || desc), 400);
 
         // Store draft for post-create member auto-hire
         if (draft?.members?.length) {
@@ -1407,7 +1404,8 @@
           document.getElementById("ws-name-input").focus();
           return;
         }
-        const desc = document.getElementById("ws-desc-input").value.trim();
+        const mission = document.getElementById("ws-mission-input")?.value.trim() || null;
+        const strategistId = document.getElementById("ws-strategist-input")?.value.trim() || null;
         const slug =
           name
             .toLowerCase()
@@ -1419,7 +1417,12 @@
           const res = await fetch("/api/teams", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, slug, description: desc }),
+            body: JSON.stringify({
+              name, slug,
+              description: mission || null,
+              mission: mission || null,
+              coordination_strategist_id: strategistId || null,
+            }),
           });
           if (!res.ok) {
             const err = await res.text();

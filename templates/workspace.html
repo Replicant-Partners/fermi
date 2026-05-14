@@ -913,7 +913,13 @@
     <div class="ws-header">
       <div class="ws-header-left">
         <button class="btn members-toggle" id="members-toggle">Members</button>
-        <h1 id="ws-name">Workspace</h1>
+        <div style="display:flex;flex-direction:column;gap:1px">
+          <h1 id="ws-name" style="margin:0">Workspace</h1>
+          <div id="ws-composition-identity" style="display:none;align-items:center;gap:8px;font-size:0.72rem;color:var(--fg3)">
+            <span id="ws-mission" style="font-style:italic;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+            <span id="ws-strategist-chip" style="display:none;background:var(--bg2);color:var(--aqua);padding:1px 6px;border-radius:10px;font-style:normal;flex-shrink:0"></span>
+          </div>
+        </div>
         <span
           id="header-coherence"
           style="font-size: 0.75rem; color: var(--fg3); cursor: default"
@@ -1610,6 +1616,20 @@
 
           document.getElementById("ws-name").textContent = ws.name;
           document.title = ws.name + " — Agent Bestiary";
+
+          // Composition identity — show mission + strategist chip when set
+          if (ws.is_composition) {
+            const identityEl = document.getElementById("ws-composition-identity");
+            const missionEl = document.getElementById("ws-mission");
+            const chipEl = document.getElementById("ws-strategist-chip");
+            if (identityEl) identityEl.style.display = "flex";
+            if (missionEl && ws.mission) missionEl.textContent = ws.mission;
+            if (chipEl && ws.coordination_strategist_name) {
+              chipEl.textContent = "⚙ " + ws.coordination_strategist_name;
+              chipEl.style.display = "";
+              chipEl.title = "Coordination strategist: " + ws.coordination_strategist_name;
+            }
+          }
           document.getElementById("ws-description").textContent =
             ws.description || "No description.";
 
