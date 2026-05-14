@@ -2125,13 +2125,15 @@
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
                   <div>
                     <div style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Provider</div>
-                    <select id="intel-provider" style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:7px 9px;font-family:inherit;font-size:0.88em" onchange="intelProviderChanged()">
-                      <option value="anthropic">Anthropic (Claude)</option>
-                      <option value="mistral">Mistral</option>
-                      <option value="openrouter">OpenRouter</option>
-                      <option value="qwen">Qwen</option>
-                      <option value="glm">Zhipu GLM</option>
-                    </select>
+                     <select id="intel-provider" style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:7px 9px;font-family:inherit;font-size:0.88em" onchange="intelProviderChanged()">
+                       <option value="anthropic">Anthropic (Claude)</option>
+                       <option value="mistral">Mistral</option>
+                       <option value="openrouter">OpenRouter</option>
+                       <option value="qwen">Qwen</option>
+                       <option value="glm">Zhipu GLM</option>
+                       <option value="deepseek">DeepSeek</option>
+                       <option value="kimi">Kimi (Moonshot AI)</option>
+                     </select>
                   </div>
                   <div>
                     <div style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Model</div>
@@ -2947,6 +2949,8 @@
         ],
         qwen: ["qwen-max", "qwen-plus", "qwen-turbo"],
         glm: ["glm-4-plus", "glm-4-air", "glm-4-flash"],
+        deepseek: ["deepseek-chat", "deepseek-reasoner"],
+        kimi: ["moonshot-v1-128k", "moonshot-v1-32k", "moonshot-v1-8k"],
       };
 
       let _intelLadder = [];
@@ -3122,6 +3126,8 @@
           <option value="openrouter" ${val==="openrouter"?"selected":""}>openrouter</option>
           <option value="qwen" ${val==="qwen"?"selected":""}>qwen</option>
           <option value="glm" ${val==="glm"?"selected":""}>glm</option>
+          <option value="deepseek" ${val==="deepseek"?"selected":""}>deepseek</option>
+          <option value="kimi" ${val==="kimi"?"selected":""}>kimi</option>
         </select>`;
       }
 
