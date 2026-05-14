@@ -9,10 +9,14 @@
 -- Existing agents default to NULL; the UI Edit section lets owners set it.
 -- The agent_card_from_db() fallback path in api_server.rs already sets
 -- valence: None — no behaviour change for agents without a card file.
+--
+-- PgBouncer-safe: ALTER TABLE wrapped in DO block per transaction-mode rules.
 
-ALTER TABLE agents
-    ADD COLUMN IF NOT EXISTS valence JSONB;
-
-COMMENT ON COLUMN agents.valence IS
-    'Affective signature: {primary_affect, arousal, valence, personality_traits}. '
-    'Used by composition planner and social matching. NULL = not yet set.';
+DO $$
+BEGIN
+    ALTER TABLE agents
+        ADD COLUMN IF NOT EXISTS valence JSONB;
+EXCEPTION WHEN duplicate_column THEN
+    -- Column already exists — idempotent
+    NULL;
+END $$;
