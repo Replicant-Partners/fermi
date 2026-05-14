@@ -501,14 +501,12 @@ async fn run_migrations(db: &PgPool) {
         "migrations/114_agent_valence_column.sql",
         // Xaman Ek working sessions (migration 115)
         "migrations/115_xaman_sessions.sql",
-        // App primitive (migration 116)
-        "migrations/116_apps.sql",
-        // Agent output_contract — domain-constrained MoE (migration 117)
-        "migrations/117_agent_output_contract.sql",
         // App primitive — registered platform artifacts with workspace templates (Doc 1)
         "migrations/116_apps.sql",
+        // Agent output_contract — domain-constrained MoE
+        "migrations/117_agent_output_contract.sql",
         // Extend object_shares.object_type to include 'workspace' (Doc 1 §6.2)
-        "migrations/117_object_type_workspace.sql",
+        "migrations/118_object_type_workspace.sql",
     ];
 
     for file in &migration_files {
