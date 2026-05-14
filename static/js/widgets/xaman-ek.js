@@ -19,6 +19,7 @@ const XamanEk = {
   _spotlightVisible: false,
   _debounce: null,
   _recentKey: "xaman-ek-recent",
+  _stateKey: "xaman-ek-state",   // persisted: { open, session_id }
   _currentUser: null,
   _userLoaded: false,
   _sessions: [],          // loaded from API
@@ -32,8 +33,35 @@ const XamanEk = {
     this._buildFab();
     this._bindKeyboard();
     this._loadUser().then(() => {
-      this._loadSessions();
+      this._loadSessions().then(() => {
+        this._restorePersistedState();
+      });
     });
+  },
+
+  // ── Persistence helpers ────────────────────────────────────────────────────
+  _saveState() {
+    try {
+      localStorage.setItem(this._stateKey, JSON.stringify({
+        open: this._sidebarVisible,
+        session_id: this._activeSession?.session_id || null,
+      }));
+    } catch (_) {}
+  },
+
+  _restorePersistedState() {
+    try {
+      const raw = localStorage.getItem(this._stateKey);
+      if (!raw) return;
+      const state = JSON.parse(raw);
+      if (state.open) {
+        this.openSidebar();
+        // Re-open the last active session directly — no extra click needed
+        if (state.session_id) {
+          this.openSessionChat(state.session_id);
+        }
+      }
+    } catch (_) {}
   },
 
   // ── Sidebar ────────────────────────────────────────────────────────────────
@@ -89,6 +117,14 @@ const XamanEk = {
     document.body.classList.add("xaman-sidebar-open");
     this._updateSidebarContext();
     this._renderSessionsList();
+    // If there's no persisted active session but there are sessions,
+    // auto-open the most recent one so the user lands in a conversation,
+    // not a list.
+    if (!this._activeSession && this._sessions.length > 0) {
+      const mostRecent = this._sessions[0]; // API returns newest-first
+      if (mostRecent) this.openSessionChat(mostRecent.session_id);
+    }
+    this._saveState();
   },
 
   closeSidebar() {
@@ -96,6 +132,7 @@ const XamanEk = {
     this._sidebar.classList.remove("visible");
     this._sidebarVisible = false;
     document.body.classList.remove("xaman-sidebar-open");
+    this._saveState();
   },
 
   _updateSidebarContext() {
@@ -214,6 +251,7 @@ const XamanEk = {
       if (!res.ok) { this.showSessionsList(); return; }
       this._activeSession = await res.json();
       this._renderSessionChat();
+      this._saveState();
     } catch (e) {
       this.showSessionsList();
     }
@@ -225,6 +263,7 @@ const XamanEk = {
     if (chat) chat.style.display = "none";
     if (list) list.style.display = "";
     this._activeSession = null;
+    this._saveState();
   },
 
   _renderSessionChat() {
@@ -476,8 +515,8 @@ const XamanEk = {
     const fab = document.createElement("button");
     fab.className = "xaman-fab";
     fab.innerHTML = "&#9733;";
-    fab.title = "Xaman Ek (Ctrl+K — spotlight / Ctrl+Shift+K — sidebar)";
-    fab.addEventListener("click", () => this.toggleSpotlight());
+    fab.title = "Xaman Ek — open (Ctrl+Shift+K) · quick search (Ctrl+K)";
+    fab.addEventListener("click", () => this.toggleSidebar());
     document.body.appendChild(fab);
   },
 
