@@ -559,7 +559,7 @@ Rendered in a preview view inside SimOps. No agent invocation in v1 — when `ma
 Ships:
 - `KaskSim` module with everything in §4.2
 - `abw-client.js` v2 with the new methods in §4.3
-- One-time bootstrap: POST the SimOps App manifest to `/api/apps` (manual step, documented in repo README)
+- ~~One-time bootstrap: POST the SimOps App manifest to `/api/apps` (manual step, documented in repo README)~~ — **automated**: `seed_apps_to_database()` upserts `apps/kask_simops.json` at every server startup (commit `d98b82a`)
 - `simops.html` shell with mode switcher
 - Migrated `simops-intake.html` (replaces wizard)
 - Migrated `simops-compose.html` (reads/writes the workspace process.yaml)

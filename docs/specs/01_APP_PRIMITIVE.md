@@ -485,11 +485,16 @@ For 6.x patches:
 ### 7.3 Rollout
 
 1. Land all migrations (idempotent — they use `IF NOT EXISTS` patterns).
-2. Deploy. Verify `/api/apps` returns `[]` with no apps registered.
-3. Manually register the first App via `POST /api/apps` (this becomes the SimOps app — see Doc 2).
-4. kask side proceeds with Doc 2.
+2. Deploy. `seed_apps_to_database()` runs at startup and upserts all `apps/*.json`
+   manifests automatically — no manual step required.
+   Verify with `GET /api/apps/kask_simops` returning the seeded manifest.
+3. kask side proceeds with Doc 2.
 
 No data migration is needed for existing workspaces. They retain their current `origin` values and don't get an App attached.
+
+> **Implementation note (updated):** Step 3 of the original rollout ("Manually register
+> via `POST /api/apps`") was superseded by `seed_apps_to_database()` in commit `d98b82a`.
+> Drop a `*.json` file in `apps/` and it's live on the next deploy.
 
 ---
 
