@@ -1,0 +1,39 @@
+{
+  "slug": "kask_simops",
+  "name": "SimOps",
+  "tagline": "Design, simulate, and compare process pipelines.",
+  "owner_user_id": "sys",
+  "homepage_url": "https://kask.bio/projects/simops",
+  "icon_url": "https://kask.bio/assets/simops-icon.svg",
+  "description": "Agent-led process modelling: interview to design, edit to compose, run to forecast. Built on the SimOps engine (ProcessConfig, cascade, predictor, optimizer) and the Fermi forecasting layer.",
+  "composition_slug": "simops_fleet",
+  "schema_slug": "kask-simops/2",
+  "workspace_template": {
+    "initial_budget": 250,
+    "default_name_pattern": "SimOps — {date} process",
+    "auto_hire": ["simops_advisor", "simops_cascade", "simops_narrator"],
+    "initial_files": [
+      {
+        "path": "simops/process.yaml",
+        "content": "name: New Process\ndescription: ''\nstages: []\n"
+      },
+      {
+        "path": "simops/budget.yaml",
+        "content": "discovery:\n  enabled: false\n  daily_cap_credits: 25\n  weekly_cap_credits: 100\n"
+      },
+      {
+        "path": ".app/manifest.yaml",
+        "content": "app_slug: kask_simops\nschema: kask-simops/2\nui: https://kask.bio/projects/simops\n"
+      },
+      {
+        "path": "context/readme.md",
+        "content": "# SimOps workspace\nThis workspace was created by the SimOps app on kask.bio.\nAll process state lives under `simops/`.\n"
+      }
+    ]
+  },
+  "visibility": "public",
+  "metadata": {
+    "kask_version": "2.0",
+    "icon_color": "#1a3833"
+  }
+}

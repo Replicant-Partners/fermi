@@ -61,6 +61,9 @@ COPY rabble-web /app/static/rabble
 # Copy agents directory.
 COPY agents /app/agents
 
+# Copy apps directory (seeded at startup via seed_apps_to_database).
+COPY apps /app/apps
+
 # Copy ontologies directory.
 COPY ontologies /app/ontologies
 

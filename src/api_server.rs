@@ -615,6 +615,11 @@ async fn main() {
     seed_agents_to_database(&memory_store, &registry).await;
     println!("Agent seeding complete");
 
+    // Seed registered Apps from apps/ directory (idempotent upsert by slug)
+    println!("Seeding apps to database...");
+    seed_apps_to_database(&db).await;
+    println!("App seeding complete");
+
     // Initialize projection engine + cache
     let projection_engine = Arc::new(ProjectionEngine::new(memory_store.clone()));
     let projection_cache = Arc::new(ProjectionCache::new(300)); // 5 min TTL
@@ -2354,6 +2359,123 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
                 }
             }
             Err(e) => eprintln!("Warning: failed to seed {}: {}", card.agent_id, e),
+        }
+    }
+}
+
+/// Seed App manifests from the `apps/` directory into the `apps` table.
+///
+/// Each file must be a JSON object matching the `apps` table shape with at
+/// minimum: `slug`, `name`, `workspace_template`.
+///
+/// Behaviour:
+/// - INSERT the app if the slug doesn't exist yet.
+/// - UPDATE `name`, `tagline`, `workspace_template`, `description`, `metadata`,
+///   `homepage_url`, `icon_url`, `composition_slug`, `schema_slug`, `visibility`
+///   if the slug already exists — so re-deploys always keep the manifest current.
+/// - The `owner_user_id` field in the JSON is advisory; on the server we
+///   use "sys" as the platform owner for seeded apps.
+/// - Never changes `published_at`, `archived_at`, or `visibility` to something
+///   more restrictive than what's already stored.
+async fn seed_apps_to_database(db: &sqlx::PgPool) {
+    // Locate the apps/ directory relative to the binary's working directory.
+    let apps_dirs = ["apps", "../apps", "../../apps"];
+    let apps_dir = apps_dirs.iter().find(|d| std::path::Path::new(d).is_dir());
+    let apps_dir = match apps_dir {
+        Some(d) => *d,
+        None => {
+            println!("No apps/ directory found — skipping App seeding");
+            return;
+        }
+    };
+
+    let entries = match std::fs::read_dir(apps_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("Could not read apps/ directory: {}", e);
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Could not read {:?}: {}", path, e);
+                continue;
+            }
+        };
+        let manifest: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Could not parse {:?}: {}", path, e);
+                continue;
+            }
+        };
+
+        let slug = match manifest["slug"].as_str() {
+            Some(s) => s.to_string(),
+            None => {
+                eprintln!("App manifest {:?} missing 'slug'", path);
+                continue;
+            }
+        };
+
+        let name = manifest["name"].as_str().unwrap_or(&slug).to_string();
+        let tagline = manifest["tagline"].as_str().map(str::to_string);
+        let homepage_url = manifest["homepage_url"].as_str().map(str::to_string);
+        let icon_url = manifest["icon_url"].as_str().map(str::to_string);
+        let composition_slug = manifest["composition_slug"].as_str().map(str::to_string);
+        let schema_slug = manifest["schema_slug"].as_str().map(str::to_string);
+        let description = manifest["description"].as_str().map(str::to_string);
+        let visibility = manifest["visibility"].as_str().unwrap_or("public").to_string();
+        let workspace_template = manifest["workspace_template"].clone();
+        let metadata = manifest["metadata"].clone();
+
+        let result = sqlx::query(
+            r#"INSERT INTO apps (
+                slug, name, tagline, owner_user_id,
+                homepage_url, icon_url,
+                composition_slug, schema_slug,
+                workspace_template, visibility,
+                description, metadata
+            ) VALUES ($1, $2, $3, 'sys', $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (slug) DO UPDATE SET
+                name               = EXCLUDED.name,
+                tagline            = EXCLUDED.tagline,
+                homepage_url       = EXCLUDED.homepage_url,
+                icon_url           = EXCLUDED.icon_url,
+                composition_slug   = EXCLUDED.composition_slug,
+                schema_slug        = EXCLUDED.schema_slug,
+                workspace_template = EXCLUDED.workspace_template,
+                description        = EXCLUDED.description,
+                metadata           = EXCLUDED.metadata,
+                visibility         = CASE
+                    WHEN apps.visibility = 'public' THEN 'public'
+                    ELSE EXCLUDED.visibility
+                END"#,
+        )
+        .bind(&slug)
+        .bind(&name)
+        .bind(&tagline)
+        .bind(&homepage_url)
+        .bind(&icon_url)
+        .bind(&composition_slug)
+        .bind(&schema_slug)
+        .bind(&workspace_template)
+        .bind(&visibility)
+        .bind(&description)
+        .bind(&metadata)
+        .execute(db)
+        .await;
+
+        match result {
+            Ok(_) => println!("Seeded app: {}", slug),
+            Err(e) => eprintln!("Warning: failed to seed app {}: {}", slug, e),
         }
     }
 }
