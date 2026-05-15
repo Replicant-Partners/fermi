@@ -119,6 +119,8 @@ fermi-auth = { path = "fermi-auth" }
 # For migration scripts
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
 anyhow = "1.0"
+serde_yaml = "0.9"
+dotenvy = "0.15"
 
 # Rate limiting
 dashmap = "6"
@@ -166,6 +168,10 @@ path = "src/bin/agent-mcp-server.rs"
 [[bin]]
 name = "migrate-embedding-dimensions"
 path = "scripts/migrate_embedding_dimensions.rs"
+
+[[bin]]
+name = "brier-backtest-seed"
+path = "scripts/brier_backtest_seed.rs"
 
 [lib]
 name = "fermi"

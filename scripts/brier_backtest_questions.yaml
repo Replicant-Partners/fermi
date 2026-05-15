@@ -1,0 +1,251 @@
+# Historical backtest questions for Brier calibration seeding.
+#
+# Each question was resolved on a real-world outcome. The `actual_outcome`
+# field is the ground truth (true = YES resolved, false = NO resolved).
+#
+# predicted_probability is a neutral prior (0.5) for questions where we
+# have no agent-specific prediction — the point is to populate resolved
+# forecast rows so the BrierEvaluator has data to score against.
+# For questions where we have a strong prior from base rates, we use that.
+#
+# To add new questions:
+#   1. Add an entry with a unique id
+#   2. Set actual_outcome to the known resolution
+#   3. Set predicted_probability to the best available prior (base rate,
+#      market consensus, or 0.5 if truly unknown)
+#   4. Set agents to the agent(s) that would have worked this question
+#   5. Run: cargo run --bin brier-backtest-seed -- --database-url $DATABASE_URL
+#
+# Format:
+#   id: unique slug
+#   question: the forecast question text
+#   domain: economics | markets | sports | biotech | geopolitics
+#   actual_outcome: true | false
+#   predicted_probability: float 0.0-1.0
+#   resolved_date: YYYY-MM-DD (approximate)
+#   agents: list of agent_ids that handle this domain
+#   tags: list of string tags for domain decomposition
+
+questions:
+  # ── Macroeconomics ──────────────────────────────────────────────────────────
+  - id: fed-rate-cut-q1-2025
+    question: "Will the Federal Reserve cut interest rates at least once before end of Q1 2025?"
+    domain: economics
+    actual_outcome: false
+    predicted_probability: 0.45
+    resolved_date: "2025-03-31"
+    agents: [macro_forecaster]
+    tags: [macroeconomics, fed, monetary_policy]
+
+  - id: us-cpi-below-3-dec-2024
+    question: "Will US CPI inflation be below 3% year-over-year in December 2024?"
+    domain: economics
+    actual_outcome: false
+    predicted_probability: 0.55
+    resolved_date: "2025-01-15"
+    agents: [macro_forecaster]
+    tags: [macroeconomics, inflation, cpi]
+
+  - id: us-recession-2024
+    question: "Will the US enter a technical recession (two consecutive quarters of negative GDP) in 2024?"
+    domain: economics
+    actual_outcome: false
+    predicted_probability: 0.25
+    resolved_date: "2025-01-01"
+    agents: [macro_forecaster, equity_analyst]
+    tags: [macroeconomics, recession, gdp]
+
+  - id: ecb-rate-cut-june-2024
+    question: "Will the European Central Bank cut rates before July 2024?"
+    domain: economics
+    actual_outcome: true
+    predicted_probability: 0.70
+    resolved_date: "2024-06-06"
+    agents: [macro_forecaster]
+    tags: [macroeconomics, ecb, monetary_policy, europe]
+
+  - id: uk-gdp-positive-q1-2024
+    question: "Will UK GDP growth be positive in Q1 2024?"
+    domain: economics
+    actual_outcome: true
+    predicted_probability: 0.55
+    resolved_date: "2024-05-10"
+    agents: [macro_forecaster]
+    tags: [macroeconomics, gdp, uk]
+
+  # ── Equity markets ──────────────────────────────────────────────────────────
+  - id: nvidia-200-end-2024
+    question: "Will Nvidia (NVDA) close above $200 on the last trading day of 2024?"
+    domain: markets
+    actual_outcome: false
+    predicted_probability: 0.40
+    resolved_date: "2024-12-31"
+    agents: [equity_analyst, market_research]
+    tags: [equity, semiconductor, nvda, ai]
+
+  - id: sp500-up-2024
+    question: "Will the S&P 500 finish 2024 higher than it started?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.65
+    resolved_date: "2024-12-31"
+    agents: [equity_analyst, macro_forecaster]
+    tags: [equity, sp500, markets]
+
+  - id: apple-3t-market-cap-2024
+    question: "Will Apple maintain a market cap above $3 trillion for all of Q4 2024?"
+    domain: markets
+    actual_outcome: false
+    predicted_probability: 0.50
+    resolved_date: "2024-12-31"
+    agents: [equity_analyst, market_research]
+    tags: [equity, apple, aapl, market_cap]
+
+  - id: meta-300-q2-2024
+    question: "Will Meta (META) stock close above $300 by end of Q2 2024?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.55
+    resolved_date: "2024-06-28"
+    agents: [equity_analyst, sentiment_analyzer]
+    tags: [equity, meta, social_media]
+
+  - id: tesla-below-200-q3-2024
+    question: "Will Tesla (TSLA) close below $200 at any point in Q3 2024?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.55
+    resolved_date: "2024-09-30"
+    agents: [equity_analyst, market_research]
+    tags: [equity, tesla, tsla, ev]
+
+  # ── Market research / competitive ───────────────────────────────────────────
+  - id: openai-gpt5-2024
+    question: "Will OpenAI release GPT-5 before end of 2024?"
+    domain: markets
+    actual_outcome: false
+    predicted_probability: 0.40
+    resolved_date: "2024-12-31"
+    agents: [market_research, entity_investigator]
+    tags: [ai, openai, product_release]
+
+  - id: google-gemini-ultra-2024
+    question: "Will Google release a Gemini model that outperforms GPT-4 on MMLU before end of 2024?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.60
+    resolved_date: "2024-12-31"
+    agents: [market_research]
+    tags: [ai, google, gemini, llm]
+
+  - id: amazon-aws-revenue-growth-q4-2024
+    question: "Will AWS revenue grow more than 15% year-over-year in Q4 2024?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.55
+    resolved_date: "2025-02-06"
+    agents: [market_research, equity_analyst]
+    tags: [cloud, aws, amazon, revenue]
+
+  # ── Sentiment ────────────────────────────────────────────────────────────────
+  - id: bitcoin-80k-2024
+    question: "Will Bitcoin exceed $80,000 at any point in 2024?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.45
+    resolved_date: "2024-11-13"
+    agents: [sentiment_analyzer, market_research]
+    tags: [crypto, bitcoin, sentiment]
+
+  - id: ai-sentiment-positive-q1-2025
+    question: "Will overall media sentiment toward AI companies be net positive in Q1 2025?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.65
+    resolved_date: "2025-03-31"
+    agents: [sentiment_analyzer]
+    tags: [ai, sentiment, media]
+
+  # ── Entity / corporate intelligence ─────────────────────────────────────────
+  - id: disney-ceo-iger-2024
+    question: "Will Bob Iger remain CEO of Disney through end of 2024?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.70
+    resolved_date: "2024-12-31"
+    agents: [entity_investigator]
+    tags: [corporate, disney, leadership]
+
+  - id: boeing-ceo-change-2024
+    question: "Will Boeing's CEO change in 2024?"
+    domain: markets
+    actual_outcome: true
+    predicted_probability: 0.35
+    resolved_date: "2024-08-02"
+    agents: [entity_investigator, market_research]
+    tags: [corporate, boeing, leadership, crisis]
+
+  # ── Biotech ──────────────────────────────────────────────────────────────────
+  - id: ozempic-novo-fda-heart-2024
+    question: "Will the FDA approve Novo Nordisk's Ozempic for cardiovascular risk reduction in 2024?"
+    domain: biotech
+    actual_outcome: true
+    predicted_probability: 0.65
+    resolved_date: "2024-03-08"
+    agents: [biotech_analyst]
+    tags: [biotech, fda, glp1, novo_nordisk]
+
+  - id: rsv-vaccine-adult-approval-2024
+    question: "Will at least two RSV vaccines for adults be available in the US market by end of 2024?"
+    domain: biotech
+    actual_outcome: true
+    predicted_probability: 0.75
+    resolved_date: "2024-12-31"
+    agents: [biotech_analyst]
+    tags: [biotech, vaccine, rsv, fda]
+
+  - id: alzheimers-drug-cms-2024
+    question: "Will CMS grant full Medicare coverage for an Alzheimer's disease treatment in 2024?"
+    domain: biotech
+    actual_outcome: false
+    predicted_probability: 0.40
+    resolved_date: "2024-12-31"
+    agents: [biotech_analyst]
+    tags: [biotech, alzheimers, medicare, cms]
+
+  # ── Sports ───────────────────────────────────────────────────────────────────
+  - id: nba-celtics-champion-2024
+    question: "Will the Boston Celtics win the NBA Championship in the 2023-24 season?"
+    domain: sports
+    actual_outcome: true
+    predicted_probability: 0.30
+    resolved_date: "2024-06-17"
+    agents: [nba_analyst]
+    tags: [nba, celtics, championship, sports]
+
+  - id: nba-mvp-jokic-2024
+    question: "Will Nikola Jokic win the NBA MVP award for the 2023-24 season?"
+    domain: sports
+    actual_outcome: false
+    predicted_probability: 0.40
+    resolved_date: "2024-05-02"
+    agents: [nba_analyst]
+    tags: [nba, mvp, jokic, sports]
+
+  - id: champions-league-winner-2024
+    question: "Will a Spanish club win the UEFA Champions League in 2023-24?"
+    domain: sports
+    actual_outcome: true
+    predicted_probability: 0.45
+    resolved_date: "2024-06-01"
+    agents: [football_analyst]
+    tags: [soccer, champions_league, spain, sports]
+
+  - id: premier-league-arsenal-2024
+    question: "Will Arsenal win the Premier League title in the 2023-24 season?"
+    domain: sports
+    actual_outcome: false
+    predicted_probability: 0.35
+    resolved_date: "2024-05-19"
+    agents: [football_analyst]
+    tags: [soccer, premier_league, arsenal, sports]
