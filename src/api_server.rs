@@ -511,6 +511,9 @@ async fn run_migrations(db: &PgPool) {
         // exist regardless of whether 113 took. DO-block so PgBouncer
         // can't split it.
         "migrations/119_teams_mission_defensive.sql",
+        // composition_versions.rejected_by + rejection_note — code
+        // expected these but no migration ever added them.
+        "migrations/120_composition_versions_rejection.sql",
     ];
 
     for file in &migration_files {

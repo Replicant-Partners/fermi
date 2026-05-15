@@ -1477,6 +1477,24 @@
       let lastMessageTime = null;
       let messageCount = 0;
 
+      // Safe DOM setters. The right-shelf refactor (3411c90) removed
+      // the panel-shelf elements (stat-messages, stat-agents,
+      // stat-members, shelf-remaining, shelf-spent, shelf-total) but
+      // the JS still writes to those IDs in several places. A naked
+      // getElementById(...).textContent = X throws TypeError when the
+      // element doesn't exist, killing the rest of the script —
+      // which is what's been breaking the icon rail event handlers
+      // mid-page. These helpers no-op silently when the element is
+      // gone, letting the rest of the script finish binding.
+      function setTextById(id, text) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+      }
+      function setStyleById(id, prop, value) {
+        const el = document.getElementById(id);
+        if (el && el.style) el.style[prop] = value;
+      }
+
       // ─── Markdown rendering ───
       marked.setOptions({ breaks: true, gfm: true });
       function formatContent(content, messageType) {
@@ -1591,9 +1609,9 @@
           const total = ws.workspace_budget || 0;
           const spent = ws.workspace_spent || 0;
           document.getElementById("budget-text").textContent = remaining;
-          document.getElementById("shelf-remaining").textContent = remaining;
-          document.getElementById("shelf-spent").textContent = spent;
-          document.getElementById("shelf-total").textContent = total;
+          setTextById("shelf-remaining", remaining);
+          setTextById("shelf-spent", spent);
+          setTextById("shelf-total", total);
           const pct = total > 0 ? Math.min(100, (remaining / total) * 100) : 0;
           document.getElementById("budget-bar-fill").style.width = pct + "%";
 
@@ -1631,8 +1649,7 @@
               </div>`;
               })
               .join("");
-            document.getElementById("stat-members").textContent =
-              ws.members.length;
+            setTextById("stat-members", ws.members.length);
           } else {
             peopleEl.innerHTML =
               '<div style="padding:4px 14px;color:var(--fg3);font-size:0.75rem">No members</div>';
@@ -1678,8 +1695,7 @@
               </a>`;
               })
               .join("");
-            document.getElementById("stat-agents").textContent =
-              ws.agents.length;
+            setTextById("stat-agents", ws.agents.length);
           } else {
             agentsEl.innerHTML =
               '<div style="padding:4px 14px;color:var(--fg3);font-size:0.75rem">No agents yet</div>';
@@ -1813,7 +1829,7 @@
           }
 
           messageCount = data.messages.length;
-          document.getElementById("stat-messages").textContent = messageCount;
+          setTextById("stat-messages", messageCount);
 
           // Register all initial messages for dedup
           data.messages.forEach((m) => {
@@ -2005,7 +2021,7 @@
           el.insertAdjacentHTML("beforeend", renderMessage(m));
 
           messageCount++;
-          document.getElementById("stat-messages").textContent = messageCount;
+          setTextById("stat-messages", messageCount);
           lastMessageTime = m.created_at;
 
           if (m.message_type === "coherence_update") loadCoherence();
@@ -2368,7 +2384,7 @@
             );
             el.scrollTop = el.scrollHeight;
             messageCount++;
-            document.getElementById("stat-messages").textContent = messageCount;
+            setTextById("stat-messages", messageCount);
             lastMessageTime = msg.created_at;
           }
 
@@ -2392,9 +2408,9 @@
           const total = ws.workspace_budget || 0;
           const spent = ws.workspace_spent || 0;
           document.getElementById("budget-text").textContent = remaining;
-          document.getElementById("shelf-remaining").textContent = remaining;
-          document.getElementById("shelf-spent").textContent = spent;
-          document.getElementById("shelf-total").textContent = total;
+          setTextById("shelf-remaining", remaining);
+          setTextById("shelf-spent", spent);
+          setTextById("shelf-total", total);
           const pct = total > 0 ? Math.min(100, (remaining / total) * 100) : 0;
           document.getElementById("budget-bar-fill").style.width = pct + "%";
         } catch {}
@@ -3518,15 +3534,13 @@
               const remaining = ws.workspace_remaining || 0;
               const total = ws.workspace_budget || 0;
               const spent = ws.workspace_spent || 0;
-              document.getElementById("budget-text").textContent = remaining;
-              document.getElementById("shelf-remaining").textContent =
-                remaining;
-              document.getElementById("shelf-spent").textContent = spent;
-              document.getElementById("shelf-total").textContent = total;
+              setTextById("budget-text", remaining);
+              setTextById("shelf-remaining", remaining);
+              setTextById("shelf-spent", spent);
+              setTextById("shelf-total", total);
               const pct =
                 total > 0 ? Math.min(100, (remaining / total) * 100) : 0;
-              document.getElementById("budget-bar-fill").style.width =
-                pct + "%";
+              setStyleById("budget-bar-fill", "width", pct + "%");
             }
           } catch {}
 
