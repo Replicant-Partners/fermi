@@ -15,11 +15,17 @@
 -- transactions that PgBouncer would split.
 
 -- ─── §1 — composition identity ─────────────────────────────────────
+--
+-- Each ADD COLUMN is its own statement. The previous combined form
+-- (one ALTER TABLE with three commas) appears to have been eaten by
+-- PgBouncer in transaction mode on Neon — same family of issues as
+-- the multi-statement constraint-update note in memory. Splitting
+-- makes each column add a one-statement transaction PgBouncer can
+-- route cleanly. All three are idempotent via IF NOT EXISTS.
 
-ALTER TABLE public.teams
-    ADD COLUMN IF NOT EXISTS mission                      TEXT,
-    ADD COLUMN IF NOT EXISTS coordination_strategist_id   UUID,
-    ADD COLUMN IF NOT EXISTS strategist_assigned_at       TIMESTAMPTZ;
+ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS mission TEXT;
+ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS coordination_strategist_id UUID;
+ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS strategist_assigned_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_teams_strategist
     ON public.teams(coordination_strategist_id)
