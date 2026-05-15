@@ -285,11 +285,11 @@ will show a `<count> workspaces spawned` next to its name, calling
 ## 9. What's pending on the ABW side
 
 - The **Apps dashboard block** on `agent-bestiary.world/dashboard`
-  is being built as a peer to "My Agents" and "Compositions". Once
-  shipped, users will see kask_simops as a first-class entity
-  with a "Spawn workspace" button — duplicates what kask.bio does
-  but useful for power users testing without leaving ABW.
-- A **server-side rollup endpoint** `GET /api/me/apps-health` (analogous
-  to `/api/me/loop-health`) is on the roadmap — would let
-  the Apps block show per-app cost, executions, and health badges
-  in one fetch. Not blocking for kask's integration.
+  shipped — users see kask_simops as a first-class tile with
+  spawn button + per-user workspace count + last-spawned-ago.
+- **`GET /api/me/apps-health`** shipped — single-query rollup
+  returning visible apps + per-user workspace counts and last spawn
+  time, keyed by `teams.origin`. Replaces the N+1 fetch pattern.
+  Kask can use this on its own side too if it wants to render a
+  "your projects" overview that mixes ABW-spawned workspaces with
+  kask's own metadata.

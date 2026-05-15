@@ -638,3 +638,91 @@ pub async fn archive_app_handler(
 
     get_app_row(&state.db, &slug).await.map(Json)
 }
+
+// ─── GET /api/me/apps-health ─────────────────────────────────────────────────
+//
+// Single-query rollup of Apps the caller can see, with per-app counts
+// of workspaces the caller has spawned. Replaces the dashboard's
+// N+1 fetch pattern (one /api/apps + one /api/apps/:slug/workspaces
+// per app) with a single round-trip.
+//
+// Returns one row per visible app (public + caller's own private/
+// unlisted), excluding archived ones. The per-user counts come from
+// a single grouped subquery over (teams, team_members), keyed by
+// teams.origin.
+//
+// Schema dependence: only on baseline columns
+//   apps.{slug, name, tagline, description, homepage_url, icon_url,
+//         composition_slug, visibility, owner_user_id, archived_at,
+//         created_at}
+//   teams.{id, origin, created_at}
+//   team_members.{team_id, member_id}
+// All of these are stable foundation fields (per the apps schema
+// review during this commit).
+
+pub async fn apps_health_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let caller_id = principal.user_id();
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            a.slug,
+            a.name,
+            a.tagline,
+            a.description,
+            a.homepage_url,
+            a.icon_url,
+            a.composition_slug,
+            a.visibility,
+            a.created_at,
+            COALESCE(c.my_count, 0)::int        AS my_workspace_count,
+            c.last_my_spawn_at
+        FROM apps a
+        LEFT JOIN (
+            SELECT
+                t.origin,
+                COUNT(*)            AS my_count,
+                MAX(t.created_at)   AS last_my_spawn_at
+            FROM teams t
+            JOIN team_members m ON m.team_id = t.id
+            WHERE m.member_id = $1
+            GROUP BY t.origin
+        ) c ON c.origin = a.slug
+        WHERE a.archived_at IS NULL
+          AND (a.visibility = 'public' OR a.owner_user_id = $1)
+        ORDER BY my_workspace_count DESC, a.created_at DESC
+        LIMIT 100
+        "#,
+    )
+    .bind(&caller_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let apps: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "slug":               r.try_get::<String, _>("slug").unwrap_or_default(),
+                "name":               r.try_get::<String, _>("name").unwrap_or_default(),
+                "tagline":            r.try_get::<Option<String>, _>("tagline").ok().flatten(),
+                "description":        r.try_get::<Option<String>, _>("description").ok().flatten(),
+                "homepage_url":       r.try_get::<Option<String>, _>("homepage_url").ok().flatten(),
+                "icon_url":           r.try_get::<Option<String>, _>("icon_url").ok().flatten(),
+                "composition_slug":   r.try_get::<Option<String>, _>("composition_slug").ok().flatten(),
+                "visibility":         r.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
+                "my_workspace_count": r.try_get::<i32, _>("my_workspace_count").unwrap_or(0),
+                "last_my_spawn_at":   r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_my_spawn_at")
+                                       .ok().flatten().map(|t| t.to_rfc3339()),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "apps":  apps,
+        "count": apps.len(),
+    })))
+}

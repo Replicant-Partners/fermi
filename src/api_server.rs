@@ -841,6 +841,10 @@ async fn main() {
             get(handlers::agents::loop_health_handler),
         )
         .route(
+            "/api/me/apps-health",
+            get(handlers::apps::apps_health_handler),
+        )
+        .route(
             "/api/agents/:agent_id/versions",
             get(handlers::agents::list_agent_versions_handler),
         )

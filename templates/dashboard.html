@@ -1367,20 +1367,21 @@
       // "Compositions". Each App is a blueprint registered in
       // apps/*.json that can spawn workspaces. The block hides itself
       // when there are no public apps available (avoids dead chrome).
+      //
+      // Uses /api/me/apps-health — single-query rollup that returns
+      // apps + per-app my_workspace_count + last_my_spawn_at. No N+1.
       async function loadApps() {
         const section = document.getElementById("apps-section");
         const grid = document.getElementById("apps-grid");
         const overall = document.getElementById("apps-overall");
         try {
-          const res = await fetch("/api/apps");
+          const res = await fetch("/api/me/apps-health");
           if (!res.ok) {
             section.style.display = "none";
             return;
           }
           const data = await res.json();
-          const apps = (data.apps || []).filter(
-            (a) => !a.archived_at && a.visibility !== "private",
-          );
+          const apps = data.apps || [];
           if (apps.length === 0) {
             section.style.display = "none";
             return;
@@ -1388,26 +1389,9 @@
           section.style.display = "";
           overall.textContent = `${apps.length} available`;
 
-          // For each app, fetch the count of this user's workspaces
-          // spawned from it. Parallel — keeps the block snappy.
-          const wsCounts = await Promise.all(
-            apps.map(async (a) => {
-              try {
-                const r = await fetch(
-                  `/api/apps/${encodeURIComponent(a.slug)}/workspaces`,
-                );
-                if (!r.ok) return 0;
-                const d = await r.json();
-                return (d.workspaces || []).length;
-              } catch {
-                return 0;
-              }
-            }),
-          );
-
           grid.innerHTML = apps
-            .map((a, i) => {
-              const count = wsCounts[i] || 0;
+            .map((a) => {
+              const count = a.my_workspace_count || 0;
               const initial = (a.name || a.slug || "?")
                 .charAt(0)
                 .toUpperCase();
@@ -1433,6 +1417,15 @@
                   <div class="app-tile-tagline">${escHtml(tagline)}</div>
                   <div class="app-tile-meta">
                     <span class="app-tile-count">${count} workspace${count === 1 ? "" : "s"}</span>
+                    ${
+                      a.last_my_spawn_at
+                        ? `<span>· last: ${(() => {
+                            const d = new Date(a.last_my_spawn_at);
+                            const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+                            return days <= 0 ? "today" : days === 1 ? "1d ago" : `${days}d ago`;
+                          })()}</span>`
+                        : ""
+                    }
                     ${a.composition_slug ? `<span>· composition: ${escHtml(a.composition_slug)}</span>` : ""}
                   </div>
                   <div class="app-tile-actions">
