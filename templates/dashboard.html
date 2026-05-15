@@ -23,14 +23,14 @@
         color: var(--yellow);
       }
       .container {
-        max-width: 1200px;
+        max-width: 1400px;
         margin: 0 auto;
-        padding: 24px;
+        padding: 16px 20px;
       }
       .section {
         background: var(--bg0);
         border: 1px solid var(--bg2);
-        padding: 20px;
+        padding: 14px 16px;
       }
       .section-title {
         font-size: 0.9rem;
@@ -269,6 +269,37 @@
         font-size: 0.7rem;
         font-style: italic;
         padding: 4px 0;
+      }
+      /* Loop drilldown items are click-through links to their action
+         surfaces. stopPropagation in the onclick handler prevents the
+         enclosing .loop-tile from collapsing when an item is clicked. */
+      .loop-item-link {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+      }
+      .loop-item-link:hover .loop-item-name {
+        color: var(--yellow);
+      }
+      .loop-item-link:hover {
+        background: var(--bg1);
+      }
+      /* Multi-column section layout — pair related blocks side-by-side
+         on wide screens so the dashboard reads horizontally rather than
+         as a heavy vertical stack. */
+      .dashboard-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      @media (max-width: 1000px) {
+        .dashboard-row {
+          grid-template-columns: 1fr;
+        }
+      }
+      .dashboard-row > .section {
+        margin-bottom: 0 !important;
       }
       .badge {
         font-size: 0.7rem;
@@ -526,19 +557,75 @@
         </div>
       </div>
 
-      <!-- Buy Credits -->
-      <div class="section" style="margin-bottom: 24px" id="buy-credits-section">
-        <div class="section-title">Buy Credits</div>
-        <div class="pricing-grid" id="pricing-grid">
-          <div class="empty-state">Loading pricing...</div>
+      <!-- Row: Compositions × Collection — agent-ops pair -->
+      <div class="dashboard-row">
+        <!-- Compositions -->
+        <div class="section">
+          <div class="section-title">
+            Compositions
+            <span style="float: right; display: flex; gap: 6px; align-items: center">
+              <select
+                id="ws-origin-filter"
+                style="
+                  background: var(--bg1);
+                  border: 1px solid var(--bg3);
+                  color: var(--fg1);
+                  padding: 4px 8px;
+                  font-size: 0.8em;
+                  border-radius: 3px;
+                "
+                onchange="loadWorkspaces()"
+              >
+                <option value="bestiary_workspace">Mine (ABW)</option>
+                <option value="rabble_swarm">Rabble swarms</option>
+                <option value="">All origins</option>
+              </select>
+              <button class="btn btn-primary" id="create-ws-btn">+ New</button>
+            </span>
+          </div>
+          <div id="workspaces-list">
+            <div class="empty-state">Loading...</div>
+          </div>
+        </div>
+
+        <!-- Collection -->
+        <div class="section">
+          <div class="section-title">
+            Collection
+            <span style="float:right">
+              <a href="/observatory" class="btn" style="font-size:0.75rem">Observatory</a>
+              <a href="/observatory/hitl" class="btn" style="font-size:0.75rem">Review queue</a>
+              <a href="/agents/new" class="btn btn-primary" style="margin-left:6px">+ New</a>
+            </span>
+          </div>
+          <div id="agents-list">
+            <div class="empty-state">Loading...</div>
+          </div>
         </div>
       </div>
 
-      <!-- Platform Activity -->
+      <!-- Row: Buy Credits × Recent Transactions — economy pair -->
+      <div class="dashboard-row">
+        <div class="section" id="buy-credits-section">
+          <div class="section-title">Buy Credits</div>
+          <div class="pricing-grid" id="pricing-grid">
+            <div class="empty-state">Loading pricing...</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Recent Transactions</div>
+          <div id="transactions-list">
+            <div class="empty-state">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Platform Activity (admin only) -->
       <div
         class="section"
         id="platform-activity-section"
-        style="margin-bottom: 24px; display: none"
+        style="margin-bottom: 16px; display: none"
       >
         <div class="section-title">Platform Activity</div>
         <div
@@ -590,35 +677,6 @@
         </div>
       </div>
 
-      <!-- Compositions -->
-      <div class="section" style="margin-bottom: 24px">
-        <div class="section-title">
-          Compositions
-          <span style="float: right; display: flex; gap: 6px; align-items: center">
-            <select
-              id="ws-origin-filter"
-              style="
-                background: var(--bg1);
-                border: 1px solid var(--bg3);
-                color: var(--fg1);
-                padding: 4px 8px;
-                font-size: 0.8em;
-                border-radius: 3px;
-              "
-              onchange="loadWorkspaces()"
-            >
-              <option value="bestiary_workspace">Mine (ABW)</option>
-              <option value="rabble_swarm">Rabble swarms</option>
-              <option value="">All origins</option>
-            </select>
-            <button class="btn btn-primary" id="create-ws-btn">+ New</button>
-          </span>
-        </div>
-        <div id="workspaces-list">
-          <div class="empty-state">Loading...</div>
-        </div>
-      </div>
-
       <!-- People -->
       <div class="section" style="margin-bottom: 24px" id="people-section">
         <div class="section-title">
@@ -662,28 +720,6 @@
         <div id="people-contacts-panel" style="display: none"></div>
       </div>
 
-      <!-- Collection -->
-      <div class="section" style="margin-bottom: 24px">
-        <div class="section-title">
-          Collection
-          <span style="float:right">
-            <a href="/observatory" class="btn" style="font-size:0.75rem">Observatory</a>
-            <a href="/observatory/hitl" class="btn" style="font-size:0.75rem">Review queue</a>
-            <a href="/agents/new" class="btn btn-primary" style="margin-left:6px">+ New</a>
-          </span>
-        </div>
-        <div id="agents-list">
-          <div class="empty-state">Loading...</div>
-        </div>
-      </div>
-
-      <!-- Recent Transactions -->
-      <div class="section">
-        <div class="section-title">Recent Transactions</div>
-        <div id="transactions-list">
-          <div class="empty-state">Loading...</div>
-        </div>
-      </div>
     </div>
 
     <script src="/static/js/widgets/toast.js"></script>
@@ -1187,7 +1223,13 @@
         return escHtml(a.display_alias || a.agent_name || "(unnamed)");
       }
 
-      // Loop 1: Learning — unconsolidated episodes, dreaming budget
+      // ─── Loop drilldown items → click through to action surface ───
+      // stopPropagation prevents the tile from collapsing on item click.
+      const STOP = "onclick=\"event.stopPropagation()\"";
+
+      // Loop 1: Learning — unconsolidated episodes, dreaming budget.
+      // Item → agent detail page; Manage tab has "Consolidate Now" and
+      // the dreaming budget controls.
       function renderLoop1(l) {
         const agents = l.agents || [];
         const flagged = agents.filter((a) => a.needs_attention);
@@ -1205,19 +1247,26 @@
             const flag = a.needs_attention
               ? `<span class="loop-item-flag">attn</span>`
               : "";
+            const href = a.agent_name
+              ? `/agent/${encodeURIComponent(a.agent_name)}`
+              : "#";
             return `
-              <div class="loop-item">
-                <span class="loop-item-name">${loopAgentLabel(a)}</span>
-                <span class="loop-item-meta">${escHtml(meta.join(" · "))}</span>
-                ${flag}
-              </div>`;
+              <a href="${href}" class="loop-item-link" ${STOP}>
+                <div class="loop-item">
+                  <span class="loop-item-name">${loopAgentLabel(a)}</span>
+                  <span class="loop-item-meta">${escHtml(meta.join(" · "))}</span>
+                  ${flag}
+                </div>
+              </a>`;
           })
           .join("");
         const detail = items || '<div class="loop-empty">No agents yet</div>';
         return { summary, detail, count: flagged.length };
       }
 
-      // Loop 2: Correction — HITL queue
+      // Loop 2: Correction — HITL queue.
+      // Item → the HITL review queue (one shared surface for all
+      // anomaly reviews; deep-linking per event_id is a follow-up).
       function renderLoop2(l) {
         const queue = l.queue || [];
         const summary = queue.length === 0
@@ -1228,18 +1277,22 @@
           .map((e) => {
             const flagClass = e.severity === "critical" ? "red" : "";
             return `
-              <div class="loop-item">
-                <span class="loop-item-name">${loopAgentLabel(e)} · ${escHtml(e.kind || "")}</span>
-                <span class="loop-item-meta">${e.days_old}d</span>
-                <span class="loop-item-flag ${flagClass}">${escHtml(e.severity || "?")}</span>
-              </div>`;
+              <a href="/observatory/hitl" class="loop-item-link" ${STOP}>
+                <div class="loop-item">
+                  <span class="loop-item-name">${loopAgentLabel(e)} · ${escHtml(e.kind || "")}</span>
+                  <span class="loop-item-meta">${e.days_old}d</span>
+                  <span class="loop-item-flag ${flagClass}">${escHtml(e.severity || "?")}</span>
+                </div>
+              </a>`;
           })
           .join("");
         const detail = items || '<div class="loop-empty">Queue is clear</div>';
         return { summary, detail, count: queue.length };
       }
 
-      // Loop 3: Coherence — workspace evaluation freshness
+      // Loop 3: Coherence — workspace evaluation freshness.
+      // Item → workspace detail; the right shelf has the Coherence
+      // panel with Index/Recommendations/Dream Notes buttons.
       function renderLoop3(l) {
         const ws = l.workspaces || [];
         const flagged = ws.filter((w) => w.needs_attention);
@@ -1260,19 +1313,26 @@
             const flag = w.needs_attention
               ? `<span class="loop-item-flag">stale</span>`
               : "";
+            const href = w.workspace_id
+              ? `/workspace/${w.workspace_id}`
+              : "#";
             return `
-              <div class="loop-item">
-                <span class="loop-item-name">${escHtml(w.name)}</span>
-                <span class="loop-item-meta">${score} · ${age}</span>
-                ${flag}
-              </div>`;
+              <a href="${href}" class="loop-item-link" ${STOP}>
+                <div class="loop-item">
+                  <span class="loop-item-name">${escHtml(w.name)}</span>
+                  <span class="loop-item-meta">${score} · ${age}</span>
+                  ${flag}
+                </div>
+              </a>`;
           })
           .join("");
         const detail = items || '<div class="loop-empty">No active workspaces</div>';
         return { summary, detail, count: flagged.length };
       }
 
-      // Loop 4: Evolution — pending composition proposals
+      // Loop 4: Evolution — pending composition proposals.
+      // Item → workspace detail; the Composition shelf surfaces
+      // the proposal review affordance.
       function renderLoop4(l) {
         const proposals = l.proposals || [];
         const summary = proposals.length === 0
@@ -1282,18 +1342,25 @@
           .slice(0, 6)
           .map((p) => {
             const diff = (p.diff_summary || "").slice(0, 60);
+            const href = p.workspace_id
+              ? `/workspace/${p.workspace_id}`
+              : "#";
             return `
-              <div class="loop-item">
-                <span class="loop-item-name">${escHtml(p.workspace_name)} v${p.version_number}</span>
-                <span class="loop-item-meta">${p.days_pending}d · ${escHtml(diff)}</span>
-              </div>`;
+              <a href="${href}" class="loop-item-link" ${STOP}>
+                <div class="loop-item">
+                  <span class="loop-item-name">${escHtml(p.workspace_name)} v${p.version_number}</span>
+                  <span class="loop-item-meta">${p.days_pending}d · ${escHtml(diff)}</span>
+                </div>
+              </a>`;
           })
           .join("");
         const detail = items || '<div class="loop-empty">Nothing pending</div>';
         return { summary, detail, count: proposals.length };
       }
 
-      // Loop 5: Calibration — Brier coverage on contracted agents
+      // Loop 5: Calibration — Brier coverage on contracted agents.
+      // Item → agent detail; the Eval tab is where calibration data
+      // accumulates and Brier scores can be inspected.
       function renderLoop5(l) {
         const agents = l.agents || [];
         const warm = l.warm || 0;
@@ -1310,12 +1377,17 @@
             const flag = a.status === "cold"
               ? `<span class="loop-item-flag">cold</span>`
               : "";
+            const href = a.agent_name
+              ? `/agent/${encodeURIComponent(a.agent_name)}`
+              : "#";
             return `
-              <div class="loop-item">
-                <span class="loop-item-name">${loopAgentLabel(a)}</span>
-                <span class="loop-item-meta">${cal} · n=${a.n_resolved}</span>
-                ${flag}
-              </div>`;
+              <a href="${href}" class="loop-item-link" ${STOP}>
+                <div class="loop-item">
+                  <span class="loop-item-name">${loopAgentLabel(a)}</span>
+                  <span class="loop-item-meta">${cal} · n=${a.n_resolved}</span>
+                  ${flag}
+                </div>
+              </a>`;
           })
           .join("");
         const detail = items || '<div class="loop-empty">No contracted agents yet</div>';
