@@ -1416,3 +1416,183 @@ pub async fn get_agent_dependencies_handler(
         "total_hire_cost": hire_cost + required_cost + optional_cost,
     })))
 }
+
+// ─── Calibration endpoint (Loop 5) ──────────────────────────────────────────
+
+/// GET /api/agents/:id/calibration
+///
+/// Returns the agent's measured calibration profile — how accurately its
+/// outputs have been validated by ground-truth signals over time.
+///
+/// Sources:
+/// - `eval_signals` where `dimension = "forecast_calibration"` (Brier scores
+///   from the BrierEvaluator, inverted so 1.0 = perfect calibration)
+/// - `fermi_forecasts` where `agents_used @> [{agent_id}]` and `brier_score IS NOT NULL`
+///
+/// Domain decomposition: derived from the agent's `fermi_contract.kg_fact_categories`
+/// and `tags` to give per-domain calibration scores where available.
+///
+/// Used by `moe_router_strategist` Stage 0 via the `get_agent_calibration` MCP tool.
+pub async fn get_agent_calibration_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let aid = db_agent.agent_id;
+
+    // ── eval_signals forecast_calibration scores ──────────────────────────────
+    let signal_rows = sqlx::query(
+        "SELECT score, confidence, created_at
+         FROM eval_signals
+         WHERE agent_id = $1 AND dimension = 'forecast_calibration'
+         ORDER BY created_at DESC
+         LIMIT 200",
+    )
+    .bind(aid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let n_eval = signal_rows.len();
+    let eval_mean: Option<f64> = if n_eval > 0 {
+        let sum: f64 = signal_rows
+            .iter()
+            .filter_map(|r| r.try_get::<f64, _>("score").ok())
+            .sum();
+        Some(sum / n_eval as f64)
+    } else {
+        None
+    };
+
+    // Trend: compare last 10 vs prior 10 (if enough data)
+    let trend = if n_eval >= 20 {
+        let recent: f64 = signal_rows[..10]
+            .iter()
+            .filter_map(|r| r.try_get::<f64, _>("score").ok())
+            .sum::<f64>() / 10.0;
+        let older: f64 = signal_rows[10..20]
+            .iter()
+            .filter_map(|r| r.try_get::<f64, _>("score").ok())
+            .sum::<f64>() / 10.0;
+        if recent > older + 0.05 { "improving" }
+        else if recent < older - 0.05 { "degrading" }
+        else { "stable" }
+    } else {
+        "insufficient_data"
+    };
+
+    // ── fermi_forecasts direct Brier scores ───────────────────────────────────
+    let forecast_rows = sqlx::query(
+        "SELECT brier_score, tags, question_text, created_at
+         FROM fermi_forecasts
+         WHERE agents_used @> $1::jsonb
+           AND brier_score IS NOT NULL
+           AND status = 'resolved'
+         ORDER BY created_at DESC
+         LIMIT 100",
+    )
+    .bind(json!([{"agent_id": aid.to_string()}]))
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let n_resolved = forecast_rows.len();
+    let brier_mean: Option<f64> = if n_resolved > 0 {
+        let sum: f64 = forecast_rows
+            .iter()
+            .filter_map(|r| r.try_get::<f64, _>("brier_score").ok())
+            .sum();
+        Some(sum / n_resolved as f64)
+    } else {
+        None
+    };
+
+    // ── Domain decomposition via agent tags ───────────────────────────────────
+    // Group forecasts by matching against agent's tag categories.
+    // Tags on forecasts are stored in the `tags` JSONB column.
+    let mut domain_scores: std::collections::HashMap<String, (f64, usize)> =
+        std::collections::HashMap::new();
+
+    for row in &forecast_rows {
+        let score: f64 = match row.try_get::<f64, _>("brier_score") {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        // forecast_calibration = 1 - brier (higher is better)
+        let calibration = 1.0 - score.clamp(0.0, 1.0);
+
+        let tags: Vec<String> = row
+            .try_get::<serde_json::Value, _>("tags")
+            .ok()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+
+        // Map forecast tags to domain using agent's own tags as the classifier
+        let agent_tags = &db_agent.tags;
+        let matched_domain = tags.iter()
+            .find(|t| agent_tags.iter().any(|at| at.contains(t.as_str()) || t.contains(at.as_str())))
+            .map(|t| t.clone())
+            .unwrap_or_else(|| "general".to_string());
+
+        let entry = domain_scores.entry(matched_domain).or_insert((0.0, 0));
+        entry.0 += calibration;
+        entry.1 += 1;
+    }
+
+    let domain_calibration: serde_json::Value = domain_scores
+        .iter()
+        .map(|(domain, (sum, count))| {
+            (domain.clone(), json!({
+                "calibration_mean": sum / *count as f64,
+                "n": count,
+            }))
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into();
+
+    // ── Composite calibration score ───────────────────────────────────────────
+    // Prefer direct Brier from resolved forecasts (more authoritative).
+    // Fall back to eval_signals forecast_calibration if no resolved forecasts.
+    let calibration_score = match (brier_mean, eval_mean) {
+        (Some(b), _) => Some(1.0 - b), // Brier inverted: lower Brier = higher calibration
+        (None, Some(e)) => Some(e),
+        _ => None,
+    };
+
+    // Confidence in the score: saturates at n=20 resolved forecasts
+    let confidence = ((n_resolved.max(n_eval) as f64) / 20.0).min(1.0);
+
+    Ok(Json(json!({
+        "agent_id": aid,
+        "agent_name": db_agent.agent_name,
+
+        // Primary calibration score (0.0–1.0, higher = better calibrated)
+        "calibration_score": calibration_score,
+        "confidence": confidence,
+        "trend": trend,
+
+        // Source breakdown
+        "n_resolved_forecasts": n_resolved,
+        "n_eval_signals": n_eval,
+        "brier_mean": brier_mean,           // direct Brier (lower = better)
+        "eval_calibration_mean": eval_mean, // eval_signals score (higher = better)
+
+        // Per-domain decomposition (requires forecast tags to match agent tags)
+        "domain_calibration": domain_calibration,
+
+        // Interpretation
+        "interpretation": match calibration_score {
+            Some(s) if s >= 0.80 => "well_calibrated",
+            Some(s) if s >= 0.65 => "reasonably_calibrated",
+            Some(s) if s >= 0.50 => "weakly_calibrated",
+            Some(_) => "poorly_calibrated",
+            None => "no_data",
+        },
+        "note": if n_resolved < 5 {
+            Some("Fewer than 5 resolved forecasts — calibration estimate is preliminary. Consider running historical backtests.")
+        } else {
+            None
+        },
+    })))
+}

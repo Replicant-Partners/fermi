@@ -829,6 +829,10 @@ async fn main() {
             get(handlers::agents::get_agent_dependencies_handler),
         )
         .route(
+            "/api/agents/:id/calibration",
+            get(handlers::agents::get_agent_calibration_handler),
+        )
+        .route(
             "/api/agents/:agent_id/versions",
             get(handlers::agents::list_agent_versions_handler),
         )

@@ -697,6 +697,103 @@ pub async fn resolve_forecast_handler(
             .await;
     });
 
+    // ── Loop 5: annotate routing-decision episodes with this outcome ─────────
+    //
+    // When a forecast resolves, look for routing-decision episodes (tagged
+    // "moe_routing_decision") from the agents used in this forecast, written
+    // within the last 7 days. Annotate them with the outcome quality so the
+    // moe_router_strategist's dreaming cycle can consolidate routing accuracy
+    // into its classification rules.
+    //
+    // calibration_quality = 1.0 - brier_score (inverted: higher = better)
+    {
+        let forecast_id_clone = forecast_id.clone();
+        let pool_annotate = pool.clone();
+        let memory_store = state.memory_store.clone();
+        let calibration_quality = 1.0 - brier_score.clamp(0.0, 1.0);
+
+        tokio::spawn(async move {
+            // Fetch the forecast to get agents_used
+            let agents_used: Vec<serde_json::Value> = match sqlx::query(
+                "SELECT agents_used FROM fermi_forecasts WHERE id = $1",
+            )
+            .bind(&forecast_id_clone)
+            .fetch_optional(&pool_annotate)
+            .await
+            {
+                Ok(Some(row)) => row
+                    .try_get::<serde_json::Value, _>("agents_used")
+                    .ok()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default(),
+                _ => return,
+            };
+
+            let since = chrono::Utc::now() - chrono::Duration::days(7);
+
+            for agent_entry in &agents_used {
+                let agent_id_str = match agent_entry.get("agent_id").and_then(|v| v.as_str()) {
+                    Some(s) => s.to_string(),
+                    None => continue,
+                };
+                let agent_uuid = match uuid::Uuid::parse_str(&agent_id_str) {
+                    Ok(u) => u,
+                    Err(_) => continue,
+                };
+
+                // Find routing-decision episodes for this agent in the last 7 days
+                let routing_episodes = match sqlx::query(
+                    "SELECT episode_id, context FROM episodes
+                     WHERE agent_id = $1
+                       AND timestamp_ref >= $2
+                       AND $3 = ANY(tags)
+                     ORDER BY timestamp_ref DESC
+                     LIMIT 10",
+                )
+                .bind(agent_uuid)
+                .bind(since)
+                .bind("moe_routing_decision")
+                .fetch_all(&pool_annotate)
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(_) => continue,
+                };
+
+                for row in &routing_episodes {
+                    let episode_id: uuid::Uuid = match row.try_get("episode_id") {
+                        Ok(id) => id,
+                        Err(_) => continue,
+                    };
+                    let mut ctx: serde_json::Value = row
+                        .try_get::<serde_json::Value, _>("context")
+                        .unwrap_or(serde_json::json!({}));
+
+                    // Annotate with outcome
+                    if let Some(obj) = ctx.as_object_mut() {
+                        obj.insert("outcome_quality".to_string(), serde_json::json!(calibration_quality));
+                        obj.insert("outcome_source".to_string(), serde_json::json!("brier_forecast"));
+                        obj.insert("outcome_brier_score".to_string(), serde_json::json!(brier_score));
+                        obj.insert("outcome_annotated_at".to_string(),
+                            serde_json::json!(chrono::Utc::now().to_rfc3339()));
+                    }
+
+                    // Write the annotated context back
+                    let _ = sqlx::query(
+                        "UPDATE episodes SET context = $1 WHERE episode_id = $2",
+                    )
+                    .bind(&ctx)
+                    .bind(episode_id)
+                    .execute(&pool_annotate)
+                    .await;
+                }
+            }
+
+            // Drop memory_store ref — it was held to ensure the Arc stays alive
+            drop(memory_store);
+        });
+    }
+
     Ok(Json(json!({
         "forecast_id": forecast_id,
         "actual_outcome": req.actual_outcome,
