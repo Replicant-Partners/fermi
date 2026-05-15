@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Pre-commit hook: runs the linters that protect against the bug classes
+# we've actually hit.
+#
+#   1. Migration lint   (PgBouncer-safety: BEGIN/COMMIT, multi-statement
+#                        ADD CONSTRAINT, idempotency)
+#   2. Schema lint      (qualified column refs in Rust SQL strings that
+#                        no migration ever declared)
+#
+# Each runs independently — a failure in one doesn't suppress the other.
+#
+# Install: ./scripts/install-git-hooks.sh
+
+set -uo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root" || exit 1
+
+failed=0
+
+# ─── 1. Migration lint (only when migrations are staged) ──────────────
+staged_migrations=$(git diff --cached --name-only --diff-filter=ACM \
+                    | grep 'migrations/.*\.sql$' || true)
+if [ -n "$staged_migrations" ]; then
+    ./scripts/lint-migrations.sh $staged_migrations || failed=1
+fi
+
+# ─── 2. Schema-consistency lint (only when .rs files are staged) ──────
+staged_rs=$(git diff --cached --name-only --diff-filter=ACM \
+            | grep '\.rs$' || true)
+if [ -n "$staged_rs" ]; then
+    ./scripts/lint-schema-consistency.py $staged_rs || failed=1
+fi
+
+exit $failed
