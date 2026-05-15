@@ -277,12 +277,112 @@
         display: block;
         text-decoration: none;
         color: inherit;
+        flex: 1;
+        min-width: 0;
       }
       .loop-item-link:hover .loop-item-name {
         color: var(--yellow);
       }
       .loop-item-link:hover {
         background: var(--bg1);
+      }
+      /* Loop 1 row layout — item link + inline action button */
+      .loop-item-row {
+        display: flex;
+        align-items: stretch;
+        gap: 6px;
+      }
+      .loop-item-action {
+        background: transparent;
+        border: 1px solid var(--bg3);
+        color: var(--yellow);
+        font-family: inherit;
+        font-size: 0.65rem;
+        padding: 2px 8px;
+        cursor: pointer;
+        align-self: center;
+        white-space: nowrap;
+      }
+      .loop-item-action:hover {
+        background: var(--yellow);
+        color: var(--bg0);
+      }
+      /* Consolidate modal */
+      .consolidate-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9000;
+      }
+      .consolidate-modal-overlay.visible {
+        display: flex;
+      }
+      .consolidate-modal {
+        background: var(--bg0);
+        border: 1px solid var(--bg3);
+        padding: 18px 20px;
+        min-width: 360px;
+        max-width: 520px;
+        max-height: 80vh;
+        overflow-y: auto;
+        font-family: inherit;
+      }
+      .consolidate-modal h3 {
+        margin: 0 0 12px 0;
+        color: var(--yellow);
+        font-size: 0.95rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .consolidate-target {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--bg1);
+        font-size: 0.82rem;
+      }
+      .consolidate-target:last-of-type {
+        border-bottom: none;
+      }
+      .consolidate-target-name {
+        color: var(--fg1);
+      }
+      .consolidate-target-meta {
+        color: var(--fg3);
+        font-size: 0.72rem;
+      }
+      .consolidate-totals {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid var(--bg2);
+        font-size: 0.85rem;
+        color: var(--fg1);
+        display: flex;
+        justify-content: space-between;
+      }
+      .consolidate-actions {
+        margin-top: 16px;
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+      .consolidate-status {
+        margin-top: 10px;
+        font-size: 0.78rem;
+        color: var(--fg2);
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      .consolidate-status-line {
+        padding: 3px 0;
+        border-bottom: 1px solid var(--bg1);
+      }
+      .consolidate-status-line:last-child {
+        border-bottom: none;
       }
       /* Multi-column section layout — pair related blocks side-by-side
          on wide screens so the dashboard reads horizontally rather than
@@ -1228,14 +1328,29 @@
       const STOP = "onclick=\"event.stopPropagation()\"";
 
       // Loop 1: Learning — unconsolidated episodes, dreaming budget.
-      // Item → agent detail page; Manage tab has "Consolidate Now" and
-      // the dreaming budget controls.
+      // Each item carries an inline [Dream] button that opens the
+      // consolidation modal pre-loaded for that agent. The tile header
+      // also gets a "Dream all flagged" button when there's a queue,
+      // for the batch path. Both paths go through openConsolidateModal()
+      // so the user always sees a budget preview before committing.
       function renderLoop1(l) {
         const agents = l.agents || [];
         const flagged = agents.filter((a) => a.needs_attention);
         const summary = flagged.length === 0
           ? `${agents.length} agent${agents.length === 1 ? "" : "s"} consolidating cleanly`
           : `${flagged.length} of ${agents.length} need dreaming attention`;
+
+        // Header batch button — only when there are flagged agents
+        const batchBtn = flagged.length > 0
+          ? `<div style="margin-bottom:8px">
+               <button class="btn"
+                       style="border-color:var(--yellow);color:var(--yellow);font-size:0.7rem"
+                       onclick="event.stopPropagation();openConsolidateBatch('flagged')">
+                 Dream all ${flagged.length} flagged
+               </button>
+             </div>`
+          : "";
+
         const items = (flagged.length > 0 ? flagged : agents.slice(0, 5))
           .map((a) => {
             const meta = [];
@@ -1247,20 +1362,37 @@
             const flag = a.needs_attention
               ? `<span class="loop-item-flag">attn</span>`
               : "";
-            const href = a.agent_name
-              ? `/agent/${encodeURIComponent(a.agent_name)}`
+            const agentName = a.agent_name || "";
+            const dreamBtn = agentName && (a.unconsolidated_episodes > 0 || a.needs_attention)
+              ? `<button class="loop-item-action"
+                         onclick="event.stopPropagation();event.preventDefault();openConsolidateSingle('${escAttr(agentName)}',${a.unconsolidated_episodes || 0})">
+                   Dream
+                 </button>`
+              : "";
+            const href = agentName
+              ? `/agent/${encodeURIComponent(agentName)}#manage`
               : "#";
+            // Cache for batch use
+            window._loop1Cache = window._loop1Cache || {};
+            window._loop1Cache[agentName] = {
+              name: agentName,
+              episodes: a.unconsolidated_episodes || 0,
+              flagged: !!a.needs_attention,
+            };
             return `
-              <a href="${href}" class="loop-item-link" ${STOP}>
-                <div class="loop-item">
-                  <span class="loop-item-name">${loopAgentLabel(a)}</span>
-                  <span class="loop-item-meta">${escHtml(meta.join(" · "))}</span>
-                  ${flag}
-                </div>
-              </a>`;
+              <div class="loop-item-row">
+                <a href="${href}" class="loop-item-link" ${STOP}>
+                  <div class="loop-item">
+                    <span class="loop-item-name">${loopAgentLabel(a)}</span>
+                    <span class="loop-item-meta">${escHtml(meta.join(" · "))}</span>
+                    ${flag}
+                  </div>
+                </a>
+                ${dreamBtn}
+              </div>`;
           })
           .join("");
-        const detail = items || '<div class="loop-empty">No agents yet</div>';
+        const detail = batchBtn + (items || '<div class="loop-empty">No agents yet</div>');
         return { summary, detail, count: flagged.length };
       }
 
@@ -1621,6 +1753,138 @@
         .addEventListener("click", () => openWsModal());
 
       // (sparkline + mock economics removed — replaced by compact tiles)
+
+      // ─── Consolidation modal (single + batch) ───
+      // Approximate per-consolidation gas cost. The backend authoritatively
+      // charges the real GAS_CONSOLIDATION env var (default 3) — if it
+      // differs from this preview, the response surfaces the actual cost.
+      const CONSOLIDATION_COST_PER_AGENT = 3;
+
+      window.openConsolidateSingle = function (agentName, episodes) {
+        openConsolidateModal([
+          { name: agentName, episodes: episodes || 0 },
+        ]);
+      };
+
+      window.openConsolidateBatch = function (scope) {
+        const cache = window._loop1Cache || {};
+        let targets = Object.values(cache);
+        if (scope === "flagged") {
+          targets = targets.filter((t) => t.flagged);
+        }
+        if (targets.length === 0) {
+          alert("Nothing to consolidate.");
+          return;
+        }
+        openConsolidateModal(targets);
+      };
+
+      function openConsolidateModal(targets) {
+        const overlay = document.getElementById("consolidate-modal-overlay");
+        if (!overlay) return;
+        const list = document.getElementById("consolidate-list");
+        const totalsEl = document.getElementById("consolidate-totals");
+        const statusEl = document.getElementById("consolidate-status");
+        const confirmBtn = document.getElementById("consolidate-confirm");
+
+        list.innerHTML = targets
+          .map(
+            (t) =>
+              `<div class="consolidate-target">
+                <span class="consolidate-target-name">${escHtml(t.name)}</span>
+                <span class="consolidate-target-meta">
+                  ${t.episodes} episode${t.episodes === 1 ? "" : "s"} · ${CONSOLIDATION_COST_PER_AGENT} cr
+                </span>
+              </div>`,
+          )
+          .join("");
+        const totalCr = targets.length * CONSOLIDATION_COST_PER_AGENT;
+        const balance =
+          parseInt(document.getElementById("wallet-balance")?.textContent || "0", 10) || 0;
+        const insufficient = balance < totalCr;
+        totalsEl.innerHTML = `
+          <span>${targets.length} agent${targets.length === 1 ? "" : "s"} · est. ${totalCr} credits</span>
+          <span style="color:${insufficient ? "var(--red)" : "var(--fg3)"}">
+            Balance: ${balance} cr${insufficient ? " — insufficient" : ""}
+          </span>`;
+        statusEl.innerHTML = "";
+        confirmBtn.disabled = insufficient;
+        confirmBtn.textContent = `Consolidate ${targets.length}`;
+        confirmBtn.onclick = () => runConsolidations(targets);
+
+        overlay.classList.add("visible");
+      }
+
+      window.closeConsolidateModal = function () {
+        document
+          .getElementById("consolidate-modal-overlay")
+          ?.classList.remove("visible");
+      };
+
+      async function runConsolidations(targets) {
+        const statusEl = document.getElementById("consolidate-status");
+        const confirmBtn = document.getElementById("consolidate-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Working…";
+        statusEl.innerHTML = "";
+
+        let ok = 0;
+        let failed = 0;
+        for (const t of targets) {
+          const line = document.createElement("div");
+          line.className = "consolidate-status-line";
+          line.innerHTML = `<span style="color:var(--fg3)">${escHtml(t.name)}</span> · <span style="color:var(--yellow)">running</span>`;
+          statusEl.appendChild(line);
+          try {
+            const res = await fetch(
+              `/api/agents/${encodeURIComponent(t.name)}/consolidate`,
+              { method: "POST", headers: { "Content-Type": "application/json" } },
+            );
+            if (res.ok) {
+              const data = await res.json();
+              const stats = data.result || {};
+              const summary =
+                stats.episodes_processed != null
+                  ? `${stats.episodes_processed} episodes · ${stats.rules_extracted || 0} rules`
+                  : "done";
+              line.innerHTML = `<span style="color:var(--fg1)">${escHtml(t.name)}</span> · <span style="color:var(--green)">✓ ${escHtml(summary)}</span>`;
+              ok++;
+            } else {
+              const err = await res.text();
+              line.innerHTML = `<span style="color:var(--fg1)">${escHtml(t.name)}</span> · <span style="color:var(--red)">✗ ${escHtml(err.slice(0, 80))}</span>`;
+              failed++;
+            }
+          } catch (e) {
+            line.innerHTML = `<span style="color:var(--fg1)">${escHtml(t.name)}</span> · <span style="color:var(--red)">✗ ${escHtml(e.message)}</span>`;
+            failed++;
+          }
+        }
+        confirmBtn.textContent = `Done (${ok} ok, ${failed} failed)`;
+        confirmBtn.disabled = true;
+        // Refresh loop health + wallet
+        setTimeout(() => {
+          if (typeof loadLoopHealth === "function") loadLoopHealth();
+        }, 300);
+      }
+    </script>
+    <!-- Consolidate Modal -->
+    <div class="consolidate-modal-overlay" id="consolidate-modal-overlay">
+      <div class="consolidate-modal">
+        <h3>Run dreaming consolidation</h3>
+        <div style="font-size:0.78rem;color:var(--fg3);margin-bottom:10px">
+          Each agent processes its unconsolidated episodes into semantic rules. Backend gas: <code>GAS_CONSOLIDATION</code> credits per agent (default 3).
+        </div>
+        <div id="consolidate-list"></div>
+        <div class="consolidate-totals" id="consolidate-totals"></div>
+        <div class="consolidate-status" id="consolidate-status"></div>
+        <div class="consolidate-actions">
+          <button class="btn" onclick="closeConsolidateModal()">Cancel</button>
+          <button class="btn btn-primary" id="consolidate-confirm">Consolidate</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      // (continued)
     </script>
     <!-- Create Workspace Modal -->
     <div class="modal-overlay" id="ws-modal">

@@ -507,6 +507,10 @@ async fn run_migrations(db: &PgPool) {
         "migrations/117_agent_output_contract.sql",
         // Extend object_shares.object_type to include 'workspace' (Doc 1 §6.2)
         "migrations/118_object_type_workspace.sql",
+        // Defensive backstop: ensure teams composition-identity columns
+        // exist regardless of whether 113 took. DO-block so PgBouncer
+        // can't split it.
+        "migrations/119_teams_mission_defensive.sql",
     ];
 
     for file in &migration_files {

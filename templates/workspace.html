@@ -613,57 +613,61 @@
 
       /* ─── Right: Shelf ─── */
        /* ─── Icon rail (replaces panel-shelf) ─── */
+       /* Wider + labeled so the rail is discoverable once a panel
+          collapses — the previous 36px/icon-only version produced
+          a "can't find where to click to reopen" complaint. */
        .ws-icon-rail {
-         width: 36px;
-         min-width: 36px;
+         width: 60px;
+         min-width: 60px;
          background: var(--bg0);
          border-left: 1px solid var(--bg2);
          display: flex;
          flex-direction: column;
-         align-items: center;
-         padding-top: 8px;
+         align-items: stretch;
+         padding-top: 6px;
          gap: 2px;
          z-index: 100;
        }
        .rail-btn {
-         width: 30px;
-         height: 30px;
+         width: 100%;
+         min-height: 52px;
          background: none;
          border: none;
-         border-radius: 4px;
+         border-left: 2px solid transparent;
          color: var(--fg3);
          cursor: pointer;
          display: flex;
+         flex-direction: column;
          align-items: center;
          justify-content: center;
-         font-size: 0.95em;
+         gap: 2px;
+         font-family: inherit;
+         padding: 6px 2px;
          position: relative;
-         transition: background 0.15s, color 0.15s;
+         transition: background 0.15s, color 0.15s, border-color 0.15s;
        }
-       .rail-btn:hover { background: var(--bg2); color: var(--fg1); }
-       .rail-btn.active { background: var(--bg2); color: var(--yellow); }
-       .rail-btn .rail-tooltip {
-         display: none;
-         position: absolute;
-         right: 38px;
-         top: 50%;
-         transform: translateY(-50%);
-         background: var(--bg2);
-         color: var(--fg1);
-         font-size: 0.7rem;
-         padding: 3px 8px;
-         border-radius: 3px;
-         white-space: nowrap;
-         pointer-events: none;
-         border: 1px solid var(--bg3);
+       .rail-btn:hover { background: var(--bg1); color: var(--fg1); }
+       .rail-btn.active {
+         background: var(--bg1);
+         color: var(--yellow);
+         border-left-color: var(--yellow);
        }
-       .rail-btn:hover .rail-tooltip { display: block; }
+       .rail-btn-icon {
+         font-size: 1.1em;
+         line-height: 1;
+       }
+       .rail-btn-label {
+         font-size: 0.6rem;
+         text-transform: uppercase;
+         letter-spacing: 0.04em;
+         color: inherit;
+       }
 
        /* ─── Overlay panel ─── */
        .ws-overlay-panel {
          position: fixed;
          top: 0;
-         right: 36px;
+         right: 60px;          /* sits flush against the icon rail */
          width: 240px;
          height: 100vh;
          background: var(--bg0);
@@ -1273,16 +1277,20 @@
         </div>
       </div>
 
-      <!-- Right: Icon rail -->
+      <!-- Right: Icon rail (60px wide, labeled buttons so you can find
+           them again after the overlay closes) -->
       <div class="ws-icon-rail" id="ws-icon-rail">
-        <button class="rail-btn" id="rail-coherence" onclick="toggleOverlay('coherence')" title="">
-          ☸<span class="rail-tooltip">Coherence</span>
+        <button class="rail-btn" id="rail-coherence" onclick="toggleOverlay('coherence')" title="Coherence">
+          <span class="rail-btn-icon">☸</span>
+          <span class="rail-btn-label">Coh</span>
         </button>
-        <button class="rail-btn" id="rail-composition" onclick="toggleOverlay('composition')" title="">
-          🧩<span class="rail-tooltip">Composition</span>
+        <button class="rail-btn" id="rail-composition" onclick="toggleOverlay('composition')" title="Composition">
+          <span class="rail-btn-icon">🧩</span>
+          <span class="rail-btn-label">Comp</span>
         </button>
-        <button class="rail-btn" id="rail-observability" onclick="toggleOverlay('observability')" title="">
-          👁<span class="rail-tooltip">Observability</span>
+        <button class="rail-btn" id="rail-observability" onclick="toggleOverlay('observability')" title="Observability">
+          <span class="rail-btn-icon">👁</span>
+          <span class="rail-btn-label">Obs</span>
         </button>
       </div>
     </div>

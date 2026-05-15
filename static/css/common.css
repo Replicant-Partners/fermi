@@ -531,11 +531,11 @@ a:hover {
    never overlaps page content. */
 .xaman-peek-tab {
   position: fixed;
-  top: 50%;
+  top: 25%;             /* upper-third — closer to header eye-line */
   left: 0;
   transform: translateY(-50%);
-  width: 18px;
-  height: 64px;
+  width: 22px;
+  height: 72px;
   background: var(--bg1);
   border: 1px solid var(--bg2);
   border-left: none;
@@ -550,14 +550,14 @@ a:hover {
   transition: width 0.18s ease, background 0.18s ease, color 0.18s ease;
 }
 .xaman-peek-tab:hover {
-  width: 26px;
+  width: 30px;
   background: var(--bg2);
 }
 .xaman-peek-tab.hidden {
   display: none;
 }
 .xaman-peek-star {
-  font-size: 1.1em;
+  font-size: 1.35em;     /* a touch bigger so the star reads as a button */
   line-height: 1;
 }
 
