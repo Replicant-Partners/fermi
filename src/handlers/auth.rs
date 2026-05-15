@@ -163,6 +163,8 @@ pub async fn auth_callback_inner(
                 (r.starts_with('/') && !r.contains("//"))
                     || r.starts_with("https://rabble.world")
                     || r.starts_with("https://silat.ooo")
+                    || r.starts_with("https://kask.bio")
+                    || r.starts_with("https://www.kask.bio")
                     || r.starts_with("http://127.0.0.1:")
                     || r.starts_with("http://localhost:")
             })
@@ -182,6 +184,12 @@ pub async fn auth_callback_inner(
                 "https://silat.ooo/#/auth?token={}&user_id={}",
                 token, user.user_id
             )
+        } else if dest.starts_with("https://kask.bio") || dest.starts_with("https://www.kask.bio") {
+            // kask.bio uses cookie-based sessions via cross-origin CORS to
+            // agent-bestiary.world. The session cookie is set above on the
+            // ABW domain; kask reads identity via GET /api/auth/me with
+            // credentials:include. Just redirect — no token in URL needed.
+            dest
         } else if dest.starts_with("http://127.0.0.1:") || dest.starts_with("http://localhost:") {
             // Desktop app flow: redirect to localhost callback with token
             let separator = if dest.contains('?') { "&" } else { "?" };
