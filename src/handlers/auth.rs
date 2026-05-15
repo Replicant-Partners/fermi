@@ -185,11 +185,23 @@ pub async fn auth_callback_inner(
                 token, user.user_id
             )
         } else if dest.starts_with("https://kask.bio") || dest.starts_with("https://www.kask.bio") {
-            // kask.bio uses cookie-based sessions via cross-origin CORS to
-            // agent-bestiary.world. The session cookie is set above on the
-            // ABW domain; kask reads identity via GET /api/auth/me with
-            // credentials:include. Just redirect — no token in URL needed.
-            dest
+            // Token-in-fragment pattern (same as rabble.world / silat.ooo).
+            //
+            // Why not the cookie? The session cookie set above uses
+            // SameSite=Lax, which blocks the cookie on cross-origin fetch()
+            // calls from kask.bio to agent-bestiary.world. kask's frontend
+            // therefore never sees the session via /api/auth/me.
+            //
+            // Instead we hand the JWT to kask in the URL fragment.
+            // kask.bio's hooks.js (consumeOAuthTokenFromHash) picks it up,
+            // persists to localStorage['abw_api_token'], and abw-client.js
+            // attaches it as Authorization: Bearer on subsequent calls.
+            //
+            // We cannot switch to SameSite=None because Chrome is rolling
+            // out third-party-cookie blocking anyway. Token-in-fragment is
+            // the future-proof pattern.
+            let sep = if dest.contains('#') { '&' } else { '#' };
+            format!("{}{}token={}&user_id={}", dest, sep, token, user.user_id)
         } else if dest.starts_with("http://127.0.0.1:") || dest.starts_with("http://localhost:") {
             // Desktop app flow: redirect to localhost callback with token
             let separator = if dest.contains('?') { "&" } else { "?" };
