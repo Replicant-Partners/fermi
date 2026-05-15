@@ -612,50 +612,132 @@
       }
 
       /* ─── Right: Shelf ─── */
-      .panel-shelf {
-        width: 220px;
-        min-width: 220px;
-        background: var(--bg0);
-        border-left: 1px solid var(--bg2);
-        display: flex;
-        flex-direction: column;
-        overflow-y: auto;
-        padding: 12px 14px;
-      }
-      .shelf-section {
-        margin-bottom: 16px;
-      }
-      .shelf-label {
-        font-size: 0.7rem;
-        color: var(--fg3);
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-bottom: 6px;
-      }
-      .shelf-value {
-        font-size: 1.4rem;
-        font-weight: bold;
-      }
-      .shelf-sub {
-        font-size: 0.75rem;
-        color: var(--fg3);
-      }
-      .stat-row-small {
-        display: flex;
-        justify-content: space-between;
-        font-size: 0.8rem;
-        padding: 3px 0;
-        border-bottom: 1px solid var(--bg1);
-      }
-      .stat-row-small:last-child {
-        border-bottom: none;
-      }
-      .stat-key {
-        color: var(--fg3);
-      }
-      .stat-val {
-        color: var(--fg2);
-      }
+       /* ─── Icon rail (replaces panel-shelf) ─── */
+       .ws-icon-rail {
+         width: 36px;
+         min-width: 36px;
+         background: var(--bg0);
+         border-left: 1px solid var(--bg2);
+         display: flex;
+         flex-direction: column;
+         align-items: center;
+         padding-top: 8px;
+         gap: 2px;
+         z-index: 100;
+       }
+       .rail-btn {
+         width: 30px;
+         height: 30px;
+         background: none;
+         border: none;
+         border-radius: 4px;
+         color: var(--fg3);
+         cursor: pointer;
+         display: flex;
+         align-items: center;
+         justify-content: center;
+         font-size: 0.95em;
+         position: relative;
+         transition: background 0.15s, color 0.15s;
+       }
+       .rail-btn:hover { background: var(--bg2); color: var(--fg1); }
+       .rail-btn.active { background: var(--bg2); color: var(--yellow); }
+       .rail-btn .rail-tooltip {
+         display: none;
+         position: absolute;
+         right: 38px;
+         top: 50%;
+         transform: translateY(-50%);
+         background: var(--bg2);
+         color: var(--fg1);
+         font-size: 0.7rem;
+         padding: 3px 8px;
+         border-radius: 3px;
+         white-space: nowrap;
+         pointer-events: none;
+         border: 1px solid var(--bg3);
+       }
+       .rail-btn:hover .rail-tooltip { display: block; }
+
+       /* ─── Overlay panel ─── */
+       .ws-overlay-panel {
+         position: fixed;
+         top: 0;
+         right: 36px;
+         width: 240px;
+         height: 100vh;
+         background: var(--bg0);
+         border-left: 1px solid var(--bg2);
+         display: flex;
+         flex-direction: column;
+         z-index: 200;
+         transform: translateX(100%);
+         transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+         box-shadow: -4px 0 20px rgba(0,0,0,0.25);
+       }
+       .ws-overlay-panel.open {
+         transform: translateX(0);
+       }
+       .overlay-header {
+         display: flex;
+         justify-content: space-between;
+         align-items: center;
+         padding: 10px 14px 8px;
+         border-bottom: 1px solid var(--bg2);
+         flex-shrink: 0;
+       }
+       .overlay-title {
+         font-size: 0.72rem;
+         text-transform: uppercase;
+         letter-spacing: 0.08em;
+         color: var(--yellow);
+         font-weight: 600;
+       }
+       .overlay-close {
+         background: none;
+         border: none;
+         color: var(--fg3);
+         cursor: pointer;
+         font-size: 1.1em;
+         padding: 0 2px;
+         line-height: 1;
+       }
+       .overlay-close:hover { color: var(--fg1); }
+       .overlay-body {
+         flex: 1;
+         overflow-y: auto;
+         padding: 12px 14px;
+       }
+
+       /* ─── Shelf section styles (reused inside overlay) ─── */
+       .shelf-section {
+         margin-bottom: 16px;
+       }
+       .shelf-label {
+         font-size: 0.7rem;
+         color: var(--fg3);
+         text-transform: uppercase;
+         letter-spacing: 1px;
+         margin-bottom: 6px;
+       }
+       .shelf-value {
+         font-size: 1.4rem;
+         font-weight: bold;
+       }
+       .shelf-sub {
+         font-size: 0.75rem;
+         color: var(--fg3);
+       }
+       .stat-row-small {
+         display: flex;
+         justify-content: space-between;
+         font-size: 0.8rem;
+         padding: 3px 0;
+         border-bottom: 1px solid var(--bg1);
+       }
+       .stat-row-small:last-child { border-bottom: none; }
+       .stat-key { color: var(--fg3); }
+       .stat-val { color: var(--fg2); }
 
       /* ─── Buttons ─── */
       .btn {
@@ -809,9 +891,8 @@
 
       /* ─── Responsive ─── */
       @media (max-width: 900px) {
-        .panel-shelf {
-          display: none;
-        }
+        .ws-icon-rail { display: none; }
+        .ws-overlay-panel { right: 0; }
       }
       @media (max-width: 640px) {
         .panel-members {
@@ -1192,259 +1273,96 @@
         </div>
       </div>
 
-      <!-- Right: Shelf -->
-      <div class="panel-shelf">
-        <!-- Coherence -->
-        <div class="shelf-section">
-          <div class="shelf-label">Coherence</div>
-          <div id="coherence-display">
-            <div
-              class="shelf-value"
-              style="color: var(--fg3)"
-              id="coherence-score"
-            >
-              --
-            </div>
-            <div class="shelf-sub" id="coherence-label">not evaluated</div>
-            <div style="margin-top: 6px">
-              <div
-                class="budget-bar"
-                style="width: 100%; height: 8px; background: var(--bg2)"
-              >
-                <div
-                  id="coherence-bar"
-                  style="height: 100%; width: 0%; transition: width 0.4s"
-                ></div>
+      <!-- Right: Icon rail -->
+      <div class="ws-icon-rail" id="ws-icon-rail">
+        <button class="rail-btn" id="rail-coherence" onclick="toggleOverlay('coherence')" title="">
+          ☸<span class="rail-tooltip">Coherence</span>
+        </button>
+        <button class="rail-btn" id="rail-composition" onclick="toggleOverlay('composition')" title="">
+          🧩<span class="rail-tooltip">Composition</span>
+        </button>
+        <button class="rail-btn" id="rail-observability" onclick="toggleOverlay('observability')" title="">
+          👁<span class="rail-tooltip">Observability</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Overlay panel (slides in from right, over the chat) -->
+    <div class="ws-overlay-panel" id="ws-overlay-panel">
+      <div class="overlay-header">
+        <span class="overlay-title" id="overlay-title">Coherence</span>
+        <button class="overlay-close" onclick="closeOverlay()">×</button>
+      </div>
+      <div class="overlay-body panel-shelf" id="overlay-body">
+
+        <!-- ── Coherence panel ── -->
+        <div id="overlay-coherence" class="overlay-pane" style="display:none">
+          <div class="shelf-section">
+            <div id="coherence-display">
+              <div class="shelf-value" style="color:var(--fg3)" id="coherence-score">--</div>
+              <div class="shelf-sub" id="coherence-label">not evaluated</div>
+              <div style="margin-top:6px">
+                <div class="budget-bar" style="width:100%;height:8px;background:var(--bg2)">
+                  <div id="coherence-bar" style="height:100%;width:0%;transition:width 0.4s"></div>
+                </div>
               </div>
+              <div id="coherence-principles" style="margin-top:8px"></div>
+              <div id="coherence-health" style="margin-top:6px;font-size:0.75rem;color:var(--fg3)"></div>
+              <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
+                <button class="btn" onclick="evaluateCoherenceTier('index')" style="font-size:0.7rem" title="Free coherence index">
+                  Index (free)
+                </button>
+                <button class="btn" onclick="evaluateCoherenceTier('recommendations')" style="font-size:0.7rem" title="Actionable recommendations (2 cr)">
+                  Recommendations (2 cr)
+                </button>
+                <button class="btn" onclick="evaluateCoherenceTier('dream_notes')" style="font-size:0.7rem" title="Dream notes synthesis (5 cr)">
+                  Dream Notes (5 cr)
+                </button>
+              </div>
+              <div id="consultant-output" style="display:none;margin-top:8px;padding:8px;background:var(--bg0);border:1px solid var(--bg2);font-size:0.75rem;line-height:1.5;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:var(--fg2)"></div>
             </div>
-            <div id="coherence-principles" style="margin-top: 8px"></div>
-            <div
-              id="coherence-health"
-              style="margin-top: 6px; font-size: 0.75rem; color: var(--fg3)"
-            ></div>
-            <div
-              style="
-                margin-top: 6px;
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-              "
-            >
-              <button
-                class="btn"
-                onclick="evaluateCoherenceTier('index')"
-                style="font-size: 0.7rem"
-                title="Free coherence index"
-              >
-                Index (free)
+          </div>
+        </div>
+
+        <!-- ── Composition panel ── -->
+        <div id="overlay-composition" class="overlay-pane" style="display:none">
+          <div class="shelf-section" id="composition-shelf-section">
+            <div style="font-size:0.75rem;color:var(--fg2);margin-bottom:10px;line-height:1.5">
+              Dreaming reviews session history, valence distribution, and coherence patterns — then proposes structural improvements.
+            </div>
+            <button class="btn" onclick="runCompositionDreaming()" style="font-size:0.7rem;width:100%" title="Composition dreaming — tension audit + tune-team RSI (5 cr)">
+              Dreaming (5 cr)
+            </button>
+            <div id="composition-proposals" style="margin-top:8px"></div>
+          </div>
+        </div>
+
+        <!-- ── Observability panel ── -->
+        <div id="overlay-observability" class="overlay-pane" style="display:none">
+          <div class="shelf-section">
+            <div style="font-size:0.75rem;color:var(--fg2);margin-bottom:10px;line-height:1.5">
+              Ask the observability composition about agent state, anomalies, drift, or eval results in this workspace.
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <button class="btn" onclick="invokeObservability('state')" style="font-size:0.7rem" title="State snapshot">
+                State snapshot
               </button>
-              <button
-                class="btn"
-                onclick="evaluateCoherenceTier('recommendations')"
-                style="font-size: 0.7rem"
-                title="Actionable recommendations (2 cr)"
-              >
-                Recommendations (2 cr)
+              <button class="btn" onclick="invokeObservability('triage')" style="font-size:0.7rem" title="Triage anomalies">
+                Triage anomalies
               </button>
-              <button
-                class="btn"
-                onclick="evaluateCoherenceTier('dream_notes')"
-                style="font-size: 0.7rem"
-                title="Dream notes synthesis (5 cr)"
-              >
-                Dream Notes (5 cr)
+              <button class="btn" onclick="invokeObservability('drift')" style="font-size:0.7rem" title="30-day drift narrative">
+                Drift report
+              </button>
+              <button class="btn" onclick="invokeObservability('eval')" style="font-size:0.7rem" title="Per-evaluator scores">
+                Eval breakdown
               </button>
             </div>
-            <div
-              id="consultant-output"
-              style="
-                display: none;
-                margin-top: 8px;
-                padding: 8px;
-                background: var(--bg0);
-                border: 1px solid var(--bg2);
-                border-radius: 4px;
-                font-size: 0.75rem;
-                line-height: 1.5;
-                white-space: pre-wrap;
-                max-height: 200px;
-                overflow-y: auto;
-                color: var(--fg2);
-              "
-            ></div>
+            <div style="font-size:0.65rem;color:var(--fg3);margin-top:8px">
+              Pay-as-the-agent-works. Output appears in chat.
+            </div>
           </div>
         </div>
 
-        <!-- Composition -->
-        <div class="shelf-section" id="composition-shelf-section">
-          <div class="shelf-label">Composition</div>
-          <div style="font-size:0.7rem;color:var(--fg3);margin-bottom:6px">
-            Dreaming reviews session history, valence distribution, and
-            coherence patterns — then proposes structural improvements.
-          </div>
-          <button
-            class="btn"
-            onclick="runCompositionDreaming()"
-            style="font-size:0.7rem;width:100%"
-            title="Composition dreaming — tension audit + tune-team RSI (5 cr)"
-          >
-            Dreaming (5 cr)
-          </button>
-          <div id="composition-proposals" style="margin-top:8px"></div>
-        </div>
-
-        <!-- Observability -->
-        <div class="shelf-section">
-          <div class="shelf-label">Observability</div>
-          <div
-            style="font-size: 0.7rem; color: var(--fg3); margin-bottom: 6px"
-          >
-            Ask the observability composition about agent state, anomalies, drift, or eval results in this workspace.
-          </div>
-          <div
-            style="
-              display: flex;
-              flex-direction: column;
-              gap: 4px;
-            "
-          >
-            <button
-              class="btn"
-              onclick="invokeObservability('state')"
-              style="font-size: 0.7rem"
-              title="State snapshot — anomaly counts, HITL queue, recent scores, persona changes"
-            >
-              State snapshot
-            </button>
-            <button
-              class="btn"
-              onclick="invokeObservability('triage')"
-              style="font-size: 0.7rem"
-              title="Triage pending anomalies → severity classification + HITL routing"
-            >
-              Triage anomalies
-            </button>
-            <button
-              class="btn"
-              onclick="invokeObservability('drift')"
-              style="font-size: 0.7rem"
-              title="Drift narrative for workspace agents over the last 30 days"
-            >
-              Drift report
-            </button>
-            <button
-              class="btn"
-              onclick="invokeObservability('eval')"
-              style="font-size: 0.7rem"
-              title="Per-evaluator scores from the most recent runs"
-            >
-              Eval breakdown
-            </button>
-          </div>
-          <div
-            style="font-size: 0.65rem; color: var(--fg3); margin-top: 6px"
-          >
-            Pay-as-the-agent-works: short summaries cost ~1cr,
-            deep-dives more. Output shows in chat.
-          </div>
-        </div>
-
-        <!-- Budget -->
-        <div class="shelf-section">
-          <div class="shelf-label">Budget</div>
-          <div
-            class="shelf-value"
-            style="color: var(--aqua)"
-            id="shelf-remaining"
-          >
-            --
-          </div>
-          <div class="shelf-sub">
-            <span id="shelf-spent">--</span> /
-            <span id="shelf-total">--</span> spent
-          </div>
-        </div>
-
-        <!-- Activity -->
-        <div class="shelf-section">
-          <div class="shelf-label">Activity</div>
-          <div class="stat-row-small">
-            <span class="stat-key">Messages</span>
-            <span class="stat-val" id="stat-messages">0</span>
-          </div>
-          <div class="stat-row-small">
-            <span class="stat-key">Agents</span>
-            <span class="stat-val" id="stat-agents">0</span>
-          </div>
-          <div class="stat-row-small">
-            <span class="stat-key">Members</span>
-            <span class="stat-val" id="stat-members">0</span>
-          </div>
-        </div>
-
-        <!-- Interaction Guide -->
-        <div class="shelf-section" id="interaction-guide" style="display: none">
-          <div class="shelf-label">How to Interact</div>
-          <div
-            id="guide-content"
-            style="font-size: 0.75rem; color: var(--fg2); line-height: 1.5"
-          ></div>
-        </div>
-
-        <div class="shelf-section">
-          <div class="shelf-label">About</div>
-          <div id="ws-description" style="font-size: 0.8rem; color: var(--fg2)">
-            --
-          </div>
-        </div>
-
-        <div class="shelf-section">
-          <div class="shelf-label">Gas Fees</div>
-          <div class="stat-row-small">
-            <span class="stat-key">Message</span
-            ><span class="stat-val">1 cr</span>
-          </div>
-          <div class="stat-row-small">
-            <span class="stat-key">Hire agent</span
-            ><span class="stat-val">5 cr</span>
-          </div>
-          <div class="stat-row-small">
-            <span class="stat-key">Add agent</span
-            ><span class="stat-val">2 cr</span>
-          </div>
-          <div class="stat-row-small">
-            <span class="stat-key">Evaluate</span
-            ><span class="stat-val">2 cr</span>
-          </div>
-          <div class="stat-row-small">
-            <span class="stat-key">Execute</span
-            ><span class="stat-val">~1cr/1k tok</span>
-          </div>
-          <div class="stat-row-small">
-            <span class="stat-key">File write</span
-            ><span class="stat-val">1 cr</span>
-          </div>
-          <div class="stat-row-small">
-            <span class="stat-key">File upload</span
-            ><span class="stat-val">1cr + 1cr/MB</span>
-          </div>
-        </div>
-
-        <div class="shelf-section">
-          <div class="shelf-label">History</div>
-          <button
-            class="btn btn-sm"
-            id="load-history-btn"
-            onclick="loadWorkspaceHistory()"
-            style="font-size: 0.75em; margin-bottom: 6px"
-          >
-            Load History
-          </button>
-          <div
-            id="ws-history"
-            style="font-size: 0.8em; color: var(--fg3)"
-          ></div>
-        </div>
       </div>
     </div>
 
@@ -2882,6 +2800,14 @@
             );
           healthEl.textContent = items.join(" | ") || "";
         }
+        // Pulse the coherence icon to signal new data
+        const railBtn = document.getElementById("rail-coherence");
+        if (railBtn) {
+          railBtn.style.color = "var(--yellow)";
+          setTimeout(() => { railBtn.style.color = ""; }, 2000);
+        }
+        // Auto-open the coherence panel briefly if nothing else is open
+        if (typeof window._flashCoherencePanel === "function") window._flashCoherencePanel();
       }
 
       // Tiered coherence evaluation
@@ -2930,6 +2856,62 @@
         }
       }
 
+      // ── Overlay panel (icon rail → slide-in) ──────────────────────
+      let _activeOverlay = null;
+
+      function toggleOverlay(panelName) {
+        if (_activeOverlay === panelName) {
+          closeOverlay();
+          return;
+        }
+        openOverlay(panelName);
+      }
+
+      function openOverlay(panelName) {
+        const panel = document.getElementById("ws-overlay-panel");
+        const title = document.getElementById("overlay-title");
+        const panes = document.querySelectorAll(".overlay-pane");
+        const railBtns = document.querySelectorAll(".rail-btn");
+
+        // Hide all panes
+        panes.forEach(p => p.style.display = "none");
+        railBtns.forEach(b => b.classList.remove("active"));
+
+        // Show requested pane
+        const pane = document.getElementById("overlay-" + panelName);
+        if (pane) pane.style.display = "";
+
+        const titles = { coherence: "Coherence", composition: "Composition", observability: "Observability" };
+        if (title) title.textContent = titles[panelName] || panelName;
+
+        const railBtn = document.getElementById("rail-" + panelName);
+        if (railBtn) railBtn.classList.add("active");
+
+        panel.classList.add("open");
+        _activeOverlay = panelName;
+      }
+
+      function closeOverlay() {
+        const panel = document.getElementById("ws-overlay-panel");
+        panel.classList.remove("open");
+        document.querySelectorAll(".rail-btn").forEach(b => b.classList.remove("active"));
+        _activeOverlay = null;
+      }
+
+      // Dismiss on Escape
+      document.addEventListener("keydown", e => {
+        if (e.key === "Escape" && _activeOverlay) closeOverlay();
+      });
+
+      // Auto-open coherence panel briefly when score updates
+      window._flashCoherencePanel = function() {
+        if (!_activeOverlay) {
+          openOverlay("coherence");
+          setTimeout(() => { if (_activeOverlay === "coherence") closeOverlay(); }, 4000);
+        }
+      };
+
+      // ── Composition dreaming ───────────────────────────────────────
       window.runCompositionDreaming = async function () {
         const btn = document.querySelector("#composition-shelf-section .btn");
         if (btn) btn.disabled = true;
