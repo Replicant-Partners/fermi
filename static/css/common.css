@@ -524,32 +524,41 @@ a:hover {
   color: var(--bg0);
 }
 
-/* Xaman Ek — Bestiary Navigator (spotlight + fab) */
-.xaman-fab {
+/* Xaman Ek — Bestiary Navigator
+   Left-edge peek tab replaces the floating bottom-right FAB. Visible
+   only when the sidebar is collapsed; click → opens the sidebar. The
+   star icon is the conversation trigger; sits inside the tab so it
+   never overlaps page content. */
+.xaman-peek-tab {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 64px;
   background: var(--bg1);
-  border: 1px solid var(--bg3);
+  border: 1px solid var(--bg2);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
   color: var(--yellow);
-  font-size: 1.4em;
   cursor: pointer;
-  z-index: 9000;
-  transition: all 0.2s ease;
+  z-index: 8400;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
+  transition: width 0.18s ease, background 0.18s ease, color 0.18s ease;
 }
-.xaman-fab:hover {
-  border-color: var(--yellow);
-  transform: scale(1.08);
+.xaman-peek-tab:hover {
+  width: 26px;
+  background: var(--bg2);
 }
-.theme-op1 .xaman-fab {
-  border-radius: 50%;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+.xaman-peek-tab.hidden {
+  display: none;
+}
+.xaman-peek-star {
+  font-size: 1.1em;
+  line-height: 1;
 }
 
 .xaman-panel {

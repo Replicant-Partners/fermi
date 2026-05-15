@@ -1652,6 +1652,18 @@
 
           // Build interaction guide from agents
           buildInteractionGuide(ws.agents || []);
+
+          // Auto-flash the most relevant shelf panel so the icon rail
+          // is discovered. Compositions surface their composition panel;
+          // everything else gets coherence. One flash per browser
+          // session (sessionStorage-gated).
+          const flashPanel = ws.is_composition ? "composition" : "coherence";
+          // Small delay so it visibly slides in after the page settles
+          setTimeout(() => {
+            if (typeof window._autoFlashShelf === "function") {
+              window._autoFlashShelf(flashPanel);
+            }
+          }, 400);
         } catch (e) {
           document.getElementById("ws-name").textContent =
             "Error loading workspace";
@@ -2909,6 +2921,28 @@
           openOverlay("coherence");
           setTimeout(() => { if (_activeOverlay === "coherence") closeOverlay(); }, 4000);
         }
+      };
+
+      // Auto-flash a relevant panel on workspace load so the rail
+      // affordance is discovered. Picks based on workspace state:
+      //   - composition workspaces → composition panel
+      //   - others → coherence panel
+      // Closes after ~3s if the user hasn't engaged the rail/panel.
+      // Guarded against re-flashing on subsequent reloads via sessionStorage.
+      window._autoFlashShelf = function(panelName) {
+        if (!panelName) return;
+        // One flash per workspace per browser session — don't be annoying
+        const flashKey = `xaman-flash-${wsId}`;
+        try {
+          if (sessionStorage.getItem(flashKey)) return;
+          sessionStorage.setItem(flashKey, "1");
+        } catch (_) { /* sessionStorage may be unavailable */ }
+        if (_activeOverlay) return; // user already opened something
+        openOverlay(panelName);
+        setTimeout(() => {
+          // Only auto-close if still showing the panel we opened
+          if (_activeOverlay === panelName) closeOverlay();
+        }, 3000);
       };
 
       // ── Composition dreaming ───────────────────────────────────────

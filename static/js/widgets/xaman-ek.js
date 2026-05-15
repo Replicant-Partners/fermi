@@ -115,6 +115,9 @@ const XamanEk = {
     this._sidebar.classList.add("visible");
     this._sidebarVisible = true;
     document.body.classList.add("xaman-sidebar-open");
+    // Hide the left-edge peek tab while sidebar is open
+    const tab = document.getElementById("xaman-peek-tab");
+    if (tab) tab.classList.add("hidden");
     this._updateSidebarContext();
     this._renderSessionsList();
     // If there's no persisted active session but there are sessions,
@@ -132,6 +135,9 @@ const XamanEk = {
     this._sidebar.classList.remove("visible");
     this._sidebarVisible = false;
     document.body.classList.remove("xaman-sidebar-open");
+    // Restore peek tab on the left edge so the user can re-open
+    const tab = document.getElementById("xaman-peek-tab");
+    if (tab) tab.classList.remove("hidden");
     this._saveState();
   },
 
@@ -512,12 +518,17 @@ const XamanEk = {
   },
 
   _buildFab() {
-    const fab = document.createElement("button");
-    fab.className = "xaman-fab";
-    fab.innerHTML = "&#9733;";
-    fab.title = "Xaman Ek — open (Ctrl+Shift+K) · quick search (Ctrl+K)";
-    fab.addEventListener("click", () => this.toggleSidebar());
-    document.body.appendChild(fab);
+    // Slim peek tab anchored to the left edge — visible only when the
+    // sidebar is collapsed. Click → opens sidebar. The star icon is
+    // retained inside the tab so users have a visual trigger that
+    // doesn't float over page content.
+    const tab = document.createElement("button");
+    tab.className = "xaman-peek-tab";
+    tab.id = "xaman-peek-tab";
+    tab.innerHTML = '<span class="xaman-peek-star">&#9733;</span>';
+    tab.title = "Xaman Ek — open (Ctrl+Shift+K)";
+    tab.addEventListener("click", () => this.toggleSidebar());
+    document.body.appendChild(tab);
   },
 
   _bindKeyboard() {
