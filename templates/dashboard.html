@@ -593,6 +593,91 @@
         border-radius: 3px;
         margin-left: 4px;
       }
+      /* ─── Apps block ─── */
+      .apps-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 12px;
+      }
+      .app-tile {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        transition: border-color 0.15s;
+      }
+      .app-tile:hover {
+        border-color: var(--bg3);
+      }
+      .app-tile-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .app-tile-icon {
+        width: 28px;
+        height: 28px;
+        border-radius: 4px;
+        background: var(--bg2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.85rem;
+        color: var(--yellow);
+        flex-shrink: 0;
+        overflow: hidden;
+      }
+      .app-tile-icon img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .app-tile-title {
+        font-size: 0.88rem;
+        color: var(--fg1);
+        font-weight: 500;
+      }
+      .app-tile-slug {
+        font-size: 0.65rem;
+        color: var(--fg4);
+        font-family: monospace;
+      }
+      .app-tile-tagline {
+        font-size: 0.75rem;
+        color: var(--fg3);
+        line-height: 1.4;
+        min-height: 2.1em;
+      }
+      .app-tile-meta {
+        display: flex;
+        gap: 8px;
+        font-size: 0.7rem;
+        color: var(--fg3);
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .app-tile-count {
+        color: var(--aqua);
+      }
+      .app-tile-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .app-tile-actions .btn {
+        font-size: 0.7rem;
+        padding: 3px 10px;
+      }
+      /* ─── Loop tile explanations ─── */
+      .loop-explain {
+        font-size: 0.65rem;
+        color: var(--fg4);
+        margin-top: 4px;
+        line-height: 1.4;
+        font-style: italic;
+      }
     </style>
   </head>
   <body>
@@ -654,6 +739,19 @@
         </div>
         <div class="loop-grid" id="loop-health-grid">
           <div class="empty-state" style="grid-column: 1/-1">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Apps — verticals/blueprints registered with the substrate.
+           Third primitive (peer to Agent and Composition) per
+           docs/VERTICAL_HARNESS_SPLIT.md + docs/integrations/. -->
+      <div class="section" id="apps-section" style="margin-bottom:16px;display:none">
+        <div class="section-title">
+          Apps
+          <span style="font-size:0.7em;color:var(--fg3);font-weight:normal;margin-left:8px" id="apps-overall"></span>
+        </div>
+        <div class="apps-grid" id="apps-grid">
+          <div class="empty-state" style="grid-column:1/-1">Loading…</div>
         </div>
       </div>
 
@@ -895,6 +993,9 @@
 
         // Load loop health (5 feedback loops)
         loadLoopHealth();
+
+        // Load Apps (verticals registered with the substrate)
+        loadApps();
 
         // Load agents
         try {
@@ -1261,6 +1362,148 @@
         </div>`;
       }
 
+      // ─── Apps (verticals) ─────────────────────────────────────────────
+      // Third primitive on the dashboard, peer to "My Agents" and
+      // "Compositions". Each App is a blueprint registered in
+      // apps/*.json that can spawn workspaces. The block hides itself
+      // when there are no public apps available (avoids dead chrome).
+      async function loadApps() {
+        const section = document.getElementById("apps-section");
+        const grid = document.getElementById("apps-grid");
+        const overall = document.getElementById("apps-overall");
+        try {
+          const res = await fetch("/api/apps");
+          if (!res.ok) {
+            section.style.display = "none";
+            return;
+          }
+          const data = await res.json();
+          const apps = (data.apps || []).filter(
+            (a) => !a.archived_at && a.visibility !== "private",
+          );
+          if (apps.length === 0) {
+            section.style.display = "none";
+            return;
+          }
+          section.style.display = "";
+          overall.textContent = `${apps.length} available`;
+
+          // For each app, fetch the count of this user's workspaces
+          // spawned from it. Parallel — keeps the block snappy.
+          const wsCounts = await Promise.all(
+            apps.map(async (a) => {
+              try {
+                const r = await fetch(
+                  `/api/apps/${encodeURIComponent(a.slug)}/workspaces`,
+                );
+                if (!r.ok) return 0;
+                const d = await r.json();
+                return (d.workspaces || []).length;
+              } catch {
+                return 0;
+              }
+            }),
+          );
+
+          grid.innerHTML = apps
+            .map((a, i) => {
+              const count = wsCounts[i] || 0;
+              const initial = (a.name || a.slug || "?")
+                .charAt(0)
+                .toUpperCase();
+              const icon = a.icon_url
+                ? `<img src="${escAttr(a.icon_url)}" alt="" onerror="this.style.display='none';this.parentNode.textContent='${escAttr(initial)}'" />`
+                : escHtml(initial);
+              const tagline = a.tagline || "";
+              const home = a.homepage_url
+                ? `<a href="${escAttr(a.homepage_url)}" target="_blank" rel="noopener" class="btn" style="font-size:0.65rem;padding:2px 8px">Homepage ↗</a>`
+                : "";
+              const filter = a.slug
+                ? `<a href="#" onclick="event.preventDefault();filterCompositionsByOrigin('${escAttr(a.slug)}')" class="btn" style="font-size:0.65rem;padding:2px 8px">View workspaces</a>`
+                : "";
+              return `
+                <div class="app-tile">
+                  <div class="app-tile-head">
+                    <div class="app-tile-icon">${icon}</div>
+                    <div style="flex:1;min-width:0">
+                      <div class="app-tile-title">${escHtml(a.name || a.slug)}</div>
+                      <div class="app-tile-slug">${escHtml(a.slug)}</div>
+                    </div>
+                  </div>
+                  <div class="app-tile-tagline">${escHtml(tagline)}</div>
+                  <div class="app-tile-meta">
+                    <span class="app-tile-count">${count} workspace${count === 1 ? "" : "s"}</span>
+                    ${a.composition_slug ? `<span>· composition: ${escHtml(a.composition_slug)}</span>` : ""}
+                  </div>
+                  <div class="app-tile-actions">
+                    <button class="btn btn-primary" onclick="spawnAppWorkspace('${escAttr(a.slug)}','${escAttr(a.name || a.slug)}')">+ Spawn workspace</button>
+                    ${filter}
+                    ${home}
+                  </div>
+                </div>`;
+            })
+            .join("");
+        } catch (e) {
+          section.style.display = "none";
+        }
+      }
+
+      // Set the Compositions origin filter to the given app slug and
+      // re-render that block. Smoothest "show me my kask workspaces"
+      // affordance for users who don't want to leave the dashboard.
+      window.filterCompositionsByOrigin = function (slug) {
+        const sel = document.getElementById("ws-origin-filter");
+        if (!sel) return;
+        // If the option doesn't exist yet, add it on the fly so the
+        // filter actually works for arbitrary app slugs.
+        const exists = Array.from(sel.options).some((o) => o.value === slug);
+        if (!exists) {
+          const opt = document.createElement("option");
+          opt.value = slug;
+          opt.textContent = slug;
+          sel.appendChild(opt);
+        }
+        sel.value = slug;
+        if (typeof loadWorkspaces === "function") loadWorkspaces();
+        // Scroll Compositions block into view
+        const wsList = document.getElementById("workspaces-list");
+        if (wsList) {
+          wsList.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      };
+
+      // Spawn a workspace from an app and either jump into it or
+      // refresh the dashboard.
+      window.spawnAppWorkspace = async function (slug, displayName) {
+        const customName = prompt(
+          `Name this ${displayName} workspace (optional, leave blank for default):`,
+          "",
+        );
+        if (customName === null) return; // user cancelled
+        try {
+          const res = await fetch(
+            `/api/apps/${encodeURIComponent(slug)}/workspaces`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                customName ? { name: customName } : {},
+              ),
+            },
+          );
+          if (!res.ok) {
+            const err = await res.text();
+            alert(`Spawn failed:\n\n${err}`);
+            return;
+          }
+          const data = await res.json();
+          // Jump straight into the workspace
+          window.location.href = `/workspace/${data.workspace_id}`;
+        } catch (e) {
+          alert("Spawn error: " + e.message);
+        }
+      };
+
       // ─── Feedback Loops health ───────────────────────────────────────────
       async function loadLoopHealth() {
         const grid = document.getElementById("loop-health-grid");
@@ -1273,16 +1516,60 @@
             return;
           }
           const data = await res.json();
+          // Each loop gets a one-line italic explainer rendered under
+          // the dynamic summary. These describe what the loop *is*, not
+          // what its current state is — generous exposure of the design
+          // pattern for users still building intuition. Sources:
+          // docs/architecture/FEEDBACK_LOOPS.md
           const loops = [
-            { key: "loop1", icon: "①", render: renderLoop1 },
-            { key: "loop2", icon: "②", render: renderLoop2 },
-            { key: "loop3", icon: "③", render: renderLoop3 },
-            { key: "loop4", icon: "④", render: renderLoop4 },
-            { key: "loop5", icon: "⑤", render: renderLoop5 },
+            {
+              key: "loop1",
+              icon: "①",
+              render: renderLoop1,
+              explain:
+                "Agents consolidate past episodes into semantic rules. " +
+                "Dreaming changes how an agent reasons next time.",
+            },
+            {
+              key: "loop2",
+              icon: "②",
+              render: renderLoop2,
+              explain:
+                "When something looks wrong, a human reviews. " +
+                "Approved corrections become permanent memory at " +
+                "human-authority weight.",
+            },
+            {
+              key: "loop3",
+              icon: "③",
+              render: renderLoop3,
+              explain:
+                "Multi-agent workspaces are scored for whether their " +
+                "conversation hangs together (TEC). Low scores prompt " +
+                "a diagnosis + coordination brief.",
+            },
+            {
+              key: "loop4",
+              icon: "④",
+              render: renderLoop4,
+              explain:
+                "Compositions can propose changes to themselves — swap " +
+                "strategist, retune members, change mission. Each " +
+                "accepted change is a new version.",
+            },
+            {
+              key: "loop5",
+              icon: "⑤",
+              render: renderLoop5,
+              explain:
+                "Agents that produce forecasts get Brier-scored when " +
+                "the forecast resolves. The MoE router uses calibration " +
+                "to learn who to send what.",
+            },
           ];
           let attentionTotal = 0;
           let html = "";
-          loops.forEach(({ key, icon, render }) => {
+          loops.forEach(({ key, icon, render, explain }) => {
             const l = data[key];
             if (!l) return;
             const status = l.status || "green";
@@ -1297,6 +1584,7 @@
                   <span class="loop-num">${num}</span>
                 </div>
                 <div class="loop-summary">${summary}</div>
+                <div class="loop-explain">${escHtml(explain)}</div>
                 <div class="loop-detail">${detail}</div>
               </div>`;
           });
