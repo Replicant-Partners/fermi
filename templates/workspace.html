@@ -1527,7 +1527,34 @@
         try {
           const res = await fetch(`/api/workspaces/${wsId}`);
           if (!res.ok) {
-            document.getElementById("ws-name").textContent = "Not Found";
+            // Workspace fetch failed — surface this clearly instead of
+            // leaving a half-rendered page where "Not Found" looks like
+            // a normal title and "-- credits" looks like an economics
+            // bug. Show an explicit unavailable banner with the status
+            // code, error body, and a way back.
+            const errText = await res.text().catch(() => "");
+            const banner = document.createElement("div");
+            banner.style.cssText =
+              "background:var(--red);color:var(--bg0);padding:14px 24px;text-align:center;font-size:0.9em;font-family:inherit;line-height:1.5;border-bottom:1px solid var(--bg2)";
+            banner.innerHTML =
+              '<strong>This workspace is unavailable.</strong> ' +
+              `HTTP ${res.status}` +
+              (errText
+                ? ` — ${errText.slice(0, 160)}${errText.length > 160 ? "…" : ""}`
+                : "") +
+              ' &nbsp; · &nbsp; ' +
+              '<a href="/dashboard" style="color:var(--bg0);text-decoration:underline;font-weight:500">Back to dashboard</a>';
+            document.body.insertBefore(banner, document.body.firstChild);
+            // Replace the soft "Not Found" name with something more
+            // accurate, and hide the misleading budget/credits pill
+            // and coherence chip so they don't suggest those features
+            // are themselves broken.
+            document.getElementById("ws-name").textContent =
+              "Workspace unavailable";
+            const budgetEl = document.querySelector(".budget-inline");
+            if (budgetEl) budgetEl.style.display = "none";
+            const coherenceEl = document.getElementById("header-coherence");
+            if (coherenceEl) coherenceEl.style.display = "none";
             return;
           }
           const ws = await res.json();
