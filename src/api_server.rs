@@ -533,6 +533,66 @@ async fn run_migrations(db: &PgPool) {
     }
 }
 
+/// Belt-and-suspenders schema ensure. Each ALTER is its own single-statement
+/// sqlx::query — bypasses any interaction between raw_sql, DO blocks, and
+/// PgBouncer in transaction mode that has eaten multi-statement DDL in the
+/// past. Run after `run_migrations`. Idempotent.
+async fn ensure_critical_schema(db: &PgPool) {
+    // (label, ALTER statement) — keep tight, only columns whose
+    // absence causes user-facing 500s on the workspace and dashboard
+    // surfaces.
+    let alters: &[(&str, &str)] = &[
+        ("teams.mission",
+         "ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS mission TEXT"),
+        ("teams.coordination_strategist_id",
+         "ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS coordination_strategist_id UUID"),
+        ("teams.strategist_assigned_at",
+         "ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS strategist_assigned_at TIMESTAMPTZ"),
+        ("composition_versions.rejected_by",
+         "ALTER TABLE public.composition_versions ADD COLUMN IF NOT EXISTS rejected_by TEXT"),
+        ("composition_versions.rejection_note",
+         "ALTER TABLE public.composition_versions ADD COLUMN IF NOT EXISTS rejection_note TEXT"),
+    ];
+
+    println!("[ensure_critical_schema] running {} column ensures…", alters.len());
+    for (label, stmt) in alters {
+        match sqlx::query(stmt).execute(db).await {
+            Ok(_) => println!("[ensure_critical_schema] ✓ {}", label),
+            Err(e) => eprintln!("[ensure_critical_schema] ✗ {} — {}", label, e),
+        }
+    }
+
+    // Verify post-state and log it so Railway logs show exactly what landed.
+    let probe = sqlx::query(
+        "SELECT table_name, column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND ((table_name = 'teams' AND column_name IN ('mission','coordination_strategist_id','strategist_assigned_at'))
+             OR (table_name = 'composition_versions' AND column_name IN ('rejected_by','rejection_note')))
+         ORDER BY table_name, column_name",
+    )
+    .fetch_all(db)
+    .await;
+
+    match probe {
+        Ok(rows) => {
+            use sqlx::Row;
+            let names: Vec<String> = rows
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{}.{}",
+                        r.try_get::<String, _>("table_name").unwrap_or_default(),
+                        r.try_get::<String, _>("column_name").unwrap_or_default()
+                    )
+                })
+                .collect();
+            println!("[ensure_critical_schema] present: [{}]", names.join(", "));
+        }
+        Err(e) => eprintln!("[ensure_critical_schema] verification probe failed: {}", e),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -570,6 +630,14 @@ async fn main() {
 
     // Run pending migrations on startup
     run_migrations(&db).await;
+
+    // Belt-and-suspenders: ensure the columns that have repeatedly failed
+    // to land via the multi-statement migration runner (PgBouncer + raw_sql
+    // interaction is suspect) actually exist. Each ALTER below is its own
+    // single-statement sqlx::query — bypasses any raw_sql / DO-block
+    // weirdness. Logs the schema state so we can see in Railway logs
+    // whether the columns are present.
+    ensure_critical_schema(&db).await;
 
     // Initialize ADM memory store — reuse the same pool (single pool to Neon)
     let memory_store = Arc::new(MemoryStore::from_pool(db.clone()));

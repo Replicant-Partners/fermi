@@ -1984,7 +1984,10 @@ impl MemoryStore {
         &self,
         workspace_id: Uuid,
     ) -> Result<Vec<crate::CompositionVersion>> {
-        let rows = sqlx::query(
+        // Defensive SELECT — if rejected_by / rejection_note are missing
+        // (migration drift, which we've hit), retry without them rather
+        // than 500ing the whole composition panel.
+        let full = sqlx::query(
             r#"SELECT composition_version_id, workspace_id, version_number,
                       mission, coordination_strategist_id,
                       member_agent_ids, member_weights,
@@ -1997,7 +2000,33 @@ impl MemoryStore {
         )
         .bind(workspace_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await;
+
+        let (rows, has_rejection_cols) = match full {
+            Ok(r) => (r, true),
+            Err(e) => {
+                eprintln!(
+                    "[list_composition_versions] full SELECT failed, retrying \
+                     without rejection columns: {}",
+                    e
+                );
+                let fallback = sqlx::query(
+                    r#"SELECT composition_version_id, workspace_id, version_number,
+                              mission, coordination_strategist_id,
+                              member_agent_ids, member_weights,
+                              diff_summary, proposed_by,
+                              accepted_by,
+                              created_at
+                       FROM composition_versions
+                       WHERE workspace_id = $1
+                       ORDER BY version_number DESC"#,
+                )
+                .bind(workspace_id)
+                .fetch_all(&self.pool)
+                .await?;
+                (fallback, false)
+            }
+        };
 
         rows.iter()
             .map(|r| {
@@ -2014,8 +2043,16 @@ impl MemoryStore {
                     diff_summary: r.try_get("diff_summary").unwrap_or(None),
                     proposed_by: r.try_get("proposed_by").unwrap_or(None),
                     accepted_by: r.try_get("accepted_by").unwrap_or(None),
-                    rejected_by: r.try_get("rejected_by").unwrap_or(None),
-                    rejection_note: r.try_get("rejection_note").unwrap_or(None),
+                    rejected_by: if has_rejection_cols {
+                        r.try_get("rejected_by").unwrap_or(None)
+                    } else {
+                        None
+                    },
+                    rejection_note: if has_rejection_cols {
+                        r.try_get("rejection_note").unwrap_or(None)
+                    } else {
+                        None
+                    },
                     created_at: r.try_get("created_at")?,
                 })
             })

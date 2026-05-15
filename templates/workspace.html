@@ -613,20 +613,34 @@
 
       /* ─── Right: Shelf ─── */
        /* ─── Icon rail (replaces panel-shelf) ─── */
-       /* Wider + labeled so the rail is discoverable once a panel
-          collapses — the previous 36px/icon-only version produced
-          a "can't find where to click to reopen" complaint. */
+       /* The rail IS the collapsed shelf — needs to read as a
+          deliberate column, not as "a few pixels of leftover
+          chrome" (per user feedback). 76px so labels fit on one
+          line at 0.66rem and the icons feel button-sized, not
+          decorative. The yellow rail-header strip at the top
+          tells the user "this column is the shelf you just
+          closed — click one of the buttons to reopen it." */
        .ws-icon-rail {
-         width: 60px;
-         min-width: 60px;
+         width: 76px;
+         min-width: 76px;
          background: var(--bg0);
          border-left: 1px solid var(--bg2);
          display: flex;
          flex-direction: column;
          align-items: stretch;
-         padding-top: 6px;
-         gap: 2px;
+         padding-top: 0;
+         gap: 1px;
          z-index: 100;
+       }
+       .rail-header {
+         font-size: 0.58rem;
+         text-transform: uppercase;
+         letter-spacing: 0.08em;
+         color: var(--yellow);
+         text-align: center;
+         padding: 6px 4px 5px;
+         border-bottom: 1px solid var(--bg2);
+         opacity: 0.85;
        }
        .rail-btn {
          width: 100%;
@@ -657,7 +671,7 @@
          line-height: 1;
        }
        .rail-btn-label {
-         font-size: 0.6rem;
+         font-size: 0.66rem;
          text-transform: uppercase;
          letter-spacing: 0.04em;
          color: inherit;
@@ -667,7 +681,7 @@
        .ws-overlay-panel {
          position: fixed;
          top: 0;
-         right: 60px;          /* sits flush against the icon rail */
+         right: 76px;          /* sits flush against the icon rail */
          width: 240px;
          height: 100vh;
          background: var(--bg0);
@@ -895,7 +909,10 @@
 
       /* ─── Responsive ─── */
       @media (max-width: 900px) {
-        .ws-icon-rail { display: none; }
+        /* Keep the rail visible even on narrow viewports — it's the only
+           affordance to reopen the shelf, and hiding it created the
+           "where did the shelf go?" confusion. The overlay slides over
+           it instead. */
         .ws-overlay-panel { right: 0; }
       }
       @media (max-width: 640px) {
@@ -1277,18 +1294,22 @@
         </div>
       </div>
 
-      <!-- Right: Icon rail (60px wide, labeled buttons so you can find
-           them again after the overlay closes) -->
+      <!-- Right: Icon rail (76px wide, labeled buttons so you can find
+           them again after the overlay closes). The "SHELF" header
+           strip tells the user "this column IS the shelf you just
+           closed — click a button to reopen it" — without it, the
+           rail reads as decorative chrome. -->
       <div class="ws-icon-rail" id="ws-icon-rail">
-        <button class="rail-btn" id="rail-coherence" onclick="toggleOverlay('coherence')" title="Coherence">
+        <div class="rail-header" title="Click a button to open a shelf panel">Shelf</div>
+        <button class="rail-btn" id="rail-coherence" onclick="toggleOverlay('coherence')" title="Coherence — semantic alignment, recommendations, dream notes">
           <span class="rail-btn-icon">☸</span>
           <span class="rail-btn-label">Coh</span>
         </button>
-        <button class="rail-btn" id="rail-composition" onclick="toggleOverlay('composition')" title="Composition">
+        <button class="rail-btn" id="rail-composition" onclick="toggleOverlay('composition')" title="Composition — propose &amp; review tune-team RSI versions">
           <span class="rail-btn-icon">🧩</span>
           <span class="rail-btn-label">Comp</span>
         </button>
-        <button class="rail-btn" id="rail-observability" onclick="toggleOverlay('observability')" title="Observability">
+        <button class="rail-btn" id="rail-observability" onclick="toggleOverlay('observability')" title="Observability — agent state, anomalies, drift, evals">
           <span class="rail-btn-icon">👁</span>
           <span class="rail-btn-label">Obs</span>
         </button>
@@ -1716,8 +1737,13 @@
             }
           }, 400);
         } catch (e) {
+          // Surface the actual exception in the console AND in the
+          // header text so a console-free pair can still see what
+          // broke. The silent "Error loading workspace" label hid the
+          // real cause for an embarrassing number of debugging cycles.
+          console.error("[loadWorkspace] threw after 200:", e);
           document.getElementById("ws-name").textContent =
-            "Error loading workspace";
+            "Workspace loaded with errors — " + (e && e.message ? e.message : String(e)).slice(0, 80);
         }
       }
 
