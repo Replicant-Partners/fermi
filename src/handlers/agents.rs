@@ -1610,7 +1610,14 @@ pub async fn loop_health_handler(
     let memory = &state.memory_store;
 
     // ── Loop 1: individual learning ─────────────────────────────────────────
-    // Agents that haven't consolidated recently or have unconsolidated episodes
+    // The previous LIMIT 20 made the flagged list look static after
+    // consolidations — process one agent, next-in-queue bubbles up
+    // into the slot, list stays at 20. Bumping to LIMIT 100 lets the
+    // frontend's needs_attention filter shrink the visible queue
+    // correctly: after a successful consolidation the agent's
+    // `unconsolidated` drops to 0 and `last_consolidated_at = NOW`,
+    // so needs_attention flips to false and the row drops out of
+    // the flagged subset that the JS shows by default.
     let loop1_rows = sqlx::query(
         "SELECT a.agent_id, a.agent_name, a.display_alias,
                 a.dreaming_budget_credits, a.dreaming_credits_used,
@@ -1621,7 +1628,7 @@ pub async fn loop_health_handler(
          WHERE a.user_id = $1 AND a.status != 'archived'
          GROUP BY a.agent_id
          ORDER BY unconsolidated DESC, a.last_consolidated_at ASC NULLS FIRST
-         LIMIT 20",
+         LIMIT 100",
     )
     .bind(&user_id)
     .fetch_all(db)
