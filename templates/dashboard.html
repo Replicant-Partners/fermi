@@ -149,6 +149,127 @@
         display: flex;
         margin-top: 6px;
       }
+      /* ─── Loop Health tiles ─── */
+      .loop-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 10px;
+      }
+      @media (max-width: 900px) {
+        .loop-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      @media (max-width: 480px) {
+        .loop-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .loop-tile {
+        background: var(--bg0);
+        border: 1px solid var(--bg2);
+        padding: 12px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .loop-tile:hover {
+        border-color: var(--bg3);
+        background: var(--bg0-soft, var(--bg0));
+      }
+      .loop-tile.open {
+        border-color: var(--yellow);
+      }
+      .loop-tile-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .loop-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .loop-dot.green {
+        background: var(--green);
+      }
+      .loop-dot.amber {
+        background: var(--yellow);
+      }
+      .loop-dot.red {
+        background: var(--red);
+      }
+      .loop-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--fg2);
+        flex: 1;
+      }
+      .loop-num {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        font-variant-numeric: tabular-nums;
+      }
+      .loop-summary {
+        font-size: 0.75rem;
+        color: var(--fg3);
+        margin-top: 6px;
+        line-height: 1.4;
+      }
+      .loop-detail {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid var(--bg2);
+        display: none;
+      }
+      .loop-tile.open .loop-detail {
+        display: block;
+      }
+      .loop-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 0.72rem;
+        border-bottom: 1px solid var(--bg1);
+      }
+      .loop-item:last-child {
+        border-bottom: none;
+      }
+      .loop-item-name {
+        color: var(--fg1);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+      }
+      .loop-item-meta {
+        color: var(--fg3);
+        font-size: 0.68rem;
+        font-variant-numeric: tabular-nums;
+        flex-shrink: 0;
+      }
+      .loop-item-flag {
+        font-size: 0.6rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 1px 5px;
+        border: 1px solid var(--yellow);
+        color: var(--yellow);
+        flex-shrink: 0;
+      }
+      .loop-item-flag.red {
+        border-color: var(--red);
+        color: var(--red);
+      }
+      .loop-empty {
+        color: var(--fg4);
+        font-size: 0.7rem;
+        font-style: italic;
+        padding: 4px 0;
+      }
       .badge {
         font-size: 0.7rem;
         padding: 2px 6px;
@@ -391,6 +512,20 @@
         </div>
       </div>
 
+      <!-- Loop Health -->
+      <div class="section" style="margin-bottom: 24px" id="loop-health-section">
+        <div class="section-title">
+          Feedback Loops
+          <span
+            id="loop-health-overall"
+            style="font-size: 0.7em; color: var(--fg3); font-weight: normal"
+          ></span>
+        </div>
+        <div class="loop-grid" id="loop-health-grid">
+          <div class="empty-state" style="grid-column: 1/-1">Loading...</div>
+        </div>
+      </div>
+
       <!-- Buy Credits -->
       <div class="section" style="margin-bottom: 24px" id="buy-credits-section">
         <div class="section-title">Buy Credits</div>
@@ -620,6 +755,9 @@
             }
           }
         } catch {}
+
+        // Load loop health (5 feedback loops)
+        loadLoopHealth();
 
         // Load agents
         try {
@@ -984,6 +1122,204 @@
           </a>
           ${extraHtml || ""}
         </div>`;
+      }
+
+      // ─── Feedback Loops health ───────────────────────────────────────────
+      async function loadLoopHealth() {
+        const grid = document.getElementById("loop-health-grid");
+        const overall = document.getElementById("loop-health-overall");
+        try {
+          const res = await fetch("/api/me/loop-health");
+          if (!res.ok) {
+            grid.innerHTML =
+              '<div class="empty-state" style="grid-column:1/-1">Could not load loop health</div>';
+            return;
+          }
+          const data = await res.json();
+          const loops = [
+            { key: "loop1", icon: "①", render: renderLoop1 },
+            { key: "loop2", icon: "②", render: renderLoop2 },
+            { key: "loop3", icon: "③", render: renderLoop3 },
+            { key: "loop4", icon: "④", render: renderLoop4 },
+            { key: "loop5", icon: "⑤", render: renderLoop5 },
+          ];
+          let attentionTotal = 0;
+          let html = "";
+          loops.forEach(({ key, icon, render }) => {
+            const l = data[key];
+            if (!l) return;
+            const status = l.status || "green";
+            const { summary, detail, count } = render(l);
+            attentionTotal += count;
+            const num = count > 0 ? `${count}` : "";
+            html += `
+              <div class="loop-tile" data-loop="${key}" onclick="toggleLoopTile('${key}')">
+                <div class="loop-tile-head">
+                  <span class="loop-dot ${status}"></span>
+                  <span class="loop-label">${icon} ${escHtml(l.label || key)}</span>
+                  <span class="loop-num">${num}</span>
+                </div>
+                <div class="loop-summary">${summary}</div>
+                <div class="loop-detail">${detail}</div>
+              </div>`;
+          });
+          grid.innerHTML = html || '<div class="empty-state" style="grid-column:1/-1">No loop data yet</div>';
+          overall.textContent = attentionTotal > 0
+            ? `${attentionTotal} item${attentionTotal === 1 ? "" : "s"} need attention`
+            : "all loops healthy";
+        } catch (e) {
+          grid.innerHTML =
+            '<div class="empty-state" style="grid-column:1/-1">Loop health unavailable</div>';
+        }
+      }
+
+      window.toggleLoopTile = function (key) {
+        const tile = document.querySelector(`.loop-tile[data-loop="${key}"]`);
+        if (!tile) return;
+        // Close others first (one open at a time, prevents tall stacks)
+        document.querySelectorAll(".loop-tile.open").forEach((el) => {
+          if (el !== tile) el.classList.remove("open");
+        });
+        tile.classList.toggle("open");
+      };
+
+      function loopAgentLabel(a) {
+        return escHtml(a.display_alias || a.agent_name || "(unnamed)");
+      }
+
+      // Loop 1: Learning — unconsolidated episodes, dreaming budget
+      function renderLoop1(l) {
+        const agents = l.agents || [];
+        const flagged = agents.filter((a) => a.needs_attention);
+        const summary = flagged.length === 0
+          ? `${agents.length} agent${agents.length === 1 ? "" : "s"} consolidating cleanly`
+          : `${flagged.length} of ${agents.length} need dreaming attention`;
+        const items = (flagged.length > 0 ? flagged : agents.slice(0, 5))
+          .map((a) => {
+            const meta = [];
+            if (a.unconsolidated_episodes > 0)
+              meta.push(`${a.unconsolidated_episodes} unconsolidated`);
+            if (a.budget_exhausted) meta.push("budget exhausted");
+            if (a.days_since_dreaming != null && a.days_since_dreaming < 999)
+              meta.push(`${a.days_since_dreaming}d since dream`);
+            const flag = a.needs_attention
+              ? `<span class="loop-item-flag">attn</span>`
+              : "";
+            return `
+              <div class="loop-item">
+                <span class="loop-item-name">${loopAgentLabel(a)}</span>
+                <span class="loop-item-meta">${escHtml(meta.join(" · "))}</span>
+                ${flag}
+              </div>`;
+          })
+          .join("");
+        const detail = items || '<div class="loop-empty">No agents yet</div>';
+        return { summary, detail, count: flagged.length };
+      }
+
+      // Loop 2: Correction — HITL queue
+      function renderLoop2(l) {
+        const queue = l.queue || [];
+        const summary = queue.length === 0
+          ? "no anomalies awaiting review"
+          : `${queue.length} anomal${queue.length === 1 ? "y" : "ies"} pending review`;
+        const items = queue
+          .slice(0, 8)
+          .map((e) => {
+            const flagClass = e.severity === "critical" ? "red" : "";
+            return `
+              <div class="loop-item">
+                <span class="loop-item-name">${loopAgentLabel(e)} · ${escHtml(e.kind || "")}</span>
+                <span class="loop-item-meta">${e.days_old}d</span>
+                <span class="loop-item-flag ${flagClass}">${escHtml(e.severity || "?")}</span>
+              </div>`;
+          })
+          .join("");
+        const detail = items || '<div class="loop-empty">Queue is clear</div>';
+        return { summary, detail, count: queue.length };
+      }
+
+      // Loop 3: Coherence — workspace evaluation freshness
+      function renderLoop3(l) {
+        const ws = l.workspaces || [];
+        const flagged = ws.filter((w) => w.needs_attention);
+        const summary = flagged.length === 0
+          ? `${ws.length} workspace${ws.length === 1 ? "" : "s"} in good standing`
+          : `${flagged.length} workspace${flagged.length === 1 ? "" : "s"} need re-evaluation`;
+        const items = (flagged.length > 0 ? flagged : ws.slice(0, 5))
+          .map((w) => {
+            const score = w.latest_coherence_score != null
+              ? `${(w.latest_coherence_score * 100).toFixed(0)}%`
+              : "—";
+            const hours = w.hours_since_coherence;
+            const age = hours == null || hours >= 9999
+              ? "never"
+              : hours < 24
+                ? `${hours}h`
+                : `${Math.floor(hours / 24)}d`;
+            const flag = w.needs_attention
+              ? `<span class="loop-item-flag">stale</span>`
+              : "";
+            return `
+              <div class="loop-item">
+                <span class="loop-item-name">${escHtml(w.name)}</span>
+                <span class="loop-item-meta">${score} · ${age}</span>
+                ${flag}
+              </div>`;
+          })
+          .join("");
+        const detail = items || '<div class="loop-empty">No active workspaces</div>';
+        return { summary, detail, count: flagged.length };
+      }
+
+      // Loop 4: Evolution — pending composition proposals
+      function renderLoop4(l) {
+        const proposals = l.proposals || [];
+        const summary = proposals.length === 0
+          ? "no pending evolution proposals"
+          : `${proposals.length} proposal${proposals.length === 1 ? "" : "s"} awaiting decision`;
+        const items = proposals
+          .slice(0, 6)
+          .map((p) => {
+            const diff = (p.diff_summary || "").slice(0, 60);
+            return `
+              <div class="loop-item">
+                <span class="loop-item-name">${escHtml(p.workspace_name)} v${p.version_number}</span>
+                <span class="loop-item-meta">${p.days_pending}d · ${escHtml(diff)}</span>
+              </div>`;
+          })
+          .join("");
+        const detail = items || '<div class="loop-empty">Nothing pending</div>';
+        return { summary, detail, count: proposals.length };
+      }
+
+      // Loop 5: Calibration — Brier coverage on contracted agents
+      function renderLoop5(l) {
+        const agents = l.agents || [];
+        const warm = l.warm || 0;
+        const cold = l.cold || 0;
+        const summary = agents.length === 0
+          ? "no contracted agents to calibrate"
+          : `${warm} warm · ${cold} cold (of ${agents.length})`;
+        const items = agents
+          .slice(0, 8)
+          .map((a) => {
+            const cal = a.calibration_score != null
+              ? `${(a.calibration_score * 100).toFixed(0)}%`
+              : "—";
+            const flag = a.status === "cold"
+              ? `<span class="loop-item-flag">cold</span>`
+              : "";
+            return `
+              <div class="loop-item">
+                <span class="loop-item-name">${loopAgentLabel(a)}</span>
+                <span class="loop-item-meta">${cal} · n=${a.n_resolved}</span>
+                ${flag}
+              </div>`;
+          })
+          .join("");
+        const detail = items || '<div class="loop-empty">No contracted agents yet</div>';
+        return { summary, detail, count: cold };
       }
 
       async function loadCollaborators() {

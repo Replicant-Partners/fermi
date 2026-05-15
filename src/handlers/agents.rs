@@ -1596,3 +1596,238 @@ pub async fn get_agent_calibration_handler(
         },
     })))
 }
+
+// ─── Loop health summary (GET /api/me/loop-health) ────────────────────────────
+
+/// Aggregates the health of all five feedback loops for the authenticated user.
+/// Used by the dashboard to surface what needs attention across loops.
+pub async fn loop_health_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let db = &state.db;
+    let memory = &state.memory_store;
+
+    // ── Loop 1: individual learning ─────────────────────────────────────────
+    // Agents that haven't consolidated recently or have unconsolidated episodes
+    let loop1_rows = sqlx::query(
+        "SELECT a.agent_id, a.agent_name, a.display_alias,
+                a.dreaming_budget_credits, a.dreaming_credits_used,
+                a.last_consolidated_at,
+                COUNT(e.episode_id) FILTER (WHERE e.consolidated = false) AS unconsolidated
+         FROM agents a
+         LEFT JOIN episodes e ON e.agent_id = a.agent_id
+         WHERE a.user_id = $1 AND a.status != 'archived'
+         GROUP BY a.agent_id
+         ORDER BY unconsolidated DESC, a.last_consolidated_at ASC NULLS FIRST
+         LIMIT 20",
+    )
+    .bind(&user_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let loop1: Vec<Value> = loop1_rows.iter().map(|r| {
+        let budget: i32 = r.try_get("dreaming_budget_credits").unwrap_or(0);
+        let used: i32 = r.try_get("dreaming_credits_used").unwrap_or(0);
+        let unconsolidated: i64 = r.try_get("unconsolidated").unwrap_or(0);
+        let last_consolidated: Option<chrono::DateTime<chrono::Utc>> =
+            r.try_get("last_consolidated_at").unwrap_or(None);
+        let days_since = last_consolidated
+            .map(|t| (chrono::Utc::now() - t).num_days())
+            .unwrap_or(999);
+        json!({
+            "agent_id": r.try_get::<uuid::Uuid,_>("agent_id").ok(),
+            "agent_name": r.try_get::<String,_>("agent_name").unwrap_or_default(),
+            "display_alias": r.try_get::<Option<String>,_>("display_alias").unwrap_or(None),
+            "unconsolidated_episodes": unconsolidated,
+            "budget_exhausted": budget > 0 && used >= budget,
+            "days_since_dreaming": days_since,
+            "needs_attention": unconsolidated > 20 || days_since > 14 || (budget > 0 && used >= budget),
+        })
+    }).collect();
+
+    let loop1_attention = loop1.iter().filter(|r| r["needs_attention"].as_bool().unwrap_or(false)).count();
+
+    // ── Loop 2: HITL correction ──────────────────────────────────────────────
+    let hitl_rows = sqlx::query(
+        "SELECT ae.event_id, ae.agent_id, ae.kind, ae.severity, ae.created_at,
+                a.agent_name, a.display_alias
+         FROM anomaly_events ae
+         JOIN agents a ON a.agent_id = ae.agent_id
+         WHERE a.user_id = $1
+           AND ae.requires_review = TRUE
+           AND ae.resolved_at IS NULL
+         ORDER BY ae.severity DESC, ae.created_at ASC
+         LIMIT 10",
+    )
+    .bind(&user_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let loop2: Vec<Value> = hitl_rows.iter().map(|r| {
+        let created: chrono::DateTime<chrono::Utc> =
+            r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now());
+        let days_old = (chrono::Utc::now() - created).num_days();
+        json!({
+            "event_id": r.try_get::<uuid::Uuid,_>("event_id").ok(),
+            "agent_id": r.try_get::<uuid::Uuid,_>("agent_id").ok(),
+            "agent_name": r.try_get::<String,_>("agent_name").unwrap_or_default(),
+            "display_alias": r.try_get::<Option<String>,_>("display_alias").unwrap_or(None),
+            "kind": r.try_get::<String,_>("kind").unwrap_or_default(),
+            "severity": r.try_get::<String,_>("severity").unwrap_or_default(),
+            "days_old": days_old,
+        })
+    }).collect();
+
+    // ── Loop 3: workspace coherence ──────────────────────────────────────────
+    let coherence_rows = sqlx::query(
+        "SELECT t.id, t.name, t.origin, t.mission,
+                MAX(ce.evaluated_at) AS last_coherence_at,
+                (SELECT ce2.global_score FROM coherence_evaluations ce2
+                 WHERE ce2.workspace_id = t.id
+                 ORDER BY ce2.evaluated_at DESC LIMIT 1) AS latest_score
+         FROM teams t
+         JOIN team_members tm ON tm.team_id = t.id
+         LEFT JOIN coherence_evaluations ce ON ce.workspace_id = t.id
+         WHERE tm.member_id = $1
+           AND tm.role IN ('owner', 'admin')
+           AND t.origin NOT IN ('rabble_swarm', 'personal_workspace')
+           AND (t.archived_at IS NULL)
+         GROUP BY t.id
+         ORDER BY last_coherence_at ASC NULLS FIRST
+         LIMIT 10",
+    )
+    .bind(&user_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let loop3: Vec<Value> = coherence_rows.iter().map(|r| {
+        let last_eval: Option<chrono::DateTime<chrono::Utc>> =
+            r.try_get("last_coherence_at").unwrap_or(None);
+        let hours_since = last_eval
+            .map(|t| (chrono::Utc::now() - t).num_hours())
+            .unwrap_or(9999);
+        let score: Option<f64> = r.try_get("latest_score").unwrap_or(None);
+        json!({
+            "workspace_id": r.try_get::<uuid::Uuid,_>("id").ok(),
+            "name": r.try_get::<String,_>("name").unwrap_or_default(),
+            "origin": r.try_get::<String,_>("origin").unwrap_or_default(),
+            "mission": r.try_get::<Option<String>,_>("mission").unwrap_or(None),
+            "latest_coherence_score": score,
+            "hours_since_coherence": hours_since,
+            "needs_attention": hours_since > 48 || score.map(|s| s < 0.4).unwrap_or(false),
+        })
+    }).collect();
+
+    let loop3_attention = loop3.iter().filter(|r| r["needs_attention"].as_bool().unwrap_or(false)).count();
+
+    // ── Loop 4: composition evolution proposals ──────────────────────────────
+    let proposals_rows = sqlx::query(
+        "SELECT cv.composition_version_id, cv.workspace_id, cv.version_number,
+                cv.diff_summary, cv.proposed_by, cv.created_at,
+                t.name AS workspace_name
+         FROM composition_versions cv
+         JOIN teams t ON t.id = cv.workspace_id
+         JOIN team_members tm ON tm.team_id = t.id
+         WHERE tm.member_id = $1
+           AND tm.role IN ('owner', 'admin')
+           AND cv.accepted_by IS NULL
+           AND cv.rejected_by IS NULL
+         ORDER BY cv.created_at DESC
+         LIMIT 10",
+    )
+    .bind(&user_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let loop4: Vec<Value> = proposals_rows.iter().map(|r| {
+        let created: chrono::DateTime<chrono::Utc> =
+            r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now());
+        json!({
+            "version_id": r.try_get::<uuid::Uuid,_>("composition_version_id").ok(),
+            "workspace_id": r.try_get::<uuid::Uuid,_>("workspace_id").ok(),
+            "workspace_name": r.try_get::<String,_>("workspace_name").unwrap_or_default(),
+            "version_number": r.try_get::<i32,_>("version_number").unwrap_or(0),
+            "diff_summary": r.try_get::<Option<String>,_>("diff_summary").unwrap_or(None),
+            "proposed_by": r.try_get::<Option<String>,_>("proposed_by").unwrap_or(None),
+            "days_pending": (chrono::Utc::now() - created).num_days(),
+        })
+    }).collect();
+
+    // ── Loop 5: calibration ──────────────────────────────────────────────────
+    let cal_rows = sqlx::query(
+        "SELECT a.agent_id, a.agent_name, a.display_alias,
+                COUNT(f.id) FILTER (WHERE f.brier_score IS NOT NULL) AS n_resolved,
+                AVG(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL) AS avg_brier
+         FROM agents a
+         LEFT JOIN fermi_forecasts f ON f.agents_used @> jsonb_build_array(jsonb_build_object('agent_id', a.agent_id::text))
+           AND f.status = 'resolved'
+         WHERE a.user_id = $1
+           AND a.status != 'archived'
+           AND (a.fermi_contract IS NOT NULL OR a.output_contract IS NOT NULL)
+         GROUP BY a.agent_id
+         ORDER BY n_resolved DESC",
+    )
+    .bind(&user_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let loop5: Vec<Value> = cal_rows.iter().map(|r| {
+        let n: i64 = r.try_get("n_resolved").unwrap_or(0);
+        let avg_brier: Option<f64> = r.try_get("avg_brier").unwrap_or(None);
+        let calibration = avg_brier.map(|b| 1.0 - b.clamp(0.0, 1.0));
+        let confidence = (n as f64 / 20.0).min(1.0);
+        json!({
+            "agent_id": r.try_get::<uuid::Uuid,_>("agent_id").ok(),
+            "agent_name": r.try_get::<String,_>("agent_name").unwrap_or_default(),
+            "display_alias": r.try_get::<Option<String>,_>("display_alias").unwrap_or(None),
+            "n_resolved": n,
+            "calibration_score": calibration,
+            "confidence": confidence,
+            "status": if n == 0 { "cold" } else if confidence < 0.5 { "warming" } else { "warm" },
+        })
+    }).collect();
+
+    let loop5_cold = loop5.iter().filter(|r| r["status"].as_str() == Some("cold")).count();
+    let loop5_warm = loop5.iter().filter(|r| r["status"].as_str() == Some("warm")).count();
+
+    Ok(Json(json!({
+        "loop1": {
+            "label": "Learning",
+            "agents": loop1,
+            "needs_attention": loop1_attention,
+            "status": if loop1_attention > 0 { "amber" } else { "green" },
+        },
+        "loop2": {
+            "label": "Correction",
+            "queue": loop2,
+            "unreviewed": loop2.len(),
+            "status": if !loop2.is_empty() { if loop2.iter().any(|r| r["severity"].as_str() == Some("critical")) { "red" } else { "amber" } } else { "green" },
+        },
+        "loop3": {
+            "label": "Coherence",
+            "workspaces": loop3,
+            "needs_attention": loop3_attention,
+            "status": if loop3_attention > 0 { "amber" } else { "green" },
+        },
+        "loop4": {
+            "label": "Evolution",
+            "proposals": loop4,
+            "pending": loop4.len(),
+            "status": if !loop4.is_empty() { "amber" } else { "green" },
+        },
+        "loop5": {
+            "label": "Calibration",
+            "agents": loop5,
+            "warm": loop5_warm,
+            "cold": loop5_cold,
+            "status": if loop5_warm == 0 && !loop5.is_empty() { "amber" } else { "green" },
+        },
+    })))
+}
