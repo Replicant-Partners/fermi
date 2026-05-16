@@ -1,0 +1,32 @@
+{
+  "slug": "{{SLUG}}",
+  "name": "{{NAME}}",
+  "tagline": "{{TAGLINE}}",
+  "description": "{{DESCRIPTION}}",
+  "homepage_url": null,
+  "icon_url": null,
+  "composition_slug": null,
+  "schema_slug": null,
+  "schema_json": null,
+  "visibility": "private",
+  "workspace_template": {
+    "initial_budget": 100,
+    "default_name_pattern": "{{NAME}} — {date} session",
+    "auto_hire": [],
+    "initial_files": [
+      {
+        "path": "{{SLUG}}/state.yaml",
+        "content": "# Canonical document for this App workspace.\n# Edit this — agents will read and write to it.\n"
+      },
+      {
+        "path": ".app/manifest.yaml",
+        "content": "app_slug: {{SLUG}}\n"
+      },
+      {
+        "path": "context/readme.md",
+        "content": "# {{NAME}} workspace\n\nSpawned from the {{SLUG}} App.\n"
+      }
+    ]
+  },
+  "metadata": {}
+}

@@ -1,0 +1,27 @@
+[package]
+name = "abw-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for building, validating, and deploying Apps on the Agent Bestiary Workspace platform"
+
+[[bin]]
+name = "abw"
+path = "src/main.rs"
+
+[dependencies]
+# The manifest builder substrate lives in the fermi lib so all entry points
+# (CLI, xamanEK app_design session, fork-from-workspace, HTTP handler) share
+# the same validation. Disable default-features so we don't pull the whole
+# server's transitive graph if it's avoidable.
+fermi = { path = "../..", default-features = false }
+
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "net", "time"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+anyhow = "1.0"
+colored = "2.0"
+dirs = "5.0"
+url = "2.5"
+open = "5"
