@@ -64,3 +64,14 @@ tree-sitter-fpl/build/
 Screenshot_20260213-024023.png
 .env*.local
 nohup.out
+
+# Generated docs (PDFs produced from .md source by external tooling — pandoc,
+# the "Export as PDF" workflow, etc.). The markdown is the source of truth;
+# the PDFs are build artifacts that drift out of sync if committed.
+docs/**/*.pdf
+
+# abw CLI per-user credentials (in case anyone runs the CLI from inside
+# the checkout). The real path is ~/.abw/credentials but this catches
+# stray local-override files.
+.abw/credentials
+crates/abw-cli/.env
