@@ -9,7 +9,7 @@
   "composition_slug": "simops_fleet",
   "schema_slug": "kask-simops/2",
   "workspace_template": {
-    "initial_budget": 295,
+    "initial_budget": 300,
     "default_name_pattern": "SimOps — {date} process",
     "auto_hire": [
       "simops_advisor",
@@ -17,6 +17,7 @@
       "simops_narrator",
       "simops_predictor",
       "simops_optimizer",
+      "simops_companion",
       "sidestream_miner",
       "comparator"
     ],
