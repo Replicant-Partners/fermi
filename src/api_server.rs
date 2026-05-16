@@ -1381,6 +1381,7 @@ async fn main() {
         .route("/api/xaman/sessions/:id", get(handlers::xaman::get_xaman_session_handler))
         .route("/api/xaman/sessions/:id/message", post(handlers::xaman::xaman_session_message_handler))
         .route("/api/xaman/sessions/:id/complete", post(handlers::xaman::complete_xaman_session_handler))
+        .route("/api/xaman/sessions/:id/create-app", post(handlers::xaman::create_app_from_session_handler))
         .route("/api/xaman/sessions/:id", delete(handlers::xaman::abandon_xaman_session_handler))
         // Set workspace composition identity (mission + strategist)
         .route(

@@ -1,242 +1,198 @@
 # Doc 3 — Building New Apps on ABW
 
 **Audience:** future you, future kask developers, future external app builders.
-**Status:** recipe — written once SimOps v2 (Doc 2) has shipped and the App primitive (Doc 1) is live.
+**Status:** recipe — shipped. Three paths in, one substrate underneath, same result.
 **Depends on:** Doc 1 (App primitive on ABW).
-**Length:** short — this is a recipe, not a manual.
+**Length:** intentionally short — most of the work moved out of this doc and into the platform.
 
 ---
 
-## What is an App on ABW
+## TL;DR — three ways to make an App
 
-An **App** is a packaged product on the ABW platform: a registered manifest that ties together
-- a canonical **schema** for the documents the app produces,
-- a **composition** of agents (the fleet),
-- a **workspace template** that ABW uses to provision a runtime container,
-- a **UI surface** (typically hosted on kask.bio or a partner domain),
-- and (eventually) an **economic policy** for revenue accounting.
+> All three produce the same artifact: a registered App with a spawn URL.
+> Pick the path that fits the person.
 
-Users enter an App, work inside a workspace it spawns, and leave with persistent state, agent collaborators, and forecasts they can compare and share.
+**1. In conversation** (best for non-coders, designers, domain experts)
+Ask Xaman Ek to help. Answer the questions. Click **Create App**.
 
-Apps coexist with the platform's other primitives — they don't replace anything. Compositions stay recipes; compound agents stay actor-agents; workspaces stay runtime containers. Apps are the *product wrapper* layer that ties them together.
-
-See Doc 1 for the formal data model and API. This doc is the recipe.
-
----
-
-## When you should make an App
-
-Make an App when you have:
-
-1. **A user-facing surface** people enter and do something in (not just call once)
-2. **A persistent state** worth keeping across sessions (files, conversations, decisions)
-3. **A coherent agent team** that collaborates on the user's task
-4. **A canonical document** the work revolves around (a process, a forecast, a creature, a track, etc.)
-
-If you only have a single agent that answers questions, don't make an App — just publish the agent. If you have multiple agents but no persistent state, register a **composition** instead. If you have everything except a UI, you have an App, you just haven't pointed at the UI yet.
-
----
-
-## The 30-minute App
-
-You can stand up a minimal App in about half an hour. Here's the path.
-
-### 1. Decide the four things
-
-| Question | Example answer (Tonic Lab) |
-|---|---|
-| What's the canonical document? | An order: `{member_id, goal, adaptogens[], base, boosters, format}` |
-| What's the agent fleet? | `tonic_advisor`, `adaptogen_curator`, `wellness_correlator` |
-| What's the workspace template? | Budget 50, auto-hire `tonic_advisor`, initial file `tonic/profile.yaml` |
-| Where's the UI? | `kask.bio/projects/tonic-lab` |
-
-If you can write these four answers down, you're ready.
-
-### 2. Register the JSON Schema (optional but recommended)
-
-Author a JSON Schema for the canonical document. Put it inline in the manifest's `schema_json` field, or host it at a stable URL and reference via `schema_slug`. The schema is what makes the App **introspectable** — Xaman Ek can describe it, kask UI can validate against it, downstream agents know what shape to produce.
-
-### 3. Author the fleet
-
-For each agent in the fleet:
-- If it exists in the bestiary, you're done.
-- If it's a variant of an existing one, **fork it** via `POST /api/agents/:id/fork` and tweak its system prompt.
-- If it's new, author it. The `companion_builder_coach` agent in the bestiary walks you through agent design — persona, system prompt, tool list, evaluation criteria.
-
-Authoring tip: the **compound-agent pattern** works well when one agent acts as the front door and delegates to specialists. Look at `social_media_studio` or `cohere_and_coordinate` for examples.
-
-### 4. Register the composition (optional but good practice)
-
-Add your fleet to the bestiary's `composition_patterns`. This makes it discoverable — other Apps can reuse your team. The naming convention is `<vertical_or_app>_<role>` (e.g. `simops_fleet`, `tonic_intake`, `rabble_lifecycle`).
-
-### 5. Write the workspace template
-
-The workspace template tells ABW how to provision a runtime container when a user creates one from your App. Minimum useful template:
-
-```jsonc
-{
-  "initial_budget": 100,
-  "auto_hire": ["your_primary_agent"],
-  "initial_files": [
-    { "path": "<app_slug>/state.yaml", "content": "<empty initial state>" },
-    { "path": ".app/manifest.yaml", "content": "app_slug: <app_slug>\nschema: <schema_slug>\n" }
-  ]
-}
+```
+@xaman_ek help me build an App for <your idea>
 ```
 
-Choose `initial_budget` such that a typical first session can be completed without topping up. Look at what your fleet costs per call (visible in agent metrics or by experimentation), multiply by expected first-session calls, add ~30% headroom.
+The session walks you through the four-thing decomposition (canonical document → fleet → workspace template → UI surface), fills sensible defaults, validates each turn, and surfaces "Create App" in the sidebar when the manifest is ready.
 
-### 6. POST the manifest
+**2. In code** (best for developers who want repeatable manifests in git)
 
 ```bash
-curl -X POST https://agent-bestiary.world/api/apps \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @your-app-manifest.json
+abw login                          # one-time OAuth (localhost callback)
+abw app new <slug>                 # scaffold a directory
+$EDITOR <slug>/manifest.json       # tweak what defaults didn't get right
+abw app deploy                     # validate + register
+abw app spawn <slug>               # spawn a workspace from it
 ```
 
-Your App is live. Anyone you share the slug with can now spawn workspaces from it.
+The CLI uses the same validators the server does; whatever passes locally also passes on deploy.
 
-### 7. Point your UI at it
+**3. From a working workspace** (best when you've built something that works and want to share it)
+In any workspace, click **Save as App** in the header. The platform introspects the workspace state, drafts a manifest, surfaces suggestions about what looks intentional vs incidental, and lets you review before publishing.
 
-Your kask page (or wherever the App's UI lives) makes three kinds of calls:
-- `ABW.app.spawnWorkspace('<your_slug>', { name })` — create a workspace
-- `ABW.readWorkspaceFile / writeWorkspaceFile` — read/write the canonical document
-- Either `POST /api/workspaces/:id/messages` with `@agent_name` (charges workspace budget) or `POST /api/agents/:id/execute/stream` (charges user wallet) to invoke agents
+> If you remember nothing else from this doc: **the three paths feed the same `apps::builder` substrate. The substrate fills defaults, runs the same validators, emits the same structured issues, and produces the same manifest shape.** The platform absorbed the recipe — that's why this doc is short.
 
-That's the whole interface.
+---
+
+## What an App is
+
+An App is a registered platform artifact that ties together:
+
+- a **canonical document** schema (what users work *on*)
+- a **fleet** of agents (who they work *with*)
+- a **workspace template** (the runtime container ABW provisions per session)
+- a **UI surface** (where the experience lives — kask.bio/projects/your-app, your own domain, anywhere)
+- an **economic policy** (reserved fields, inert in v1 — see Doc 1)
+
+Users enter your App, spawn a workspace, work in it, and leave with persistent state, agent collaborators, and outputs they can share.
+
+Apps sit alongside the other ABW primitives:
+- **Agents** (atomic units, cards anyone can author)
+- **Compositions** (teams of agents — strategist + members + mission)
+- **Workspaces** (runtime containers with chat, git, shared memory, gas wallet)
+- **Apps** (the product wrapper — App = packaged Composition + schema + workspace template + UI pointer)
+
+---
+
+## When to make an App (and when not to)
+
+**Make an App when** you have all four:
+1. A user-facing surface people enter and *do something* in (not just call once)
+2. Persistent state worth keeping across sessions
+3. A coherent agent fleet collaborating on the user's task
+4. A canonical document the work revolves around (process, forecast, creature, family tree, anything)
+
+**Don't make an App when:**
+- You have one agent that answers questions → just publish the agent
+- Multiple agents, no persistent state → register a composition instead
+- No coherent domain (you can't name the canonical document in one sentence) → not a domain yet
+
+---
+
+## What each path is good at
+
+| Path | Time | Best for | Surfaces |
+|---|---|---|---|
+| **Xaman Ek session** | 5–15 min | Iterating on a fuzzy idea; non-coders; design conversations | Sidebar `Create App →` button when ready |
+| **CLI (`abw`)** | 30 sec to first artifact | Developers; CI; git-tracked manifests; teams | `abw app new` / `validate` / `deploy` / `spawn` |
+| **Save workspace as App** | 1 click + review | "I just built this and it works — make it shareable" | Workspace header button |
+
+You can mix paths: design with Xaman Ek, then `abw app deploy` from a git checkout. Or scaffold with the CLI, refine via Xaman Ek conversation. The manifest is portable across all three.
+
+---
+
+## Worked example: `efrain` (Mario's App)
+
+Mario wants to build an App for managing research-paper notes. He's a developer, so he picks the CLI:
+
+```bash
+abw login                             # opens browser, mints API key
+abw app new efrain                    # scaffolds efrain/
+cd efrain
+# manifest.json has sensible defaults; he edits tagline, description,
+# and adds two agents to auto_hire by name (Xaman Ek tells him which)
+abw app validate                      # shows suggestions
+abw app deploy                        # POSTs to /api/apps
+# → "App 'efrain' registered. Spawn at https://agent-bestiary.world/apps/efrain"
+abw app spawn efrain --open           # opens his first workspace
+```
+
+Three steps to a working App. The substrate validated every step. Mario's manifest is committed alongside his UI code in his own repo.
 
 ---
 
 ## Patterns to copy
 
-### The **stateful interview** pattern (SimOps)
-- An advisor agent runs a multi-turn conversation
-- Each turn is logged as a workspace message
-- The agent builds the canonical document incrementally
-- The user can branch, skip, or save partial state
+These are the App shapes that already work on ABW. Each is a tested template — read the linked example, copy what fits.
 
-Good for: discovery work, intake processes, configuration tasks.
+### Stateful interview (SimOps)
+An advisor agent runs a multi-turn conversation; each turn is a workspace message; the agent builds the canonical document incrementally; the user can branch, skip, or save partial state.
+*Good for: discovery work, intake, configuration.*
 
-### The **side-by-side variants** pattern (SimOps Scenarios, future apps)
-- Canonical document is forked into named variants
-- Variants compared via `git/diff`
-- Variants run through forecasts or simulations for A/B
+### Side-by-side variants (SimOps Scenarios)
+Canonical document is forked into named variants; variants compared via git/diff; variants run through forecasts or simulations for A/B.
+*Good for: anything users want to compare.*
 
-Good for: anything where users want to compare configurations or strategies.
+### Content pipeline (`social_media_studio`)
+One compound agent orchestrates a fixed pipeline: brief → image → caption → publish. User provides a brief; downstream is automatic.
+*Good for: review-and-approve workflows.*
 
-### The **content-pipeline** pattern (social_media_studio)
-- One compound agent orchestrates: brief → image → caption → publish
-- User provides a brief; downstream is automatic
-- Workspace holds drafts and a publish log
+### AR / spatial (Rabble)
+Workspace state includes H3 spatial primitives; multiple users coexist in a shared workspace; agents observe and react to state changes.
+*Good for: location-aware, multi-user real-time.*
 
-Good for: production workflows where the user's job is mostly "review and approve".
+### Forecasting (Fermi Console)
+Canonical document is a forecast (question, drivers, FPL source); persistent across sessions via `/api/forecasts`; schedules re-run the forecast over time; portfolios group related forecasts.
+*Good for: any quantitative prediction app.*
 
-### The **AR/spatial** pattern (Rabble)
-- Workspace state includes spatial primitives (H3 cells)
-- Multiple users coexist in a shared workspace
-- Agents observe and react to state changes
-
-Good for: location-aware experiences, multi-user real-time.
-
-### The **forecasting** pattern (Fermi Console)
-- Canonical document is a forecast (question, drivers, FPL source)
-- Persistent across sessions via `/api/forecasts`
-- Schedules re-run the forecast over time
-- Portfolios group related forecasts
-
-Good for: any quantitative prediction app. Reusable directly via the existing Fermi APIs.
-
-### The **transactional kiosk** pattern (Tonic Lab — when built)
-- Each interaction is short and complete (an order, a measurement)
-- State persists per member, not per session
-- Hardware integration via dedicated agents
-- Membership data feeds wellness recommendations
-
-Good for: physical-world kiosks, retail, point-of-care.
+### Transactional kiosk (Tonic Lab — when built)
+Each interaction is short and complete (an order, a measurement); state persists per member, not per session; hardware integration via dedicated agents.
+*Good for: physical-world kiosks, retail, point-of-care.*
 
 ---
 
 ## Working with Xaman Ek
 
-Xaman Ek is the platform navigator. When designing an App, ask Xaman Ek:
+Xaman Ek is the platform navigator. Beyond `app_design` sessions, you can ask:
 
-- **"What agents exist for <domain>?"** — finds existing fleet members so you don't re-author
-- **"Are there composition patterns like <description>?"** — finds reusable templates
-- **"What's a good fleet for <use case>?"** — gets a starting composition
-- **"What's missing from my fleet to do X?"** — identifies gaps and suggests new agents to author
+- **"What agents exist for `<domain>`?"** — finds existing fleet members
+- **"Are there composition patterns like `<description>`?"** — finds reusable templates
+- **"What's a good fleet for `<use case>`?"** — gets a starting composition
+- **"What's missing from my fleet to do X?"** — identifies gaps
 
 Once your App is registered with `visibility: public` or `unlisted`, Xaman Ek can describe it to other users:
 
-- **"What Apps are available for <domain>?"** — surfaces your App
-- **"How do I use <your App>?"** — pulls from your manifest's `description` and homepage
+- **"What Apps are available for `<domain>`?"** — surfaces your App
+- **"How do I use `<your App>`?"** — pulls from your manifest's `description` and homepage
 
 To improve discoverability, write a clear `description` and `tagline` on your manifest. These are what Xaman Ek reads.
 
 ---
 
+## Visibility & sharing
+
+- **`visibility: private`** — only you can spawn workspaces from it. Useful for dev.
+- **`visibility: unlisted`** — anyone with the slug can spawn, not listed in `GET /api/apps`. Useful for beta.
+- **`visibility: public`** — listed in the catalogue, anyone can spawn.
+
+For collaborative workspaces, use `POST /api/shares` with `object_type: "workspace"`.
+
+---
+
 ## Economics (when they exist)
 
-The `revenue_share` and `pricing_policy` fields on the App manifest are reserved but inert in v1 of the App primitive. When ABW ships revenue accounting:
+`revenue_share` and `pricing_policy` are reserved but inert in v1. When revenue accounting ships:
 
-- Set `pricing_policy = "metered"` for usage-based billing
-- Set `pricing_policy = "subscription"` for flat-rate access to your App
-- Set `revenue_share = { "app_owner": 0.7, "platform": 0.3 }` to declare your cut
-- Use `POST /api/workspaces/:id/budget` to add credits to a workspace (already exists)
-- Workspace credit consumption already flows to agent owners proportionally — App-level routing comes next
+- `pricing_policy = "metered"` for usage-based billing
+- `pricing_policy = "subscription"` for flat-rate access
+- `revenue_share = { "app_owner": 0.7, "platform": 0.3 }` to declare your cut
 
-Don't design around these features until they ship. They're listed here so you know what's coming.
+Don't design around these until they ship. They're listed here so you know what's coming.
 
 ---
 
-## Publication & sharing
+## Reference
 
-Once your App is registered:
-
-- `visibility: private` — only you can spawn workspaces from it. Useful for development.
-- `visibility: unlisted` — anyone with the slug can spawn, but it's not in `GET /api/apps` without auth. Useful for beta.
-- `visibility: public` — listed in the catalogue, anyone can spawn.
-
-For **collaborative workspaces** (you and a colleague work on the same Process / Tonic profile / forecast), use the workspace-sharing primitive: `POST /api/shares` with `object_type: "workspace"` (available once Doc 1 §6.2 ships).
-
-For **public artifacts** (a published version of a workspace with a stable URL): not yet supported. Coming in a follow-up to Doc 1.
-
----
-
-## Checklist — before you ship
-
-- [ ] Manifest validates against the App schema (slug format, no reserved tags, workspace_template structure)
-- [ ] Initial budget is enough for a typical first session × 1.3
-- [ ] All agents in `auto_hire` exist and are accessible
-- [ ] Canonical document schema (JSON Schema or YAML example) documented
-- [ ] First-run flow tested end-to-end: spawn workspace → do work → reload → resume
-- [ ] At least one example workspace exists for screenshots and docs
-- [ ] Description and tagline are clear enough for Xaman Ek to surface
-- [ ] UI handles the auth-required state cleanly (Fermi-console-style sign-in flow, see kask's `hooks.js`)
-- [ ] At least one experiment / forecast / output is producible end-to-end
-
----
-
-## When NOT to make an App
-
-- **One-off task.** Just call an agent.
-- **No persistent state.** Use the agent + composition layer directly.
-- **No coherent domain.** If you can't name the canonical document in one sentence, you don't have a domain.
-- **Not your platform.** If you're consuming the ABW catalogue from your own backend, you might not need a registered App at all — just call the APIs.
-
-Apps are a commitment to maintaining a product surface. They earn that commitment by giving users continuity, sharing, and discoverability that ad-hoc agent calls cannot.
-
----
-
-## Examples to read
-
-- **SimOps** — Doc 2 in this folder. Stateful interview + side-by-side variants + forecasting.
-- **Fermi Console** — `fermi/INTRODUCTION.md` + `fermi/FERMI_CONSOLE.md`. Forecast-centric, the original.
-- **Rabble** — repo at `/home/ilabra/fermi/rabble-web`. AR/spatial pattern.
-- **Adaptogen Lab** (future) — TBD; will use the knowledge-curation pattern around `adaptogen_curator`.
+- **App primitive data model + API:** `docs/specs/01_APP_PRIMITIVE.md`
+- **SimOps example:** `docs/specs/02_KASK_SIMOPS_APP.md`
+- **Substrate (validation + defaults + suggestions):** `src/apps/builder.rs`
+- **CLI source:** `crates/abw-cli/`
+- **Auth endpoint for CLI login:** `src/handlers/auth.rs::auth_cli_start`
+- **Session-mode create-app endpoint:** `src/handlers/xaman.rs::create_app_from_session_handler`
+- **Existing Apps:**
+  - SimOps (`apps/kask_simops.json`)
+  - Rabble (`rabble-web/`, no manifest yet — gateway-style App)
+  - Fermi Console (`crates/fermi-console/`)
+  - Adaptogen Lab (future)
 
 ---
 
 ## Glossary
 
-Same as Doc 1 §9. The terms `App`, `Composition`, `Compound agent`, `Workspace`, `Origin` are the platform vocabulary. Avoid `Vertical`, `Studio`, `Lab`, `Workbench`, `Surface` — they're not in the platform's lexicon.
+The platform vocabulary: **App**, **Composition**, **Compound agent**, **Workspace**, **Origin**. Avoid `Vertical`, `Studio`, `Lab`, `Workbench`, `Surface` — they're not in the platform's lexicon.

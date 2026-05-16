@@ -5,8 +5,9 @@
 //!   POST /api/xaman/sessions              create or update session
 //!   GET  /api/xaman/sessions/:id          get single session
 //!   POST /api/xaman/sessions/:id/message  append a message turn + call xaman_ek agent
-//!   POST /api/xaman/sessions/:id/complete mark session completed
-//!   DELETE /api/xaman/sessions/:id        abandon session
+//!   POST /api/xaman/sessions/:id/complete   mark session completed
+//!   POST /api/xaman/sessions/:id/create-app create an App from a ready app_design session
+//!   DELETE /api/xaman/sessions/:id          abandon session
 
 use axum::{
     extract::{Path, State},
@@ -311,6 +312,218 @@ pub async fn abandon_xaman_session_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({ "status": "abandoned" })))
+}
+
+// ─── Create App from app_design session ───────────────────────────────────────
+//
+// When an `app_design` session reaches `status: "ready_to_create"`, the
+// xaman-ek sidebar surfaces a "Create App" button. The button POSTs here.
+// We pull the session's `in_progress` JSON, run it through the builder
+// substrate (defaults + validation), and write the result via the same path
+// the public POST /api/apps handler uses.
+//
+// This keeps the conversational flow honest:
+//   - All validation goes through fermi::apps::builder (same as CLI, same
+//     as the public POST handler).
+//   - If the session's in_progress has gaps the builder fills sensible
+//     defaults; if it has blocking errors the caller gets structured
+//     issues back, not a corrupt App.
+//   - On success, the response includes the spawn URL so the UI can
+//     immediately link the user into their newly-created App.
+
+pub async fn create_app_from_session_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(session_id): Path<Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    use fermi::apps::builder::{build_manifest, PartialManifest, Severity};
+
+    let user_id = principal.user_id();
+
+    // Fetch the session — must exist, must belong to caller, must be app_design.
+    let row = sqlx::query(
+        "SELECT session_type, in_progress, status
+         FROM xaman_sessions
+         WHERE session_id = $1 AND user_id = $2",
+    )
+    .bind(session_id)
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+
+    let session_type: String = row
+        .try_get("session_type")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if session_type != "app_design" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("session is type '{}', not 'app_design'", session_type),
+        ));
+    }
+    let in_progress: Value = row
+        .try_get("in_progress")
+        .unwrap_or(json!({}));
+
+    // Run through the builder substrate.
+    let partial = PartialManifest::from_value(&in_progress);
+    let result = build_manifest(partial);
+
+    if result.has_errors() {
+        // Return the issue list verbatim so the UI can render them under each
+        // field — same shape the CLI renders for `abw app validate`.
+        let issues: Vec<Value> = result
+            .issues
+            .iter()
+            .map(|i| {
+                json!({
+                    "severity": match i.severity {
+                        Severity::Error => "error",
+                        Severity::Warning => "warning",
+                        Severity::Info => "info",
+                        Severity::Suggestion => "suggestion",
+                    },
+                    "field": i.field,
+                    "message": i.message,
+                    "fix": i.fix.as_ref().map(|f| json!({
+                        "label": f.label,
+                        "patch": f.patch.clone(),
+                    })),
+                })
+            })
+            .collect();
+        return Err((
+            StatusCode::BAD_REQUEST,
+            serde_json::to_string(&json!({
+                "error": "session in_progress has blocking errors — keep designing with xaman_ek",
+                "issues": issues,
+            }))
+            .unwrap_or_else(|_| "validation failed".into()),
+        ));
+    }
+
+    // Capture non-blocking suggestions BEFORE moving result.manifest, since
+    // the issue list is reused in the response payload at the end.
+    let non_blocking_issues: Vec<(Severity, String, String)> = result
+        .non_blocking()
+        .iter()
+        .map(|i| (i.severity, i.field.clone(), i.message.clone()))
+        .collect();
+
+    let manifest = result
+        .manifest
+        .ok_or((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "builder returned no manifest despite passing validation (bug)".into(),
+        ))?;
+
+    let slug = manifest["slug"]
+        .as_str()
+        .ok_or((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "builder output missing slug (bug)".into(),
+        ))?
+        .to_string();
+
+    // Insert the App row. We replicate the SQL from handlers::apps to avoid a
+    // cross-handler call (which would force us to construct CreateAppRequest
+    // and route through Json<> serialization roundtrip). Same shape, same
+    // columns, same conflict handling.
+    let visibility = manifest["visibility"].as_str().unwrap_or("private");
+    let tagline = manifest["tagline"].as_str();
+    let description = manifest["description"].as_str();
+    let homepage_url = manifest["homepage_url"].as_str();
+    let icon_url = manifest["icon_url"].as_str();
+    let composition_slug = manifest["composition_slug"].as_str();
+    let schema_slug = manifest["schema_slug"].as_str();
+    let schema_json = manifest.get("schema_json").cloned();
+    let workspace_template = manifest["workspace_template"].clone();
+    let metadata = manifest.get("metadata").cloned().unwrap_or(json!({}));
+    let name = manifest["name"].as_str().unwrap_or(&slug);
+
+    let insert = sqlx::query(
+        r#"INSERT INTO apps (
+            slug, name, tagline, owner_user_id,
+            homepage_url, icon_url,
+            composition_slug, schema_slug, schema_json,
+            workspace_template, visibility, description, metadata
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           RETURNING id"#,
+    )
+    .bind(&slug)
+    .bind(name)
+    .bind(tagline)
+    .bind(&user_id)
+    .bind(homepage_url)
+    .bind(icon_url)
+    .bind(composition_slug)
+    .bind(schema_slug)
+    .bind(schema_json)
+    .bind(&workspace_template)
+    .bind(visibility)
+    .bind(description)
+    .bind(&metadata)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("unique") || msg.contains("duplicate") {
+            (
+                StatusCode::CONFLICT,
+                format!("App slug '{}' is already taken — pick a different slug in the session", slug),
+            )
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, msg)
+        }
+    })?;
+
+    let app_id: Uuid = insert
+        .try_get("id")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Mark the session completed so it doesn't keep showing "Create App".
+    let _ = sqlx::query(
+        "UPDATE xaman_sessions SET status = 'completed', last_active_at = NOW()
+         WHERE session_id = $1",
+    )
+    .bind(session_id)
+    .execute(&state.db)
+    .await;
+
+    tracing::info!(
+        app_id = %app_id,
+        slug = %slug,
+        user = %user_id,
+        session = %session_id,
+        "App created from app_design session"
+    );
+
+    // Tell the UI the slug + URL it should redirect to. The /apps/<slug>
+    // page is the canonical landing; from there the user spawns a workspace.
+    let issues_for_ui: Vec<Value> = non_blocking_issues
+        .into_iter()
+        .map(|(severity, field, message)| {
+            json!({
+                "severity": match severity {
+                    Severity::Warning => "warning",
+                    Severity::Info => "info",
+                    Severity::Suggestion => "suggestion",
+                    _ => "info",
+                },
+                "field": field,
+                "message": message,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "status": "created",
+        "app_id": app_id,
+        "slug": slug,
+        "url": format!("/apps/{}", slug),
+        "suggestions": issues_for_ui,
+    })))
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

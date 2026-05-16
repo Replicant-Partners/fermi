@@ -420,9 +420,14 @@ const XamanEk = {
     const status = inProgress.status || "in_progress";
     const isReady = readyToCreate || status === "ready_to_create";
 
+    const labels = {
+      agent_design: "🃏 Agent Draft",
+      composition_design: "🧩 Composition Plan",
+      app_design: "📦 App Draft",
+    };
     let html = `<div class="xaman-inprogress-header">
       <span class="xaman-inprogress-label">
-        ${sessionType === "agent_design" ? "🃏 Agent Draft" : sessionType === "composition_design" ? "🧩 Composition Plan" : "📝 Draft"}
+        ${labels[sessionType] || "📝 Draft"}
       </span>
       <span class="xaman-inprogress-status ${isReady ? "xaman-status-ready" : "xaman-status-building"}">
         ${isReady ? "✓ Ready" : "Building..."}
@@ -462,10 +467,77 @@ const XamanEk = {
           class="xaman-create-btn">
           Create composition →
         </a>`;
+      } else if (sessionType === "app_design") {
+        // Apps go via a dedicated endpoint that runs the manifest builder
+        // (fermi::apps::builder) on the session's in_progress and inserts
+        // the App row in one shot. The flow doesn't need a prefill page
+        // because the conversational session has already gathered the
+        // full manifest.
+        html += `<button type="button"
+          class="xaman-create-btn"
+          onclick="XamanEk.createAppFromSession()">
+          Create App →
+        </button>`;
       }
     }
 
     panel.innerHTML = html;
+  },
+
+  /**
+   * POST to /api/xaman/sessions/:id/create-app. The server runs the manifest
+   * builder, inserts the App row, marks the session completed, and returns
+   * { slug, url }. On success we navigate to the new App's catalogue page so
+   * the user can immediately spawn a workspace from it. On failure we render
+   * the structured `issues` array inline (matching the CLI's render style)
+   * so the user knows which fields to refine in conversation.
+   */
+  async createAppFromSession() {
+    const session = this._activeSession;
+    if (!session || !session.session_id) {
+      if (window.Toast) Toast.show("No active session.", "error");
+      return;
+    }
+
+    // Disable the button to prevent double-clicks while the request is in flight.
+    const btn = document.querySelector(".xaman-create-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "Creating…"; }
+
+    try {
+      const res = await fetch(`/api/xaman/sessions/${session.session_id}/create-app`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Surface any non-blocking suggestions briefly before navigating.
+        if (data.suggestions && data.suggestions.length > 0 && window.Toast) {
+          Toast.show(`App '${data.slug}' created — ${data.suggestions.length} suggestion(s) for later`, "success");
+        }
+        // Navigate to the App's catalogue page (the canonical landing).
+        window.location.href = data.url || `/apps/${data.slug}`;
+        return;
+      }
+      // Server returned an error — try to render the structured issues if present.
+      const errText = await res.text();
+      let issues = null;
+      try {
+        const parsed = JSON.parse(errText);
+        if (parsed && parsed.issues) issues = parsed.issues;
+      } catch { /* not JSON */ }
+
+      if (issues && issues.length > 0) {
+        const blocking = issues.filter(i => i.severity === "error");
+        const lines = blocking.map(i => `${i.field}: ${i.message}`).join("\n");
+        if (window.Toast) Toast.show(`Cannot create App yet:\n${lines}`, "error");
+      } else {
+        if (window.Toast) Toast.show(`Create failed: ${errText.slice(0, 200)}`, "error");
+      }
+    } catch (e) {
+      if (window.Toast) Toast.show(`Create failed: ${e.message}`, "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Create App →"; }
+    }
   },
 
   _sidebarKeydown(e) {
