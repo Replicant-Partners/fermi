@@ -9,11 +9,11 @@ name = "abw"
 path = "src/main.rs"
 
 [dependencies]
-# The manifest builder substrate lives in the fermi lib so all entry points
-# (CLI, xamanEK app_design session, fork-from-workspace, HTTP handler) share
-# the same validation. Disable default-features so we don't pull the whole
-# server's transitive graph if it's avoidable.
-fermi = { path = "../..", default-features = false }
+# Pure manifest builder + validator. Tiny crate (serde + serde_json only) so
+# the CLI builds standalone without pulling in the fermi server's transitive
+# graph (axum, sqlx, agent-bestiary crates, etc.). Same code the server's
+# `crate::apps::builder` re-exports.
+abw-apps-core = { path = "../abw-apps-core" }
 
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }

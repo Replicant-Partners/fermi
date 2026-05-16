@@ -23,6 +23,7 @@ members = [
     "fermi-lsp", "crates/fermi-console",
     "crates/simops",
     "crates/abw-cli",
+    "crates/abw-apps-core",
 ]
 resolver = "2"
 
@@ -116,6 +117,11 @@ simops = { path = "crates/simops" }
 
 # Auth
 fermi-auth = { path = "fermi-auth" }
+
+# App primitive — pure manifest builder + validator. Standalone crate so
+# the abw CLI can depend on the same logic without pulling in the whole
+# fermi server transitive graph (axum, sqlx, agent-bestiary, voyage, etc.).
+abw-apps-core = { path = "crates/abw-apps-core" }
 
 # For migration scripts
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }

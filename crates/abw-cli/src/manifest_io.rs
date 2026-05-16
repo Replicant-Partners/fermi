@@ -1,12 +1,12 @@
 //! Local manifest read/write helpers and Issue rendering for the CLI.
 //!
-//! The actual validation logic lives in `fermi::apps::builder` — this module
+//! The actual validation logic lives in `abw_apps_core` — this module
 //! is just a thin presentation layer that finds the manifest file, parses
 //! it, and renders the builder's `Issue` list as ANSI-coloured CLI output.
 
 use anyhow::{anyhow, Context, Result};
 use colored::*;
-use fermi::apps::builder::{BuildResult, Issue, PartialManifest, Severity};
+use abw_apps_core::{BuildResult, Issue, PartialManifest, Severity};
 use std::path::{Path, PathBuf};
 
 /// Locate manifest.json from the working directory or from an explicit path.

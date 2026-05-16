@@ -9,7 +9,7 @@ use super::Ctx;
 use anyhow::{anyhow, Context, Result};
 use clap::Args as ClapArgs;
 use colored::*;
-use fermi::apps::builder::build_manifest;
+use abw_apps_core::build_manifest;
 use std::path::PathBuf;
 
 use crate::config::resolve_api_key;

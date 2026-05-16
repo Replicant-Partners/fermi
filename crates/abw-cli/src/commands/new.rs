@@ -4,7 +4,7 @@ use super::Ctx;
 use anyhow::{anyhow, Context, Result};
 use clap::Args as ClapArgs;
 use colored::*;
-use fermi::apps::builder::{default_name_from_slug, validate_slug};
+use abw_apps_core::{default_name_from_slug, validate_slug};
 use std::path::PathBuf;
 
 const MANIFEST_TEMPLATE: &str = include_str!("../../templates/manifest.json");

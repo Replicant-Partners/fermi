@@ -8,7 +8,7 @@ use super::Ctx;
 use anyhow::{anyhow, Result};
 use clap::Args as ClapArgs;
 use colored::*;
-use fermi::apps::builder::build_manifest;
+use abw_apps_core::build_manifest;
 use std::path::PathBuf;
 
 use crate::manifest_io::{find_manifest, read_manifest, render_build_result};

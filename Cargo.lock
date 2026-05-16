@@ -29,14 +29,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
+name = "abw-apps-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "abw-cli"
 version = "0.1.0"
 dependencies = [
+ "abw-apps-core",
  "anyhow",
  "clap",
  "colored",
  "dirs 5.0.1",
- "fermi",
  "open",
  "reqwest 0.12.28",
  "serde",
@@ -3514,6 +3522,7 @@ dependencies = [
 name = "fermi"
 version = "0.1.0"
 dependencies = [
+ "abw-apps-core",
  "agent-bestiary-coherence-gate",
  "agent-bestiary-evaluators",
  "agent-bestiary-memory",
