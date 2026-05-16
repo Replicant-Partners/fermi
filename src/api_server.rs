@@ -368,7 +368,7 @@ pub(crate) struct GeminiInlineData {
 async fn run_migrations(db: &PgPool) {
     let migration_files = [
         "migrations/004_add_users_table.sql",
-        "migrations/004_migrate_users_for_auth.sql",
+        // 004_migrate_users_for_auth.sql was merged into 004b — file does not exist
         "migrations/004b_migrate_users_for_auth.sql",
         "migrations/005_add_api_keys.sql",
         "migrations/006_add_user_id_to_agents.sql",
@@ -413,7 +413,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/045_rabble_funding.sql",
         "migrations/046_rabble_visibility.sql",
         "migrations/047_flight_path_samples.sql",
-        "migrations/048_voice_assets.sql",
+        "migrations/048_fermi_notebooks.sql",   // was wrongly listed as 048_voice_assets.sql
+        "migrations/049_akp_foundation.sql",    // AKP protocol tables (deferred but idempotent)
         "migrations/048b_voice_assets.sql",
         "migrations/050_fix_tx_type_constraint_rabble.sql",
         "migrations/051_swarm_telemetry.sql",
