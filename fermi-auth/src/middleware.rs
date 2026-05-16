@@ -16,9 +16,10 @@ pub struct AuthState {
     pub db: PgPool,
 }
 
-/// Extract a token from the request: Bearer header, cookie, or API key header
+/// Extract a token from the request: Bearer header → session cookie → ?token=
+/// query parameter (cross-origin SSE fallback).
 fn extract_token(req: &Request) -> Option<TokenSource> {
-    // 1. Check Authorization: Bearer <token>
+    // 1. Authorization: Bearer <token> — primary path for SDK/API clients.
     if let Some(auth_header) = req.headers().get(header::AUTHORIZATION) {
         if let Ok(auth_str) = auth_header.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
@@ -27,7 +28,8 @@ fn extract_token(req: &Request) -> Option<TokenSource> {
         }
     }
 
-    // 2. Check session cookie
+    // 2. Session cookie — primary path for browser sessions on the same
+    //    origin (and Lax-eligible cross-site requests).
     if let Some(cookie_header) = req.headers().get(header::COOKIE) {
         if let Ok(cookies) = cookie_header.to_str() {
             for cookie in cookies.split(';') {
@@ -35,6 +37,31 @@ fn extract_token(req: &Request) -> Option<TokenSource> {
                 if let Some(value) = cookie.strip_prefix("abw_session=") {
                     if !value.is_empty() {
                         return Some(TokenSource::Cookie(value.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. ?token=<jwt> query parameter. Only auth path available to
+    //    cross-origin EventSource clients: the SSE spec forbids
+    //    EventSource from sending custom headers, and our SameSite=Lax
+    //    cookie is blocked on cross-origin connect requests. Treated
+    //    as a Bearer JWT (same validation as the Authorization path).
+    //
+    //    Ordered last so a fresh same-origin cookie always wins over
+    //    a stale token someone might paste into a URL.
+    if let Some(query) = req.uri().query() {
+        for pair in query.split('&') {
+            let mut it = pair.splitn(2, '=');
+            if let (Some(k), Some(v)) = (it.next(), it.next()) {
+                if k == "token" && !v.is_empty() {
+                    let decoded = percent_encoding::percent_decode_str(v)
+                        .decode_utf8()
+                        .map(|s| s.into_owned())
+                        .unwrap_or_else(|_| v.to_string());
+                    if !decoded.is_empty() {
+                        return Some(TokenSource::Bearer(decoded));
                     }
                 }
             }
@@ -134,10 +161,103 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::Request as HttpRequest;
+
+    fn build(uri: &str, headers: &[(&str, &str)]) -> Request {
+        let mut builder = HttpRequest::builder().uri(uri);
+        for (k, v) in headers {
+            builder = builder.header(*k, *v);
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
+    fn unwrap_bearer(t: Option<TokenSource>) -> String {
+        match t {
+            Some(TokenSource::Bearer(s)) => s,
+            other => panic!("expected Bearer, got {:?}", debug(&other)),
+        }
+    }
+
+    fn unwrap_cookie(t: Option<TokenSource>) -> String {
+        match t {
+            Some(TokenSource::Cookie(s)) => s,
+            other => panic!("expected Cookie, got {:?}", debug(&other)),
+        }
+    }
+
+    fn debug(t: &Option<TokenSource>) -> &'static str {
+        match t {
+            Some(TokenSource::Bearer(_)) => "Bearer",
+            Some(TokenSource::Cookie(_)) => "Cookie",
+            None => "None",
+        }
+    }
 
     #[test]
-    fn test_token_source_parsing() {
-        // This is a basic structural test. Full integration tests
-        // require a running database and HTTP server.
+    fn extract_token_prefers_authorization_header() {
+        // Header beats cookie beats query — verify both fallbacks are
+        // ignored when the header is present.
+        let req = build(
+            "/api/x?token=query-token",
+            &[
+                ("authorization", "Bearer header-token"),
+                ("cookie", "abw_session=cookie-token"),
+            ],
+        );
+        assert_eq!(unwrap_bearer(extract_token(&req)), "header-token");
+    }
+
+    #[test]
+    fn extract_token_falls_back_to_cookie() {
+        // No header — cookie wins over query.
+        let req = build(
+            "/api/x?token=query-token",
+            &[("cookie", "abw_session=cookie-token")],
+        );
+        assert_eq!(unwrap_cookie(extract_token(&req)), "cookie-token");
+    }
+
+    #[test]
+    fn extract_token_reads_query_param_when_no_header_no_cookie() {
+        // The cross-origin SSE case: EventSource can't set headers and
+        // SameSite=Lax cookies are blocked on cross-origin connects.
+        let req = build("/api/x?token=query-token", &[]);
+        assert_eq!(unwrap_bearer(extract_token(&req)), "query-token");
+    }
+
+    #[test]
+    fn extract_token_query_param_handles_url_encoding() {
+        // kask.bio uses encodeURIComponent on the token before appending
+        // to the URL. JWTs only contain [A-Za-z0-9_-.] so the dot is the
+        // realistic encoded char; we also accept arbitrary %xx for safety.
+        let raw = "abc.def%2Fghi"; // %2F = '/'
+        let uri = format!("/api/x?token={}", raw);
+        let req = build(&uri, &[]);
+        assert_eq!(unwrap_bearer(extract_token(&req)), "abc.def/ghi");
+    }
+
+    #[test]
+    fn extract_token_query_param_with_other_params() {
+        // ?token= can sit alongside other query params in any order.
+        let req = build("/api/x?foo=bar&token=t&baz=qux", &[]);
+        assert_eq!(unwrap_bearer(extract_token(&req)), "t");
+
+        let req = build("/api/x?token=t&foo=bar", &[]);
+        assert_eq!(unwrap_bearer(extract_token(&req)), "t");
+    }
+
+    #[test]
+    fn extract_token_empty_query_param_is_ignored() {
+        // ?token= with no value falls through to None — never let an
+        // empty string become a Bearer source.
+        let req = build("/api/x?token=", &[]);
+        assert!(extract_token(&req).is_none());
+    }
+
+    #[test]
+    fn extract_token_returns_none_when_all_absent() {
+        let req = build("/api/x", &[]);
+        assert!(extract_token(&req).is_none());
     }
 }

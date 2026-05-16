@@ -47,4 +47,9 @@ thiserror = "2.0"
 # URL encoding for OAuth
 serde_urlencoded = "0.7"
 
+# Percent-decoding for cross-origin EventSource token-in-query auth path
+# (already in the tree transitively via axum — direct dep just so the
+# import is clean and version-pinned).
+percent-encoding = "2"
+
 [dev-dependencies]
