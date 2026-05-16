@@ -73,7 +73,7 @@ erDiagram
     }
 
     team_members {
-        UUID team_id PK FK
+        UUID team_id PK "FK"
         TEXT member_id PK
         TEXT member_type "user | agent"
         TEXT role "owner | admin | member | viewer"
@@ -102,8 +102,8 @@ erDiagram
     }
 
     workspace_agents {
-        UUID workspace_id PK FK
-        UUID agent_id PK FK
+        UUID workspace_id PK "FK"
+        UUID agent_id PK "FK"
         TEXT added_by
         TEXT relationship "hired | owned | created_here"
     }
@@ -287,7 +287,7 @@ erDiagram
     }
 
     consolidation_locks {
-        UUID agent_id PK FK
+        UUID agent_id PK "FK"
         TIMESTAMPTZ locked_at
         TEXT locked_by
         TIMESTAMPTZ expires_at

@@ -1145,9 +1145,9 @@
                   <div class="section">
                     <div class="section-title">Knowledge Graph (Ontology)</div>
                     <div class="field-grid">
-                      <div class="field-item"><div class="field-label">Entities</div><div class="field-value">${ontology.entities || 0}</div></div>
-                      <div class="field-item"><div class="field-label">Relationships</div><div class="field-value">${ontology.relationships || 0}</div></div>
-                      <div class="field-item"><div class="field-label">Evolution Commits</div><div class="field-value">${ontology.evolution_commits || 0}</div></div>
+                      <div class="field-item"><div class="field-label">Entities</div><div class="field-value" id="kg-entity-count">${ontology.entity_count ?? ontology.entities ?? "…"}</div></div>
+                      <div class="field-item"><div class="field-label">Relationships</div><div class="field-value" id="kg-fact-count">${ontology.fact_count ?? ontology.relationships ?? "…"}</div></div>
+                      <div class="field-item"><div class="field-label">Evolution Commits</div><div class="field-value" id="kg-commits">${ontology.evolution_commits ?? "…"}</div></div>
                       <div class="field-item"><div class="field-label">Last Updated</div><div class="field-value">${ontology.last_updated ? new Date(ontology.last_updated).toLocaleDateString() : "N/A"}</div></div>
                     </div>
                     <a href="/agent/${agentId}/ontology" class="view-link">View Knowledge Graph →</a>
@@ -1545,6 +1545,13 @@
               if (data && data.stats) {
                 kgNodeCount = data.stats.entity_count || nodeCount;
                 kgEdgeCount = data.stats.fact_count || edges.length;
+                // Populate Knowledge tab counts (rendered as "…" until this resolves)
+                const ecEl = document.getElementById("kg-entity-count");
+                const fcEl = document.getElementById("kg-fact-count");
+                const cmEl = document.getElementById("kg-commits");
+                if (ecEl) ecEl.textContent = data.stats.entity_count ?? 0;
+                if (fcEl) fcEl.textContent = data.stats.fact_count ?? 0;
+                if (cmEl) cmEl.textContent = data.evolution_commits ?? 0;
               }
               const el = document.getElementById("kg-stat");
               if (el)
