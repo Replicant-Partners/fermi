@@ -883,11 +883,52 @@ pub async fn workspace_messages_stream_handler(
 
 // ─── Workspace Hire / Add ──────────────────────────────────────────
 
+/// Identifier accepted by /hire and /add — either a UUID (canonical) or
+/// an agent_name handle (e.g. "supply_chain_oracle"). The string form
+/// matches the rest of the public API (execute, message @mentions),
+/// which means clients no longer need to do a catalog round-trip just
+/// to invite a curated agent into a workspace.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum AgentRef {
+    Uuid(uuid::Uuid),
+    Handle(String),
+}
+
 #[derive(Debug, Deserialize)]
 pub struct HireAddRequest {
-    agent_id: uuid::Uuid,
+    agent_id: AgentRef,
     #[serde(default)]
     include_optional: bool,
+}
+
+impl HireAddRequest {
+    /// Resolve the request's agent_id into a (uuid, Agent) pair. Handles
+    /// both UUID and handle inputs.
+    async fn resolve(
+        &self,
+        state: &AppState,
+    ) -> Result<(uuid::Uuid, Agent), (StatusCode, String)> {
+        match &self.agent_id {
+            AgentRef::Uuid(u) => {
+                let agent = state
+                    .memory_store
+                    .get_agent(*u)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent not found: {}", e)))?
+                    .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+                Ok((*u, agent))
+            }
+            AgentRef::Handle(h) => {
+                let agent = state
+                    .memory_store
+                    .get_agent_by_name(h)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent '{}' not found: {}", h, e)))?;
+                Ok((agent.agent_id, agent))
+            }
+        }
+    }
 }
 
 /// Post a system message to workspace chat (helper) + broadcast to SSE.
@@ -930,13 +971,8 @@ pub async fn hire_agent_handler(
         ));
     }
 
-    // Resolve agent
-    let agent = state
-        .memory_store
-        .get_agent(req.agent_id)
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent not found: {}", e)))?
-        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+    // Resolve agent — accepts either UUID or handle.
+    let (agent_uuid, agent) = req.resolve(&state).await?;
 
     // Must not own the agent (use /add for your own)
     if agent.owner_id.as_deref() == Some(&user_id) {
@@ -946,8 +982,11 @@ pub async fn hire_agent_handler(
         ));
     }
 
-    // Agent must be public (or shared with caller — future)
-    if agent.visibility != "public" {
+    // Agent must be public OR be a curated/system-tier agent. Curated
+    // agents are platform-blessed and hireable by anyone regardless of
+    // the visibility column (which historically defaults to 'private').
+    let curated_or_system = agent.tier == "curated" || agent.tier == "system";
+    if agent.visibility != "public" && !curated_or_system {
         return Err((StatusCode::FORBIDDEN, "Agent is not public".to_string()));
     }
 
@@ -955,7 +994,7 @@ pub async fn hire_agent_handler(
     let already =
         sqlx::query("SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2")
             .bind(ws_uuid)
-            .bind(req.agent_id)
+            .bind(agent_uuid)
             .fetch_optional(&state.db)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -967,7 +1006,7 @@ pub async fn hire_agent_handler(
     }
 
     // Charge hire gas from workspace wallet
-    let agent_id_str = req.agent_id.to_string();
+    let agent_id_str = agent_uuid.to_string();
     charge_workspace_gas(
         &state.db,
         ws_uuid,
@@ -984,7 +1023,7 @@ pub async fn hire_agent_handler(
         "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship) VALUES ($1, $2, $3, 'hired') ON CONFLICT DO NOTHING",
     )
     .bind(ws_uuid)
-    .bind(req.agent_id)
+    .bind(agent_uuid)
     .bind(&user_id)
     .execute(&state.db)
     .await
@@ -1147,13 +1186,8 @@ pub async fn add_agent_handler(
         .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
         .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
 
-    // Resolve agent — must own it
-    let agent = state
-        .memory_store
-        .get_agent(req.agent_id)
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent not found: {}", e)))?
-        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+    // Resolve agent — accepts either UUID or handle, must own it.
+    let (agent_uuid, agent) = req.resolve(&state).await?;
 
     if agent.owner_id.as_deref() != Some(&user_id) {
         return Err((
@@ -1166,7 +1200,7 @@ pub async fn add_agent_handler(
     let already =
         sqlx::query("SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2")
             .bind(ws_uuid)
-            .bind(req.agent_id)
+            .bind(agent_uuid)
             .fetch_optional(&state.db)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1178,7 +1212,7 @@ pub async fn add_agent_handler(
     }
 
     // Charge add gas from workspace wallet
-    let agent_id_str = req.agent_id.to_string();
+    let agent_id_str = agent_uuid.to_string();
     charge_workspace_gas(
         &state.db,
         ws_uuid,
@@ -1195,7 +1229,7 @@ pub async fn add_agent_handler(
         "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship) VALUES ($1, $2, $3, 'owned') ON CONFLICT DO NOTHING",
     )
     .bind(ws_uuid)
-    .bind(req.agent_id)
+    .bind(agent_uuid)
     .bind(&user_id)
     .execute(&state.db)
     .await
@@ -1250,9 +1284,18 @@ pub async fn remove_workspace_agent_handler(
     let ws_uuid: uuid::Uuid = workspace_id
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
-    let agent_uuid: uuid::Uuid = agent_id
-        .parse()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid agent ID".to_string()))?;
+    // Path param accepts either UUID or handle — mirror the /hire and
+    // /add JSON-body behaviour so clients can speak a single identifier
+    // form across the whole workspace agents API.
+    let agent_uuid: uuid::Uuid = match agent_id.parse::<uuid::Uuid>() {
+        Ok(u) => u,
+        Err(_) => state
+            .memory_store
+            .get_agent_by_name(&agent_id)
+            .await
+            .map(|a| a.agent_id)
+            .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent '{}' not found: {}", agent_id, e)))?,
+    };
 
     // Must be admin+ or the person who added
     let role = teams::get_member_role(&state.db, ws_uuid, &user_id)
