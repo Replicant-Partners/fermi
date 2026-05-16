@@ -181,6 +181,14 @@ The `workspace_template` JSONB holds enough information for ABW to provision a c
 
 All endpoints return `Content-Type: application/json`. All write endpoints require an authenticated principal (`AuthPrincipal`). Authorization rules per-endpoint in §5.
 
+> **For human users:** this is the underlying API. You don't normally call `POST /api/apps` by hand — the platform exposes three friendlier paths that all converge on these endpoints:
+>
+> 1. `@xaman_ek help me build an App for …` (conversational)
+> 2. `abw app new <slug> && abw app deploy` (CLI)
+> 3. **Save as App** button on any working workspace (fork)
+>
+> All three go through the same `abw_apps_core::build_manifest` substrate before reaching this API. See [`03_BUILDING_NEW_APPS.md`](./03_BUILDING_NEW_APPS.md) for the recipe.
+
 ### 4.1 `POST /api/apps` — register a new App
 
 Handler: `handlers::apps::create_app_handler` (new file `src/handlers/apps.rs`).
