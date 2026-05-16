@@ -24,6 +24,12 @@ pub mod api;
 pub mod gas;
 pub mod workflows;
 
+// App primitive — registry + manifest builder
+// (handlers live in handlers::apps; builder substrate is here so the CLI,
+// the xamanEK app_design session, the fork-from-workspace flow, and the
+// auto-seed-from-filesystem path all share the same validation rules.)
+pub mod apps;
+
 // Polymarket integration (prediction market data)
 pub mod polymarket;
 

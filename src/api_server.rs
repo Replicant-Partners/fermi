@@ -527,6 +527,9 @@ async fn run_migrations(db: &PgPool) {
         // seed_geopolitical_risk, seed_crypto_sentiment) that were
         // accidentally written to production via SeedData::build().
         "migrations/123_remove_test_seed_agents.sql",
+        // Expand xaman_sessions.session_type CHECK to include 'app_design'
+        // (new conversational mode for building Apps on ABW via xaman_ek).
+        "migrations/124_xaman_sessions_app_design.sql",
     ];
 
     for file in &migration_files {

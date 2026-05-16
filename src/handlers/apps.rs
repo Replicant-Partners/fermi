@@ -32,21 +32,12 @@ use crate::{resolve_agent, AppState};
 
 // ─── Reserved origin tags ────────────────────────────────────────────────────
 //
-// These strings cannot be used as App slugs because existing workspaces
-// already use them as origin values. Enforced in code, not in the DB
-// (simpler to extend without a migration).
-
-const RESERVED_SLUGS: &[&str] = &[
-    "bestiary_workspace",
-    "rabble_swarm",
-    "personal_workspace",
-    "fermi_forecast",
-    "silat_workspace",
-];
-
-fn is_reserved(slug: &str) -> bool {
-    RESERVED_SLUGS.contains(&slug)
-}
+// The canonical reserved-slug list and slug validators live in
+// `crate::apps::builder` so the CLI, the xamanEK app_design session, the
+// fork-from-workspace flow, and this HTTP handler all share the same rules.
+// Re-exported here for backwards compatibility with callers that may have
+// been depending on the local symbol name.
+use fermi::apps::builder::{is_reserved, validate_slug, validate_visibility};
 
 // ─── Request types ───────────────────────────────────────────────────────────
 
@@ -225,21 +216,17 @@ pub async fn create_app_handler(
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
     let owner_id = principal.user_id();
 
-    // Validate slug format (same regex as DB CHECK)
-    if !body.slug.chars().next().map(|c| c.is_ascii_lowercase()).unwrap_or(false) {
-        return Err((StatusCode::BAD_REQUEST, "slug must start with a lowercase letter".into()));
-    }
-    let valid_slug = body.slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-    if !valid_slug || body.slug.len() < 3 || body.slug.len() > 64 {
-        return Err((StatusCode::BAD_REQUEST, "slug must be 3-64 chars, lowercase letters, digits, underscores only".into()));
-    }
-    if is_reserved(&body.slug) {
-        return Err((StatusCode::CONFLICT, format!("'{}' is a reserved origin tag and cannot be used as an App slug", body.slug)));
+    // Slug + visibility validation lives in apps::builder so all entry points
+    // (HTTP, CLI, xamanEK app_design session, fork-from-workspace) agree.
+    if let Err(msg) = validate_slug(&body.slug) {
+        // Reserved slugs are a conflict; everything else is a bad request.
+        let status = if is_reserved(&body.slug) { StatusCode::CONFLICT } else { StatusCode::BAD_REQUEST };
+        return Err((status, msg));
     }
 
     let visibility = body.visibility.as_deref().unwrap_or("private");
-    if !["private", "unlisted", "public"].contains(&visibility) {
-        return Err((StatusCode::BAD_REQUEST, "visibility must be 'private', 'unlisted', or 'public'".into()));
+    if let Err(msg) = validate_visibility(visibility) {
+        return Err((StatusCode::BAD_REQUEST, msg));
     }
 
     let workspace_template = body.workspace_template.unwrap_or(json!({}));
