@@ -226,29 +226,32 @@ impl MemoryStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)
             ON CONFLICT (agent_name)
-            DO UPDATE SET
-                agent_type = EXCLUDED.agent_type,
-                version = EXCLUDED.version,
-                tier = EXCLUDED.tier,
-                executor_type = EXCLUDED.executor_type,
-                model = EXCLUDED.model,
-                temperature = EXCLUDED.temperature,
-                mcp_servers = EXCLUDED.mcp_servers,
-                description = EXCLUDED.description,
-                system_prompt = EXCLUDED.system_prompt,
-                sample_queries = EXCLUDED.sample_queries,
-                status = EXCLUDED.status,
-                accepts = EXCLUDED.accepts,
-                produces = EXCLUDED.produces,
-                workflow_template = EXCLUDED.workflow_template,
-                prompt_template = EXCLUDED.prompt_template,
-                requires_secrets = EXCLUDED.requires_secrets,
-                model_ladder = EXCLUDED.model_ladder,
-                min_tier = EXCLUDED.min_tier,
-                capability_gates = EXCLUDED.capability_gates,
-                fermi_contract = EXCLUDED.fermi_contract,
-                model_params = EXCLUDED.model_params
-            RETURNING agent_id
+             DO UPDATE SET
+                 agent_type = EXCLUDED.agent_type,
+                 version = EXCLUDED.version,
+                 tier = EXCLUDED.tier,
+                 executor_type = EXCLUDED.executor_type,
+                 model = EXCLUDED.model,
+                 temperature = EXCLUDED.temperature,
+                 mcp_servers = EXCLUDED.mcp_servers,
+                 description = EXCLUDED.description,
+                 system_prompt = EXCLUDED.system_prompt,
+                 sample_queries = EXCLUDED.sample_queries,
+                 status = EXCLUDED.status,
+                 accepts = EXCLUDED.accepts,
+                 produces = EXCLUDED.produces,
+                 workflow_template = EXCLUDED.workflow_template,
+                 prompt_template = EXCLUDED.prompt_template,
+                 requires_secrets = EXCLUDED.requires_secrets,
+                 model_ladder = EXCLUDED.model_ladder,
+                 min_tier = EXCLUDED.min_tier,
+                 capability_gates = EXCLUDED.capability_gates,
+                 fermi_contract = EXCLUDED.fermi_contract,
+                 model_params = EXCLUDED.model_params,
+                 -- Preserve existing owner; only fill in if currently NULL
+                 -- (prevents seed from wiping ownership set by admin/user)
+                 user_id = COALESCE(agents.user_id, EXCLUDED.user_id)
+             RETURNING agent_id
             "#,
         )
         .bind(agent.agent_id)

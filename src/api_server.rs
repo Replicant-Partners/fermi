@@ -519,6 +519,10 @@ async fn run_migrations(db: &PgPool) {
         // (TEXT_ARRAY, UUID_ARRAY, VECTOR_1024, PK_FK) that break the
         // knowledge graph renderer.
         "migrations/121_fix_xaman_ek_ontology_mermaid.sql",
+        // Backfill ownership for curated/system agents seeded after
+        // migration 111 ran (e.g. new SimOps v2 fleet agents). Same
+        // logic as 111 — idempotent, assigns earliest admin user.
+        "migrations/122_backfill_curated_agent_ownership.sql",
     ];
 
     for file in &migration_files {
@@ -1118,6 +1122,9 @@ async fn main() {
         .route("/auth/github", get(handlers::auth::auth_github))
         .route("/auth/callback", get(handlers::auth::auth_callback))
         .route("/auth/logout", post(handlers::auth::auth_logout))
+        // CLI login flow (localhost-callback OAuth → long-lived API key)
+        .route("/auth/cli", get(handlers::auth::auth_cli_start))
+        .route("/auth/cli/finish", get(handlers::auth::auth_cli_finish))
         // Stripe webhook (no auth — Stripe calls this directly)
         .route(
             "/webhooks/stripe",
