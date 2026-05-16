@@ -1044,6 +1044,8 @@
         </div>
       </div>
       <div class="ws-header-right">
+        <!-- Save workspace as App — opens draft-review modal, see openSaveAsAppModal() -->
+        <button class="btn" id="save-as-app-btn" title="Publish this workspace as a reusable App" onclick="openSaveAsAppModal()">Save as App</button>
         <div
           id="fund-area"
           style="display: flex; align-items: center; gap: 6px"
@@ -1491,6 +1493,68 @@
           <div style="color: var(--fg3); font-size: 0.8rem">Loading...</div>
         </div>
         <button class="modal-close" id="add-modal-close">Close</button>
+      </div>
+    </div>
+
+    <!-- ─── Save as App Modal ─── -->
+    <!-- Server provides a draft manifest via POST /api/workspaces/:id/fork-to-app;
+         user reviews, edits the slug + visibility, optionally applies suggested
+         fixes (each with a JSON Patch), then publishes via POST /api/apps. -->
+    <div class="modal-overlay" id="save-as-app-modal">
+      <div class="modal" style="max-width: 640px; max-height: 90vh; overflow-y: auto">
+        <h2 style="margin-top:0">Save workspace as App</h2>
+        <div style="font-size: 0.78rem; color: var(--fg3); margin-bottom: 12px; line-height: 1.5">
+          The platform has introspected this workspace and drafted a manifest.
+          Review the fields, accept or reject the suggestions, and publish when ready.
+        </div>
+
+        <!-- Source summary (read-only) -->
+        <div id="save-as-app-source" style="font-size:0.75rem;color:var(--fg3);margin-bottom:14px;padding:8px 10px;background:var(--bg1);border:1px solid var(--bg2);border-radius:3px"></div>
+
+        <!-- Editable manifest fields -->
+        <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:0.82rem;align-items:center">
+          <label for="saa-slug">Slug</label>
+          <input type="text" id="saa-slug" placeholder="my_app" style="padding:5px 8px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);font-family:inherit" />
+
+          <label for="saa-name">Name</label>
+          <input type="text" id="saa-name" placeholder="My App" style="padding:5px 8px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);font-family:inherit" />
+
+          <label for="saa-tagline">Tagline</label>
+          <input type="text" id="saa-tagline" placeholder="One-line description" style="padding:5px 8px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);font-family:inherit" />
+
+          <label for="saa-description" style="align-self:start;padding-top:4px">Description</label>
+          <textarea id="saa-description" rows="3" placeholder="What this App is for" style="padding:5px 8px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);font-family:inherit;resize:vertical"></textarea>
+
+          <label for="saa-visibility">Visibility</label>
+          <select id="saa-visibility" style="padding:5px 8px;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);font-family:inherit;width:fit-content">
+            <option value="private">Private — only you can spawn workspaces from it</option>
+            <option value="unlisted">Unlisted — anyone with the slug can spawn</option>
+            <option value="public">Public — listed in the catalogue</option>
+          </select>
+        </div>
+
+        <!-- Fleet preview (read-only) -->
+        <div style="margin-top:14px">
+          <div style="font-size:0.7rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Fleet (auto-hire)</div>
+          <div id="saa-fleet" style="display:flex;flex-wrap:wrap;gap:4px;font-size:0.72rem"></div>
+        </div>
+
+        <!-- Initial budget (read-only — derived from workspace spend) -->
+        <div style="margin-top:14px;font-size:0.75rem;color:var(--fg3)">
+          <strong>Initial budget:</strong> <span id="saa-budget"></span> credits
+        </div>
+
+        <!-- Suggestions / fixes -->
+        <div id="saa-issues-section" style="margin-top:16px;display:none">
+          <div style="font-size:0.7rem;color:var(--yellow);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Suggestions</div>
+          <div id="saa-issues" style="display:flex;flex-direction:column;gap:6px;font-size:0.78rem"></div>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+          <button class="btn" id="saa-cancel" onclick="closeSaveAsAppModal()">Cancel</button>
+          <button class="btn btn-primary" id="saa-publish" onclick="publishSaveAsApp()">Publish App</button>
+        </div>
       </div>
     </div>
 
@@ -3748,6 +3812,221 @@
         el.innerHTML =
           html || '<span style="color:var(--fg4)">No history yet</span>';
         if (btn) btn.style.display = "none";
+      }
+
+      // ─── Save workspace as App ─────────────────────────────────────────────
+      //
+      // Flow:
+      //   1. User clicks "Save as App" → openSaveAsAppModal()
+      //   2. POST /api/workspaces/:id/fork-to-app returns a draft manifest +
+      //      structured issue list (suggestions about what's intentional vs
+      //      incidental, each with optional JSON-Patch auto-fixes).
+      //   3. UI populates the modal with the draft.
+      //   4. User reviews, edits, optionally applies suggestion fixes.
+      //   5. User clicks Publish → publishSaveAsApp() POSTs the finalized
+      //      manifest to /api/apps and navigates to /apps/<slug>.
+      //
+      // The substrate (fermi::apps::builder) re-validates the manifest on
+      // POST so any client-side bypass attempts fail loudly.
+
+      window._saveAsAppDraft = null;
+
+      async function openSaveAsAppModal() {
+        const modal = document.getElementById("save-as-app-modal");
+        if (!modal) return;
+        modal.classList.add("active");
+
+        // Show a loading state while the fork runs server-side.
+        const sourceEl = document.getElementById("save-as-app-source");
+        sourceEl.textContent = "Loading workspace introspection…";
+
+        try {
+          const res = await fetch(`/api/workspaces/${wsId}/fork-to-app`, {
+            method: "POST",
+            credentials: "include",
+          });
+          if (!res.ok) {
+            const errText = await res.text();
+            sourceEl.textContent = `Failed to introspect: ${errText.slice(0, 200)}`;
+            return;
+          }
+          const data = await res.json();
+          window._saveAsAppDraft = data;
+          renderSaveAsAppDraft(data);
+        } catch (e) {
+          sourceEl.textContent = `Error: ${e.message}`;
+        }
+      }
+
+      function closeSaveAsAppModal() {
+        const modal = document.getElementById("save-as-app-modal");
+        if (modal) modal.classList.remove("active");
+        window._saveAsAppDraft = null;
+      }
+
+      function renderSaveAsAppDraft(data) {
+        const m = data.draft_manifest || {};
+        const src = data.source || {};
+
+        const sourceEl = document.getElementById("save-as-app-source");
+        sourceEl.innerHTML = `
+          <div>Forked from workspace <strong>${escAttr(src.workspace_name || "")}</strong></div>
+          <div style="margin-top:4px">${src.message_count || 0} messages · ${src.agent_count || 0} agents${src.mission ? " · mission: " + escAttr(src.mission) : ""}</div>
+        `;
+
+        document.getElementById("saa-slug").value = m.slug || "";
+        document.getElementById("saa-name").value = m.name || "";
+        document.getElementById("saa-tagline").value = m.tagline || "";
+        document.getElementById("saa-description").value = m.description || "";
+        document.getElementById("saa-visibility").value = m.visibility || "private";
+
+        // Fleet pills
+        const fleetEl = document.getElementById("saa-fleet");
+        const auto_hire = (m.workspace_template && m.workspace_template.auto_hire) || [];
+        if (auto_hire.length === 0) {
+          fleetEl.innerHTML = '<span style="color:var(--fg4);font-style:italic">No agents in fleet</span>';
+        } else {
+          fleetEl.innerHTML = auto_hire
+            .map(a => `<span style="background:var(--bg2);color:var(--aqua);padding:2px 8px;border-radius:10px;border:1px solid var(--bg3)">${escAttr(a)}</span>`)
+            .join("");
+        }
+
+        document.getElementById("saa-budget").textContent =
+          (m.workspace_template && m.workspace_template.initial_budget) || "—";
+
+        // Issues
+        const issuesSection = document.getElementById("saa-issues-section");
+        const issuesEl = document.getElementById("saa-issues");
+        const issues = data.issues || [];
+        if (issues.length === 0) {
+          issuesSection.style.display = "none";
+        } else {
+          issuesSection.style.display = "";
+          issuesEl.innerHTML = issues
+            .map((issue, idx) => {
+              const sevColor = {
+                error: "var(--red)",
+                warning: "var(--yellow)",
+                info: "var(--aqua)",
+                suggestion: "var(--green)",
+              }[issue.severity] || "var(--fg3)";
+              const fixBtn = issue.fix
+                ? `<button class="btn btn-sm" style="font-size:0.7rem;padding:2px 8px;margin-left:6px" onclick="applySuggestionFix(${idx})">${escAttr(issue.fix.label)}</button>`
+                : "";
+              return `<div style="display:flex;align-items:flex-start;gap:6px;padding:6px 8px;background:var(--bg1);border-left:3px solid ${sevColor}">
+                <div style="flex:1">
+                  <div style="font-size:0.7rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.06em">${issue.severity} · ${escAttr(issue.field || "")}</div>
+                  <div style="margin-top:2px">${escAttr(issue.message)}</div>
+                </div>
+                ${fixBtn}
+              </div>`;
+            })
+            .join("");
+        }
+      }
+
+      function applySuggestionFix(issueIdx) {
+        const data = window._saveAsAppDraft;
+        if (!data || !data.issues || !data.issues[issueIdx]) return;
+        const fix = data.issues[issueIdx].fix;
+        if (!fix || !fix.patch) return;
+
+        // Apply the JSON Patch to the draft_manifest. Tiny implementation
+        // of the subset of RFC 6902 we actually need (add, replace).
+        try {
+          for (const op of fix.patch) {
+            applyJsonPatchOp(data.draft_manifest, op);
+          }
+          // Mark this issue as applied (so the button doesn't re-fire).
+          data.issues[issueIdx].fix = null;
+          renderSaveAsAppDraft(data);
+          if (window.Toast) Toast.show("Suggestion applied", "success");
+        } catch (e) {
+          if (window.Toast) Toast.show(`Couldn't apply fix: ${e.message}`, "error");
+        }
+      }
+
+      function applyJsonPatchOp(doc, op) {
+        // Minimal JSON Patch subset: add and replace at object/array paths.
+        const path = op.path || "";
+        const parts = path.split("/").filter(p => p !== "");
+        if (parts.length === 0) throw new Error("empty path");
+
+        let cur = doc;
+        for (let i = 0; i < parts.length - 1; i++) {
+          const key = decodeJsonPointer(parts[i]);
+          if (cur[key] === undefined) {
+            throw new Error(`path not found: ${path}`);
+          }
+          cur = cur[key];
+        }
+        const last = decodeJsonPointer(parts[parts.length - 1]);
+
+        if (op.op === "replace" || op.op === "add") {
+          if (last === "-" && Array.isArray(cur)) {
+            cur.push(op.value);
+          } else {
+            cur[last] = op.value;
+          }
+        } else {
+          throw new Error(`unsupported op: ${op.op}`);
+        }
+      }
+
+      function decodeJsonPointer(part) {
+        return part.replace(/~1/g, "/").replace(/~0/g, "~");
+      }
+
+      async function publishSaveAsApp() {
+        const draft = window._saveAsAppDraft;
+        if (!draft || !draft.draft_manifest) {
+          if (window.Toast) Toast.show("No draft to publish", "error");
+          return;
+        }
+
+        // Pull the user's edits back into the manifest before POSTing.
+        const manifest = JSON.parse(JSON.stringify(draft.draft_manifest));
+        manifest.slug = document.getElementById("saa-slug").value.trim();
+        manifest.name = document.getElementById("saa-name").value.trim();
+        manifest.tagline = document.getElementById("saa-tagline").value.trim() || null;
+        manifest.description = document.getElementById("saa-description").value.trim() || null;
+        manifest.visibility = document.getElementById("saa-visibility").value;
+
+        const btn = document.getElementById("saa-publish");
+        if (btn) { btn.disabled = true; btn.textContent = "Publishing…"; }
+
+        try {
+          const res = await fetch("/api/apps", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(manifest),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const slug = data.slug || manifest.slug;
+            if (window.Toast) Toast.show(`App '${slug}' published — opening catalogue page`, "success");
+            window.location.href = `/apps/${slug}`;
+            return;
+          }
+          const errText = await res.text();
+          if (window.Toast) Toast.show(`Publish failed: ${errText.slice(0, 200)}`, "error");
+        } catch (e) {
+          if (window.Toast) Toast.show(`Publish failed: ${e.message}`, "error");
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = "Publish App"; }
+        }
+      }
+
+      // Tiny escaping helper for the inline-style strings we generate above.
+      // workspace.html already has `escHtml` but it's defined later; this is
+      // local so the save-as-app helpers don't depend on init order.
+      function escAttr(s) {
+        return String(s || "")
+          .replace(/&/g, "&amp;")
+          .replace(/"/g, "&quot;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
       }
     </script>
     <script src="/static/js/widgets/xaman-ek.js"></script>

@@ -690,3 +690,82 @@ pub async fn set_composition_identity_handler(
         "status": "updated",
     })))
 }
+
+// ─── Fork workspace to draft App manifest ────────────────────────────────────
+//
+// POST /api/workspaces/:id/fork-to-app
+//
+// Introspects the workspace and returns a draft PartialManifest the UI can
+// review before publishing. The endpoint is read-only — it doesn't register
+// the App. The user reviews the draft (and the structured suggestions about
+// what looks intentional vs incidental), edits as needed, and then POSTs the
+// finalized manifest to POST /api/apps the regular way.
+//
+// This is the server side of the "Save workspace as App" workspace-header
+// button. See src/apps/workspace_fork.rs for the introspection logic.
+
+pub async fn fork_workspace_to_app_draft_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    use fermi::apps::workspace_fork::{introspect_workspace_to_draft, ForkError};
+
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let user_id = principal.user_id();
+
+    let draft = introspect_workspace_to_draft(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|e| match e {
+            ForkError::NotFound => (StatusCode::NOT_FOUND, e.to_string()),
+            ForkError::NotOwned => (StatusCode::FORBIDDEN, e.to_string()),
+            ForkError::AlreadyAnApp(_) => (StatusCode::CONFLICT, e.to_string()),
+            ForkError::Db(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        })?;
+
+    // Render the structured issues so the UI can group them by severity.
+    let issues: Vec<serde_json::Value> = draft
+        .issues
+        .iter()
+        .map(|i| {
+            serde_json::json!({
+                "severity": match i.severity {
+                    fermi::apps::builder::Severity::Error => "error",
+                    fermi::apps::builder::Severity::Warning => "warning",
+                    fermi::apps::builder::Severity::Info => "info",
+                    fermi::apps::builder::Severity::Suggestion => "suggestion",
+                },
+                "field": i.field,
+                "message": i.message,
+                "fix": i.fix.as_ref().map(|f| serde_json::json!({
+                    "label": f.label,
+                    "patch": f.patch.clone(),
+                })),
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "draft_manifest": draft.manifest.to_value(),
+        "issues": issues,
+        "source": {
+            "workspace_id": draft.source.workspace_id,
+            "workspace_name": draft.source.workspace_name,
+            "workspace_slug": draft.source.workspace_slug,
+            "mission": draft.source.mission,
+            "composition_strategist_id": draft.source.composition_strategist_id,
+            "origin": draft.source.origin,
+            "message_count": draft.source.message_count,
+            "agent_count": draft.source.agent_count,
+        },
+        "next_steps": [
+            "Review the draft_manifest below.",
+            "Accept/reject the suggestions in `issues` — each suggestion may carry a `fix.patch` (JSON Patch) the UI can apply with one click.",
+            "Edit the draft as needed, especially: slug (must be unique), tagline, description, visibility.",
+            "POST the finalized manifest to /api/apps to register the App."
+        ]
+    })))
+}

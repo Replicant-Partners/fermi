@@ -1362,6 +1362,12 @@ async fn main() {
             "/api/workspaces/:workspace_id/workflow",
             get(handlers::workspace::get_workspace_workflow_handler),
         )
+        // Fork a workspace to a draft App manifest (server-side introspection;
+        // UI reviews + edits before POSTing to /api/apps)
+        .route(
+            "/api/workspaces/:workspace_id/fork-to-app",
+            post(handlers::workspace::fork_workspace_to_app_draft_handler),
+        )
         // Workspace agent hire/add
         .route(
             "/api/workspaces/:workspace_id/hire",

@@ -16,3 +16,4 @@
 //!   - `builder::Issue`, `builder::Severity` — structured feedback shape.
 
 pub mod builder;
+pub mod workspace_fork;
