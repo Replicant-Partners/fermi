@@ -523,6 +523,10 @@ async fn run_migrations(db: &PgPool) {
         // migration 111 ran (e.g. new SimOps v2 fleet agents). Same
         // logic as 111 — idempotent, assigns earliest admin user.
         "migrations/122_backfill_curated_agent_ownership.sql",
+        // Remove test regression-fixture agents (seed_market_research,
+        // seed_geopolitical_risk, seed_crypto_sentiment) that were
+        // accidentally written to production via SeedData::build().
+        "migrations/123_remove_test_seed_agents.sql",
     ];
 
     for file in &migration_files {
