@@ -9,14 +9,16 @@
   "composition_slug": "simops_fleet",
   "schema_slug": "kask-simops/2",
   "workspace_template": {
-    "initial_budget": 275,
+    "initial_budget": 295,
     "default_name_pattern": "SimOps — {date} process",
     "auto_hire": [
       "simops_advisor",
       "simops_cascade",
       "simops_narrator",
       "simops_predictor",
-      "simops_optimizer"
+      "simops_optimizer",
+      "sidestream_miner",
+      "comparator"
     ],
     "initial_files": [
       {
