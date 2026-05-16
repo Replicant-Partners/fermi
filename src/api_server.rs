@@ -514,6 +514,10 @@ async fn run_migrations(db: &PgPool) {
         // composition_versions.rejected_by + rejection_note — code
         // expected these but no migration ever added them.
         "migrations/120_composition_versions_rejection.sql",
+        // Fix Xaman Ek ontology snapshot: invalid Mermaid attribute types
+        // (TEXT_ARRAY, UUID_ARRAY, VECTOR_1024, PK_FK) that break the
+        // knowledge graph renderer.
+        "migrations/121_fix_xaman_ek_ontology_mermaid.sql",
     ];
 
     for file in &migration_files {
@@ -548,6 +552,25 @@ async fn ensure_critical_schema(db: &PgPool) {
          "ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS coordination_strategist_id UUID"),
         ("teams.strategist_assigned_at",
          "ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS strategist_assigned_at TIMESTAMPTZ"),
+        // composition_versions table — migration 113 uses raw_sql which
+        // PgBouncer in transaction mode can split; belt-and-suspenders
+        // CREATE TABLE IF NOT EXISTS ensures the table always exists.
+        ("composition_versions.table",
+         "CREATE TABLE IF NOT EXISTS public.composition_versions ( \
+              composition_version_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
+              workspace_id UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE, \
+              version_number INT NOT NULL, \
+              mission TEXT, \
+              coordination_strategist_id UUID, \
+              member_agent_ids UUID[], \
+              member_weights JSONB, \
+              diff_summary TEXT, \
+              proposed_by TEXT, \
+              accepted_by TEXT, \
+              rejected_by TEXT, \
+              rejection_note TEXT, \
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
+          )"),
         ("composition_versions.rejected_by",
          "ALTER TABLE public.composition_versions ADD COLUMN IF NOT EXISTS rejected_by TEXT"),
         ("composition_versions.rejection_note",
@@ -568,7 +591,7 @@ async fn ensure_critical_schema(db: &PgPool) {
          FROM information_schema.columns
          WHERE table_schema = 'public'
            AND ((table_name = 'teams' AND column_name IN ('mission','coordination_strategist_id','strategist_assigned_at'))
-             OR (table_name = 'composition_versions' AND column_name IN ('rejected_by','rejection_note')))
+             OR (table_name = 'composition_versions' AND column_name IN ('composition_version_id','rejected_by','rejection_note')))
          ORDER BY table_name, column_name",
     )
     .fetch_all(db)

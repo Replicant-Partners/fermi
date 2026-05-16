@@ -5400,6 +5400,31 @@ fn parse_uuid_field(input: &serde_json::Value, field: &str) -> Result<Uuid, Stri
     Uuid::parse_str(s).map_err(|e| format!("Invalid UUID for {}: {}", field, e))
 }
 
+/// Resolve an `agent_id` field that may be either a UUID string or an
+/// agent-name slug (e.g. "equity_analyst").  UUID is tried first; on
+/// failure we hit the DB via `get_agent_by_name` to obtain the real UUID.
+async fn resolve_agent_id(
+    input: &serde_json::Value,
+    field: &str,
+    ctx: &ToolContext,
+) -> Result<Uuid, String> {
+    let s = input
+        .get(field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("Missing required parameter: {}", field))?;
+
+    if let Ok(uuid) = Uuid::parse_str(s) {
+        return Ok(uuid);
+    }
+
+    // Treat as a name slug and look up the UUID in the agents table.
+    ctx.memory_store
+        .get_agent_by_name(s)
+        .await
+        .map(|a| a.agent_id)
+        .map_err(|e| format!("Agent '{}' not found (tried as name slug): {}", s, e))
+}
+
 async fn execute_query_eval_signals(
     input: &serde_json::Value,
     ctx: &ToolContext,
@@ -5423,7 +5448,7 @@ async fn execute_query_eval_runs(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
-    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
     let limit = input
         .get("limit")
         .and_then(|v| v.as_i64())
@@ -5448,7 +5473,7 @@ async fn execute_query_anomalies(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
-    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
     let limit = input
         .get("limit")
         .and_then(|v| v.as_i64())
@@ -5496,7 +5521,7 @@ async fn execute_query_timeline(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
-    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
     let limit = input
         .get("limit")
         .and_then(|v| v.as_i64())
@@ -5521,7 +5546,7 @@ async fn execute_query_dyad_state(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
-    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
 
     let dyads = ctx
         .memory_store
@@ -5679,7 +5704,7 @@ async fn execute_run_evaluator_registry(
         .as_ref()
         .ok_or("run_evaluator_registry is not available in this execution context (no eval_trigger plumbed). Use the agent detail page's Run + Judge button or POST /api/agents/:id/eval/run.")?;
 
-    let agent_id = parse_uuid_field(input, "agent_id")?;
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
     let user_id = ctx
         .user_id
         .clone()

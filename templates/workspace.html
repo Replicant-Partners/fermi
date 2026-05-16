@@ -677,25 +677,29 @@
          color: inherit;
        }
 
-       /* ─── Overlay panel ─── */
-       .ws-overlay-panel {
-         position: fixed;
-         top: 0;
-         right: 76px;          /* sits flush against the icon rail */
-         width: 240px;
-         height: 100vh;
-         background: var(--bg0);
-         border-left: 1px solid var(--bg2);
-         display: flex;
-         flex-direction: column;
-         z-index: 200;
-         transform: translateX(100%);
-         transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
-         box-shadow: -4px 0 20px rgba(0,0,0,0.25);
-       }
-       .ws-overlay-panel.open {
-         transform: translateX(0);
-       }
+        /* ─── Overlay panel ─── */
+        .ws-overlay-panel {
+          position: fixed;
+          top: 0;
+          right: 76px;          /* sits flush against the icon rail */
+          width: 240px;
+          height: 100vh;
+          background: var(--bg0);
+          border-left: 1px solid var(--bg2);
+          display: flex;
+          flex-direction: column;
+          z-index: 200;
+          /* translateX(100%) only moves 240px — not enough to clear the 76px
+             rail, so the closed panel covers the rail buttons and there is no
+             affordance to reopen it.  Add the rail width so the panel fully
+             disappears behind the rail when closed. */
+          transform: translateX(calc(100% + 76px));
+          transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+          box-shadow: -4px 0 20px rgba(0,0,0,0.25);
+        }
+        .ws-overlay-panel.open {
+          transform: translateX(0);
+        }
        .overlay-header {
          display: flex;
          justify-content: space-between;
@@ -912,8 +916,12 @@
         /* Keep the rail visible even on narrow viewports — it's the only
            affordance to reopen the shelf, and hiding it created the
            "where did the shelf go?" confusion. The overlay slides over
-           it instead. */
-        .ws-overlay-panel { right: 0; }
+           it instead. At right:0 translateX(100%) already clears the
+           viewport so no extra offset is needed. */
+        .ws-overlay-panel {
+          right: 0;
+          transform: translateX(100%);
+        }
       }
       @media (max-width: 640px) {
         .panel-members {
@@ -1622,8 +1630,7 @@
               chipEl.title = "Coordination strategist: " + ws.coordination_strategist_name;
             }
           }
-          document.getElementById("ws-description").textContent =
-            ws.description || "No description.";
+          setTextById("ws-description", ws.description || "No description.");
 
           // Budget
           const remaining = ws.workspace_remaining || 0;

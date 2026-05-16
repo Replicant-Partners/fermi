@@ -1,20 +1,10 @@
--- Seed Xaman Ek's ontology snapshot with the full system ER diagram.
--- This gives the platform navigator a live knowledge graph of the entire schema.
+-- Re-seed Xaman Ek's ontology snapshot with corrected Mermaid ERD syntax.
+-- Migration 034 used invalid Mermaid attribute types (TEXT_ARRAY, UUID_ARRAY,
+-- VECTOR_1024, PK_FK) that cause a parse error in the knowledge graph renderer.
+-- This migration replaces the seeded snapshot with valid syntax.
 
-INSERT INTO ontology_snapshots (
-    snapshot_id, agent_id, git_commit_sha, git_repository, git_path,
-    pushed_to_remote, mermaid_content,
-    entity_count, fact_count, community_count, rule_count,
-    version, created_at
-)
-SELECT
-    gen_random_uuid(),
-    a.agent_id,
-    'seed-034',
-    'local',
-    'ontology.mermaid',
-    FALSE,
-    $mermaid$
+UPDATE ontology_snapshots
+SET mermaid_content = $mermaid$
 erDiagram
 
     %% ═══════════════════════════════════════════
@@ -439,27 +429,11 @@ erDiagram
         TEXT status
         TIMESTAMPTZ invited_at
     }
-$mermaid$,
-    28,   -- entity_count (tables)
-    42,   -- fact_count (relationships)
-    6,    -- community_count (domains)
-    0,    -- rule_count
-    1,    -- version
-    NOW()
-FROM agents a
-WHERE a.agent_name = 'xaman_ek'
-  AND NOT EXISTS (
-    SELECT 1 FROM ontology_snapshots os WHERE os.agent_id = a.agent_id
-  );
-
--- Point agent to this snapshot
-UPDATE agents
-SET current_ontology_snapshot_id = (
-    SELECT snapshot_id FROM ontology_snapshots os
+$mermaid$
+WHERE snapshot_id IN (
+    SELECT os.snapshot_id
+    FROM ontology_snapshots os
     JOIN agents a ON os.agent_id = a.agent_id
     WHERE a.agent_name = 'xaman_ek'
-    ORDER BY os.created_at DESC LIMIT 1
-),
-current_ontology_commit = 'seed-034'
-WHERE agent_name = 'xaman_ek'
-  AND current_ontology_snapshot_id IS NULL;
+      AND os.git_commit_sha = 'seed-034'
+);
