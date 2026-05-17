@@ -159,14 +159,23 @@ pub async fn introspect_workspace_to_draft(
 
     let mut issues: Vec<Issue> = Vec::new();
 
-    // Step 2: fleet — agents hired in the workspace + execution counts so we
-    // can flag the "hired but never used" ones.
+    // Step 2: fleet — agents hired in the workspace + per-workspace message
+    // counts so we can flag the "hired but never used" ones.
+    //
+    // Note: episodes does not carry a workspace_id (it's an agent-scoped
+    // event log, not a workspace one). The closest per-workspace signal is
+    // workspace_messages where sender_type='agent' and sender_id matches
+    // the agent's UUID-as-text. That gives us "how many times did this
+    // agent speak in this workspace" — a reasonable proxy for "was this
+    // agent actually used here" for fork-from-workspace heuristics.
     let fleet_rows = sqlx::query(
         r#"SELECT a.agent_name,
-                  COUNT(e.id) FILTER (WHERE e.workspace_id = $1) AS execution_count
+                  COUNT(wm.message_id) FILTER (WHERE wm.sender_type = 'agent') AS execution_count
            FROM workspace_agents wa
            JOIN agents a ON a.agent_id = wa.agent_id
-           LEFT JOIN episodes e ON e.agent_id = a.agent_id
+           LEFT JOIN workspace_messages wm
+             ON wm.workspace_id = wa.workspace_id
+            AND wm.sender_id = a.agent_id::text
            WHERE wa.workspace_id = $1
            GROUP BY a.agent_name
            ORDER BY execution_count DESC, a.agent_name"#,
