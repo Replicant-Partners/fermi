@@ -38,8 +38,17 @@
         background: var(--bg1); border: 1px solid var(--bg2); border-radius: 4px;
         padding: 16px; text-decoration: none; color: inherit;
         transition: border-color 0.15s;
+        position: relative;
       }
       .app-card:hover { border-color: var(--yellow); }
+      .app-card-archive {
+        position: absolute; top: 8px; right: 10px;
+        background: none; border: none; color: var(--fg3);
+        font-size: 0.85em; cursor: pointer; opacity: 0;
+        padding: 2px 5px; border-radius: 2px; transition: opacity 0.15s, color 0.15s;
+      }
+      .app-card:hover .app-card-archive { opacity: 1; }
+      .app-card-archive:hover { color: var(--red); background: var(--bg2); }
       .card-top { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
       .card-icon {
         width: 40px; height: 40px; border-radius: 6px; background: var(--bg2);
@@ -93,6 +102,7 @@
     <script>
       let _allApps = [];
       let _myUserId = null;
+      let _isAdmin = false;
       let _filter = "all";
 
       async function loadApps() {
@@ -104,6 +114,7 @@
           if (meRes?.ok) {
             const me = await meRes.json();
             _myUserId = me.user_id;
+            _isAdmin = me.role === "admin";
           }
           if (!appsRes.ok) {
             document.getElementById("app-grid").innerHTML =
@@ -166,8 +177,13 @@
           : esc((app.name || app.slug || "A").charAt(0).toUpperCase());
         const tmpl = app.workspace_template || {};
         const agentCount = (tmpl.auto_hire || []).length;
+        const archiveBtn = (isOwn || _isAdmin)
+          ? `<button class="app-card-archive" title="Archive app"
+              onclick="event.preventDefault();event.stopPropagation();archiveApp('${esc(app.slug)}','${esc(app.name||app.slug)}')">×</button>`
+          : "";
         return `
           <a href="/apps/${esc(app.slug)}" class="app-card">
+            ${archiveBtn}
             <div class="card-top">
               <div class="card-icon">${icon}</div>
               <div>
@@ -181,6 +197,21 @@
               <span class="card-agents">${agentCount} agent${agentCount !== 1 ? "s" : ""}</span>
             </div>
           </a>`;
+      }
+
+      async function archiveApp(slug, name) {
+        if (!confirm(`Archive app "${name}"?\n\nIt will be hidden from the catalogue. Existing workspaces are unaffected.`)) return;
+        try {
+          const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/archive`, { method: "POST" });
+          if (res.ok) {
+            _allApps = _allApps.filter(a => a.slug !== slug);
+            render();
+          } else {
+            alert("Archive failed: " + await res.text());
+          }
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
       }
 
       function esc(s) {
