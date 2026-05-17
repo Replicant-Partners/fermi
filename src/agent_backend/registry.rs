@@ -275,8 +275,11 @@ impl AgentRegistry {
         if let Some(tokens) = output.tokens_used {
             card.usage.total_tokens_used += tokens as u64;
 
-            // Calculate cost based on model
-            let cost = calculate_cost(&card.capabilities.model, tokens);
+            // Local providers (ollama) carry no per-token cost — gas only.
+            // calculate_cost returns 0.0 for them so total_cost_usd stays
+            // accurate as "cloud spend" and the catalogue badge can surface
+            // "Runs locally — no per-execution charge" when cost == 0.
+            let cost = calculate_cost(&card.capabilities.provider, &card.capabilities.model, tokens);
             card.usage.total_cost_usd += cost;
         }
 
@@ -342,15 +345,30 @@ impl std::fmt::Display for RegistryError {
 
 impl std::error::Error for RegistryError {}
 
-/// Calculate cost based on model and token count
-fn calculate_cost(model: &str, tokens: u32) -> f64 {
-    // Model-specific pricing (per 1M tokens)
+/// Calculate cost based on provider, model, and token count.
+///
+/// Local providers (ollama) carry no per-token cost — the user
+/// owns the inference hardware. Return 0.0 so total_cost_usd
+/// stays accurate as "cloud spend only."
+fn calculate_cost(provider: &str, model: &str, tokens: u32) -> f64 {
+    // Local providers: no per-token charge
+    if provider == "ollama" {
+        return 0.0;
+    }
+
+    // Model-specific pricing (per 1M tokens, USD)
     let rate_per_million = match model {
-        "claude-3-5-sonnet-20241022" => 3.0,
-        "claude-3-5-sonnet-20240620" => 3.0,
-        "claude-3-opus-20240229" => 15.0,
-        "claude-3-haiku-20240307" => 0.25,
-        _ => 3.0, // Default
+        // Anthropic
+        "claude-sonnet-4-6"
+        | "claude-sonnet-4-5-20250929"
+        | "claude-3-5-sonnet-20241022"
+        | "claude-3-5-sonnet-20240620" => 3.0,
+        "claude-opus-4-6" | "claude-3-opus-20240229" => 15.0,
+        "claude-haiku-4-5-20251001" | "claude-3-haiku-20240307" => 0.25,
+        // OpenRouter free tier
+        "openrouter/free" => 0.0,
+        // Everything else: use a conservative default
+        _ => 3.0,
     };
 
     (tokens as f64 / 1_000_000.0) * rate_per_million
