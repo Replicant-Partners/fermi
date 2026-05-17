@@ -118,6 +118,7 @@ const Nav = {
         <div class="nav-dropdown-label">${Nav._esc(user.email || name)}</div>
         <a href="/dashboard" class="nav-dropdown-item">Dashboard</a>
         <a href="/profile" class="nav-dropdown-item">Profile</a>
+        <a href="/settings" class="nav-dropdown-item">Settings</a>
         ${isAdmin ? '<a href="/admin" class="nav-dropdown-item">Admin</a>' : ""}
         <div class="nav-dropdown-sep"></div>
         <button class="nav-dropdown-item nav-dropdown-theme" onclick="Nav._toggleTheme()">
