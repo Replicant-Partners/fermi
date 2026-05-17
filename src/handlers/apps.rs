@@ -169,6 +169,13 @@ pub async fn list_apps_handler(
         } else {
             " AND archived_at IS NULL".to_string()
         };
+        // Admins see all apps regardless of visibility or owner
+        let is_admin = principal.as_ref().map(|p| p.can_admin()).unwrap_or(false);
+        let owner_clause = if is_admin {
+            "1=1".to_string()
+        } else {
+            format!("(visibility = 'public' OR owner_user_id = $1)")
+        };
         let sql = format!(
             r#"SELECT id, slug, name, tagline, owner_user_id, owner_team_id,
                       homepage_url, icon_url, composition_slug, schema_slug,
@@ -176,9 +183,9 @@ pub async fn list_apps_handler(
                       pricing_policy, visibility, published_at, archived_at,
                       description, metadata, created_at, updated_at
                FROM apps
-               WHERE (visibility = 'public' OR owner_user_id = $1)
+               WHERE {}
                {}{}{}{} ORDER BY created_at DESC LIMIT 200"#,
-            visibility_filter, owner_filter, prefix_filter, archived_filter
+            owner_clause, visibility_filter, owner_filter, prefix_filter, archived_filter
         );
         sqlx::query(&sql)
             .bind(uid)
