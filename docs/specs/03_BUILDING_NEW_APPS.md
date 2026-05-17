@@ -23,6 +23,16 @@ The session walks you through the four-thing decomposition (canonical document â
 
 **2. In code** (best for developers who want repeatable manifests in git)
 
+Install the CLI in one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/fermi/main/scripts/install-abw.sh | bash
+```
+
+(Supports Linux x86_64/ARM64, macOS Intel/Apple Silicon, Windows x86_64. Building from source is fine too: `cargo install --git https://github.com/Replicant-Partners/fermi --bin abw abw-cli`.)
+
+Then:
+
 ```bash
 abw login                          # one-time OAuth (localhost callback)
 abw app new <slug>                 # scaffold a directory
