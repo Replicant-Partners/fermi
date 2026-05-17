@@ -422,11 +422,15 @@ impl ToolAwareExecutor {
         base_url: &str,
     ) -> Result<OpenAIResponse, ExecutionError> {
         let url = format!("{}/chat/completions", base_url);
-        let response = self
+        let mut req = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+        // Skip Authorization header for providers that need no key (e.g. Ollama)
+        if !api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", api_key));
+        }
+        let response = req
             .json(request)
             .send()
             .await
@@ -499,6 +503,15 @@ impl AgentExecutor for ToolAwareExecutor {
 // ─── Helpers ───────────────────────────────────────────────────────
 
 fn resolve_openai_provider(provider: &str) -> Result<(String, String), ExecutionError> {
+    // Ollama needs no API key — just a base URL.
+    if provider == "ollama" {
+        let base_url = std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| {
+            // Fall back to localhost default if OLLAMA_ENABLE is set
+            "http://localhost:11434/v1".to_string()
+        });
+        return Ok((String::new(), base_url));
+    }
+
     let env_key = format!("{}_API_KEY", provider.to_uppercase());
     let api_key = std::env::var(&env_key)
         .map_err(|_| ExecutionError::ExecutionFailed(format!("{} not set", env_key)))?;

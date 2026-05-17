@@ -9,6 +9,7 @@
 ///   - glm (Zhipu AI GLM, OpenAI-compatible — GLM_API_KEY / GLM_BASE_URL)
 ///   - deepseek (DeepSeek, OpenAI-compatible — DEEPSEEK_API_KEY)
 ///   - kimi (Moonshot AI Kimi, OpenAI-compatible — KIMI_API_KEY)
+///   - ollama (local Ollama instance — OLLAMA_BASE_URL, no API key required)
 use crate::agent_backend::executor::{
     AgentExecutor, AgentMetadata, AgentOutput, AgentStatus, ExecutionContext, ExecutionError,
 };
@@ -22,6 +23,7 @@ use std::time::Instant;
 
 /// Provider configuration
 struct ProviderConfig {
+    /// API key — empty string for providers that don't require one (e.g. Ollama)
     api_key: String,
     base_url: String,
 }
@@ -114,6 +116,30 @@ impl MultiModelExecutor {
                 },
             );
             println!("  Multi-model: Kimi (Moonshot AI) provider available");
+        }
+
+        // Ollama — local or operator-hosted OpenAI-compatible endpoint.
+        // No API key required; presence of OLLAMA_BASE_URL is the activation signal.
+        // Default: http://localhost:11434/v1 (standard Ollama OpenAI-compat port).
+        if let Ok(base_url) = std::env::var("OLLAMA_BASE_URL") {
+            providers.insert(
+                "ollama".to_string(),
+                ProviderConfig {
+                    api_key: String::new(), // Ollama needs no auth
+                    base_url,
+                },
+            );
+            println!("  Multi-model: Ollama provider available (local/operator-hosted)");
+        } else if std::env::var("OLLAMA_ENABLE").as_deref() == Ok("true") {
+            // Opt-in with default localhost URL — useful for development
+            providers.insert(
+                "ollama".to_string(),
+                ProviderConfig {
+                    api_key: String::new(),
+                    base_url: "http://localhost:11434/v1".to_string(),
+                },
+            );
+            println!("  Multi-model: Ollama provider available (localhost default)");
         }
 
         println!(
@@ -214,11 +240,15 @@ impl MultiModelExecutor {
         config: &ProviderConfig,
     ) -> Result<OpenAIResponse, ExecutionError> {
         let url = format!("{}/chat/completions", config.base_url);
-        let response = self
+        let mut req = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+        // Skip Authorization header for providers that don't require a key (e.g. Ollama)
+        if !config.api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", config.api_key));
+        }
+        let response = req
             .json(request)
             .send()
             .await
