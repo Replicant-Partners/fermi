@@ -774,8 +774,8 @@
                 "
                 onchange="loadWorkspaces()"
               >
-                <option value="bestiary_workspace">My workspaces</option>
                 <option value="">All (incl. shared)</option>
+                <option value="bestiary_workspace">My workspaces only</option>
                 <option value="rabble_swarm">Rabble swarms</option>
               </select>
               <button class="btn btn-primary" id="create-ws-btn">+ New</button>
@@ -1098,12 +1098,11 @@
         } catch {}
 
         // Load workspaces — uses the dropdown's current value for origin
-        // filter. Default is "bestiary_workspace" so rabble auto-gens
-        // are hidden from the harness dashboard by default.
+        // filter. Default is "" (all) so shared workspaces are visible.
+        // Rabble swarms are hidden via their own filter option.
         window.loadWorkspaces = async function () {
           const origin =
-            document.getElementById("ws-origin-filter")?.value ??
-            "bestiary_workspace";
+            document.getElementById("ws-origin-filter")?.value ?? "";
           const url = origin
             ? "/api/workspaces?origin=" + encodeURIComponent(origin)
             : "/api/workspaces";

@@ -142,28 +142,14 @@
       <div id="app-error" class="error-state" style="display:none"></div>
     </div>
 
-    <!-- Grant credits modal -->
-    <div id="grant-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:500;align-items:center;justify-content:center">
-      <div style="background:var(--bg0);border:1px solid var(--bg2);border-radius:4px;padding:24px;width:340px;max-width:90vw">
-        <div style="font-size:0.9em;color:var(--fg0);margin-bottom:4px;font-weight:500">Grant Credits to Workspace</div>
-        <div style="font-size:0.78em;color:var(--fg3);margin-bottom:16px">Credits are granted directly — not deducted from your wallet.</div>
-        <select id="grant-ws-select" style="width:100%;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:8px;font-family:inherit;font-size:0.85em;margin-bottom:10px;border-radius:3px"></select>
-        <input type="number" id="grant-amount" value="200" min="1" max="10000"
-          style="width:100%;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:8px;font-family:inherit;font-size:0.85em;margin-bottom:10px;border-radius:3px;box-sizing:border-box" placeholder="Credits" />
-        <input type="text" id="grant-reason" value="Admin top-up"
-          style="width:100%;background:var(--bg1);border:1px solid var(--bg3);color:var(--fg1);padding:8px;font-family:inherit;font-size:0.85em;margin-bottom:16px;border-radius:3px;box-sizing:border-box" placeholder="Reason" />
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button onclick="closeGrantModal()" style="background:none;border:1px solid var(--bg3);color:var(--fg3);padding:7px 14px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:0.85em">Cancel</button>
-          <button onclick="submitGrant()" style="background:var(--yellow);color:var(--bg0);border:none;padding:7px 14px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:0.85em;font-weight:600">Grant</button>
-        </div>
-        <div id="grant-status" style="font-size:0.78em;color:var(--green);margin-top:10px;display:none"></div>
-      </div>
-    </div>
-
     <script>
       let _app = null;
       let _workspaces = [];
       let _isAdmin = false;
+
+      function esc(s) {
+        return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      }
 
       async function loadApp() {
         try {
@@ -196,10 +182,10 @@
       }
 
       function renderApp(app) {
+        // Update page title — Nav.init already rendered the header with a
+        // placeholder title; just update document.title directly
         document.title = `${app.name || app.slug} — Agent Bestiary`;
-        Nav.setTitle(app.name || app.slug);
 
-        // Hero
         const iconEl = document.getElementById("app-icon");
         if (app.icon_url) {
           iconEl.innerHTML = `<img src="${esc(app.icon_url)}" alt="" onerror="this.parentElement.textContent='⚙'" />`;
@@ -209,10 +195,9 @@
         document.getElementById("app-name").textContent = app.name || app.slug;
         document.getElementById("app-tagline").textContent = app.tagline || "";
         const badges = document.getElementById("app-badges");
-        badges.innerHTML = `<span class="badge ${app.visibility || 'private'}">${app.visibility || 'private'}</span>`;
+        badges.innerHTML = `<span class="badge ${esc(app.visibility || 'private')}">${esc(app.visibility || 'private')}</span>`;
         if (app.composition_slug) badges.innerHTML += `<span class="badge">${esc(app.composition_slug)}</span>`;
 
-        // Body
         document.getElementById("app-description").textContent = app.description || "";
         document.getElementById("app-slug-val").textContent = app.slug;
         document.getElementById("app-owner").textContent = app.owner_display_name || app.owner_user_id || "—";
@@ -232,10 +217,7 @@
           ? autoHire.map(id => `<a href="/agent/${esc(id)}" class="agent-pill">⚙ ${esc(id)}</a>`).join("")
           : '<span style="color:var(--fg3);font-size:0.82em">None auto-hired</span>';
 
-        // Show spawn button for authenticated users
         document.getElementById("spawn-btn").style.display = "inline-block";
-
-        // Admin section
         if (_isAdmin) document.getElementById("admin-section").style.display = "block";
 
         document.getElementById("app-hero").style.display = "flex";
@@ -255,21 +237,59 @@
       function renderWorkspaces(list) {
         const el = document.getElementById("workspaces-list");
         if (!list.length) {
-          el.innerHTML = '<div style="color:var(--fg3);font-size:0.85em">No workspaces yet. Click "+ New Workspace" to spawn one.</div>';
+          el.innerHTML = '<div style="color:var(--fg3);font-size:0.85em">No workspaces yet — click "+ New Workspace" to spawn one.</div>';
           return;
         }
-        el.innerHTML = list.map(w => `
+        // budget/spent come from the API (not workspace_remaining)
+        el.innerHTML = list.map(w => {
+          const budget = w.budget ?? w.workspace_budget ?? 0;
+          const spent  = w.spent  ?? w.workspace_spent  ?? 0;
+          const remaining = budget - spent;
+          const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
+          const low = remaining < 50;
+          const grantBtn = _isAdmin
+            ? `<button onclick="event.preventDefault();grantToWorkspace('${esc(w.id)}','${esc(w.name||w.id)}')"
+                style="background:none;border:1px solid var(--bg3);color:var(--fg3);padding:2px 8px;border-radius:3px;cursor:pointer;font-size:0.72em;font-family:inherit;white-space:nowrap"
+                title="Grant credits">+ cr</button>`
+            : "";
+          return `
           <a href="/workspace/${esc(w.id)}" class="ws-item">
-            <div>
-              <div>${esc(w.name || "Unnamed")}</div>
-              <div class="ws-meta">${w.agent_count || 0} agents · ${w.workspace_remaining ?? w.workspace_budget ?? 0} cr remaining</div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span>${esc(w.name || "Unnamed")}</span>
+                ${low ? `<span style="font-size:0.65em;color:var(--red);background:var(--bg2);padding:1px 5px;border-radius:2px">low gas</span>` : ""}
+              </div>
+              <div class="ws-meta">${remaining} / ${budget} cr · ${w.created_at ? new Date(w.created_at).toLocaleDateString() : ""}</div>
+              <div style="height:3px;background:var(--bg2);border-radius:2px;margin-top:4px">
+                <div style="height:100%;width:${pct}%;background:${pct>85?'var(--red)':pct>60?'var(--yellow)':'var(--green)'};border-radius:2px;transition:width 0.3s"></div>
+              </div>
             </div>
-            <div class="ws-meta">${w.created_at ? new Date(w.created_at).toLocaleDateString() : ""}</div>
-          </a>`).join("");
+            <div style="margin-left:10px;flex-shrink:0">${grantBtn}</div>
+          </a>`;
+        }).join("");
+      }
 
-        // Populate grant modal workspace select
-        const sel = document.getElementById("grant-ws-select");
-        sel.innerHTML = list.map(w => `<option value="${esc(w.id)}">${esc(w.name || w.id)}</option>`).join("");
+      // Inline per-workspace grant — no modal, just a quick input prompt
+      async function grantToWorkspace(wsId, wsName) {
+        const credits = parseInt(prompt(`Grant credits to "${wsName}"?\n\nAmount:`, "200"));
+        if (!credits || credits < 1) return;
+        const reason = prompt("Reason:", "Admin top-up") || "Admin top-up";
+        try {
+          const res = await fetch(`/api/admin/workspaces/${encodeURIComponent(wsId)}/grant`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ credits, reason }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            // Flash confirmation on the workspace item, then reload
+            loadWorkspaces();
+          } else {
+            alert("Grant failed: " + (data.error || JSON.stringify(data)));
+          }
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
       }
 
       async function spawnWorkspace() {
@@ -284,17 +304,11 @@
           });
           if (!res.ok) {
             const err = await res.text();
-            alert("Failed to spawn workspace: " + err);
+            alert("Failed to spawn: " + err);
             return;
           }
           const data = await res.json();
-          if (data.workspace_url) {
-            window.location.href = data.workspace_url;
-          } else if (data.workspace_id) {
-            window.location.href = `/workspace/${data.workspace_id}`;
-          } else {
-            loadWorkspaces();
-          }
+          window.location.href = data.workspace_url || `/workspace/${data.workspace_id}` || window.location.href;
         } catch (e) {
           alert("Error: " + e.message);
         } finally {
@@ -303,53 +317,11 @@
         }
       }
 
-      function showGrantModal() {
-        document.getElementById("grant-modal").style.display = "flex";
-        document.getElementById("grant-status").style.display = "none";
-      }
-
-      function closeGrantModal() {
-        document.getElementById("grant-modal").style.display = "none";
-      }
-
-      async function submitGrant() {
-        const wsId = document.getElementById("grant-ws-select").value;
-        const credits = parseInt(document.getElementById("grant-amount").value) || 200;
-        const reason = document.getElementById("grant-reason").value || "Admin top-up";
-        const statusEl = document.getElementById("grant-status");
-        statusEl.style.display = "none";
-        try {
-          const res = await fetch(`/api/admin/workspaces/${encodeURIComponent(wsId)}/grant`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ credits, reason }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            statusEl.style.color = "var(--red)";
-            statusEl.textContent = data.error || "Grant failed";
-          } else {
-            statusEl.style.color = "var(--green)";
-            statusEl.textContent = `✓ Granted ${credits} cr to "${data.workspace_name}"`;
-            loadWorkspaces();
-          }
-          statusEl.style.display = "block";
-        } catch (e) {
-          statusEl.style.color = "var(--red)";
-          statusEl.textContent = e.message;
-          statusEl.style.display = "block";
-        }
-      }
-
       async function archiveApp() {
         if (!confirm(`Archive app '${appSlug}'? It will no longer be discoverable.`)) return;
         const res = await fetch(`/api/apps/${encodeURIComponent(appSlug)}/archive`, { method: "POST" });
-        if (res.ok) { window.location.href = "/apps"; }
-        else { alert("Failed to archive: " + await res.text()); }
-      }
-
-      function esc(s) {
-        return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+        if (res.ok) window.location.href = "/apps";
+        else alert("Failed to archive: " + await res.text());
       }
 
       loadApp();
