@@ -2133,14 +2133,15 @@
                   <div>
                     <div style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Provider</div>
                      <select id="intel-provider" style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:7px 9px;font-family:inherit;font-size:0.88em" onchange="intelProviderChanged()">
-                       <option value="anthropic">Anthropic (Claude)</option>
-                       <option value="mistral">Mistral</option>
-                       <option value="openrouter">OpenRouter</option>
-                       <option value="qwen">Qwen</option>
-                       <option value="glm">Zhipu GLM</option>
-                       <option value="deepseek">DeepSeek</option>
-                       <option value="kimi">Kimi (Moonshot AI)</option>
-                     </select>
+                        <option value="anthropic">Anthropic (Claude)</option>
+                        <option value="mistral">Mistral</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="qwen">Qwen</option>
+                        <option value="glm">Zhipu GLM</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="kimi">Kimi (Moonshot AI)</option>
+                        <option value="ollama">Ollama (local)</option>
+                      </select>
                   </div>
                   <div>
                     <div style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Model</div>
@@ -2958,6 +2959,16 @@
         glm: ["glm-4-plus", "glm-4-air", "glm-4-flash"],
         deepseek: ["deepseek-chat", "deepseek-reasoner"],
         kimi: ["moonshot-v1-128k", "moonshot-v1-32k", "moonshot-v1-8k"],
+        ollama: [
+          "qwen2.5:7b",
+          "qwen2.5:14b",
+          "qwen2.5:32b",
+          "llama3.3:70b",
+          "llama3.1:8b",
+          "mistral:7b",
+          "gemma3:9b",
+          "deepseek-r1:7b",
+        ],
       };
 
       let _intelLadder = [];
@@ -3135,6 +3146,7 @@
           <option value="glm" ${val==="glm"?"selected":""}>glm</option>
           <option value="deepseek" ${val==="deepseek"?"selected":""}>deepseek</option>
           <option value="kimi" ${val==="kimi"?"selected":""}>kimi</option>
+          <option value="ollama" ${val==="ollama"?"selected":""}>ollama (local)</option>
         </select>`;
       }
 
