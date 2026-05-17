@@ -170,58 +170,69 @@ if [[ $SKIP_CLI -eq 0 ]]; then
         tmpdir=$(mktemp -d)
         trap "rm -rf '$tmpdir'" EXIT
 
+        # Absolute path to the CLI binary — subshells may cd around, and a
+        # relative ./target/debug/abw would break.
+        cli_abs=$(readlink -f "$CLI_BINARY" 2>/dev/null || realpath "$CLI_BINARY" 2>/dev/null || echo "$CLI_BINARY")
+
         # abw app new — scaffolds a directory + manifest.json
+        # Capture stderr so a real error shows up in the failure message
+        # instead of being swallowed by >/dev/null 2>&1.
+        new_log="$tmpdir/abw-new.log"
         if (cd "$tmpdir" && \
             ABW_BASE_URL="$ABW_BASE_URL" ABW_API_TOKEN="$ABW_API_TOKEN" \
-            "$CLI_BINARY" --quiet app new "$cli_slug" \
+            "$cli_abs" --quiet app new "$cli_slug" \
                 --tagline "smoke test ${RUN_STAMP}" \
                 --description "Created by smoke-test-apps.sh" \
-                >/dev/null 2>&1); then
+                >"$new_log" 2>&1) && [[ -d "$tmpdir/$cli_slug" ]]; then
             pass "abw app new ${cli_slug} — scaffold created"
         else
-            fail "abw app new ${cli_slug} — scaffold failed"
+            fail "abw app new ${cli_slug} — scaffold failed (log: $(head -c 200 "$new_log" 2>/dev/null || echo none))"
+            # The validate/deploy/spawn block below is guarded by `if [[ -d "$tmpdir/$cli_slug" ]]`
+            # so we just fall through without those running.
         fi
 
-        # abw app validate
-        if (cd "$tmpdir/$cli_slug" && \
-            ABW_BASE_URL="$ABW_BASE_URL" ABW_API_TOKEN="$ABW_API_TOKEN" \
-            "$CLI_BINARY" --quiet app validate >/dev/null 2>&1); then
-            pass "abw app validate — passes on clean scaffold"
-        else
-            fail "abw app validate — failed on clean scaffold"
-        fi
+        if [[ -d "$tmpdir/$cli_slug" ]]; then
+            # abw app validate
+            validate_log="$tmpdir/abw-validate.log"
+            if (cd "$tmpdir/$cli_slug" && \
+                ABW_BASE_URL="$ABW_BASE_URL" ABW_API_TOKEN="$ABW_API_TOKEN" \
+                "$cli_abs" --quiet app validate >"$validate_log" 2>&1); then
+                pass "abw app validate — passes on clean scaffold"
+            else
+                fail "abw app validate — failed (log: $(head -c 200 "$validate_log"))"
+            fi
 
-        # abw app deploy
-        if (cd "$tmpdir/$cli_slug" && \
-            ABW_BASE_URL="$ABW_BASE_URL" ABW_API_TOKEN="$ABW_API_TOKEN" \
-            "$CLI_BINARY" --quiet app deploy >/dev/null 2>&1); then
-            pass "abw app deploy — registered with server"
-            CREATED_APPS+=("$cli_slug")
-        else
-            fail "abw app deploy — registration failed"
-        fi
+            # abw app deploy
+            deploy_log="$tmpdir/abw-deploy.log"
+            if (cd "$tmpdir/$cli_slug" && \
+                ABW_BASE_URL="$ABW_BASE_URL" ABW_API_TOKEN="$ABW_API_TOKEN" \
+                "$cli_abs" --quiet app deploy >"$deploy_log" 2>&1); then
+                pass "abw app deploy — registered with server"
+                CREATED_APPS+=("$cli_slug")
+            else
+                fail "abw app deploy — failed (log: $(head -c 300 "$deploy_log"))"
+            fi
 
-        # Server-side verification: App is fetchable
-        result=$(api GET "/api/apps/${cli_slug}")
-        status="${result%%:*}"
-        if [[ "$status" == "200" ]]; then
-            pass "GET /api/apps/${cli_slug} — App is fetchable"
-        else
-            fail "GET /api/apps/${cli_slug} — got ${status}, expected 200"
-        fi
+            # Server-side verification: App is fetchable
+            result=$(api GET "/api/apps/${cli_slug}")
+            status="${result%%:*}"
+            if [[ "$status" == "200" ]]; then
+                pass "GET /api/apps/${cli_slug} — App is fetchable"
+            else
+                fail "GET /api/apps/${cli_slug} — got ${status}, expected 200"
+            fi
 
-        # abw app spawn — creates a workspace from the App
-        # (we use --quiet which prints just the workspace URL)
-        spawn_out=$(cd "$tmpdir/$cli_slug" && \
-            ABW_BASE_URL="$ABW_BASE_URL" ABW_API_TOKEN="$ABW_API_TOKEN" \
-            "$CLI_BINARY" --quiet app spawn "$cli_slug" 2>&1)
-        if [[ -n "$spawn_out" && "$spawn_out" == *"/workspace/"* ]]; then
-            pass "abw app spawn — workspace URL returned ($(echo "$spawn_out" | head -c 60)…)"
-            # Extract workspace id from the URL for later cleanup
-            ws_id=$(echo "$spawn_out" | grep -oE '/workspace/[^/[:space:]]+' | head -1 | sed 's|/workspace/||')
-            [[ -n "$ws_id" ]] && CREATED_WORKSPACES+=("$ws_id")
-        else
-            fail "abw app spawn — no workspace URL in output: ${spawn_out:0:200}"
+            # abw app spawn — creates a workspace from the App
+            spawn_out=$(cd "$tmpdir/$cli_slug" && \
+                ABW_BASE_URL="$ABW_BASE_URL" ABW_API_TOKEN="$ABW_API_TOKEN" \
+                "$cli_abs" --quiet app spawn "$cli_slug" 2>&1)
+            if [[ -n "$spawn_out" && "$spawn_out" == *"/workspace/"* ]]; then
+                pass "abw app spawn — workspace URL returned ($(echo "$spawn_out" | head -c 60)…)"
+                ws_id=$(echo "$spawn_out" | grep -oE '/workspace/[^/[:space:]]+' | head -1 | sed 's|/workspace/||')
+                [[ -n "$ws_id" ]] && CREATED_WORKSPACES+=("$ws_id")
+            else
+                fail "abw app spawn — no workspace URL in output: ${spawn_out:0:200}"
+            fi
         fi
     fi
 else
@@ -235,11 +246,30 @@ if [[ $SKIP_SESSION -eq 0 ]]; then
 
     session_slug=$(slug_for session)
 
-    # Create an app_design session
+    # Create an app_design session with in_progress already populated.
+    # The session-create endpoint accepts an in_progress object on creation —
+    # there's no separate update endpoint (sessions evolve via xaman_ek's
+    # __UPDATE__ blocks emitted from the message handler). For a smoke test
+    # that doesn't talk to the LLM, we just hand it the finished manifest
+    # directly and call create-app.
     create_body=$(jq -nc \
         --arg type "app_design" \
         --arg title "smoke test session" \
-        '{session_type: $type, title: $title, in_progress: {}}')
+        --arg slug "$session_slug" \
+        --arg name "Smoke session $RUN_STAMP" \
+        --arg tagline "exercises POST /api/xaman/sessions/:id/create-app" \
+        '{
+            session_type: $type,
+            title: $title,
+            in_progress: {
+                slug: $slug,
+                name: $name,
+                tagline: $tagline,
+                description: "Created by smoke-test-apps.sh via the conversational path",
+                visibility: "private",
+                status: "ready_to_create"
+            }
+        }')
     result=$(api POST "/api/xaman/sessions" "$create_body")
     status="${result%%:*}"
     body="${result#*:}"
@@ -247,7 +277,7 @@ if [[ $SKIP_SESSION -eq 0 ]]; then
     if [[ "$status" == "200" || "$status" == "201" ]]; then
         session_id=$(echo "$body" | jq -r '.session_id')
         if [[ -n "$session_id" && "$session_id" != "null" ]]; then
-            pass "POST /api/xaman/sessions (type=app_design) — created ${session_id}"
+            pass "POST /api/xaman/sessions (type=app_design, in_progress prefilled) — created ${session_id}"
         else
             fail "POST /api/xaman/sessions — no session_id in response: ${body:0:200}"
             session_id=""
@@ -258,28 +288,6 @@ if [[ $SKIP_SESSION -eq 0 ]]; then
     fi
 
     if [[ -n "$session_id" ]]; then
-        # Populate in_progress directly via PUT-style update (simulating what
-        # xaman_ek would do via __UPDATE__ blocks over multiple turns).
-        update_body=$(jq -nc \
-            --arg slug "$session_slug" \
-            --arg name "Smoke session $RUN_STAMP" \
-            --arg tagline "exercises POST /api/xaman/sessions/:id/create-app" \
-            '{in_progress: {
-                slug: $slug,
-                name: $name,
-                tagline: $tagline,
-                description: "Created by smoke-test-apps.sh via the conversational path",
-                visibility: "private",
-                status: "ready_to_create"
-            }}')
-        result=$(api POST "/api/xaman/sessions/${session_id}" "$update_body")
-        status="${result%%:*}"
-        if [[ "$status" == "200" || "$status" == "201" ]]; then
-            pass "POST /api/xaman/sessions/${session_id} — in_progress populated"
-        else
-            fail "POST /api/xaman/sessions/${session_id} — got ${status}: ${result#*:}"
-        fi
-
         # Fire create-app
         result=$(api POST "/api/xaman/sessions/${session_id}/create-app")
         status="${result%%:*}"
@@ -315,24 +323,40 @@ if [[ $SKIP_FORK -eq 0 ]]; then
     section "Path 3 — Fork from workspace"
 
     fork_slug=$(slug_for fork)
+    # Team slug must be unique-per-server and slug-formatted. Reuse the
+    # timestamp so reruns don't collide and the slug remains predictable.
+    source_ws_slug="smoke_fork_source_${RUN_STAMP}"
 
-    # Create a workspace to fork from
-    ws_body=$(jq -nc --arg name "smoke-fork-source-${RUN_STAMP}" \
-        '{name: $name, description: "smoke test fork source"}')
-    result=$(api POST "/api/workspaces" "$ws_body")
+    # Create a workspace to fork from. Workspaces ARE teams on the platform —
+    # the canonical creation endpoint is POST /api/teams. CreateTeamRequest
+    # requires name + slug, optional description + origin + mission +
+    # coordination_strategist_id. Origin defaults to "bestiary_workspace"
+    # which is exactly what we want (a personal workspace, not an app-spawned
+    # one — apps spawn workspaces via POST /api/apps/:slug/workspaces, which
+    # is a different code path).
+    ws_body=$(jq -nc \
+        --arg name "smoke-fork-source-${RUN_STAMP}" \
+        --arg slug "$source_ws_slug" \
+        '{
+            name: $name,
+            slug: $slug,
+            description: "smoke test fork source — safe to delete",
+            origin: "bestiary_workspace"
+        }')
+    result=$(api POST "/api/teams" "$ws_body")
     status="${result%%:*}"
     body="${result#*:}"
     if [[ "$status" == "200" || "$status" == "201" ]]; then
-        ws_id=$(echo "$body" | jq -r '.id // .workspace_id // .team_id')
+        ws_id=$(echo "$body" | jq -r '.id // .team_id // .workspace_id')
         if [[ -n "$ws_id" && "$ws_id" != "null" ]]; then
-            pass "POST /api/workspaces — created source workspace ${ws_id}"
+            pass "POST /api/teams — created source workspace ${ws_id}"
             CREATED_WORKSPACES+=("$ws_id")
         else
-            fail "POST /api/workspaces — no id in response: ${body:0:200}"
+            fail "POST /api/teams — no id in response: ${body:0:200}"
             ws_id=""
         fi
     else
-        fail "POST /api/workspaces — got ${status}: ${body:0:200}"
+        fail "POST /api/teams — got ${status}: ${body:0:200}"
         ws_id=""
     fi
 
