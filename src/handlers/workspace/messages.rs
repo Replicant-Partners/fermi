@@ -128,17 +128,43 @@ pub async fn post_workspace_message_handler(
         .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?
         .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".to_string()))?;
 
-    // Charge message gas
-    charge_workspace_gas(
-        &state.db,
-        ws_uuid,
-        &workspace_id,
-        state.gas_fees.message_send,
-        "gas_fee",
-        "Chat message",
-        None,
-    )
-    .await?;
+    // Charge message gas — UNLESS the client explicitly tagged this
+    // message as a bookkeeping event (metadata.cost_class == 'event_append').
+    //
+    // Apps like SimOps use workspace messages as an append-only event log
+    // for everything from 'process.saved' commits to 'insight.accepted'
+    // status updates. Charging gas per append makes audit-trail discipline
+    // economically punishing — the discovery flow needs 50-100 events
+    // before the workspace even has a finalised pipeline. The cost_class
+    // taxonomy (defined in docs/specs/01_APP_PRIMITIVE.md §4) classifies
+    // these as 'event_append' and explicitly mandates zero gas.
+    //
+    // Real agent-initiated chat messages stay billable as before. We also
+    // keep the charge when message_type is 'agent_invocation' because
+    // that's the path that fires LLM work and needs to cover its cost
+    // even if the metadata happens to mention event_append.
+    let is_event_append = matches!(
+        req.metadata
+            .as_ref()
+            .and_then(|m| m.get("cost_class"))
+            .and_then(|v| v.as_str()),
+        Some("event_append")
+    );
+    let is_invocation_path =
+        req.message_type.as_deref() == Some("agent_invocation")
+        || parse_at_mention(&req.content).is_some();
+    if !(is_event_append && !is_invocation_path) {
+        charge_workspace_gas(
+            &state.db,
+            ws_uuid,
+            &workspace_id,
+            state.gas_fees.message_send,
+            "gas_fee",
+            "Chat message",
+            None,
+        )
+        .await?;
+    }
 
     // Detect @agent_name invocation
     let at_mention = parse_at_mention(&req.content);
