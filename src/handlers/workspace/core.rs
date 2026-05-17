@@ -127,6 +127,7 @@ pub async fn list_workspaces_handler(
             "name": team.name,
             "slug": team.slug,
             "description": team.description,
+            "owner_id": team.owner_id,
             "origin": origin,
             "workspace_budget": budget,
             "workspace_spent": spent,

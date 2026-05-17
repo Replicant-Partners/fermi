@@ -823,6 +823,8 @@ async fn main() {
         .route("/", get(handlers::pages::landing))
         .route("/aspiration", get(handlers::pages::aspiration))
         .route("/catalogue", get(handlers::pages::catalogue))
+        .route("/apps", get(handlers::pages::apps_catalogue_view))
+        .route("/apps/:slug", get(handlers::pages::app_detail_view))
         .route("/docs", get(handlers::pages::docs_view))
         .route("/docs/:slug", get(handlers::pages::docs_view))
         .route("/agent/:agent_id", get(handlers::pages::agent_detail))
@@ -1694,6 +1696,10 @@ async fn main() {
         .route(
             "/api/admin/users/:user_id/grant",
             post(handlers::admin::admin_grant_credits_handler),
+        )
+        .route(
+            "/api/admin/workspaces/:workspace_id/grant",
+            post(handlers::admin::admin_grant_workspace_credits_handler),
         )
         .route(
             "/api/admin/agents",

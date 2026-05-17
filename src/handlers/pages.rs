@@ -234,3 +234,19 @@ pub async fn observatory_hitl_view() -> Html<String> {
     };
     Html(html)
 }
+
+pub async fn apps_catalogue_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/apps.html") {
+        Ok(content) => content,
+        Err(e) => format!("<h1>Apps</h1><p>Error loading template: {}</p>", e),
+    };
+    Html(html)
+}
+
+pub async fn app_detail_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/app_detail.html") {
+        Ok(content) => content,
+        Err(e) => format!("<h1>App</h1><p>Error loading template: {}</p>", e),
+    };
+    Html(html)
+}

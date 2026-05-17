@@ -117,6 +117,7 @@ const Nav = {
       <div class="nav-user-dropdown" id="nav-user-dropdown">
         <div class="nav-dropdown-label">${Nav._esc(user.email || name)}</div>
         <a href="/dashboard" class="nav-dropdown-item">Dashboard</a>
+        <a href="/apps" class="nav-dropdown-item">Apps</a>
         <a href="/profile" class="nav-dropdown-item">Profile</a>
         <a href="/settings" class="nav-dropdown-item">Settings</a>
         ${isAdmin ? '<a href="/admin" class="nav-dropdown-item">Admin</a>' : ""}

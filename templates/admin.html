@@ -332,6 +332,13 @@
         </div>
       </div>
 
+      <!-- Quick actions -->
+      <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-green" onclick="openGrantWsModal('')" style="font-size:0.8em">
+          ⚡ Grant Credits to Workspace
+        </button>
+      </div>
+
       <!-- Tabs -->
       <div class="tabs">
         <button class="tab active" data-tab="users">Users</button>
@@ -587,28 +594,38 @@
       </div>
     </div>
 
-    <!-- Grant Credits Modal -->
+    <!-- Grant Credits to User Modal -->
     <div class="modal-overlay" id="grant-modal">
       <div class="modal">
-        <h3>Grant Credits</h3>
+        <h3>Grant Credits to User</h3>
         <p id="grant-target" style="color: var(--fg3); font-size: 0.85rem"></p>
         <label>Credits</label>
-        <input
-          type="number"
-          id="grant-amount"
-          value="100"
-          min="1"
-          max="10000"
-        />
+        <input type="number" id="grant-amount" value="100" min="1" max="10000" />
         <label>Reason</label>
-        <textarea
-          id="grant-reason"
-          placeholder="e.g., Beta tester reward"
-        ></textarea>
+        <textarea id="grant-reason" placeholder="e.g., Beta tester reward"></textarea>
         <div class="modal-actions">
           <button class="btn" onclick="closeGrantModal()">Cancel</button>
           <button class="btn btn-green" onclick="submitGrant()">Grant</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Grant Credits to Workspace Modal -->
+    <div class="modal-overlay" id="grant-ws-modal">
+      <div class="modal">
+        <h3>Grant Credits to Workspace</h3>
+        <p style="color:var(--fg3);font-size:0.82rem;margin-bottom:8px">Credits go directly to the workspace wallet — not deducted from any user. Use to unblock 402s.</p>
+        <label>Workspace ID or Name</label>
+        <input type="text" id="grant-ws-id" placeholder="UUID or paste workspace URL" style="font-family:monospace;font-size:0.82em" />
+        <label>Credits</label>
+        <input type="number" id="grant-ws-amount" value="200" min="1" max="10000" />
+        <label>Reason</label>
+        <textarea id="grant-ws-reason" placeholder="e.g., Unblock efrain app workspace"></textarea>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeGrantWsModal()">Cancel</button>
+          <button class="btn btn-green" onclick="submitWsGrant()">Grant</button>
+        </div>
+        <p id="grant-ws-status" style="font-size:0.8rem;margin-top:8px;display:none"></p>
       </div>
     </div>
 
@@ -788,6 +805,50 @@
       }
 
       // --- Grant modal ---
+      // ── Workspace grant ──────────────────────────────────────
+      function openGrantWsModal(wsId) {
+        document.getElementById("grant-ws-id").value = wsId || "";
+        document.getElementById("grant-ws-amount").value = 200;
+        document.getElementById("grant-ws-reason").value = "Admin top-up";
+        document.getElementById("grant-ws-status").style.display = "none";
+        document.getElementById("grant-ws-modal").classList.add("active");
+      }
+      function closeGrantWsModal() {
+        document.getElementById("grant-ws-modal").classList.remove("active");
+      }
+      async function submitWsGrant() {
+        let wsId = document.getElementById("grant-ws-id").value.trim();
+        // Accept full workspace URLs — extract UUID
+        const uuidMatch = wsId.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+        if (uuidMatch) wsId = uuidMatch[0];
+        if (!wsId) { alert("Enter a workspace ID or URL."); return; }
+        const credits = parseInt(document.getElementById("grant-ws-amount").value) || 200;
+        const reason = document.getElementById("grant-ws-reason").value || "Admin top-up";
+        const statusEl = document.getElementById("grant-ws-status");
+        try {
+          const res = await fetch(`/api/admin/workspaces/${encodeURIComponent(wsId)}/grant`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ credits, reason }),
+          });
+          const data = await res.json();
+          statusEl.style.display = "block";
+          if (res.ok) {
+            statusEl.style.color = "var(--green)";
+            statusEl.textContent = `✓ Granted ${credits} cr to "${data.workspace_name || wsId}"`;
+            loadStats();
+          } else {
+            statusEl.style.color = "var(--red)";
+            statusEl.textContent = data.error || JSON.stringify(data);
+          }
+        } catch (e) {
+          statusEl.style.display = "block";
+          statusEl.style.color = "var(--red)";
+          statusEl.textContent = e.message;
+        }
+      }
+
+      // ── User grant ────────────────────────────────────────────
       let grantTargetUserId = "";
       function openGrantModal(userId, displayName) {
         grantTargetUserId = userId;

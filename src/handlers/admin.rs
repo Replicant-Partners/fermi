@@ -416,6 +416,59 @@ pub async fn admin_grant_credits_handler(
     })))
 }
 
+/// POST /api/admin/workspaces/:workspace_id/grant
+/// Grant credits directly to a workspace wallet without deducting from any
+/// user wallet. Used by admins to unblock 402s on external-developer
+/// workspaces (e.g. efrain) or to top-up kask SimOps workspaces.
+pub async fn admin_grant_workspace_credits_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(body): Json<GrantCreditsRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    let credits = body.credits.max(1).min(10000);
+    let reason = body.reason.unwrap_or_else(|| "Admin grant".to_string());
+
+    // Validate workspace exists and get its name for the response
+    let ws_row = sqlx::query(
+        "SELECT name, workspace_budget FROM teams WHERE id = $1::uuid",
+    )
+    .bind(&workspace_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Workspace {} not found", workspace_id)))?;
+
+    let ws_name: String = ws_row.try_get("name").unwrap_or_default();
+
+    // Grant to workspace wallet (no user deduction)
+    let wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    credit_grant(&state.db, wallet.wallet_id, credits, &reason)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Also bump teams.workspace_budget so the workspace header shows the right number
+    sqlx::query("UPDATE teams SET workspace_budget = workspace_budget + $1 WHERE id = $2::uuid")
+        .bind(credits)
+        .bind(&workspace_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "status": "granted",
+        "workspace_id": workspace_id,
+        "workspace_name": ws_name,
+        "credits": credits,
+        "reason": reason,
+    })))
+}
+
 pub async fn admin_list_agents_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,

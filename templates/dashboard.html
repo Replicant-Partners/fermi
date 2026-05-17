@@ -774,9 +774,9 @@
                 "
                 onchange="loadWorkspaces()"
               >
-                <option value="bestiary_workspace">Mine (ABW)</option>
+                <option value="bestiary_workspace">My workspaces</option>
+                <option value="">All (incl. shared)</option>
                 <option value="rabble_swarm">Rabble swarms</option>
-                <option value="">All origins</option>
               </select>
               <button class="btn btn-primary" id="create-ws-btn">+ New</button>
             </span>
@@ -956,6 +956,7 @@
       }
 
       // Auth check
+      let _dashCurrentUser = null;
       (async () => {
         try {
           const res = await fetch("/api/auth/me");
@@ -963,7 +964,7 @@
             showAuthPrompt();
             return;
           }
-          await res.json();
+          _dashCurrentUser = await res.json();
           // user-area is populated by /static/js/auth.js
         } catch {
           showAuthPrompt();
@@ -1013,9 +1014,9 @@
                 (groups[s] || groups.draft).push(a);
               });
 
-              // Portfolio counter
+              // Portfolio counter — match catalogue which shows published only
               document.getElementById("portfolio-agents").textContent =
-                data.agents.length;
+                data.agents.filter(a => a.status === "published").length;
 
               const renderTile = (a) => {
                 const statusColors = {
@@ -1144,13 +1145,17 @@
                   const more = (w.agent_count || 0) - previews.length;
                   // Show origin badge for non-default origins so it's
                   // clear which vertical owns a workspace.
+                   const isShared = w.owner_id && _dashCurrentUser && w.owner_id !== _dashCurrentUser.user_id;
                   const originBadge =
                     w.origin && w.origin !== "bestiary_workspace"
                       ? `<span style="font-size:0.55rem;color:var(--fg3);background:var(--bg1);padding:1px 5px;border-radius:2px;margin-left:6px;text-transform:uppercase;letter-spacing:0.05em">${w.origin}</span>`
                       : "";
+                  const sharedBadge = isShared
+                    ? `<span style="font-size:0.55rem;color:var(--aqua);background:var(--bg1);padding:1px 5px;border-radius:2px;margin-left:6px;text-transform:uppercase;letter-spacing:0.05em">shared</span>`
+                    : "";
                   return `
                   <a href="/workspace/${w.id}" class="tile">
-                    <div class="tile-name">${w.name || "Unnamed"}${originBadge}</div>
+                    <div class="tile-name">${w.name || "Unnamed"}${originBadge}${sharedBadge}</div>
                     <div class="tile-meta">${w.agent_count || 0} agent${(w.agent_count || 0) !== 1 ? "s" : ""} &middot; ${w.workspace_remaining || 0}/${w.workspace_budget || 0} cr</div>
                     <div class="tile-avatar-stack">${avatars}${more > 0 ? `<span style="font-size:0.6em;color:var(--fg3);margin-left:4px">+${more}</span>` : ""}</div>
                     <div class="tile-budget"><div class="tile-budget-fill" style="width:${pct}%"></div></div>
