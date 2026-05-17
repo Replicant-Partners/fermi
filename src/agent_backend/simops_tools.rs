@@ -1110,6 +1110,8 @@ pub async fn execute_simops_write_actuation_plan(
             authority_weight: 0.5,
             dyad_id: None,
             persona_version_at_write: None,
+                provider_used: None,
+                model_used: None,
         };
 
         ctx.memory_store.store_episode(episode).await

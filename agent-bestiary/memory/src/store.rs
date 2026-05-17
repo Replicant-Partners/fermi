@@ -71,10 +71,11 @@ impl MemoryStore {
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
-                provenance, authority_weight, dyad_id, persona_version_at_write
+                provenance, authority_weight, dyad_id, persona_version_at_write,
+                provider_used, model_used
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                    $14, $15, $16, $17)
+                    $14, $15, $16, $17, $18, $19)
             RETURNING episode_id
             "#,
         )
@@ -95,6 +96,8 @@ impl MemoryStore {
         .bind(episode.authority_weight)
         .bind(&episode.dyad_id)
         .bind(episode.persona_version_at_write)
+        .bind(&episode.provider_used)
+        .bind(&episode.model_used)
         .fetch_one(&self.pool)
         .await?;
 
@@ -109,7 +112,8 @@ impl MemoryStore {
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
-                provenance, authority_weight, dyad_id, persona_version_at_write
+                provenance, authority_weight, dyad_id, persona_version_at_write,
+                provider_used, model_used
             FROM episodes
             WHERE episode_id = $1
             "#,
@@ -149,6 +153,8 @@ impl MemoryStore {
                 .try_get::<Option<i32>, _>("persona_version_at_write")
                 .ok()
                 .flatten(),
+            provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
+            model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
         })
     }
 
@@ -160,7 +166,8 @@ impl MemoryStore {
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
-                provenance, authority_weight, dyad_id, persona_version_at_write
+                provenance, authority_weight, dyad_id, persona_version_at_write,
+                provider_used, model_used
             FROM episodes
             WHERE agent_id = $1 AND NOT consolidated
             ORDER BY timestamp_ref DESC
@@ -202,6 +209,8 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
+                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
+                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
             });
         }
 
@@ -890,6 +899,8 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
+                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
+                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
             };
 
             results.push((episode, distance));
@@ -966,6 +977,8 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
+                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
+                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
             };
 
             results.push((episode, distance));
@@ -985,7 +998,8 @@ impl MemoryStore {
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
-                provenance, authority_weight, dyad_id, persona_version_at_write
+                provenance, authority_weight, dyad_id, persona_version_at_write,
+                provider_used, model_used
             FROM episodes
             WHERE agent_id = $1
               AND execution_status = 'failure'
@@ -1030,6 +1044,8 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
+                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
+                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
             });
         }
 
@@ -1588,7 +1604,8 @@ impl MemoryStore {
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, consolidated, tags,
-                provenance, authority_weight, dyad_id, persona_version_at_write
+                provenance, authority_weight, dyad_id, persona_version_at_write,
+                provider_used, model_used
             FROM episodes
             WHERE agent_id = $1
             ORDER BY timestamp_ref DESC
@@ -1631,6 +1648,8 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
+                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
+                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
             });
         }
 
@@ -1647,7 +1666,8 @@ impl MemoryStore {
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
-                provenance, authority_weight, dyad_id, persona_version_at_write
+                provenance, authority_weight, dyad_id, persona_version_at_write,
+                provider_used, model_used
             FROM episodes
             WHERE agent_id = $1 AND embedding IS NOT NULL
             ORDER BY timestamp_ref ASC
@@ -1688,6 +1708,8 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
+                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
+                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
             });
         }
 
@@ -3868,6 +3890,8 @@ mod tests {
             authority_weight: 0.5,
             dyad_id: None,
             persona_version_at_write: None,
+                provider_used: None,
+                model_used: None,
         };
 
         let episode_id = store.store_episode(episode.clone()).await.unwrap();
@@ -3917,6 +3941,8 @@ mod tests {
                 authority_weight: 0.5,
                 dyad_id: None,
                 persona_version_at_write: None,
+                provider_used: None,
+                model_used: None,
             };
 
             store.store_episode(episode).await.unwrap();
@@ -3971,6 +3997,8 @@ mod tests {
                 authority_weight: 0.5,
                 dyad_id: None,
                 persona_version_at_write: None,
+                provider_used: None,
+                model_used: None,
             };
             episode_ids.push(episode.episode_id);
             store.store_episode(episode).await.unwrap();

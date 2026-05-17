@@ -163,6 +163,8 @@ pub async fn reject_composition_version_handler(
                         authority_weight: 1.0,
                         dyad_id: None,
                         persona_version_at_write: None,
+                provider_used: None,
+                model_used: None,
                     };
                     let _ = state.memory_store.store_episode(episode).await;
                 }

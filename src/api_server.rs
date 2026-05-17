@@ -527,9 +527,11 @@ async fn run_migrations(db: &PgPool) {
         // seed_geopolitical_risk, seed_crypto_sentiment) that were
         // accidentally written to production via SeedData::build().
         "migrations/123_remove_test_seed_agents.sql",
-        // Expand xaman_sessions.session_type CHECK to include 'app_design'
-        // (new conversational mode for building Apps on ABW via xaman_ek).
-        "migrations/124_xaman_sessions_app_design.sql",
+        // Phase 2 observability annotation: provider_used + model_used on
+        // episodes, eval_signals, anomaly_events; provider_mix on
+        // coherence_evaluations. Enables per-provider observatory filtering
+        // and Loop 5 calibration tracking split by provider.
+        "migrations/124_observability_provider_annotation.sql",
     ];
 
     for file in &migration_files {
@@ -2918,6 +2920,18 @@ pub(crate) fn agent_output_to_episode(
         authority_weight: 0.5,
         dyad_id: None,
         persona_version_at_write: None,
+        // Phase 2: tag execution provenance so the observatory can filter
+        // by provider and per-provider calibration can work (Loop 5).
+        model_used: output.metadata.model_used.clone(),
+        provider_used: output.metadata.model_used.as_deref().map(|m| {
+            if m.starts_with("claude") { "anthropic".to_string() }
+            else if m.starts_with("gpt") || m.starts_with("o1") || m.starts_with("o3") { "openai".to_string() }
+            else if m.starts_with("mistral") || m.starts_with("open-mistral") { "mistral".to_string() }
+            else if m.starts_with("qwen") { "qwen".to_string() }
+            else if m.starts_with("deepseek") { "deepseek".to_string() }
+            else if m.contains("openrouter") || m.contains("/") { "openrouter".to_string() }
+            else { "ollama".to_string() }
+        }),
     }
 }
 

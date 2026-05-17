@@ -197,6 +197,8 @@ impl TwoWriteMemory {
             dyad_id: original.and_then(|e| e.dyad_id.clone()),
             persona_version_at_write: original
                 .and_then(|e| e.persona_version_at_write),
+            provider_used: original.and_then(|e| e.provider_used.clone()),
+            model_used: original.and_then(|e| e.model_used.clone()),
         })
     }
 }

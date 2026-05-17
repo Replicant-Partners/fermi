@@ -192,6 +192,8 @@ mod tests {
             authority_weight: 0.5,
             dyad_id: None,
             persona_version_at_write: None,
+                provider_used: None,
+                model_used: None,
         };
         EpisodeBundle::from_episode(&ep)
     }

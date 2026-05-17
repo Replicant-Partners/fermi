@@ -39,6 +39,15 @@ pub struct Episode {
     /// Drift monitor uses this to compare embeddings across versions.
     #[serde(default)]
     pub persona_version_at_write: Option<i32>,
+
+    // ─── Phase 2 observability annotation (migration 124) ───
+    /// LLM provider used for this execution (e.g. "anthropic", "ollama").
+    /// NULL for episodes written before migration 124 or by non-LLM paths.
+    #[serde(default)]
+    pub provider_used: Option<String>,
+    /// Specific model used (e.g. "claude-sonnet-4-6", "qwen2.5:7b").
+    #[serde(default)]
+    pub model_used: Option<String>,
 }
 
 fn default_authority_weight() -> f64 {

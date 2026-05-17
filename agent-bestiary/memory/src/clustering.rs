@@ -221,6 +221,8 @@ mod tests {
                 authority_weight: 0.5,
                 dyad_id: None,
                 persona_version_at_write: None,
+                provider_used: None,
+                model_used: None,
             });
         }
 
@@ -245,6 +247,8 @@ mod tests {
                 authority_weight: 0.5,
                 dyad_id: None,
                 persona_version_at_write: None,
+                provider_used: None,
+                model_used: None,
                 execution_time_ms: 1000,
                 tokens_used: Some(100),
                 cost_usd: Some(Decimal::new(1, 3)),

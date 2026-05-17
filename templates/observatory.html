@@ -156,6 +156,16 @@
             <option value="200">200</option>
           </select>
         </label>
+        <label>Provider:&nbsp;
+          <select id="provider-filter" onchange="loadAgent()">
+            <option value="">All</option>
+            <option value="anthropic">anthropic</option>
+            <option value="ollama">ollama (local)</option>
+            <option value="openrouter">openrouter</option>
+            <option value="mistral">mistral</option>
+            <option value="deepseek">deepseek</option>
+          </select>
+        </label>
         <button class="btn btn-primary" onclick="loadAgent()">Load</button>
         <button class="btn" id="scan-btn" onclick="triggerScan()">Trigger Scan</button>
         <div class="refresh-controls">
@@ -297,6 +307,7 @@
         const id = document.getElementById("agent-input").value.trim();
         if (!id || _isLoading) return;
         const winSize = document.getElementById("window-select").value;
+        const provider = document.getElementById("provider-filter")?.value || "";
 
         _isLoading = true;
         setScanStatus("Loading…", "scanning");
@@ -307,6 +318,17 @@
             fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/dyads`),
             fetchJson(`/api/observatory/agents/${encodeURIComponent(id)}/anomalies?limit=20`),
           ]);
+
+          // Client-side provider filter — anomaly_events and timeline entries
+          // gain provider_used after migration 124; filter is a no-op on
+          // pre-migration rows (provider_used === null bypasses the filter).
+          if (provider) {
+            if (anoms.anomalies) {
+              anoms.anomalies = anoms.anomalies.filter(a =>
+                !a.provider_used || a.provider_used === provider
+              );
+            }
+          }
 
           _currentAgent = id;
           renderAgent(tl, dyads, anoms);
