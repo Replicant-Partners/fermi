@@ -261,11 +261,25 @@ pub async fn post_workspace_message_handler(
                         .unwrap_or_default();
                     let ws_context = load_workspace_context(&state2.workspace_git, &slug).await;
 
-                    // Build augmented query with workspace context
-                    let augmented_query = if ws_context.is_empty() {
-                        query2.clone()
-                    } else {
-                        format!("{}\n\n{}", ws_context, query2)
+                    // Build augmented query: git context + kask context_bundle + user message.
+                    // kask sends metadata.context_bundle as a pre-serialized JSON object
+                    // containing process, variations, recent_events, annotations, budget,
+                    // workspace_agents. Prepend it so the companion sees the full workspace
+                    // state without a separate file-read round-trip.
+                    let bundle_block = req.metadata
+                        .as_ref()
+                        .and_then(|m| m.get("context_bundle"))
+                        .map(|b| format!(
+                            "[CONTEXT BUNDLE]\n{}\n[/CONTEXT BUNDLE]",
+                            serde_json::to_string_pretty(b).unwrap_or_default()
+                        ))
+                        .unwrap_or_default();
+
+                    let augmented_query = match (ws_context.is_empty(), bundle_block.is_empty()) {
+                        (true,  true)  => query2.clone(),
+                        (false, true)  => format!("{}\n\n{}", ws_context, query2),
+                        (true,  false) => format!("{}\n\n{}", bundle_block, query2),
+                        (false, false) => format!("{}\n\n{}\n\n{}", ws_context, bundle_block, query2),
                     };
 
                     // Resolve and execute
