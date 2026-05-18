@@ -1,24 +1,22 @@
-# Building on ABW — A Practical Guide for Vibe Coders
+# Building on ABW — A Practical Guide
 
-**Audience:** You have domain expertise and use AI coding tools (Cursor,
-Claude, Copilot) to build things. You're comfortable iterating fast and
-debugging with AI help. You may not have a traditional software engineering
-background. This guide helps you build the **runtime UX** of an App on the
-Agent Bestiary Workspace (ABW) substrate — the part that comes after you've
-registered an App and now need to wire its UI, action grammar, prompt
-iteration loop, and error handling.
+**Audience:** internal. You're building an App on ABW with AI coding tools at your side. This doc tells you how to do it without hitting walls blindly.
 
-**Where ABW is right now:** early MVP. The substrate works. The APIs are
-real. The agents think. But sharp edges exist — this doc tells you where
-they are and how to work around them.
+**Where ABW is right now:** early MVP. The substrate works. The APIs are real. The agents think. Sharp edges exist — this doc says where they are and how to work around them.
 
-> **Prerequisite — you already have an App registered.** This guide picks up
-> *after* registration. If you don't have one yet, do that first:
->
-> - **5-minute recipe (three creation paths):** [`03_CREATING_APPS.md`](./03_CREATING_APPS.md) — conversational with Xaman Ek, CLI scaffold, or Save-as-App from any working workspace.
-> - **API + data model reference:** [`01_APP_PRIMITIVE.md`](./01_APP_PRIMITIVE.md)
->
-> Come back here once `abw app deploy` (or the equivalent) has put your App on the platform.
+---
+
+## Registering an App is the easy bit — three one-liners
+
+You won't spend serious time here. The platform absorbed the recipe:
+
+- **In conversation:** `@xaman_ek help me build an App for <idea>` — answer the questions, click **Create App**.
+- **In code:** `abw app new <slug> && $EDITOR <slug>/manifest.json && abw app deploy`.
+- **From any working workspace:** click **Save as App** in the header.
+
+All three produce the same artifact. Pick whichever fits the moment. Details in [`03_CREATING_APPS.md`](./03_CREATING_APPS.md); API surface in [`01_APP_PRIMITIVE.md`](./01_APP_PRIMITIVE.md).
+
+**The rest of this doc is about the work *after* registration** — wiring a UI to your App's action grammar, iterating the agent's prompt, handling errors. That's the part that takes real time.
 
 ---
 
