@@ -283,7 +283,7 @@ The agent is running the old prompt from the database. This always
 means the same thing: your git push updated the file on disk but the
 running server hasn't picked it up yet.
 
-**Fix: use the Intelligence tab, not git.**
+**Fix: use the Manage tab, not git.**
 
 Go to `https://agent-bestiary.world/agent/my_companion`, click
 **Intelligence**, paste your new prompt, bump the version, save.
@@ -291,7 +291,7 @@ Takes 30 seconds. No git, no deploy, no waiting.
 
 Once your prompt is stable and you're ready to commit it permanently,
 then git push — the next server restart will pick it up and sync the
-file with the database row. Until then, the Intelligence tab is your
+file with the database row. Until then, the Manage tab is your
 edit loop.
 
 ### Action blocks don't parse / `JSON.parse` fails
@@ -332,7 +332,7 @@ If you're developing on a different domain, either:
 ```
 1. Talk to your agent in a workspace — see what it does
 2. Notice something wrong (wrong tone, missing action type, bad output)
-3. Go to agent-bestiary.world/agent/my_companion → Intelligence tab
+3. Go to agent-bestiary.world/agent/my_companion → Manage tab
 4. Edit the system prompt directly, bump the version number
 5. Click Save — change is live in seconds
 6. Go back to the workspace and try again
@@ -341,11 +341,11 @@ If you're developing on a different domain, either:
 That's it. This loop takes 2 minutes per iteration, not 20.
 
 **Git push is for when your prompt is stable**, not for active
-iteration. Think of the Intelligence tab like a REPL — you experiment
+iteration. Think of the Manage tab like a REPL — you experiment
 there first, then commit to git once it's working. The next server
 restart will sync the file with whatever is in the database.
 
-**What the Intelligence tab lets you edit:**
+**What the Manage tab lets you edit:**
 - System prompt (the most important thing)
 - Model and temperature
 - Model ladder (which model runs for free vs standard vs premium tier users)
@@ -364,7 +364,7 @@ print('prompt starts with:', a.get('system_prompt','')[:80])
 ```
 
 If the version and first line of the prompt match what you saved in the
-Intelligence tab, you're live. If they don't, wait 30 seconds and try
+Manage tab, you're live. If they don't, wait 30 seconds and try
 again — the save is async.
 
 **The action log is your feedback signal:**
@@ -514,7 +514,7 @@ abw workspace actions annotate <ws-id> "note" --kind insight
 **Key URLs:**
 ```
 https://agent-bestiary.world/apps               — App catalogue
-https://agent-bestiary.world/agent/<id>         — Agent detail + Intelligence tab
+https://agent-bestiary.world/agent/<id>         — Agent detail page (Manage tab for prompt editing)
 https://agent-bestiary.world/admin              — Admin panel (grant credits, manage agents)
 https://agent-bestiary.world/settings/api-keys  — Mint API tokens
 https://agent-bestiary.world/api/apps/<slug>/schema — Your App's action grammar
