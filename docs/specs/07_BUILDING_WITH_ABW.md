@@ -266,29 +266,33 @@ Most common causes in order of likelihood:
    ```
 
 4. **The server hasn't restarted since you pushed.** Agent cards are
-   seeded from the filesystem at startup. If you just pushed a new card,
-   wait for the Railway deploy (usually 2-5 minutes) or manually update
-   via the API:
-   ```bash
-   curl -X PUT https://agent-bestiary.world/api/agents/my_companion \
-     -H "Authorization: Bearer ferm_..." \
-     -H "Content-Type: application/json" \
-     -d '{ "system_prompt": "...", "version": "1.0.0" }'
-   ```
+   seeded from the filesystem at startup — a git push alone doesn't
+   update the live agent. **Don't wait for a deploy.** Update the agent
+   directly in the browser:
 
-### Agent responds in v2 vocabulary (wrong prompt)
+   → Go to `https://agent-bestiary.world/agent/my_companion`
+   → Click the **Intelligence** tab
+   → Edit the system prompt, bump the version number (e.g. `1.0.0` → `1.1.0`)
+   → Click **Save**
 
-The API is returning the old prompt from the database, not what's in
-your agent card file. The seeder runs at startup — your push hasn't
-triggered a redeploy yet. Wait 2-5 minutes, then verify:
+   The change is live immediately. No deploy, no command line.
 
-```bash
-curl "https://agent-bestiary.world/api/agents?search=my_companion&limit=1" \
-  | python3 -c "import sys,json; a=json.load(sys.stdin)['agents'][0]; print(a['version'], a['system_prompt'][:100])"
-```
+### Agent responds with old behaviour (wrong prompt)
 
-If it still shows old content, use the PUT endpoint to patch directly
-(no redeploy needed).
+The agent is running the old prompt from the database. This always
+means the same thing: your git push updated the file on disk but the
+running server hasn't picked it up yet.
+
+**Fix: use the Intelligence tab, not git.**
+
+Go to `https://agent-bestiary.world/agent/my_companion`, click
+**Intelligence**, paste your new prompt, bump the version, save.
+Takes 30 seconds. No git, no deploy, no waiting.
+
+Once your prompt is stable and you're ready to commit it permanently,
+then git push — the next server restart will pick it up and sync the
+file with the database row. Until then, the Intelligence tab is your
+edit loop.
 
 ### Action blocks don't parse / `JSON.parse` fails
 
@@ -323,32 +327,55 @@ If you're developing on a different domain, either:
 
 ## Step 5 — The development loop
 
-The fastest loop once you have a working skeleton:
+**The primary loop — all in the browser, no deploys:**
 
 ```
-1. Edit agent card (system_prompt, version)
-2. git commit && git push
-3. Wait 2-5 min for Railway deploy (or PUT directly via API — faster)
-4. Test in the browser / CLI
-5. Check action log: GET /api/workspaces/:id/actions
-6. Iterate on the prompt based on what you see
+1. Talk to your agent in a workspace — see what it does
+2. Notice something wrong (wrong tone, missing action type, bad output)
+3. Go to agent-bestiary.world/agent/my_companion → Intelligence tab
+4. Edit the system prompt directly, bump the version number
+5. Click Save — change is live in seconds
+6. Go back to the workspace and try again
 ```
 
-**The PUT shortcut** (no redeploy needed for prompt changes):
+That's it. This loop takes 2 minutes per iteration, not 20.
 
+**Git push is for when your prompt is stable**, not for active
+iteration. Think of the Intelligence tab like a REPL — you experiment
+there first, then commit to git once it's working. The next server
+restart will sync the file with whatever is in the database.
+
+**What the Intelligence tab lets you edit:**
+- System prompt (the most important thing)
+- Model and temperature
+- Model ladder (which model runs for free vs standard vs premium tier users)
+- Version number (bump this every time you change the prompt so you can
+  tell which version a workspace is running)
+
+**Checking what's actually live:**
 ```bash
-export PROMPT=$(cat agents/curated/my_companion/agent_card.json \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['system_prompt'])")
-
-curl -X PUT https://agent-bestiary.world/api/agents/my_companion \
-  -H "Authorization: Bearer $ABW_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"system_prompt\": $(echo "$PROMPT" | python3 -c \"import json,sys; print(json.dumps(sys.stdin.read()))\"), \"version\": \"1.1.0\"}"
+curl "https://agent-bestiary.world/api/agents?search=my_companion&limit=1" \
+  | python3 -c "
+import sys, json
+a = json.load(sys.stdin)['agents'][0]
+print('version:', a['version'])
+print('prompt starts with:', a.get('system_prompt','')[:80])
+"
 ```
 
-Or just use the Agent detail page Intelligence tab at
-`https://agent-bestiary.world/agent/my_companion` — edit the prompt
-directly, save. No CLI needed.
+If the version and first line of the prompt match what you saved in the
+Intelligence tab, you're live. If they don't, wait 30 seconds and try
+again — the save is async.
+
+**The action log is your feedback signal:**
+```bash
+abw workspace actions list <ws-id>
+```
+After each test turn, check what actions the agent actually emitted.
+If the log is empty, the agent isn't producing action blocks — the
+prompt needs work. If the log has entries but they're wrong type or
+wrong shape — the prompt needs refinement. The log tells you the truth
+about what the agent is doing, not what you hope it's doing.
 
 ---
 
