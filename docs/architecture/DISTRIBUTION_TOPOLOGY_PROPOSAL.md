@@ -10,7 +10,7 @@
 - `docs/architecture/FEEDBACK_LOOPS.md` — the five feedback loops execution feeds
 - `docs/architecture/OBSERVABILITY_ARCHITECTURE_SPEC.md` — how execution becomes signal
 - `docs/architecture/AKP_DESIGN.md` §4.1 — economic-topology stance (see §11 reconciliation)
-- `docs/specs/01_APP_PRIMITIVE.md`, `docs/specs/03_BUILDING_NEW_APPS.md` — App primitive and external-developer recipe
+- `docs/specs/01_APP_PRIMITIVE.md`, `docs/specs/03_CREATING_APPS.md`, `docs/specs/07_BUILDING_WITH_ABW.md` — App primitive, creation recipe, and runtime-UX guide
 - ADR-011 (in-prompt, xaman_ek) — creature cognition economy
 - `src/agent_backend/multi_model_executor.rs`, `tool_executor.rs` — current provider dispatch
 
@@ -528,7 +528,7 @@ efrain matters out of proportion to its own product scope. Mario is building it 
 
 - `agents/templates/` — the agent-card scaffolding, with `companion_builder_coach` walking authoring sessions
 - `xaman_ek`'s MCP endpoint — for design dialogue and discovery (composition_design session mode, agent_design session mode)
-- `docs/specs/01_APP_PRIMITIVE.md` + `docs/specs/03_BUILDING_NEW_APPS.md` — the App primitive and the "30-minute App" recipe
+- `docs/specs/01_APP_PRIMITIVE.md` + `docs/specs/03_CREATING_APPS.md` — the App primitive and the "5-minute App registration" recipe
 - `POST /api/apps` — manifest registration
 - Workspace API + workspace-template + auto-hire + initial_files — runtime provisioning
 - `@agent_name` messaging + `POST /api/agents/:id/execute/stream` — invocation patterns

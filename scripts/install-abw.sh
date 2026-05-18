@@ -192,4 +192,6 @@ echo "  cd my_first_app && \$EDITOR manifest.json"
 echo "  $BIN_NAME app deploy                     # register on the platform"
 echo "  $BIN_NAME app spawn my_first_app --open  # create + open a workspace"
 echo
-dim "Docs: https://github.com/${REPO}/blob/main/docs/specs/03_BUILDING_NEW_APPS.md"
+dim "Docs:"
+dim "  Creating an App:   https://github.com/${REPO}/blob/main/docs/specs/03_CREATING_APPS.md"
+dim "  Runtime UX guide:  https://github.com/${REPO}/blob/main/docs/specs/07_BUILDING_WITH_ABW.md"

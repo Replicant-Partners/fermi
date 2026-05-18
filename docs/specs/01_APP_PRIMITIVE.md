@@ -187,7 +187,7 @@ All endpoints return `Content-Type: application/json`. All write endpoints requi
 > 2. `abw app new <slug> && abw app deploy` (CLI)
 > 3. **Save as App** button on any working workspace (fork)
 >
-> All three go through the same `abw_apps_core::build_manifest` substrate before reaching this API. See [`03_BUILDING_NEW_APPS.md`](./03_BUILDING_NEW_APPS.md) for the recipe.
+> All three go through the same `abw_apps_core::build_manifest` substrate before reaching this API. See [`03_CREATING_APPS.md`](./03_CREATING_APPS.md) for the recipe, and [`07_BUILDING_WITH_ABW.md`](./07_BUILDING_WITH_ABW.md) for the runtime-UX guide that picks up after the App is registered.
 
 ### 4.1 `POST /api/apps` — register a new App
 

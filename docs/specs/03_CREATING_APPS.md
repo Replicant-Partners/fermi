@@ -1,9 +1,11 @@
-# Doc 3 — Building New Apps on ABW
+# Doc 3 — Creating Apps on ABW
 
 **Audience:** future you, future kask developers, future external app builders.
 **Status:** recipe — shipped. Three paths in, one substrate underneath, same result.
 **Depends on:** Doc 1 (App primitive on ABW).
 **Length:** intentionally short — most of the work moved out of this doc and into the platform.
+
+> **Scope:** this doc gets you from "I have an idea" to "my App is registered on the platform." For the **runtime UX work that comes after registration** — wiring a UI to your App's action grammar, iterating on the agent prompt, handling errors, etc. — read [`07_BUILDING_WITH_ABW.md`](./07_BUILDING_WITH_ABW.md).
 
 ---
 
@@ -187,16 +189,32 @@ Don't design around these until they ship. They're listed here so you know what'
 
 ---
 
+## Next — building the runtime
+
+Registration is the foothold, not the finish line. Once your App is on the platform, the work that follows is wiring its runtime UX:
+
+- Calling the **App schema endpoint** (`GET /api/apps/<slug>/schema`) to discover your agent's action grammar
+- Building a UI that posts to `/api/workspaces/:id/messages` and parses `__ACTION__` blocks from agent responses
+- Iterating the agent's `system_prompt` in the **Manage** tab and watching the workspace action log close the loop
+- Handling the common error codes (`401`, `402`, `403`, `500`) cleanly
+
+→ **[`07_BUILDING_WITH_ABW.md`](./07_BUILDING_WITH_ABW.md)** is the practical runtime guide. It picks up exactly where this doc ends.
+
+---
+
 ## Reference
 
 - **App primitive data model + API:** `docs/specs/01_APP_PRIMITIVE.md`
-- **SimOps example:** `docs/specs/02_KASK_SIMOPS_APP.md`
-- **Substrate (validation + defaults + suggestions):** `src/apps/builder.rs`
+- **Runtime UX guide (after registration):** `docs/specs/07_BUILDING_WITH_ABW.md`
+- **App CLI extension roadmap:** `docs/specs/04_APP_CLI_EXTENSION.md`
+- **Action protocol for kask migration:** `docs/specs/05_ACTION_PROTOCOL_KASK_MIGRATION.md`
+- **Substrate (validation + defaults + suggestions):** `crates/abw-apps-core/src/lib.rs` (re-exported as `src/apps/builder.rs`)
 - **CLI source:** `crates/abw-cli/`
 - **Auth endpoint for CLI login:** `src/handlers/auth.rs::auth_cli_start`
 - **Session-mode create-app endpoint:** `src/handlers/xaman.rs::create_app_from_session_handler`
 - **Existing Apps:**
   - SimOps (`apps/kask_simops.json`)
+  - efrain — Mario's research-notes App (external developer)
   - Rabble (`rabble-web/`, no manifest yet — gateway-style App)
   - Fermi Console (`crates/fermi-console/`)
   - Adaptogen Lab (future)

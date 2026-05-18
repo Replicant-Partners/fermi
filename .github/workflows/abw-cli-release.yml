@@ -141,7 +141,7 @@ jobs:
           cp "target/${TARGET}/release/${BIN}" "${STAGE}/${BIN}"
           cp crates/abw-cli/Cargo.toml "${STAGE}/" || true
           [ -f LICENSE ] && cp LICENSE "${STAGE}/" || true
-          [ -f docs/specs/03_BUILDING_NEW_APPS.md ] && cp docs/specs/03_BUILDING_NEW_APPS.md "${STAGE}/README.md" || true
+          [ -f docs/specs/03_CREATING_APPS.md ] && cp docs/specs/03_CREATING_APPS.md "${STAGE}/README.md" || true
 
           tar -czf "${ARCHIVE}" -C "${STAGE}" .
 
@@ -173,8 +173,8 @@ jobs:
           $stage = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
           Copy-Item "target/${TARGET}/release/${EXE}" -Destination "${stage}/${EXE}"
           if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination "${stage}/" }
-          if (Test-Path "docs/specs/03_BUILDING_NEW_APPS.md") {
-            Copy-Item "docs/specs/03_BUILDING_NEW_APPS.md" -Destination "${stage}/README.md"
+          if (Test-Path "docs/specs/03_CREATING_APPS.md") {
+            Copy-Item "docs/specs/03_CREATING_APPS.md" -Destination "${stage}/README.md"
           }
 
           Compress-Archive -Path "${stage}/*" -DestinationPath $ARCHIVE -Force
@@ -202,7 +202,8 @@ jobs:
 
             The `abw` command-line is the developer-facing path for building
             Apps on the Agent Bestiary Workspace platform. See [Doc 3 — Building
-            New Apps on ABW](https://github.com/Replicant-Partners/fermi/blob/main/docs/specs/03_BUILDING_NEW_APPS.md)
+            Creating Apps on ABW](https://github.com/Replicant-Partners/fermi/blob/main/docs/specs/03_CREATING_APPS.md)
+            and the [runtime-UX guide](https://github.com/Replicant-Partners/fermi/blob/main/docs/specs/07_BUILDING_WITH_ABW.md)
             for the three drop-dead-easy paths.
 
             ### Quick install (any platform)

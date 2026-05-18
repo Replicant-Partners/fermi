@@ -3,12 +3,22 @@
 **Audience:** You have domain expertise and use AI coding tools (Cursor,
 Claude, Copilot) to build things. You're comfortable iterating fast and
 debugging with AI help. You may not have a traditional software engineering
-background. This guide helps you build an App on the Agent Bestiary
-Workspace (ABW) substrate without hitting the walls blindly.
+background. This guide helps you build the **runtime UX** of an App on the
+Agent Bestiary Workspace (ABW) substrate — the part that comes after you've
+registered an App and now need to wire its UI, action grammar, prompt
+iteration loop, and error handling.
 
 **Where ABW is right now:** early MVP. The substrate works. The APIs are
 real. The agents think. But sharp edges exist — this doc tells you where
 they are and how to work around them.
+
+> **Prerequisite — you already have an App registered.** This guide picks up
+> *after* registration. If you don't have one yet, do that first:
+>
+> - **5-minute recipe (three creation paths):** [`03_CREATING_APPS.md`](./03_CREATING_APPS.md) — conversational with Xaman Ek, CLI scaffold, or Save-as-App from any working workspace.
+> - **API + data model reference:** [`01_APP_PRIMITIVE.md`](./01_APP_PRIMITIVE.md)
+>
+> Come back here once `abw app deploy` (or the equivalent) has put your App on the platform.
 
 ---
 
@@ -52,69 +62,7 @@ The only person who pushes to the ABW repo is the platform engineer
 
 ---
 
-## Step 1 — Set up the CLI
-
-```bash
-# Install
-curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/fermi/main/scripts/install-abw.sh | bash
-
-# Authenticate — opens a browser, stores a token at ~/.abw/credentials
-abw login
-
-# Verify
-abw whoami
-```
-
-You'll need an account at `https://agent-bestiary.world`. Sign up, then
-mint an API key at `https://agent-bestiary.world/settings/api-keys` if
-you prefer to use a token directly instead of browser login.
-
----
-
-## Step 2 — Understand what an App actually is
-
-An App on ABW has two files you create and own:
-
-**1. `manifest.json`** — describes your App and what a workspace starts with:
-```json
-{
-  "slug": "my_app",
-  "name": "My App",
-  "description": "What it does",
-  "visibility": "private",
-  "workspace_template": {
-    "initial_budget": 200,
-    "auto_hire": ["my_companion"],
-    "initial_files": [
-      { "path": "my_app/state.yaml", "content": "# main document\n" },
-      { "path": ".app/manifest.yaml", "content": "app_slug: my_app\n" }
-    ]
-  }
-}
-```
-
-**2. `agent_card.json`** — describes your agent (the AI that talks to
-users in your App's workspaces). The most important field is
-`system_prompt` — this is the agent's complete instructions.
-
-You scaffold both with:
-```bash
-abw app new my_app
-```
-
-This creates a local folder with sensible defaults. Edit the files,
-then register your App on ABW:
-
-```bash
-abw app deploy
-```
-
-That's it. Your App is now live at
-`https://agent-bestiary.world/apps/my_app`.
-
----
-
-## Step 3 — Start here: call the schema endpoint
+## Step 1 — Start here: call the schema endpoint
 
 Once your App is deployed, this is the first thing to call:
 
@@ -144,7 +92,7 @@ in one pass.
 
 ---
 
-## Step 4 — The simplest possible UI
+## Step 2 — The simplest possible UI
 
 Here's a complete working UI in under 100 lines of HTML. No framework,
 no build step, no dependencies. Paste it into a file, open it in a
@@ -262,7 +210,7 @@ That's your entire UI to start.
 
 ---
 
-## Step 5 — The development loop
+## Step 3 — The development loop
 
 **Everything happens in the browser. No git, no deploys, no waiting.**
 
@@ -312,7 +260,7 @@ tells you what the agent is actually doing.
 
 ---
 
-## Step 6 — The errors you will see and what they mean
+## Step 4 — The errors you will see and what they mean
 
 ### `401 Missing authorization token`
 
@@ -396,7 +344,7 @@ If you're developing on a different domain:
 
 ---
 
-## Step 7 — What to give your AI coding assistant
+## Step 5 — What to give your AI coding assistant
 
 When you want your coding agent to build a UI or dispatcher for you,
 give it exactly these three things:
@@ -433,7 +381,7 @@ dispatcher and UI in one pass.
 
 ---
 
-## Step 8 — What's still rough (known limitations as of May 2026)
+## Step 6 — What's still rough (known limitations as of May 2026)
 
 These are real gaps. Work around them; don't fight them.
 
