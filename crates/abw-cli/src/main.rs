@@ -1,12 +1,23 @@
 //! `abw` — Agent Bestiary Workspace CLI.
 //!
-//! Drop-dead-easy path for building Apps on ABW:
-//!
-//!   abw login                 # one-time OAuth login (localhost callback)
+//! App lifecycle:
+//!   abw login                 # one-time OAuth login
 //!   abw app new <slug>        # scaffold a new App directory
-//!   abw app validate          # validate the manifest locally (no network)
-//!   abw app deploy            # POST to /api/apps and print the spawn URL
-//!   abw app spawn <slug>      # spawn a workspace from a deployed App
+//!   abw app validate          # validate manifest locally
+//!   abw app deploy            # register App on ABW
+//!   abw app spawn <slug>      # spawn a workspace from an App
+//!
+//! Workspace interaction:
+//!   abw workspace message <ws-id> "text" [--agent simops_companion]
+//!   abw workspace files get <ws-id> simops/process.yaml
+//!   abw workspace files put <ws-id> simops/process.yaml --content @file.yaml
+//!   abw workspace actions list <ws-id>
+//!   abw workspace actions pending <ws-id>
+//!   abw workspace actions accept <ws-id> <action-id>
+//!   abw workspace actions reject <ws-id> <action-id>
+//!   abw workspace actions annotate <ws-id> --kind insight --target process "note"
+//!   abw workspace actions mutate <ws-id> --path simops/process.yaml --content @new.yaml
+//!   abw workspace actions fork <ws-id> --name "co2-capture" --patch '{"stages":[...]}'
 //!
 //! See `crates/abw-cli/README.md` for the full surface.
 
@@ -54,6 +65,10 @@ enum Top {
     /// App primitive — build, validate, deploy, and spawn Apps.
     #[command(subcommand)]
     App(AppCmd),
+
+    /// Workspace interaction — messages, files, and action protocol.
+    #[command(subcommand)]
+    Workspace(commands::workspace::WorkspaceCmd),
 }
 
 #[derive(Subcommand, Debug)]
@@ -99,6 +114,7 @@ async fn main() -> ExitCode {
             AppCmd::Deploy(args) => commands::deploy::run(&ctx, args).await,
             AppCmd::Spawn(args) => commands::spawn::run(&ctx, args).await,
         },
+        Top::Workspace(ws_cmd) => commands::workspace::run(&ctx, ws_cmd).await,
     };
 
     match result {

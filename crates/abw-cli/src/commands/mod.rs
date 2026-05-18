@@ -9,6 +9,7 @@ pub mod login;
 pub mod new;
 pub mod spawn;
 pub mod validate;
+pub mod workspace;
 
 /// Cross-cutting CLI state passed to every command.
 pub struct Ctx {
