@@ -536,7 +536,11 @@ impl MemoryStore {
         }
         if updates.output_contract.is_some() {
             set_clauses.push(format!("output_contract = ${}", param_idx));
-            let _ = param_idx;
+            param_idx += 1;
+        }
+        if updates.version.is_some() {
+            set_clauses.push(format!("version = ${}", param_idx));
+            let _ = param_idx; // last field — no increment needed
         }
 
         if set_clauses.is_empty() {
@@ -614,6 +618,9 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.output_contract {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.version {
             query = query.bind(v);
         }
 

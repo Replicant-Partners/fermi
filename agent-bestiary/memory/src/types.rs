@@ -644,6 +644,8 @@ pub struct AgentUpdate {
     pub valence: Option<serde_json::Value>,
     // Domain output contract — typed schema for domain-constrained MoE members
     pub output_contract: Option<serde_json::Value>,
+    // Semantic version string — allows callers to bump via PUT without a redeploy
+    pub version: Option<String>,
 }
 
 /// Snapshot of mutable agent fields at a point in time
