@@ -5,8 +5,10 @@
 //! which renders the chain.
 
 pub mod deploy;
+pub mod list;
 pub mod login;
 pub mod new;
+pub mod publish;
 pub mod spawn;
 pub mod validate;
 pub mod workspace;

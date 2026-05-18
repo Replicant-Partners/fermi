@@ -857,6 +857,16 @@ async fn main() {
             "/api/agents/curated",
             get(handlers::agents::list_curated_agents_handler),
         )
+        // App registry read endpoints — catalogue is browsable without auth.
+        // The handlers accept Option<AuthPrincipal>: an authenticated caller
+        // additionally sees their own private/unlisted Apps; an unauthed
+        // caller sees only `visibility=public` rows.
+        .route("/api/apps", get(handlers::apps::list_apps_handler))
+        .route("/api/apps/:slug", get(handlers::apps::get_app_handler))
+        .route(
+            "/api/apps/:slug/schema",
+            get(handlers::apps::get_app_schema_handler),
+        )
         .route("/api/waitlist", post(handlers::misc::waitlist_handler))
         .route(
             "/api/models/catalogue",
@@ -1317,13 +1327,15 @@ async fn main() {
             post(handlers::consolidation::consolidate_agent_handler),
         )
         // ── App registry (Doc 1 — App primitive) ──────────────────────────────
-        .route("/api/apps", get(handlers::apps::list_apps_handler))
+        // Read endpoints (GET /api/apps, GET /api/apps/:slug, GET
+        // /api/apps/:slug/schema) are mounted on the *public* router below
+        // so the catalogue is browsable without auth. The list handler
+        // itself uses Option<AuthPrincipal> to surface caller-owned
+        // private/unlisted Apps when a token is present.
         .route("/api/apps", post(handlers::apps::create_app_handler))
-        .route("/api/apps/:slug", get(handlers::apps::get_app_handler))
         .route("/api/apps/:slug", put(handlers::apps::update_app_handler_full))
         .route("/api/apps/:slug/workspaces", post(handlers::apps::spawn_workspace_handler))
         .route("/api/apps/:slug/workspaces", get(handlers::apps::list_app_workspaces_handler))
-        .route("/api/apps/:slug/schema", get(handlers::apps::get_app_schema_handler))
         .route("/api/apps/:slug/publish", post(handlers::apps::publish_app_handler))
         .route("/api/apps/:slug/archive", post(handlers::apps::archive_app_handler))
         // ── SimOps direct computation (no LLM — for Compose mode live feedback) ─

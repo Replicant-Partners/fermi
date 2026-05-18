@@ -85,6 +85,15 @@ enum AppCmd {
 
     /// Spawn a workspace from a deployed App.
     Spawn(commands::spawn::Args),
+
+    /// List Apps. Without --public, lists your own Apps (any visibility).
+    /// Add --public to browse the catalogue instead.
+    List(commands::list::Args),
+
+    /// Promote an App's visibility to `public` — makes it browsable in the
+    /// catalogue. Apps default to `private` on `abw app deploy`; this is
+    /// the explicit promotion step.
+    Publish(commands::publish::Args),
 }
 
 #[tokio::main]
@@ -113,6 +122,8 @@ async fn main() -> ExitCode {
             AppCmd::Validate(args) => commands::validate::run(&ctx, args).await,
             AppCmd::Deploy(args) => commands::deploy::run(&ctx, args).await,
             AppCmd::Spawn(args) => commands::spawn::run(&ctx, args).await,
+            AppCmd::List(args) => commands::list::run(&ctx, args).await,
+            AppCmd::Publish(args) => commands::publish::run(&ctx, args).await,
         },
         Top::Workspace(ws_cmd) => commands::workspace::run(&ctx, ws_cmd).await,
     };
