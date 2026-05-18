@@ -532,6 +532,10 @@ async fn run_migrations(db: &PgPool) {
         // coherence_evaluations. Enables per-provider observatory filtering
         // and Loop 5 calibration tracking split by provider.
         "migrations/124_observability_provider_annotation.sql",
+        // Generalised workspace action protocol: workspace_action_log +
+        // workspace_annotations tables. Foundation for isomorphic App actions
+        // across companion, CLI, and MCP callers.
+        "migrations/125_workspace_action_protocol.sql",
     ];
 
     for file in &migration_files {
@@ -1343,6 +1347,57 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/budget",
             post(handlers::workspace::fund_workspace_handler),
+        )
+        // ── Generalised App action protocol ──────────────────────────────────
+        // Six action types + list/pending/accept/reject + annotations.
+        // Isomorphic across companion action blocks, abw CLI, and MCP tools/call.
+        .route(
+            "/api/workspaces/:workspace_id/actions",
+            get(handlers::workspace::actions::list_actions_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/pending",
+            get(handlers::workspace::actions::list_pending_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/mutate_document",
+            post(handlers::workspace::actions::mutate_document_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/fork_state",
+            post(handlers::workspace::actions::fork_state_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/compare",
+            post(handlers::workspace::actions::compare_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/invoke_member",
+            post(handlers::workspace::actions::invoke_member_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/annotate_schema",
+            post(handlers::workspace::actions::annotate_schema_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/annotate",
+            post(handlers::workspace::actions::annotate_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/:action_id/accept",
+            post(handlers::workspace::actions::accept_action_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/:action_id/reject",
+            post(handlers::workspace::actions::reject_action_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/annotations",
+            get(handlers::workspace::actions::list_annotations_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/annotations/:annotation_id",
+            delete(handlers::workspace::actions::resolve_annotation_handler),
         )
         // Workspace chat
         .route(
