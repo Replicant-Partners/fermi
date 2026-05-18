@@ -633,6 +633,49 @@ pub async fn archive_app_handler(
     get_app_row(&state.db, &slug).await.map(Json)
 }
 
+// ─── GET /api/apps/:slug/schema ──────────────────────────────────────────────
+//
+// Returns the App's schema_json — the machine-readable action grammar
+// that tells UI builders, CLI generators, and MCP clients exactly what
+// action types the strategist agent can emit, their field shapes, and
+// how to parse the __ACTION__ blocks from companion responses.
+//
+// Public for public Apps (no auth required). Private Apps require auth.
+
+pub async fn get_app_schema_handler(
+    State(state): State<AppState>,
+    principal: Option<AuthPrincipal>,
+    Path(slug): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let app = get_app_row(&state.db, &slug).await?;
+
+    // Visibility check: private/unlisted requires auth + ownership or admin
+    let visibility = app["visibility"].as_str().unwrap_or("private");
+    if visibility != "public" {
+        let caller_id = principal.as_ref().map(|p| p.user_id());
+        let owner_id = app["owner_user_id"].as_str().unwrap_or("");
+        let is_admin = principal.as_ref().map(|p| p.can_admin()).unwrap_or(false);
+        if caller_id.as_deref() != Some(owner_id) && !is_admin {
+            return Err((StatusCode::FORBIDDEN, "Not authorised to view this App's schema".into()));
+        }
+    }
+
+    let schema = app.get("schema_json")
+        .cloned()
+        .filter(|v| !v.is_null())
+        .unwrap_or_else(|| json!({
+            "schema_slug": app["schema_slug"],
+            "note": "No schema_json declared for this App. Add schema_json to the App manifest to describe the action grammar.",
+        }));
+
+    Ok(Json(json!({
+        "app_slug":   slug,
+        "app_name":   app["name"],
+        "schema_slug": app["schema_slug"],
+        "schema":     schema,
+    })))
+}
+
 // ─── GET /api/me/apps-health ─────────────────────────────────────────────────
 //
 // Single-query rollup of Apps the caller can see, with per-app counts

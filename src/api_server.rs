@@ -1323,6 +1323,7 @@ async fn main() {
         .route("/api/apps/:slug", put(handlers::apps::update_app_handler_full))
         .route("/api/apps/:slug/workspaces", post(handlers::apps::spawn_workspace_handler))
         .route("/api/apps/:slug/workspaces", get(handlers::apps::list_app_workspaces_handler))
+        .route("/api/apps/:slug/schema", get(handlers::apps::get_app_schema_handler))
         .route("/api/apps/:slug/publish", post(handlers::apps::publish_app_handler))
         .route("/api/apps/:slug/archive", post(handlers::apps::archive_app_handler))
         // ── SimOps direct computation (no LLM — for Compose mode live feedback) ─
@@ -2626,6 +2627,8 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
         let icon_url = manifest["icon_url"].as_str().map(str::to_string);
         let composition_slug = manifest["composition_slug"].as_str().map(str::to_string);
         let schema_slug = manifest["schema_slug"].as_str().map(str::to_string);
+        let schema_json = manifest.get("schema_json").cloned()
+            .filter(|v| !v.is_null());
         let description = manifest["description"].as_str().map(str::to_string);
         let visibility = manifest["visibility"].as_str().unwrap_or("public").to_string();
         let workspace_template = manifest["workspace_template"].clone();
@@ -2635,10 +2638,10 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
             r#"INSERT INTO apps (
                 slug, name, tagline, owner_user_id,
                 homepage_url, icon_url,
-                composition_slug, schema_slug,
+                composition_slug, schema_slug, schema_json,
                 workspace_template, visibility,
                 description, metadata
-            ) VALUES ($1, $2, $3, 'sys', $4, $5, $6, $7, $8, $9, $10, $11)
+            ) VALUES ($1, $2, $3, 'sys', $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (slug) DO UPDATE SET
                 name               = EXCLUDED.name,
                 tagline            = EXCLUDED.tagline,
@@ -2646,6 +2649,7 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
                 icon_url           = EXCLUDED.icon_url,
                 composition_slug   = EXCLUDED.composition_slug,
                 schema_slug        = EXCLUDED.schema_slug,
+                schema_json        = EXCLUDED.schema_json,
                 workspace_template = EXCLUDED.workspace_template,
                 description        = EXCLUDED.description,
                 metadata           = EXCLUDED.metadata,
@@ -2661,6 +2665,7 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
         .bind(&icon_url)
         .bind(&composition_slug)
         .bind(&schema_slug)
+        .bind(&schema_json)
         .bind(&workspace_template)
         .bind(&visibility)
         .bind(&description)

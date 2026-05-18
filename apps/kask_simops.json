@@ -8,6 +8,150 @@
   "description": "Agent-led process modelling: interview to design, edit to compose, run to forecast. Built on the SimOps engine (ProcessConfig, cascade, predictor, optimizer) and the Fermi forecasting layer.",
   "composition_slug": "simops_fleet",
   "schema_slug": "kask-simops/2",
+  "schema_json": {
+    "$schema": "kask-simops/2",
+    "description": "Action grammar for the SimOps companion agent. Every structured action the companion emits — and every typed API call or CLI command — conforms to one of these six types.",
+    "canonical_document": {
+      "path": "simops/process.yaml",
+      "description": "The process pipeline — stages, efficiencies, sidestreams, SOSA contracts."
+    },
+    "action_types": [
+      {
+        "type": "mutate_document",
+        "simops_alias": "edit_process",
+        "description": "Patch the canonical process document. The companion emits this when the user describes or refines their process. During alpha every mutate_document is pended for human confirmation regardless of the confirmation field.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/mutate_document",
+        "mcp_tool": "mutate_document",
+        "cli": "abw workspace actions mutate <ws-id> --path simops/process.yaml --content @new.yaml",
+        "fields": {
+          "path":         { "type": "string",  "required": true,  "description": "File path relative to workspace root, e.g. simops/process.yaml" },
+          "patch":        { "type": "object",  "required": true,  "description": "The patch to apply. Shape is app-specific; for SimOps this is a partial ProcessConfig." },
+          "content":      { "type": "string",  "required": false, "description": "Full serialised document content after applying the patch. Required for auto-apply; optional for ask." },
+          "rationale":    { "type": "string",  "required": false, "description": "Why this change is being made. Shown in the diff modal." },
+          "confirmation": { "type": "string",  "required": false, "enum": ["auto", "ask"], "description": "auto = apply immediately; ask = pend for human review. Alpha: always treated as ask." },
+          "app_schema":   { "type": "string",  "required": false, "description": "App schema slug — kask_simops for SimOps." }
+        },
+        "response": {
+          "action_id":    "UUID of the created action log entry",
+          "confirmation": "auto | pending",
+          "applied":      "true if applied immediately",
+          "path":         "the file path that was (or will be) written"
+        }
+      },
+      {
+        "type": "fork_state",
+        "simops_alias": "fork_variation",
+        "description": "Create a named variant of the canonical process by applying a patch over a source state. Written to simops/variations/<slug>.yaml in the workspace git.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/fork_state",
+        "mcp_tool": "fork_state",
+        "cli": "abw workspace actions fork <ws-id> --name \"co2-capture\" --hypothesis \"...\"",
+        "fields": {
+          "name":       { "type": "string", "required": true,  "description": "Human-readable variation name, e.g. CO2 capture @ 75%" },
+          "from":       { "type": "string", "required": false, "default": "base", "description": "Source slug to fork from" },
+          "patch":      { "type": "object", "required": true,  "description": "What differs from the source — partial ProcessConfig" },
+          "hypothesis": { "type": "string", "required": false, "description": "What you expect this variation to achieve and why" },
+          "app_schema": { "type": "string", "required": false }
+        },
+        "response": {
+          "action_id":    "UUID of the action log entry",
+          "variant_slug": "filesystem-safe slug derived from name",
+          "path":         "simops/variations/<slug>.yaml"
+        }
+      },
+      {
+        "type": "compare",
+        "simops_alias": "compare_variations",
+        "description": "Record a comparison request across named variants. The server records the intent; the client dispatches the cascade runs and narration, then calls /accept with the results.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/compare",
+        "mcp_tool": "compare",
+        "fields": {
+          "variants":    { "type": "array",  "items": "string", "required": true, "description": "List of variant slugs to compare, e.g. [\"base\", \"co2-capture-75\"]" },
+          "metrics":     { "type": "array",  "items": "string", "required": false, "description": "Metrics to compare, e.g. [\"ner\", \"carbon\", \"opex\", \"npv\"]" },
+          "narrate_via": { "type": "string", "required": false, "description": "Agent to narrate results, e.g. comparator" },
+          "app_schema":  { "type": "string", "required": false }
+        },
+        "response": {
+          "action_id": "UUID — pass to /accept with results once cascades complete",
+          "status":    "recorded"
+        }
+      },
+      {
+        "type": "invoke_member",
+        "simops_alias": "invoke_agent",
+        "description": "Record a member agent invocation in the action log. Actual execution is via workspace messages or MCP execute_agent — this is the audit record.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/invoke_member",
+        "mcp_tool": "invoke_member",
+        "fields": {
+          "agent_id":  { "type": "string", "required": true,  "description": "Agent to invoke, e.g. simops_cascade, supply_chain_oracle" },
+          "query":     { "description": "Structured query — object or string, agent-specific", "required": true },
+          "render_as": { "type": "string", "required": false, "enum": ["bom_table", "narrative", "kpi_delta", "raw"] },
+          "app_schema":{ "type": "string", "required": false }
+        },
+        "response": {
+          "action_id": "UUID of the action log entry",
+          "agent_id":  "the invoked agent",
+          "status":    "recorded"
+        }
+      },
+      {
+        "type": "annotate_schema",
+        "simops_alias": "declare_sosa_contract",
+        "description": "Declare what kind of sensor or data source can supply a process field. This is how the Sensor Bridge knows what a field expects and how to bind live data to it.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/annotate_schema",
+        "mcp_tool": "annotate_schema",
+        "fields": {
+          "stage_id":             { "type": "string", "required": false, "description": "Stage ID this contract applies to, e.g. fermentation" },
+          "field":                { "type": "string", "required": true,  "description": "Field name, e.g. efficiency, carbon_intensity, sidestream.co2.capture_fraction" },
+          "observable_property":  { "type": "string", "required": true,  "description": "SOSA-style observable property name in snake_case, e.g. yield_fraction" },
+          "unit":                 { "type": "string", "required": true,  "description": "UCUM-style unit, e.g. dimensionless, kg, L, Cel" },
+          "sampling":             { "type": "string", "required": false, "enum": ["per_batch", "continuous", "on_demand"] },
+          "rationale":            { "type": "string", "required": false },
+          "app_schema":           { "type": "string", "required": false }
+        },
+        "response": {
+          "action_id":            "UUID of the action log entry",
+          "observable_property":  "the declared property",
+          "status":               "recorded"
+        }
+      },
+      {
+        "type": "annotate",
+        "simops_alias": "annotate",
+        "description": "Record a typed observation about the process, a stage, or a variation. Stored in workspace_annotations for querying and resolving. Shown inline near the target in the UI.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/annotate",
+        "mcp_tool": "annotate",
+        "cli": "abw workspace actions annotate <ws-id> \"body text\" --kind insight --target stage:fermentation",
+        "fields": {
+          "kind":       { "type": "string", "required": true,  "enum": ["critique", "insight", "risk", "decision"], "description": "critique = something looks wrong; insight = non-obvious observation; risk = downside to flag; decision = recorded choice" },
+          "target":     { "type": "string", "required": true,  "description": "What this applies to: stage:<id> | process | variation:<slug>" },
+          "body":       { "type": "string", "required": true,  "description": "Plain-language note" },
+          "severity":   { "type": "string", "required": false, "enum": ["info", "warn", "block"], "description": "info = grey; warn = amber; block = red (reserve for model-breaking issues)" },
+          "app_schema": { "type": "string", "required": false }
+        },
+        "response": {
+          "action_id":     "UUID of the action log entry",
+          "annotation_id": "UUID in workspace_annotations",
+          "applied":       true
+        }
+      }
+    ],
+    "parsing": {
+      "description": "How to extract action blocks from a companion response",
+      "delimiter_open":  "__ACTION__",
+      "delimiter_close": "__END_ACTION__",
+      "algorithm": "Split on __ACTION__\\n...\\n__END_ACTION__ — each block contains a single JSON object. Everything outside the delimiters is prose for the user.",
+      "javascript": "const ACTION_RE = /__ACTION__\\n([\\s\\S]*?)\\n__END_ACTION__/g;\nconst actions = [...content.matchAll(ACTION_RE)].map(m => JSON.parse(m[1]));\nconst prose = content.replace(ACTION_RE, '').trim();"
+    },
+    "type_name_map": {
+      "description": "SimOps companion uses domain-specific aliases in its prompt. Map to canonical API type names when posting to action endpoints.",
+      "edit_process":          "mutate_document",
+      "fork_variation":        "fork_state",
+      "compare_variations":    "compare",
+      "invoke_agent":          "invoke_member",
+      "declare_sosa_contract": "annotate_schema",
+      "annotate":              "annotate"
+    }
+  },
   "workspace_template": {
     "initial_budget": 1500,
     "default_name_pattern": "SimOps — {date} process",

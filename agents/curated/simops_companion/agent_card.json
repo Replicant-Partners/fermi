@@ -138,6 +138,7 @@
     "output_contract": {
       "domain": "process_optimisation",
       "produces_schema": "kask_simops/action_block",
+      "schema_endpoint": "/api/apps/kask_simops/schema",
       "calibration": {
         "signal": "sosa_observation",
         "comparison": "predicted_vs_measured",
