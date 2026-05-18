@@ -64,24 +64,31 @@ talks to the ABW API, or as complex as a full web app).
 
 ## Step 2 — Start here: call the schema endpoint
 
-Before writing any code, call this:
+Once your App is deployed, this is the first thing to call:
 
 ```bash
-curl https://agent-bestiary.world/api/apps/kask_simops/schema
+curl https://agent-bestiary.world/api/apps/your_app_slug/schema
 ```
 
 What comes back is the complete action grammar — every action your agent
 can emit, every field it expects, and how to parse the action blocks from
 the agent's responses. This is what your UI needs to implement.
 
-For your own App, once you've deployed it:
+There are two live examples you can call right now to see what the response
+looks like:
+
 ```bash
-curl https://agent-bestiary.world/api/apps/my_app/schema
+# SimOps — a process-modelling App with a rich 6-action grammar
+curl https://agent-bestiary.world/api/apps/kask_simops/schema
+
+# efrain — a simpler App (good starting template for something new)
+curl https://agent-bestiary.world/api/apps/efrain_ai/schema
 ```
 
-**Give this to your AI coding tool.** Paste the JSON into Cursor or Claude
-and say: "Generate a JavaScript dispatcher that handles all the action types
-in this schema." It will generate the switch statement for you.
+**Give the output to your AI coding tool.** Paste the JSON into Cursor
+or Claude and say: "Generate a JavaScript dispatcher that handles all the
+action types in this schema." It will write the switch statement for you
+in one pass.
 
 ---
 
@@ -185,14 +192,15 @@ browser.
     }
 
     async function dispatchAction(action) {
-      // Map SimOps prompt aliases to API endpoint names
+      // Your agent's system prompt may use domain-specific action names.
+      // Map them to the canonical API endpoint names here.
+      // Example for SimOps: 'edit_process' → 'mutate_document'
+      // For a new App: define your own aliases or use the canonical names directly.
+      // Get the full map from: GET /api/apps/your_app_slug/schema → type_name_map
       const TYPE_MAP = {
-        'edit_process': 'mutate_document',
-        'fork_variation': 'fork_state',
-        'compare_variations': 'compare',
-        'invoke_agent': 'invoke_member',
-        'declare_sosa_contract': 'annotate_schema',
-        'annotate': 'annotate',
+        // Add your App's aliases here, e.g.:
+        // 'save_note': 'mutate_document',
+        // 'tag_entry': 'annotate',
       };
       const type = TYPE_MAP[action.type] || action.type;
       const resp = await fetch(`${BASE}/api/workspaces/${wsId()}/actions/${type}`, {
@@ -304,11 +312,12 @@ after `/workspace/`.
 
 ### CORS errors in the browser
 
-The ABW API allows `https://kask.bio`, `https://agent-bestiary.world`,
-and localhost origins. If you're developing on a different domain, either:
-- Develop on localhost (any port works)
+The ABW API allows `https://agent-bestiary.world` and localhost origins.
+Known third-party App domains (like `kask.bio`) are also allowed on request.
+If you're developing on a different domain, either:
+- Develop on localhost (any port works — `http://localhost:3000` etc.)
 - Use a proxy that forwards requests to the ABW API
-- Add your domain to the CORS list (ask the platform admin)
+- Ask the platform admin to add your domain to the CORS allowlist
 
 ---
 
@@ -350,9 +359,11 @@ give it exactly these three things:
 
 **1. The schema endpoint output:**
 ```
-GET https://agent-bestiary.world/api/apps/kask_simops/schema
+GET https://agent-bestiary.world/api/apps/your_app_slug/schema
 ```
-(replace `kask_simops` with your App slug)
+This returns your App's full action grammar as structured JSON. If you
+haven't deployed your App yet, use `kask_simops` or `efrain_ai` as a
+reference to understand the shape before writing your own.
 
 **2. The workspace API surface:**
 ```
@@ -410,6 +421,46 @@ than buying credits until you're ready to launch.
 workspace-scoped tools (`read_workspace_file`, `list_workspace_agents`)
 return `401` without a valid token. Pass `Authorization: Bearer ferm_...`
 in your MCP client configuration.
+
+---
+
+## Worked example — efrain_ai
+
+`efrain_ai` is a real App on ABW built by an external developer (Mario).
+It's a good reference because it's simpler than SimOps and shows the
+pattern without the domain complexity.
+
+**What it is:** a research notes App. The companion agent helps the user
+capture, organise, and cross-reference notes on a topic. The canonical
+document is a YAML file under `efrain/notes.yaml`.
+
+**What the schema looks like:**
+```bash
+curl https://agent-bestiary.world/api/apps/efrain_ai/schema
+```
+
+Because `efrain_ai` is a simpler App, its action grammar has fewer types —
+mostly `mutate_document` (update a note) and `annotate` (tag an observation).
+That's a good starting template: you don't need all six action types to
+have a working App.
+
+**What its workspace looks like:**
+```bash
+# Read the current notes document
+abw workspace files get <ws-id> efrain/notes.yaml
+
+# See what the companion has been doing
+abw workspace actions list <ws-id>
+
+# Send a message to the companion
+abw workspace message <ws-id> "what connections do you see between these entries?" \
+  --agent efrain_companion
+```
+
+**The lesson from efrain:** start with two action types (`mutate_document`
+and `annotate`), get them working end-to-end, then add more as your domain
+demands them. The schema endpoint will reflect whatever your agent card
+declares — it grows with the App.
 
 ---
 
