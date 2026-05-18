@@ -30,11 +30,52 @@ That's it. Everything else is plumbing.
 
 ---
 
-## Step 1 — Understand what an App actually is
+## Important: you never touch the ABW codebase
 
-An App on ABW has three parts:
+This is the single biggest source of confusion for new App developers.
 
-**1. The manifest** (`manifest.json` in your app directory):
+**You do not need git access to the ABW platform repo.** You are not
+editing files inside the ABW server. You are a tenant, not a maintainer.
+
+Your workflow is entirely through:
+- **The ABW web UI** — browse agents, manage your agent's prompt, see workspaces
+- **The `abw` CLI** — scaffold, register, and interact with workspaces from your terminal
+- **The ABW API** — what your UI calls at runtime
+- **Your own project folder** — which you manage however you like (git, Dropbox, whatever)
+
+The `abw` CLI talks to the ABW API on your behalf. When you run
+`abw app deploy`, it sends your manifest and agent card to the server
+via an API call. No git involved. No ABW repo access needed.
+
+The only person who pushes to the ABW repo is the platform engineer
+(Ivan). That's a separate job.
+
+---
+
+## Step 1 — Set up the CLI
+
+```bash
+# Install
+curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/fermi/main/scripts/install-abw.sh | bash
+
+# Authenticate — opens a browser, stores a token at ~/.abw/credentials
+abw login
+
+# Verify
+abw whoami
+```
+
+You'll need an account at `https://agent-bestiary.world`. Sign up, then
+mint an API key at `https://agent-bestiary.world/settings/api-keys` if
+you prefer to use a token directly instead of browser login.
+
+---
+
+## Step 2 — Understand what an App actually is
+
+An App on ABW has two files you create and own:
+
+**1. `manifest.json`** — describes your App and what a workspace starts with:
 ```json
 {
   "slug": "my_app",
@@ -43,31 +84,42 @@ An App on ABW has three parts:
   "visibility": "private",
   "workspace_template": {
     "initial_budget": 200,
-    "auto_hire": ["my_companion_agent"],
+    "auto_hire": ["my_companion"],
     "initial_files": [
-      { "path": "my_app/state.yaml", "content": "# canonical document\n" },
+      { "path": "my_app/state.yaml", "content": "# main document\n" },
       { "path": ".app/manifest.yaml", "content": "app_slug: my_app\n" }
     ]
   }
 }
 ```
 
-**2. An agent card** (the agent that talks to users in your App's workspaces):
-```
-agents/curated/my_companion/agent_card.json
+**2. `agent_card.json`** — describes your agent (the AI that talks to
+users in your App's workspaces). The most important field is
+`system_prompt` — this is the agent's complete instructions.
+
+You scaffold both with:
+```bash
+abw app new my_app
 ```
 
-**3. A UI** (optional — can be as simple as a single HTML file that
-talks to the ABW API, or as complex as a full web app).
+This creates a local folder with sensible defaults. Edit the files,
+then register your App on ABW:
+
+```bash
+abw app deploy
+```
+
+That's it. Your App is now live at
+`https://agent-bestiary.world/apps/my_app`.
 
 ---
 
-## Step 2 — Start here: call the schema endpoint
+## Step 3 — Start here: call the schema endpoint
 
 Once your App is deployed, this is the first thing to call:
 
 ```bash
-curl https://agent-bestiary.world/api/apps/your_app_slug/schema
+curl https://agent-bestiary.world/api/apps/my_app/schema
 ```
 
 What comes back is the complete action grammar — every action your agent
@@ -75,7 +127,7 @@ can emit, every field it expects, and how to parse the action blocks from
 the agent's responses. This is what your UI needs to implement.
 
 There are two live examples you can call right now to see what the response
-looks like:
+looks like before you deploy your own:
 
 ```bash
 # SimOps — a process-modelling App with a rich 6-action grammar
@@ -92,7 +144,7 @@ in one pass.
 
 ---
 
-## Step 3 — The simplest possible UI
+## Step 4 — The simplest possible UI
 
 Here's a complete working UI in under 100 lines of HTML. No framework,
 no build step, no dependencies. Paste it into a file, open it in a
@@ -102,7 +154,7 @@ browser.
 <!DOCTYPE html>
 <html>
 <head>
-  <title>My ABW App</title>
+  <title>My App</title>
   <style>
     body { font-family: monospace; max-width: 800px; margin: 40px auto; padding: 20px; background: #1a1a1a; color: #e0e0e0; }
     #messages { height: 400px; overflow-y: auto; border: 1px solid #333; padding: 12px; margin-bottom: 12px; }
@@ -114,8 +166,7 @@ browser.
   </style>
 </head>
 <body>
-  <h2>My ABW App</h2>
-
+  <h2>My App</h2>
   <div>
     <label>Workspace ID: <input id="ws-id" placeholder="paste workspace UUID or URL" /></label>
     <label>Token: <input id="token" type="password" placeholder="ferm_..." /></label>
@@ -127,15 +178,15 @@ browser.
 
   <script>
     const BASE = 'https://agent-bestiary.world';
+    const AGENT = 'my_companion';   // ← your agent's slug
+    const APP   = 'my_app';         // ← your App's slug
     const ACTION_RE = /__ACTION__\n([\s\S]*?)\n__END_ACTION__/g;
 
     function wsId() {
       const v = document.getElementById('ws-id').value.trim();
-      // Accept full URLs — strip to UUID
       const m = v.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-      return m ? m[0] : v;
+      return m ? m[0] : v;   // accept full URLs or bare UUIDs
     }
-
     function token() { return document.getElementById('token').value.trim(); }
 
     function addMessage(role, text) {
@@ -159,13 +210,13 @@ browser.
       document.getElementById('input').value = '';
       addMessage('user', text);
 
-      const resp = await fetch(`${BASE}/api/workspaces/${wsId()}/messages`, {
+      await fetch(`${BASE}/api/workspaces/${wsId()}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token()}` },
-        body: JSON.stringify({ content: `@my_companion ${text}`, agent: 'my_companion' })
+        body: JSON.stringify({ content: `@${AGENT} ${text}`, agent: AGENT })
       });
 
-      // Poll for agent response (or connect to SSE stream for real-time)
+      // Poll for the agent's reply (use SSE stream for real-time)
       setTimeout(async () => {
         const msgs = await fetch(`${BASE}/api/workspaces/${wsId()}/messages?limit=5`, {
           headers: { 'Authorization': `Bearer ${token()}` }
@@ -175,7 +226,6 @@ browser.
         if (!last) return;
 
         const content = last.content || '';
-        // Split prose from action blocks
         const actions = [...content.matchAll(ACTION_RE)].map(m => {
           try { return JSON.parse(m[1]); } catch { return null; }
         }).filter(Boolean);
@@ -183,45 +233,86 @@ browser.
 
         if (prose) addMessage('agent', prose);
         actions.forEach(addAction);
-
-        // Dispatch each action to the server
-        for (const action of actions) {
-          await dispatchAction(action);
-        }
+        for (const action of actions) await dispatchAction(action);
       }, 3000);
     }
 
     async function dispatchAction(action) {
-      // Your agent's system prompt may use domain-specific action names.
-      // Map them to the canonical API endpoint names here.
-      // Example for SimOps: 'edit_process' → 'mutate_document'
-      // For a new App: define your own aliases or use the canonical names directly.
-      // Get the full map from: GET /api/apps/your_app_slug/schema → type_name_map
+      // Your agent's prompt may use domain-specific action names.
+      // Get the full alias map from: GET /api/apps/my_app/schema → type_name_map
       const TYPE_MAP = {
-        // Add your App's aliases here, e.g.:
-        // 'save_note': 'mutate_document',
-        // 'tag_entry': 'annotate',
+        // e.g. 'save_note': 'mutate_document',
+        // e.g. 'tag_entry': 'annotate',
       };
       const type = TYPE_MAP[action.type] || action.type;
-      const resp = await fetch(`${BASE}/api/workspaces/${wsId()}/actions/${type}`, {
+      const result = await fetch(`${BASE}/api/workspaces/${wsId()}/actions/${type}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token()}` },
-        body: JSON.stringify({ ...action, app_schema: 'my_app' })
-      });
-      const result = await resp.json();
-      console.log('Action dispatched:', type, result);
+        body: JSON.stringify({ ...action, app_schema: APP })
+      }).then(r => r.json());
+      console.log('action dispatched:', type, result);
     }
   </script>
 </body>
 </html>
 ```
 
-Replace `my_companion` with your agent's ID. Replace `my_app` in the
-`app_schema` field with your App slug. That's your entire UI to start.
+Change the two constants at the top (`AGENT` and `APP`) to your values.
+That's your entire UI to start.
 
 ---
 
-## Step 4 — The errors you will see and what they mean
+## Step 5 — The development loop
+
+**Everything happens in the browser. No git, no deploys, no waiting.**
+
+```
+1. Spawn a workspace from your App
+   → https://agent-bestiary.world/apps/my_app → "+ New Workspace"
+
+2. Talk to your agent in that workspace
+   → Type a message, see what comes back
+
+3. Notice something wrong (wrong tone, missing action, bad output)
+
+4. Edit the prompt — go to:
+   → https://agent-bestiary.world/agent/my_companion → Manage tab
+   → Edit the system prompt
+   → Bump the version number (1.0 → 1.1)
+   → Save
+
+5. The change is live immediately — no deploy, no waiting
+
+6. Go back to the workspace and try again
+```
+
+This loop takes 2 minutes per iteration.
+
+**What the Manage tab lets you change:**
+- System prompt — the agent's complete instructions
+- Model — which LLM runs (Sonnet, Haiku, etc.)
+- Temperature — how creative/deterministic the output is
+- Model ladder — which model runs for free-tier vs paid users
+- Version number — bump this every time you change the prompt
+
+**Checking that your change is live:**
+
+Go to `https://agent-bestiary.world/agent/my_companion` → Overview tab.
+The version number shown should match what you just saved. If it does,
+the change is live.
+
+**The action log is your feedback signal:**
+```bash
+abw workspace actions list <ws-id>
+```
+After each test turn, check what actions the agent actually emitted.
+Empty log = the agent isn't producing action blocks, the prompt needs
+work. Wrong action type or shape = prompt needs refinement. The log
+tells you what the agent is actually doing.
+
+---
+
+## Step 6 — The errors you will see and what they mean
 
 ### `401 Missing authorization token`
 
@@ -230,178 +321,104 @@ Your API token isn't being sent. Check:
 - You're passing it as `Authorization: Bearer ferm_...`
 - If using the CLI: `export ABW_API_TOKEN=ferm_...`
 
-Get a token at: `https://agent-bestiary.world/settings/api-keys`
+Get a token: `https://agent-bestiary.world/settings/api-keys`
 
 ### `403 Not a workspace member`
 
-You're trying to access a workspace you haven't been added to.
-Either spawn a new workspace from your App, or ask the workspace owner
-to add you.
+You're trying to access a workspace you haven't been added to. Either
+spawn a new one from your App, or ask the workspace owner to add you.
 
 ### `402 Payment Required` (or `insufficient credits`)
 
-The workspace has run out of gas (credits). Fix:
-- Ask the platform admin to top up: `POST /api/admin/workspaces/:id/grant`
-  with `{ "credits": 200, "reason": "top-up" }`
-- Or via the admin panel at `https://agent-bestiary.world/admin`
-  → "⚡ Grant Credits to Workspace"
+The workspace has run out of gas (credits). Each agent turn costs
+roughly 6-15 credits. A 200-credit workspace lasts 15-25 turns.
 
-This happens often during development. Budget 200+ credits per workspace
-for testing.
+Fix — ask the platform admin to top up via the admin panel:
+`https://agent-bestiary.world/admin` → "⚡ Grant Credits to Workspace"
+
+Or they can run:
+```bash
+abw workspace actions annotate <ws-id> ...  # not the fix
+# The fix is an admin action — ping Ivan
+```
+
+This happens constantly during development. Don't buy credits yet —
+ask for a grant.
 
 ### `500 Internal Server Error` on `/api/workspaces/:id/messages`
 
-Most common causes in order of likelihood:
+Most common causes:
 
-1. **The agent name is wrong.** Double-check the `agent` field in your
-   POST body matches exactly the `agent_id` in the agent card JSON.
+1. **Agent name is wrong.** The `agent` field in your POST must match
+   exactly the `agent_id` you registered with `abw app deploy`.
+   Check: `https://agent-bestiary.world/agent/my_companion` — if that
+   page 404s, the agent isn't registered.
 
-2. **The workspace doesn't have the agent hired.** Check that your App's
-   `auto_hire` array includes the agent, or hire it manually:
-   `POST /api/workspaces/:id/hire` with `{ "agent_id": "my_companion" }`
+2. **Agent not hired into the workspace.** Your App's `auto_hire` in
+   `manifest.json` must include your agent. If you forgot it, re-deploy
+   (`abw app deploy`) and spawn a new workspace.
 
-3. **The agent card has a JSON syntax error.** Validate your agent card:
+3. **Agent card has a JSON syntax error.** The agent card you deployed
+   has invalid JSON. Validate it before deploying:
    ```bash
-   cat agents/curated/my_companion/agent_card.json | python3 -m json.tool
+   cat my_app/agent_card.json | python3 -m json.tool
    ```
+   Fix the error, then `abw app deploy` again.
 
-4. **The server hasn't restarted since you pushed.** Agent cards are
-   seeded from the filesystem at startup — a git push alone doesn't
-   update the live agent. **Don't wait for a deploy.** Update the agent
-   directly in the browser:
+### Agent responds with old behaviour
 
-   → Go to `https://agent-bestiary.world/agent/my_companion`
-   → Click the **Intelligence** tab
-   → Edit the system prompt, bump the version number (e.g. `1.0.0` → `1.1.0`)
-   → Click **Save**
+The prompt you edited in the Manage tab hasn't saved yet, or you're
+looking at the wrong agent. Check:
 
-   The change is live immediately. No deploy, no command line.
+Go to `https://agent-bestiary.world/agent/my_companion` → Overview.
+The version shown should match what you typed in the Manage tab. If it
+doesn't, open the Manage tab, make a trivial change (add a space,
+remove it), and save again.
 
-### Agent responds with old behaviour (wrong prompt)
-
-The agent is running the old prompt from the database. This always
-means the same thing: your git push updated the file on disk but the
-running server hasn't picked it up yet.
-
-**Fix: use the Manage tab, not git.**
-
-Go to `https://agent-bestiary.world/agent/my_companion`, click
-**Intelligence**, paste your new prompt, bump the version, save.
-Takes 30 seconds. No git, no deploy, no waiting.
-
-Once your prompt is stable and you're ready to commit it permanently,
-then git push — the next server restart will pick it up and sync the
-file with the database row. Until then, the Manage tab is your
-edit loop.
-
-### Action blocks don't parse / `JSON.parse` fails
+### Action blocks don't appear / `JSON.parse` fails
 
 The model produced malformed JSON inside an action block. This happens
-with smaller models (Haiku, OpenRouter free). The fix:
+with weaker models (Haiku, OpenRouter free tier). The action grammar is
+complex JSON — it needs Sonnet.
 
-1. Use Sonnet for the companion agent (the action grammar is complex
-   enough to need it)
-2. Add a `try/catch` around your `JSON.parse` — log the raw block and
-   skip it rather than crashing
-3. If you see partial blocks (only `__ACTION__` without `__END_ACTION__`),
-   the model hit its `max_tokens` limit — increase to 4096 in the agent card
+Fix: go to the Manage tab, change the model to `claude-sonnet-4-6`, save.
 
-### `workspace_action_log` is empty after dispatching
-
-The action POSTs are reaching the server (you'd get a 4xx otherwise),
-but if you see `{ "actions": [] }` on `GET /api/workspaces/:id/actions`,
-the rows are there — check you're using the right workspace UUID.
-Workspace URLs look like `/workspace/abc123...` — the UUID is the part
-after `/workspace/`.
+If you see partial blocks (only `__ACTION__` without `__END_ACTION__`),
+the model hit its output limit. Go to Manage tab → bump `max_tokens`
+to 4096 in the model params.
 
 ### CORS errors in the browser
 
 The ABW API allows `https://agent-bestiary.world` and localhost origins.
-Known third-party App domains (like `kask.bio`) are also allowed on request.
-If you're developing on a different domain, either:
-- Develop on localhost (any port works — `http://localhost:3000` etc.)
-- Use a proxy that forwards requests to the ABW API
-- Ask the platform admin to add your domain to the CORS allowlist
+If you're developing on a different domain:
+- Use localhost during development (any port works)
+- Ask the platform admin to add your domain to the allowlist
 
 ---
 
-## Step 5 — The development loop
-
-**The primary loop — all in the browser, no deploys:**
-
-```
-1. Talk to your agent in a workspace — see what it does
-2. Notice something wrong (wrong tone, missing action type, bad output)
-3. Go to agent-bestiary.world/agent/my_companion → Manage tab
-4. Edit the system prompt directly, bump the version number
-5. Click Save — change is live in seconds
-6. Go back to the workspace and try again
-```
-
-That's it. This loop takes 2 minutes per iteration, not 20.
-
-**Git push is for when your prompt is stable**, not for active
-iteration. Think of the Manage tab like a REPL — you experiment
-there first, then commit to git once it's working. The next server
-restart will sync the file with whatever is in the database.
-
-**What the Manage tab lets you edit:**
-- System prompt (the most important thing)
-- Model and temperature
-- Model ladder (which model runs for free vs standard vs premium tier users)
-- Version number (bump this every time you change the prompt so you can
-  tell which version a workspace is running)
-
-**Checking what's actually live:**
-```bash
-curl "https://agent-bestiary.world/api/agents?search=my_companion&limit=1" \
-  | python3 -c "
-import sys, json
-a = json.load(sys.stdin)['agents'][0]
-print('version:', a['version'])
-print('prompt starts with:', a.get('system_prompt','')[:80])
-"
-```
-
-If the version and first line of the prompt match what you saved in the
-Manage tab, you're live. If they don't, wait 30 seconds and try
-again — the save is async.
-
-**The action log is your feedback signal:**
-```bash
-abw workspace actions list <ws-id>
-```
-After each test turn, check what actions the agent actually emitted.
-If the log is empty, the agent isn't producing action blocks — the
-prompt needs work. If the log has entries but they're wrong type or
-wrong shape — the prompt needs refinement. The log tells you the truth
-about what the agent is doing, not what you hope it's doing.
-
----
-
-## Step 6 — What to give your AI coding assistant
+## Step 7 — What to give your AI coding assistant
 
 When you want your coding agent to build a UI or dispatcher for you,
 give it exactly these three things:
 
-**1. The schema endpoint output:**
+**1. Your schema:**
+```bash
+curl https://agent-bestiary.world/api/apps/my_app/schema
 ```
-GET https://agent-bestiary.world/api/apps/your_app_slug/schema
-```
-This returns your App's full action grammar as structured JSON. If you
-haven't deployed your App yet, use `kask_simops` or `efrain_ai` as a
-reference to understand the shape before writing your own.
+Paste the output. This tells the AI every action type, every field,
+and how to parse the blocks.
 
 **2. The workspace API surface:**
 ```
 POST /api/workspaces/:id/messages        — send a message / invoke agent
 GET  /api/workspaces/:id/messages        — list recent messages
-GET  /api/workspaces/:id/messages/stream — SSE stream for real-time
-GET  /api/workspaces/:id/files/:path     — read a file
-POST /api/workspaces/:id/files           — write a file
+GET  /api/workspaces/:id/messages/stream — SSE stream (real-time)
+GET  /api/workspaces/:id/files/:path     — read a workspace file
+POST /api/workspaces/:id/files           — write a workspace file
 POST /api/workspaces/:id/actions/:type   — dispatch a typed action
 GET  /api/workspaces/:id/actions         — list action log
 GET  /api/workspaces/:id/annotations     — list annotations
+All requests need: Authorization: Bearer <your_token>
 ```
 
 **3. The action parsing snippet:**
@@ -411,83 +428,73 @@ const actions = [...content.matchAll(ACTION_RE)].map(m => JSON.parse(m[1]));
 const prose = content.replace(ACTION_RE, '').trim();
 ```
 
-With these three inputs, any capable AI coding assistant can generate
-a working UI in one pass.
+With these three, any capable AI coding assistant can generate a working
+dispatcher and UI in one pass.
 
 ---
 
-## Step 7 — What's still rough (known limitations as of May 2026)
+## Step 8 — What's still rough (known limitations as of May 2026)
 
 These are real gaps. Work around them; don't fight them.
 
-**Agent prompt updates need a redeploy** (or the PUT workaround above)
-to reflect in the API. The seeder runs at server startup, not on push.
-
-**The diff modal for `mutate_document` with `confirmation: "ask"` is
-alpha.** During the alpha period, all `mutate_document` actions are treated
-as `pending` regardless of the confirmation field. Your UI needs to call
+**`mutate_document` with `confirmation: "ask"` pends for human review.**
+During alpha, every `mutate_document` is treated as `pending` regardless
+of what the agent sends. Your UI needs to call
 `POST /api/workspaces/:id/actions/:action-id/accept` after the user
-reviews. The companion's action block is intent; the accept call is
-execution.
+reviews the proposed change. The action block is intent; the accept call
+is execution.
 
-**SSE streaming works but the agent response arrives as a single message**
-at the end of execution, not token-by-token. If you want streaming tokens,
-use `GET /api/workspaces/:id/messages/stream` — it emits one SSE event
-per message when the agent finishes. It doesn't stream partial tokens.
+**SSE stream delivers complete messages, not token-by-token.**
+`GET /api/workspaces/:id/messages/stream` emits one event when the agent
+finishes. It does not stream partial tokens.
 
-**The `compare` action records intent only.** The client is responsible
-for running the cascade on each variant and calling `/accept` with the
-results. The server doesn't run cascades automatically yet.
+**The `compare` action records intent only.** The client dispatches
+cascade runs and calls `/accept` with the results. The server doesn't
+run cascades automatically.
 
-**Credits deplete fast during development.** Each agent turn costs
-6-15 credits depending on the model and context size. A 200-credit
-workspace lasts about 15-25 turns. Ask the admin for a grant rather
-than buying credits until you're ready to launch.
+**Credits deplete fast during development.** Each turn: 6-15 credits.
+Ask for grants, don't buy yet.
 
-**xaman_ek's MCP tools require a Bearer token.** Unlike public GET endpoints,
-workspace-scoped tools (`read_workspace_file`, `list_workspace_agents`)
-return `401` without a valid token. Pass `Authorization: Bearer ferm_...`
-in your MCP client configuration.
+**xaman_ek's MCP tools require a Bearer token.** Workspace-scoped tools
+(`read_workspace_file`, `list_workspace_agents`) return `401` without one.
+Pass `Authorization: Bearer ferm_...` in your MCP client config.
+
+**Agent version history is not yet in the UI.** When you edit the prompt
+in the Manage tab, the old version is saved internally but there's no
+browser view to see or restore past versions yet. Coming soon.
 
 ---
 
 ## Worked example — efrain_ai
 
-`efrain_ai` is a real App on ABW built by an external developer (Mario).
-It's a good reference because it's simpler than SimOps and shows the
-pattern without the domain complexity.
+`efrain_ai` is a real App built by Mario, an external developer. He built
+it without any access to the ABW codebase. It's a good reference because
+it's simpler than SimOps.
 
-**What it is:** a research notes App. The companion agent helps the user
-capture, organise, and cross-reference notes on a topic. The canonical
-document is a YAML file under `efrain/notes.yaml`.
+**What it is:** a research notes App. The companion helps the user capture
+and cross-reference notes. The canonical document is `efrain/notes.yaml`.
 
-**What the schema looks like:**
+**How Mario built it:**
+```bash
+abw app new efrain_ai
+# edited manifest.json and agent_card.json in that folder
+abw app deploy
+```
+
+Then he iterated the prompt in the Manage tab until it behaved correctly.
+No git access to ABW. No deploys. Just the CLI and the browser.
+
+**What its schema looks like:**
 ```bash
 curl https://agent-bestiary.world/api/apps/efrain_ai/schema
 ```
 
-Because `efrain_ai` is a simpler App, its action grammar has fewer types —
-mostly `mutate_document` (update a note) and `annotate` (tag an observation).
-That's a good starting template: you don't need all six action types to
-have a working App.
+The efrain action grammar is simpler than SimOps — mostly `mutate_document`
+(update a note) and `annotate` (tag an observation). That's a good starting
+template: two action types is enough to have a working App.
 
-**What its workspace looks like:**
-```bash
-# Read the current notes document
-abw workspace files get <ws-id> efrain/notes.yaml
-
-# See what the companion has been doing
-abw workspace actions list <ws-id>
-
-# Send a message to the companion
-abw workspace message <ws-id> "what connections do you see between these entries?" \
-  --agent efrain_companion
-```
-
-**The lesson from efrain:** start with two action types (`mutate_document`
-and `annotate`), get them working end-to-end, then add more as your domain
-demands them. The schema endpoint will reflect whatever your agent card
-declares — it grows with the App.
+**The lesson from efrain:** start with two action types and one agent. Get
+them working end-to-end. The schema endpoint grows as you add more.
 
 ---
 
@@ -496,16 +503,18 @@ declares — it grows with the App.
 **App lifecycle:**
 ```bash
 abw login
-abw app new my_app
-abw app validate
-abw app deploy
-abw app spawn my_app
+abw app new my_app           # scaffold manifest + agent card locally
+abw app validate             # check for errors before deploying
+abw app deploy               # register/update the App on ABW
+abw app spawn my_app         # spawn a new workspace
 ```
 
 **Workspace interaction:**
 ```bash
 abw workspace message <ws-id> "hello" --agent my_companion
 abw workspace files get <ws-id> my_app/state.yaml
+abw workspace files put <ws-id> my_app/state.yaml --content @updated.yaml
+abw workspace actions list <ws-id>
 abw workspace actions pending <ws-id>
 abw workspace actions accept <ws-id> <action-id>
 abw workspace actions annotate <ws-id> "note" --kind insight
@@ -513,17 +522,18 @@ abw workspace actions annotate <ws-id> "note" --kind insight
 
 **Key URLs:**
 ```
-https://agent-bestiary.world/apps               — App catalogue
-https://agent-bestiary.world/agent/<id>         — Agent detail page (Manage tab for prompt editing)
-https://agent-bestiary.world/admin              — Admin panel (grant credits, manage agents)
-https://agent-bestiary.world/settings/api-keys  — Mint API tokens
-https://agent-bestiary.world/api/apps/<slug>/schema — Your App's action grammar
+https://agent-bestiary.world/apps               — browse all Apps
+https://agent-bestiary.world/apps/my_app        — your App's page
+https://agent-bestiary.world/agent/my_companion — your agent (Manage tab to edit prompt)
+https://agent-bestiary.world/admin              — admin panel (grant credits)
+https://agent-bestiary.world/settings/api-keys  — mint API tokens
+https://agent-bestiary.world/api/apps/my_app/schema — your action grammar
 ```
 
-**MCP endpoint (for AI coding tools like Cursor):**
+**MCP endpoint — for AI coding tools like Cursor:**
 ```
 https://agent-bestiary.world/mcp/agents/xaman_ek
 ```
-Configure this in your MCP client with your Bearer token. xaman_ek
-can then tell you what agents exist, read workspace files, and execute
+Configure this in Cursor/Claude Desktop with your Bearer token.
+xaman_ek can then discover agents, read workspace files, and execute
 agents on your behalf — all from inside your coding environment.
