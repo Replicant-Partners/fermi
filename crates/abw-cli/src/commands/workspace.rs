@@ -190,31 +190,46 @@ pub struct FilesPutArgs {
 async fn files_put(ctx: &Ctx, args: FilesPutArgs) -> Result<()> {
     let api_key = config::resolve_api_key()?;
     let ws_id = resolve_workspace_id(&args.workspace);
-
     let content = resolve_content(args.content.as_deref())?;
 
+    // Server route: PUT /api/workspaces/:workspace_id/files/*path
+    // Body shape:   { content, is_base64?, message? }   (see WriteFileBody)
+    // Previous version used POST /api/workspaces/:id/files (no such route)
+    // with body {path, content, commit_message} — silently returned 405 and
+    // the CLI's resp.json() saw an empty body ("EOF at line 1 column 0").
     let body = json!({
-        "path":           args.path,
-        "content":        content,
-        "commit_message": args.message,
+        "content": content,
+        "message": args.message,
     });
 
     let resp = ctx.http()
-        .post(ctx.url(&format!("/api/workspaces/{}/files", ws_id)))
+        .put(ctx.url(&format!(
+            "/api/workspaces/{}/files/{}",
+            ws_id,
+            args.path.trim_start_matches('/')
+        )))
         .bearer_auth(&api_key)
         .json(&body)
         .send().await
         .context("writing file")?;
 
     let status = resp.status();
-    let data: Value = resp.json().await.context("parsing response")?;
-
     if !status.is_success() {
-        bail!("server returned {}: {}", status, data);
+        // Surface the raw body — server errors come back as plain text via
+        // (StatusCode, String); JSON-only error parsing would hide them.
+        let body = resp.text().await.unwrap_or_default();
+        bail!("server returned {}: {}", status, body);
     }
 
-    let sha = data.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
-    println!("{} {} @ {}", "✓".green(), args.path, &sha[..8.min(sha.len())]);
+    // Success body: { path, commit: { sha, message, timestamp } }
+    let data: Value = resp.json().await.context("parsing response")?;
+    let sha = data
+        .get("commit")
+        .and_then(|c| c.get("sha"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let short_sha = &sha[..8.min(sha.len())];
+    println!("{} {} @ {}", "✓".green(), args.path, short_sha);
     Ok(())
 }
 
