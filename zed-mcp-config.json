@@ -1,4 +1,6 @@
 {
+  "_comment": "Reference config for the Fermi Agent Bestiary MCP server. The live config Zed actually reads is at ~/.config/zed/settings.json under `context_servers`. This file is the canonical version — copy the `mcpServers.fermi-agent-bestiary` block into your settings.json (translating to Zed's `context_servers` shape — same fields, different parent key).",
+
   "mcpServers": {
     "fermi-agent-bestiary": {
       "command": "/home/ilabra/fermi/target/debug/agent-mcp-server",
@@ -9,18 +11,22 @@
         "RUST_LOG": "info"
       },
       "_tools": [
-        "list_agents        — List all 27 agents with metadata",
-        "get_agent           — Get detailed info for a specific agent",
-        "execute_agent       — Run an agent with a query (requires ANTHROPIC_API_KEY)",
-        "save_agent          — Save agent stats to disk + git commit",
-        "search_agents       — Search by keyword, tag, type, or tier",
-        "get_catalogue       — Full catalogue grouped by category with composition patterns",
-        "ask_xaman_ek        — Ask the platform navigator anything"
-      ]
+        "list_agents        — List all curated agents (79 as of 2026-05-19) with metadata",
+        "get_agent          — Get detailed info for a specific agent (by agent_id)",
+        "execute_agent      — Run an agent with a query (requires ANTHROPIC_API_KEY)",
+        "save_agent         — Save agent stats to disk + git commit",
+        "search_agents      — Search by keyword, tag, type, or tier",
+        "get_catalogue      — Full catalogue grouped by category with composition patterns",
+        "ask_xaman_ek       — Ask the platform navigator anything (78 specimens registered)"
+      ],
+      "_rebuild_note": "After pulling new commits from main, rebuild the binary so the MCP server picks up code changes and new agents: `cargo build --bin agent-mcp-server` from /home/ilabra/fermi. The agent count, the xaman_ek system prompt, and the executor (which Ollama support, observability annotation, and honest-economics for local providers now ride through) all bake in at startup. Then restart Zed (Cmd/Ctrl-Shift-P → 'context server: restart' or quit + relaunch).",
+      "_last_verified": "2026-05-19 — binary timestamp matches current HEAD"
     },
     "neon": {
       "command": "npx",
-      "args": ["@neondatabase/mcp-server-neon"],
+      "args": [
+        "@neondatabase/mcp-server-neon"
+      ],
       "env": {
         "NEON_API_KEY": "${NEON_API_KEY}"
       }
