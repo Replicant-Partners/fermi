@@ -8,20 +8,70 @@
     "executor": "llm",
     "mcp_tools": [
       {
+        "name": "execute_agent",
+        "description": "Delegate to an optional dependency agent (cascade, predictor, optimizer, narrator, supply_chain_oracle, sidestream_miner, comparator) for specialised sub-tasks. Used when the user's question requires capability outside simops_companion's own remit.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "Optional dependency agent_id"
+            },
+            "query": {
+              "type": "string",
+              "description": "Question / task to delegate"
+            }
+          },
+          "required": [
+            "agent_id",
+            "query"
+          ]
+        }
+      },
+      {
         "name": "mutate_document",
         "description": "Patch the workspace's canonical document (e.g. simops/process.yaml). Records in action log; pends for human confirmation by default.",
         "input_schema": {
           "type": "object",
           "properties": {
-            "workspace_id": { "type": "string", "description": "Workspace UUID" },
-            "path": { "type": "string", "description": "Document path relative to workspace root" },
-            "patch": { "type": "object", "description": "The patch to apply (app-specific shape)" },
-            "content": { "type": "string", "description": "Full serialised document content after patch (required for auto-apply)" },
-            "rationale": { "type": "string", "description": "Why this change is being made" },
-            "confirmation": { "type": "string", "enum": ["auto", "ask"], "description": "auto = apply immediately; ask = pend for human review" },
-            "app_schema": { "type": "string", "description": "App schema slug (e.g. kask_simops)" }
+            "workspace_id": {
+              "type": "string",
+              "description": "Workspace UUID"
+            },
+            "path": {
+              "type": "string",
+              "description": "Document path relative to workspace root"
+            },
+            "patch": {
+              "type": "object",
+              "description": "The patch to apply (app-specific shape)"
+            },
+            "content": {
+              "type": "string",
+              "description": "Full serialised document content after patch (required for auto-apply)"
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this change is being made"
+            },
+            "confirmation": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "ask"
+              ],
+              "description": "auto = apply immediately; ask = pend for human review"
+            },
+            "app_schema": {
+              "type": "string",
+              "description": "App schema slug (e.g. kask_simops)"
+            }
           },
-          "required": ["workspace_id", "path", "patch"]
+          "required": [
+            "workspace_id",
+            "path",
+            "patch"
+          ]
         }
       },
       {
@@ -30,14 +80,34 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "workspace_id": { "type": "string" },
-            "name": { "type": "string", "description": "Human-readable variation name" },
-            "from": { "type": "string", "description": "Source slug to fork from (default: base)" },
-            "patch": { "type": "object", "description": "What differs from the source" },
-            "hypothesis": { "type": "string", "description": "What this variation is expected to achieve" },
-            "app_schema": { "type": "string" }
+            "workspace_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string",
+              "description": "Human-readable variation name"
+            },
+            "from": {
+              "type": "string",
+              "description": "Source slug to fork from (default: base)"
+            },
+            "patch": {
+              "type": "object",
+              "description": "What differs from the source"
+            },
+            "hypothesis": {
+              "type": "string",
+              "description": "What this variation is expected to achieve"
+            },
+            "app_schema": {
+              "type": "string"
+            }
           },
-          "required": ["workspace_id", "name", "patch"]
+          "required": [
+            "workspace_id",
+            "name",
+            "patch"
+          ]
         }
       },
       {
@@ -46,13 +116,33 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "workspace_id": { "type": "string" },
-            "variants": { "type": "array", "items": { "type": "string" } },
-            "metrics": { "type": "array", "items": { "type": "string" } },
-            "narrate_via": { "type": "string", "description": "Agent to narrate results (e.g. comparator)" },
-            "app_schema": { "type": "string" }
+            "workspace_id": {
+              "type": "string"
+            },
+            "variants": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "metrics": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "narrate_via": {
+              "type": "string",
+              "description": "Agent to narrate results (e.g. comparator)"
+            },
+            "app_schema": {
+              "type": "string"
+            }
           },
-          "required": ["workspace_id", "variants"]
+          "required": [
+            "workspace_id",
+            "variants"
+          ]
         }
       },
       {
@@ -61,13 +151,33 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "workspace_id": { "type": "string" },
-            "agent_id": { "type": "string" },
-            "query": { "description": "Structured query (object or string)" },
-            "render_as": { "type": "string", "enum": ["bom_table", "narrative", "kpi_delta", "raw"] },
-            "app_schema": { "type": "string" }
+            "workspace_id": {
+              "type": "string"
+            },
+            "agent_id": {
+              "type": "string"
+            },
+            "query": {
+              "description": "Structured query (object or string)"
+            },
+            "render_as": {
+              "type": "string",
+              "enum": [
+                "bom_table",
+                "narrative",
+                "kpi_delta",
+                "raw"
+              ]
+            },
+            "app_schema": {
+              "type": "string"
+            }
           },
-          "required": ["workspace_id", "agent_id", "query"]
+          "required": [
+            "workspace_id",
+            "agent_id",
+            "query"
+          ]
         }
       },
       {
@@ -76,16 +186,43 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "workspace_id": { "type": "string" },
-            "stage_id": { "type": "string" },
-            "field": { "type": "string", "description": "e.g. efficiency, carbon_intensity, sidestream.co2.capture_fraction" },
-            "observable_property": { "type": "string" },
-            "unit": { "type": "string" },
-            "sampling": { "type": "string", "enum": ["per_batch", "continuous", "on_demand"] },
-            "rationale": { "type": "string" },
-            "app_schema": { "type": "string" }
+            "workspace_id": {
+              "type": "string"
+            },
+            "stage_id": {
+              "type": "string"
+            },
+            "field": {
+              "type": "string",
+              "description": "e.g. efficiency, carbon_intensity, sidestream.co2.capture_fraction"
+            },
+            "observable_property": {
+              "type": "string"
+            },
+            "unit": {
+              "type": "string"
+            },
+            "sampling": {
+              "type": "string",
+              "enum": [
+                "per_batch",
+                "continuous",
+                "on_demand"
+              ]
+            },
+            "rationale": {
+              "type": "string"
+            },
+            "app_schema": {
+              "type": "string"
+            }
           },
-          "required": ["workspace_id", "field", "observable_property", "unit"]
+          "required": [
+            "workspace_id",
+            "field",
+            "observable_property",
+            "unit"
+          ]
         }
       },
       {
@@ -94,14 +231,43 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "workspace_id": { "type": "string" },
-            "kind": { "type": "string", "enum": ["critique", "insight", "risk", "decision"] },
-            "target": { "type": "string", "description": "e.g. stage:fermentation, process, variation:co2-capture" },
-            "body": { "type": "string" },
-            "severity": { "type": "string", "enum": ["info", "warn", "block"] },
-            "app_schema": { "type": "string" }
+            "workspace_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "critique",
+                "insight",
+                "risk",
+                "decision"
+              ]
+            },
+            "target": {
+              "type": "string",
+              "description": "e.g. stage:fermentation, process, variation:co2-capture"
+            },
+            "body": {
+              "type": "string"
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warn",
+                "block"
+              ]
+            },
+            "app_schema": {
+              "type": "string"
+            }
           },
-          "required": ["workspace_id", "kind", "target", "body"]
+          "required": [
+            "workspace_id",
+            "kind",
+            "target",
+            "body"
+          ]
         }
       }
     ],
@@ -176,7 +342,15 @@
     "budget": 100.0
   },
   "metadata": {
-    "tags": ["simops", "kask", "companion", "strategist", "moe", "process_modelling", "action_grammar"],
+    "tags": [
+      "simops",
+      "kask",
+      "companion",
+      "strategist",
+      "moe",
+      "process_modelling",
+      "action_grammar"
+    ],
     "sample_queries": [
       "Help me model a kombucha brewing process.",
       "What's the carbon footprint of my drying stage?",
@@ -189,7 +363,12 @@
       "primary_affect": "strategic",
       "arousal": 0.4,
       "valence": 0.6,
-      "personality_traits": ["direct", "precise", "collegial", "action-oriented"]
+      "personality_traits": [
+        "direct",
+        "precise",
+        "collegial",
+        "action-oriented"
+      ]
     },
     "created": "2026-05-18",
     "author": "Ivan Labra",

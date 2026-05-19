@@ -536,6 +536,11 @@ async fn run_migrations(db: &PgPool) {
         // workspace_annotations tables. Foundation for isomorphic App actions
         // across companion, CLI, and MCP callers.
         "migrations/125_workspace_action_protocol.sql",
+        // Expand xaman_sessions.session_type CHECK to include 'app_design'
+        // (new conversational mode for building Apps on ABW via xaman_ek).
+        // Originally numbered 124; renumbered to 127 after the topology Phase-2
+        // observability migration claimed slot 124 in a parallel session.
+        "migrations/127_xaman_sessions_app_design.sql",
     ];
 
     for file in &migration_files {
@@ -2790,6 +2795,11 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             },
             capability_gates: serde_json::from_value(agent.capability_gates.clone())
                 .unwrap_or_default(),
+            // min_provider_class is loaded from agent_card.json on disk; the
+            // DB row doesn't carry this field yet. Default to CloudStandard,
+            // which mirrors the typed default and matches the existing
+            // semantics for agents minted before the topology Phase-0 work.
+            min_provider_class: fermi::agent_backend::agent_card::MinProviderClass::default(),
             fermi_contract: agent
                 .fermi_contract
                 .as_ref()
