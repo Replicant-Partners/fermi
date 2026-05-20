@@ -200,22 +200,45 @@ CARDINAL RULES (override everything else):
                 })
             }
             Err(_) => {
-                // Fallback: treat as plain text evidence
-                // IMPORTANT: preserve the FULL text as summary so downstream
-                // consumers can parse structured data from it.
-                // Also store key lines as findings for display.
-                let summary = text.to_string();
-                let findings: Vec<String> = text
-                    .lines()
-                    .filter(|l| !l.trim().is_empty() && l.len() > 10)
-                    .take(10)
-                    .map(|l| l.trim().to_string())
-                    .collect();
+                // Fallback: treat as plain text evidence.
+                //
+                // Special case (issue #4): if the response is itself a
+                // structured JSON object that simply didn't match the
+                // EvidenceData shape (e.g. supply_chain_oracle's
+                // `{items, risks, total_bom_cost, oracle_note}` contract),
+                // do NOT stuff the entire JSON back into the `summary`
+                // field. The downstream formatter would otherwise emit the
+                // same JSON twice — once as the raw response and once as
+                // an `**Evidence:**` addendum.
+                //
+                // We check `json_text` (already stripped of markdown fences
+                // above) rather than the original `text` so that responses
+                // wrapped in ```json …``` fences are also detected.
+                //
+                // The raw text remains accessible via
+                // `AgentOutput.metadata.reasoning` (and from there
+                // `execution_result.metadata.raw_response`), so no
+                // information is lost; we just stop duplicating it into
+                // the evidence channel where it doesn't belong.
+                let looks_like_json_contract = is_json_contract_text(&text)
+                    || is_json_contract_text(json_text);
+                let (summary, findings): (Option<String>, Vec<String>) =
+                    if looks_like_json_contract {
+                        (None, Vec::new())
+                    } else {
+                        let findings: Vec<String> = text
+                            .lines()
+                            .filter(|l| !l.trim().is_empty() && l.len() > 10)
+                            .take(10)
+                            .map(|l| l.trim().to_string())
+                            .collect();
+                        (Some(text.to_string()), findings)
+                    };
 
                 Ok(EvidenceStmt {
                     id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
                     source: format!("Agent: {} (Claude API)", agent_name),
-                    summary: Some(summary),
+                    summary,
                     url: None,
                     relevance: Some(0.5),
                     date: Some(Utc::now().format("%Y-%m-%d").to_string()),
@@ -470,6 +493,28 @@ pub(crate) struct Usage {
     pub output_tokens: u32,
 }
 
+/// Heuristic — does this text look like a JSON-contract response (an
+/// object or array that parses as valid JSON), possibly wrapped in a
+/// markdown ```json … ``` fence? Used to suppress the legacy Evidence
+/// addendum when an agent's primary answer is structured JSON
+/// (issue #4 / docs/specs/10_RESEARCH_AGENTS_EMPTY_LLM_OUTPUT.md
+/// follow-up).
+pub(crate) fn is_json_contract_text(text: &str) -> bool {
+    let t = text.trim();
+    // Strip an optional ```json … ``` fence.
+    let t = t
+        .strip_prefix("```json")
+        .or_else(|| t.strip_prefix("```JSON"))
+        .or_else(|| t.strip_prefix("```"))
+        .unwrap_or(t)
+        .trim_start();
+    let t = t.strip_suffix("```").unwrap_or(t).trim();
+    if !(t.starts_with('{') || t.starts_with('[')) {
+        return false;
+    }
+    serde_json::from_str::<serde_json::Value>(t).is_ok()
+}
+
 /// Extract all text from content blocks
 pub(crate) fn extract_text_from_content(blocks: &[ContentBlock]) -> String {
     blocks
@@ -492,4 +537,159 @@ struct EvidenceData {
     confidence: f64,
     #[serde(default)]
     reasoning: String,
+}
+
+
+// ─── Tests ─────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_response(text: &str) -> ClaudeResponse {
+        ClaudeResponse {
+            id: "msg_test".to_string(),
+            model: "claude-test".to_string(),
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+            stop_reason: Some("end_turn".to_string()),
+        }
+    }
+
+    /// Regression for issue #4: when the LLM returns a JSON object that
+    /// doesn't match the EvidenceData shape (e.g. supply_chain_oracle's
+    /// `{items, risks, total_bom_cost, oracle_note}` contract), the fallback
+    /// branch must NOT stuff the whole JSON into `summary`. Otherwise the
+    /// downstream formatter emits the same JSON twice.
+    #[test]
+    fn parse_response_does_not_stuff_json_contract_into_summary() {
+        let executor = LLMExecutor::new("test-key".into());
+        let oracle_response = r#"```json
+{
+  "items": [{"name": "Tea", "unit_cost": 42}],
+  "risks": [],
+  "total_bom_cost": 42,
+  "oracle_note": "ok"
+}
+```"#;
+        let response = mk_response(oracle_response);
+        let evidence = executor
+            .parse_response(&response, "supply_chain_oracle")
+            .expect("parse_response should succeed");
+
+        assert!(
+            evidence.summary.is_none(),
+            "summary must be None for JSON-contract responses, was {:?}",
+            evidence.summary
+        );
+        assert!(
+            evidence.key_findings.is_empty(),
+            "key_findings must be empty for JSON-contract responses"
+        );
+    }
+
+    /// Confirm the JSON-array contract case is also detected, not just objects.
+    #[test]
+    fn parse_response_recognises_array_contract() {
+        let executor = LLMExecutor::new("test-key".into());
+        let response = mk_response(r#"[{"name": "a"}, {"name": "b"}]"#);
+        let evidence = executor
+            .parse_response(&response, "test_agent")
+            .expect("parse_response should succeed");
+        assert!(evidence.summary.is_none());
+    }
+
+    /// Free-form text responses should still get extracted into summary
+    /// + findings — the fix is targeted at JSON-contract shapes only.
+    #[test]
+    fn parse_response_preserves_summary_for_free_form_text() {
+        let executor = LLMExecutor::new("test-key".into());
+        let response = mk_response(
+            "Analysis of the situation:\n\
+             - The market is volatile.\n\
+             - Lead times are extended.\n\
+             Forecast: 6-9 months recovery.",
+        );
+        let evidence = executor
+            .parse_response(&response, "test_agent")
+            .expect("parse_response should succeed");
+        assert!(
+            evidence.summary.is_some(),
+            "free-form text must keep its summary"
+        );
+        let s = evidence.summary.unwrap();
+        assert!(s.contains("Analysis"));
+        assert!(!evidence.key_findings.is_empty());
+    }
+
+    /// EvidenceData-shaped JSON (the proper contract) goes through the
+    /// happy path, not the fallback — summary comes from the JSON field.
+    /// Then the JSON-contract detection below the Err branch fires too,
+    /// since the response IS a JSON contract; the happy path still wins
+    /// because it returns Ok first.
+    #[test]
+    fn parse_response_uses_summary_field_when_evidence_data_shape() {
+        let executor = LLMExecutor::new("test-key".into());
+        let response = mk_response(
+            r#"{"key_findings": ["a", "b"], "summary": "headline finding", "confidence": 0.8}"#,
+        );
+        let evidence = executor
+            .parse_response(&response, "test_agent")
+            .expect("parse_response should succeed");
+        assert_eq!(evidence.summary.as_deref(), Some("headline finding"));
+        assert_eq!(evidence.key_findings.len(), 2);
+    }
+
+    // ─── is_json_contract_text helper ────────────────────────────────
+
+    #[test]
+    fn is_json_contract_text_detects_bare_object() {
+        assert!(is_json_contract_text(r#"{"items":[]}"#));
+        assert!(is_json_contract_text(r#"  {"items":[]}  "#));
+    }
+
+    #[test]
+    fn is_json_contract_text_detects_bare_array() {
+        assert!(is_json_contract_text(r#"[1, 2, 3]"#));
+        assert!(is_json_contract_text(r#"[{"a":1}]"#));
+    }
+
+    #[test]
+    fn is_json_contract_text_detects_markdown_fenced_json() {
+        assert!(is_json_contract_text(
+            "```json\n{\"items\":[{\"name\":\"Tea\"}]}\n```"
+        ));
+        assert!(is_json_contract_text("```\n{\"a\":1}\n```"));
+        assert!(is_json_contract_text("```JSON\n[1,2]\n```"));
+    }
+
+    #[test]
+    fn is_json_contract_text_rejects_invalid_json() {
+        // Looks like JSON but isn't parseable.
+        assert!(!is_json_contract_text("{not valid json}"));
+        assert!(!is_json_contract_text("{\"items\":,}"));
+    }
+
+    #[test]
+    fn is_json_contract_text_rejects_free_form_text() {
+        assert!(!is_json_contract_text(
+            "Analysis: the market is up.\n- bullet"
+        ));
+        assert!(!is_json_contract_text("# Heading\n\nParagraph."));
+        assert!(!is_json_contract_text(""));
+    }
+
+    #[test]
+    fn is_json_contract_text_rejects_partial_json() {
+        // Free-form text that quotes a JSON snippet inline shouldn't trigger
+        // — we only suppress addenda when the entire response is structured.
+        assert!(!is_json_contract_text(
+            "The agent emitted {\"items\":[]}.\n\nAnalysis follows."
+        ));
+    }
 }

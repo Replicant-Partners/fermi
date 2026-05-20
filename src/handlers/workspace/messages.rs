@@ -47,11 +47,20 @@ use super::core::{charge_workspace_gas, get_workspace_slug, parse_at_mention};
 // LLM's real output. 193k tokens / 0 usable content per the reported
 // reproduction.
 //
+// Follow-up (issue #4): with the raw-response channel working, JSON-
+// contract agents started emitting their primary JSON answer followed by
+// a `**Evidence:**` addendum that duplicated the same JSON (the evidence
+// parser falls back to "stuff the whole text into summary" when the
+// response doesn't match the EvidenceData/EvidenceJson shape). 2× token
+// cost on `content`, and downstream JSON extractors broke on the doubling.
+//
 // Policy:
 //   1. The raw LLM response (`AgentOutput.metadata.reasoning`) is the
 //      source of truth for `content`. Pass it through verbatim.
-//   2. If parsed evidence summaries contain real signal, append an
-//      `**Evidence:**` block as an addendum — not a replacement.
+//   2. If parsed evidence summaries contain real signal AND are not
+//      already substrings of the raw response (so they add information
+//      rather than duplicating it), append an `**Evidence:**` block as
+//      an addendum — not a replacement.
 //   3. Empty bullets are suppressed entirely (no `- ` leftovers).
 //   4. If the LLM genuinely returned nothing, say so honestly instead
 //      of emitting the old empty-template artifact.
@@ -63,11 +72,19 @@ fn format_execution_result_content(
     raw_response: &str,
     evidence_summaries: &[&str],
 ) -> String {
+    let trimmed_raw = raw_response.trim();
+
     let evidence_block = evidence_summaries
         .iter()
         .filter_map(|s| {
             let trimmed = s.trim();
             if trimmed.is_empty() {
+                None
+            } else if !trimmed_raw.is_empty() && trimmed_raw.contains(trimmed) {
+                // Issue #4 — the addendum is a substring of the raw response
+                // (typical pattern: the JSON parser failed and stuffed the
+                // whole response back as `summary`). Skip — it would just
+                // duplicate the primary content.
                 None
             } else {
                 Some(format!("- {}", trimmed))
@@ -76,7 +93,6 @@ fn format_execution_result_content(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let trimmed_raw = raw_response.trim();
     if trimmed_raw.is_empty() {
         if evidence_block.is_empty() {
             "(agent returned no content)".to_string()
@@ -1525,6 +1541,89 @@ mod tests {
         let content = format_execution_result_content(raw, &summaries);
         assert!(content.contains("\"items\""));
         assert!(content.contains("ALU-001"));
+    }
+
+    // ─── Issue #4 — addendum must not duplicate the raw response ───────
+
+    /// Regression for issue #4: the evidence parser used to stuff the entire
+    /// LLM response into `summary` when it couldn't deserialise it as
+    /// EvidenceData. The formatter would then emit the same JSON twice —
+    /// once as the raw response, once as a `**Evidence:**` addendum bullet.
+    /// Doubled token cost, broke greedy JSON extractors downstream.
+    #[test]
+    fn addendum_does_not_duplicate_raw_response_when_summary_equals_raw() {
+        let raw = r#"{"items":[{"name":"Tea","unit_cost":42}],"total_bom_cost":42}"#;
+        // The bug shape: evidence summary IS the full raw response.
+        let summaries: Vec<&str> = vec![raw];
+        let content = format_execution_result_content(raw, &summaries);
+        assert_eq!(
+            content, raw,
+            "addendum equal to raw response must be suppressed entirely"
+        );
+        assert_eq!(
+            content.matches("\"items\"").count(),
+            1,
+            "primary JSON must appear exactly once"
+        );
+        assert!(
+            !content.contains("**Evidence:**"),
+            "no Evidence heading when the addendum would duplicate"
+        );
+    }
+
+    /// Subset case: the summary is a non-trivial substring of the raw
+    /// response (e.g. an extract or quote). Still skip — the substring is
+    /// already in the primary content.
+    #[test]
+    fn addendum_suppressed_when_summary_is_substring_of_raw() {
+        let raw = "Analysis paragraph mentioning the key driver of seasonality.";
+        let summaries: Vec<&str> = vec!["key driver of seasonality"];
+        let content = format_execution_result_content(raw, &summaries);
+        assert_eq!(content, raw);
+        assert!(!content.contains("**Evidence:**"));
+    }
+
+    /// Mixed case: some summaries duplicate the raw, others add real signal.
+    /// The duplicates are filtered, the unique ones survive in the addendum.
+    #[test]
+    fn mixed_summaries_filter_only_the_duplicates() {
+        let raw = "Body mentions item A in detail.";
+        let summaries: Vec<&str> = vec!["item A", "extra finding from external source"];
+        let content = format_execution_result_content(raw, &summaries);
+        assert_eq!(
+            content,
+            "Body mentions item A in detail.\n\n**Evidence:**\n- extra finding from external source"
+        );
+    }
+
+    /// The supply_chain_oracle reproduction from issue #4 — the same JSON
+    /// must not appear twice in `content`.
+    #[test]
+    fn supply_chain_oracle_repro_does_not_double_json() {
+        let raw = r#"```json
+{
+  "items": [
+    {"name": "Tea", "unit_cost": 42, "unit": "kg"},
+    {"name": "Raw Cane Sugar", "unit_cost": 1.2, "unit": "kg"}
+  ],
+  "risks": [],
+  "total_bom_cost": 43.2,
+  "oracle_note": "Mid-market pricing applied"
+}
+```"#;
+        // The bug shape from production: summary == raw.
+        let summaries: Vec<&str> = vec![raw];
+        let content = format_execution_result_content(raw, &summaries);
+        assert_eq!(
+            content.matches("oracle_note").count(),
+            1,
+            "JSON must not be duplicated in content"
+        );
+        assert_eq!(
+            content.matches("Raw Cane Sugar").count(),
+            1,
+            "items must not appear twice"
+        );
     }
 }
 

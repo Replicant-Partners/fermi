@@ -12,8 +12,8 @@ use crate::agent_backend::executor::{
     ToolInvocation,
 };
 use crate::agent_backend::llm_executor::{
-    extract_text_from_content, ClaudeRequest, ClaudeResponse, ClaudeThinking, ContentBlock,
-    Message, MessageBlock, MessageContent,
+    extract_text_from_content, is_json_contract_text, ClaudeRequest, ClaudeResponse,
+    ClaudeThinking, ContentBlock, Message, MessageBlock, MessageContent,
 };
 use crate::agent_backend::multi_model_executor::{OpenAIMessage, OpenAIRequest, OpenAIResponse};
 use crate::agent_backend::tools::{ToolContext, ToolRegistry};
@@ -793,6 +793,35 @@ fn resolve_openai_provider(provider: &str) -> Result<(String, String), Execution
 
 /// Parse evidence from text (handles both JSON and plain text responses)
 fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64, Option<String>) {
+    // Short-circuit (issue #4): when the response is itself a structured
+    // JSON object or array (the typical shape from JSON-contract research
+    // agents — supply_chain_oracle, comparator, sidestream_miner, …),
+    // do NOT route the text through EvidenceJson and back into `summary`.
+    //
+    // EvidenceJson has `#[serde(default)]` on every field, so any valid
+    // JSON object deserialises with empty defaults. That used to produce
+    // an EvidenceStmt with `summary: Some("")`, which the downstream
+    // formatter would still try to render — and, when the legacy parser
+    // stuffed the raw JSON into summary, would emit the same JSON twice.
+    //
+    // Skip straight to a content-free evidence stub; the raw text remains
+    // accessible via the third return value (which becomes
+    // `AgentOutput.metadata.reasoning` and from there
+    // `execution_result.metadata.raw_response`).
+    if is_json_contract_text(text) {
+        let evidence = vec![EvidenceStmt {
+            id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
+            source: format!("Agent: {}", agent_name),
+            summary: None,
+            url: None,
+            relevance: Some(0.5),
+            date: Some(Utc::now().format("%Y-%m-%d").to_string()),
+            strength: Some(0.5),
+            key_findings: Vec::new(),
+        }];
+        return (evidence, 0.5, Some(text.to_string()));
+    }
+
     // Try to extract JSON from the response
     let json_text = if let Some(start) = text.find('{') {
         if let Some(end) = text.rfind('}') {
@@ -837,6 +866,33 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
         }
         Err(_) => {
             // Fallback: treat as plain text evidence.
+            //
+            // Special case (issue #4): if the response is itself a structured
+            // JSON object that simply didn't match the EvidenceJson shape
+            // (e.g. supply_chain_oracle's `{items, risks, …}` contract), do
+            // NOT stuff the entire JSON back into the `summary` field — the
+            // downstream formatter would otherwise emit the same JSON twice,
+            // once as the raw response and once as an `**Evidence:**`
+            // addendum. The raw text is already preserved via the third
+            // return value (becomes `AgentOutput.metadata.reasoning`).
+            let looks_like_json_contract = {
+                let t = text.trim_start();
+                t.starts_with('{') || t.starts_with('[')
+            };
+            if looks_like_json_contract {
+                let evidence = vec![EvidenceStmt {
+                    id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
+                    source: format!("Agent: {}", agent_name),
+                    summary: None,
+                    url: None,
+                    relevance: Some(0.5),
+                    date: Some(Utc::now().format("%Y-%m-%d").to_string()),
+                    strength: Some(0.5),
+                    key_findings: Vec::new(),
+                }];
+                return (evidence, 0.5, Some(text.to_string()));
+            }
+
             // IMPORTANT: preserve the FULL text as summary so downstream
             // consumers (wiki, evidence panel) can display it completely.
             // Extract key lines as findings for the evidence card display.
@@ -961,5 +1017,45 @@ mod tests {
     fn matches_uppercase_and_lowercase_return_variants() {
         assert!(prompt_demands_structured_output("Return a valid JSON object"));
         assert!(prompt_demands_structured_output("return a valid JSON object"));
+    }
+
+    // ─── Issue #4 — parse_evidence_text addendum suppression ──────────
+
+    /// Regression for issue #4: when the tool loop's final text is a JSON
+    /// object that doesn't match EvidenceJson, the fallback branch must NOT
+    /// stuff the whole JSON into `summary`. Otherwise the downstream
+    /// formatter emits the same JSON twice in `content`.
+    #[test]
+    fn parse_evidence_text_does_not_stuff_json_contract_into_summary() {
+        let json_text = r#"{"items":[{"name":"Tea"}],"total_bom_cost":42}"#;
+        let (evidence, _confidence, reasoning) =
+            super::parse_evidence_text(json_text, "test_agent");
+        assert_eq!(evidence.len(), 1);
+        assert!(
+            evidence[0].summary.is_none(),
+            "summary must be None for JSON-contract responses; got {:?}",
+            evidence[0].summary
+        );
+        assert!(evidence[0].key_findings.is_empty());
+        // Raw text is preserved in the reasoning channel so the formatter
+        // and metadata.raw_response still surface it as the primary answer.
+        assert_eq!(reasoning.as_deref(), Some(json_text));
+    }
+
+    #[test]
+    fn parse_evidence_text_recognises_array_contract() {
+        let (evidence, _conf, reasoning) =
+            super::parse_evidence_text(r#"[1, 2, 3]"#, "test_agent");
+        assert_eq!(evidence.len(), 1);
+        assert!(evidence[0].summary.is_none());
+        assert_eq!(reasoning.as_deref(), Some("[1, 2, 3]"));
+    }
+
+    #[test]
+    fn parse_evidence_text_preserves_summary_for_free_form_text() {
+        let text = "Analysis paragraph.\n- bullet one\n- bullet two";
+        let (evidence, _conf, _reasoning) = super::parse_evidence_text(text, "test_agent");
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].summary.as_deref(), Some(text));
     }
 }
