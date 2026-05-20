@@ -168,22 +168,68 @@ pub struct Stage {
 }
 
 impl Stage {
+    /// Should this stage be propagated as a same-unit mass-balance instead of
+    /// going through the energy-equivalent bridge?
+    ///
+    /// The energy bridge (`input.energy_kwh` → × efficiency →
+    /// `output.quantity_from_kwh`) is the right model for processes where
+    /// each resource carries embodied energy that's actually relevant —
+    /// fuel cells, electrolyte chains, anything whose efficiency the user
+    /// already thinks of in NER terms.
+    ///
+    /// It is the wrong model for mass-tracking processes (food, biological,
+    /// material) where the user has declared input.unit == output.unit and
+    /// has not annotated either resource with an `energy_density`. Going
+    /// through the bridge in that case multiplies quantity by 0 and
+    /// silently collapses the cascade — see Doc 11.
+    ///
+    /// Trigger conditions (any-mismatch falls through to the energy bridge):
+    ///   - input.unit == output.unit
+    ///   - neither resource carries an energy_density annotation
+    ///
+    /// This is a strict subset of the cases where the energy bridge currently
+    /// returns 0, so it cannot change the output of any process whose energy
+    /// bridge worked previously. kWh→kWh stages also satisfy the trigger and
+    /// produce identical results, so they're unaffected in practice.
+    fn use_mass_balance(&self) -> bool {
+        self.input.unit == self.output.unit
+            && self.input.energy_density.is_none()
+            && self.output.energy_density.is_none()
+    }
+
     /// Propagate a given input quantity forward through this stage.
     ///
-    /// Efficiency is applied in *energy-equivalent* space so cross-unit stages
-    /// (e.g. kg biomass → kWh hydrogen) are handled correctly:
-    ///   output_energy_kWh = input_energy_kWh × efficiency
-    /// then converted back to the output resource's native unit.
+    /// Two propagation modes:
+    ///
+    /// 1. **Mass-balance** (when [`Self::use_mass_balance`] returns true):
+    ///    `output_quantity = input_quantity × efficiency`. Direct, unit-
+    ///    preserving. The user's intuition for declarations like
+    ///    "fermentation efficiency 0.72 on tea media (L→L)".
+    ///
+    /// 2. **Energy bridge** (default): efficiency is applied in
+    ///    energy-equivalent space so cross-unit stages (e.g. kg biomass →
+    ///    kWh hydrogen) are handled correctly:
+    ///    `output_energy_kWh = input_energy_kWh × efficiency`, then
+    ///    converted back to the output resource's native unit.
     pub fn forward(&self, input_quantity: f64) -> f64 {
+        if self.use_mass_balance() {
+            return input_quantity * self.efficiency;
+        }
         let input_energy_kwh = self.input.energy_kwh(input_quantity);
         let output_energy_kwh = input_energy_kwh * self.efficiency;
         self.output.quantity_from_kwh(output_energy_kwh)
     }
 
     /// Back-calculate the required input to achieve a target output quantity.
+    ///
+    /// Mirrors [`Self::forward`]'s two propagation modes — mass-balance when
+    /// the stage qualifies, energy bridge otherwise.
     pub fn backward(&self, target_output: f64) -> f64 {
         if self.efficiency <= 0.0 {
             return f64::INFINITY;
+        }
+        if self.use_mass_balance() {
+            return target_output / self.efficiency;
         }
         let output_energy_kwh = self.output.energy_kwh(target_output);
         let input_energy_kwh = output_energy_kwh / self.efficiency;
@@ -317,5 +363,153 @@ mod tests {
             maintenance_cost_usd: None,
         };
         assert!(config.validate().is_err());
+    }
+
+    // ─── Doc 11 — mass-balance pass-through ──────────────────────────
+
+    /// Helper: a kg→kg stage with no energy_density on either side —
+    /// the canonical mass-tracking process shape (food, biological,
+    /// material) that used to silently collapse to 0.
+    fn alkali_purification_stage() -> Stage {
+        Stage {
+            id: "alkali_purification".into(),
+            efficiency: 0.85,
+            carbon_intensity: 0.02,
+            input: Resource {
+                name: "pellicle".into(),
+                unit: "kg".into(),
+                energy_density: None,
+                density_unit: None,
+            },
+            output: Resource {
+                name: "purified_pellicle".into(),
+                unit: "kg".into(),
+                energy_density: None,
+                density_unit: None,
+            },
+            capex: None,
+            opex_per_input_unit: None,
+            sidestreams: None,
+            sensors: None,
+        }
+    }
+
+    #[test]
+    fn use_mass_balance_triggers_when_units_match_and_no_energy_density() {
+        let stage = alkali_purification_stage();
+        assert!(
+            stage.use_mass_balance(),
+            "kg→kg with no energy_density must use mass-balance propagation"
+        );
+    }
+
+    #[test]
+    fn use_mass_balance_does_not_trigger_when_units_differ() {
+        let mut stage = alkali_purification_stage();
+        stage.output.unit = "L".into();
+        assert!(
+            !stage.use_mass_balance(),
+            "kg→L must fall through to the energy bridge regardless of densities"
+        );
+    }
+
+    #[test]
+    fn use_mass_balance_does_not_trigger_when_either_side_has_energy_density() {
+        // The cross-unit fermentation stage from the algae chain has a
+        // density on the biomass side — must NOT use mass-balance.
+        let stage = Stage {
+            id: "fermentation".into(),
+            efficiency: 0.20,
+            carbon_intensity: 0.3,
+            input: Resource {
+                name: "biomass".into(),
+                unit: "kg".into(),
+                energy_density: Some(5.5),
+                density_unit: Some("kcal/g".into()),
+            },
+            output: Resource {
+                name: "biomass".into(),
+                unit: "kg".into(),
+                energy_density: None,
+                density_unit: None,
+            },
+            capex: None,
+            opex_per_input_unit: None,
+            sidestreams: None,
+            sensors: None,
+        };
+        assert!(
+            !stage.use_mass_balance(),
+            "having an energy_density on one side means the user intends \
+             the energy bridge — don't silently switch propagation modes"
+        );
+    }
+
+    /// Doc 11 regression: forward propagation of a mass-tracking stage
+    /// must NOT return 0. Pre-fix, this returned 0.0 because the energy
+    /// bridge multiplied by `energy_density: None → 0 kWh`.
+    #[test]
+    fn forward_propagation_uses_mass_balance_when_no_energy_density() {
+        let stage = alkali_purification_stage();
+        // 10 kg in × 0.85 efficiency → 8.5 kg out (mass-balance).
+        let out = stage.forward(10.0);
+        assert!(
+            (out - 8.5).abs() < 1e-9,
+            "expected mass-balance 8.5 kg, got {}",
+            out
+        );
+    }
+
+    #[test]
+    fn backward_propagation_uses_mass_balance_when_no_energy_density() {
+        let stage = alkali_purification_stage();
+        // Want 8.5 kg out at 0.85 efficiency → need 10 kg in.
+        let needed = stage.backward(8.5);
+        assert!(
+            (needed - 10.0).abs() < 1e-9,
+            "expected mass-balance 10 kg, got {}",
+            needed
+        );
+    }
+
+    /// Round-trip on a mass-balance stage must recover the input.
+    #[test]
+    fn mass_balance_round_trip_recovers_input() {
+        let stage = alkali_purification_stage();
+        let input = 12.3_f64;
+        let recovered = stage.backward(stage.forward(input));
+        assert!((recovered - input).abs() < 1e-9);
+    }
+
+    /// Same-unit kWh→kWh stages already worked under the energy bridge
+    /// and must continue to produce identical results under the
+    /// mass-balance path that now also fires for them.
+    #[test]
+    fn kwh_to_kwh_stage_unchanged_under_mass_balance() {
+        let stage = Stage {
+            id: "fuel_cell".into(),
+            efficiency: 0.60,
+            carbon_intensity: 0.0,
+            input: Resource {
+                name: "hydrogen".into(),
+                unit: "kWh".into(),
+                energy_density: None,
+                density_unit: None,
+            },
+            output: Resource {
+                name: "electricity".into(),
+                unit: "kWh".into(),
+                energy_density: None,
+                density_unit: None,
+            },
+            capex: None,
+            opex_per_input_unit: None,
+            sidestreams: None,
+            sensors: None,
+        };
+        assert!(stage.use_mass_balance());
+        // 100 kWh × 0.60 → 60 kWh, both paths agree.
+        let out = stage.forward(100.0);
+        assert!((out - 60.0).abs() < 1e-9, "got {}", out);
     }
 }

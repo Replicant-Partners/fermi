@@ -283,4 +283,107 @@ mod tests {
         let result = cascade_forward(&process, 10_000.0);
         assert!(result.system_ner < 0.01, "system NER should be tiny: {}", result.system_ner);
     }
+
+    // ─── Doc 11 — mass-tracking cascade ──────────────────────────────
+
+    /// The kombucha bioink chain from Doc 11. Four mass-tracking stages
+    /// (kg→kg, no energy_density on any resource) plus an L→L→kg shape
+    /// that the engine can't auto-bridge — but every same-unit stage
+    /// must propagate the mass forward correctly under the Option A
+    /// mass-balance pass-through.
+    ///
+    /// We drop the fermentation L→kg stage from the full Doc 11 chain
+    /// since that one genuinely requires the user to declare a bridge
+    /// (density). The remaining four kg→kg stages must not collapse to 0.
+    fn kombucha_purification_chain() -> ProcessConfig {
+        let mass_stage = |id: &str, eff: f64, ci: f64| Stage {
+            id: id.into(),
+            efficiency: eff,
+            carbon_intensity: ci,
+            input: Resource {
+                name: "pellicle".into(),
+                unit: "kg".into(),
+                energy_density: None,
+                density_unit: None,
+            },
+            output: Resource {
+                name: "pellicle".into(),
+                unit: "kg".into(),
+                energy_density: None,
+                density_unit: None,
+            },
+            capex: None,
+            opex_per_input_unit: None,
+            sidestreams: None,
+            sensors: None,
+        };
+        ProcessConfig {
+            name: "Kombucha Bioink (purification only)".into(),
+            description: None,
+            feature_of_interest: None,
+            elec_price_per_kwh: None,
+            maintenance_cost_usd: None,
+            stages: vec![
+                mass_stage("alkali_purification", 0.85, 0.02),
+                mass_stage("mechanical_homogenisation", 0.95, 0.01),
+                mass_stage("bioink_formulation", 0.92, 0.05),
+            ],
+        }
+    }
+
+    /// Pre-fix this returned `final_output_quantity = 0.0` for every
+    /// stage past the first because each stage's `energy_kwh(qty)` was
+    /// 0 (no energy_density), collapsing the cascade silently.
+    /// Post-fix the mass propagates through every stage.
+    #[test]
+    fn mass_tracking_cascade_does_not_collapse_to_zero() {
+        let process = kombucha_purification_chain();
+        let result = cascade_forward(&process, 10.0);
+
+        // Each kg→kg stage applies its efficiency directly to mass.
+        // 10 × 0.85 × 0.95 × 0.92 ≈ 7.429 kg
+        let expected = 10.0 * 0.85 * 0.95 * 0.92;
+        assert!(
+            (result.final_output_quantity - expected).abs() < 1e-9,
+            "expected {expected}, got {}",
+            result.final_output_quantity
+        );
+
+        // Every intermediate stage must also have non-zero output.
+        for s in &result.stages {
+            assert!(
+                s.output_quantity > 0.0,
+                "stage {} collapsed to 0 (Doc 11 regression)",
+                s.stage_id
+            );
+        }
+    }
+
+    #[test]
+    fn mass_tracking_cascade_backward_recovers_forward_input() {
+        let process = kombucha_purification_chain();
+        let fwd = cascade_forward(&process, 10.0);
+        let bwd = cascade_backward(&process, fwd.final_output_quantity);
+        assert!(
+            (bwd.total_input_quantity - 10.0).abs() < 1e-9,
+            "round-trip drift: {}",
+            bwd.total_input_quantity
+        );
+    }
+
+    /// System NER for an all-mass-balance, no-energy-density cascade is
+    /// undefined (denominator is 0); the existing guard at line 97 of
+    /// `cascade_forward` already returns 0 for that case. We just want to
+    /// confirm the rest of the cascade (mass, carbon, opex) still works.
+    #[test]
+    fn mass_tracking_cascade_emits_real_carbon_delta() {
+        let process = kombucha_purification_chain();
+        let result = cascade_forward(&process, 10.0);
+        // Three stages with positive carbon_intensity → net positive carbon.
+        assert!(
+            result.net_carbon_kg > 0.0,
+            "expected net positive carbon, got {}",
+            result.net_carbon_kg
+        );
+    }
 }
