@@ -35,6 +35,62 @@ use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState
 use super::core::{charge_workspace_gas, get_workspace_slug, parse_at_mention};
 
 
+// ─── execution_result content policy ───────────────────────────────
+//
+// Bug history (issue #2 / docs/specs/09_RESEARCH_AGENT_OUTPUT_STRIPPED.md):
+// the previous implementation reconstructed `content` from
+// `format!("**Evidence:**\n- {summary}")` using parsed evidence summaries.
+// Research-tier agents whose system prompts emit JSON contracts
+// (`supply_chain_oracle`, `comparator`, `sidestream_miner`, …) yielded
+// empty summaries through that parse, so `content` collapsed to the
+// literal 18-byte string `"\n\n**Evidence:**\n- "` regardless of the
+// LLM's real output. 193k tokens / 0 usable content per the reported
+// reproduction.
+//
+// Policy:
+//   1. The raw LLM response (`AgentOutput.metadata.reasoning`) is the
+//      source of truth for `content`. Pass it through verbatim.
+//   2. If parsed evidence summaries contain real signal, append an
+//      `**Evidence:**` block as an addendum — not a replacement.
+//   3. Empty bullets are suppressed entirely (no `- ` leftovers).
+//   4. If the LLM genuinely returned nothing, say so honestly instead
+//      of emitting the old empty-template artifact.
+//
+// `raw_response` is also exposed in metadata for machine consumers
+// (kask's `_extractBomItems`, comparator narrative readers, etc.) that
+// want the canonical text without re-parsing markdown.
+fn format_execution_result_content(
+    raw_response: &str,
+    evidence_summaries: &[&str],
+) -> String {
+    let evidence_block = evidence_summaries
+        .iter()
+        .filter_map(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(format!("- {}", trimmed))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let trimmed_raw = raw_response.trim();
+    if trimmed_raw.is_empty() {
+        if evidence_block.is_empty() {
+            "(agent returned no content)".to_string()
+        } else {
+            format!("**Evidence:**\n{}", evidence_block)
+        }
+    } else if evidence_block.is_empty() {
+        raw_response.to_string()
+    } else {
+        format!("{}\n\n**Evidence:**\n{}", trimmed_raw, evidence_block)
+    }
+}
+
+
 // ─── Workspace Chat ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -459,30 +515,23 @@ pub async fn post_workspace_message_handler(
                     }
                     .await;
 
-                    // Post result message
+                    // Post result message. See `format_execution_result_content`
+                    // below for content policy (issue #2 / Doc 09).
                     let (content, metadata, msg_type) = match result {
                         Ok(output) => {
-                            let evidence_summary = output
-                                .evidence
-                                .iter()
-                                .map(|e| {
-                                    format!("- {}", e.summary.as_deref().unwrap_or("(no summary)"))
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            let reasoning = output
+                            let raw_response = output
                                 .metadata
                                 .reasoning
-                                .as_deref()
-                                .unwrap_or("No reasoning provided");
-                            let content = format!(
-                                "{}\n\n{}",
-                                reasoning,
-                                if evidence_summary.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!("**Evidence:**\n{}", evidence_summary)
-                                }
+                                .clone()
+                                .unwrap_or_default();
+                            let evidence_summaries: Vec<&str> = output
+                                .evidence
+                                .iter()
+                                .map(|e| e.summary.as_deref().unwrap_or(""))
+                                .collect();
+                            let content = format_execution_result_content(
+                                &raw_response,
+                                &evidence_summaries,
                             );
                             let meta = json!({
                                 "agent_name": agent_name2,
@@ -491,6 +540,10 @@ pub async fn post_workspace_message_handler(
                                 "tokens_used": output.tokens_used,
                                 "status": format!("{:?}", output.status),
                                 "evidence_count": output.evidence.len(),
+                                // Verbatim LLM output for machine consumers — kask's
+                                // `_extractBomItems`, comparator narrative readers,
+                                // etc. — so they don't have to re-parse the markdown.
+                                "raw_response": raw_response,
                             });
                             (content, meta, "execution_result".to_string())
                         }
@@ -1379,4 +1432,85 @@ pub async fn remove_workspace_agent_handler(
     Ok(Json(json!({ "message": "Agent removed from workspace" })))
 }
 
+
+// ─── Tests ─────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::format_execution_result_content;
+
+    /// Regression for issue #2: when the LLM returns a real response,
+    /// `content` must contain it verbatim — not a stripped Evidence template.
+    #[test]
+    fn raw_response_passes_through_when_evidence_summaries_empty() {
+        let raw = r#"{"items":[{"sku":"X","qty":1}],"confidence":0.7}"#;
+        // Empty / blank summaries — the JSON-contract case from issue #2.
+        let summaries: Vec<&str> = vec!["", "   "];
+        let content = format_execution_result_content(raw, &summaries);
+        assert_eq!(content, raw, "raw LLM response must pass through verbatim");
+    }
+
+    /// The exact byte pattern this code used to emit pre-fix.
+    /// If we ever regress, this test catches it immediately.
+    #[test]
+    fn never_emits_legacy_empty_evidence_template() {
+        let raw = "any non-empty LLM output";
+        let summaries: Vec<&str> = vec!["", "   "];
+        let content = format_execution_result_content(raw, &summaries);
+        assert_ne!(content, "\n\n**Evidence:**\n- ");
+        assert!(!content.is_empty());
+        assert!(
+            content.len() > 18,
+            "post-fix content must carry actual signal, not the 18-byte artifact"
+        );
+    }
+
+    /// Truly empty LLM output gets an honest placeholder, not the artifact.
+    #[test]
+    fn empty_llm_output_with_no_evidence_emits_placeholder() {
+        let content = format_execution_result_content("", &[]);
+        assert_eq!(content, "(agent returned no content)");
+    }
+
+    #[test]
+    fn empty_llm_output_with_evidence_falls_back_to_evidence_block() {
+        let summaries = vec!["finding A", "finding B"];
+        let content = format_execution_result_content("", &summaries);
+        assert_eq!(content, "**Evidence:**\n- finding A\n- finding B");
+    }
+
+    #[test]
+    fn raw_response_with_non_empty_evidence_gets_evidence_addendum() {
+        let raw = "Analysis paragraph.";
+        let summaries = vec!["finding A", "finding B"];
+        let content = format_execution_result_content(raw, &summaries);
+        assert_eq!(
+            content,
+            "Analysis paragraph.\n\n**Evidence:**\n- finding A\n- finding B"
+        );
+    }
+
+    #[test]
+    fn evidence_summaries_are_trimmed_and_blank_lines_dropped() {
+        let raw = "Body.";
+        let summaries = vec!["  finding A  ", "", "  ", "finding B"];
+        let content = format_execution_result_content(raw, &summaries);
+        assert_eq!(
+            content,
+            "Body.\n\n**Evidence:**\n- finding A\n- finding B"
+        );
+    }
+
+    /// Specifically asserts that whatever this function returns is something
+    /// kask's `_extractBomItems` (or any consumer) can plausibly parse —
+    /// i.e. non-empty and not the literal pre-fix artifact.
+    #[test]
+    fn json_contract_response_remains_parseable() {
+        let raw = r#"{"items":[{"sku":"ALU-001","qty":12.5}],"notes":"primary"}"#;
+        let summaries: Vec<&str> = vec![]; // EvidenceJson default → empty vec
+        let content = format_execution_result_content(raw, &summaries);
+        assert!(content.contains("\"items\""));
+        assert!(content.contains("ALU-001"));
+    }
+}
 

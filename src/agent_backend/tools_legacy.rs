@@ -4252,13 +4252,35 @@ async fn execute_delegate_to_agent(
         .await
         .map_err(|e| format!("Delegation failed: {}", e))?;
 
-    // Post the result as a workspace message from the delegated agent
-    let result_text = output
+    // Post the result as a workspace message from the delegated agent.
+    //
+    // Pass the raw LLM response through verbatim (see issue #2 / docs/specs/
+    // 09_RESEARCH_AGENT_OUTPUT_STRIPPED.md). Falling back to evidence summaries
+    // alone destroys structured JSON outputs from research-tier agents.
+    let raw_response = output
+        .metadata
+        .reasoning
+        .clone()
+        .unwrap_or_default();
+    let evidence_text = output
         .evidence
         .iter()
-        .filter_map(|e| e.summary.clone())
+        .filter_map(|e| {
+            let s = e.summary.as_deref().unwrap_or("").trim();
+            if s.is_empty() {
+                None
+            } else {
+                Some(s.to_string())
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
+
+    let result_text = if !raw_response.trim().is_empty() {
+        raw_response.clone()
+    } else {
+        evidence_text.clone()
+    };
 
     let result_msg = WorkspaceMessage {
         message_id: Uuid::new_v4(),
@@ -4277,6 +4299,7 @@ async fn execute_delegate_to_agent(
             "tokens_used": output.tokens_used,
             "tool_invocations": output.tool_invocations.len(),
             "loop_iterations": output.loop_iterations,
+            "raw_response": raw_response,
         }),
         created_at: chrono::Utc::now(),
     };
