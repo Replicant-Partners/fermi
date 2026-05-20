@@ -307,6 +307,7 @@ impl AgentExecutor for LLMExecutor {
 
         // Extract the full response text BEFORE parsing into evidence
         let full_response_text = extract_text_from_content(&claude_response.content);
+        let stop_reason = claude_response.stop_reason.clone();
 
         // Extract evidence
         let evidence = self.parse_response(&claude_response, &agent.name)?;
@@ -314,11 +315,31 @@ impl AgentExecutor for LLMExecutor {
 
         let elapsed = start.elapsed();
 
+        // Honest status: if the LLM hit max_tokens or produced no text,
+        // don't claim Success (issue #3). The caller can still consume what
+        // little there is via metadata.reasoning if useful.
+        let (status, failure_reason) = if full_response_text.trim().is_empty() {
+            (
+                AgentStatus::Failed,
+                Some(format!(
+                    "llm produced empty text (stop_reason={})",
+                    stop_reason.as_deref().unwrap_or("?")
+                )),
+            )
+        } else if stop_reason.as_deref() == Some("max_tokens") {
+            (
+                AgentStatus::Failed,
+                Some("llm hit max_tokens; response is truncated".to_string()),
+            )
+        } else {
+            (AgentStatus::Success, None)
+        };
+
         Ok(AgentOutput {
             agent_name: agent.name.clone(),
             agent_type: agent.agent_type.clone().unwrap_or_default(),
             timestamp: Utc::now(),
-            status: AgentStatus::Success,
+            status,
             evidence: vec![evidence],
             confidence,
             sources_consulted: vec!["claude-api".to_string()],
@@ -330,6 +351,9 @@ impl AgentExecutor for LLMExecutor {
                 model_used: Some(claude_response.model),
                 temperature: request.temperature,
                 reasoning: Some(full_response_text),
+                provider: Some("anthropic".to_string()),
+                stop_reason,
+                failure_reason,
             },
             tool_invocations: vec![],
             loop_iterations: 1,

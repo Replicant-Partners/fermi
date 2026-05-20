@@ -25,6 +25,26 @@ use std::time::Instant;
 
 const MAX_ITERATIONS: u32 = 5;
 
+/// Detect whether a system prompt declares a structured-output contract
+/// (typically "return raw JSON, no prose"). Agents that demand structured
+/// output must bypass the tool loop — the platform's injected tools
+/// (search_knowledge, web_search, …) encourage the LLM to keep tool-using
+/// past MAX_ITERATIONS and return tool_use blocks with no final assistant
+/// text. The result is empty content despite tens of thousands of tokens
+/// consumed (issue #3 / docs/specs/10_RESEARCH_AGENTS_EMPTY_LLM_OUTPUT.md).
+///
+/// Conservative on purpose: matches verbatim phrases used in real curated
+/// agent cards. Adding a new JSON-contract agent requires either reusing
+/// one of these phrases or wiring the agent through `LLMExecutor` directly.
+pub(crate) fn prompt_demands_structured_output(prompt: &str) -> bool {
+    prompt.contains("ONLY")
+        || prompt.contains("raw JSON")
+        || prompt.contains("Return a valid JSON")
+        || prompt.contains("return a valid JSON")
+        || prompt.contains("no prose outside")
+        || prompt.contains("JSON object — no prose")
+}
+
 /// Executor that wraps an inner executor with tool-calling capability
 pub struct ToolAwareExecutor {
     inner: Arc<dyn AgentExecutor>,
@@ -89,6 +109,10 @@ impl ToolAwareExecutor {
         let mut tool_invocations: Vec<ToolInvocation> = Vec::new();
         let mut iteration: u32 = 0;
         let mut final_response: Option<ClaudeResponse> = None;
+        // Set when the loop exits because it hit MAX_ITERATIONS while still in
+        // a tool_use state — the response is incomplete and we'll do a flush
+        // turn below to coax the LLM into producing its final answer.
+        let mut hit_iteration_cap_in_tool_use = false;
 
         loop {
             iteration += 1;
@@ -114,7 +138,16 @@ impl ToolAwareExecutor {
 
             let stop_reason = response.stop_reason.clone().unwrap_or_default();
 
-            if stop_reason != "tool_use" || iteration >= MAX_ITERATIONS {
+            // Honest cap-out: if we hit MAX_ITERATIONS while the LLM was still
+            // tool-using, the response has no final assistant text — issue #3.
+            // Mark it so the flush turn below runs.
+            if stop_reason == "tool_use" && iteration >= MAX_ITERATIONS {
+                hit_iteration_cap_in_tool_use = true;
+                final_response = Some(response);
+                break;
+            }
+
+            if stop_reason != "tool_use" {
                 final_response = Some(response);
                 break;
             }
@@ -203,21 +236,137 @@ impl ToolAwareExecutor {
             });
         }
 
-        let elapsed = start.elapsed();
-
-        // Parse final response into evidence
-        let response = final_response.ok_or_else(|| {
+        let mut response = final_response.ok_or_else(|| {
             ExecutionError::ExecutionFailed("No final response from LLM".to_string())
         })?;
+        let mut stop_reason = response.stop_reason.clone();
 
+        // ── Flush turn ──
+        //
+        // If we hit the iteration cap while the LLM was still tool-using
+        // (or it stopped with no usable text for some other reason), do one
+        // final no-tools call telling the LLM the loop is over and to produce
+        // its final answer now. This converts what used to be empty content
+        // into a structured response — see issue #3 / Doc 10.
+        let initial_text = extract_text_from_content(&response.content);
+        let need_flush = hit_iteration_cap_in_tool_use || initial_text.trim().is_empty();
+        if need_flush {
+            // Append the partial assistant response and a user nudge.
+            let assistant_blocks: Vec<MessageBlock> = response
+                .content
+                .iter()
+                .map(|block| match block {
+                    ContentBlock::Text { text } => MessageBlock::Text { text: text.clone() },
+                    ContentBlock::ToolUse { id, name, input } => MessageBlock::ToolUse {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    },
+                })
+                .collect();
+            // Synthesize empty tool_result blocks so the conversation is
+            // well-formed: every tool_use the assistant emitted needs a
+            // corresponding tool_result before we can send another user turn.
+            let stub_tool_results: Vec<MessageBlock> = response
+                .content
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::ToolUse { id, .. } => Some(MessageBlock::ToolResult {
+                        tool_use_id: id.clone(),
+                        content: "(tool not executed: iteration limit reached)".to_string(),
+                    }),
+                    _ => None,
+                })
+                .collect();
+            if !assistant_blocks.is_empty() {
+                messages.push(Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::Blocks(assistant_blocks),
+                });
+            }
+            if !stub_tool_results.is_empty() {
+                messages.push(Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Blocks(stub_tool_results),
+                });
+            }
+            messages.push(Message {
+                role: "user".to_string(),
+                content: MessageContent::Text(
+                    "You have reached the tool-use iteration limit. \
+                     Produce your final answer now using the output format \
+                     specified in your system prompt. Do not request more tools."
+                        .to_string(),
+                ),
+            });
+
+            let flush_request = ClaudeRequest {
+                model: context.agent_card.capabilities.model.clone(),
+                max_tokens: sp.max_tokens,
+                temperature: sp.temperature,
+                top_p: sp.top_p,
+                top_k: sp.top_k,
+                thinking: thinking_block.clone(),
+                system: Some(system_prompt.clone()),
+                messages: messages.clone(),
+                // Explicitly no tools — force a text response.
+                tools: None,
+                tool_choice: None,
+            };
+
+            if let Ok(flush_response) = self.send_anthropic_request(&flush_request, &api_key).await
+            {
+                total_input_tokens += flush_response.usage.input_tokens;
+                total_output_tokens += flush_response.usage.output_tokens;
+                stop_reason = flush_response.stop_reason.clone();
+                response = flush_response;
+            }
+            // If the flush call itself failed, keep the partial response we had.
+        }
+
+        let elapsed = start.elapsed();
         let text = extract_text_from_content(&response.content);
         let (evidence, confidence, reasoning) = parse_evidence_text(&text, &agent.name);
+
+        let trimmed_text_empty = text.trim().is_empty();
+        let (status, failure_reason) = if trimmed_text_empty {
+            (
+                AgentStatus::Failed,
+                Some(format!(
+                    "tool loop produced empty content (stop_reason={}, iterations={}{})",
+                    stop_reason.as_deref().unwrap_or("?"),
+                    iteration,
+                    if hit_iteration_cap_in_tool_use {
+                        ", hit_iteration_cap"
+                    } else {
+                        ""
+                    }
+                )),
+            )
+        } else if stop_reason.as_deref() == Some("max_tokens") {
+            (
+                AgentStatus::Failed,
+                Some("llm hit max_tokens; response is truncated".to_string()),
+            )
+        } else if hit_iteration_cap_in_tool_use {
+            // Flush turn produced text, but we still want callers to know the
+            // tool loop didn't run to completion.
+            (
+                AgentStatus::Success,
+                Some(format!(
+                    "tool loop hit iteration cap ({}); answer produced from flush turn",
+                    MAX_ITERATIONS
+                )),
+            )
+        } else {
+            (AgentStatus::Success, None)
+        };
 
         Ok(AgentOutput {
             agent_name: agent.name.clone(),
             agent_type: agent.agent_type.clone().unwrap_or_default(),
             timestamp: Utc::now(),
-            status: AgentStatus::Success,
+            status,
             evidence,
             confidence,
             sources_consulted: vec!["claude-api".to_string()],
@@ -227,6 +376,9 @@ impl ToolAwareExecutor {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
                 temperature: sp.temperature,
                 reasoning,
+                provider: Some("anthropic".to_string()),
+                stop_reason,
+                failure_reason,
             },
             tool_invocations,
             loop_iterations: iteration,
@@ -263,6 +415,8 @@ impl ToolAwareExecutor {
         let mut tool_invocations: Vec<ToolInvocation> = Vec::new();
         let mut iteration: u32 = 0;
         let mut final_text: Option<String> = None;
+        let mut last_finish_reason: Option<String> = None;
+        let mut hit_iteration_cap_in_tool_calls = false;
 
         loop {
             iteration += 1;
@@ -294,8 +448,16 @@ impl ToolAwareExecutor {
             })?;
 
             let finish_reason = choice.finish_reason.as_deref().unwrap_or("");
+            last_finish_reason = Some(finish_reason.to_string());
 
-            if finish_reason != "tool_calls" || iteration >= MAX_ITERATIONS {
+            // Cap-out while still tool-calling — flag for flush turn (issue #3).
+            if finish_reason == "tool_calls" && iteration >= MAX_ITERATIONS {
+                hit_iteration_cap_in_tool_calls = true;
+                final_text = choice.message.content.clone();
+                break;
+            }
+
+            if finish_reason != "tool_calls" {
                 final_text = choice.message.content.clone();
                 break;
             }
@@ -357,9 +519,89 @@ impl ToolAwareExecutor {
             }
         }
 
+        let mut text = final_text.unwrap_or_default();
+
+        // ── Flush turn (OpenAI-compatible) ──
+        //
+        // If we hit the iteration cap while still tool-calling, or the final
+        // assistant message has no content, do one more call with no tools
+        // telling the model to produce its final answer (issue #3 / Doc 10).
+        if hit_iteration_cap_in_tool_calls || text.trim().is_empty() {
+            messages.push(OpenAIMessage::chat(
+                "user",
+                "You have reached the tool-use iteration limit. \
+                 Produce your final answer now using the output format \
+                 specified in your system prompt. Do not request more tools.",
+            ));
+
+            let flush_request = OpenAIRequest {
+                model: context.agent_card.capabilities.model.clone(),
+                messages: messages.clone(),
+                temperature: sp_oai.temperature,
+                max_tokens: Some(sp_oai.max_tokens),
+                top_p: sp_oai.top_p,
+                frequency_penalty: sp_oai.frequency_penalty,
+                presence_penalty: sp_oai.presence_penalty,
+                repetition_penalty: sp_oai.repetition_penalty,
+                seed: sp_oai.random_seed,
+                // Explicitly no tools — force a text response.
+                tools: None,
+                tool_choice: None,
+            };
+            if let Ok(flush_response) = self
+                .send_openai_request(&flush_request, &api_key, &base_url)
+                .await
+            {
+                if let Some(ref usage) = flush_response.usage {
+                    total_tokens += usage.total_tokens;
+                }
+                if let Some(choice) = flush_response.choices.first() {
+                    last_finish_reason = choice
+                        .finish_reason
+                        .clone()
+                        .or(last_finish_reason.clone());
+                    if let Some(ref content) = choice.message.content {
+                        if !content.trim().is_empty() {
+                            text = content.clone();
+                        }
+                    }
+                }
+            }
+        }
+
         let elapsed = start.elapsed();
-        let text = final_text.unwrap_or_default();
         let (evidence, confidence, reasoning) = parse_evidence_text(&text, &agent.name);
+
+        let (status, failure_reason) = if text.trim().is_empty() {
+            (
+                AgentStatus::Failed,
+                Some(format!(
+                    "tool loop produced empty content (finish_reason={}, iterations={}{})",
+                    last_finish_reason.as_deref().unwrap_or("?"),
+                    iteration,
+                    if hit_iteration_cap_in_tool_calls {
+                        ", hit_iteration_cap"
+                    } else {
+                        ""
+                    }
+                )),
+            )
+        } else if last_finish_reason.as_deref() == Some("length") {
+            (
+                AgentStatus::Failed,
+                Some("llm hit length cap; response is truncated".to_string()),
+            )
+        } else if hit_iteration_cap_in_tool_calls {
+            (
+                AgentStatus::Success,
+                Some(format!(
+                    "tool loop hit iteration cap ({}); answer produced from flush turn",
+                    MAX_ITERATIONS
+                )),
+            )
+        } else {
+            (AgentStatus::Success, None)
+        };
 
         Ok(AgentOutput {
             agent_name: agent.name.clone(),
@@ -368,7 +610,7 @@ impl ToolAwareExecutor {
                 .clone()
                 .unwrap_or_else(|| "research".to_string()),
             timestamp: Utc::now(),
-            status: AgentStatus::Success,
+            status,
             evidence,
             confidence,
             sources_consulted: vec![],
@@ -378,6 +620,9 @@ impl ToolAwareExecutor {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
                 temperature: sp_oai.temperature,
                 reasoning,
+                provider: Some(provider.clone()),
+                stop_reason: last_finish_reason,
+                failure_reason,
             },
             tool_invocations,
             loop_iterations: iteration,
@@ -466,12 +711,20 @@ impl AgentExecutor for ToolAwareExecutor {
         }
 
         // Agents with custom system prompts that demand specific output formats
-        // (e.g., fermi's JSON decomposition) must NOT go through the tool loop.
-        // The tool loop sends all platform tools (search_knowledge, etc.) which
-        // confuses the LLM into calling tools and returning narrative instead of
-        // following the system prompt's JSON schema. Delegate to inner executor.
-        // Meta-agents (tagged "meta-agent") always bypass — they return structured
-        // JSON decompositions that the tool loop would corrupt.
+        // (e.g., fermi's JSON decomposition, supply_chain_oracle's BoM contract)
+        // must NOT go through the tool loop. The tool loop sends all platform
+        // tools (search_knowledge, web_search, etc.) which encourages the LLM to
+        // keep calling tools past MAX_ITERATIONS and return tool_use blocks with
+        // no final assistant text. The result is empty content despite tens of
+        // thousands of tokens consumed (issue #3 / Doc 10).
+        //
+        // Meta-agents (tagged "meta-agent") always bypass.
+        //
+        // Heuristic for JSON-contract agents — match common phrases used in
+        // curated system prompts. Conservative on purpose: matches the verbatim
+        // phrases used in real agent cards (supply_chain_oracle, comparator,
+        // sidestream_miner, …) so that adding new ones can't accidentally
+        // re-enable the tool loop unless the prompt is rewritten.
         let is_meta_agent = context
             .agent_card
             .metadata
@@ -482,8 +735,8 @@ impl AgentExecutor for ToolAwareExecutor {
             || context
                 .agent_card
                 .system_prompt
-                .as_ref()
-                .map(|p| p.contains("ONLY") || p.contains("raw JSON"))
+                .as_deref()
+                .map(prompt_demands_structured_output)
                 .unwrap_or(false);
         if prompt_demands_format {
             return self.inner.execute(agent, context).await;
@@ -652,5 +905,61 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
             }];
             (evidence, 0.5, Some(text.to_string()))
         }
+    }
+}
+
+
+// ─── Tests ─────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::prompt_demands_structured_output;
+
+    /// Regression for issue #3 — supply_chain_oracle's actual system prompt.
+    /// Pre-fix, the bypass heuristic only matched "ONLY" or "raw JSON"; this
+    /// agent's prompt uses neither, so it went through the tool loop and
+    /// returned empty content. The heuristic must catch it now.
+    #[test]
+    fn detects_supply_chain_oracle_contract() {
+        let prompt = "Return a valid JSON object — no prose outside it:\n\n```json\n{\n  \"items\": [...]\n}\n```";
+        assert!(
+            prompt_demands_structured_output(prompt),
+            "supply_chain_oracle-style prompt must bypass the tool loop"
+        );
+    }
+
+    #[test]
+    fn detects_comparator_contract() {
+        let prompt = "You write a narrative.\n\nreturn a valid JSON object";
+        assert!(prompt_demands_structured_output(prompt));
+    }
+
+    #[test]
+    fn detects_simops_advisor_contract() {
+        let prompt = "Output: raw JSON only.";
+        assert!(prompt_demands_structured_output(prompt));
+    }
+
+    #[test]
+    fn does_not_match_generic_research_prompt() {
+        // Generic prompts that don't declare a JSON contract should keep
+        // running through the tool loop.
+        let prompt = "You are a research agent. Use web_search to find sources \
+                      and write a thorough analysis with citations.";
+        assert!(!prompt_demands_structured_output(prompt));
+    }
+
+    #[test]
+    fn does_not_match_prompts_that_merely_mention_json() {
+        let prompt = "You may receive JSON input from the user. Reply in markdown.";
+        assert!(!prompt_demands_structured_output(prompt));
+    }
+
+    /// Catches a small typo / casing slip in the heuristic that would silently
+    /// disable bypass for one of the affected agents.
+    #[test]
+    fn matches_uppercase_and_lowercase_return_variants() {
+        assert!(prompt_demands_structured_output("Return a valid JSON object"));
+        assert!(prompt_demands_structured_output("return a valid JSON object"));
     }
 }

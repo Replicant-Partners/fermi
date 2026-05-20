@@ -517,6 +517,14 @@ pub async fn post_workspace_message_handler(
 
                     // Post result message. See `format_execution_result_content`
                     // below for content policy (issue #2 / Doc 09).
+                    //
+                    // Observability fields plumbed from AgentMetadata:
+                    //   - stop_reason     — LLM-reported finish state
+                    //   - resolved_model  — model actually used (not card-declared)
+                    //   - provider        — provider actually called
+                    //   - failure_reason  — set when the executor decided the run
+                    //                       did not produce real output (issue #3)
+                    //   - loop_iterations — tool-loop iteration count
                     let (content, metadata, msg_type) = match result {
                         Ok(output) => {
                             let raw_response = output
@@ -544,6 +552,12 @@ pub async fn post_workspace_message_handler(
                                 // `_extractBomItems`, comparator narrative readers,
                                 // etc. — so they don't have to re-parse the markdown.
                                 "raw_response": raw_response,
+                                // Observability (issue #3 / Doc 10)
+                                "stop_reason": output.metadata.stop_reason,
+                                "resolved_model": output.metadata.model_used,
+                                "provider": output.metadata.provider,
+                                "failure_reason": output.metadata.failure_reason,
+                                "loop_iterations": output.loop_iterations,
                             });
                             (content, meta, "execution_result".to_string())
                         }

@@ -58,11 +58,24 @@ pub enum AgentStatus {
 }
 
 /// Agent execution metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AgentMetadata {
     pub model_used: Option<String>,
     pub temperature: Option<f64>,
     pub reasoning: Option<String>,
+    /// Provider that handled the request (anthropic, openai, openrouter, …) —
+    /// resolved at execution time, not just whatever the card declared.
+    pub provider: Option<String>,
+    /// Final stop / finish reason reported by the LLM
+    /// (anthropic: stop / tool_use / max_tokens / end_turn / pause_turn / refusal;
+    ///  openai-compatible: stop / tool_calls / length / content_filter / function_call).
+    /// Critical for diagnosing tool-loop exits and silent truncations
+    /// (see issue #3 / docs/specs/10_RESEARCH_AGENTS_EMPTY_LLM_OUTPUT.md).
+    pub stop_reason: Option<String>,
+    /// If the executor decided this run did not actually succeed
+    /// (e.g. empty content after consuming tokens, tool-loop cap-out without
+    /// final text), a short machine-readable reason string. None = no failure.
+    pub failure_reason: Option<String>,
 }
 
 /// Execution error
@@ -152,6 +165,7 @@ impl AgentExecutor for MockExecutor {
                 model_used: Some("mock-model".to_string()),
                 temperature: Some(0.0),
                 reasoning: Some("Mock execution for testing".to_string()),
+                ..Default::default()
             },
             tool_invocations: vec![],
             loop_iterations: 1,
@@ -210,5 +224,18 @@ mod tests {
         assert_eq!(output.status, AgentStatus::Success);
         assert_eq!(output.evidence.len(), 1);
         assert_eq!(output.confidence, 0.75);
+    }
+
+    /// Pins the new optional fields (issue #3) so older constructors that
+    /// don't set them keep compiling via `..Default::default()`.
+    #[test]
+    fn agent_metadata_default_has_none_observability_fields() {
+        let m = AgentMetadata::default();
+        assert!(m.model_used.is_none());
+        assert!(m.temperature.is_none());
+        assert!(m.reasoning.is_none());
+        assert!(m.provider.is_none());
+        assert!(m.stop_reason.is_none());
+        assert!(m.failure_reason.is_none());
     }
 }

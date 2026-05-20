@@ -227,6 +227,7 @@ impl MultiModelExecutor {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
                 temperature: sp.temperature,
                 reasoning,
+                ..Default::default()
             },
             tool_invocations: vec![],
             loop_iterations: 1,
