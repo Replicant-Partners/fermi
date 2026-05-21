@@ -10,6 +10,7 @@ use fermi_auth::{credit_charge, get_or_create_wallet, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
+use uuid::Uuid;
 
 use agent_bestiary_memory::{Agent, AgentUpdate, Episode};
 
@@ -1205,15 +1206,23 @@ pub async fn update_agent_handler(
         ));
     }
 
-    // Snapshot current state before applying updates
-    if let Err(e) = state
+    // Capture pre-update version number for the activity-feed event (Doc 12 §
+    // Capability 3). Snapshotting *after* the update means the previous max
+    // is the from-version; cheap query, runs once per PUT.
+    let from_version_number = state
         .memory_store
-        .create_agent_version(db_agent.agent_id, &user_id)
+        .list_agent_versions(db_agent.agent_id)
         .await
-    {
-        eprintln!("Warning: failed to create version snapshot: {}", e);
-    }
+        .ok()
+        .and_then(|vs| vs.first().map(|v| v.version_number))
+        .unwrap_or(0);
 
+    // Apply the update first, then snapshot. This is the inversion documented
+    // in Doc 12 § Capability 1: when `create_agent_version` runs *after*
+    // `update_agent`, the freshly-inserted row reflects the *current* state
+    // of the `agents` table. `MAX(version_number)` is then the canonical
+    // pointer to "the version this agent is currently at" — the property
+    // every other Capability in this spec depends on.
     state
         .memory_store
         .update_agent(db_agent.agent_id, &updates)
@@ -1225,7 +1234,231 @@ pub async fn update_agent_handler(
             )
         })?;
 
-    Ok(Json(json!({ "message": "Agent updated successfully" })))
+    let new_version = state
+        .memory_store
+        .create_agent_version(db_agent.agent_id, &user_id)
+        .await
+        .ok();
+
+    // Doc 12 § Capability 3 — emit agent_card.updated to every workspace
+    // where this agent is hired. Best-effort, async, doesn't block the PUT.
+    if let Some(ref v) = new_version {
+        let to_version_id = v.version_id;
+        let to_version_number = v.version_number;
+        let agent_uuid = db_agent.agent_id;
+        let agent_name = db_agent.agent_name.clone();
+        let changelog_summary = updates.description.clone();
+        let changed_fields = collect_changed_fields(&updates);
+        let event_state = state.clone();
+        tokio::spawn(async move {
+            broadcast_agent_card_updated(
+                &event_state,
+                agent_uuid,
+                &agent_name,
+                from_version_number,
+                None,
+                to_version_number,
+                Some(to_version_id),
+                &changed_fields,
+                changelog_summary.as_deref(),
+                "owner",
+            )
+            .await;
+        });
+    }
+
+    Ok(Json(json!({
+        "message": "Agent updated successfully",
+        "version_number": new_version.as_ref().map(|v| v.version_number),
+        "version_id": new_version.as_ref().map(|v| v.version_id),
+    })))
+}
+
+/// Doc 12 § Capability 3 — collect the names of fields the caller is changing
+/// in this PUT. Used in the `agent_card.updated` event body so app-side UIs
+/// can render "system_prompt and model_ladder changed" without diffing.
+fn collect_changed_fields(updates: &AgentUpdate) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    if updates.description.is_some() {
+        fields.push("description");
+    }
+    if updates.system_prompt.is_some() {
+        fields.push("system_prompt");
+    }
+    if updates.visibility.is_some() {
+        fields.push("visibility");
+    }
+    if updates.tags.is_some() {
+        fields.push("tags");
+    }
+    if updates.model.is_some() {
+        fields.push("model");
+    }
+    if updates.temperature.is_some() {
+        fields.push("temperature");
+    }
+    if updates.display_alias.is_some() {
+        fields.push("display_alias");
+    }
+    if updates.status.is_some() {
+        fields.push("status");
+    }
+    if updates.fork_pricing.is_some() {
+        fields.push("fork_pricing");
+    }
+    if updates.accepts.is_some() {
+        fields.push("accepts");
+    }
+    if updates.produces.is_some() {
+        fields.push("produces");
+    }
+    if updates.workflow_template.is_some() {
+        fields.push("workflow_template");
+    }
+    if updates.prompt_template.is_some() {
+        fields.push("prompt_template");
+    }
+    if updates.requires_secrets.is_some() {
+        fields.push("requires_secrets");
+    }
+    if updates.llm_provider.is_some() {
+        fields.push("llm_provider");
+    }
+    if updates.model_ladder.is_some() {
+        fields.push("model_ladder");
+    }
+    if updates.min_tier.is_some() {
+        fields.push("min_tier");
+    }
+    if updates.capability_gates.is_some() {
+        fields.push("capability_gates");
+    }
+    if updates.model_params.is_some() {
+        fields.push("model_params");
+    }
+    if updates.valence.is_some() {
+        fields.push("valence");
+    }
+    if updates.output_contract.is_some() {
+        fields.push("output_contract");
+    }
+    if updates.version.is_some() {
+        fields.push("version");
+    }
+    if updates.education_budget_credits.is_some() {
+        fields.push("education_budget_credits");
+    }
+    fields
+}
+
+/// Doc 12 § Capability 3 — fan an agent_card.updated system_event into every
+/// workspace where the given agent is hired. Best-effort; errors are logged
+/// but do not propagate, because the underlying PUT has already committed.
+async fn broadcast_agent_card_updated(
+    state: &AppState,
+    agent_uuid: Uuid,
+    agent_name: &str,
+    from_version_number: i32,
+    from_version_id: Option<Uuid>,
+    to_version_number: i32,
+    to_version_id: Option<Uuid>,
+    changed_fields: &[&'static str],
+    changelog_summary: Option<&str>,
+    changed_by: &str,
+) {
+    let workspaces = match sqlx::query(
+        "SELECT DISTINCT workspace_id FROM workspace_agents WHERE agent_id = $1",
+    )
+    .bind(agent_uuid)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!(
+                "agent_card.updated: failed to look up hired workspaces for {}: {}",
+                agent_name, e
+            );
+            return;
+        }
+    };
+
+    if workspaces.is_empty() {
+        return;
+    }
+
+    let body = json!({
+        "kind": "agent_card.updated",
+        "agent_id": agent_uuid,
+        "agent_name": agent_name,
+        "from_version_number": from_version_number,
+        "from_version_id": from_version_id,
+        "to_version_number": to_version_number,
+        "to_version_id": to_version_id,
+        "changed_fields": changed_fields,
+        "changelog_summary": changelog_summary,
+        "changed_by": changed_by,
+        "changed_at": chrono::Utc::now().to_rfc3339(),
+    });
+
+    let content = format!(
+        "@{} updated to v{} ({} changed)",
+        agent_name,
+        to_version_number,
+        if changed_fields.is_empty() {
+            "no field set".to_string()
+        } else {
+            changed_fields.join(", ")
+        },
+    );
+
+    for row in workspaces {
+        let workspace_id: Uuid = match row.try_get("workspace_id") {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+
+        let msg = agent_bestiary_memory::WorkspaceMessage {
+            message_id: Uuid::new_v4(),
+            workspace_id,
+            sender_type: "system".to_string(),
+            sender_id: "system".to_string(),
+            sender_name: Some("System".to_string()),
+            content: content.clone(),
+            message_type: "system_event".to_string(),
+            metadata: body.clone(),
+            created_at: chrono::Utc::now(),
+        };
+
+        let _ = state.memory_store.store_workspace_message(&msg).await;
+
+        // In-process + cross-replica broadcast — matches the pattern used by
+        // every other system_event emitter (see workspace::messages::broadcast_message).
+        let msg_json = json!({
+            "message_id": msg.message_id,
+            "sender_type": msg.sender_type,
+            "sender_id": msg.sender_id,
+            "sender_name": msg.sender_name,
+            "content": msg.content,
+            "message_type": msg.message_type,
+            "metadata": msg.metadata,
+            "created_at": msg.created_at.to_rfc3339(),
+        });
+        let _ = state.ws_broadcast.send(crate::WorkspaceEvent {
+            workspace_id,
+            message: msg_json.clone(),
+        });
+        let pool = state.db.clone();
+        let channel = format!("ws_{}", workspace_id.as_simple());
+        let payload = serde_json::to_string(&msg_json).unwrap_or_default();
+        tokio::spawn(async move {
+            let _ = sqlx::query("SELECT pg_notify($1, $2)")
+                .bind(&channel)
+                .bind(&payload)
+                .execute(&pool)
+                .await;
+        });
+    }
 }
 
 // ─── Agent Version History ─────────────────────────────────────────
@@ -1293,14 +1526,15 @@ pub async fn restore_agent_version_handler(
         return Err((StatusCode::FORBIDDEN, "Not the owner".to_string()));
     }
 
-    // Snapshot current state before restoring
-    if let Err(e) = state
+    // Capture pre-restore version number for the activity-feed event (Doc 12 §
+    // Capability 3), same shape as update_agent_handler.
+    let from_version_number = state
         .memory_store
-        .create_agent_version(db_agent.agent_id, &user_id)
+        .list_agent_versions(db_agent.agent_id)
         .await
-    {
-        eprintln!("Warning: failed to snapshot before restore: {}", e);
-    }
+        .ok()
+        .and_then(|vs| vs.first().map(|v| v.version_number))
+        .unwrap_or(0);
 
     // Load the target version
     let version = state
@@ -1327,9 +1561,43 @@ pub async fn restore_agent_version_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Snapshot *after* the restore so MAX(version_number) points at the
+    // current effective state (Doc 12 § Capability 1 ordering invariant).
+    let new_version = state
+        .memory_store
+        .create_agent_version(db_agent.agent_id, &user_id)
+        .await
+        .ok();
+
+    if let Some(ref v) = new_version {
+        let to_version_id = v.version_id;
+        let to_version_number = v.version_number;
+        let agent_uuid = db_agent.agent_id;
+        let agent_name = db_agent.agent_name.clone();
+        let event_state = state.clone();
+        let changelog = format!("restored from v{}", version_num);
+        tokio::spawn(async move {
+            broadcast_agent_card_updated(
+                &event_state,
+                agent_uuid,
+                &agent_name,
+                from_version_number,
+                None,
+                to_version_number,
+                Some(to_version_id),
+                &["system_prompt", "model", "tags", "visibility"],
+                Some(&changelog),
+                "owner",
+            )
+            .await;
+        });
+    }
+
     Ok(Json(json!({
         "message": format!("Restored to version {}", version_num),
         "version_restored": version_num,
+        "version_number": new_version.as_ref().map(|v| v.version_number),
+        "version_id": new_version.as_ref().map(|v| v.version_id),
     })))
 }
 
@@ -1839,4 +2107,198 @@ pub async fn loop_health_handler(
             "status": if loop5_warm == 0 && !loop5.is_empty() { "amber" } else { "green" },
         },
     })))
+}
+
+// ─── GET /api/agents/:agent_id/calibration ─────────────────────────────
+//
+// Doc 12 § Capability 4 — version-partitioned calibration query.
+
+#[derive(Deserialize)]
+pub struct CalibrationQuery {
+    /// `version` (default) or `none`. When `none`, the endpoint returns a
+    /// single-partition response covering the full window.
+    #[serde(default)]
+    pub partition_by: Option<String>,
+    /// Time window in days for observations; defaults to 90.
+    #[serde(default)]
+    pub window_days: Option<i64>,
+    /// Optional workspace filter. When supplied, only observations whose
+    /// session belongs to the workspace are counted.
+    #[serde(default)]
+    pub workspace_id: Option<Uuid>,
+}
+
+/// Per-version row returned by `agent_calibration_handler`.
+fn calibration_partition_json(
+    version_number: Option<i32>,
+    version_deployed_at: Option<chrono::DateTime<chrono::Utc>>,
+    n_observations: i64,
+) -> Value {
+    json!({
+        "version_number": version_number,
+        "version_deployed_at": version_deployed_at.map(|t| t.to_rfc3339()),
+        "n_observations": n_observations,
+        // Brier scoring is intentionally NULL in v1: the existing
+        // `fermi_forecasts` table doesn't yet carry version stamps on
+        // `agents_used`, so a per-partition Brier mean would be spurious.
+        // The endpoint shape leaves the field present so consumers can light
+        // it up later without restructuring their callers.
+        "n_resolved": 0,
+        "brier_mean": Value::Null,
+    })
+}
+
+pub async fn agent_calibration_handler(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(q): Query<CalibrationQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let agent_uuid = db_agent.agent_id;
+
+    let partition_by = q.partition_by.as_deref().unwrap_or("version");
+    let window_days = q.window_days.unwrap_or(90).max(1);
+
+    // Doc 12 § Capability 1 — query `sosa_observations` by the agent slug we
+    // wrote into `produced_by_agent_id`. We also accept the canonical UUID
+    // form for clients that aren't aware of the slug, mirroring the resolver
+    // used in `ingest_observations_handler`.
+    let cutoff_ms = (chrono::Utc::now()
+        - chrono::Duration::days(window_days))
+    .timestamp_millis();
+
+    // Counts per version. We left-join `agent_versions` so partitions for
+    // versions that have already been pruned (or that pre-date Doc 12's
+    // stamping) still surface with a NULL deployed_at.
+    let rows = sqlx::query(
+        "SELECT o.produced_by_version_number AS version_number,
+                v.created_at                 AS version_deployed_at,
+                COUNT(*)::BIGINT             AS n_observations
+         FROM sosa_observations o
+         LEFT JOIN agent_versions v
+           ON v.agent_id = $1
+          AND v.version_number = o.produced_by_version_number
+         WHERE (o.produced_by_agent_id = $2 OR o.produced_by_agent_id = $3)
+           AND o.phenomenon_time >= $4
+           AND ($5::uuid IS NULL OR o.session_id IN (
+                 SELECT session_id FROM observation_sessions WHERE platform_id IN (
+                   SELECT platform_id FROM sosa_platforms WHERE owner_id IN (
+                     SELECT user_id FROM workspaces WHERE workspace_id = $5))))
+         GROUP BY o.produced_by_version_number, v.created_at
+         ORDER BY o.produced_by_version_number ASC NULLS LAST",
+    )
+    .bind(agent_uuid)
+    .bind(&db_agent.agent_name)
+    .bind(agent_uuid.to_string())
+    .bind(cutoff_ms)
+    .bind(q.workspace_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Query failed: {}", e)))?;
+
+    let partitions: Vec<Value> = if partition_by == "none" {
+        // Sum across versions — useful for clients that just want a count.
+        let total: i64 = rows.iter().map(|r| r.try_get::<i64, _>("n_observations").unwrap_or(0)).sum();
+        vec![calibration_partition_json(None, None, total)]
+    } else {
+        rows.iter()
+            .map(|r| {
+                let vn: Option<i32> = r.try_get("version_number").ok();
+                let vt: Option<chrono::DateTime<chrono::Utc>> = r.try_get("version_deployed_at").ok();
+                let n: i64 = r.try_get("n_observations").unwrap_or(0);
+                calibration_partition_json(vn, vt, n)
+            })
+            .collect()
+    };
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "window_days": window_days,
+        "partition_by": partition_by,
+        "partitions": partitions,
+        // Honest v1 disclosure (Doc 12 § Capability 4). Consumers can read
+        // `partitions` for version-stamped observation counts now; Brier
+        // scoring per version requires a downstream change to record
+        // `agent_version_id` in `fermi_forecasts.agents_used` entries.
+        "brier_status": "unstamped",
+        "brier_note": "Per-version Brier requires version-stamped forecasts in fermi_forecasts.agents_used; v1 returns observation counts only.",
+    })))
+}
+
+
+// ─── Tests ─────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Doc 12 § Capability 3 — `collect_changed_fields` must surface every
+    /// field the PUT body sets, so the activity-feed event can render
+    /// "system_prompt and model_ladder changed" without diffing.
+    #[test]
+    fn collect_changed_fields_lists_every_set_field() {
+        let updates = AgentUpdate {
+            system_prompt: Some("new prompt".to_string()),
+            model_ladder: Some(json!([{"tier": "premium"}])),
+            ..Default::default()
+        };
+        let fields = collect_changed_fields(&updates);
+        assert!(fields.contains(&"system_prompt"));
+        assert!(fields.contains(&"model_ladder"));
+        assert_eq!(fields.len(), 2);
+    }
+
+    /// Empty update — used by clients that PUT with no body to bump a
+    /// version manually. Field list is empty; the activity event still
+    /// renders with `(no field set)` per the broadcast formatting.
+    #[test]
+    fn collect_changed_fields_is_empty_when_no_fields_set() {
+        let updates = AgentUpdate::default();
+        let fields = collect_changed_fields(&updates);
+        assert!(fields.is_empty());
+    }
+
+    /// Verify every field on AgentUpdate has a matching arm in
+    /// `collect_changed_fields`. If a new field is added to the struct
+    /// and a maintainer forgets to wire it here, the agent_card.updated
+    /// event silently loses signal. This test fires on every full-set
+    /// AgentUpdate to keep the two in sync.
+    #[test]
+    fn collect_changed_fields_covers_every_agent_update_field() {
+        let updates = AgentUpdate {
+            description: Some("d".into()),
+            system_prompt: Some("s".into()),
+            visibility: Some("v".into()),
+            tags: Some(vec!["t".into()]),
+            model: Some("m".into()),
+            temperature: Some(0.1),
+            education_budget_credits: Some(1),
+            display_alias: Some("a".into()),
+            status: Some("s".into()),
+            fork_pricing: Some(json!({})),
+            accepts: Some(vec!["x".into()]),
+            produces: Some(vec!["y".into()]),
+            workflow_template: Some(json!({})),
+            prompt_template: Some("p".into()),
+            requires_secrets: Some(json!([])),
+            llm_provider: Some("anthropic".into()),
+            model_ladder: Some(json!([])),
+            min_tier: Some("free".into()),
+            capability_gates: Some(json!({})),
+            model_params: Some(json!({})),
+            valence: Some(json!({})),
+            output_contract: Some(json!({})),
+            version: Some("1.0.0".into()),
+        };
+        let fields = collect_changed_fields(&updates);
+        // 23 fields on AgentUpdate today — if the count drifts here,
+        // either a field was added (good — wire it up above) or a
+        // maintainer wired one twice (bad — dedupe).
+        assert_eq!(
+            fields.len(),
+            23,
+            "AgentUpdate has fields that collect_changed_fields doesn't cover: got {:?}",
+            fields
+        );
+    }
 }

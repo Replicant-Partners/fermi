@@ -541,6 +541,8 @@ async fn run_migrations(db: &PgPool) {
         // Originally numbered 124; renumbered to 127 after the topology Phase-2
         // observability migration claimed slot 124 in a parallel session.
         "migrations/127_xaman_sessions_app_design.sql",
+        // Doc 12 § Capability 1 — agent version stamp on sosa_observations.
+        "migrations/128_sosa_observations_produced_by.sql",
     ];
 
     for file in &migration_files {
@@ -980,6 +982,12 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/versions/:version_num",
             get(handlers::agents::get_agent_version_handler),
+        )
+        // Doc 12 § Capability 4 — version-partitioned calibration query.
+        // Public read; results only expose observation counts, not raw values.
+        .route(
+            "/api/agents/:agent_id/calibration",
+            get(handlers::agents::agent_calibration_handler),
         )
         .route(
             "/api/agents/:agent_id/ontology",

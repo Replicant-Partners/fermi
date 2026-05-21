@@ -694,6 +694,50 @@ impl MemoryStore {
             .collect())
     }
 
+    /// Get the *current* effective version of an agent — i.e. the row in
+    /// `agent_versions` with `MAX(version_number)`.
+    ///
+    /// Doc 12 § Capability 1 invariant: callers that update agents (via
+    /// `update_agent_handler`, `restore_agent_version_handler`, future
+    /// dreaming / strategist mutators) must call `create_agent_version`
+    /// *after* `update_agent` so this query returns the post-update state.
+    /// `update_agent_handler` already does this.
+    ///
+    /// Returns `Ok(None)` if the agent has no version history yet (e.g.
+    /// the version log was created after the agent itself); callers should
+    /// treat that as "version unknown" and pass NULL to `produced_by_*`
+    /// columns rather than fabricating a number.
+    pub async fn get_current_agent_version(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<Option<AgentVersion>> {
+        let row = sqlx::query(
+            "SELECT version_id, agent_id, version_number, description, system_prompt, tags, model, temperature, visibility, display_alias, changed_by, created_at
+             FROM agent_versions
+             WHERE agent_id = $1
+             ORDER BY version_number DESC
+             LIMIT 1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| AgentVersion {
+            version_id: row.try_get("version_id").unwrap_or_default(),
+            agent_id: row.try_get("agent_id").unwrap_or_default(),
+            version_number: row.try_get("version_number").unwrap_or(0),
+            description: row.try_get("description").ok(),
+            system_prompt: row.try_get("system_prompt").ok(),
+            tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+            model: row.try_get("model").ok(),
+            temperature: row.try_get("temperature").ok(),
+            visibility: row.try_get("visibility").ok(),
+            display_alias: row.try_get("display_alias").ok(),
+            changed_by: row.try_get("changed_by").ok(),
+            created_at: row.try_get("created_at").unwrap_or_default(),
+        }))
+    }
+
     /// Get a specific version by number
     pub async fn get_agent_version(
         &self,

@@ -377,6 +377,7 @@ impl AgentExecutor for LLMExecutor {
                 provider: Some("anthropic".to_string()),
                 stop_reason,
                 failure_reason,
+                ..Default::default()
             },
             tool_invocations: vec![],
             loop_iterations: 1,

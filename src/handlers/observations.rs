@@ -66,6 +66,38 @@ pub struct SosaObservation {
     pub phenomenon_time: i64,
     pub result_time: Option<i64>,
     pub extra: Option<serde_json::Value>,
+    /// Doc 12 § Capability 1 — optional provenance: which agent (and which
+    /// version of that agent) produced this observation. The server resolves
+    /// the current version if only `agent_id` is supplied. NULL when the
+    /// observation is typed directly by a user / streamed from a sensor.
+    #[serde(default)]
+    pub produced_by: Option<ProducedByAgent>,
+}
+
+/// Doc 12 § Capability 1 — agent provenance attached to an observation.
+///
+/// Two shapes the platform accepts:
+///   - `{ "agent_id": "<slug-or-uuid>" }` — server resolves current version.
+///   - `{ "agent_id": "...", "version_id": "...", "version_number": N }` —
+///     client knows the version explicitly and passes it through verbatim.
+///
+/// Apps that don't track versions client-side (the dominant pattern; kask
+/// does this) should pass only `agent_id`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProducedByAgent {
+    pub agent_id: String,
+    #[serde(default)]
+    pub version_id: Option<Uuid>,
+    #[serde(default)]
+    pub version_number: Option<i32>,
+}
+
+/// Resolved provenance the INSERT path actually binds against the row.
+#[derive(Debug, Clone, Default)]
+struct ResolvedProducedBy {
+    agent_id: Option<String>,
+    version_id: Option<Uuid>,
+    version_number: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -76,6 +108,11 @@ pub struct ObservationQuery {
     pub to_ms: Option<i64>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    /// Doc 12 § Capability 1 — filter by agent provenance. Both accept the
+    /// agent's slug (the human-readable name) verbatim; the produced_by_agent_id
+    /// column stores whatever the writer passed in.
+    pub produced_by_agent_id: Option<String>,
+    pub produced_by_version_number: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -391,13 +428,93 @@ pub async fn ingest_observations_handler(
     )
     .await?;
 
+    // Doc 12 § Capability 1 — resolve agent provenance per observation.
+    //
+    // Multiple observations in the same batch frequently share an agent, so
+    // cache resolutions by agent_id to avoid hammering `agent_versions` once
+    // per row. Resolution is best-effort: if the agent isn't found or the
+    // version lookup fails, the columns are left NULL and the batch still
+    // ingests successfully — this is observability, not auth.
+    let mut resolved: Vec<ResolvedProducedBy> = Vec::with_capacity(batch.observations.len());
+    let mut agent_cache: std::collections::HashMap<String, ResolvedProducedBy> =
+        std::collections::HashMap::new();
+
+    for obs in &batch.observations {
+        match &obs.produced_by {
+            None => resolved.push(ResolvedProducedBy::default()),
+            Some(pb) => {
+                // Cache key is (agent_id, supplied_version_number). When the
+                // client provides an explicit version we use it verbatim and
+                // never resolve; otherwise we cache the server-resolved
+                // current version per agent.
+                let cache_key = format!("{}|{:?}", pb.agent_id, pb.version_number);
+                if let Some(existing) = agent_cache.get(&cache_key) {
+                    resolved.push(existing.clone());
+                    continue;
+                }
+
+                // Resolve the agent_id (which may be the slug or UUID) into
+                // the canonical agent_id UUID. Best-effort: NULL out the
+                // provenance if lookup fails.
+                let agent_uuid_opt: Option<Uuid> = match sqlx::query(
+                    "SELECT agent_id FROM agents WHERE LOWER(name) = LOWER($1) \
+                     OR agent_id::text = $1 LIMIT 1",
+                )
+                .bind(&pb.agent_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                {
+                    Some(row) => row.try_get("agent_id").ok(),
+                    None => None,
+                };
+
+                let resolved_one = match agent_uuid_opt {
+                    None => ResolvedProducedBy {
+                        agent_id: Some(pb.agent_id.clone()),
+                        version_id: pb.version_id,
+                        version_number: pb.version_number,
+                    },
+                    Some(agent_uuid) => {
+                        // If caller supplied an explicit version_id/number,
+                        // trust it; otherwise resolve the current version.
+                        if pb.version_id.is_some() || pb.version_number.is_some() {
+                            ResolvedProducedBy {
+                                agent_id: Some(pb.agent_id.clone()),
+                                version_id: pb.version_id,
+                                version_number: pb.version_number,
+                            }
+                        } else {
+                            let cur = state
+                                .memory_store
+                                .get_current_agent_version(agent_uuid)
+                                .await
+                                .ok()
+                                .flatten();
+                            ResolvedProducedBy {
+                                agent_id: Some(pb.agent_id.clone()),
+                                version_id: cur.as_ref().map(|v| v.version_id),
+                                version_number: cur.as_ref().map(|v| v.version_number),
+                            }
+                        }
+                    }
+                };
+
+                agent_cache.insert(cache_key, resolved_one.clone());
+                resolved.push(resolved_one);
+            }
+        }
+    }
+
     // Build multi-row INSERT
     let obs_count = batch.observations.len();
-    let col_count = 11u32;
+    let col_count = 14u32; // Doc 12 § Capability 1: +3 produced_by columns.
     let mut query = String::from(
         "INSERT INTO sosa_observations (observation_id, session_id, sensor_id, platform_id, \
          observable_property, feature_of_interest, result_value, result_unit, \
-         phenomenon_time, result_time, extra) VALUES ",
+         phenomenon_time, result_time, extra, \
+         produced_by_agent_id, produced_by_version_id, produced_by_version_number) VALUES ",
     );
 
     let mut param_idx = 1u32;
@@ -427,6 +544,7 @@ pub async fn ingest_observations_handler(
 
     for (i, obs) in batch.observations.iter().enumerate() {
         let (ref oid, ref extra) = derived[i];
+        let prov = &resolved[i];
         q = q
             .bind(*oid)
             .bind(session_id)
@@ -438,7 +556,10 @@ pub async fn ingest_observations_handler(
             .bind(&obs.result_unit)
             .bind(obs.phenomenon_time)
             .bind(obs.result_time)
-            .bind(extra);
+            .bind(extra)
+            .bind(&prov.agent_id)
+            .bind(prov.version_id)
+            .bind(prov.version_number);
     }
 
     q.execute(&state.db).await.map_err(|e| {
@@ -576,10 +697,12 @@ pub async fn query_observations_handler(
     let limit = q.limit.unwrap_or(1000).min(10_000);
     let offset = q.offset.unwrap_or(0);
 
-    // Build dynamic query
+    // Build dynamic query — note the three new produced_by_* columns from
+    // Doc 12 § Capability 1, always returned.
     let mut sql = String::from(
         "SELECT observation_id, sensor_id, observable_property, feature_of_interest,
-                result_value, result_unit, phenomenon_time, result_time, procedure, extra
+                result_value, result_unit, phenomenon_time, result_time, procedure, extra,
+                produced_by_agent_id, produced_by_version_id, produced_by_version_number
          FROM sosa_observations WHERE session_id = $1",
     );
     let mut param_idx = 2u32;
@@ -599,6 +722,14 @@ pub async fn query_observations_handler(
     }
     if q.to_ms.is_some() {
         conditions.push(format!(" AND phenomenon_time <= ${}", param_idx));
+        param_idx += 1;
+    }
+    if q.produced_by_agent_id.is_some() {
+        conditions.push(format!(" AND produced_by_agent_id = ${}", param_idx));
+        param_idx += 1;
+    }
+    if q.produced_by_version_number.is_some() {
+        conditions.push(format!(" AND produced_by_version_number = ${}", param_idx));
         param_idx += 1;
     }
 
@@ -624,6 +755,12 @@ pub async fn query_observations_handler(
     if let Some(to) = q.to_ms {
         query = query.bind(to);
     }
+    if let Some(ref pa) = q.produced_by_agent_id {
+        query = query.bind(pa);
+    }
+    if let Some(pv) = q.produced_by_version_number {
+        query = query.bind(pv);
+    }
     query = query.bind(limit).bind(offset);
 
     let rows = query
@@ -645,6 +782,10 @@ pub async fn query_observations_handler(
                 "result_time": r.get::<Option<i64>, _>("result_time"),
                 "procedure": r.get::<Option<String>, _>("procedure"),
                 "extra": r.get::<serde_json::Value, _>("extra"),
+                // Doc 12 § Capability 1
+                "produced_by_agent_id": r.get::<Option<String>, _>("produced_by_agent_id"),
+                "produced_by_version_id": r.get::<Option<Uuid>, _>("produced_by_version_id"),
+                "produced_by_version_number": r.get::<Option<i32>, _>("produced_by_version_number"),
             })
         })
         .collect();

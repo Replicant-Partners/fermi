@@ -567,12 +567,57 @@ pub async fn execute_simops_write_observation(
 
     let observation_id = Uuid::new_v4();
 
+    // Doc 12 § Capability 1 — resolve the current agent's identity and
+    // version stamp them onto the row. ToolContext.current_agent_id is the
+    // canonical UUID; we look up the human-readable name (for the
+    // denormalised string column) and the latest version row.
+    //
+    // Best-effort: if the agent_id is missing or the lookups fail, the
+    // columns are left NULL and the write still succeeds. Observation
+    // provenance is observability, not correctness.
+    let (produced_by_agent_id, produced_by_version_id, produced_by_version_number): (
+        Option<String>,
+        Option<Uuid>,
+        Option<i32>,
+    ) = match ctx.current_agent_id {
+        Some(agent_uuid) => {
+            let name: Option<String> = sqlx::query(
+                "SELECT name FROM agents WHERE agent_id = $1 LIMIT 1",
+            )
+            .bind(agent_uuid)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|row| row.try_get("name").ok());
+
+            // Resolve current version directly (no MemoryStore handle in this
+            // tool context). Mirrors the body of
+            // MemoryStore::get_current_agent_version.
+            let (vid, vnum): (Option<Uuid>, Option<i32>) = sqlx::query(
+                "SELECT version_id, version_number FROM agent_versions \
+                 WHERE agent_id = $1 ORDER BY version_number DESC LIMIT 1",
+            )
+            .bind(agent_uuid)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|row| (row.try_get("version_id").ok(), row.try_get("version_number").ok()))
+            .unwrap_or((None, None));
+
+            (name, vid, vnum)
+        }
+        None => (None, None, None),
+    };
+
     sqlx::query(
         "INSERT INTO sosa_observations
          (observation_id, session_id, platform_id, observable_property,
           feature_of_interest, result_value, result_unit,
-          phenomenon_time, result_time, extra)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)",
+          phenomenon_time, result_time, extra,
+          produced_by_agent_id, produced_by_version_id, produced_by_version_number)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12)",
     )
     .bind(observation_id)
     .bind(session_id)
@@ -583,6 +628,9 @@ pub async fn execute_simops_write_observation(
     .bind(result_unit)
     .bind(phenomenon_time)
     .bind(&extra)
+    .bind(&produced_by_agent_id)
+    .bind(produced_by_version_id)
+    .bind(produced_by_version_number)
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to write observation: {e}"))?;
@@ -594,6 +642,9 @@ pub async fn execute_simops_write_observation(
         "result_value": result_value,
         "result_unit": result_unit,
         "phenomenon_time": phenomenon_time,
+        "produced_by_agent_id": produced_by_agent_id,
+        "produced_by_version_id": produced_by_version_id,
+        "produced_by_version_number": produced_by_version_number,
         "status": "written",
     });
     serde_json::to_string_pretty(&result).map_err(|e| e.to_string())

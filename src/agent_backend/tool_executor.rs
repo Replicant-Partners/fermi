@@ -379,6 +379,7 @@ impl ToolAwareExecutor {
                 provider: Some("anthropic".to_string()),
                 stop_reason,
                 failure_reason,
+                ..Default::default()
             },
             tool_invocations,
             loop_iterations: iteration,
@@ -623,6 +624,7 @@ impl ToolAwareExecutor {
                 provider: Some(provider.clone()),
                 stop_reason: last_finish_reason,
                 failure_reason,
+                ..Default::default()
             },
             tool_invocations,
             loop_iterations: iteration,

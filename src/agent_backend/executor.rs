@@ -76,6 +76,13 @@ pub struct AgentMetadata {
     /// (e.g. empty content after consuming tokens, tool-loop cap-out without
     /// final text), a short machine-readable reason string. None = no failure.
     pub failure_reason: Option<String>,
+    /// Doc 12 § Capability 2 — agent version at execution time. Populated
+    /// by the caller (workspace message handler, execution endpoint) after
+    /// the executor returns, by resolving `MAX(version_number)` from
+    /// `agent_versions` for this agent. Executors themselves leave these
+    /// as `None`.
+    pub agent_version_id: Option<uuid::Uuid>,
+    pub agent_version_number: Option<i32>,
 }
 
 /// Execution error
@@ -226,8 +233,8 @@ mod tests {
         assert_eq!(output.confidence, 0.75);
     }
 
-    /// Pins the new optional fields (issue #3) so older constructors that
-    /// don't set them keep compiling via `..Default::default()`.
+    /// Pins the optional fields (issue #3 + issue #5) so older constructors
+    /// that don't set them keep compiling via `..Default::default()`.
     #[test]
     fn agent_metadata_default_has_none_observability_fields() {
         let m = AgentMetadata::default();
@@ -237,5 +244,8 @@ mod tests {
         assert!(m.provider.is_none());
         assert!(m.stop_reason.is_none());
         assert!(m.failure_reason.is_none());
+        // Doc 12 § Capability 2 — version stamp fields default to None.
+        assert!(m.agent_version_id.is_none());
+        assert!(m.agent_version_number.is_none());
     }
 }

@@ -527,9 +527,32 @@ pub async fn post_workspace_message_handler(
                             }
                         }
 
-                        Ok::<_, (StatusCode, String)>(output)
+                        // Hand the agent UUID back out to the surrounding
+                        // scope so the result-message construction can resolve
+                        // the current version (Doc 12 § Capability 2).
+                        Ok::<_, (StatusCode, String)>((output, db_agent.agent_id))
                     }
                     .await;
+
+                    // Doc 12 § Capability 2 — agent version stamp on the
+                    // execution_result. Resolved once, after the executor
+                    // returns, by looking up MAX(version_number) for this
+                    // agent. Best-effort: if the lookup fails or the agent
+                    // has no version history, the keys are present but null.
+                    let agent_uuid_opt: Option<uuid::Uuid> =
+                        result.as_ref().ok().map(|(_, id)| *id);
+                    let (av_id, av_num): (Option<uuid::Uuid>, Option<i32>) = match agent_uuid_opt
+                    {
+                        Some(agent_uuid) => state2
+                            .memory_store
+                            .get_current_agent_version(agent_uuid)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|v| (Some(v.version_id), Some(v.version_number)))
+                            .unwrap_or((None, None)),
+                        None => (None, None),
+                    };
 
                     // Post result message. See `format_execution_result_content`
                     // below for content policy (issue #2 / Doc 09).
@@ -541,8 +564,9 @@ pub async fn post_workspace_message_handler(
                     //   - failure_reason  — set when the executor decided the run
                     //                       did not produce real output (issue #3)
                     //   - loop_iterations — tool-loop iteration count
+                    //   - agent_version_{id,number} — Doc 12 § Capability 2
                     let (content, metadata, msg_type) = match result {
-                        Ok(output) => {
+                        Ok((output, _agent_uuid)) => {
                             let raw_response = output
                                 .metadata
                                 .reasoning
@@ -574,12 +598,20 @@ pub async fn post_workspace_message_handler(
                                 "provider": output.metadata.provider,
                                 "failure_reason": output.metadata.failure_reason,
                                 "loop_iterations": output.loop_iterations,
+                                // Agent version (issue #5 / Doc 12)
+                                "agent_version_id": av_id,
+                                "agent_version_number": av_num,
                             });
                             (content, meta, "execution_result".to_string())
                         }
                         Err((_status, err_msg)) => (
                             format!("Execution failed: {}", err_msg),
-                            json!({"agent_name": agent_name2, "error": true}),
+                            json!({
+                                "agent_name": agent_name2,
+                                "error": true,
+                                "agent_version_id": av_id,
+                                "agent_version_number": av_num,
+                            }),
                             "execution_result".to_string(),
                         ),
                     };
