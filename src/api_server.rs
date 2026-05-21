@@ -983,12 +983,11 @@ async fn main() {
             "/api/agents/:agent_id/versions/:version_num",
             get(handlers::agents::get_agent_version_handler),
         )
-        // Doc 12 § Capability 4 — version-partitioned calibration query.
-        // Public read; results only expose observation counts, not raw values.
-        .route(
-            "/api/agents/:agent_id/calibration",
-            get(handlers::agents::agent_calibration_handler),
-        )
+        // Doc 12 § Capability 4 — version partitioning is exposed as an
+        // optional `?partition_by=version` query on the pre-existing
+        // /api/agents/:id/calibration route declared above. No second
+        // route needed; routing on the same prefix with two different
+        // path-param names (`:id` vs `:agent_id`) is rejected by axum.
         .route(
             "/api/agents/:agent_id/ontology",
             get(handlers::ontology::get_ontology),

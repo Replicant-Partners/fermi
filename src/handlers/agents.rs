@@ -1707,6 +1707,7 @@ pub async fn get_agent_calibration_handler(
     State(state): State<AppState>,
     _principal: AuthPrincipal,
     Path(agent_id): Path<String>,
+    Query(q): Query<CalibrationQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let aid = db_agent.agent_id;
@@ -1833,6 +1834,75 @@ pub async fn get_agent_calibration_handler(
     // Confidence in the score: saturates at n=20 resolved forecasts
     let confidence = ((n_resolved.max(n_eval) as f64) / 20.0).min(1.0);
 
+    // ── Doc 12 § Capability 4 — optional version partitioning ────────────────
+    //
+    // When the caller asks for `?partition_by=version`, attach per-version
+    // observation counts from `sosa_observations.produced_by_version_*`
+    // (stamped by Doc 12 § Capability 1). Honest about the limit: per-version
+    // Brier scores stay NULL because `fermi_forecasts.agents_used` doesn't
+    // carry `agent_version_id` yet — wiring that is the prerequisite for
+    // version-partitioned Brier and is documented in the response.
+    let partition_by = q.partition_by.as_deref().unwrap_or("none");
+    let window_days = q.window_days.unwrap_or(90).max(1);
+
+    let partitions_block: Option<Value> = if partition_by == "version" {
+        let cutoff_ms = (chrono::Utc::now()
+            - chrono::Duration::days(window_days))
+        .timestamp_millis();
+
+        let part_rows = sqlx::query(
+            "SELECT o.produced_by_version_number AS version_number,
+                    v.created_at                 AS version_deployed_at,
+                    COUNT(*)::BIGINT             AS n_observations
+             FROM sosa_observations o
+             LEFT JOIN agent_versions v
+               ON v.agent_id = $1
+              AND v.version_number = o.produced_by_version_number
+             WHERE (o.produced_by_agent_id = $2 OR o.produced_by_agent_id = $3)
+               AND o.phenomenon_time >= $4
+               AND ($5::uuid IS NULL OR o.session_id IN (
+                     SELECT session_id FROM observation_sessions WHERE platform_id IN (
+                       SELECT platform_id FROM sosa_platforms WHERE owner_id IN (
+                         SELECT user_id FROM workspaces WHERE workspace_id = $5))))
+             GROUP BY o.produced_by_version_number, v.created_at
+             ORDER BY o.produced_by_version_number ASC NULLS LAST",
+        )
+        .bind(aid)
+        .bind(&db_agent.agent_name)
+        .bind(aid.to_string())
+        .bind(cutoff_ms)
+        .bind(q.workspace_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Query failed: {}", e)))?;
+
+        let partitions: Vec<Value> = part_rows
+            .iter()
+            .map(|r| {
+                let vn: Option<i32> = r.try_get("version_number").ok();
+                let vt: Option<chrono::DateTime<chrono::Utc>> =
+                    r.try_get("version_deployed_at").ok();
+                let n: i64 = r.try_get("n_observations").unwrap_or(0);
+                calibration_partition_json(vn, vt, n)
+            })
+            .collect();
+
+        Some(json!({
+            "partition_by": "version",
+            "window_days": window_days,
+            "partitions": partitions,
+            // Honest v1 disclosure (Doc 12 § Capability 4). Consumers can
+            // read `partitions` for version-stamped observation counts now;
+            // per-version Brier requires `agent_version_id` to also be
+            // recorded in `fermi_forecasts.agents_used` entries — a
+            // downstream change tracked separately from this endpoint.
+            "brier_status": "unstamped",
+            "brier_note": "Per-version Brier requires version-stamped forecasts in fermi_forecasts.agents_used; current rows surface observation counts only.",
+        }))
+    } else {
+        None
+    };
+
     Ok(Json(json!({
         "agent_id": aid,
         "agent_name": db_agent.agent_name,
@@ -1850,6 +1920,10 @@ pub async fn get_agent_calibration_handler(
 
         // Per-domain decomposition (requires forecast tags to match agent tags)
         "domain_calibration": domain_calibration,
+
+        // Per-version decomposition (Doc 12 § Capability 4). Present only when
+        // the caller passed `?partition_by=version`.
+        "version_partition": partitions_block,
 
         // Interpretation
         "interpretation": match calibration_score {
@@ -2109,14 +2183,17 @@ pub async fn loop_health_handler(
     })))
 }
 
-// ─── GET /api/agents/:agent_id/calibration ─────────────────────────────
+// ─── Doc 12 § Capability 4 — calibration query types ────────────────────────
 //
-// Doc 12 § Capability 4 — version-partitioned calibration query.
+// Used by `get_agent_calibration_handler` above. When the caller passes
+// `?partition_by=version`, the handler attaches a `version_partition` block
+// to its response carrying per-version observation counts from
+// `sosa_observations.produced_by_version_*` (stamped by Doc 12 § Capability 1).
 
 #[derive(Deserialize)]
 pub struct CalibrationQuery {
-    /// `version` (default) or `none`. When `none`, the endpoint returns a
-    /// single-partition response covering the full window.
+    /// `version` enables Doc 12 § Capability 4 partitioning. Any other value
+    /// (or the default) keeps the legacy single-aggregate response shape.
     #[serde(default)]
     pub partition_by: Option<String>,
     /// Time window in days for observations; defaults to 90.
@@ -2128,7 +2205,7 @@ pub struct CalibrationQuery {
     pub workspace_id: Option<Uuid>,
 }
 
-/// Per-version row returned by `agent_calibration_handler`.
+/// Per-version row in the `version_partition.partitions` array.
 fn calibration_partition_json(
     version_number: Option<i32>,
     version_deployed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -2138,91 +2215,13 @@ fn calibration_partition_json(
         "version_number": version_number,
         "version_deployed_at": version_deployed_at.map(|t| t.to_rfc3339()),
         "n_observations": n_observations,
-        // Brier scoring is intentionally NULL in v1: the existing
-        // `fermi_forecasts` table doesn't yet carry version stamps on
-        // `agents_used`, so a per-partition Brier mean would be spurious.
-        // The endpoint shape leaves the field present so consumers can light
-        // it up later without restructuring their callers.
+        // Per-version Brier is intentionally NULL: the existing
+        // `fermi_forecasts.agents_used` doesn't yet carry version stamps,
+        // so a per-partition Brier mean would be spurious. The field stays
+        // present so consumers can light it up later without restructuring.
         "n_resolved": 0,
         "brier_mean": Value::Null,
     })
-}
-
-pub async fn agent_calibration_handler(
-    State(state): State<AppState>,
-    Path(agent_id): Path<String>,
-    Query(q): Query<CalibrationQuery>,
-) -> Result<Json<Value>, (StatusCode, String)> {
-    let db_agent = resolve_agent(&state, &agent_id).await?;
-    let agent_uuid = db_agent.agent_id;
-
-    let partition_by = q.partition_by.as_deref().unwrap_or("version");
-    let window_days = q.window_days.unwrap_or(90).max(1);
-
-    // Doc 12 § Capability 1 — query `sosa_observations` by the agent slug we
-    // wrote into `produced_by_agent_id`. We also accept the canonical UUID
-    // form for clients that aren't aware of the slug, mirroring the resolver
-    // used in `ingest_observations_handler`.
-    let cutoff_ms = (chrono::Utc::now()
-        - chrono::Duration::days(window_days))
-    .timestamp_millis();
-
-    // Counts per version. We left-join `agent_versions` so partitions for
-    // versions that have already been pruned (or that pre-date Doc 12's
-    // stamping) still surface with a NULL deployed_at.
-    let rows = sqlx::query(
-        "SELECT o.produced_by_version_number AS version_number,
-                v.created_at                 AS version_deployed_at,
-                COUNT(*)::BIGINT             AS n_observations
-         FROM sosa_observations o
-         LEFT JOIN agent_versions v
-           ON v.agent_id = $1
-          AND v.version_number = o.produced_by_version_number
-         WHERE (o.produced_by_agent_id = $2 OR o.produced_by_agent_id = $3)
-           AND o.phenomenon_time >= $4
-           AND ($5::uuid IS NULL OR o.session_id IN (
-                 SELECT session_id FROM observation_sessions WHERE platform_id IN (
-                   SELECT platform_id FROM sosa_platforms WHERE owner_id IN (
-                     SELECT user_id FROM workspaces WHERE workspace_id = $5))))
-         GROUP BY o.produced_by_version_number, v.created_at
-         ORDER BY o.produced_by_version_number ASC NULLS LAST",
-    )
-    .bind(agent_uuid)
-    .bind(&db_agent.agent_name)
-    .bind(agent_uuid.to_string())
-    .bind(cutoff_ms)
-    .bind(q.workspace_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Query failed: {}", e)))?;
-
-    let partitions: Vec<Value> = if partition_by == "none" {
-        // Sum across versions — useful for clients that just want a count.
-        let total: i64 = rows.iter().map(|r| r.try_get::<i64, _>("n_observations").unwrap_or(0)).sum();
-        vec![calibration_partition_json(None, None, total)]
-    } else {
-        rows.iter()
-            .map(|r| {
-                let vn: Option<i32> = r.try_get("version_number").ok();
-                let vt: Option<chrono::DateTime<chrono::Utc>> = r.try_get("version_deployed_at").ok();
-                let n: i64 = r.try_get("n_observations").unwrap_or(0);
-                calibration_partition_json(vn, vt, n)
-            })
-            .collect()
-    };
-
-    Ok(Json(json!({
-        "agent_id": agent_id,
-        "window_days": window_days,
-        "partition_by": partition_by,
-        "partitions": partitions,
-        // Honest v1 disclosure (Doc 12 § Capability 4). Consumers can read
-        // `partitions` for version-stamped observation counts now; Brier
-        // scoring per version requires a downstream change to record
-        // `agent_version_id` in `fermi_forecasts.agents_used` entries.
-        "brier_status": "unstamped",
-        "brier_note": "Per-version Brier requires version-stamped forecasts in fermi_forecasts.agents_used; v1 returns observation counts only.",
-    })))
 }
 
 
