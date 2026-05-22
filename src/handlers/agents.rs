@@ -554,6 +554,14 @@ pub async fn create_agent_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
 
+    // Slug validation — `agent_name` is URL-routed via
+    // /api/agents/:agent_id/... so it must satisfy the platform-wide
+    // snake_case rule. See `fermi::slug` for the full rule and why.
+    // Without this, an agent named `efra-ai/05-valuation` becomes
+    // unreachable at its own URL and breaks the @-mention parser
+    // downstream.
+    fermi::slug::validate_http("agent_name", &req.agent_name)?;
+
     let agent = Agent {
         agent_id: uuid::Uuid::new_v4(),
         agent_name: req.agent_name.clone(),
@@ -762,6 +770,11 @@ pub async fn import_agent_handler(
             "Missing agent_id or agent_name in card".to_string(),
         ))?
         .to_string();
+
+    // Same slug rule as `create_agent_handler` — an imported card whose
+    // identifier breaks URL routing (or `@`-mentions) is rejected at the
+    // door rather than landing in the DB and producing surprises later.
+    fermi::slug::validate_http("agent_name", &agent_name)?;
 
     let agent_type = card
         .get("agent_type")

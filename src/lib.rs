@@ -30,6 +30,11 @@ pub mod workflows;
 // auto-seed-from-filesystem path all share the same validation rules.)
 pub mod apps;
 
+// Shared slug validation for every publishable artifact (agents, apps,
+// workspaces, compositions, …). Re-exports the same rules App slugs
+// already use so the platform has a single mental model.
+pub mod slug;
+
 // Polymarket integration (prediction market data)
 pub mod polymarket;
 

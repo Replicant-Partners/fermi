@@ -35,6 +35,14 @@ pub async fn create_team_handler(
     principal: AuthPrincipal,
     Json(body): Json<CreateTeamRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    // Slug validation — the team/workspace `slug` feeds into the
+    // git-backed workspace repo path (`<base>/workspaces/<slug>`) AND
+    // surfaces in user-facing URLs. A slug like `foo/bar` would let a
+    // caller write to `<base>/workspaces/foo/bar` instead of a sibling
+    // of every other workspace, with all the path-traversal nastiness
+    // that implies. See `fermi::slug` for the full rule.
+    fermi::slug::validate_http("slug", &body.slug)?;
+
     let origin = body.origin.as_deref().unwrap_or("bestiary_workspace");
     let team = teams::create_team(
         &state.db,
