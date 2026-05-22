@@ -1168,24 +1168,62 @@
         };
 
         window.loadWorkspaces = async function () {
-          const origin =
-            document.getElementById("ws-origin-filter")?.value ?? "";
-          const url = origin
-            ? "/api/workspaces?origin=" + encodeURIComponent(origin)
-            : "/api/workspaces";
+          const sel = document.getElementById("ws-origin-filter");
+          const origin = sel?.value ?? "";
+          // ALWAYS fetch the full list and filter client-side. Fetching
+          // with ?origin=X on the API silently drops every workspace
+          // whose origin isn't in the dropdown's hard-coded enum (e.g.
+          // a workspace someone invited you to that was created via an
+          // App like `efrain_ai` or `kask_simops`). Client-side filter
+          // also lets us populate the dropdown dynamically below.
           try {
-            const res = await fetch(url);
+            const res = await fetch("/api/workspaces");
             if (!res.ok) return;
             const data = await res.json();
+            const all = data.workspaces || [];
+
+            // Populate the origin dropdown with the union of static
+            // options + every distinct origin actually present. Preserves
+            // the current selection across reloads when possible.
+            if (sel) {
+              const staticVals = new Set(["", "bestiary_workspace", "rabble_swarm"]);
+              const dynamicOrigins = Array.from(
+                new Set(all.map((w) => w.origin).filter((o) => o && !staticVals.has(o)))
+              ).sort();
+              const current = sel.value;
+              // Rebuild options once per load.
+              sel.innerHTML = "";
+              const addOpt = (value, label) => {
+                const o = document.createElement("option");
+                o.value = value;
+                o.textContent = label;
+                sel.appendChild(o);
+              };
+              addOpt("", "All (incl. shared)");
+              addOpt("bestiary_workspace", "My workspaces only");
+              addOpt("rabble_swarm", "Rabble swarms");
+              for (const o of dynamicOrigins) addOpt(o, o);
+              if (
+                Array.from(sel.options).some((o) => o.value === current)
+              ) {
+                sel.value = current;
+              }
+            }
+
+            const filtered = origin
+              ? all.filter((w) => w.origin === origin)
+              : all;
             const el = document.getElementById("workspaces-list");
-            document.getElementById("portfolio-compositions").textContent = (
-              data.workspaces || []
-            ).length;
-            if (!data.workspaces || data.workspaces.length === 0) {
+            document.getElementById("portfolio-compositions").textContent =
+              filtered.length;
+            if (filtered.length === 0) {
               el.innerHTML =
                 '<div class="empty-state">No compositions for the selected origin.</div>';
               return;
             }
+            // Re-bind `data.workspaces` to the filtered list so the
+            // existing rendering loop below picks it up unchanged.
+            data.workspaces = filtered;
             const hues = [200, 140, 30, 340, 270, 50, 170, 10];
             el.innerHTML =
               '<div class="tile-scroll"><div class="tile-grid">' +
