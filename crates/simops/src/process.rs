@@ -185,16 +185,30 @@ impl Stage {
     ///
     /// Trigger conditions (any-mismatch falls through to the energy bridge):
     ///   - input.unit == output.unit
-    ///   - neither resource carries an energy_density annotation
+    ///   - neither resource carries a meaningful energy_density
+    ///     (None **or** Some(0.0); see below)
     ///
     /// This is a strict subset of the cases where the energy bridge currently
     /// returns 0, so it cannot change the output of any process whose energy
     /// bridge worked previously. kWh→kWh stages also satisfy the trigger and
     /// produce identical results, so they're unaffected in practice.
+    ///
+    /// **`energy_density: 0` is treated identically to `None`** — both mean
+    /// "this resource has no embodied energy worth tracking", which is
+    /// exactly when the energy bridge should NOT be used. Without this,
+    /// any process whose Resources block was initialised with explicit
+    /// zeros (a very common pattern — water tanks, beverage pipelines,
+    /// food processing) silently collapses to 0 output because
+    /// `input_quantity × 0 (kWh/L) = 0 kWh`, then `× efficiency = 0`,
+    /// then `quantity_from_kwh(0) = 0`. The cascade chain breaks at the
+    /// first such stage and every downstream stage sees 0 input.
     fn use_mass_balance(&self) -> bool {
+        fn has_energy(d: Option<f64>) -> bool {
+            matches!(d, Some(v) if v > 0.0)
+        }
         self.input.unit == self.output.unit
-            && self.input.energy_density.is_none()
-            && self.output.energy_density.is_none()
+            && !has_energy(self.input.energy_density)
+            && !has_energy(self.output.energy_density)
     }
 
     /// Propagate a given input quantity forward through this stage.
@@ -410,6 +424,63 @@ mod tests {
         assert!(
             !stage.use_mass_balance(),
             "kg→L must fall through to the energy bridge regardless of densities"
+        );
+    }
+
+    /// Regression: `energy_density: Some(0.0)` must be treated as
+    /// "no embodied energy" (same as None), not as "use the energy
+    /// bridge with a zero multiplier". The latter silently collapses
+    /// the cascade — see kask kombucha workspace, every Resources
+    /// block was initialised with `energy_density: 0` for L→L
+    /// beverage stages and downstream stages saw 0 input.
+    #[test]
+    fn use_mass_balance_triggers_when_energy_density_is_zero() {
+        let stage = Stage {
+            id: "cold_steep".into(),
+            efficiency: 0.93,
+            carbon_intensity: 0.04,
+            input: Resource {
+                name: "water".into(),
+                unit: "L".into(),
+                energy_density: Some(0.0),
+                density_unit: None,
+            },
+            output: Resource {
+                name: "cold_steep_tea".into(),
+                unit: "L".into(),
+                energy_density: Some(0.0),
+                density_unit: None,
+            },
+            capex: None,
+            opex_per_input_unit: None,
+            sidestreams: None,
+            sensors: None,
+        };
+        assert!(
+            stage.use_mass_balance(),
+            "L→L with energy_density=0 on both sides must use mass-balance — \
+             0 means 'no embodied energy', not 'energy bridge with zero kWh'"
+        );
+        // And the forward pass must actually flow non-zero quantity.
+        let out = stage.forward(200.0);
+        assert!(
+            (out - 186.0).abs() < 1e-9,
+            "200 L × 0.93 = 186 L expected; got {}",
+            out
+        );
+    }
+
+    /// Asymmetric zero: input declares energy_density=0 but output
+    /// declares None. Still mass-balance (neither side carries
+    /// meaningful energy).
+    #[test]
+    fn use_mass_balance_triggers_when_one_side_zero_other_none() {
+        let mut stage = alkali_purification_stage();
+        stage.input.energy_density = Some(0.0);
+        assert!(
+            stage.use_mass_balance(),
+            "energy_density=0 ↔ energy_density=None equivalence: neither \
+             carries energy → mass-balance"
         );
     }
 
