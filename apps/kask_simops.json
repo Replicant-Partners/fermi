@@ -165,7 +165,8 @@
       "sidestream_miner",
       "comparator",
       "supply_chain_oracle",
-      "sensor_advisor"
+      "sensor_advisor",
+      "energy_advisor"
     ],
     "initial_files": [
       {
