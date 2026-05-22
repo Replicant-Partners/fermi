@@ -163,7 +163,9 @@
       "simops_optimizer",
       "simops_companion",
       "sidestream_miner",
-      "comparator"
+      "comparator",
+      "supply_chain_oracle",
+      "sensor_advisor"
     ],
     "initial_files": [
       {
