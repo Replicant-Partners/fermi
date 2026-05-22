@@ -584,11 +584,29 @@ pub async fn charge_workspace_gas(
 
 /// Parse @agent_name mentions from message content.
 /// Returns (target_agent_name, query_text) if found.
+///
+/// Accepted mention characters: alphanumerics, `_`, `-`, `/`, and `.`.
+/// `/` matters specifically — agents like `efra-ai/05-valuation` use it as
+/// a namespacing separator and the previous regex stopped at the first
+/// `/`, producing a stub like `efra-ai` that resolves to nothing. `.`
+/// is included for symmetry with conventions like `foo.bar.v2`.
+///
+/// We deliberately don't include `:` or `@` to keep mention boundaries
+/// unambiguous (so `@a@b` still parses as one mention `a`, not `a@b`).
 pub fn parse_at_mention(content: &str) -> Option<(String, String)> {
-    // Match @word_chars at start or after whitespace
-    let re = regex::Regex::new(r"@([a-zA-Z0-9_-]+)").ok()?;
+    let re = regex::Regex::new(r"@([a-zA-Z0-9_./-]+)").ok()?;
     let m = re.find(content)?;
     let agent_name = re.captures(content)?.get(1)?.as_str().to_string();
+    // Trim trailing punctuation that the regex greedily consumed but
+    // almost certainly belongs to the surrounding prose, not the name —
+    // e.g. "@efra-ai/05-valuation." should mention `efra-ai/05-valuation`,
+    // not `efra-ai/05-valuation.`.
+    let agent_name = agent_name
+        .trim_end_matches(|c: char| c == '.' || c == '/' || c == '-' || c == '_')
+        .to_string();
+    if agent_name.is_empty() {
+        return None;
+    }
     // Query is everything except the @mention
     let query = format!("{}{}", &content[..m.start()], &content[m.end()..])
         .trim()
@@ -769,4 +787,63 @@ pub async fn fork_workspace_to_app_draft_handler(
             "POST the finalized manifest to /api/apps to register the App."
         ]
     })))
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: agent IDs containing `/` (e.g. `efra-ai/05-valuation`)
+    /// must parse as one whole mention, not get truncated at the slash.
+    /// Before the fix, the regex `[a-zA-Z0-9_-]+` stopped at `/` and
+    /// `resolve_agent("efra-ai")` returned the "not in workspace" error
+    /// even when the slash-suffixed agent had just been added.
+    #[test]
+    fn parse_at_mention_accepts_slashed_agent_name() {
+        let parsed = parse_at_mention("@efra-ai/05-valuation please provide one for ASTS");
+        assert_eq!(
+            parsed,
+            Some((
+                "efra-ai/05-valuation".to_string(),
+                "please provide one for ASTS".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_at_mention_accepts_simple_agent_name() {
+        let parsed = parse_at_mention("@xaman_ek what's next?");
+        assert_eq!(
+            parsed,
+            Some(("xaman_ek".to_string(), "what's next?".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_at_mention_accepts_dotted_agent_name() {
+        let parsed = parse_at_mention("@foo.bar.v2 hello");
+        assert_eq!(parsed, Some(("foo.bar.v2".to_string(), "hello".to_string())));
+    }
+
+    #[test]
+    fn parse_at_mention_strips_trailing_sentence_period() {
+        let parsed = parse_at_mention("Hey @efra-ai/05-valuation. Thanks.");
+        // Trailing `.` belongs to the prose, not the mention.
+        assert_eq!(
+            parsed.as_ref().map(|p| p.0.as_str()),
+            Some("efra-ai/05-valuation")
+        );
+    }
+
+    #[test]
+    fn parse_at_mention_returns_none_without_mention() {
+        assert_eq!(parse_at_mention("no mention here"), None);
+    }
+
+    #[test]
+    fn parse_at_mention_returns_none_when_query_empty() {
+        // Pure mention with no surrounding text is not actionable.
+        assert_eq!(parse_at_mention("@xaman_ek"), None);
+    }
 }
