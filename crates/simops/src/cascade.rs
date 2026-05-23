@@ -25,8 +25,13 @@ pub struct StageResult {
     pub input_energy_kwh: f64,
     /// Output energy in kWh (for NER roll-up)
     pub output_energy_kwh: f64,
-    /// Stage-level NER: output_energy / input_energy
-    pub stage_ner: f64,
+    /// Stage-level NER: output_energy / input_energy.
+    /// `None` when input_energy_kwh = 0 (resource has no embodied
+    /// energy → NER is mathematically undefined, not zero). The
+    /// kask KPI strip swaps the NER tile for the agent-recommended
+    /// metric in that case (yield, specific energy, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_ner: Option<f64>,
     /// Operational cost for this stage (USD)
     pub opex_usd: f64,
 }
@@ -43,8 +48,18 @@ pub struct CascadeResult {
     pub final_output_unit: String,
     /// Net carbon across all stages (kg CO₂-eq).  Negative = net sink.
     pub net_carbon_kg: f64,
-    /// System-level NER: final output energy / total primary input energy
-    pub system_ner: f64,
+    /// System-level NER: final output energy / total primary input
+    /// energy. `None` when the primary input resource has no embodied
+    /// energy (energy_density = 0 or unset) — NER is mathematically
+    /// undefined for mass-conservation processes (beverages, foods,
+    /// cosmetics) and the KPI strip should show an alternative metric
+    /// (volumetric_yield, specific_energy_intensity) instead. Previous
+    /// versions returned 0.0 as a fallback which looked like a real
+    /// value and misled the operator into thinking the process was
+    /// failing energetically when it was simply not an energy-conversion
+    /// process.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_ner: Option<f64>,
     /// Total OPEX across all stages (USD)
     pub total_opex_usd: f64,
     /// Annualised CAPEX (USD)
@@ -70,7 +85,12 @@ pub fn cascade_forward(process: &ProcessConfig, input_quantity: f64) -> CascadeR
         let carbon = stage.carbon_delta(out_q);
         let in_e = stage.input.energy_kwh(in_q);
         let out_e = stage.output.energy_kwh(out_q);
-        let stage_ner = if in_e > 0.0 { out_e / in_e } else { 0.0 };
+        // NER is meaningful only when the input resource carries
+        // embodied energy. For mass-conservation stages (water → tea,
+        // milk → yogurt) the input has no quantifiable kWh content
+        // and NER is undefined — emit None so the consumer knows to
+        // show an alternative metric.
+        let stage_ner = if in_e > 0.0 { Some(out_e / in_e) } else { None };
         let opex = stage.opex_usd(in_q);
 
         net_carbon += carbon;
@@ -95,9 +115,9 @@ pub fn cascade_forward(process: &ProcessConfig, input_quantity: f64) -> CascadeR
     let last = process.stages.last().unwrap();
     let final_energy_kwh = last.output.energy_kwh(quantity);
     let system_ner = if primary_energy_kwh > 0.0 {
-        final_energy_kwh / primary_energy_kwh
+        Some(final_energy_kwh / primary_energy_kwh)
     } else {
-        0.0
+        None
     };
 
     CascadeResult {
@@ -137,7 +157,7 @@ pub fn cascade_backward(process: &ProcessConfig, target_output: f64) -> CascadeR
         let carbon = stage.carbon_delta(out_q);
         let in_e = stage.input.energy_kwh(in_q);
         let out_e = stage.output.energy_kwh(out_q);
-        let stage_ner = if in_e > 0.0 { out_e / in_e } else { 0.0 };
+        let stage_ner = if in_e > 0.0 { Some(out_e / in_e) } else { None };
         let opex = stage.opex_usd(in_q);
 
         net_carbon += carbon;
@@ -163,9 +183,9 @@ pub fn cascade_backward(process: &ProcessConfig, target_output: f64) -> CascadeR
     let primary_energy_kwh = first_stage.input.energy_kwh(primary_input);
     let final_energy_kwh = last_stage.output.energy_kwh(target_output);
     let system_ner = if primary_energy_kwh > 0.0 {
-        final_energy_kwh / primary_energy_kwh
+        Some(final_energy_kwh / primary_energy_kwh)
     } else {
-        0.0
+        None
     };
 
     CascadeResult {
@@ -281,7 +301,44 @@ mod tests {
         // 3% photosynthetic × 20% fermentation × 60% fuel cell = 0.0036
         let process = algae_h2_process();
         let result = cascade_forward(&process, 10_000.0);
-        assert!(result.system_ner < 0.01, "system NER should be tiny: {}", result.system_ner);
+        let ner = result.system_ner.expect("algae_h2 has photonic input → NER defined");
+        assert!(ner < 0.01, "system NER should be tiny: {}", ner);
+    }
+
+    /// Regression: for a mass-conservation process (L→L beverage with
+    /// no energy_density on any resource), system_ner must be `None`,
+    /// NOT `Some(0.0)`. The latter previously misled the kask KPI strip
+    /// into displaying '0.000' which looked like a real value. None is
+    /// honest: NER is mathematically undefined here.
+    #[test]
+    fn system_ner_is_none_for_mass_conservation_process() {
+        let process = ProcessConfig {
+            name: "kombucha".into(),
+            description: None,
+            feature_of_interest: None,
+            elec_price_per_kwh: None,
+            maintenance_cost_usd: None,
+            stages: vec![
+                Stage {
+                    id: "ferment".into(),
+                    efficiency: 0.85,
+                    carbon_intensity: 0.04,
+                    input:  Resource { name: "water".into(), unit: "L".into(),
+                                       energy_density: None, density_unit: None },
+                    output: Resource { name: "kombucha".into(), unit: "L".into(),
+                                       energy_density: None, density_unit: None },
+                    capex: None, opex_per_input_unit: None,
+                    sidestreams: None, sensors: None,
+                },
+            ],
+        };
+        let result = cascade_forward(&process, 200.0);
+        assert!(result.system_ner.is_none(),
+            "L→L with no energy_density must report NER as None (undefined), not Some(0.0)");
+        // Per-stage NER also None for the same reason.
+        assert!(result.stages[0].stage_ner.is_none());
+        // But the cascade still flows — output should be 200 × 0.85 = 170.
+        assert!((result.stages[0].output_quantity - 170.0).abs() < 1e-9);
     }
 
     // ─── Doc 11 — mass-tracking cascade ──────────────────────────────
