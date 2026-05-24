@@ -1352,6 +1352,8 @@ async fn main() {
         .route("/api/apps/:slug/archive", post(handlers::apps::archive_app_handler))
         // ── SimOps direct computation (no LLM — for Compose mode live feedback) ─
         .route("/api/simops/cascade", post(handlers::simops::cascade_handler))
+        // ── SimOps distributional projection (Digital Twin "Generate distribution") ─
+        .route("/api/simops/project", post(handlers::simops::project_handler))
         // Workspace routes
         .route(
             "/api/workspaces",

@@ -115,6 +115,7 @@ coherence-observer = { path = "agent-bestiary/coherence/crates/coherence-observe
 
 # SimOps — Universal Resource Efficiency Engine (SOSA-aligned)
 simops = { path = "crates/simops" }
+projections = { path = "crates/projections", features = ["simops-executor"] }
 
 # Auth
 fermi-auth = { path = "fermi-auth" }
