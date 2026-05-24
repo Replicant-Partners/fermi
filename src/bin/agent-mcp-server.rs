@@ -21,6 +21,8 @@ use fermi::agent_backend::{
     registry::AgentRegistry,
 };
 use fermi::ast::AgentStmt;
+use fermi::{Executor, Lexer, Parser, SemanticAnalyzer};
+use fermi::sensitivity::full_sensitivity_analysis;
 
 // Tool: List all available agents
 #[macros::mcp_tool(
@@ -89,6 +91,37 @@ pub struct AskXamanEkTool {
     pub question: String,
 }
 
+// Tool: Execute a FPL program — real Monte Carlo simulation
+#[macros::mcp_tool(
+    name = "fermi_execute_fpl",
+    description = "Execute a Fermi FPL program string. Runs a real Monte Carlo simulation (default 10,000 iterations) and returns ExecutionResults: mean, median, std_dev, p5, p25, p75, p95, min, max, base_rate, divergence_relative, divergence_absolute."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiExecuteFplTool {
+    /// A complete valid FPL program as a string
+    pub fpl_program: String,
+    /// Number of Monte Carlo iterations (default: 10000, max: 100000)
+    #[serde(default)]
+    pub iterations: Option<u32>,
+    /// Optional random seed for reproducibility
+    #[serde(default)]
+    pub seed: Option<u64>,
+}
+
+// Tool: Run Sobol sensitivity analysis on a FPL program
+#[macros::mcp_tool(
+    name = "fermi_sensitivity_analysis",
+    description = "Run Sobol sensitivity analysis on a FPL program. Returns first-order and total-order Sobol indices for each driver — real variance decomposition identifying which drivers actually drive output variance."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiSensitivityAnalysisTool {
+    /// The same FPL program string passed to fermi_execute_fpl
+    pub fpl_program: String,
+    /// Number of iterations for sensitivity analysis (default: 5000)
+    #[serde(default)]
+    pub iterations: Option<u32>,
+}
+
 /// Custom handler for Agent Bestiary operations
 struct AgentBestiaryHandler {
     registry: Arc<AgentRegistry>,
@@ -117,6 +150,8 @@ impl ServerHandler for AgentBestiaryHandler {
                 SearchAgentsTool::tool(),
                 GetCatalogueTool::tool(),
                 AskXamanEkTool::tool(),
+                FermiExecuteFplTool::tool(),
+                FermiSensitivityAnalysisTool::tool(),
             ],
             meta: None,
             next_cursor: None,
@@ -452,9 +487,109 @@ impl ServerHandler for AgentBestiaryHandler {
                 ]))
             }
 
+            "fermi_execute_fpl" => {
+                let tool: FermiExecuteFplTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                // Parse the FPL program through the full pipeline
+                let program = parse_fpl(&tool.fpl_program)
+                    .map_err(CallToolError::from_message)?;
+
+                // Execute Monte Carlo simulation
+                let iterations = (tool.iterations.unwrap_or(10_000) as usize).min(100_000);
+                let mut executor = match tool.seed {
+                    Some(seed) => Executor::with_seed(iterations, seed),
+                    None => Executor::new(iterations),
+                };
+                let results = executor.execute(&program)
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+                let output = json!({
+                    "iterations": results.iterations,
+                    "mean":   results.mean,
+                    "median": results.median,
+                    "std_dev": results.std_dev,
+                    "p5":  results.p5,
+                    "p25": results.p25,
+                    "p75": results.p75,
+                    "p95": results.p95,
+                    "min": results.min,
+                    "max": results.max,
+                    "base_rate": results.base_rate,
+                    "divergence_relative": results.divergence_relative,
+                    "divergence_absolute": results.divergence_absolute,
+                });
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&output).unwrap().into(),
+                ]))
+            }
+
+            "fermi_sensitivity_analysis" => {
+                let tool: FermiSensitivityAnalysisTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                let program = parse_fpl(&tool.fpl_program)
+                    .map_err(CallToolError::from_message)?;
+
+                let iterations = (tool.iterations.unwrap_or(5_000) as usize).min(50_000);
+                let analysis = full_sensitivity_analysis(&program, iterations)
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+                // Build per-driver sensitivity objects, ranked by total-order index
+                let drivers: Vec<serde_json::Value> = analysis.ranked_drivers.iter()
+                    .filter_map(|name| analysis.driver_sensitivities.get(name))
+                    .map(|s| json!({
+                        "driver": s.driver_name,
+                        "first_order_index": s.first_order_index,
+                        "total_order_index": s.total_order_index,
+                        "variance_contribution": s.variance_contribution,
+                        "standard_error": s.standard_error,
+                        "ci_low":  (s.total_order_index - 1.96 * s.standard_error).max(0.0),
+                        "ci_high": (s.total_order_index + 1.96 * s.standard_error).min(1.0),
+                    }))
+                    .collect();
+
+                let output = json!({
+                    "iterations": iterations,
+                    "baseline": {
+                        "mean":    analysis.baseline.mean,
+                        "std_dev": analysis.baseline.std_dev,
+                        "p5":      analysis.baseline.p5,
+                        "p95":     analysis.baseline.p95,
+                    },
+                    "drivers": drivers,
+                    "top_driver": analysis.ranked_drivers.first(),
+                });
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&output).unwrap().into(),
+                ]))
+            }
+
             _ => Err(CallToolError::unknown_tool(params.name)),
         }
     }
+}
+
+/// Parse an FPL program string through the full lexer → parser → semantic pipeline.
+/// Returns the validated Program or a human-readable error string.
+fn parse_fpl(source: &str) -> std::result::Result<fermi::ast::Program, String> {
+    let lexer = Lexer::new(source);
+    let tokens = lexer.tokenize().map_err(|errs| {
+        errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ")
+    })?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse().map_err(|e| format!("Parse error: {e}"))?;
+    let analyzer = SemanticAnalyzer::new();
+    let analysis = analyzer.analyze(&program);
+    if !analysis.errors.is_empty() {
+        let msgs = analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
+        return Err(format!("Semantic error: {msgs}"));
+    }
+    Ok(program)
 }
 
 /// Categorize an agent based on its tags and type
@@ -578,6 +713,7 @@ async fn main() -> SdkResult<()> {
 
     eprintln!("🚀 Fermi Agent Bestiary MCP Server started");
     eprintln!("   Tools: list_agents, get_agent, execute_agent, save_agent, search_agents, get_catalogue, ask_xaman_ek");
+    eprintln!("   FPL:   fermi_execute_fpl, fermi_sensitivity_analysis");
 
     server.start().await
 }

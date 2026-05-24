@@ -22,6 +22,7 @@ members = [
     "fermi-auth",
     "fermi-lsp", "crates/fermi-console",
     "crates/simops",
+    "crates/projections",
     "crates/abw-cli",
     "crates/abw-apps-core",
 ]
