@@ -26,6 +26,7 @@ use projections::{
 use dynamics::{
     apply_dynamics_model, registry as dynamics_registry, SkillInput as DynamicsInput,
     RheologyInput, resolve_rheology, list_rheology_manifests,
+    coupled::{apply_coupled_dynamics_model, CoupledInput, CoupledParamsOverride},
 };
 
 use fermi_auth::AuthPrincipal;
@@ -155,11 +156,48 @@ pub async fn project_handler(
 pub async fn dynamics_handler(
     _state: State<AppState>,
     _principal: AuthPrincipal,
-    Json(req): Json<DynamicsInput>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let output = apply_dynamics_model(req)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    Ok(Json(json!(output)))
+    // Normalise: `model_uris` (plural array) OR `model_uri` (singular string).
+    // Single-model path uses the original SkillInput → apply_dynamics_model (unchanged).
+    // Multi-model path uses CoupledInput → apply_coupled_dynamics_model.
+    let has_plural = body.get("model_uris")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len() > 1)
+        .unwrap_or(false);
+
+    if has_plural {
+        // Multi-model coupled path
+        let req: CoupledInput = serde_json::from_value(body)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid coupled request: {e}")))?;
+        let output = apply_coupled_dynamics_model(req)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        Ok(Json(json!(output)))
+    } else {
+        // Single-model path — normalise model_uris: ["X"] to model_uri: "X" if needed
+        let body = if body.get("model_uri").is_none() {
+            // model_uris: ["X"] → extract first as model_uri
+            if let Some(uri) = body.get("model_uris")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+            {
+                let mut b = body.clone();
+                b.as_object_mut().unwrap().insert("model_uri".into(), json!(uri));
+                b
+            } else {
+                body
+            }
+        } else {
+            body
+        };
+
+        let req: DynamicsInput = serde_json::from_value(body)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid dynamics request: {e}")))?;
+        let output = apply_dynamics_model(req)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        Ok(Json(json!(output)))
+    }
 }
 
 // ─── GET /api/simops/dynamics/models ──────────────────────────────────────────

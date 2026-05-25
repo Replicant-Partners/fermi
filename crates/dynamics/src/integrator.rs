@@ -6,6 +6,7 @@
 
 use ode_solvers::{DVector, Rk4, System};
 use crate::DynamicsModel;
+use crate::coupled::CoupledSystem;
 
 /// Adapter that bridges `DynamicsModel` (slice-based) to `ode_solvers::System`.
 struct ModelAdapter<'a> {
@@ -69,6 +70,59 @@ pub fn integrate(
         }
     }
 
+    Ok(result)
+}
+
+/// Adapter that bridges `CoupledSystem` (slice-based) to `ode_solvers::System`.
+struct CoupledAdapter<'a> {
+    coupled: &'a CoupledSystem<'a>,
+}
+
+impl<'a> System<f64, DVector<f64>> for CoupledAdapter<'a> {
+    fn system(&self, t: f64, y: &DVector<f64>, dy: &mut DVector<f64>) {
+        self.coupled.system(t, y.as_slice(), dy.as_mut_slice());
+    }
+}
+
+/// Integrate a coupled multi-model system over the union state vector.
+/// Same RK4 algorithm as `integrate` — the system function is the
+/// `CoupledSystem` adapter that sums contributions from all models.
+pub fn integrate_coupled(
+    coupled: &CoupledSystem<'_>,
+    y0: &[f64],
+    horizon_days: f64,
+    step_days: f64,
+    cadence_days: f64,
+) -> Result<Vec<(f64, Vec<f64>)>, String> {
+    let n = y0.len();
+    if n == 0 { return Err("Union state vector is empty".into()); }
+    if horizon_days <= 0.0 { return Err(format!("horizon_days must be > 0, got {horizon_days}")); }
+    if step_days <= 0.0 || step_days > horizon_days {
+        return Err(format!("step_days must be in (0, horizon_days], got {step_days}"));
+    }
+
+    let y0_vec = DVector::from_vec(y0.to_vec());
+    let adapter = CoupledAdapter { coupled };
+    let mut solver = Rk4::new(adapter, 0.0_f64, y0_vec, horizon_days, step_days);
+
+    solver.integrate().map_err(|e| format!("RK4 integration failed: {:?}", e))?;
+
+    let x_out = solver.x_out();
+    let y_out = solver.y_out();
+    let mut result: Vec<(f64, Vec<f64>)> = Vec::new();
+    let mut last_sampled = -f64::INFINITY;
+
+    for (t, y) in x_out.iter().zip(y_out.iter()) {
+        if t - last_sampled >= cadence_days - 1e-9 {
+            result.push((*t, y.as_slice().to_vec()));
+            last_sampled = *t;
+        }
+    }
+    if let (Some(t_last), Some(y_last)) = (x_out.last(), y_out.last()) {
+        if result.last().map(|(t, _)| *t).unwrap_or(-1.0) < *t_last - 1e-9 {
+            result.push((*t_last, y_last.as_slice().to_vec()));
+        }
+    }
     Ok(result)
 }
 

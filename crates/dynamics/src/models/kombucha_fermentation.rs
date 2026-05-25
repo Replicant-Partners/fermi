@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use crate::{
     DynamicsModel, ModelManifest, Note,
-    manifest::{ContextSchema, ContextSource, ParamSchema, StateFieldSchema},
+    manifest::{ContextSchema, ContextSource, ContributionMode, ParamSchema, StateFieldSchema},
 };
 
 const R: f64 = 8.314; // J/(mol·K)
@@ -62,12 +62,14 @@ impl DynamicsModel for KombuchaFermentation {
                     units: "%".into(),
                     description: "Sugar content; consumed by SCOBY culture.".into(),
                     typical_range: Some((0.0, 15.0)),
+                    contribution: ContributionMode::Additive,
                 }),
                 ("chem:ph_value".into(), StateFieldSchema {
                     label: "pH".into(),
                     units: "dimensionless".into(),
                     description: "Acidity; drops as organic acids accumulate.".into(),
                     typical_range: Some((2.5, 7.0)),
+                    contribution: ContributionMode::Additive,
                 }),
             ]),
             params_schema: BTreeMap::from([

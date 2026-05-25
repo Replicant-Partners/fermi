@@ -37,6 +37,7 @@
 //! assert!(output.converged || !output.trajectories.is_empty());
 //! ```
 
+pub mod coupled;
 pub mod integrator;
 pub mod manifest;
 pub mod models;
@@ -50,7 +51,7 @@ use serde::{Deserialize, Serialize};
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 pub use manifest::{
-    ContextSchema, ContextSource, ModelManifest, ParamSchema, StateFieldSchema,
+    ContributionMode, ContextSchema, ContextSource, ModelManifest, ParamSchema, StateFieldSchema,
 };
 pub use provenance::Provenance;
 pub use rheology::{

@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use crate::{
     DynamicsModel, ModelManifest, Note,
-    manifest::{ContextSchema, ContextSource, ParamSchema, StateFieldSchema},
+    manifest::{ContextSchema, ContextSource, ContributionMode, ParamSchema, StateFieldSchema},
 };
 
 pub struct LinearDecay {
@@ -40,6 +40,7 @@ impl DynamicsModel for LinearDecay {
                     units: "property-dependent".into(),
                     description: "Value relaxing toward target.".into(),
                     typical_range: None,
+                    contribution: ContributionMode::Additive,
                 },
             )]),
             params_schema: BTreeMap::from([

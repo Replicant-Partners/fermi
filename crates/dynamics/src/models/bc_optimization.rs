@@ -26,7 +26,7 @@
 use std::collections::BTreeMap;
 use crate::{
     DynamicsModel, ModelManifest, Note,
-    manifest::{ContextSchema, ContextSource, ParamSchema, StateFieldSchema},
+    manifest::{ContextSchema, ContextSource, ContributionMode, ParamSchema, StateFieldSchema},
 };
 
 const R: f64 = 8.314;
@@ -129,18 +129,22 @@ impl DynamicsModel for BcOptimization {
                 ("chem:brix_percent".into(), StateFieldSchema {
                     label: "Brix".into(), units: "%".into(),
                     description: "Carbon substrate.".into(), typical_range: Some((0.0, 15.0)),
+                    contribution: ContributionMode::Additive,
                 }),
                 ("chem:ph_value".into(), StateFieldSchema {
                     label: "pH".into(), units: "dimensionless".into(),
                     description: "Culture acidity.".into(), typical_range: Some((2.5, 7.0)),
+                    contribution: ContributionMode::Additive,
                 }),
                 ("bio:bc_yield_g_per_l".into(), StateFieldSchema {
                     label: "BC yield".into(), units: "g/L".into(),
                     description: "Bacterial cellulose concentration.".into(), typical_range: Some((0.0, 6.0)),
+                    contribution: ContributionMode::Additive,
                 }),
                 ("bio:bc_quality_index".into(), StateFieldSchema {
                     label: "BC quality index".into(), units: "0–1".into(),
                     description: "Relative crystallinity/quality. 1.0 = maximum.".into(), typical_range: Some((0.0, 1.0)),
+                    contribution: ContributionMode::Additive,
                 }),
             ]),
             params_schema: BTreeMap::from([

@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use crate::{
     DynamicsModel, ModelManifest, Note,
-    manifest::{ContextSchema, ContextSource, ParamSchema, StateFieldSchema},
+    manifest::{ContextSchema, ContextSource, ContributionMode, ParamSchema, StateFieldSchema},
 };
 
 const R: f64 = 8.314;
@@ -69,16 +69,19 @@ impl DynamicsModel for PellicleGrowth {
                     label: "Brix".into(), units: "%".into(),
                     description: "Sugar content.".into(),
                     typical_range: Some((0.0, 15.0)),
+                    contribution: ContributionMode::Additive,
                 }),
                 ("chem:ph_value".into(), StateFieldSchema {
                     label: "pH".into(), units: "dimensionless".into(),
                     description: "Acidity.".into(),
                     typical_range: Some((2.5, 7.0)),
+                    contribution: ContributionMode::Additive,
                 }),
                 ("bio:pellicle_g_per_l".into(), StateFieldSchema {
                     label: "Pellicle".into(), units: "g/L".into(),
                     description: "SCOBY pellicle concentration.".into(),
                     typical_range: Some((0.0, 8.0)),
+                    contribution: ContributionMode::Additive,
                 }),
             ]),
             params_schema: BTreeMap::from([
