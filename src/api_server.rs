@@ -543,6 +543,9 @@ async fn run_migrations(db: &PgPool) {
         "migrations/127_xaman_sessions_app_design.sql",
         // Doc 12 § Capability 1 — agent version stamp on sosa_observations.
         "migrations/128_sosa_observations_produced_by.sql",
+        // Backfill ownership for curated agents seeded after migration 122
+        // (e.g. simops_dynamics_runner). Same idempotent pattern as 111/122.
+        "migrations/129_backfill_curated_agent_ownership_2.sql",
     ];
 
     for file in &migration_files {
