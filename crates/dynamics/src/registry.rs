@@ -6,6 +6,7 @@ use crate::{DynamicsModel, SkillInput};
 use crate::models::{
     linear_decay::LinearDecay,
     kombucha_fermentation::KombuchaFermentation,
+    kombucha_f2_carbonation::KombuchaF2Carbonation,
     pellicle_growth::PellicleGrowth,
     bc_optimization::BcOptimization,
 };
@@ -76,6 +77,19 @@ pub fn resolve(model_uri: &str, input: Option<&SkillInput>) -> Option<Box<dyn Dy
             )))
         }
 
+        "kask:dynamics/kombucha_f2_carbonation@v1" => {
+            Some(Box::new(KombuchaF2Carbonation::from_context(
+                temp_c,
+                &{
+                    let mut p = input
+                        .map(|i| i.params_override.clone())
+                        .unwrap_or_default();
+                    // pull any relevant params from the flat override map
+                    p
+                },
+            )))
+        }
+
         _ => None,
     }
 }
@@ -85,6 +99,7 @@ pub fn known_uris() -> Vec<&'static str> {
     vec![
         "kask:dynamics/linear_decay@v1",
         "kask:dynamics/kombucha_fermentation@v1",
+        "kask:dynamics/kombucha_f2_carbonation@v1",
         "kask:dynamics/pellicle_growth@v1",
         "kask:dynamics/bc_optimization@v1",
     ]
@@ -92,10 +107,10 @@ pub fn known_uris() -> Vec<&'static str> {
 
 /// List model manifests — used by the dynamics_runner agent to auto-select a model.
 pub fn list_manifests() -> Vec<crate::ModelManifest> {
-    // Construct default instances to get manifests
     vec![
         LinearDecay::new("chem:ph_value", 0.1, 0.0).manifest(),
         KombuchaFermentation::default().manifest(),
+        KombuchaF2Carbonation::default().manifest(),
         PellicleGrowth::default().manifest(),
         BcOptimization::default().manifest(),
     ]
