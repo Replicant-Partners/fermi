@@ -2481,6 +2481,21 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
         Err(_) => return,
     };
 
+    // Look up the earliest admin user once. All curated/system agents are owned
+    // by the admin so the admin has full Eval / Intelligence / Manage views.
+    // User-created agents are never seeded here — they go through hire_agent_handler
+    // which sets owner_id from the calling principal.
+    let admin_user_id: Option<String> = sqlx::query_scalar(
+        "SELECT user_id FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1"
+    )
+    .fetch_optional(memory_store.pool())
+    .await
+    .unwrap_or(None);
+
+    if admin_user_id.is_none() {
+        eprintln!("seed_agents_to_database: no admin user found — curated agents will have no owner until one is set");
+    }
+
     for card in &cards {
         let agent = Agent {
             agent_id: uuid::Uuid::new_v4(),
@@ -2507,7 +2522,13 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             dreaming_budget_reset_at: None,
             system_prompt: card.system_prompt.clone(),
             visibility: "public".to_string(),
-            owner_id: None,
+            // Curated agents are owned by the admin user so the admin has
+            // full management views. The upsert uses ON CONFLICT DO UPDATE,
+            // so existing agents with a real owner_id won't be overwritten
+            // to NULL — but they will be reassigned to the admin on re-seed.
+            // That's intentional: curated agents belong to the platform admin,
+            // not to individual users.
+            owner_id: admin_user_id.clone(),
             tags: card.metadata.tags.clone(),
             education_budget_credits: 0,
             education_credits_used: 0,

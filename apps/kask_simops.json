@@ -162,6 +162,7 @@
       "simops_predictor",
       "simops_optimizer",
       "simops_companion",
+      "simops_dynamics_runner",
       "sidestream_miner",
       "comparator",
       "supply_chain_oracle",
