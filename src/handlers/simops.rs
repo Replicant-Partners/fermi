@@ -23,6 +23,7 @@ use simops::{
 use projections::{
     project_distribution, ExecutorRegistry, ProjectionRequest,
 };
+use dynamics::{apply_dynamics_model, registry as dynamics_registry, SkillInput as DynamicsInput};
 
 use fermi_auth::AuthPrincipal;
 use crate::AppState;
@@ -125,4 +126,47 @@ pub async fn project_handler(
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     Ok(Json(json!(response)))
+}
+
+// ─── POST /api/simops/dynamics ────────────────────────────────────────────────
+//
+// ODE-based dynamics model projection. Runs one of the registered models
+// (kombucha_fermentation, pellicle_growth, bc_optimization, linear_decay)
+// and returns trajectories for each state dimension.
+//
+// Powers the kask Digital Twin time-series projection panel.
+// No LLM in the path. No credits charged.
+//
+// Request body: DynamicsInput (SkillInput from crates/dynamics)
+// Response:     SkillOutput (trajectories + provenance + notes)
+//
+// Example:
+// {
+//   "model_uri": "kask:dynamics/kombucha_fermentation@v1",
+//   "initial_state": { "chem:brix_percent": 10.0, "chem:ph_value": 5.0 },
+//   "process_context": { "temperature_c": 26.0 },
+//   "horizon": { "kind": "fixed", "days": 14 },
+//   "sample_cadence": { "hours": 6 }
+// }
+
+pub async fn dynamics_handler(
+    _state: State<AppState>,
+    _principal: AuthPrincipal,
+    Json(req): Json<DynamicsInput>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let output = apply_dynamics_model(req)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!(output)))
+}
+
+// ─── GET /api/simops/dynamics/models ──────────────────────────────────────────
+//
+// List all registered dynamics model manifests.
+// Used by the dynamics_runner agent and kask model-picker UI.
+
+pub async fn dynamics_list_handler(
+    _state: State<AppState>,
+    _principal: AuthPrincipal,
+) -> Json<Value> {
+    Json(json!(dynamics_registry::list_manifests()))
 }

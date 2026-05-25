@@ -23,6 +23,7 @@ members = [
     "fermi-lsp", "crates/fermi-console",
     "crates/simops",
     "crates/projections",
+    "crates/dynamics",
     "crates/abw-cli",
     "crates/abw-apps-core",
 ]
@@ -116,6 +117,7 @@ coherence-observer = { path = "agent-bestiary/coherence/crates/coherence-observe
 # SimOps — Universal Resource Efficiency Engine (SOSA-aligned)
 simops = { path = "crates/simops" }
 projections = { path = "crates/projections", features = ["simops-executor"] }
+dynamics = { path = "crates/dynamics" }
 
 # Auth
 fermi-auth = { path = "fermi-auth" }

@@ -1354,6 +1354,9 @@ async fn main() {
         .route("/api/simops/cascade", post(handlers::simops::cascade_handler))
         // ── SimOps distributional projection (Digital Twin "Generate distribution") ─
         .route("/api/simops/project", post(handlers::simops::project_handler))
+        // ── SimOps dynamics (ODE time-series projection) ─────────────────────────
+        .route("/api/simops/dynamics", post(handlers::simops::dynamics_handler))
+        .route("/api/simops/dynamics/models", get(handlers::simops::dynamics_list_handler))
         // Workspace routes
         .route(
             "/api/workspaces",

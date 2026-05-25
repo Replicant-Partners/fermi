@@ -83,6 +83,7 @@ pub use legacy::{
 use crate::agent_backend::agent_card::AgentCard;
 use async_trait::async_trait;
 use serde_json::json;
+use ::dynamics;
 
 // ─── Skill trait ─────────────────────────────────────────────────────────────
 
@@ -152,6 +153,8 @@ pub enum SkillCategory {
     Formation,
     /// SimOps cascade, KPI computation, predictor, optimizer.
     ProcessOptimization,
+    /// ODE-based dynamics models (fermentation, pellicle, BC optimization).
+    Dynamics,
 }
 
 // ─── SkillRegistry ───────────────────────────────────────────────────────────
@@ -182,6 +185,8 @@ struct SimopsPredictorTrain;
 struct SimopsPredictorForecast;
 struct SimopsOptimizeScale;
 struct SimopsOptimizeSingleInput;
+struct ApplyDynamicsModel;
+struct ListDynamicsModels;
 
 #[async_trait] impl Skill for H3Resolve {
     fn name(&self) -> &'static str { "h3_resolve" }
@@ -264,6 +269,75 @@ simops_skill!(SimopsPredictorForecast, "simops_predictor_forecast",     "Forecas
 simops_skill!(SimopsOptimizeScale,     "simops_optimize_scale",         "Scale a process configuration to a new target throughput.");
 simops_skill!(SimopsOptimizeSingleInput,"simops_optimize_single_input", "Optimize a single input variable to hit a target output.");
 
+#[async_trait]
+impl Skill for ApplyDynamicsModel {
+    fn name(&self) -> &'static str { "apply_dynamics_model" }
+    fn description(&self) -> &'static str {
+        "Run an ODE-based dynamics model (kombucha fermentation, pellicle growth, BC optimization, linear decay) \
+         and return trajectories for each state dimension over the requested horizon. \
+         Input: model_uri, initial_state (property URIs → values), process_context, \
+         params_override, horizon {kind, days}, sample_cadence {hours}."
+    }
+    fn category(&self) -> SkillCategory { SkillCategory::ProcessOptimization }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "model_uri": { "type": "string", "description": "e.g. kask:dynamics/kombucha_fermentation@v1" },
+                "initial_state": { "type": "object", "description": "Property URIs → initial values" },
+                "process_context": { "type": "object", "description": "temperature_c, agitation_rpm, etc." },
+                "params_override": { "type": "object", "description": "Override default model parameters" },
+                "horizon": {
+                    "type": "object",
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["fixed", "until_property_reaches"] },
+                        "days": { "type": "number" }
+                    },
+                    "required": ["kind"]
+                },
+                "sample_cadence": {
+                    "type": "object",
+                    "properties": { "hours": { "type": "number" } }
+                },
+                "generated_by": { "type": "string" }
+            },
+            "required": ["model_uri", "initial_state", "horizon"]
+        })
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<String, String> {
+        let skill_input: dynamics::SkillInput = serde_json::from_value(input.clone())
+            .map_err(|e| format!("Invalid apply_dynamics_model input: {e}"))?;
+        let output = dynamics::apply_dynamics_model(skill_input)?;
+        serde_json::to_string(&output).map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait]
+impl Skill for ListDynamicsModels {
+    fn name(&self) -> &'static str { "list_dynamics_models" }
+    fn description(&self) -> &'static str {
+        "List all available ODE dynamics models with their manifests: \
+         URI, applies_to_set (property URIs), params_schema, context_schema. \
+         Use to discover which model covers a given set of sensor property URIs."
+    }
+    fn category(&self) -> SkillCategory { SkillCategory::ProcessOptimization }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    async fn execute(
+        &self,
+        _input: &serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<String, String> {
+        let manifests = dynamics::registry::list_manifests();
+        serde_json::to_string(&manifests).map_err(|e| e.to_string())
+    }
+}
+
 impl SkillRegistry {
     /// All registered skills. Extend this list to add new skills platform-wide.
     pub fn all() -> Vec<Box<dyn Skill>> {
@@ -283,6 +357,9 @@ impl SkillRegistry {
             Box::new(SimopsPredictorForecast),
             Box::new(SimopsOptimizeScale),
             Box::new(SimopsOptimizeSingleInput),
+            // ── Dynamics (ODE-based time evolution) ──────────────────
+            Box::new(ApplyDynamicsModel),
+            Box::new(ListDynamicsModels),
         ]
     }
 

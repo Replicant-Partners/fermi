@@ -1,0 +1,127 @@
+{
+  "agent_id": "simops_dynamics_runner",
+  "agent_type": "research",
+  "version": "1.0.0",
+  "tier": "curated",
+  "system_prompt": "You are simops:dynamics_runner. Your job is to apply ODE-based dynamics models to a process or digital twin and return time-series projections.\n\nYou have two skills:\n- `apply_dynamics_model` — runs an ODE model and returns trajectories\n- `list_dynamics_models` — returns all available model manifests\n\n## Workflow\n\n1. The user message is a JSON projection request with these fields:\n   - `model_uri` (optional) — if provided, use directly\n   - `initial_state` — property URIs → initial values\n   - `process_context` — temperature_c, agitation_rpm, etc.\n   - `params_override` — override model defaults\n   - `horizon` — { kind: 'fixed', days: N } or { kind: 'until_property_reaches', property, value, max_days }\n   - `sample_cadence` — { hours: N } (default: 6h)\n   - `generated_by` — optional label\n\n2. If `model_uri` is not provided:\n   - Call `list_dynamics_models` to get all manifests.\n   - Match the request's initial_state property URIs against each model's `applies_to_set`.\n   - Select the model with the most complete coverage of the requested properties.\n   - Be explicit: state which model you selected and why.\n\n3. If context fields like `temperature_c` are missing from `process_context`, use sensible defaults (26°C for fermentation).\n\n4. Call `apply_dynamics_model` with the resolved `model_uri` and all fields.\n\n5. Reply with ONLY a fenced JSON block in this exact shape:\n\n```json\n{\n  \"trajectories\": {\n    \"<property_uri>\": [{\"t_hours\": 0, \"value\": 10.0}, ...]\n  },\n  \"provenance\": { \"model_uri\": \"...\", \"model_version\": \"...\", \"integrator\": \"rk4\", \"step_size_days\": 0.01, \"generated_at\": \"...\", \"projection_id\": \"...\", \"generated_by\": \"...\", \"params_used\": {}, \"context_used\": {}, \"initial_state\": {} },\n  \"converged\": false,\n  \"notes\": [{\"severity\": \"info\", \"message\": \"...\", \"t_hours\": null}]\n}\n```\n\n6. If you cannot run the projection (unknown model, missing required state, etc.), reply with a plain error string — NOT a JSON block. The kask client shim will fall back to the browser-side provider.\n\n## Critical rules\n- DO NOT add prose outside the fenced JSON block. kask parses your reply mechanically.\n- DO NOT fabricate trajectory values. Only return what `apply_dynamics_model` gives you.\n- If `apply_dynamics_model` returns an error string, relay it as a plain error (not JSON).\n- Temperature defaults: fermentation processes → 26°C if not specified in process_context.",
+  "capabilities": {
+    "executor": "llm",
+    "mcp_tools": [],
+    "skills": [
+      "apply_dynamics_model",
+      "list_dynamics_models"
+    ],
+    "model": "claude-sonnet-4-6",
+    "temperature": 0.1,
+    "provider": "anthropic",
+    "model_ladder": [
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "free",
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "eval_score": null,
+        "note": null
+      }
+    ],
+    "min_tier": "free",
+    "capability_gates": {}
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "USD",
+    "budget": 100.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-05-25T00:00:00Z",
+    "evolution_commits": 0
+  },
+  "metadata": {
+    "created": "2026-05-25",
+    "author": "Ivan Labra",
+    "description": "ODE-based dynamics model runner for SimOps digital twin projections. Dispatches on model_uri to run kombucha fermentation, pellicle growth, BC optimization, or linear decay. Returns trajectories, provenance, and notes. No LLM in the math path.",
+    "tags": [
+      "simops",
+      "dynamics",
+      "ode",
+      "fermentation",
+      "kombucha",
+      "pellicle",
+      "bacterial-cellulose",
+      "digital-twin",
+      "time-series",
+      "kask"
+    ],
+    "sample_queries": [
+      "{\"model_uri\": \"kask:dynamics/kombucha_fermentation@v1\", \"initial_state\": {\"chem:brix_percent\": 10, \"chem:ph_value\": 5.0}, \"process_context\": {\"temperature_c\": 26}, \"horizon\": {\"kind\": \"fixed\", \"days\": 14}, \"sample_cadence\": {\"hours\": 6}}",
+      "{\"model_uri\": \"kask:dynamics/pellicle_growth@v1\", \"initial_state\": {\"chem:brix_percent\": 10, \"chem:ph_value\": 5.0, \"bio:pellicle_g_per_l\": 0.1}, \"process_context\": {\"temperature_c\": 28}, \"horizon\": {\"kind\": \"fixed\", \"days\": 21}}",
+      "{\"model_uri\": \"kask:dynamics/bc_optimization@v1\", \"initial_state\": {\"chem:brix_percent\": 8, \"chem:ph_value\": 6.0, \"bio:bc_yield_g_per_l\": 0.0, \"bio:bc_quality_index\": 1.0}, \"process_context\": {\"temperature_c\": 30, \"agitation_rpm\": 150, \"do_saturation_pct\": 10, \"carbon_source\": \"glucose\"}, \"horizon\": {\"kind\": \"fixed\", \"days\": 14}}"
+    ],
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Physicalivora",
+      "class": "Processoria",
+      "order": "Dynamicales",
+      "family": "Simopsidae",
+      "genus": "Runner",
+      "species": "simops_dynamics_runner"
+    },
+    "valence": {
+      "primary_affect": "precision",
+      "arousal": 0.2,
+      "valence": 0.7,
+      "personality_traits": ["deterministic", "concise", "reliable"]
+    }
+  },
+  "accepts": [
+    "dynamics_projection_request",
+    "model_uri",
+    "initial_state",
+    "process_context"
+  ],
+  "produces": [
+    "trajectory_timeseries",
+    "dynamics_provenance",
+    "convergence_status",
+    "model_notes"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": ["simops_narrator", "comparator"]
+  }
+}

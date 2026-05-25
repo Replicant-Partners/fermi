@@ -1,0 +1,102 @@
+//! Model URI → DynamicsModel dispatch.
+//!
+//! `resolve(uri)` is the single dispatch point. Add new models here.
+
+use crate::{DynamicsModel, SkillInput};
+use crate::models::{
+    linear_decay::LinearDecay,
+    kombucha_fermentation::KombuchaFermentation,
+    pellicle_growth::PellicleGrowth,
+    bc_optimization::BcOptimization,
+};
+
+/// Resolve a model URI to a boxed DynamicsModel instance.
+/// Returns None if the URI is unknown.
+pub fn resolve(model_uri: &str, input: Option<&SkillInput>) -> Option<Box<dyn DynamicsModel>> {
+    let temp_c = input
+        .and_then(|i| i.process_context.get("temperature_c"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(26.0);
+
+    let ph_floor = input
+        .and_then(|i| i.params_override.get("ph_floor"))
+        .copied()
+        .unwrap_or(2.5);
+
+    match model_uri {
+        "kask:dynamics/linear_decay@v1" => {
+            // For linear decay, the property URI is in initial_state or defaults to brix
+            let property_uri = input
+                .and_then(|i| i.initial_state.keys().next())
+                .cloned()
+                .unwrap_or_else(|| "chem:ph_value".into());
+            let k = input
+                .and_then(|i| i.params_override.get("k"))
+                .copied()
+                .unwrap_or(0.1);
+            let target = input
+                .and_then(|i| i.params_override.get("target"))
+                .copied()
+                .unwrap_or(0.0);
+            Some(Box::new(LinearDecay::new(property_uri, k, target)))
+        }
+
+        "kask:dynamics/kombucha_fermentation@v1" => {
+            Some(Box::new(KombuchaFermentation::from_temperature(temp_c, ph_floor)))
+        }
+
+        "kask:dynamics/pellicle_growth@v1" => {
+            let p_max = input
+                .and_then(|i| i.params_override.get("p_max"))
+                .copied()
+                .unwrap_or(8.0);
+            Some(Box::new(PellicleGrowth::from_temperature(temp_c, ph_floor, p_max)))
+        }
+
+        "kask:dynamics/bc_optimization@v1" => {
+            let agitation_rpm = input
+                .and_then(|i| i.process_context.get("agitation_rpm"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let do_pct = input
+                .and_then(|i| i.process_context.get("do_saturation_pct"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(10.0);
+            let carbon = input
+                .and_then(|i| i.process_context.get("carbon_source"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("glucose")
+                .to_string();
+            let bc_max = input
+                .and_then(|i| i.params_override.get("bc_max"))
+                .copied()
+                .unwrap_or(6.0);
+            Some(Box::new(BcOptimization::from_context(
+                temp_c, agitation_rpm, do_pct, &carbon, ph_floor, bc_max,
+            )))
+        }
+
+        _ => None,
+    }
+}
+
+/// All known model URIs — for error messages and the `list_dynamics_models` skill.
+pub fn known_uris() -> Vec<&'static str> {
+    vec![
+        "kask:dynamics/linear_decay@v1",
+        "kask:dynamics/kombucha_fermentation@v1",
+        "kask:dynamics/pellicle_growth@v1",
+        "kask:dynamics/bc_optimization@v1",
+    ]
+}
+
+/// List model manifests — used by the dynamics_runner agent to auto-select a model.
+pub fn list_manifests() -> Vec<crate::ModelManifest> {
+    // Construct default instances to get manifests
+    vec![
+        LinearDecay::new("chem:ph_value", 0.1, 0.0).manifest(),
+        KombuchaFermentation::default().manifest(),
+        PellicleGrowth::default().manifest(),
+        BcOptimization::default().manifest(),
+    ]
+}
