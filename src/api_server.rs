@@ -1360,6 +1360,9 @@ async fn main() {
         // ── SimOps dynamics (ODE time-series projection) ─────────────────────────
         .route("/api/simops/dynamics", post(handlers::simops::dynamics_handler))
         .route("/api/simops/dynamics/models", get(handlers::simops::dynamics_list_handler))
+        // ── SimOps rheology (instantaneous fluid property calculator) ─────────
+        .route("/api/simops/rheology", post(handlers::simops::rheology_handler))
+        .route("/api/simops/rheology/models", get(handlers::simops::rheology_list_handler))
         // Workspace routes
         .route(
             "/api/workspaces",

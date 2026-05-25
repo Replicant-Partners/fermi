@@ -42,6 +42,7 @@ pub mod manifest;
 pub mod models;
 pub mod provenance;
 pub mod registry;
+pub mod rheology;
 
 use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,10 @@ pub use manifest::{
     ContextSchema, ContextSource, ModelManifest, ParamSchema, StateFieldSchema,
 };
 pub use provenance::Provenance;
+pub use rheology::{
+    AlgaeViscosity, FlowRegime, RheologyInput, RheologyManifest, RheologyModel, RheologyOutput,
+    list_rheology_manifests, known_rheology_uris, resolve_rheology,
+};
 
 /// One sample on a property's trajectory.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

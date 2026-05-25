@@ -187,6 +187,7 @@ struct SimopsOptimizeScale;
 struct SimopsOptimizeSingleInput;
 struct ApplyDynamicsModel;
 struct ListDynamicsModels;
+struct ApplyRheologyModel;
 
 #[async_trait] impl Skill for H3Resolve {
     fn name(&self) -> &'static str { "h3_resolve" }
@@ -317,6 +318,46 @@ impl Skill for ApplyDynamicsModel {
 }
 
 #[async_trait]
+impl Skill for ApplyRheologyModel {
+    fn name(&self) -> &'static str { "apply_rheology_model" }
+    fn description(&self) -> &'static str {
+        "Compute instantaneous fluid rheology (viscosity, flow index, regime) for an algae \
+         suspension at given operating conditions. Power-law model with Arrhenius temperature \
+         dependence. Input: model_uri, temperature_c, shear_rate_per_s, volume_fraction, \
+         optional params_override. No time integration — single operating point."
+    }
+    fn category(&self) -> SkillCategory { SkillCategory::ProcessOptimization }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "model_uri": { "type": "string", "default": "kask:rheology/algae_viscosity@v1" },
+                "temperature_c": { "type": "number", "description": "Fluid temperature in °C" },
+                "shear_rate_per_s": { "type": "number", "description": "Shear rate in s⁻¹" },
+                "volume_fraction": { "type": "number", "description": "Algae volume fraction 0–1 (e.g. 0.15 = 15%)" },
+                "params_override": { "type": "object", "description": "Override k0, ea, c_n, n_min, density_kg_m3" }
+            },
+            "required": ["temperature_c", "shear_rate_per_s", "volume_fraction"]
+        })
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<String, String> {
+        let uri = input.get("model_uri")
+            .and_then(|v| v.as_str())
+            .unwrap_or("kask:rheology/algae_viscosity@v1");
+        let model = dynamics::resolve_rheology(uri)
+            .ok_or_else(|| format!("Unknown rheology model URI: {uri}"))?;
+        let rheology_input: dynamics::RheologyInput = serde_json::from_value(input.clone())
+            .map_err(|e| format!("Invalid apply_rheology_model input: {e}"))?;
+        let output = model.compute(&rheology_input)?;
+        serde_json::to_string(&output).map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait]
 impl Skill for ListDynamicsModels {
     fn name(&self) -> &'static str { "list_dynamics_models" }
     fn description(&self) -> &'static str {
@@ -360,6 +401,8 @@ impl SkillRegistry {
             // ── Dynamics (ODE-based time evolution) ──────────────────
             Box::new(ApplyDynamicsModel),
             Box::new(ListDynamicsModels),
+            // ── Rheology (instantaneous fluid properties) ─────────────
+            Box::new(ApplyRheologyModel),
         ]
     }
 

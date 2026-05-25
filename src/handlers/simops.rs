@@ -23,7 +23,10 @@ use simops::{
 use projections::{
     project_distribution, ExecutorRegistry, ProjectionRequest,
 };
-use dynamics::{apply_dynamics_model, registry as dynamics_registry, SkillInput as DynamicsInput};
+use dynamics::{
+    apply_dynamics_model, registry as dynamics_registry, SkillInput as DynamicsInput,
+    RheologyInput, resolve_rheology, list_rheology_manifests,
+};
 
 use fermi_auth::AuthPrincipal;
 use crate::AppState;
@@ -169,4 +172,51 @@ pub async fn dynamics_list_handler(
     _principal: AuthPrincipal,
 ) -> Json<Value> {
     Json(json!(dynamics_registry::list_manifests()))
+}
+
+// ─── POST /api/simops/rheology ────────────────────────────────────────────────
+//
+// Instantaneous rheology calculation — no time integration.
+// Given (temperature, shear_rate, volume_fraction, model_uri), returns
+// viscosity, flow index, consistency index.
+//
+// Powers the kask Twin panel viscosity probe / pump sizing tool.
+// No LLM. No credits charged.
+//
+// Request body: { model_uri, temperature_c, shear_rate_per_s, volume_fraction, params_override? }
+// Response:     { viscosity_pa_s, flow_index_n, consistency_index_k, regime, kinematic_mm2_per_s }
+
+pub async fn rheology_handler(
+    _state: State<AppState>,
+    _principal: AuthPrincipal,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let model_uri = body.get("model_uri")
+        .and_then(|v| v.as_str())
+        .unwrap_or("kask:rheology/algae_viscosity@v1");
+
+    let model = resolve_rheology(model_uri)
+        .ok_or_else(|| (
+            StatusCode::BAD_REQUEST,
+            format!("Unknown rheology model URI: '{}'. Known: {}",
+                model_uri,
+                dynamics::known_rheology_uris().join(", "))
+        ))?;
+
+    let input: RheologyInput = serde_json::from_value(body)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid request: {e}")))?;
+
+    let output = model.compute(&input)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    Ok(Json(json!(output)))
+}
+
+// ─── GET /api/simops/rheology/models ─────────────────────────────────────────
+
+pub async fn rheology_list_handler(
+    _state: State<AppState>,
+    _principal: AuthPrincipal,
+) -> Json<Value> {
+    Json(json!(list_rheology_manifests()))
 }
