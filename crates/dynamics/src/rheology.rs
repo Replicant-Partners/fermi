@@ -192,6 +192,19 @@ impl AlgaeViscosity {
             density_kg_m3: *input.params_override.get("density_kg_m3").unwrap_or(&d.density_kg_m3),
         }
     }
+
+    /// Export current parameter values as a `params_override` map.
+    /// Used by `derive_rheology` to pass calibrated params back into per-point compute calls.
+    pub fn to_input_overrides(&self) -> BTreeMap<String, f64> {
+        BTreeMap::from([
+            ("k0".into(),            self.k0),
+            ("ea".into(),            self.ea),
+            ("t_ref_k".into(),       self.t_ref_k),
+            ("c_n".into(),           self.c_n),
+            ("n_min".into(),         self.n_min),
+            ("density_kg_m3".into(), self.density_kg_m3),
+        ])
+    }
 }
 
 impl RheologyModel for AlgaeViscosity {
