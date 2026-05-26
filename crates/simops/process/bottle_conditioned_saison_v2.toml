@@ -1,0 +1,136 @@
+# bottle_conditioned_saison_v2.toml — Carbonation/2F worked example from spec 30
+#
+# Two-stage process: primary_fermentation → secondary_fermentation (bottle conditioning)
+# This is the canonical fixture from spec 30 §"Worked example: carbonation/2F"
+#
+# Exercises:
+#   - multi-input secondary stage (green_beer + priming_sugar + champagne_yeast)
+#   - catalyst WITHOUT density (champagne_yeast) → cascade_note emitted, cascade proceeds
+#   - upstream linkage (green_beer from_stage primary_fermentation)
+#   - sidestream with no capture (trub discarded)
+#   - dynamics_models binding on secondary stage (kask:dynamics/kombucha_f2_carbonation@v1)
+#
+# Spec 30 O3 canonical numerical outputs:
+#   primary_fermentation:
+#     total_input_kg:            104.0   (100L wort × 1.04 kg/L)
+#     total_mass_balance_input_kg: 104.0 (dry_yeast is catalyst, excluded)
+#     total_output_kg:           100.88  (104.0 × 0.97)
+#     green_beer: residual → 100.88 - 2.08 trub = 98.80 kg → 97.82 L
+#   secondary_fermentation:
+#     green_beer from upstream: 97.82 L × 1.01 density = ~98.80 kg
+#     priming_sugar: 3.5g/L × 97.82L = 342.4g × 0.0016 = 0.548 kg MB
+#     total_MB_input_kg: 98.80 + 0.548 = 99.35 kg
+#     total_output_kg: 99.35 × 0.99 = 98.36 kg
+
+schema_version = 2
+name = "Bottle-conditioned saison"
+description = "Two-stage beer: primary fermentation → bottle conditioning (F2 carbonation)"
+
+[throughput]
+basis_stage = "secondary_fermentation"
+basis_input = "green_beer"
+qty_per_run = 100.0
+qty_unit = "L"
+runs_per_year = 26
+
+[[stages]]
+id = "primary_fermentation"
+name = "Primary fermentation"
+efficiency = 0.97
+power_kwh_per_input_kg = 0.12
+labor_hours_per_input_kg = 0.001
+
+  [stages.carbon_intensity]
+  mode = "synthetic"
+  value = 0.05
+
+  [[stages.inputs]]
+  name = "wort"
+  role = "principal"
+  qty = 1.0
+  qty_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.80
+  cost_unit = "eur_per_L"
+  density_kg_per_unit = 1.04
+
+  [[stages.inputs]]
+  name = "dry_yeast"
+  role = "catalyst"             # excluded from mass-balance; cost counted
+  qty = 0.5
+  qty_unit = "g"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.05
+  cost_unit = "eur_per_g"
+  density_kg_per_unit = 0.001
+
+  [[stages.outputs]]
+  name = "green_beer"
+  role = "downstream_feed"      # residual (no qty_per_input_kg → takes remainder)
+  qty_unit = "L"
+  density_kg_per_unit = 1.01
+
+  [[stages.outputs]]
+  name = "trub"
+  role = "sidestream"
+  qty_per_input_kg = 0.02
+  qty_unit = "kg"
+  capture_fraction = 0.0        # not captured, discarded
+  value_per_unit_usd = 0.0
+
+[[stages]]
+id = "secondary_fermentation"
+name = "Bottle conditioning (carbonation / F2)"
+efficiency = 0.99
+
+  [[stages.inputs]]
+  name = "green_beer"
+  from_stage = "primary_fermentation"
+  role = "principal"
+
+  [[stages.inputs]]
+  name = "priming_sugar"
+  role = "consumable"
+  qty = 3.5
+  qty_unit = "g"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.002
+  cost_unit = "eur_per_g"
+  density_kg_per_unit = 0.0016  # sucrose: 1.587 g/mL → 0.001587 kg/g ≈ 0.0016
+
+  [[stages.inputs]]
+  name = "champagne_yeast"
+  role = "catalyst"             # no density_kg_per_unit → cascade_note emitted
+  qty = 0.5
+  qty_unit = "g"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.05
+  cost_unit = "eur_per_g"
+  # density_kg_per_unit intentionally omitted — triggers density_missing_input_excluded note
+  # catalyst role means it's excluded from MB anyway, so note is informational only
+
+  [[stages.outputs]]
+  name = "carbonated_beer"
+  role = "product"
+  qty_unit = "L"
+  density_kg_per_unit = 1.005
+  value_per_unit_usd = 4.50
+
+  [[stages.outputs]]
+  name = "lees_sediment"
+  role = "sidestream"
+  qty_per_input_kg = 0.008
+  qty_unit = "kg"
+  capture_fraction = 0.0
+  value_per_unit_usd = 0.0
+
+  # Dynamics model binding (spec 29/30 — ODE carbonation model)
+  # Uncomment when kask:dynamics/kombucha_f2_carbonation@v1 is bound to this stage
+  # [[stages.dynamics_models]]
+  # model_uri = "kask:dynamics/kombucha_f2_carbonation@v1"

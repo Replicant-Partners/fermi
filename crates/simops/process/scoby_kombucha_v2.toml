@@ -1,0 +1,140 @@
+# scoby_kombucha_v2.toml — Kombucha production, ProcessConfig v2
+#
+# Three-stage process: cold_steep → primary_fermentation → bottling
+# Exercises:
+#   - per_basis: principal ratio inputs (tea, sugar, SCOBY catalyst)
+#   - upstream linkage across all three stages
+#   - catalyst exclusion from mass-balance
+#   - multi-output stage (kombucha_liquid as downstream_feed, pellicle as sidestream)
+#   - role flip: swap outputs[].role vs bc_optimization_v2.toml for the same biology
+#
+# This is the spec 30 acceptance criterion 3 "kombucha side" of the role-flip test.
+# The bc_optimization_v2.toml uses identical inputs/efficiency; only output roles differ.
+
+schema_version = 2
+name = "SCOBY Kombucha Production"
+description = "Three-stage kombucha: cold steep → primary fermentation → bottling"
+
+[throughput]
+basis_stage = "cold_steep"
+basis_input = "water"
+qty_per_run = 200.0
+qty_unit = "L"
+runs_per_year = 52
+
+[[stages]]
+id = "cold_steep"
+name = "Cold steep"
+efficiency = 0.98
+
+  [[stages.inputs]]
+  name = "water"
+  role = "principal"
+  qty = 1.0
+  qty_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.0029
+  cost_unit = "eur_per_L"
+  density_kg_per_unit = 1.0
+
+  [[stages.inputs]]
+  name = "green_tea"
+  role = "consumable"
+  qty = 12.0
+  qty_unit = "g"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.0125
+  cost_unit = "eur_per_g"
+  density_kg_per_unit = 0.001   # ~1 g/mL dissolved contribution
+
+  [[stages.outputs]]
+  name = "cold_steep_tea"
+  role = "downstream_feed"
+  qty_unit = "L"
+  density_kg_per_unit = 1.01    # tea slightly denser than water
+
+[[stages]]
+id = "primary_fermentation"
+name = "Primary fermentation (F1)"
+efficiency = 0.99
+
+  [[stages.inputs]]
+  name = "cold_steep_tea"
+  from_stage = "cold_steep"
+  role = "principal"
+
+  [[stages.inputs]]
+  name = "cane_sugar"
+  role = "consumable"
+  qty = 70.0
+  qty_unit = "g"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.0012
+  cost_unit = "eur_per_g"
+  density_kg_per_unit = 0.001   # dissolved; 1 g sugar ≈ adds ~1 g to liquid mass
+
+  [[stages.inputs]]
+  name = "starter_scoby"
+  role = "catalyst"             # excluded from mass-balance; cost still counted
+  qty = 0.1
+  qty_unit = "kg"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 5.0
+  cost_unit = "eur_per_kg"
+  density_kg_per_unit = 1.05   # SCOBY density approx water+
+
+  [[stages.outputs]]
+  name = "kombucha_liquid"
+  role = "downstream_feed"      # ← KOMBUCHA SIDE: liquid is the principal flow
+  qty_unit = "L"
+  density_kg_per_unit = 1.02
+
+  [[stages.outputs]]
+  name = "new_pellicle"
+  role = "sidestream"
+  qty_per_input_kg = 0.04
+  qty_unit = "kg"
+  capture_fraction = 0.95
+  value_per_unit_usd = 0.0      # not yet valued; captured for reuse
+
+[[stages]]
+id = "bottling"
+name = "Bottling and carbonation (F2)"
+efficiency = 0.995
+
+  [[stages.inputs]]
+  name = "kombucha_liquid"
+  from_stage = "primary_fermentation"
+  role = "principal"
+
+  [[stages.inputs]]
+  name = "priming_sugar"
+  role = "consumable"
+  qty = 8.0
+  qty_unit = "g"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.0012
+  cost_unit = "eur_per_g"
+  density_kg_per_unit = 0.001
+
+  [[stages.outputs]]
+  name = "bottled_kombucha"
+  role = "product"
+  qty_unit = "L"
+  density_kg_per_unit = 1.025
+  value_per_unit_usd = 4.50
+
+  [[stages.outputs]]
+  name = "lees"
+  role = "waste"
+  qty_per_input_kg = 0.003
+  qty_unit = "kg"
+  disposal_cost_per_unit_usd = 0.001

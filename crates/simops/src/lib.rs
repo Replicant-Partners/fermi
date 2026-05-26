@@ -32,11 +32,13 @@
 //! ```
 
 pub mod cascade;
+pub mod cascade_v2;
 pub mod error;
 pub mod kpi;
 pub mod optimizer;
 pub mod predictor;
 pub mod process;
+pub mod process_v2;
 
 // Convenience re-exports
 pub use cascade::{cascade_backward, cascade_forward, CascadeResult, StageResult};
@@ -45,3 +47,9 @@ pub use kpi::{compute_kpis, BatchObservation, EnergyStatus, KpiReport, KCAL_PER_
 pub use optimizer::{scale_from_reference, single_input_solve, OptimizationResult};
 pub use predictor::{Predictor, TrainingObservation};
 pub use process::{CapexProfile, ProcessConfig, Resource, Sensor, Sidestream, Stage};
+pub use process_v2::{
+    CarbonIntensity, CascadeRequestEnvelope, CascadeRequestV2, Input, InputRole,
+    MassBalanceMode, Output, OutputRole, PerBasis, ProcessConfigV2, ScaleRequest,
+    SchemaVersionProbe, StageV2, Throughput,
+};
+pub use cascade_v2::{cascade_v2, CascadeError, CascadeResponseV2};

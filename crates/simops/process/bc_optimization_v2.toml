@@ -1,0 +1,113 @@
+# bc_optimization_v2.toml — Bacterial cellulose (BC) production, ProcessConfig v2
+#
+# Same fermentation biology as scoby_kombucha_v2.toml but with output roles flipped:
+# - pellicle is the downstream_feed (it gets processed further)
+# - spent_medium is the sidestream (the liquid byproduct)
+#
+# This is the spec 30 acceptance criterion 3 "BC side" of the role-flip test.
+# Both this and scoby_kombucha_v2.toml have identical:
+#   - inputs (same materials, same ratios)
+#   - efficiency values
+#   - mass-balance calculations
+# They differ ONLY in outputs[].role declarations.
+
+schema_version = 2
+name = "Bacterial Cellulose Production"
+description = "Two-stage BC: fermentation → purification. Pellicle is the product."
+
+[throughput]
+basis_stage = "fermentation"
+basis_input = "medium"
+qty_per_run = 200.0
+qty_unit = "L"
+runs_per_year = 26
+
+[[stages]]
+id = "fermentation"
+name = "BC fermentation"
+efficiency = 0.99
+
+  [[stages.inputs]]
+  name = "medium"
+  role = "principal"
+  qty = 1.0
+  qty_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.003
+  cost_unit = "eur_per_L"
+  density_kg_per_unit = 1.01
+
+  [[stages.inputs]]
+  name = "cane_sugar"
+  role = "consumable"
+  qty = 70.0
+  qty_unit = "g"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 0.0012
+  cost_unit = "eur_per_g"
+  density_kg_per_unit = 0.001
+
+  [[stages.inputs]]
+  name = "starter_scoby"
+  role = "catalyst"             # same as kombucha — excluded from mass-balance
+  qty = 0.1
+  qty_unit = "kg"
+  per = 1.0
+  per_unit = "L"
+  per_basis = "principal"
+  unit_cost = 5.0
+  cost_unit = "eur_per_kg"
+  density_kg_per_unit = 1.05
+
+  [[stages.outputs]]
+  name = "pellicle"
+  role = "downstream_feed"      # ← BC SIDE: pellicle is the principal flow
+  qty_per_input_kg = 0.04
+  qty_unit = "kg"
+  density_kg_per_unit = 1.0
+
+  [[stages.outputs]]
+  name = "spent_medium"
+  role = "sidestream"           # ← BC SIDE: liquid is the byproduct
+  qty_unit = "L"
+  density_kg_per_unit = 1.01
+  capture_fraction = 0.0        # discarded (can be recycled in future)
+  value_per_unit_usd = 0.0
+
+[[stages]]
+id = "purification"
+name = "Pellicle purification"
+efficiency = 0.92
+
+  [[stages.inputs]]
+  name = "pellicle"
+  from_stage = "fermentation"
+  role = "principal"
+
+  [[stages.inputs]]
+  name = "wash_water"
+  role = "consumable"
+  qty = 5.0
+  qty_unit = "L"
+  per = 1.0
+  per_unit = "kg"               # per kg of pellicle
+  per_basis = "principal"
+  unit_cost = 0.003
+  cost_unit = "eur_per_L"
+  density_kg_per_unit = 1.0
+
+  [[stages.outputs]]
+  name = "purified_pellicle"
+  role = "product"
+  qty_unit = "kg"
+  density_kg_per_unit = 1.0
+  value_per_unit_usd = 45.0     # BC commands premium pricing
+
+  [[stages.outputs]]
+  name = "wash_effluent"
+  role = "waste"
+  qty_unit = "L"
+  density_kg_per_unit = 1.0
+  disposal_cost_per_unit_usd = 0.002

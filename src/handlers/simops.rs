@@ -19,6 +19,8 @@ use serde_json::{json, Value};
 use simops::{
     cascade::{cascade_backward, cascade_forward},
     process::ProcessConfig,
+    cascade_v2::cascade_v2,
+    process_v2::{CascadeRequestEnvelope, CascadeRequestV2},
 };
 use projections::{
     project_distribution, ExecutorRegistry, ProjectionRequest,
@@ -47,16 +49,69 @@ pub struct CascadeRequest {
 }
 
 // ─── POST /api/simops/cascade ────────────────────────────────────────────────
+//
+// Version-dispatching cascade handler.
+//
+// The request body is inspected for `process.schema_version`:
+//   - schema_version == 2 (or absent with `inputs[]` present) → v2 engine
+//   - schema_version absent / 1 with `input` singular → v1 engine (legacy)
+//   - schema_version == 2 but `direction: backward` → 400 (deferred spec 30.6)
+//
+// v1 requests that include `schema_version: 1` explicitly are also rejected
+// with the spec 30 migration message.
 
 pub async fn cascade_handler(
     _state: State<AppState>,
     _principal: AuthPrincipal,
-    Json(req): Json<CascadeRequest>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    // Validate ProcessConfig (unit compatibility between adjacent stages).
-    req.process
-        .validate()
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid ProcessConfig: {}", e)))?;
+    // Probe schema_version without full deserialisation
+    let schema_version = body
+        .get("process")
+        .and_then(|p| p.get("schema_version"))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+
+    // Also detect v2 by presence of `inputs` on the first stage
+    let has_inputs_array = body
+        .get("process")
+        .and_then(|p| p.get("stages"))
+        .and_then(|s| s.as_array())
+        .and_then(|a| a.first())
+        .map(|s| s.get("inputs").is_some())
+        .unwrap_or(false);
+
+    let is_v2 = schema_version == Some(2) || (schema_version.is_none() && has_inputs_array);
+
+    if is_v2 {
+        // ── v2 path ──────────────────────────────────────────────────────────
+        let req: CascadeRequestV2 = serde_json::from_value(body)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid v2 cascade request: {e}")))?;
+
+        let response = cascade_v2(&req)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+        return Ok(Json(json!(response)));
+    }
+
+    // ── v1 rejection if schema_version explicitly set to non-2 ───────────────
+    if let Some(v) = schema_version {
+        if v != 2 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("ProcessConfig schema_version must be 2 (got: {v}). See kask spec 30."),
+            ));
+        }
+    }
+
+    // ── v1 legacy path (no schema_version, singular input/output) ────────────
+    // v1 processes have a singular `input` field on stages, no `inputs[]`.
+    // They are still supported for existing integrations but are deprecated.
+    // Any v1 process that reaches here was not rejected above (no schema_version
+    // and no inputs[] array). Parse directly.
+    let req: CascadeRequest = serde_json::from_value(body)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid cascade request: {e}. \
+            If this is a v2 process (inputs[]/outputs[]), ensure schema_version: 2 is set.")))?;
 
     // Guard: empty stage list would panic in cascade_forward/backward.
     if req.process.stages.is_empty() {
