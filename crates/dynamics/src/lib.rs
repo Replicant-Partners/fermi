@@ -196,11 +196,27 @@ pub fn apply_dynamics_model(input: SkillInput) -> Result<SkillOutput, String> {
             input.model_uri,
             registry::known_uris().join(", ")))?;
 
-    // Build initial state vector in manifest order
+    // Validate: all required state variables must be provided.
+    // Missing keys silently defaulting to 0.0 would produce wrong trajectories
+    // without any signal — e.g. bc_yield=0 is valid, but omitting it entirely
+    // by mistake should be a loud error.
     let order = model.state_order();
-    let y0: Vec<f64> = order.iter().map(|uri| {
-        input.initial_state.get(uri).copied().unwrap_or(0.0)
-    }).collect();
+    let missing: Vec<&str> = order.iter()
+        .filter(|uri| !input.initial_state.contains_key(*uri))
+        .map(|s| s.as_str())
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Missing required initial_state keys for '{}': {}",
+            input.model_uri,
+            missing.join(", ")
+        ));
+    }
+
+    // Build initial state vector in manifest order (all keys validated above)
+    let y0: Vec<f64> = order.iter()
+        .map(|uri| input.initial_state[uri])
+        .collect();
 
     // Determine integration horizon
     let horizon_days = match &input.horizon {
@@ -555,5 +571,53 @@ mod tests {
         assert!(uris.contains(&"phys:dynamic_viscosity_pa_s"));
         assert!(uris.contains(&"phys:flow_index_n"));
         assert!(uris.contains(&"phys:consistency_index_k"));
+    }
+
+    // ── AC 10: missing state variables must return an explicit error ──────────
+
+    #[test]
+    fn missing_state_single_model_returns_error_not_silent_zero() {
+        // bc_optimization requires bio:bc_yield_g_per_l and bio:bc_quality_index.
+        // Omitting them must produce an explicit error — not silently default to 0.0.
+        let input = SkillInput {
+            model_uri: "kask:dynamics/bc_optimization@v1".into(),
+            initial_state: BTreeMap::from([
+                // Deliberately omit bio:bc_yield_g_per_l and bio:bc_quality_index
+                ("chem:brix_percent".into(), 8.0),
+                ("chem:ph_value".into(), 6.0),
+            ]),
+            process_context: serde_json::json!({
+                "temperature_c": 30.0,
+                "agitation_rpm": 0.0,
+                "do_saturation_pct": 10.0,
+                "carbon_source": "glucose"
+            }),
+            params_override: BTreeMap::new(),
+            horizon: Horizon::Fixed { days: 1.0 },
+            sample_cadence: None,
+            integrator: None,
+            generated_by: None,
+        };
+        let result = apply_dynamics_model(input);
+        assert!(
+            result.is_err(),
+            "Missing required state variables must return Err, not silently default to 0.0"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("Missing required initial_state keys"),
+            "Error message must identify missing keys, got: {msg}"
+        );
+        assert!(
+            msg.contains("bio:bc_yield_g_per_l") || msg.contains("bio:bc_quality_index"),
+            "Error must name the specific missing keys, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn complete_state_single_model_still_works() {
+        // Regression: ensure the validation doesn't break the happy path
+        let output = apply_dynamics_model(bc_input()).unwrap();
+        assert!(output.trajectories.contains_key("bio:bc_yield_g_per_l"));
     }
 }

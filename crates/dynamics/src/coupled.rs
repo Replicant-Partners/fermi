@@ -260,8 +260,9 @@ pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput
     }
 
     // ── 6. Build initial state vector in union order ──────────────────────────
+    // All keys validated in step 5 — direct index is safe here.
     let y0: Vec<f64> = union_order.iter()
-        .map(|uri| input.initial_state.get(uri).copied().unwrap_or(0.0))
+        .map(|uri| input.initial_state[uri])
         .collect();
 
     // ── 7. Determine step size (minimum across models) ────────────────────────
