@@ -215,13 +215,23 @@ pub async fn post_workspace_message_handler(
     // keep the charge when message_type is 'agent_invocation' because
     // that's the path that fires LLM work and needs to cover its cost
     // even if the metadata happens to mention event_append.
-    let is_event_append = matches!(
-        req.metadata
-            .as_ref()
-            .and_then(|m| m.get("cost_class"))
-            .and_then(|v| v.as_str()),
-        Some("event_append")
-    );
+    // A message is a free bookkeeping event when:
+    //   (a) metadata.cost_class == "event_append"  (the explicit contract), OR
+    //   (b) message_type == "event_append"          (kask shorthand — avoids
+    //       needing a full metadata object for every SimOps log write)
+    //
+    // Either path is accepted so kask doesn't have to coordinate a metadata
+    // object construction for every cascade.ran / insight.accepted / process.saved
+    // write — setting message_type is enough.
+    let is_event_append =
+        req.message_type.as_deref() == Some("event_append")
+        || matches!(
+            req.metadata
+                .as_ref()
+                .and_then(|m| m.get("cost_class"))
+                .and_then(|v| v.as_str()),
+            Some("event_append")
+        );
     let is_invocation_path =
         req.message_type.as_deref() == Some("agent_invocation")
         || parse_at_mention(&req.content).is_some();
