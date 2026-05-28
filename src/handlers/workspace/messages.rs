@@ -236,7 +236,7 @@ pub async fn post_workspace_message_handler(
         req.message_type.as_deref() == Some("agent_invocation")
         || parse_at_mention(&req.content).is_some();
     if !(is_event_append && !is_invocation_path) {
-        charge_workspace_gas(
+        let charge_result = charge_workspace_gas(
             &state.db,
             ws_uuid,
             &workspace_id,
@@ -245,7 +245,20 @@ pub async fn post_workspace_message_handler(
             "Chat message",
             None,
         )
-        .await?;
+        .await;
+
+        // Only hard-fail (402) on LLM invocation paths — those actually cost money.
+        // Plain chat messages and bookkeeping writes (cascade.ran, process.saved, etc.)
+        // are allowed to proceed even when the workspace wallet is empty.
+        // This prevents the workspace from becoming completely unusable just because
+        // the wallet balance drifted to 0 while teams.workspace_budget still shows credits
+        // (a known sync issue when admin-granted credits — which land in granted_balance —
+        // are used to fund a workspace that requires purchased_balance for transfers).
+        if is_invocation_path {
+            charge_result?;
+        }
+        // Non-invocation: log the failure but proceed — the message is written.
+        // The workspace owner sees the low-balance warning on the next workspace load.
     }
 
     // Detect @agent_name invocation

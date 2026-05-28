@@ -460,13 +460,23 @@ pub async fn fund_workspace_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let charge_result = if principal.can_admin() {
+    // Use full balance (granted + purchased) when:
+    //   (a) caller is a platform admin, OR
+    //   (b) caller is funding their own workspace (owner self-funds)
+    //
+    // Previously only admins could use granted credits for workspace funding.
+    // This blocked the common flow where an operator receives admin-granted
+    // credits and tries to fund their own workspace — those credits land in
+    // granted_balance which credit_charge_purchased_only rejects, causing a
+    // silent 402 that leaves workspace_budget and wallet out of sync.
+    let is_self_fund = team.owner_id == principal.user_id();
+    let charge_result = if principal.can_admin() || is_self_fund {
         credit_charge(
             &state.db,
             user_wallet.wallet_id,
             req.amount,
             "transfer_out",
-            &format!("Fund workspace {} (admin)", team.name),
+            &format!("Fund workspace {}", team.name),
             Some(&workspace_id),
         )
         .await
