@@ -438,6 +438,115 @@ pub struct ProcessConfigV2 {
 
 // ─── HTTP request body ────────────────────────────────────────────────────────
 
+/// Twin parallelism scaling regime (spec 24 + spec 31 M5).
+/// Determines how a per-instance metric scales to a total across N instances.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ScalingRegime {
+    /// Named shorthand: "linear" | "constant"
+    Named(String),
+    /// Structured regime: { kind: "power", exponent: 0.6 }
+    ///                 or { kind: "shared", base: 50, per_instance: 15 }
+    Structured {
+        kind: String,
+        #[serde(default)]
+        exponent: Option<f64>,
+        #[serde(default)]
+        base: Option<f64>,
+        #[serde(default)]
+        per_instance: Option<f64>,
+    },
+}
+
+impl ScalingRegime {
+    /// Apply this regime to (base_value_per_instance, instance_count).
+    /// Returns the total across all active instances.
+    pub fn apply(&self, base_value: f64, n: usize) -> f64 {
+        if !base_value.is_finite() { return base_value; }
+        if n == 0 { return 0.0; }
+        if n == 1 { return base_value; }
+        let n_f = n as f64;
+        match self {
+            Self::Named(s) if s == "constant" => base_value,
+            Self::Named(_) => base_value * n_f,  // "linear" or unknown → linear
+            Self::Structured { kind, exponent, base, per_instance } => match kind.as_str() {
+                "constant" => base_value,
+                "power" => {
+                    let exp = exponent.unwrap_or(1.0).max(0.0);
+                    base_value * n_f.powf(exp)
+                }
+                "shared" => {
+                    let b = base.unwrap_or(0.0);
+                    let pi = per_instance.unwrap_or(base_value);
+                    b + pi * n_f
+                }
+                _ => base_value * n_f, // unknown → linear (safe default)
+            },
+        }
+    }
+}
+
+impl Default for ScalingRegime {
+    fn default() -> Self { Self::Named("linear".into()) }
+}
+
+/// Scaling map per lens for a parallel stage.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct StageScaling {
+    #[serde(default)] pub materials: Option<ScalingRegime>,
+    #[serde(default)] pub energy: Option<ScalingRegime>,
+    #[serde(default)] pub labor: Option<ScalingRegime>,
+    #[serde(default)] pub carbon: Option<ScalingRegime>,
+    #[serde(default)] pub output_qty: Option<ScalingRegime>,
+}
+
+/// One physical vessel/instance within a parallel stage.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ParallelInstance {
+    pub id: String,
+    /// "running" | "quarantined" | "harvested" | "failed"
+    #[serde(default = "default_running")]
+    pub status: String,
+}
+fn default_running() -> String { "running".into() }
+
+impl ParallelInstance {
+    /// Active instances contribute to the stage total.
+    /// Failed instances are excluded.
+    pub fn is_active(&self) -> bool {
+        self.status != "failed"
+    }
+}
+
+/// Parallelism block for one stage in the twin manifest.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StageParallelism {
+    pub kind: String,  // "parallel_instances"
+    #[serde(default)]
+    pub instances: Vec<ParallelInstance>,
+    #[serde(default)]
+    pub scaling: StageScaling,
+}
+
+impl StageParallelism {
+    pub fn active_count(&self) -> usize {
+        self.instances.iter().filter(|i| i.is_active()).count().max(1)
+    }
+}
+
+/// Twin manifest — read from `simops/twins/{twin_id}/twin.yaml`.
+/// Passed in the cascade request body when the operator has a twin selected.
+/// Absent = all stages are singleton (backward compat, no scaling applied).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TwinManifest {
+    #[serde(default)]
+    pub twin_id: Option<String>,
+    /// Per-stage parallelism map. Keys are stage IDs.
+    /// Stages absent from this map are singleton (N=1, no scaling).
+    #[serde(default)]
+    pub parallelism: std::collections::HashMap<String, StageParallelism>,
+}
+
 /// Request body for `POST /api/simops/cascade` with a v2 process.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CascadeRequestV2 {
@@ -447,6 +556,11 @@ pub struct CascadeRequestV2 {
     /// How to determine the absolute input quantity.
     #[serde(default)]
     pub scale: ScaleRequest,
+    /// Optional twin manifest. When present, parallelism scaling (4 regimes)
+    /// is applied to each stage's economics. Absent = all singleton.
+    /// Spec 36a A.2.3, spec 24 amendment 2026-05-29.
+    #[serde(default)]
+    pub twin: Option<TwinManifest>,
 }
 
 /// Thin envelope for schema-version detection at the handler boundary.

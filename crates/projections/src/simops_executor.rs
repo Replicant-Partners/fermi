@@ -86,6 +86,7 @@ impl ModelExecutor for SimOpsCascadeExecutor {
             process,
             direction: "forward".into(),
             scale: ScaleRequest::FromThroughput,
+            twin: None,
         };
 
         let result = cascade_v2(&req).map_err(|e| ProjectionError::ExecutorFailed {

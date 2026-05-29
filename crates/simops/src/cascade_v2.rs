@@ -30,7 +30,8 @@ use chrono::Utc;
 
 use crate::process_v2::{
     CascadeRequestV2, CarbonIntensity, Input, InputRole, MassBalanceMode,
-    Output, OutputRole, PerBasis, ProcessConfigV2, ScaleRequest, StageV2,
+    Output, OutputRole, PerBasis, ProcessConfigV2, ScaleRequest, ScalingRegime,
+    StageParallelism, StageV2, TwinManifest,
 };
 
 // ─── Cascade note ─────────────────────────────────────────────────────────────
@@ -215,7 +216,15 @@ pub struct ResolvedStage {
     pub inputs_resolved: Vec<ResolvedInput>,
     pub outputs_resolved: Vec<ResolvedOutput>,
     pub mass_balance: MassBalanceSummary,
+    /// Per-instance economics (single vessel, before parallelism scaling).
+    /// Always present. When instance_count == 1, identical to economics_total.
     pub economics: StageEconomics,
+    /// Total economics across all active instances after parallelism scaling.
+    /// Equal to economics when instance_count == 1 (no twin or singleton stage).
+    pub economics_total: StageEconomics,
+    /// Number of active instances for this stage (from twin manifest).
+    /// 1 for singleton stages or when no twin is provided.
+    pub instance_count: usize,
     pub cascade_notes: Vec<CascadeNote>,
 }
 
@@ -399,6 +408,10 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
     let mut resolved_stages: Vec<ResolvedStage> = Vec::new();
 
     for (stage_idx, stage) in process.stages.iter().enumerate() {
+        // Look up twin parallelism for this stage
+        let stage_parallelism = req.twin.as_ref()
+            .and_then(|t| t.parallelism.get(&stage.id));
+
         let resolved = resolve_stage(
             stage,
             stage_idx,
@@ -410,6 +423,7 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
             elec_price,
             labor_cost,
             carbon_price,
+            stage_parallelism,
         )?;
 
         // Register this stage's outputs for downstream consumption
@@ -592,6 +606,7 @@ fn resolve_stage(
     elec_price: f64,
     labor_cost: f64,
     carbon_price: f64,
+    stage_parallelism: Option<&StageParallelism>,
 ) -> Result<ResolvedStage, CascadeError> {
     let mut notes: Vec<CascadeNote> = Vec::new();
     let mut resolved_inputs: Vec<ResolvedInput> = Vec::new();
@@ -716,6 +731,15 @@ fn resolve_stage(
         resolved_outputs.iter().find(|o| o.qty_basis == "residual").map(|o| o.kg).unwrap_or(0.0)
     }).unwrap_or(0.0)).max(0.0);
 
+    // ── Apply twin parallelism scaling (spec 36a A.2.3, spec 31 M5) ──────────
+    let instance_count = stage_parallelism.map(|p| p.active_count()).unwrap_or(1);
+    let economics_total = if instance_count > 1 {
+        let p = stage_parallelism.unwrap(); // safe: instance_count > 1 only when Some
+        scale_economics_for_parallelism(&economics, instance_count, &p.scaling)
+    } else {
+        economics.clone()
+    };
+
     Ok(ResolvedStage {
         stage_id: stage.id.clone(),
         inputs_resolved: resolved_inputs,
@@ -729,6 +753,8 @@ fn resolve_stage(
             unaccounted_kg: unaccounted,
         },
         economics,
+        economics_total,
+        instance_count,
         cascade_notes: notes,
     })
 }
@@ -1200,11 +1226,109 @@ fn compute_stage_economics(
     }
 }
 
+// ─── Parallelism scaling ─────────────────────────────────────────────────────
+
+/// Apply twin parallelism scaling regimes to per-instance economics.
+/// Returns a new StageEconomics representing the total across all active instances.
+/// Spec 36a A.2.3, spec 31 M5, spec 24 amendment.
+fn scale_economics_for_parallelism(
+    per_instance: &StageEconomics,
+    n: usize,
+    scaling: &crate::process_v2::StageScaling,
+) -> StageEconomics {
+    let linear = ScalingRegime::default();
+
+    let mat_regime = scaling.materials.as_ref().unwrap_or(&linear);
+    let energy_regime = scaling.energy.as_ref().unwrap_or(&linear);
+    let labor_regime = scaling.labor.as_ref().unwrap_or(&linear);
+    let carbon_regime = scaling.carbon.as_ref().unwrap_or(&linear);
+
+    let scale_opt = |v: Option<f64>, regime: &ScalingRegime| -> Option<f64> {
+        v.map(|x| regime.apply(x, n))
+    };
+    let scale_f = |v: f64, regime: &ScalingRegime| -> f64 { regime.apply(v, n) };
+
+    let materials_total = scale_opt(per_instance.materials_eur_per_kg, mat_regime);
+    let energy_total = scale_opt(per_instance.energy_eur_per_kg, energy_regime);
+    let labor_total = scale_opt(per_instance.labor_eur_per_kg, labor_regime);
+    let carbon_total = scale_opt(per_instance.carbon_eur_per_kg, carbon_regime);
+
+    let opex_total = {
+        let m = materials_total.unwrap_or(0.0);
+        let e = energy_total.unwrap_or(0.0);
+        let l = labor_total.unwrap_or(0.0);
+        let c = carbon_total.unwrap_or(0.0);
+        let up = scale_f(per_instance.upstream_cost_per_kg, &linear);
+        let ws = scale_f(per_instance.waste_disposal_cost_eur, &linear);
+        let ss = scale_f(per_instance.sidestream_credit_eur, &linear);
+        if per_instance.opex_per_kg_total_input.is_some() {
+            Some(m + e + l + c + up + ws - ss)
+        } else { None }
+    };
+
+    let cost_breakdown_total = per_instance.cost_breakdown.as_ref().map(|cb| {
+        CostBreakdown {
+            materials: cb.materials.iter().map(|row| CostBreakdownRow {
+                input_name: row.input_name.clone(),
+                eur_per_run: mat_regime.apply(row.eur_per_run, n),
+                eur_per_kg_input: mat_regime.apply(row.eur_per_kg_input, n),
+                qty_resolved: row.qty_resolved,
+                qty_unit: row.qty_unit.clone(),
+                unit_cost: row.unit_cost,
+            }).collect(),
+            energy: cb.energy.iter().map(|row| EnergyBreakdownRow {
+                kind: row.kind.clone(),
+                eur_per_run: energy_regime.apply(row.eur_per_run, n),
+                kwh: row.kwh.map(|k| energy_regime.apply(k, n)),
+                rate_eur_per_kwh: row.rate_eur_per_kwh,
+                diagnostic: row.diagnostic.clone(),
+            }).collect(),
+            labor: cb.labor.iter().map(|row| EnergyBreakdownRow {
+                kind: row.kind.clone(),
+                eur_per_run: labor_regime.apply(row.eur_per_run, n),
+                kwh: row.kwh.map(|k| labor_regime.apply(k, n)),
+                rate_eur_per_kwh: row.rate_eur_per_kwh,
+                diagnostic: row.diagnostic.clone(),
+            }).collect(),
+            carbon: cb.carbon.iter().map(|row| CarbonBreakdownRow {
+                kind: row.kind.clone(),
+                eur_per_run: carbon_regime.apply(row.eur_per_run, n),
+                kg_co2: row.kg_co2.map(|k| carbon_regime.apply(k, n)),
+                price_eur_per_tco2: row.price_eur_per_tco2,
+                diagnostic: row.diagnostic.clone(),
+            }).collect(),
+        }
+    });
+
+    StageEconomics {
+        materials_eur_per_kg: materials_total,
+        upstream_cost_per_kg: scale_f(per_instance.upstream_cost_per_kg, &linear),
+        energy_eur_per_kg: energy_total,
+        labor_eur_per_kg: labor_total,
+        carbon_eur_per_kg: carbon_total,
+        sidestream_credit_eur: scale_f(per_instance.sidestream_credit_eur, &linear),
+        waste_disposal_cost_eur: scale_f(per_instance.waste_disposal_cost_eur, &linear),
+        opex_per_kg_total_input: opex_total,
+        opex_per_unit_principal_input_display: per_instance.opex_per_unit_principal_input_display.clone(),
+        cost_breakdown: cost_breakdown_total,
+        energy_breakdown: per_instance.energy_breakdown.as_ref().map(|eb| EnergyBreakdown {
+            stage_kwh: eb.stage_kwh.map(|k| energy_regime.apply(k, n)),
+            diagnostic: eb.diagnostic.clone(),
+        }),
+        carbon_breakdown: per_instance.carbon_breakdown.as_ref().map(|cb| CarbonBreakdown {
+            stage_kg_co2: cb.stage_kg_co2.map(|k| carbon_regime.apply(k, n)),
+            diagnostic: cb.diagnostic.clone(),
+        }),
+        diagnostics: per_instance.diagnostics.clone(),
+    }
+}
+
 // ─── Process totals ───────────────────────────────────────────────────────────
 
 fn compute_process_totals(stages: &[ResolvedStage]) -> ProcessTotals {
+    // Use economics_total (parallelism-scaled) for process-level rollups
     let total_opex: f64 = stages.iter().map(|s| {
-        s.economics.opex_per_kg_total_input.unwrap_or(0.0) * s.mass_balance.total_mass_balance_input_kg
+        s.economics_total.opex_per_kg_total_input.unwrap_or(0.0) * s.mass_balance.total_mass_balance_input_kg
     }).sum();
 
     let total_revenue: f64 = stages.iter().flat_map(|s| s.outputs_resolved.iter())
@@ -1314,6 +1438,7 @@ mod tests {
             process: p,
             direction: "forward".into(),
             scale: ScaleRequest::FromThroughput,
+            twin: None,
         };
         let result = cascade_v2(&req);
         assert!(matches!(result, Err(CascadeError::SchemaVersion { got: 1 })));
@@ -1325,6 +1450,7 @@ mod tests {
             process: simple_process(),
             direction: "backward".into(),
             scale: ScaleRequest::FromThroughput,
+            twin: None,
         };
         assert!(matches!(cascade_v2(&req), Err(CascadeError::BackwardNotSupported)));
     }
@@ -1337,6 +1463,7 @@ mod tests {
             process: simple_process(),
             direction: "forward".into(),
             scale: ScaleRequest::FromThroughput,
+            twin: None,
         };
         let resp = cascade_v2(&req).unwrap();
         let mb = &resp.stages[0].mass_balance;
@@ -1371,7 +1498,7 @@ mod tests {
             density_kg_per_unit: None, mass_balance: None,
         });
 
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput };
+        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
         let resp = cascade_v2(&req).unwrap();
         let stage = &resp.stages[0];
         let inputs: std::collections::HashMap<_, _> = stage.inputs_resolved.iter().map(|i| (i.name.as_str(), i)).collect();
@@ -1458,7 +1585,7 @@ mod tests {
             ],
             elec_price_per_kwh: None, labor_cost_per_hour: None, carbon_price_per_tonne: None,
         };
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput };
+        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
         let resp = cascade_v2(&req).unwrap();
 
         // s1: 100 kg in × 0.9 = 90 kg out
@@ -1521,7 +1648,7 @@ mod tests {
             ],
             elec_price_per_kwh: None, labor_cost_per_hour: None, carbon_price_per_tonne: None,
         };
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput };
+        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
         assert!(matches!(cascade_v2(&req), Err(CascadeError::UnknownFromOutput { .. })));
     }
 
@@ -1541,7 +1668,7 @@ mod tests {
             density_kg_per_unit: None,  // no density
             mass_balance: None,
         });
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput };
+        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
         let resp = cascade_v2(&req).unwrap();
         let stage = &resp.stages[0];
         let powder = stage.inputs_resolved.iter().find(|i| i.name == "mystery_powder").unwrap();
@@ -1553,5 +1680,153 @@ mod tests {
         let note_kinds: Vec<&str> = stage.cascade_notes.iter().map(|n| n.kind).collect();
         assert!(note_kinds.contains(&"density_missing_input_excluded"),
             "notes: {:?}", note_kinds);
+    }
+
+    // ── Scaling regime unit tests ───────────────────────────────────────────
+
+    #[test]
+    fn scaling_linear_multiplies_by_n() {
+        let r = ScalingRegime::Named("linear".into());
+        assert!((r.apply(10.0, 3) - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scaling_constant_returns_base() {
+        let r = ScalingRegime::Named("constant".into());
+        assert!((r.apply(10.0, 5) - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scaling_power_applies_exponent() {
+        let r = ScalingRegime::Structured { kind: "power".into(), exponent: Some(0.6), base: None, per_instance: None };
+        // 10 * 4^0.6 = 10 * 2.297 ≈ 22.97
+        let result = r.apply(10.0, 4);
+        assert!((result - 10.0 * 4.0_f64.powf(0.6)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scaling_shared_adds_base_plus_per_instance() {
+        let r = ScalingRegime::Structured { kind: "shared".into(), exponent: None, base: Some(50.0), per_instance: Some(15.0) };
+        // base=50 + per_instance=15 * N=3 = 95
+        assert!((r.apply(0.0, 3) - 95.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn singleton_stage_economics_total_equals_per_instance() {
+        let req = CascadeRequestV2 {
+            process: simple_process(),
+            direction: "forward".into(),
+            scale: ScaleRequest::FromThroughput,
+            twin: None,
+        };
+        let resp = cascade_v2(&req).unwrap();
+        let stage = &resp.stages[0];
+        assert_eq!(stage.instance_count, 1);
+        // With no twin, economics_total should equal economics
+        assert_eq!(
+            stage.economics.opex_per_kg_total_input,
+            stage.economics_total.opex_per_kg_total_input,
+        );
+    }
+
+    #[test]
+    fn twin_linear_scaling_doubles_cost_for_n2() {
+        use crate::process_v2::*;
+        use std::collections::HashMap;
+
+        let twin = TwinManifest {
+            twin_id: Some("primary".into()),
+            parallelism: HashMap::from([(
+                "s1".into(),
+                StageParallelism {
+                    kind: "parallel_instances".into(),
+                    instances: vec![
+                        ParallelInstance { id: "v_a".into(), status: "running".into() },
+                        ParallelInstance { id: "v_b".into(), status: "running".into() },
+                    ],
+                    scaling: StageScaling::default(), // all linear
+                },
+            )]),
+        };
+
+        let req = CascadeRequestV2 {
+            process: simple_process(),
+            direction: "forward".into(),
+            scale: ScaleRequest::FromThroughput,
+            twin: Some(twin),
+        };
+        let resp = cascade_v2(&req).unwrap();
+        let stage = &resp.stages[0];
+        assert_eq!(stage.instance_count, 2);
+
+        // With linear scaling, economics_total should be 2× per-instance
+        if let (Some(per), Some(total)) = (
+            stage.economics.materials_eur_per_kg,
+            stage.economics_total.materials_eur_per_kg,
+        ) {
+            assert!((total - per * 2.0).abs() < 1e-9,
+                "linear scaling: total={total}, per={per}, expected {}", per * 2.0);
+        }
+    }
+
+    #[test]
+    fn twin_failed_instance_excluded_from_count() {
+        use crate::process_v2::*;
+        use std::collections::HashMap;
+
+        let twin = TwinManifest {
+            twin_id: None,
+            parallelism: HashMap::from([(
+                "s1".into(),
+                StageParallelism {
+                    kind: "parallel_instances".into(),
+                    instances: vec![
+                        ParallelInstance { id: "v_a".into(), status: "running".into() },
+                        ParallelInstance { id: "v_b".into(), status: "failed".into() }, // excluded
+                        ParallelInstance { id: "v_c".into(), status: "running".into() },
+                    ],
+                    scaling: StageScaling::default(),
+                },
+            )]),
+        };
+        let req = CascadeRequestV2 {
+            process: simple_process(),
+            direction: "forward".into(),
+            scale: ScaleRequest::FromThroughput,
+            twin: Some(twin),
+        };
+        let resp = cascade_v2(&req).unwrap();
+        // 3 instances, 1 failed → 2 active
+        assert_eq!(resp.stages[0].instance_count, 2);
+    }
+
+    #[test]
+    fn basis_stage_null_returns_422_structured_error() {
+        use crate::process_v2::*;
+        let p = ProcessConfigV2 {
+            schema_version: 2,
+            name: "null_basis".into(),
+            description: None,
+            throughput: Throughput {
+                basis_stage: None, // ← null
+                basis_input: None,
+                qty_per_run: 100.0,
+                qty_unit: "L".into(),
+                runs_per_year: None,
+            },
+            stages: simple_process().stages,
+            elec_price_per_kwh: None,
+            labor_cost_per_hour: None,
+            carbon_price_per_tonne: None,
+        };
+        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
+        let result = cascade_v2(&req);
+        assert!(matches!(result, Err(CascadeError::BasisUnresolved { .. })));
+        if let Err(e) = result {
+            assert_eq!(e.status_code(), 422);
+            let json = e.to_json();
+            assert_eq!(json["error"], "BASIS_STAGE_UNRESOLVED");
+            assert!(json["annotation_suggestions"].is_array());
+        }
     }
 }
