@@ -123,8 +123,8 @@ mod tests {
             name: "test".into(),
             description: None,
             throughput: Throughput {
-                basis_stage: "s1".into(),
-                basis_input: "w".into(),
+                basis_stage: Some("s1".into()),
+                basis_input: Some("w".into()),
                 qty_per_run: 10.0,
                 qty_unit: "L".into(),
                 runs_per_year: Some(10.0),

@@ -98,18 +98,107 @@ pub struct MassBalanceSummary {
 
 // ─── Economics ────────────────────────────────────────────────────────────────
 
+/// Per-input material cost row.
+#[derive(Debug, Clone, Serialize)]
+pub struct CostBreakdownRow {
+    pub input_name: String,
+    pub eur_per_run: f64,
+    pub eur_per_kg_input: f64,
+    pub qty_resolved: f64,
+    pub qty_unit: String,
+    pub unit_cost: f64,
+}
+
+/// Per-input energy row.
+#[derive(Debug, Clone, Serialize)]
+pub struct EnergyBreakdownRow {
+    pub kind: String,
+    pub eur_per_run: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kwh: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_eur_per_kwh: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
+}
+
+/// Per-input carbon row.
+#[derive(Debug, Clone, Serialize)]
+pub struct CarbonBreakdownRow {
+    pub kind: String,
+    pub eur_per_run: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kg_co2: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_eur_per_tco2: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
+}
+
+/// Structured cost breakdown (spec 36a A.2.2 Q3b).
+#[derive(Debug, Clone, Serialize)]
+pub struct CostBreakdown {
+    pub materials: Vec<CostBreakdownRow>,
+    pub energy: Vec<EnergyBreakdownRow>,
+    pub labor: Vec<EnergyBreakdownRow>,
+    pub carbon: Vec<CarbonBreakdownRow>,
+}
+
+/// Structured energy breakdown.
+#[derive(Debug, Clone, Serialize)]
+pub struct EnergyBreakdown {
+    /// Stage-level electricity kWh (from power_kwh_per_input_kg × input_kg).
+    /// Null when power_kwh_per_input_kg is undeclared.
+    pub stage_kwh: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<StageDiagnostic>,
+}
+
+/// Structured carbon breakdown.
+#[derive(Debug, Clone, Serialize)]
+pub struct CarbonBreakdown {
+    /// Stage-level carbon in kg CO₂-eq.
+    /// Null when carbon_intensity is undeclared.
+    pub stage_kg_co2: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<StageDiagnostic>,
+}
+
+/// Diagnostic emitted when a stage field is missing (spec 36a A.2.2 Q3a).
+#[derive(Debug, Clone, Serialize)]
+pub struct StageDiagnostic {
+    pub kind: &'static str,
+    pub field: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StageEconomics {
-    pub materials_eur_per_kg: f64,
+    /// Null when any input lacks unit_cost. Diagnostic included.
+    pub materials_eur_per_kg: Option<f64>,
     pub upstream_cost_per_kg: f64,
-    pub energy_eur_per_kg: f64,
-    pub labor_eur_per_kg: f64,
-    pub carbon_eur_per_kg: f64,
+    /// Null when power_kwh_per_input_kg undeclared. Diagnostic included.
+    pub energy_eur_per_kg: Option<f64>,
+    /// Null when labor_hours_per_input_kg undeclared. Diagnostic included.
+    pub labor_eur_per_kg: Option<f64>,
+    /// Null when carbon_intensity undeclared. Diagnostic included.
+    pub carbon_eur_per_kg: Option<f64>,
     pub sidestream_credit_eur: f64,
     pub waste_disposal_cost_eur: f64,
-    pub opex_per_kg_total_input: f64,
+    /// Null when any required field is missing (honest: not everything is known).
+    pub opex_per_kg_total_input: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opex_per_unit_principal_input_display: Option<DisplayUnit>,
+    /// Per-input/per-component breakdown (spec 36a A.2.2 Q3b).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_breakdown: Option<CostBreakdown>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub energy_breakdown: Option<EnergyBreakdown>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carbon_breakdown: Option<CarbonBreakdown>,
+    /// Diagnostics for missing fields — tells kask WHY a value is null.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub diagnostics: Vec<StageDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,6 +253,13 @@ pub struct CascadeProvenance {
 pub enum CascadeError {
     SchemaVersion { got: u32 },
     BackwardNotSupported,
+    /// throughput.basis_stage or basis_input is null.
+    /// Returns 422 with annotation_suggestions so kask can surface a bind action.
+    BasisUnresolved {
+        field: String,
+        suggested_stage: Option<String>,
+        suggested_input: Option<String>,
+    },
     StageNoInputs(String),
     StageNoOutputs(String),
     UnknownFromStage { input: String, stage: String, target: String },
@@ -180,9 +276,48 @@ pub enum CascadeError {
     AmbiguousPerUnit { stage: String, input: String, per_unit: String, units: Vec<String> },
 }
 
+impl CascadeError {
+    /// HTTP status code for this error (422 for BasisUnresolved, 400 for others).
+    pub fn status_code(&self) -> u16 {
+        match self {
+            Self::BasisUnresolved { .. } => 422,
+            _ => 400,
+        }
+    }
+
+    /// Structured JSON body for this error. Includes annotation_suggestions
+    /// for BasisUnresolved so kask can render an action chip.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::BasisUnresolved { field, suggested_stage, suggested_input } => {
+                serde_json::json!({
+                    "error": "BASIS_STAGE_UNRESOLVED",
+                    "message": format!("throughput.{field} is null; cannot integrate without a basis target"),
+                    "annotation_suggestions": [{
+                        "kind": "basis_stage_bind",
+                        "target_field": format!("throughput.{field}"),
+                        "proposed_stage": suggested_stage,
+                        "proposed_input": suggested_input,
+                        "reasons": ["first stage with a principal input"],
+                        "confidence": 0.85
+                    }]
+                })
+            }
+            _ => serde_json::json!({ "error": self.to_string() }),
+        }
+    }
+}
+
 impl std::fmt::Display for CascadeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::BasisUnresolved { field, suggested_stage, suggested_input } => {
+                write!(f, "BASIS_STAGE_UNRESOLVED: throughput.{field} is null; \
+                    cannot integrate without a basis target. \
+                    Suggested: stage={}, input={}",
+                    suggested_stage.as_deref().unwrap_or("?"),
+                    suggested_input.as_deref().unwrap_or("?"))
+            }
             Self::SchemaVersion { got } =>
                 write!(f, "ProcessConfig schema_version must be 2 (got: {got}). See kask spec 30."),
             Self::BackwardNotSupported =>
@@ -243,7 +378,7 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
     // Validate process structure
     validate_process(process)?;
 
-    // Determine absolute basis quantity
+    // Determine absolute basis quantity (422 if null — spec 36a A.4.2)
     let basis_qty = resolve_basis_quantity(process, &req.scale)?;
 
     // Build a stage-index map for upstream lookups
@@ -280,7 +415,7 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
         // Register this stage's outputs for downstream consumption
         for output in &resolved.outputs_resolved {
             let key = (stage.id.clone(), output.name.clone());
-            let opex = resolved.economics.opex_per_kg_total_input;
+            let opex = resolved.economics.opex_per_kg_total_input.unwrap_or(0.0);
             upstream_cumulative_opex.insert(key.clone(), opex);
             upstream_outputs.insert(key, output.clone());
         }
@@ -307,16 +442,21 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
 fn validate_process(process: &ProcessConfigV2) -> Result<(), CascadeError> {
     let stage_ids: Vec<&str> = process.stages.iter().map(|s| s.id.as_str()).collect();
 
-    // Validate throughput references
-    let basis_stage = process.stages.iter()
-        .find(|s| s.id == process.throughput.basis_stage)
-        .ok_or_else(|| CascadeError::UnknownThroughputStage(process.throughput.basis_stage.clone()))?;
+    // Validate throughput references — null basis_stage/basis_input accepted
+    // (spec 36a A.4.2). When null, cascade auto-selects + emits bind_suggestion note.
+    if let Some(ref basis_stage_id) = process.throughput.basis_stage {
+        let basis_stage = process.stages.iter()
+            .find(|s| &s.id == basis_stage_id)
+            .ok_or_else(|| CascadeError::UnknownThroughputStage(basis_stage_id.clone()))?;
 
-    if !basis_stage.inputs.iter().any(|i| i.name == process.throughput.basis_input) {
-        return Err(CascadeError::UnknownThroughputInput {
-            stage: process.throughput.basis_stage.clone(),
-            input: process.throughput.basis_input.clone(),
-        });
+        if let Some(ref basis_input_name) = process.throughput.basis_input {
+            if !basis_stage.inputs.iter().any(|i| &i.name == basis_input_name) {
+                return Err(CascadeError::UnknownThroughputInput {
+                    stage: basis_stage_id.clone(),
+                    input: basis_input_name.clone(),
+                });
+            }
+        }
     }
 
     for stage in &process.stages {
@@ -364,6 +504,8 @@ fn validate_process(process: &ProcessConfigV2) -> Result<(), CascadeError> {
         }
 
         // Stages referenced by downstream stages must have a downstream_feed output
+        // OR a product-roled output (spec 36a A.1.2: product is feed-equivalent when
+        // consumed downstream — kask should stop promoting roles; ABW accepts this).
         let is_referenced_downstream = process.stages.iter().skip(
             stage_ids.iter().position(|&id| id == stage.id).unwrap() + 1
         ).any(|later| later.inputs.iter().any(|i| {
@@ -371,8 +513,10 @@ fn validate_process(process: &ProcessConfigV2) -> Result<(), CascadeError> {
         }));
 
         if is_referenced_downstream {
-            let has_feed = stage.outputs.iter().any(|o| o.role == OutputRole::DownstreamFeed);
-            if !has_feed {
+            let has_feed_equivalent = stage.outputs.iter().any(|o|
+                o.role == OutputRole::DownstreamFeed || o.role == OutputRole::Product
+            );
+            if !has_feed_equivalent {
                 return Err(CascadeError::NoDownstreamFeedForLinked { stage: stage.id.clone() });
             }
         }
@@ -383,14 +527,45 @@ fn validate_process(process: &ProcessConfigV2) -> Result<(), CascadeError> {
 
 // ─── Basis quantity ───────────────────────────────────────────────────────────
 
+/// Resolve the basis quantity.
+/// When `basis_stage`/`basis_input` are null, returns `CascadeError::BasisUnresolved`
+/// with annotation_suggestions so kask can surface an action chip.
+/// (Spec 36a A.4.2 — refuse to integrate, return structured error, not auto-fill.)
 fn resolve_basis_quantity(
     process: &ProcessConfigV2,
     scale: &ScaleRequest,
 ) -> Result<f64, CascadeError> {
     match scale {
-        ScaleRequest::FromThroughput => Ok(process.throughput.qty_per_run),
+        ScaleRequest::FromThroughput => {
+            if process.throughput.basis_stage.is_none() {
+                // Find the best candidate to suggest
+                let suggested = process.stages.iter()
+                    .find(|s| s.inputs.iter().any(|i| i.role == InputRole::Principal))
+                    .and_then(|s| {
+                        s.inputs.iter().find(|i| i.role == InputRole::Principal)
+                            .map(|i| (s.id.clone(), i.name.clone()))
+                    });
+                return Err(CascadeError::BasisUnresolved {
+                    field: "basis_stage".into(),
+                    suggested_stage: suggested.as_ref().map(|(s, _)| s.clone()),
+                    suggested_input: suggested.map(|(_, i)| i),
+                });
+            }
+            if process.throughput.basis_input.is_none() {
+                let basis_stage_id = process.throughput.basis_stage.as_deref().unwrap();
+                let suggested_input = process.stages.iter()
+                    .find(|s| s.id == basis_stage_id)
+                    .and_then(|s| s.inputs.iter().find(|i| i.role == InputRole::Principal))
+                    .map(|i| i.name.clone());
+                return Err(CascadeError::BasisUnresolved {
+                    field: "basis_input".into(),
+                    suggested_stage: Some(basis_stage_id.to_string()),
+                    suggested_input,
+                });
+            }
+            Ok(process.throughput.qty_per_run)
+        }
         ScaleRequest::Explicit { stage_id, input_name, qty, .. } => {
-            // Validate the explicit reference exists
             let stage = process.stages.iter().find(|s| &s.id == stage_id)
                 .ok_or_else(|| CascadeError::UnknownThroughputStage(stage_id.clone()))?;
             if !stage.inputs.iter().any(|i| &i.name == input_name) {
@@ -865,12 +1040,25 @@ fn compute_stage_economics(
     carbon_price: f64,
 ) -> StageEconomics {
     let scale = if total_mb_kg > 0.0 { 1.0 / total_mb_kg } else { 0.0 };
+    let mut diagnostics: Vec<StageDiagnostic> = Vec::new();
 
-    // Materials cost from external inputs
-    let materials_eur: f64 = resolved_inputs.iter()
-        .filter(|r| r.source == "external")
-        .filter_map(|r| r.cost_eur)
-        .sum();
+    // ── Materials: per-input breakdown rows ───────────────────────────────────
+    let mut materials_rows: Vec<CostBreakdownRow> = Vec::new();
+    let mut materials_eur = 0.0f64;
+    for r in resolved_inputs.iter().filter(|r| r.source == "external") {
+        if let Some(cost) = r.cost_eur {
+            let unit_cost = if r.qty > 0.0 { cost / r.qty } else { 0.0 };
+            materials_rows.push(CostBreakdownRow {
+                input_name: r.name.clone(),
+                eur_per_run: cost,
+                eur_per_kg_input: cost * scale,
+                qty_resolved: r.qty,
+                qty_unit: r.unit.clone(),
+                unit_cost,
+            });
+            materials_eur += cost;
+        }
+    }
 
     // Upstream cost carried from linked inputs
     let upstream_eur: f64 = resolved_inputs.iter()
@@ -878,57 +1066,137 @@ fn compute_stage_economics(
         .filter_map(|r| r.upstream_cost_carried_eur)
         .sum();
 
-    // Energy
-    let energy_eur = stage.power_kwh_per_input_kg.unwrap_or(0.0) * total_mb_kg * elec_price;
+    // ── Energy: null when undeclared, diagnostic emitted ─────────────────────
+    let (energy_eur_opt, energy_rows, energy_diag) = if let Some(kwh_per_kg) = stage.power_kwh_per_input_kg {
+        let kwh = kwh_per_kg * total_mb_kg;
+        let eur = kwh * elec_price;
+        let row = EnergyBreakdownRow {
+            kind: "stage_electric".into(),
+            eur_per_run: eur,
+            kwh: Some(kwh),
+            rate_eur_per_kwh: Some(elec_price),
+            diagnostic: None,
+        };
+        (Some(eur), vec![row], None)
+    } else {
+        let diag = StageDiagnostic {
+            kind: "STAGE_FIELD_MISSING",
+            field: "power_kwh_per_input_kg".into(),
+            message: "Stage does not declare power_kwh_per_input_kg; energy cost unknown.".into(),
+        };
+        diagnostics.push(StageDiagnostic {
+            kind: "STAGE_FIELD_MISSING",
+            field: "power_kwh_per_input_kg".into(),
+            message: "Stage does not declare power_kwh_per_input_kg; energy cost unknown.".into(),
+        });
+        (None, vec![], Some(diag))
+    };
 
-    // Labour
-    let labor_eur = stage.labor_hours_per_input_kg.unwrap_or(0.0) * total_mb_kg * labor_cost;
+    // ── Labour: null when undeclared ──────────────────────────────────────────
+    let (labor_eur_opt, labor_rows) = if let Some(hours_per_kg) = stage.labor_hours_per_input_kg {
+        let hours = hours_per_kg * total_mb_kg;
+        let eur = hours * labor_cost;
+        let row = EnergyBreakdownRow {
+            kind: "stage_attended".into(),
+            eur_per_run: eur,
+            kwh: Some(hours),
+            rate_eur_per_kwh: Some(labor_cost),
+            diagnostic: None,
+        };
+        (Some(eur), vec![row])
+    } else {
+        diagnostics.push(StageDiagnostic {
+            kind: "STAGE_FIELD_MISSING",
+            field: "labor_hours_per_input_kg".into(),
+            message: "Stage does not declare labor_hours_per_input_kg; labour cost unknown.".into(),
+        });
+        (None, vec![])
+    };
 
-    // Carbon
-    let carbon_intensity_val = stage.carbon_intensity.as_ref()
-        .map(|ci| ci.value_kg_per_kg())
-        .unwrap_or(0.0);
-    // total_output_kg approximation for carbon
+    // ── Carbon: null when undeclared ──────────────────────────────────────────
     let total_output_kg = total_mb_kg * stage.efficiency;
-    let carbon_kg = carbon_intensity_val * total_output_kg;
-    let carbon_eur = carbon_kg * (carbon_price / 1000.0); // price is per tonne
+    let (carbon_eur_opt, carbon_rows, carbon_diag) = if let Some(ci) = &stage.carbon_intensity {
+        let intensity = ci.value_kg_per_kg();
+        let kg_co2 = intensity * total_output_kg;
+        let eur = kg_co2 * (carbon_price / 1000.0);
+        let row = CarbonBreakdownRow {
+            kind: "stage_emissions".into(),
+            eur_per_run: eur,
+            kg_co2: Some(kg_co2),
+            price_eur_per_tco2: Some(carbon_price),
+            diagnostic: None,
+        };
+        (Some(eur), vec![row], None)
+    } else {
+        let diag = StageDiagnostic {
+            kind: "STAGE_FIELD_MISSING",
+            field: "carbon_intensity".into(),
+            message: "Stage does not declare carbon_intensity; carbon cost unknown.".into(),
+        };
+        diagnostics.push(StageDiagnostic {
+            kind: "STAGE_FIELD_MISSING",
+            field: "carbon_intensity".into(),
+            message: "Stage does not declare carbon_intensity; carbon cost unknown.".into(),
+        });
+        (None, vec![], Some(diag))
+    };
 
-    // Sidestream credits
+    // ── Sidestream credits + waste disposal ────────────────────────────────────
     let sidestream_credit: f64 = resolved_outputs.iter()
         .filter(|o| o.role == "sidestream")
         .filter_map(|o| o.value_eur)
         .sum();
-
-    // Waste disposal
     let waste_disposal: f64 = resolved_outputs.iter()
         .filter(|o| o.role == "waste")
         .filter_map(|o| o.disposal_cost_eur)
         .sum();
 
+    // ── Roll up — null if any component is null ────────────────────────────────
+    let energy_eur = energy_eur_opt.unwrap_or(0.0);
+    let labor_eur = labor_eur_opt.unwrap_or(0.0);
+    let carbon_eur = carbon_eur_opt.unwrap_or(0.0);
+
     let total_eur = upstream_eur + materials_eur + energy_eur + labor_eur + carbon_eur
         + waste_disposal - sidestream_credit;
 
-    // Display unit: opex per unit of first principal input
+    // opex_per_kg_total_input is null when any required lens is missing
+    let opex_known = energy_eur_opt.is_some() && labor_eur_opt.is_some() && carbon_eur_opt.is_some();
+
     let display = resolved_inputs.iter()
         .find(|r| r.role == "principal")
-        .map(|r| {
-            let per_unit_val = if r.qty > 0.0 { total_eur / r.qty } else { 0.0 };
-            DisplayUnit {
-                value: per_unit_val,
-                unit: format!("eur_per_{}_{}", r.unit, r.name),
-            }
+        .map(|r| DisplayUnit {
+            value: if r.qty > 0.0 { total_eur / r.qty } else { 0.0 },
+            unit: format!("eur_per_{}_{}", r.unit, r.name),
         });
 
     StageEconomics {
-        materials_eur_per_kg: materials_eur * scale,
+        // materials null only when NO external inputs have unit_cost at all
+        materials_eur_per_kg: if resolved_inputs.iter().any(|r| r.source == "external" && r.cost_eur.is_some()) {
+            Some(materials_eur * scale)
+        } else { None },
         upstream_cost_per_kg: upstream_eur * scale,
-        energy_eur_per_kg: energy_eur * scale,
-        labor_eur_per_kg: labor_eur * scale,
-        carbon_eur_per_kg: carbon_eur * scale,
+        energy_eur_per_kg: energy_eur_opt.map(|e| e * scale),
+        labor_eur_per_kg: labor_eur_opt.map(|l| l * scale),
+        carbon_eur_per_kg: carbon_eur_opt.map(|c| c * scale),
         sidestream_credit_eur: sidestream_credit,
         waste_disposal_cost_eur: waste_disposal,
-        opex_per_kg_total_input: total_eur * scale,
+        opex_per_kg_total_input: if opex_known { Some(total_eur * scale) } else { None },
         opex_per_unit_principal_input_display: display,
+        cost_breakdown: Some(CostBreakdown {
+            materials: materials_rows,
+            energy: energy_rows,
+            labor: labor_rows,
+            carbon: carbon_rows,
+        }),
+        energy_breakdown: Some(EnergyBreakdown {
+            stage_kwh: stage.power_kwh_per_input_kg.map(|k| k * total_mb_kg),
+            diagnostic: energy_diag,
+        }),
+        carbon_breakdown: Some(CarbonBreakdown {
+            stage_kg_co2: stage.carbon_intensity.as_ref().map(|ci| ci.value_kg_per_kg() * total_output_kg),
+            diagnostic: carbon_diag,
+        }),
+        diagnostics,
     }
 }
 
@@ -936,7 +1204,7 @@ fn compute_stage_economics(
 
 fn compute_process_totals(stages: &[ResolvedStage]) -> ProcessTotals {
     let total_opex: f64 = stages.iter().map(|s| {
-        s.economics.opex_per_kg_total_input * s.mass_balance.total_mass_balance_input_kg
+        s.economics.opex_per_kg_total_input.unwrap_or(0.0) * s.mass_balance.total_mass_balance_input_kg
     }).sum();
 
     let total_revenue: f64 = stages.iter().flat_map(|s| s.outputs_resolved.iter())
@@ -954,12 +1222,11 @@ fn compute_process_totals(stages: &[ResolvedStage]) -> ProcessTotals {
         .filter_map(|o| o.disposal_cost_eur)
         .sum();
 
-    let carbon_kg: f64 = stages.iter().map(|s| {
-        s.economics.carbon_eur_per_kg * s.mass_balance.total_mass_balance_input_kg
-        // carbon_eur_per_kg is per kg; we want kg CO2 not EUR — approximate via carbon_intensity
-        // Use a rough back-calculation: carbon_eur / carbon_price_per_tonne * 1000
-        // For now compute from mass directly
-    }).sum::<f64>() / 50.0 * 1000.0; // rough: reverse the 50 EUR/tonne default
+    // Sum CO₂ from carbon_breakdown where available
+    let carbon_kg: f64 = stages.iter()
+        .filter_map(|s| s.economics.carbon_breakdown.as_ref())
+        .filter_map(|cb| cb.stage_kg_co2)
+        .sum();
 
     ProcessTotals {
         total_opex_per_run_eur: total_opex,
@@ -980,8 +1247,8 @@ mod tests {
 
     fn throughput(basis_stage: &str, basis_input: &str, qty: f64, unit: &str) -> Throughput {
         Throughput {
-            basis_stage: basis_stage.into(),
-            basis_input: basis_input.into(),
+            basis_stage: Some(basis_stage.into()),
+            basis_input: Some(basis_input.into()),
             qty_per_run: qty,
             qty_unit: unit.into(),
             runs_per_year: Some(10.0),

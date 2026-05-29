@@ -88,8 +88,17 @@ pub async fn cascade_handler(
         let req: CascadeRequestV2 = serde_json::from_value(body)
             .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid v2 cascade request: {e}")))?;
 
-        let response = cascade_v2(&req)
-            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        let response = cascade_v2(&req).map_err(|e| {
+            use simops::cascade_v2::CascadeError;
+            let status = if e.status_code() == 422 {
+                StatusCode::UNPROCESSABLE_ENTITY
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            // For structured errors (BasisUnresolved), return JSON body
+            let body = serde_json::to_string(&e.to_json()).unwrap_or_else(|_| e.to_string());
+            (status, body)
+        })?;
 
         return Ok(Json(json!(response)));
     }

@@ -15,7 +15,76 @@
 //! other than 2, produces a deserialisation error at the handler boundary.
 
 use std::collections::BTreeMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+// ─── Flexible f64 deserialiser ────────────────────────────────────────────────
+// Accepts bare f64 (0.97) OR tagged-union ({ "value": 0.97 }) OR string ("0.97").
+// Spec 36a A.4.3: kask sends efficiency as tagged-union from some code paths;
+// ABW should accept both and always emit bare f64 in responses.
+
+fn deserialize_flexible_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    use serde::de::{self, Visitor, MapAccess};
+    use std::fmt;
+
+    struct Flex;
+    impl<'de> Visitor<'de> for Flex {
+        type Value = f64;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "a number or {{ value: number }} object")
+        }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<f64, E> { Ok(v) }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<f64, E> { Ok(v as f64) }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<f64, E> { Ok(v as f64) }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<f64, E> {
+            v.parse::<f64>().map_err(|_| de::Error::invalid_value(de::Unexpected::Str(v), &self))
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<f64, A::Error> {
+            let mut value: Option<f64> = None;
+            while let Some(key) = map.next_key::<String>()? {
+                if key == "value" {
+                    value = Some(map.next_value()?);
+                } else {
+                    let _: serde_json::Value = map.next_value()?;
+                }
+            }
+            value.ok_or_else(|| de::Error::missing_field("value"))
+        }
+    }
+    d.deserialize_any(Flex)
+}
+
+fn deserialize_optional_flexible_f64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    use serde::de::{self, Visitor, MapAccess};
+    use std::fmt;
+
+    struct OptFlex;
+    impl<'de> Visitor<'de> for OptFlex {
+        type Value = Option<f64>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "null, a number, or {{ value: number }}")
+        }
+        fn visit_none<E: de::Error>(self) -> Result<Option<f64>, E> { Ok(None) }
+        fn visit_unit<E: de::Error>(self) -> Result<Option<f64>, E> { Ok(None) }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Option<f64>, E> { Ok(Some(v)) }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Option<f64>, E> { Ok(Some(v as f64)) }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Option<f64>, E> { Ok(Some(v as f64)) }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Option<f64>, E> {
+            Ok(Some(v.parse::<f64>().map_err(|_| de::Error::invalid_value(de::Unexpected::Str(v), &self))?))
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Option<f64>, A::Error> {
+            let mut value: Option<f64> = None;
+            while let Some(key) = map.next_key::<String>()? {
+                if key == "value" { value = Some(map.next_value()?); }
+                else { let _: serde_json::Value = map.next_value()?; }
+            }
+            Ok(value)
+        }
+        fn visit_some<D2: Deserializer<'de>>(self, d: D2) -> Result<Option<f64>, D2::Error> {
+            deserialize_flexible_f64(d).map(Some)
+        }
+    }
+    d.deserialize_any(OptFlex)
+}
 
 // ─── Role enums ───────────────────────────────────────────────────────────────
 
@@ -258,6 +327,9 @@ pub struct StageV2 {
     pub outputs: Vec<Output>,
 
     /// Fraction of total mass-balance input that becomes total output.
+    /// Accepts bare f64 (0.97) OR tagged-union ({ "value": 0.97 }) for
+    /// backward compat with kask process YAMLs. Always emitted as bare f64.
+    #[serde(deserialize_with = "deserialize_flexible_f64")]
     pub efficiency: f64,
 
     /// Energy consumption per kg of total mass-balance input (kWh/kg).
@@ -280,20 +352,32 @@ pub struct StageV2 {
 // ─── Throughput ───────────────────────────────────────────────────────────────
 
 /// Absolute scaling block. Declares the "1 unit of production scale."
+///
+/// All fields are optional at deserialisation time. When `basis_stage` or
+/// `basis_input` are null/absent, the cascade engine emits a `bind_suggestion`
+/// cascade_note and auto-selects the first stage with a principal input.
+/// Spec 36a A.4.2: kask should stop auto-filling; ABW accepts null + annotates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Throughput {
-    /// Which stage contains the basis input.
-    pub basis_stage: String,
-    /// Name of the basis input on that stage.
-    pub basis_input: String,
-    /// Quantity per run in `qty_unit`.
+    /// Which stage contains the basis input. Null = cascade auto-selects + emits bind_suggestion note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis_stage: Option<String>,
+    /// Name of the basis input on that stage. Null = cascade auto-selects first principal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis_input: Option<String>,
+    /// Quantity per run in `qty_unit`. Defaults to 1.0 when absent.
+    #[serde(default = "default_qty_per_run")]
     pub qty_per_run: f64,
-    /// Unit of the basis quantity (e.g. "L", "kg").
+    /// Unit of the basis quantity (e.g. "L", "kg"). Defaults to "unit".
+    #[serde(default = "default_qty_unit")]
     pub qty_unit: String,
     /// Runs per year (for annualised economics).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runs_per_year: Option<f64>,
 }
+
+fn default_qty_per_run() -> f64 { 1.0 }
+fn default_qty_unit() -> String { "unit".to_string() }
 
 // ─── ScaleRequest ─────────────────────────────────────────────────────────────
 
