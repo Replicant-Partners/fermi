@@ -39,6 +39,8 @@ pub mod optimizer;
 pub mod predictor;
 pub mod process;
 pub mod process_v2;
+pub mod event_kinds;
+pub mod slot_match;
 
 // Convenience re-exports
 pub use cascade::{cascade_backward, cascade_forward, CascadeResult, StageResult};
@@ -53,3 +55,5 @@ pub use process_v2::{
     SchemaVersionProbe, StageV2, Throughput,
 };
 pub use cascade_v2::{cascade_v2, CascadeError, CascadeResponseV2};
+pub use event_kinds::SimOpsEventKind;
+pub use slot_match::{suggest_principal_bindings, SlotBindingSuggestion};

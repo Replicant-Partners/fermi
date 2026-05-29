@@ -1357,6 +1357,9 @@ async fn main() {
         .route("/api/simops/cascade", post(handlers::simops::cascade_handler))
         // ── SimOps distributional projection (Digital Twin "Generate distribution") ─
         .route("/api/simops/project", post(handlers::simops::project_handler))
+        // ── SimOps slot-match binding suggestions (spec 36a A.1.1 + A.1.4) ──────
+        .route("/api/simops/cascade/suggest-bindings",
+            post(handlers::workspace::actions::suggest_bindings_handler))
         // ── SimOps dynamics (ODE time-series projection) ─────────────────────────
         .route("/api/simops/dynamics", post(handlers::simops::dynamics_handler))
         .route("/api/simops/dynamics/models", get(handlers::simops::dynamics_list_handler))
@@ -1426,6 +1429,10 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/actions/:action_id/reject",
             post(handlers::workspace::actions::reject_action_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/migrate_parallelism_to_twin",
+            post(handlers::workspace::actions::migrate_parallelism_to_twin_handler),
         )
         .route(
             "/api/workspaces/:workspace_id/annotations",

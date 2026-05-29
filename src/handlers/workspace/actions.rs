@@ -46,6 +46,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use fermi_auth::{teams, AuthPrincipal};
+use simops::{suggest_principal_bindings, process_v2::ProcessConfigV2};
 
 use crate::AppState;
 
@@ -840,4 +841,191 @@ pub async fn resolve_annotation_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({ "annotation_id": annotation_uuid, "resolved": true })))
+}
+
+// ─── POST /api/simops/cascade/suggest-bindings ────────────────────────────────
+//
+// Spec 36a A.1.1 + A.1.4 — slot-match scoring.
+// Takes a ProcessConfigV2 and returns binding suggestions for every orphan
+// principal input (principal without from_stage on a non-first stage).
+// Pure computation — no workspace state. No credits charged.
+//
+// Request: { process: ProcessConfigV2 }
+// Response: { suggestions: SlotBindingSuggestion[] }
+
+#[derive(Deserialize)]
+pub struct SuggestBindingsRequest {
+    pub process: ProcessConfigV2,
+}
+
+pub async fn suggest_bindings_handler(
+    _state: State<AppState>,
+    _principal: AuthPrincipal,
+    Json(req): Json<SuggestBindingsRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let suggestions = suggest_principal_bindings(&req.process);
+    Ok(Json(json!({
+        "suggestions": suggestions,
+        "count": suggestions.len(),
+    })))
+}
+
+// ─── POST /api/workspaces/:id/actions/migrate_parallelism_to_twin ─────────────
+//
+// Spec 36a A.1.5 — one-shot migration.
+// Reads simops/process.yaml from the workspace, moves any stage.parallelism
+// blocks to a twin manifest, writes both files via the action protocol.
+//
+// Request: {
+//   process_path: "simops/process.yaml",   // optional, defaults to above
+//   twin_path: "simops/twins/primary/twin.yaml",  // optional
+//   confirmation: "auto" | "ask"           // default "ask"
+// }
+// Response: {
+//   action_id, stages_migrated, twin_path, process_sha, twin_sha
+// }
+
+#[derive(Deserialize)]
+pub struct MigrateParallelismRequest {
+    #[serde(default = "default_process_path")]
+    pub process_path: String,
+    #[serde(default = "default_twin_path")]
+    pub twin_path: String,
+    #[serde(default)]
+    pub confirmation: Option<String>,
+}
+fn default_process_path() -> String { "simops/process.yaml".into() }
+fn default_twin_path() -> String { "simops/twins/primary/twin.yaml".into() }
+
+pub async fn migrate_parallelism_to_twin_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<MigrateParallelismRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
+
+    // Read process YAML
+    let process_content = tokio::task::spawn_blocking({
+        let git = state.workspace_git.clone();
+        let slug = slug.clone();
+        let path = req.process_path.clone();
+        move || git.read_file(&slug, &path)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::NOT_FOUND, format!("Could not read {}: {}", req.process_path, e)))?;
+
+    // Parse as JSON (YAML is valid JSON superset for our process shape)
+    let mut process_json: serde_json::Value = serde_yaml::from_str(&process_content)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Failed to parse process YAML: {e}")))?;
+
+    // Run migration — move stage.parallelism to twin manifest
+    let stages = process_json.get_mut("stages")
+        .and_then(|s| s.as_array_mut())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "process.stages is missing or not an array".into()))?;
+
+    let mut twin_parallelism = serde_json::Map::new();
+    let mut stages_migrated = 0usize;
+
+    for stage in stages.iter_mut() {
+        if let Some(obj) = stage.as_object_mut() {
+            if let Some(par) = obj.get("parallelism").cloned() {
+                let kind = par.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+                if kind == "parallel_instances" {
+                    let stage_id = obj.get("id")
+                        .and_then(|id| id.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    twin_parallelism.insert(stage_id, par);
+                    obj.remove("parallelism");
+                    stages_migrated += 1;
+                } else {
+                    // Singleton or unknown — drop without migrating
+                    obj.remove("parallelism");
+                }
+            }
+        }
+    }
+
+    if stages_migrated == 0 {
+        return Ok(Json(json!({
+            "action_id": null,
+            "stages_migrated": 0,
+            "message": "No parallel_instances blocks found in process.stages — nothing to migrate.",
+            "twin_path": req.twin_path,
+        })));
+    }
+
+    // Serialise cleaned process back to YAML
+    let cleaned_yaml = serde_yaml::to_string(&process_json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("YAML serialisation failed: {e}")))?;
+
+    // Build twin manifest YAML
+    let twin_manifest = serde_json::json!({
+        "twin_id": "primary",
+        "process_ref": req.process_path,
+        "parallelism": twin_parallelism,
+        "created_at": Utc::now().to_rfc3339(),
+        "created_by": "migrate_parallelism_to_twin",
+        "status": "active",
+        "derived_from": null,
+    });
+    let twin_yaml = serde_yaml::to_string(&twin_manifest)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Twin YAML serialisation failed: {e}")))?;
+
+    let confirmation = req.confirmation.as_deref().unwrap_or("ask");
+
+    // Log and apply both writes
+    let payload = json!({
+        "process_path": req.process_path,
+        "twin_path": req.twin_path,
+        "stages_migrated": stages_migrated,
+    });
+
+    let action_id = log_action(
+        &state, ws_uuid, "migrate_parallelism_to_twin",
+        "user", &user_id, Some("kask_simops"), &payload, confirmation, None,
+    ).await?;
+
+    let mut process_sha = None;
+    let mut twin_sha = None;
+
+    if confirmation == "auto" {
+        // Write cleaned process
+        match state.workspace_git.commit_file(
+            &slug, &req.process_path, &cleaned_yaml,
+            &format!("migrate: move stage.parallelism to twin manifest (spec 36a A.1.5)")
+        ) {
+            Ok(sha) => { process_sha = Some(sha); }
+            Err(e) => tracing::warn!("migrate: process write failed: {e}"),
+        }
+
+        // Write twin manifest
+        match state.workspace_git.commit_file(
+            &slug, &req.twin_path, &twin_yaml,
+            "migrate: create twin manifest with relocated parallelism"
+        ) {
+            Ok(sha) => { twin_sha = Some(sha); }
+            Err(e) => tracing::warn!("migrate: twin write failed: {e}"),
+        }
+
+        let _ = sqlx::query(
+            "UPDATE workspace_action_log SET applied = true, applied_at = NOW()
+             WHERE action_id = $1"
+        )
+        .bind(action_id)
+        .execute(&state.db)
+        .await;
+    }
+
+    Ok(Json(json!({
+        "action_id": action_id,
+        "stages_migrated": stages_migrated,
+        "twin_path": req.twin_path,
+        "process_sha": process_sha,
+        "twin_sha": twin_sha,
+        "confirmation": confirmation,
+    })))
 }
