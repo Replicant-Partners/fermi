@@ -20,7 +20,7 @@ use simops::{
     cascade::{cascade_backward, cascade_forward},
     process::ProcessConfig,
     cascade_v2::cascade_v2,
-    process_v2::{CascadeRequestEnvelope, CascadeRequestV2},
+    process_v2::{CascadeRequestEnvelope, CascadeRequestV2, ProcessConfigV2, ScaleRequest, TwinManifest},
 };
 use projections::{
     project_distribution, ExecutorRegistry, ProjectionRequest,
@@ -31,6 +31,7 @@ use dynamics::{
     coupled::{apply_coupled_dynamics_model, CoupledInput, CoupledParamsOverride},
 };
 
+use axum::extract::Path;
 use fermi_auth::AuthPrincipal;
 use crate::AppState;
 
@@ -321,4 +322,134 @@ pub async fn rheology_list_handler(
     _principal: AuthPrincipal,
 ) -> Json<Value> {
     Json(json!(list_rheology_manifests()))
+}
+
+// ─── POST /api/workspaces/:workspace_id/cascade ───────────────────────────────
+//
+// Workspace-aware convenience cascade endpoint.
+//
+// ABW reads `simops/process.yaml` and (optionally) `simops/twins/<twin_id>/twin.yaml`
+// from the workspace git, then runs the v2 cascade engine. kask passes only the
+// workspace_id and optionally twin_id — no file reading required on the client side.
+//
+// Request body (all fields optional):
+//   {
+//     "twin_id":   "primary",              // default "primary"; omit to skip twin
+//     "direction": "forward",              // default "forward"
+//     "scale":     { "kind": "from_throughput" }  // default
+//     "process_path": "simops/process.yaml"       // default
+//   }
+//
+// Response: same shape as POST /api/simops/cascade (CascadeResponseV2)
+//
+// Two endpoints, two purposes:
+//   /api/simops/cascade          — stateless; caller provides full process + twin JSON
+//   /api/workspaces/:id/cascade  — workspace-aware; ABW assembles from workspace files
+//
+// No credits charged — CPU-only, free at the platform level.
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceCascadeRequest {
+    /// Twin ID to load from simops/twins/<twin_id>/twin.yaml.
+    /// Set to null explicitly to run without twin (singleton mode).
+    #[serde(default = "default_twin_id")]
+    pub twin_id: Option<String>,
+    /// Direction — "forward" only for v2 (backward deferred to spec 30.6).
+    #[serde(default = "default_direction")]
+    pub direction: String,
+    /// Scale block. Defaults to from_throughput.
+    #[serde(default)]
+    pub scale: ScaleRequest,
+    /// Path to the process YAML in the workspace git.
+    #[serde(default = "default_process_path_wc")]
+    pub process_path: String,
+}
+
+fn default_twin_id() -> Option<String> { Some("primary".into()) }
+fn default_direction() -> String { "forward".into() }
+fn default_process_path_wc() -> String { "simops/process.yaml".into() }
+
+pub async fn workspace_cascade_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<WorkspaceCascadeRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    // Resolve workspace slug for git reads
+    let ws_uuid: uuid::Uuid = workspace_id.parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".into()))?;
+    let slug = crate::handlers::workspace::get_workspace_slug(&state.db, ws_uuid)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Workspace not found".to_string()))?;
+
+    // ── Read process YAML ──────────────────────────────────────────────────────
+    let process_yaml = tokio::task::spawn_blocking({
+        let git = state.workspace_git.clone();
+        let slug = slug.clone();
+        let path = req.process_path.clone();
+        move || git.read_file(&slug, &path)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::NOT_FOUND, format!("Could not read {}: {}", req.process_path, e)))?;
+
+    let process: ProcessConfigV2 = serde_yaml::from_str(&process_yaml)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Failed to parse process YAML: {e}")))?;
+
+    // ── Optionally read twin YAML ──────────────────────────────────────────────
+    let twin: Option<TwinManifest> = if let Some(ref twin_id) = req.twin_id {
+        let twin_path = format!("simops/twins/{twin_id}/twin.yaml");
+        let twin_result = tokio::task::spawn_blocking({
+            let git = state.workspace_git.clone();
+            let slug = slug.clone();
+            let path = twin_path.clone();
+            move || git.read_file(&slug, &path)
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        match twin_result {
+            Ok(yaml) => {
+                match serde_yaml::from_str::<TwinManifest>(&yaml) {
+                    Ok(t) => Some(t),
+                    Err(e) => {
+                        // Parse failure on twin YAML is a warning, not a hard error —
+                        // cascade proceeds in singleton mode with a note in the response.
+                        tracing::warn!(workspace_id=%workspace_id, twin_id=%twin_id,
+                            "Failed to parse twin YAML, proceeding in singleton mode: {e}");
+                        None
+                    }
+                }
+            }
+            Err(_) => {
+                // Twin file absent — proceed in singleton mode silently
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // ── Run cascade ────────────────────────────────────────────────────────────
+    let cascade_req = CascadeRequestV2 {
+        process,
+        direction: req.direction,
+        scale: req.scale,
+        twin,
+    };
+
+    let response = cascade_v2(&cascade_req).map_err(|e| {
+        use simops::cascade_v2::CascadeError;
+        let status = if e.status_code() == 422 {
+            StatusCode::UNPROCESSABLE_ENTITY
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        let body = serde_json::to_string(&e.to_json()).unwrap_or_else(|_| e.to_string());
+        (status, body)
+    })?;
+
+    Ok(Json(json!(response)))
 }

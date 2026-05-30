@@ -1387,6 +1387,11 @@ async fn main() {
             "/api/workspaces/:workspace_id/budget",
             post(handlers::workspace::fund_workspace_handler),
         )
+        // ── Workspace-aware cascade (reads process + twin from workspace git) ──
+        .route(
+            "/api/workspaces/:workspace_id/cascade",
+            post(handlers::simops::workspace_cascade_handler),
+        )
         // ── Generalised App action protocol ──────────────────────────────────
         // Six action types + list/pending/accept/reject + annotations.
         // Isomorphic across companion action blocks, abw CLI, and MCP tools/call.
