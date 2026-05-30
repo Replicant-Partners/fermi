@@ -9,10 +9,20 @@
 -- PgBouncer-safe: CREATE INDEX CONCURRENTLY not supported in transaction mode;
 -- using standard CREATE INDEX which is fine for maintenance windows.
 
-CREATE INDEX IF NOT EXISTS idx_sosa_obs_projection_id
-    ON sosa_observations ((extra->>'projection_id'))
-    WHERE extra->>'projection_id' IS NOT NULL;
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sosa_obs_projection_id'
+    ) THEN
+        CREATE INDEX idx_sosa_obs_projection_id
+            ON sosa_observations ((extra->>'projection_id'))
+            WHERE extra->>'projection_id' IS NOT NULL;
+    END IF;
 
-CREATE INDEX IF NOT EXISTS idx_sosa_obs_source_property
-    ON sosa_observations (observable_property, feature_of_interest, phenomenon_time DESC)
-    WHERE extra->>'source' = 'simops_simulation';
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sosa_obs_source_property'
+    ) THEN
+        CREATE INDEX idx_sosa_obs_source_property
+            ON sosa_observations (observable_property, feature_of_interest, phenomenon_time DESC)
+            WHERE extra->>'source' = 'simops_simulation';
+    END IF;
+END $$;
