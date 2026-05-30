@@ -12,6 +12,7 @@
 //! | `kask:dynamics/kombucha_fermentation@v1` | 2D | Brix + pH, Arrhenius |
 //! | `kask:dynamics/pellicle_growth@v1` | 3D | Brix + pH + Pellicle |
 //! | `kask:dynamics/bc_optimization@v1` | 4D | Brix + pH + BC_yield + BC_quality |
+//! | `kask:dynamics/solid_liquid_extraction@v1` | 2D | Ct + Cs, second-order Arrhenius |
 //!
 //! ## Usage
 //!

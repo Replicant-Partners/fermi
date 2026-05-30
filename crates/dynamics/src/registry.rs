@@ -9,6 +9,7 @@ use crate::models::{
     kombucha_f2_carbonation::KombuchaF2Carbonation,
     pellicle_growth::PellicleGrowth,
     bc_optimization::BcOptimization,
+    solid_liquid_extraction::{SolidLiquidExtraction, SolventKind},
 };
 
 /// Resolve a model URI to a boxed DynamicsModel instance.
@@ -84,9 +85,42 @@ pub fn resolve(model_uri: &str, input: Option<&SkillInput>) -> Option<Box<dyn Dy
                     let mut p = input
                         .map(|i| i.params_override.clone())
                         .unwrap_or_default();
-                    // pull any relevant params from the flat override map
                     p
                 },
+            )))
+        }
+
+        "kask:dynamics/solid_liquid_extraction@v1" => {
+            let solvent_str = input
+                .and_then(|i| i.process_context.get("solvent"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("water");
+            let solvent = match solvent_str {
+                "ethanol_water_50" => SolventKind::EthanolWater50,
+                "acetone_water_65" => SolventKind::AcetoneWater65,
+                "custom" => SolventKind::Custom,
+                _ => SolventKind::Water,
+            };
+            let cs_initial = input
+                .and_then(|i| i.params_override.get("cs_initial"))
+                .copied();
+            let ae = input
+                .and_then(|i| i.params_override.get("Ae"))
+                .copied();
+            let ea = input
+                .and_then(|i| i.params_override.get("Ea"))
+                .copied();
+            let ae_deg = input
+                .and_then(|i| i.params_override.get("Ae_deg"))
+                .copied();
+            let ea_deg = input
+                .and_then(|i| i.params_override.get("Ea_deg"))
+                .copied();
+            let degradation_onset = input
+                .and_then(|i| i.params_override.get("degradation_onset"))
+                .copied();
+            Some(Box::new(SolidLiquidExtraction::from_context(
+                temp_c, solvent, cs_initial, ae, ea, ae_deg, ea_deg, degradation_onset,
             )))
         }
 
@@ -102,6 +136,7 @@ pub fn known_uris() -> Vec<&'static str> {
         "kask:dynamics/kombucha_f2_carbonation@v1",
         "kask:dynamics/pellicle_growth@v1",
         "kask:dynamics/bc_optimization@v1",
+        "kask:dynamics/solid_liquid_extraction@v1",
     ]
 }
 
@@ -113,5 +148,6 @@ pub fn list_manifests() -> Vec<crate::ModelManifest> {
         KombuchaF2Carbonation::default().manifest(),
         PellicleGrowth::default().manifest(),
         BcOptimization::default().manifest(),
+        SolidLiquidExtraction::default().manifest(),
     ]
 }
