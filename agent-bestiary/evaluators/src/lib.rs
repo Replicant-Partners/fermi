@@ -42,6 +42,7 @@ pub mod error;
 pub mod judge;
 pub mod model;
 pub mod prelude;
+pub mod projection_scoring;
 pub mod registry;
 pub mod result;
 pub mod scoring;
@@ -56,6 +57,7 @@ pub use judge::{JudgeOutcome, LlmJudge, LlmJudgeConfig, LlmJudgeEvaluator, NoopL
 pub use model::EvalModel;
 pub use registry::{EvaluatorRegistry, RegistryOutcome};
 pub use result::{Dimension, EvalFlag, EvalResult, RegistryResult};
+pub use projection_scoring::{ProjectionLookup, ProjectionObservation, ProjectionScoringEvaluator};
 pub use scoring::{BrierEvaluator, BrierLookup, BrierObservation};
 pub use tier::EvalTier;
 

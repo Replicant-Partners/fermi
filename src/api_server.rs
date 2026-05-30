@@ -546,6 +546,10 @@ async fn run_migrations(db: &PgPool) {
         // Backfill ownership for curated agents seeded after migration 122
         // (e.g. simops_dynamics_runner). Same idempotent pattern as 111/122.
         "migrations/129_backfill_curated_agent_ownership_2.sql",
+        // Index sosa_observations.extra for projection_id lookup.
+        // Enables ProjectionScoringEvaluator (spec 20) to find prior
+        // synthetic observations when real measurements arrive.
+        "migrations/130_sosa_projection_index.sql",
     ];
 
     for file in &migration_files {

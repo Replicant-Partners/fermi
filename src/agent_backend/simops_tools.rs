@@ -549,7 +549,43 @@ pub async fn execute_simops_write_observation(
         .get("phenomenon_time")
         .and_then(|v| v.as_i64())
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-    let extra = input.get("extra").cloned().unwrap_or(json!({}));
+
+    // Build extra — merge caller-supplied fields with auto-injected provenance fields.
+    // projection_id: if the caller passes one explicitly, use it; otherwise
+    // pull from the tool input's top-level "projection_id" field.
+    // This allows dynamics_runner / cascade to stamp every synthetic
+    // observation with the projection that produced it, enabling the
+    // ProjectionScoringEvaluator to find the prediction when real
+    // measurements arrive later (spec 20).
+    let mut extra = input.get("extra")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .map(serde_json::Value::Object)
+        .unwrap_or_else(|| json!({}));
+
+    let extra_obj = extra.as_object_mut().expect("extra is always an object here");
+
+    // Auto-inject projection_id if present in the tool input and not already in extra
+    if !extra_obj.contains_key("projection_id") {
+        if let Some(pid) = input.get("projection_id").and_then(|v| v.as_str()) {
+            extra_obj.insert("projection_id".into(), json!(pid));
+        }
+    }
+    // Auto-inject source = "simops_simulation" for synthetic observations
+    // (distinguishes them from real measurements in the scoring evaluator)
+    if !extra_obj.contains_key("source") {
+        let procedure = input.get("procedure").and_then(|v| v.as_str()).unwrap_or("");
+        if procedure.contains("simulation") || procedure.is_empty() {
+            extra_obj.insert("source".into(), json!("simops_simulation"));
+        }
+    }
+    // Auto-inject model_uri and stage_id when provided
+    if let Some(mu) = input.get("model_uri").and_then(|v| v.as_str()) {
+        extra_obj.entry("model_uri").or_insert_with(|| json!(mu));
+    }
+    if let Some(sid) = input.get("stage_id").and_then(|v| v.as_str()) {
+        extra_obj.entry("stage_id").or_insert_with(|| json!(sid));
+    }
 
     // Verify session exists and get platform_id
     let session_row = sqlx::query(
