@@ -224,7 +224,13 @@ CARDINAL RULES (override everything else):
                     || is_json_contract_text(json_text);
                 let (summary, findings): (Option<String>, Vec<String>) =
                     if looks_like_json_contract {
-                        (None, Vec::new())
+                        // Safety net (ABW issue — "Success + empty payload"):
+                        // even though this response is a structured JSON
+                        // contract that didn't match EvidenceData, try to
+                        // salvage a summary and key_findings from well-known
+                        // fields (e.g. enemy_sensor's `summary`,
+                        // prey_locator's `hunting_summary`, etc.).
+                        extract_summary_from_json_contract(&text)
                     } else {
                         let findings: Vec<String> = text
                             .lines()
@@ -528,6 +534,96 @@ pub(crate) fn extract_text_from_content(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
+/// Try to extract a human-readable summary and key findings from a JSON
+/// contract response whose shape doesn't match `EvidenceData`.
+///
+/// Creature / research agents (enemy_sensor, genome_profiler, prey_locator, …)
+/// embed a `"summary"` or `"hunting_summary"` field directly in their response
+/// JSON.  We also harvest top-level string arrays (threats, prey_targets, …) as
+/// key_findings so the evidence card is never entirely blank.
+///
+/// This is the safety-net used by both `LLMExecutor::parse_response` and
+/// `tool_executor::parse_evidence_text` (ABW issue — "Success + empty payload").
+pub(crate) fn extract_summary_from_json_contract(text: &str) -> (Option<String>, Vec<String>) {
+    // Strip optional ```json … ``` fence before parsing.
+    let t = text.trim();
+    let t = t
+        .strip_prefix("```json")
+        .or_else(|| t.strip_prefix("```JSON"))
+        .or_else(|| t.strip_prefix("```"))
+        .unwrap_or(t)
+        .trim_start();
+    let stripped = t.strip_suffix("```").unwrap_or(t).trim();
+
+    let value: serde_json::Value = match serde_json::from_str(stripped) {
+        Ok(v) => v,
+        Err(_) => return (None, Vec::new()),
+    };
+
+    let obj = match value.as_object() {
+        Some(o) => o,
+        // Arrays have no obvious summary field — leave empty.
+        None => return (None, Vec::new()),
+    };
+
+    // --- summary string ---
+    // Prefer the conventional "summary" key, then agent-specific variants.
+    let summary_keys = [
+        "summary", "hunting_summary", "oracle_note", "note",
+        "description", "assessment",
+    ];
+    let summary = summary_keys
+        .iter()
+        .find_map(|k| obj.get(*k)?.as_str().map(|s| s.to_string()))
+        .filter(|s| !s.is_empty());
+
+    // --- key findings ---
+    // Collect short string descriptions from well-known array / scalar fields.
+    let array_keys = [
+        "threats", "prey_targets", "key_findings", "findings", "items",
+        "risks", "notable_genes", "defining_traits", "sister_taxa",
+    ];
+    let mut findings: Vec<String> = Vec::new();
+    for key in &array_keys {
+        if let Some(arr) = obj.get(*key).and_then(|v| v.as_array()) {
+            for item in arr.iter().take(10) {
+                if let Some(s) = item.as_str() {
+                    if !s.is_empty() {
+                        findings.push(s.to_string());
+                    }
+                } else if let Some(sub) = item.as_object() {
+                    // For structured items, build a short description from
+                    // common fields: species, relationship, reasoning, name, etc.
+                    let desc_keys = [
+                        "species", "name", "relationship", "reasoning",
+                        "risk", "vulnerability",
+                    ];
+                    let parts: Vec<&str> = desc_keys
+                        .iter()
+                        .filter_map(|dk| sub.get(*dk)?.as_str())
+                        .collect();
+                    if !parts.is_empty() {
+                        findings.push(parts.join(" — "));
+                    }
+                }
+            }
+            if findings.len() >= 10 {
+                break;
+            }
+        }
+    }
+
+    // Fallback: if we have no summary but the response carries a top-level
+    // "threat_level" string, synthesise a minimal human-readable one.
+    let summary = summary.or_else(|| {
+        obj.get("threat_level")
+            .and_then(|v| v.as_str())
+            .map(|tl| format!("Threat level: {}", tl))
+    });
+
+    (summary, findings)
+}
+
 /// Parsed evidence data from LLM response
 #[derive(Debug, Deserialize)]
 struct EvidenceData {
@@ -565,8 +661,11 @@ mod tests {
     /// Regression for issue #4: when the LLM returns a JSON object that
     /// doesn't match the EvidenceData shape (e.g. supply_chain_oracle's
     /// `{items, risks, total_bom_cost, oracle_note}` contract), the fallback
-    /// branch must NOT stuff the whole JSON into `summary`. Otherwise the
-    /// downstream formatter emits the same JSON twice.
+    /// branch must NOT stuff the whole raw JSON blob into `summary`.
+    ///
+    /// Updated for ABW fix: `oracle_note` is now harvested into `summary`
+    /// and item `name` fields into `key_findings`. The raw JSON must NOT
+    /// appear verbatim in `summary` (that was the original issue #4 bug).
     #[test]
     fn parse_response_does_not_stuff_json_contract_into_summary() {
         let executor = LLMExecutor::new("test-key".into());
@@ -583,15 +682,21 @@ mod tests {
             .parse_response(&response, "supply_chain_oracle")
             .expect("parse_response should succeed");
 
-        assert!(
-            evidence.summary.is_none(),
-            "summary must be None for JSON-contract responses, was {:?}",
+        // `oracle_note` is a recognised summary-key — it must be extracted.
+        assert_eq!(
+            evidence.summary.as_deref(),
+            Some("ok"),
+            "oracle_note must be harvested as summary, was {:?}",
             evidence.summary
         );
-        assert!(
-            evidence.key_findings.is_empty(),
-            "key_findings must be empty for JSON-contract responses"
-        );
+        // Critically, the raw JSON blob must NOT be the summary value.
+        if let Some(ref s) = evidence.summary {
+            assert!(
+                !s.contains("total_bom_cost"),
+                "raw JSON must not be stuffed into summary; got: {:?}",
+                s
+            );
+        }
     }
 
     /// Confirm the JSON-array contract case is also detected, not just objects.

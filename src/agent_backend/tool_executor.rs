@@ -12,8 +12,9 @@ use crate::agent_backend::executor::{
     ToolInvocation,
 };
 use crate::agent_backend::llm_executor::{
-    extract_text_from_content, is_json_contract_text, ClaudeRequest, ClaudeResponse,
-    ClaudeThinking, ContentBlock, Message, MessageBlock, MessageContent,
+    extract_summary_from_json_contract, extract_text_from_content, is_json_contract_text,
+    ClaudeRequest, ClaudeResponse, ClaudeThinking, ContentBlock, Message, MessageBlock,
+    MessageContent,
 };
 use crate::agent_backend::multi_model_executor::{OpenAIMessage, OpenAIRequest, OpenAIResponse};
 use crate::agent_backend::tools::{ToolContext, ToolRegistry};
@@ -43,6 +44,10 @@ pub(crate) fn prompt_demands_structured_output(prompt: &str) -> bool {
         || prompt.contains("return a valid JSON")
         || prompt.contains("no prose outside")
         || prompt.contains("JSON object — no prose")
+        // Rabble creature agents (enemy_sensor, genome_profiler, prey_locator)
+        // use "output valid JSON only" (lowercase "only") or "Return JSON:"
+        || prompt.contains("output valid JSON only")
+        || prompt.contains("Return JSON:")
 }
 
 /// Executor that wraps an inner executor with tool-calling capability
@@ -811,15 +816,24 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
     // `AgentOutput.metadata.reasoning` and from there
     // `execution_result.metadata.raw_response`).
     if is_json_contract_text(text) {
+        // Even though the response is a structured JSON contract (not the
+        // EvidenceData shape), try to salvage a human-readable summary and
+        // key findings from well-known fields that creature / research agents
+        // embed directly in their response objects (e.g. enemy_sensor's
+        // `summary`, genome_profiler's `summary`, prey_locator's
+        // `hunting_summary`).  Falling through to empty evidence here is the
+        // root cause of the "Success + empty payload" bug (ABW issue).
+        let (salvaged_summary, salvaged_findings) =
+            extract_summary_from_json_contract(text);
         let evidence = vec![EvidenceStmt {
             id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
             source: format!("Agent: {}", agent_name),
-            summary: None,
+            summary: salvaged_summary,
             url: None,
             relevance: Some(0.5),
             date: Some(Utc::now().format("%Y-%m-%d").to_string()),
             strength: Some(0.5),
-            key_findings: Vec::new(),
+            key_findings: salvaged_findings,
         }];
         return (evidence, 0.5, Some(text.to_string()));
     }
@@ -882,15 +896,20 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
                 t.starts_with('{') || t.starts_with('[')
             };
             if looks_like_json_contract {
+                // Safety net: try to salvage summary/findings from well-known
+                // JSON fields (e.g. enemy_sensor `summary`, prey_locator
+                // `hunting_summary`) rather than returning empty evidence.
+                let (salvaged_summary, salvaged_findings) =
+                    extract_summary_from_json_contract(text);
                 let evidence = vec![EvidenceStmt {
                     id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
                     source: format!("Agent: {}", agent_name),
-                    summary: None,
+                    summary: salvaged_summary,
                     url: None,
                     relevance: Some(0.5),
                     date: Some(Utc::now().format("%Y-%m-%d").to_string()),
                     strength: Some(0.5),
-                    key_findings: Vec::new(),
+                    key_findings: salvaged_findings,
                 }];
                 return (evidence, 0.5, Some(text.to_string()));
             }
@@ -1025,20 +1044,27 @@ mod tests {
 
     /// Regression for issue #4: when the tool loop's final text is a JSON
     /// object that doesn't match EvidenceJson, the fallback branch must NOT
-    /// stuff the whole JSON into `summary`. Otherwise the downstream
+    /// stuff the whole raw JSON blob into `summary`. Otherwise the downstream
     /// formatter emits the same JSON twice in `content`.
+    ///
+    /// Updated for ABW fix: the extractor now salvages `summary` / findings
+    /// from well-known keys. For a supply_chain_oracle-style payload that has
+    /// no `summary` key but does have `items`, the raw JSON should NOT appear
+    /// in `summary`, and items with a `name` field are harvested into
+    /// `key_findings`. The raw text is still preserved via `reasoning`.
     #[test]
     fn parse_evidence_text_does_not_stuff_json_contract_into_summary() {
         let json_text = r#"{"items":[{"name":"Tea"}],"total_bom_cost":42}"#;
         let (evidence, _confidence, reasoning) =
             super::parse_evidence_text(json_text, "test_agent");
         assert_eq!(evidence.len(), 1);
+        // No `summary` key in this payload — must still be None (raw JSON
+        // must not be stuffed into the summary field).
         assert!(
             evidence[0].summary.is_none(),
-            "summary must be None for JSON-contract responses; got {:?}",
+            "summary must be None when JSON has no summary key; got {:?}",
             evidence[0].summary
         );
-        assert!(evidence[0].key_findings.is_empty());
         // Raw text is preserved in the reasoning channel so the formatter
         // and metadata.raw_response still surface it as the primary answer.
         assert_eq!(reasoning.as_deref(), Some(json_text));
@@ -1059,5 +1085,97 @@ mod tests {
         let (evidence, _conf, _reasoning) = super::parse_evidence_text(text, "test_agent");
         assert_eq!(evidence.len(), 1);
         assert_eq!(evidence[0].summary.as_deref(), Some(text));
+    }
+
+    // ─── ABW creature-agent fix — "Success + empty payload" ───────────
+
+    /// enemy_sensor response shape: must extract `summary` and threat descriptions.
+    #[test]
+    fn parse_evidence_text_enemy_sensor_response() {
+        let json = r#"{
+            "threat_level": "medium",
+            "threats": [
+                {"creature_id": "abc", "species": "Anax junius", "relationship": "aerial predator", "risk": "medium"}
+            ],
+            "summary": "A dragonfly in the immediate vicinity poses moderate predation risk."
+        }"#;
+        let (evidence, _conf, reasoning) = super::parse_evidence_text(json, "enemy_sensor");
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(
+            evidence[0].summary.as_deref(),
+            Some("A dragonfly in the immediate vicinity poses moderate predation risk."),
+            "enemy_sensor summary must be extracted from the `summary` field"
+        );
+        assert!(!evidence[0].key_findings.is_empty(), "threat descriptions should populate key_findings");
+        assert!(reasoning.is_some(), "raw JSON must still be in reasoning");
+    }
+
+    /// enemy_sensor with threat_level but no summary field — fallback synthesises one.
+    #[test]
+    fn parse_evidence_text_enemy_sensor_no_summary_field() {
+        let json = r#"{"threat_level": "none", "threats": []}"#;
+        let (evidence, _conf, _reasoning) = super::parse_evidence_text(json, "enemy_sensor");
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(
+            evidence[0].summary.as_deref(),
+            Some("Threat level: none"),
+            "threat_level fallback must produce a minimal summary"
+        );
+    }
+
+    /// prey_locator SCAN response shape: must extract `hunting_summary`.
+    #[test]
+    fn parse_evidence_text_prey_locator_scan_response() {
+        let json = r#"{
+            "prey_targets": [
+                {"creature_id": "xyz", "species": "Aedes aegypti", "order": "Diptera", "vulnerability": "high", "distance_cells": 1, "reasoning": "within range"}
+            ],
+            "hunting_summary": "One viable prey target identified within immediate range.",
+            "predator_advantage": "speed and aerial agility"
+        }"#;
+        let (evidence, _conf, _reasoning) = super::parse_evidence_text(json, "prey_locator");
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(
+            evidence[0].summary.as_deref(),
+            Some("One viable prey target identified within immediate range."),
+            "prey_locator summary must be extracted from `hunting_summary`"
+        );
+        assert!(!evidence[0].key_findings.is_empty(), "prey_targets should populate key_findings");
+    }
+
+    /// genome_profiler response: must extract `summary` from the nested `conservation` object.
+    #[test]
+    fn parse_evidence_text_genome_profiler_response() {
+        let json = r#"{
+            "taxonomy": {"kingdom": "Animalia", "order": "Lepidoptera", "species": "Danaus plexippus"},
+            "genome": {"estimated_size_mb": "480", "ploidy": "diploid"},
+            "phylogeny": {"superorder": "Holometabola", "sister_taxa": ["Papilionidae"], "divergence_mya": "90"},
+            "conservation": {"iucn_status": "Not Evaluated"},
+            "summary": "Danaus plexippus occupies Holometabola with a ~480 Mb genome typical for Lepidoptera."
+        }"#;
+        let (evidence, _conf, _reasoning) = super::parse_evidence_text(json, "genome_profiler");
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(
+            evidence[0].summary.as_deref(),
+            Some("Danaus plexippus occupies Holometabola with a ~480 Mb genome typical for Lepidoptera."),
+            "genome_profiler summary must be extracted from top-level `summary` field"
+        );
+    }
+
+    /// `prompt_demands_structured_output` must now match the creature-agent phrases.
+    #[test]
+    fn detects_creature_agent_json_contracts() {
+        // enemy_sensor / genome_profiler use this exact phrase
+        assert!(
+            super::prompt_demands_structured_output(
+                "RESPONSE FORMAT — output valid JSON only:\n{...}"
+            ),
+            "\"output valid JSON only\" must be detected"
+        );
+        // prey_locator uses "Return JSON:"
+        assert!(
+            super::prompt_demands_structured_output("Return JSON: {\"prey_targets\": [...]}"),
+            "\"Return JSON:\" must be detected"
+        );
     }
 }
