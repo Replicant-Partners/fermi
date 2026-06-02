@@ -1,7 +1,7 @@
 # Feedback Loops in the Agent Bestiary
 
-**Date:** 2026-05-15  
-**Status:** Reference — describes the five adaptive feedback loops as actually implemented.
+**Date:** 2026-05-15, revised 2026-06-03  
+**Status:** Reference — describes the five adaptive feedback loops as implemented, plus the BayesOps Loop A extension (specified, not yet built).
 
 ---
 
@@ -242,7 +242,7 @@ cohere_and_coordinate sessions → episodes in strategist's memory
 
 ---
 
-## The hierarchy
+## 2. The hierarchy
 
 The five loops operate at different timescales and different system levels:
 
@@ -263,86 +263,121 @@ They are nested: Loop 2 feeds into Loop 1 (corrections become episodes). Loop 3'
 
 ---
 
-## 3. Strategy for closing Loop 5
+## 3. Loop 5 — Closure Status (as of 2026-06-03)
 
-### The data problem
+Loop 5 is now closed. The four steps originally planned are all implemented:
 
-You are right that there is a data problem. The Brier signal is thin right now because:
+| Step | Status | Where |
+|---|---|---|
+| Bootstrap calibration data (backtest seed) | ✅ `BrierLookupSqlx` wired to `fermi_forecasts` | `src/handlers/eval_brier.rs` |
+| `GET /api/agents/:id/calibration` endpoint | ✅ Live — returns `calibration_score`, `trend`, `domain_calibration`, `projection_accuracy_mean`, `model_accuracy` | `src/handlers/agents.rs:1719` |
+| `get_agent_calibration` tool on `moe_router_strategist` | ✅ On agent card, Stage 0 uses it | `agents/curated/moe_router_strategist/agent_card.json` |
+| Routing episode outcome annotation | ✅ Fires on forecast resolution | `src/handlers/forecasts.rs:700` |
 
-1. **Few resolved forecasts** — 8 agents have `fermi_contract`, meaning they produce CEP-structured output that can be scored against Polymarket or other resolution sources. But resolution takes time (forecasts on events that haven't happened yet), and the current forecast volume is low.
+The cold-start progression holds as originally described:
+- **Month 0–2:** routing based on `accepts`/`produces`/`skills` declarations (semantic matching)
+- **Month 2–4:** routing weighted by historical accuracy as forecasts resolve and backtest data seeds
+- **Month 4+:** routing is a calibrated probabilistic classifier
 
-2. **Routing decisions are not yet annotated with outcomes** — `moe_router_strategist` records routing decisions as episodes, but there is no path yet from "this query was routed to member X" → "member X's output was evaluated as Y" → "update routing classifier."
-
-3. **The calibration curve needs volume before it's meaningful** — a single agent's Brier score on 5 resolved forecasts is not a calibration curve. The `BrierEvaluator` already saturates confidence at n=20 resolved forecasts. Below that, the signal is informative but not actionable.
-
-### The strategy — four steps, in order
-
-**Step 1 — Bootstrap synthetic calibration data (now, without waiting)**
-
-For the forecasting agents that already have `fermi_contract`, run historical backtests: replay past Polymarket events through the agent and score the outputs. These are "synthetic" in the sense that the questions are known-resolved, but the scoring is real. This gives each forecasting agent a starting calibration curve within days, not months.
-
-The infrastructure exists: `BrierLookupSqlx` reads from `fermi_forecasts filtered on agents_used`. The question is just seeding the table with historical backtest results. This is a one-time data migration, not a code change.
-
-**Step 2 — Route calibration scores into the MoE classifier (the feedback path)**
-
-Add a `GET /api/agents/:id/calibration` endpoint that returns:
-```json
-{
-  "agent_id": "...",
-  "forecast_calibration_mean": 0.73,
-  "forecast_calibration_trend": "improving",
-  "domain_scores": {
-    "market_analysis": 0.78,
-    "regulatory": 0.61,
-    "macroeconomic": 0.70
-  },
-  "n_resolved": 23
-}
-```
-
-The `moe_router_strategist`'s Stage 0 classification criteria already lists "historical accuracy" as the third priority. Right now it can only read from episodic memory via `search_knowledge`. Adding a `get_agent_calibration` tool to its `mcp_tools` means the routing classifier can explicitly weight members by their measured calibration on domain-matched queries. No ML required — it's a lookup.
-
-**Step 3 — Annotate routing decisions with outcomes**
-
-When a routed query resolves (forecast resolves, SOSA observation arrives, HITL correction applied), write back to the routing-decision episode: "this routing decision produced outcome quality Y." The `moe_router_strategist`'s `search_knowledge` call in Stage 0 can then find past routing decisions for similar queries and weight toward members that resolved well.
-
-This is the pure episodic memory path — no separate routing table needed. The episode context already holds `{query_type, member_selected, confidence}`; adding `{outcome_quality, outcome_source}` when the resolution arrives closes the loop through the existing ADM pipeline.
-
-**Step 4 — Let Loop 1 do the rest**
-
-Once routing decisions are annotated with outcomes, Loop 1 (individual agent learning) handles the rest. The `moe_router_strategist`'s own dreaming cycle consolidates routing-decision episodes into rules like "for macroeconomic questions, macro_forecaster has historically outperformed sentiment_analyzer by 0.12 Brier points." These rules enter its KG context and are read in future Stage 0 classifications.
-
-This is the key insight: **Loop 5 closes through Loop 1.** The MoE strategist is itself an agent that learns via dreaming. The calibration signal is just a new dimension of evidence that its episodic memory can consolidate. The only engineering work is: (a) the calibration endpoint, (b) the outcome annotation on routing episodes, and (c) the `get_agent_calibration` tool on the strategist's card.
-
-### On the cold-start problem
-
-The data problem is real, but it's bounded. The platform does not need calibration data to be useful — it needs calibration data to be *learning*. A composition without Loop 5 closed still works; it just routes based on declared capabilities rather than demonstrated accuracy. That is a reasonable starting state.
-
-The progression is:
-- **Month 0–2:** routing based on `accepts`/`produces`/`skills` declarations (semantic matching, deterministic)
-- **Month 2–4:** routing increasingly weighted by historical accuracy as forecasts resolve and backtest data is seeded
-- **Month 4+:** routing is a calibrated probabilistic classifier, and composition proposals from Loop 4 are informed by which members are actually accurate in which sub-domains
-
-The value of the system increases monotonically with data. The architecture does not break at low data volume — it degrades gracefully to semantic matching. That is the right design.
+The value of the system increases monotonically with data. The architecture degrades gracefully to semantic matching at low data volume — that is the right design.
 
 ---
 
-## 4. What makes this architecture coherent
+## 4. BayesOps — Loop A: Parameter Fitting (Planned)
+
+**Status:** Specified (`docs/specs/14_BAYESOPS_SPEC.md`). Not yet implemented. Begins after Spec 20's `ProjectionScoringEvaluator` has accumulated a real observation cycle.
+
+### What Loop A is and why it is not Loop 1–5
+
+Loops 1–5 are all **harness-level changes**: they modify what context agents receive, how they are routed, and how their compositions are structured. They operate over agent episodes and produce semantic rules, coordination briefs, and routing weights.
+
+Loop A is different in kind. It operates **upstream of Loop B** (the FPL Monte Carlo executor) and produces something the loops do not: **the distribution parameters themselves**.
+
+```
+Loop A (BayesOps — offline, per dataset):
+  Historical SOSA observations
+    → fit posterior distribution
+    → FittedDistribution: Beta(9.4, 13.6) or Normal(4.8, 0.7)
+    → written into FPL Driver as distribution parameters
+
+Loop B (FPL executor — online, per forecast question):
+  Driver yield: Beta(9.4, 13.6)   ← from Loop A, or from a human
+    → Monte Carlo simulation (10,000 samples)
+    → ExecutionResults: mean, p5, p95, Sobol indices
+```
+
+Loop B is entirely unchanged by BayesOps. The seam between Loop A and Loop B is the `Distribution` type in the FPL AST — `Beta`, `Normal`, `Lognormal`, `Triangular` — which already exists. Loop A produces those parameters from data rather than from human elicitation.
+
+### How Loop A extends Loops 1 and 5
+
+**Extends Loop 1 (agent learning):**
+
+Loops 1 and 5 already accumulate `projection_accuracy` eval signals when real batches resolve against cascade projections (Spec 20). Those signals feed semantic rules into the agent's KG context — harness-level changes that tell the agent *which model is unreliable under which conditions*.
+
+Loop A adds the complementary capability: given that an agent knows which model to use (Loop 1's semantic rules), BayesOps provides *calibrated distribution parameters for what that model predicts*. The two operate at different levels:
+
+| | Mechanism | Output | Level |
+|---|---|---|---|
+| Loop 1 / Spec 20 | EvalSignal → consolidation → semantic rule | "Use bc_optimization at 30°C, not kombucha_fermentation" | Harness |
+| Loop A / BayesOps | SOSA history → posterior fit → `Beta(α,β)` | "At 30°C, yield follows `Normal(4.8, 0.6)` based on 40 real runs" | Distribution parameters |
+
+Together: Loop 1 tells the agent *what to run*; Loop A tells the FPL model *how to parameterise it*.
+
+**Extends Loop 5 (calibration and routing):**
+
+Loop 5 routes queries to agents based on measured calibration. BayesOps extends this in Phase 3 (what-if queries): the `ConditionalPosterior` produced by `posterior-reg` generates input sensitivity indices (which input drives outcome variance most?), scenario comparisons (A vs B), and probability-at-threshold queries (`P(yield ≥ 5.5 kg | lighting=135)`). These outputs are naturally scored by the same Brier/projection_accuracy infrastructure that Loop 5 already uses — the fitted model's predictions resolve against real batches, feeding Loop 5's routing classifier with evidence about which BayesOps model variant is most accurate for which process conditions.
+
+### The planned loop structure with BayesOps
+
+```
+Timescale    Loop                          Level                    Status
+─────────────────────────────────────────────────────────────────────────────────
+Hours        1a. Individual learning        Single agent             ✅ Closed
+Hours        1b. Projection accuracy        SimOps agents            ✅ Implemented
+Days         2.  HITL correction            Single agent             ✅ Closed
+Session      3a. Coherence (inner)          Composition chat         ✅ Closed
+Weeks        3b. Coherence (outer)          Composition team         ⚡ Nascent
+Months       4.  Composition evolution      Team structure           🔧 Structural
+Days-weeks   5b. Projection calibration     SimOps routing           ✅ Implemented
+Months+      5a. Brier calibration          Platform-wide            ✅ Closed
+─────────────────────────────────────────────────────────────────────────────────
+Offline      A.  BayesOps — parameter fit   FPL distribution params  🗓 Planned
+             (feeds Loop B / FPL executor)
+```
+
+Loop A sits outside the online loop hierarchy because it is an offline computation triggered by data accumulation rather than an execution event. It is the layer that makes the inputs to Loop B data-driven rather than analyst-elicited.
+
+### Phase gate
+
+Loop A Phase 1 (`crates/posterior`, simple marginal fitting) begins after:
+1. Migration 130 is deployed
+2. `ProjectionScoringEvaluator` (Spec 20) has accumulated at least one real observation cycle
+3. The real SOSA history is large enough to validate that `fit_marginal()` produces posteriors whose CI width meaningfully differs across agents and process conditions
+
+See `docs/specs/14_BAYESOPS_SPEC.md §12` for the full sequencing, touch-count per phase, and validation gates.
+
+---
+
+## 5. What makes this architecture coherent
 
 Each loop corrects at the appropriate timescale:
 - Fast loops (1, 2, inner-3) handle execution-level errors — the agent said the wrong thing, the team went in the wrong direction.
 - Slow loops (outer-3, 4) handle structural errors — the team is wrong for the problem, the composition needs to change.
 - Calibration loop (5) handles systematic bias — the routing classifier has persistent blind spots that need data to reveal.
+- Offline loop (A, planned) handles parameter bias — the distribution assumptions the forecasts run on are not grounded in operational data.
 
 Each loop uses a different corrective mechanism:
 - Loops 1 and 2: episodic memory → dreaming → semantic rules
 - Loop 3: TEC coherence → coordination brief → conversation steering
 - Loop 4: session patterns → composition proposals → human approval → team change
 - Loop 5: calibration scores → routing weights → member selection
+- Loop A: observation history → posterior fit → FPL distribution parameters
 
-Each loop is separated from the others by a human or coherence gate:
+Each online loop (1–5) is separated from the others by a human or coherence gate:
 - Loop 2 requires a human reviewer (anomaly → HITL queue)
 - Loop 4 requires owner approval (composition proposal → accept/reject)
 - Loop 5's routing weights are readable by humans via the calibration endpoint
 
-No loop can modify agent behaviour without either a human gate or the coherence gate. This is not an accident. It is the property that makes the system trustworthy as it learns.
+Loop A (BayesOps) is separated from Loop B (FPL executor) by the operator: the fitted distribution parameters are written into FPL models explicitly, not injected automatically until Phase 5 ships `data_driven()`. This is intentional — parameter changes to forecast models should be reviewable before they affect production forecasts.
+
+No online loop can modify agent behaviour without either a human gate or the coherence gate. Loop A cannot modify forecast behaviour without the operator accepting the fitted parameters. These properties compound: the system learns continuously at the harness level (Loops 1–5) while requiring human acceptance of parameter-level changes (Loop A). Fast adaptation where the cost of error is low; human review where the cost is high.

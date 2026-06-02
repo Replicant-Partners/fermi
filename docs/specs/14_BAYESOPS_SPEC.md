@@ -1,18 +1,24 @@
 # BayesOps: Data-Informed Distribution Fitting for Fermi
 ## Specification & Roadmap — v0.2
 
-**Status:** Draft  
+**Status:** Active — Phase 1 not yet started; Phases 2–5 roadmap  
 **Author:** Ivan Labra  
-**Date:** 2026-05-23  
+**Date:** 2026-05-23, revised 2026-06-03  
 **Replaces:** v0.1 (discarded — too SimOps-specific, conflated two MC loops)
 
-> **Scope decision 2026-05-23:** Phase 1 (`crates/posterior`, simple marginal fitting) is active work.
-> Phases 2–5 (`crates/posterior-reg`, HMC sampler, what-if queries, FPL dynamic injection)
-> are **deferred to roadmap** — the architecture and interface are specified here so the seam
-> is designed correctly, but implementation does not begin until Phase 1 is shipped and
-> the minimum-data regime is validated against real cultivation run history.
-> Rationale: the HMC sampler is non-trivial; `nuts-rs` or equivalent should be evaluated
-> before any custom implementation; and static FPL injection (Mode 1) covers the immediate need.
+> **Current state (2026-06-03):** Neither `crates/posterior` nor `crates/posterior-reg` exists yet.
+> Zero implementation. The spec is complete and the seam is designed correctly.
+>
+> **What changed with Spec 20 (2026-05-30):** Spec 20 (`20_SIMOPS_PROJECTION_SCORING.md`) closes
+> Loop 1/5 for SimOps via a *different mechanism* — deferred hard-verifier scoring that feeds
+> semantic rules into the agent's KG context. That is harness-level learning (Loop A is BayesOps;
+> Loop 1/5 is Spec 20). They are complementary not competing. See Spec 20 §12 for the composition.
+> Spec 20 should ship first. BayesOps Phase 1 begins once Spec 20's `ProjectionScoringEvaluator`
+> has accumulated enough real observations to validate the minimum-data regime assumption.
+>
+> **Scope decision unchanged:** Phase 1 (`crates/posterior`, simple marginal fitting) is the
+> entry point. Phases 2–5 remain roadmap — do not begin until Phase 1 is validated against
+> real cultivation run history.
 
 ---
 
@@ -658,7 +664,8 @@ flowchart TD
 
 ## 10. Roadmap
 
-### Phase 1 — `crates/posterior` (Week 1)
+### Phase 1 — `crates/posterior` (Week 1) 🗓 NOT STARTED
+**Status:** Waiting on Spec 20 `ProjectionScoringEvaluator` deployment and first real SOSA observation cycle to validate minimum-data assumptions.  
 **Goal:** Simple path working. Conjugate Beta, Normal, Lognormal, Triangular fitting with bootstrap CI. No sampler needed.
 
 | Task | Acceptance criterion |
@@ -742,3 +749,120 @@ This is as important as what changes:
 | `crates/simops/src/optimizer.rs` | Unchanged (OLS path); augmented by `optimise_for_target` in Phase 3 |
 | `crates/simops/src/kpi.rs` | Unchanged |
 | `agent-bestiary/evaluators/src/scoring.rs` | Unchanged |
+
+---
+
+## 12. Implementation Plan and Current State
+
+**As of 2026-06-03: zero implementation.** Neither crate exists. This section documents the
+ordered path from now to completion and answers the question "what do I actually have to touch?"
+
+### 12.1 What exists today that BayesOps depends on
+
+| Existing component | How BayesOps uses it |
+|---|---|
+| `sosa_observations` table | Source of real observations for fitting |
+| `eval_signals` (`projection_accuracy`) | Quality signal that tells us when we have enough data to validate fits (from Spec 20) |
+| `src/ast.rs` `Distribution` enum | Already has `Beta`, `Normal`, `Lognormal`, `Triangular` — these are the output format |
+| `src/executor.rs` MC loop | Unchanged — just consumes whatever parameters are in the AST |
+| `crates/simops/src/predictor.rs` | Will be extended in Phase 4 (behind feature flag) |
+| Migration 130 (SOSA projection index) | Must be deployed before real observation volume accumulates |
+
+### 12.2 What each phase actually touches
+
+**Phase 1 — `crates/posterior` only. Zero changes to existing code.**
+
+Create one new crate. Add one workspace member. Everything else untouched.
+The output (`Beta(9.4, 13.6)`) is something the operator copies manually into an FPL file — no
+parser change, no console change, no executor change.
+
+```
+New files:    crates/posterior/Cargo.toml
+              crates/posterior/src/lib.rs
+              crates/posterior/src/beta.rs
+              crates/posterior/src/normal.rs
+              crates/posterior/src/lognormal.rs
+              crates/posterior/src/bootstrap.rs
+              crates/posterior/src/auto.rs
+Modified:     Cargo.toml  (add workspace member — 1 line)
+Touch count:  6 new files, 1 line change
+```
+
+**Phase 2–3 — `crates/posterior-reg`. Still no changes to FPL or console.**
+
+Create one more new crate (depends on `posterior` for shared types). Touches `simops` predictor
+behind a cargo feature flag — operators who don't use SimOps see no change.
+
+```
+New files:    crates/posterior-reg/  (sampler, models, improvement loop)
+Modified:     crates/simops/Cargo.toml  (optional feature: bayesian)
+              crates/simops/src/predictor.rs  (add PredictorEngine::Conditional)
+Touch count:  ~8 new files, 2 files modified (both in simops, both behind feature flag)
+```
+
+**Phase 4 — SimOps integration. Feature-flagged, no FPL changes.**
+
+```
+Modified:     crates/simops/src/predictor.rs  (engine dispatch)
+              agents/curated/simops_predictor/agent_card.json  (engine field)
+              src/handlers/simops.rs  (pass engine choice through)
+Touch count:  3 files modified
+```
+
+**Phase 5 — FPL `data_driven()`. This is the only phase that touches the language.**
+
+```
+Modified:     src/ast.rs              (add DataDriven variant — ~10 lines)
+              src/parser.rs           (add data_driven(...) parse rule — ~15 lines)
+              src/executor.rs         (handle DataDriven node — ~20 lines)
+              src/handlers/notebooks.rs  (inject posterior context at API time)
+New:          posterior store (JSON file or DB table)
+              background refit task
+Touch count:  4 files modified (small changes each), 2 new components
+```
+
+The console FPL editor gets `data_driven()` autocomplete as a **nice-to-have** in Phase 5, not
+a requirement. The feature works without it — the operator types `data_driven("yield")` and
+the backend resolves it.
+
+### 12.3 Sequencing and gates
+
+```
+Gate 0: Migration 130 deployed + first real SOSA observation cycle
+         (already specified — waiting on operational deployment)
+          ↓
+Phase 1: crates/posterior — ~1 week
+         Validation gate: fit_marginal() on real SOSA history
+         gives useful posteriors (CI width decreases as n grows)
+          ↓
+Phase 2–3: crates/posterior-reg — ~3 weeks
+           Validation gate: what-if queries improve operator
+           decisions in at least one documented SimOps session
+            ↓
+Phase 4: SimOps integration — ~1 week
+         Validation gate: NLPD on held-out real runs improves
+         compared to OLS baseline
+          ↓
+Phase 5: FPL data_driven() — ~1 week
+         Validation gate: end-to-end test — 10 batches →
+         refit → tighter CI → FPL forecast interval narrows
+```
+
+**Estimated total from Gate 0: ~6–7 weeks of implementation work.**
+
+Phases 1–4 are prerequisite to Phase 5. Each phase has an explicit validation gate that must
+be met before the next phase begins — this prevents building a sophisticated sampler before
+confirming that simple marginal fitting is useful on real data.
+
+### 12.4 Relationship to Spec 20
+
+Spec 20 (`ProjectionScoringEvaluator`) must be operationally deployed before Phase 1 begins.
+The reason: Spec 20 accumulates `projection_accuracy` eval signals on real batches. These signals
+are how we validate whether BayesOps Phase 1 posteriors are improving over time — the quality
+signal that confirms Gate 0 has been passed and the fitting is working.
+
+Without Spec 20 running, Phase 1 produces posteriors with no external validation signal. You
+can fit distributions but cannot tell whether they are helping. The two specs are sequenced
+deliberately: Spec 20 provides the measurement infrastructure; BayesOps provides the fitting
+infrastructure. Each is independently useful; together they close the full loop from raw
+observations to calibrated uncertainty to improved forecasts.
