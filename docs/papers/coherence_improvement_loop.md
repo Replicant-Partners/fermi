@@ -1,6 +1,6 @@
 # Explanatory Coherence Modeling as an Improvement Loop in Agent-to-Agent and Agent-to-Human Collaboration
 
-**Draft — February 2026**
+**Draft — February 2026, revised June 2026**
 
 **Authors**: Ivan Labra - axelotl partners
 
@@ -73,6 +73,8 @@ extending Thagard's original formulation with a temporal dimension $\tau$.
 | $A : U \rightarrow [-1, 1]$                        | Activation function settled via ECHO                                                                                                           |
 | $\sigma : \{P_1, \ldots, P_7\} \rightarrow [0, 1]$ | Principle-level scoring                                                                                                                        |
 | $\tau : U \rightarrow \mathbb{R}$                  | Temporal ordering of utterances                                                                                                                |
+
+A critical design property of this tuple is that every element is **directly observable from the conversation record**. $U$ is the set of actual utterances; $E$ is identified by participants explicitly marking something as evidence or by the evaluator agent classifying it as such; $R^+$ and $R^-$ are assigned by the evaluator at runtime; $\tau$ is the message timestamp sequence. No element requires pre-specification of agent properties, no parameter must be measured independently of the conversation itself, and no quantity is derived from an analogy to a different domain. The state space of the system is defined by what agents actually say, not by what an analyst decides they mean in advance. This is the foundational design constraint from which the framework's implementability follows.
 
 ### 3.2 Participant Attribution
 
@@ -277,15 +279,27 @@ While Constitutional AI (Bai et al., 2022) and RLHF (Christiano et al., 2017) op
 
 Our optimal tension model draws on organizational theory's concept of "task conflict" versus "relationship conflict" (Jehn, 1995). Task conflict (disagreement about ideas and approaches) improves group decision-making, while relationship conflict (interpersonal friction) degrades it. Our formal taxonomy of incoherence types provides a computational analog to this distinction.
 
+### 8.4 Physical Analogy Frameworks
+
+A class of recent frameworks proposes to model conceptual or agent dynamics by direct analogy to physical systems — borrowing equations from thermodynamics, statistical mechanics, or biochemistry and mapping their variables onto linguistic or cognitive phenomena. The appeal is understandable: these equations are mathematically rich, well-studied, and carry strong intuitions about equilibrium, phase transitions, and cooperativity.
+
+We argue that this approach faces a category error that no amount of parameter refinement can resolve. Physical equations of the MWC or Boltzmann type are valid because their variables refer to real physical quantities with defined units, conservation laws, and measurement procedures. The allosteric constant $L = \exp(-(E_T - E_R)/kT)$ works because $E_T$ and $E_R$ are free energy differences measured in joules, $k$ is Boltzmann's constant, and $T$ is temperature in kelvin. The equation is not an analogy — it is a consequence of statistical mechanics applied to a system with conserved energy.
+
+When such an equation is applied to concepts or utterances, these referents disappear. There is no "interpretive energy" with conservation laws. There is no "contextual concentration" with units of molecules per litre. The equation's variables become labels for quantities the analyst chooses, and the output — however precisely calculated — is downstream of those choices, not of any property of the concept being studied. The result is not a measurement; it is a post-hoc rationalization dressed in quantitative notation.
+
+The present framework avoids this problem by grounding its formal objects in the one thing that is always available and always real in an agent interaction: **the utterances themselves**. Utterances have observable structure. Their coherence and incoherence relations are assignable by inspection. The ECHO activation function operates over these relations without requiring that language be a physical system. TEC was designed for propositions in discourse, not adapted from a domain where propositions do not naturally occur. This is not a minor methodological preference — it is the difference between a model whose inputs are measurable and one whose inputs are undefined.
+
 ---
 
 ## 9. Limitations and Future Work
 
 **Limitations**:
 
-- The heuristic classification of utterances into TEC categories (Claim, Evidence, Explanation, Analogy, Question) is imprecise; LLM-based classification may improve accuracy but introduces its own biases
-- The optimal tension model's parameters ($\Gamma^*_{\min}$, $\Gamma^*_{\max}$) must be learned empirically and may not generalize across domains
-- Human participants' contributions are harder to model formally; pragmatic and social dimensions of communication are not captured by TEC
+- The heuristic classification of utterances into TEC categories (Claim, Evidence, Explanation, Analogy, Question) is imprecise; LLM-based classification may improve accuracy but introduces its own biases. This is an **engineering limitation**: the classification target is well-defined even where the classifier is imperfect.
+- The optimal tension model's parameters ($\Gamma^*_{\min}$, $\Gamma^*_{\max}$) must be learned empirically and may not generalize across domains. This is a **calibration limitation**: the model structure is sound but requires data to instantiate.
+- Human participants' contributions are harder to model formally; pragmatic and social dimensions of communication are not captured by TEC. This is a **scope limitation**: the framework models propositional coherence, not the full pragmatic register of human communication.
+- The coherence evaluator is an additional participant in every session it monitors. Its presence may alter collaborative dynamics — a form of observer effect that is difficult to disentangle from the signal being measured.
+- Link assignment between utterances ($R^+$, $R^-$) is performed by the evaluator agent and introduces its own classification errors. Inter-rater reliability between evaluator instances has not been measured.
 
 **Future directions**:
 

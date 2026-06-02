@@ -334,3 +334,43 @@ The weight-update side remains open. If and when fine-tunable local models run v
 **Q3 — Feedback to the operator surface.** Should projection_accuracy scores surface in the kask Digital Twin UI as a "model calibration" indicator per stage? E.g. a green/amber/red badge showing "this model's last 5 projections were X% accurate on average."
 
 **Recommendation:** yes — this is the most direct operator value. The badge is a kask-side rendering of `mean(eval_signals WHERE dimension='projection_accuracy' AND agent=dynamics_runner AND flags->>'stage_id'=X AND flags->>'model_uri'=Y ORDER BY created_at DESC LIMIT 5)`.
+
+---
+
+## 12. Relationship to BayesOps (Spec 14)
+
+This spec and `docs/specs/14_BAYESOPS_SPEC.md` address the same root problem — historical data shaping SimOps predictions — via complementary mechanisms that operate at different levels of the stack. They are not alternatives; they compose.
+
+**This spec (Spec 20) operates at the harness level — Loop 1.**
+
+The `ProjectionScoringEvaluator` produces `EvalSignal` rows. The `ConsolidationWorker` clusters them into semantic rules. Those rules are injected into `simops_dynamics_runner`'s KG context before each execution. The effect: the agent learns *which models are unreliable under which conditions* and can reason about that at inference time. No distribution parameters change. No model weights change. The harness changes.
+
+Example rule produced: `"kask:dynamics/kombucha_fermentation@v1 overestimates bio:bc_yield_g_per_l by ~15% when temperature_c > 65°C"`. The runner reads this in its context, selects a different model or flags the calibration gap, and produces a better projection.
+
+**Spec 14 (BayesOps) operates at the distribution-parameter level — Loop A (offline parameter fitting).**
+
+BayesOps fits a posterior distribution over historical observations and produces `Beta(α, β)` or `Normal(μ, σ)` parameters that feed directly into FPL `Driver` declarations. The effect: the *uncertainty width* of the forecast is calibrated to the evidence available. 8 real runs produces a wide posterior; 80 runs produces a tight one. This is not a harness change — it changes the parameters of the distributions the Monte Carlo executor samples from.
+
+Example output: given 12 real Ambu runs, BayesOps produces `Beta(7.2, 5.1)` for the yield-success base rate. An FPL model uses `Driver base_rate: Beta(7.2, 5.1)` — the uncertainty correctly reflects that 12 runs is thin evidence.
+
+**How they compose:**
+
+```
+Real batch completes
+    │
+    ├─→ Spec 20: ProjectionScoringEvaluator
+    │       → EvalSignal (projection_accuracy)
+    │       → ConsolidationWorker → semantic rules
+    │       → KG context: "model X unreliable at condition Y"
+    │       → simops_dynamics_runner selects a better model next time
+    │
+    └─→ Spec 14: BayesOps refit trigger (N new observations)
+            → fit_regression() on updated observation set
+            → posterior: Normal(4.6, 0.8) at planned input conditions
+            → FPL Driver updated: Driver yield: Normal(4.6, 0.8)
+            → forecast interval narrows as evidence accumulates
+```
+
+Spec 20 improves *which model the agent chooses and how it reasons about its limitations*. Spec 14 improves *the calibrated uncertainty of the distribution parameters that model runs with*. A fully instrumented SimOps workspace benefits from both: better model selection (Spec 20) and better-calibrated uncertainty on the selected model's outputs (Spec 14).
+
+**Implementation ordering:** Spec 20 should ship first. It requires only the `ProjectionScoringEvaluator` and a migration (§8 checklist: ~2–3 days). Spec 14 Phase 1 (`crates/posterior`, simple marginal fitting) can follow. The full BayesOps regression path (Spec 14 Phases 2–5) depends on sufficient real observation volume to validate — Spec 20's scoring infrastructure is a prerequisite for knowing when that volume threshold is reached.

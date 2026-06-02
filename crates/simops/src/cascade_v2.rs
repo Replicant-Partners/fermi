@@ -27,6 +27,7 @@
 use std::collections::HashMap;
 use serde::Serialize;
 use chrono::Utc;
+use uuid::Uuid;
 
 use crate::process_v2::{
     CascadeRequestV2, CarbonIntensity, Input, InputRole, MassBalanceMode,
@@ -254,6 +255,13 @@ pub struct CascadeProvenance {
     pub cascade_version: &'static str,
     pub schema_version: u32,
     pub computed_at: String,
+    /// Stable UUID for this projection run. Written into:
+    ///   1. Synthetic SOSA observations (`extra->>'projection_id'`) so the
+    ///      `ProjectionScoringEvaluator` can match real measurements back to
+    ///      this prediction.
+    ///   2. The agent episode context (`context->>'projection_id'`) so the
+    ///      evaluator can link its `EvalSignal` to the originating episode.
+    pub projection_id: String,
 }
 
 // ─── Cascade error ────────────────────────────────────────────────────────────
@@ -447,6 +455,7 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
             cascade_version: "2.0.0",
             schema_version: 2,
             computed_at: Utc::now().to_rfc3339(),
+            projection_id: format!("proj-{}", Uuid::new_v4()),
         },
     })
 }

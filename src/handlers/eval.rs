@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use agent_bestiary_evaluators::{
     AggregatedSignal, BrierEvaluator, ConflictFlag, Dimension, EvaluatorRegistry,
-    LlmJudgeEvaluator, RegistryOutcome,
+    LlmJudgeEvaluator, ProjectionScoringEvaluator, RegistryOutcome,
 };
 use agent_bestiary_memory::{
     Agent, EpisodeBundle, EvalRun, EvalSignal, EvalTestCase, TranscriptRole, TranscriptTurn,
@@ -32,6 +32,7 @@ use fermi::ast;
 
 use crate::handlers::eval_brier::{AgentNameResolver, BrierLookupSqlx};
 use crate::handlers::eval_judge::LlmJudgeAnthropic;
+use crate::handlers::eval_projection::ProjectionLookupSqlx;
 use crate::{agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState};
 
 // Track B — native evaluator family (registered per eval run)
@@ -832,6 +833,11 @@ fn build_registry(
         BrierLookupSqlx::new(state.db.clone()).with_agent_name_resolver(resolver),
     );
     registry.register(Arc::new(BrierEvaluator::new(brier_lookup)));
+
+    // Hard-verified signal: projection accuracy for SimOps dynamics/cascade agents.
+    // Inapplicable for non-SimOps agents — the evaluator self-filters by agent name.
+    let projection_lookup = Arc::new(ProjectionLookupSqlx::new(state.db.clone()));
+    registry.register(Arc::new(ProjectionScoringEvaluator::new(projection_lookup)));
 
     registry
 }

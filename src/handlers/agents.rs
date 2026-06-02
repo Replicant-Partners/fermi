@@ -523,7 +523,7 @@ pub fn default_agent_type() -> String {
     "research".to_string()
 }
 pub fn default_model() -> String {
-    "claude-3-haiku-20240307".to_string()
+    "claude-haiku-4-5-20251001".to_string()
 }
 pub fn default_temperature() -> f64 {
     0.3
@@ -669,7 +669,7 @@ pub async fn model_catalogue_handler(State(_state): State<AppState>) -> Json<Val
                 "id": "anthropic",
                 "name": "Anthropic",
                 "models": [
-                    {"id": "claude-3-haiku-20240307", "name": "Haiku", "speed": "fast", "cost_tier": "low", "description": "Fast, efficient"},
+                    {"id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5", "speed": "fast", "cost_tier": "low", "description": "Fast, efficient"},
                     {"id": "claude-sonnet-4-5-20250929", "name": "Sonnet 4.5", "speed": "balanced", "cost_tier": "medium", "description": "Balanced"},
                     {"id": "claude-opus-4-6", "name": "Opus 4.6", "speed": "slow", "cost_tier": "high", "description": "Most capable"}
                 ],
@@ -786,7 +786,7 @@ pub async fn import_agent_handler(
     let model = caps
         .and_then(|c| c.get("model"))
         .and_then(|v| v.as_str())
-        .unwrap_or("claude-3-haiku-20240307")
+        .unwrap_or("claude-haiku-4-5-20251001")
         .to_string();
 
     let temperature = caps
@@ -1835,17 +1835,80 @@ pub async fn get_agent_calibration_handler(
         .collect::<serde_json::Map<_, _>>()
         .into();
 
+    // ── eval_signals projection_accuracy scores (SimOps hard-verified) ───────
+    // Hard-verified signal: deferred comparison against real SOSA observations.
+    // Only populated for simops_dynamics_runner / simops_cascade agents.
+    // These are epistemically stronger than LLM-judged signals — the batch
+    // resolves independently of the prediction.
+    let projection_rows = sqlx::query(
+        "SELECT score, confidence, flags, created_at
+         FROM eval_signals
+         WHERE agent_id = $1 AND dimension = 'projection_accuracy'
+         ORDER BY created_at DESC
+         LIMIT 100",
+    )
+    .bind(aid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let n_projection = projection_rows.len();
+    let projection_mean: Option<f64> = if n_projection > 0 {
+        let sum: f64 = projection_rows
+            .iter()
+            .filter_map(|r| r.try_get::<f64, _>("score").ok())
+            .sum();
+        Some(sum / n_projection as f64)
+    } else {
+        None
+    };
+
+    // Per-model breakdown from projection flags
+    let mut model_accuracy: std::collections::HashMap<String, (f64, usize)> =
+        std::collections::HashMap::new();
+    for row in &projection_rows {
+        let score: f64 = match row.try_get::<f64, _>("score") {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let flags: serde_json::Value = row
+            .try_get::<serde_json::Value, _>("flags")
+            .unwrap_or(serde_json::json!({}));
+        let model_uri = flags
+            .get("model_uri")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let entry = model_accuracy.entry(model_uri).or_insert((0.0, 0));
+        entry.0 += score;
+        entry.1 += 1;
+    }
+    let model_accuracy_json: serde_json::Value = model_accuracy
+        .iter()
+        .map(|(model, (sum, count))| {
+            (model.clone(), json!({
+                "accuracy_mean": sum / *count as f64,
+                "n": count,
+            }))
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into();
+
     // ── Composite calibration score ───────────────────────────────────────────
-    // Prefer direct Brier from resolved forecasts (more authoritative).
-    // Fall back to eval_signals forecast_calibration if no resolved forecasts.
-    let calibration_score = match (brier_mean, eval_mean) {
-        (Some(b), _) => Some(1.0 - b), // Brier inverted: lower Brier = higher calibration
-        (None, Some(e)) => Some(e),
+    // Priority order (most authoritative first):
+    //   1. Direct Brier from resolved fermi_forecasts
+    //   2. projection_accuracy from hard-verified SOSA deltas (SimOps)
+    //   3. eval_signals forecast_calibration from LLM-judged evaluators
+    let calibration_score = match (brier_mean, projection_mean, eval_mean) {
+        (Some(b), _, _) => Some(1.0 - b), // Brier inverted: lower = higher calibration
+        (None, Some(p), _) => Some(p),    // projection_accuracy: already 0-1 higher=better
+        (None, None, Some(e)) => Some(e),
         _ => None,
     };
 
-    // Confidence in the score: saturates at n=20 resolved forecasts
-    let confidence = ((n_resolved.max(n_eval) as f64) / 20.0).min(1.0);
+    // Confidence: saturates at n=20. Count across all signal sources.
+    let n_total = n_resolved.max(n_projection).max(n_eval);
+    let confidence = (n_total as f64 / 20.0).min(1.0);
 
     // ── Doc 12 § Capability 4 — optional version partitioning ────────────────
     //
@@ -1928,11 +1991,16 @@ pub async fn get_agent_calibration_handler(
         // Source breakdown
         "n_resolved_forecasts": n_resolved,
         "n_eval_signals": n_eval,
-        "brier_mean": brier_mean,           // direct Brier (lower = better)
-        "eval_calibration_mean": eval_mean, // eval_signals score (higher = better)
+        "n_projection_observations": n_projection,
+        "brier_mean": brier_mean,                     // direct Brier (lower = better)
+        "eval_calibration_mean": eval_mean,           // LLM-judged signals (higher = better)
+        "projection_accuracy_mean": projection_mean,  // hard-verified SOSA delta (higher = better)
 
         // Per-domain decomposition (requires forecast tags to match agent tags)
         "domain_calibration": domain_calibration,
+
+        // Per-model accuracy (SimOps agents: accuracy per dynamics model URI)
+        "model_accuracy": model_accuracy_json,
 
         // Per-version decomposition (Doc 12 § Capability 4). Present only when
         // the caller passed `?partition_by=version`.
@@ -1946,8 +2014,8 @@ pub async fn get_agent_calibration_handler(
             Some(_) => "poorly_calibrated",
             None => "no_data",
         },
-        "note": if n_resolved < 5 {
-            Some("Fewer than 5 resolved forecasts — calibration estimate is preliminary. Consider running historical backtests.")
+        "note": if n_resolved < 5 && n_projection < 5 {
+            Some("Fewer than 5 hard-verified observations — calibration estimate is preliminary.")
         } else {
             None
         },

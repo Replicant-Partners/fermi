@@ -13,6 +13,31 @@ The word "negative" here does not mean harmful — it means stabilising and self
 
 What makes these loops *adaptive* rather than merely reactive is that the correction changes the internal state of the agent or composition permanently, not just its behaviour on the next turn. The agent that dreamed last night reasons differently today. That is adaptation.
 
+### What these loops do and do not change
+
+A useful framing from the SIA paper (arXiv:2603.27766): *"Harness shapes how the agent searches; weight updates change what the model knows."*
+
+All five loops described here are **harness-level changes**. They modify:
+- What semantic rules, entities, and facts the agent's prompt is enriched with before each execution (Loop 1)
+- Which anomalies a human reviewer sees and corrects (Loop 2)
+- What coordination brief the agents read on the next turn (Loop 3)
+- Who is in the composition (Loop 4)
+- Which member the routing strategist selects (Loop 5)
+
+None of these loops update model weights. They change the context, the configuration, and the routing — not the underlying model's parameters. This is the correct design for API-hosted models where weight updates are unavailable. It is also the correct design even when fine-tunable local models are available: harness changes are reversible, auditable, and human-gateable; weight updates are none of those things by default.
+
+The quality ceiling question — whether harness-level accumulation of semantic rules reaches the same improvement ceiling as gradient descent — is empirically open. The architecture does not preclude weight updates for local models; the quality-weighted episode history produced by these loops is a direct prerequisite for any future fine-tuning path.
+
+### Two classes of eval signal
+
+The loops consume two structurally different kinds of eval signal, and the difference matters:
+
+**LLM-judged signals** — scores produced by evaluators that use an LLM to assess output quality (LlmJudge, Faithfulness, Sotopia, etc.). These are fast and domain-general but inherit LLM non-determinism. They require the coherence gate in Loop 2 because a sufficiently adversarial or confused judge could produce a correction that damages the agent's world model.
+
+**Hard-verified signals** — scores produced by deterministic comparison against ground truth that resolves independently of the agent's output. Brier score on resolved forecasts (Loop 5) and `projection_accuracy` on real SOSA observations vs. prior cascade projections (Loop 1, Spec 20) are both hard-verified. The scoring step has no LLM in it. The ground truth (market resolution, physical batch measurement) does not know or care what the agent predicted.
+
+Hard-verified signals are epistemically stronger: they cannot be gamed by an agent that learns to produce plausible-sounding outputs, and they do not require a coherence gate before propagating into memory. When a real cultivation batch yields 3.8 kg against a predicted 4.2 kg, that delta is a fact. The semantic rule it produces ("this model overestimates yield at high temperature") is grounded in physical reality, not in an LLM's judgment of output quality.
+
 ---
 
 ## The five loops
@@ -21,7 +46,15 @@ What makes these loops *adaptive* rather than merely reactive is that the correc
 
 **Target:** the agent should reason correctly about its domain, using what it has learned from past executions.
 
-**Signal:** eval dimension scores (relevance, accuracy, completeness, persona_fidelity, forecast_calibration, etc.) written to `eval_signals` per evaluator per episode.
+**Signal:** eval dimension scores written to `eval_signals` per evaluator per episode. Two classes of signal feed this loop:
+
+*LLM-judged dimensions* — relevance, accuracy, completeness, persona_fidelity, and similar scores produced by the EvaluatorRegistry (LlmJudge, Faithfulness, Sotopia, etc.). Fast, domain-general, inherently noisy.
+
+*Hard-verified dimensions* — scores computed by deterministic comparison against ground truth that resolves independently of the agent's output:
+- `forecast_calibration` (Brier score on resolved `fermi_forecasts`) — Loop 5 feeds this back into Loop 1 for forecasting agents
+- `projection_accuracy` (SOSA observation delta: `1 - |predicted - actual| / |actual|`) — introduced in Spec 20 for `simops_dynamics_runner` and `simops_cascade` agents; computed by `ProjectionScoringEvaluator` when a real batch measurement arrives against a prior synthetic projection
+
+Hard-verified signals require no coherence gate before consolidation. They are facts about the physical world, not judgments about output quality.
 
 **Correction path:**
 ```
@@ -31,13 +64,23 @@ Agent executes → episode stored → EvaluatorRegistry scores it
     → ConsolidationWorker (on-demand): DBSCAN cluster → semantic rules
                                         → ontology snapshot → dream_synopsis
     → KG context injected into next execution (kg_context.rs, every call)
+
+For hard-verified signals (projection_accuracy):
+    Real SOSA observation ingested
+    → ProjectionScoringEvaluator: find prior synthetic projection
+    → compute delta → write EvalSignal (dimension: "projection_accuracy")
+    → same ConsolidationWorker path → semantic rules like:
+       "kombucha_fermentation overestimates yield by ~15% when temp > 65°C"
+    → injected into simops_dynamics_runner KG context on next execution
 ```
 
-**What changes:** the agent's semantic memory — the rules, entities, and facts its system prompt is enriched with before each execution. The agent that has run 50 times on market analysis questions has accumulated domain-specific rules that make its 51st response qualitatively different from its first.
+**What changes:** the agent's semantic memory — the rules, entities, and facts its system prompt is enriched with before each execution. The agent that has run 50 times on market analysis questions has accumulated domain-specific rules that make its 51st response qualitatively different from its first. For SimOps agents, hard-verified projection_accuracy scores produce physically grounded model-calibration rules with no LLM judgment in the scoring path.
 
-**Timescale:** dreaming cycles. Typically hours to days depending on budget allocation.
+**Timescale:** dreaming cycles for LLM-judged signals (hours to days). Hard-verified signals trigger consolidation as soon as a real observation arrives — potentially within the same session as the projection.
 
-**Status:** fully closed and running.
+**Status:** fully closed and running for LLM-judged signals. `ProjectionScoringEvaluator` (hard-verified path) specified in Spec 20, ready to implement.
+
+**See also:** `docs/specs/20_SIMOPS_PROJECTION_SCORING.md` for full data flow and implementation checklist.
 
 ---
 
@@ -143,17 +186,27 @@ cohere_and_coordinate sessions → episodes in strategist's memory
 
 ---
 
-### Loop 5 — Brier calibration and routing accuracy
+### Loop 5 — Calibration and routing accuracy
 
-**Target:** the platform's forecasting agents should become more calibrated over time; the MoE routing strategist should learn which members are genuinely accurate on which sub-domains.
+**Target:** the platform's agents should become more calibrated over time; the MoE routing strategist should learn which members are genuinely accurate on which sub-domains.
 
-**Signal:**
-- For forecasting agents: Brier score when `fermi_forecasts` resolve against actual outcomes. Computed by `BrierEvaluator` and written to `eval_signals.dimension = "forecast_calibration"`.
-- For routing decisions: the accuracy of routing decisions recorded by `moe_router_strategist` — did the chosen member produce the best outcome for this query type?
+**Two signal paths feed this loop:**
 
-**Current state of the signal path:**
+**5a — Forecast calibration (Brier score)**
+- Signal: Brier score when `fermi_forecasts` resolve against actual outcomes. Computed by `BrierEvaluator`, written to `eval_signals.dimension = "forecast_calibration"`.
+- Timescale: months. Requires sufficient resolved forecasts to establish calibration curves.
+- Ground truth source: market resolution, event outcomes — independent of the agent's prediction.
+
+**5b — SimOps projection accuracy**
+- Signal: `projection_accuracy` score when real SOSA observations arrive against prior cascade projections. Computed by `ProjectionScoringEvaluator` (Spec 20), written to `eval_signals.dimension = "projection_accuracy"`.
+- Timescale: days to weeks, depending on batch cycle time. Ground truth arrives with every completed cultivation run — far faster than forecast resolution.
+- Ground truth source: physical batch measurement — the batch does not know what was predicted.
+- **Key difference from 5a:** this signal is available for SimOps agents even when no `fermi_forecasts` exist. It feeds Loop 1 directly (semantic rules about model calibration) and Loop 5 routing (which dynamics model to select for which process conditions).
+
+**Current state of the signal paths:**
 ```
-Agent executes forecast question
+5a — Forecast calibration:
+    Agent executes forecast question
     → BrierEvaluator reads fermi_forecasts filtered on agents_used
     → Computes 1 - brier_score → forecast_calibration dimension
     → Written to eval_signals
@@ -161,17 +214,31 @@ Agent executes forecast question
     → Observable in observatory trend charts
     
     moe_router_strategist routes query to member
-    → Records routing decision as episode: {query_type, member_selected, rationale, confidence}
-    → ... outcome arrives (resolved forecast, SOSA observation, HITL correction) ...
-    → BREAK: no mechanism yet reads outcome and updates routing classifier
+    → Records routing decision as episode
+    → BREAK: outcome annotation on routing episodes not yet wired
+
+5b — Projection accuracy:
+    Cascade projection runs → synthetic SOSA observation written
+    → Real batch completes → operator enters SOSA observation
+    → ProjectionScoringEvaluator: match projection → compute delta
+    → EvalSignal (projection_accuracy) → ConsolidationWorker
+    → Semantic rules in simops_dynamics_runner KG context
+    → BREAK: routing weight update from projection_accuracy not yet wired
+    Status: ProjectionScoringEvaluator specified (Spec 20), not yet implemented
 ```
 
-**What is missing:**
-The signal is collected and stored. The loop is not closed. Closing it requires connecting the outcome signal (Brier score, SOSA observation, HITL correction) back to the routing weights for future decisions. See §3 for the strategy.
+**What is missing for full closure:**
+- Routing episode outcome annotation (both 5a and 5b)
+- `get_agent_calibration` tool on `moe_router_strategist` card (see §3)
+- `ProjectionScoringEvaluator` implementation (Spec 20 checklist)
 
-**Timescale:** months. Requires sufficient resolved forecasts to establish calibration curves.
+**Timescale:** 5a: months (forecast resolution cadence). 5b: days to weeks (batch cycle cadence).
 
-**Status:** signal collected, feedback path not wired.
+**Status:**
+- 5a: signal collected (`BrierEvaluator` + `BrierLookupSqlx` wired), routing episode annotation wired (`forecasts.rs:700`). **Loop closed.**
+- 5b: `ProjectionScoringEvaluator` implemented and tested, `ProjectionLookupSqlx` implemented, evaluator registered in `EvaluatorRegistry`, `projection_accuracy` included in `get_agent_calibration` response, `projection_id` added to `CascadeProvenance`. **Loop closed pending migration 130 deployment and first real SOSA observation cycle.**
+
+**See also:** `docs/specs/20_SIMOPS_PROJECTION_SCORING.md` for 5b implementation detail.
 
 ---
 
@@ -180,14 +247,16 @@ The signal is collected and stored. The loop is not closed. Closing it requires 
 The five loops operate at different timescales and different system levels:
 
 ```
-Timescale    Loop                     Level              Status
-─────────────────────────────────────────────────────────────────────
-Hours        1. Individual learning   Single agent       ✅ Closed
-Days         2. HITL correction       Single agent       ✅ Closed
-Session      3. Coherence (inner)     Composition chat   ✅ Closed
-Weeks        3. Coherence (outer)     Composition team   ⚡ Nascent
-Months       4. Composition evolution Team structure     🔧 Structural
-Months+      5. Brier calibration     Platform-wide      🔓 Signal only
+Timescale    Loop                          Level              Status
+────────────────────────────────────────────────────────────────────────────
+Hours        1a. Individual learning        Single agent       ✅ Closed (LLM-judged)
+Hours        1b. Projection accuracy        SimOps agents      🔧 Specified (Spec 20)
+Days         2.  HITL correction            Single agent       ✅ Closed
+Session      3a. Coherence (inner)          Composition chat   ✅ Closed
+Weeks        3b. Coherence (outer)          Composition team   ⚡ Nascent
+Months       4.  Composition evolution      Team structure     🔧 Structural
+Days-weeks   5b. Projection calibration     SimOps routing     ✅ Implemented
+Months+      5a. Brier calibration          Platform-wide      ✅ Closed
 ```
 
 They are nested: Loop 2 feeds into Loop 1 (corrections become episodes). Loop 3's outer iteration feeds into Loop 4 (session patterns drive composition proposals). Loop 5, when closed, will feed into Loop 3 (calibration scores will weight the MoE routing classifier, which will influence which members are recommended in composition proposals).

@@ -18,6 +18,7 @@ pub mod dashboard;
 pub mod eval;
 pub mod eval_brier;
 pub mod eval_judge;
+pub mod eval_projection;
 pub mod execution;
 pub mod execution_stream;
 pub mod forecasts;
