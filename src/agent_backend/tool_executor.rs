@@ -1162,20 +1162,24 @@ mod tests {
         );
     }
 
-    /// `prompt_demands_structured_output` must now match the creature-agent phrases.
+    /// Creature agent prompts use "STEP 2 — RESPOND with a JSON object" — this
+    /// must NOT trigger the bypass (they need the tool loop to call GBIF/scan).
+    /// The bypass is reserved for agents that demand pure JSON with no tool phase.
     #[test]
-    fn detects_creature_agent_json_contracts() {
-        // enemy_sensor / genome_profiler use this exact phrase
+    fn creature_agent_prompts_do_not_bypass_tool_loop() {
+        // New genome_profiler / enemy_sensor wording
         assert!(
-            super::prompt_demands_structured_output(
-                "RESPONSE FORMAT — output valid JSON only:\n{...}"
+            !super::prompt_demands_structured_output(
+                "STEP 1 — GATHER DATA: Use gbif_species_search...\nSTEP 2 — RESPOND with a JSON object in this exact shape:"
             ),
-            "\"output valid JSON only\" must be detected"
+            "creature agent two-phase prompts must NOT bypass the tool loop"
         );
-        // prey_locator uses "Return JSON:"
+        // New prey_locator wording
         assert!(
-            super::prompt_demands_structured_output("Return JSON: {\"prey_targets\": [...]}"),
-            "\"Return JSON:\" must be detected"
+            !super::prompt_demands_structured_output(
+                "STEP 1 — GATHER DATA: Use scan_nearby_creatures...\nSTEP 2 — RESPOND with a JSON object in this exact shape:"
+            ),
+            "prey_locator two-phase prompt must NOT bypass the tool loop"
         );
     }
 }

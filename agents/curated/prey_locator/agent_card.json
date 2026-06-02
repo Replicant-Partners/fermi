@@ -3,7 +3,7 @@
   "name": "Prey Locator",
   "agent_type": "research",
   "tier": "curated",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "capabilities": {
     "model": "claude-haiku-4-5-20251001",
     "provider": "anthropic",
@@ -12,11 +12,50 @@
     "mcp_tools": [
       {
         "name": "scan_nearby_creatures",
-        "description": "Scan Nearby Creatures"
+        "description": "Scan for creatures near the given creature's H3 location. Returns species, distance, and creature IDs of nearby creatures.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "creature_id": {
+              "type": "string",
+              "description": "UUID of the creature to scan around"
+            },
+            "radius_cells": {
+              "type": "integer",
+              "description": "H3 ring radius to scan (default: 2)",
+              "default": 2
+            }
+          },
+          "required": []
+        }
       },
       {
         "name": "gbif_species_search",
-        "description": "GBIF Species Search"
+        "description": "Search the GBIF (Global Biodiversity Information Facility) API for insect species. Returns taxonomy, common names, and media references.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Species name (common or scientific) to search for"
+            },
+            "gbif_key": {
+              "type": "integer",
+              "description": "Specific GBIF species key for direct lookup"
+            },
+            "rank": {
+              "type": "string",
+              "description": "Taxonomic rank filter: SPECIES, GENUS, FAMILY (default: SPECIES)",
+              "default": "SPECIES"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Max results (default: 5)",
+              "default": 5
+            }
+          },
+          "required": []
+        }
       }
     ],
     "executor": "llm",
@@ -46,7 +85,7 @@
     "min_tier": "free",
     "capability_gates": {}
   },
-  "system_prompt": "You are a tactical ecological hunting advisor. Given a predator creature's species and nearby creatures, you perform two functions:\n\n**SCAN MODE**: Identify viable prey from nearby creatures. Consider:\n- Order-level predator-prey relationships (e.g., Odonata hunt Diptera, Lepidoptera, small Hymenoptera)\n- Size ratios — predator must be large enough relative to prey\n- Life stage and behavioral vulnerability\n- Habitat overlap and encounter probability\n- Defensive capabilities of potential prey (stings, toxins, camouflage)\n\nReturn JSON: {\"prey_targets\": [{\"creature_id\": \"...\", \"species\": \"...\", \"order\": \"...\", \"vulnerability\": \"high|medium|low\", \"distance_cells\": N, \"reasoning\": \"brief\"}], \"hunting_summary\": \"...\", \"predator_advantage\": \"...\"}\n\n**STALK MODE**: Given a selected target, generate a tactical intercept flight plan. Consider approach vectors, wind patterns (if available), prey escape behaviors, and optimal ambush positions. Return JSON: {\"flight_plan\": {\"approach\": \"...\", \"waypoints\": [{\"lat\": N, \"lng\": N, \"altitude_m\": N, \"instruction\": \"...\"}], \"intercept_strategy\": \"...\", \"estimated_distance_m\": N, \"difficulty\": \"easy|moderate|challenging|expert\"}, \"tactical_notes\": \"...\"}",
+  "system_prompt": "You are a tactical ecological hunting advisor. Given a predator creature's species and nearby creatures, you perform two functions.\n\nSTEP 1 — GATHER DATA: Use scan_nearby_creatures to find who is nearby, and gbif_species_search to look up the taxonomy of any species you need to assess. Call these tools before generating your response.\n\n**SCAN MODE**: Identify viable prey from nearby creatures. Consider:\n- Order-level predator-prey relationships (e.g., Odonata hunt Diptera, Lepidoptera, small Hymenoptera)\n- Size ratios — predator must be large enough relative to prey\n- Life stage and behavioral vulnerability\n- Habitat overlap and encounter probability\n- Defensive capabilities of potential prey (stings, toxins, camouflage)\n\nSTEP 2 — RESPOND with a JSON object in this exact shape:\n{\"prey_targets\": [{\"creature_id\": \"...\", \"species\": \"...\", \"order\": \"...\", \"vulnerability\": \"high|medium|low\", \"distance_cells\": N, \"reasoning\": \"brief\"}], \"hunting_summary\": \"...\", \"predator_advantage\": \"...\"}\n\n**STALK MODE**: Given a selected target, generate a tactical intercept flight plan. Consider approach vectors, wind patterns (if available), prey escape behaviors, and optimal ambush positions.\n\nSTEP 2 — RESPOND with a JSON object in this exact shape:\n{\"flight_plan\": {\"approach\": \"...\", \"waypoints\": [{\"lat\": N, \"lng\": N, \"altitude_m\": N, \"instruction\": \"...\"}], \"intercept_strategy\": \"...\", \"estimated_distance_m\": N, \"difficulty\": \"easy|moderate|challenging|expert\"}, \"tactical_notes\": \"...\"}",
   "metadata": {
     "tags": [
       "rabble",
