@@ -157,7 +157,7 @@ pub async fn enemy_sensor_handler(
 
             // Synchronous dispatch with timeout to prevent Railway 502
             let assessment = tokio::time::timeout(
-                std::time::Duration::from_secs(25),
+                std::time::Duration::from_secs(55),
                 rabble_workspace::dispatch_rabble_action(
                     &state,
                     workspace_id,
@@ -274,7 +274,7 @@ pub async fn enemy_sensor_handler(
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
             let result = tokio::time::timeout(
-                std::time::Duration::from_secs(25),
+                std::time::Duration::from_secs(55),
                 rabble_workspace::dispatch_rabble_action(
                     &state,
                     workspace_id,
@@ -493,7 +493,7 @@ pub async fn genome_profiler_handler(
 
             // Synchronous dispatch with timeout
             let profile = tokio::time::timeout(
-                std::time::Duration::from_secs(25),
+                std::time::Duration::from_secs(55),
                 rabble_workspace::dispatch_rabble_action(
                     &state,
                     workspace_id,
@@ -715,7 +715,7 @@ pub async fn prey_locator_handler(
 
             // Synchronous dispatch with timeout
             let result = tokio::time::timeout(
-                std::time::Duration::from_secs(25),
+                std::time::Duration::from_secs(55),
                 rabble_workspace::dispatch_rabble_action(
                     &state,
                     workspace_id,
@@ -844,7 +844,7 @@ pub async fn prey_locator_handler(
 
             // Synchronous dispatch with timeout
             let plan = tokio::time::timeout(
-                std::time::Duration::from_secs(25),
+                std::time::Duration::from_secs(55),
                 rabble_workspace::dispatch_rabble_action(
                     &state,
                     workspace_id,
@@ -956,7 +956,7 @@ pub async fn prey_locator_handler(
 
             // Synchronous dispatch with timeout
             let result = tokio::time::timeout(
-                std::time::Duration::from_secs(25),
+                std::time::Duration::from_secs(55),
                 rabble_workspace::dispatch_rabble_action(
                     &state,
                     workspace_id,
