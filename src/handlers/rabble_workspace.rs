@@ -205,42 +205,60 @@ pub async fn dispatch_rabble_action(
     user_id: &str,
     creature_id: Option<Uuid>,
 ) -> Result<String, String> {
-    // Resolve agent
+    // Resolve agent card first (in-memory registry — no I/O)
     let db_agent = resolve_agent(state, agent_name)
         .await
         .map_err(|(_code, msg)| msg)?;
-    let mut card = resolve_agent_card(state, &db_agent);
+    let card = resolve_agent_card(state, &db_agent);
 
-    // Enrich card with KG context from past dream cycles
-    card = enrich_with_kg_context(
+    // Parallelise all pre-execution DB queries: cognition tier, workspace slug,
+    // and KG enrichment (which does its own DB + embedding work internally).
+    let cognition_tier_fut = async {
+        if let Some(cid) = creature_id {
+            sqlx::query(
+                "SELECT cognition_tier FROM creature_conditions WHERE creature_id = $1 LIMIT 1",
+            )
+            .bind(cid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<String, _>("cognition_tier").ok())
+            .and_then(|t| match t.as_str() {
+                "standard" => Some(CognitionTier::Standard),
+                "premium"  => Some(CognitionTier::Premium),
+                "free"     => Some(CognitionTier::Free),
+                _          => None,
+            })
+        } else {
+            None
+        }
+    };
+
+    let slug_fut = async {
+        sqlx::query("SELECT slug FROM teams WHERE id = $1")
+            .bind(workspace_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<String, _>("slug").ok())
+            .unwrap_or_default()
+    };
+
+    let kg_fut = enrich_with_kg_context(
         &state.memory_store,
         &state.embedder,
         db_agent.agent_id,
         query,
         card,
-    )
-    .await;
+    );
 
-    // ADR-011: resolve model tier from creature_conditions when creature is known
-    let cognition_tier = if let Some(cid) = creature_id {
-        sqlx::query(
-            "SELECT cognition_tier FROM creature_conditions WHERE creature_id = $1 LIMIT 1",
-        )
-        .bind(cid)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|r| r.try_get::<String, _>("cognition_tier").ok())
-        .and_then(|t| match t.as_str() {
-            "standard" => Some(CognitionTier::Standard),
-            "premium" => Some(CognitionTier::Premium),
-            "free" => Some(CognitionTier::Free),
-            _ => None,
-        })
-    } else {
-        None
-    };
+    let (cognition_tier, slug, mut card) = tokio::join!(
+        cognition_tier_fut,
+        slug_fut,
+        kg_fut,
+    );
 
     // Apply tier resolution to card (patching model/provider in place)
     if let Some(ref tier) = cognition_tier {
@@ -267,16 +285,6 @@ pub async fn dispatch_rabble_action(
         creature_id,
         cognition_tier,
     };
-
-    // Get workspace slug for git context
-    let slug: String = sqlx::query("SELECT slug FROM teams WHERE id = $1")
-        .bind(workspace_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|r| r.try_get("slug").ok())
-        .unwrap_or_default();
 
     // Build ToolContext
     let tool_context = Arc::new(ToolContext {
@@ -307,58 +315,17 @@ pub async fn dispatch_rabble_action(
         .await
         .map_err(|e| format!("Agent execution failed: {:?}", e))?;
 
-    // Extract response text
+    // Extract response text — this is what the caller needs. Everything
+    // below (embedding, episode store, message store, gas charge) is
+    // housekeeping that does not affect the response. Fire it in the
+    // background so the caller gets the result immediately.
     let response_text = output
         .metadata
         .reasoning
         .clone()
         .unwrap_or_else(|| "(no response)".to_string());
 
-    // Record episode with embedding
-    let mut episode = agent_output_to_episode(db_agent.agent_id, query, &output);
-    let embed_text = format!("{} {}", query, &response_text);
-    if let Ok(embedding) = state.embedder.generate(&embed_text).await {
-        episode.embedding = Some(embedding);
-    }
-    let _ = state.memory_store.store_episode(episode).await;
-
-    // Store as workspace message
-    let msg = WorkspaceMessage {
-        message_id: Uuid::new_v4(),
-        workspace_id,
-        sender_type: "agent".to_string(),
-        sender_id: db_agent.agent_id.to_string(),
-        sender_name: Some(agent_name.to_string()),
-        content: response_text.clone(),
-        message_type: action_type.to_string(),
-        metadata: json!({
-            "action_type": action_type,
-            "tokens_used": output.tokens_used,
-            "confidence": output.confidence,
-        }),
-        created_at: chrono::Utc::now(),
-    };
-    let _ = state.memory_store.store_workspace_message(&msg).await;
-
-    // Charge execution gas from workspace wallet + distribute to agents
     let tokens = output.tokens_used.unwrap_or(0) as i32;
-    let (exec_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
-    let total = exec_fee + gas_fee;
-    let agent_ids = get_workspace_agent_ids(&state.db, workspace_id).await;
-    let ws_id_str = workspace_id.to_string();
-    if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id_str).await {
-        let _ = charge_and_distribute(
-            &state.db,
-            ws_wallet.wallet_id,
-            total,
-            "execution_fee",
-            &format!("@{} {} ({}tk)", agent_name, action_type, tokens),
-            &agent_ids,
-            None,
-            Some(workspace_id),
-        )
-        .await;
-    }
 
     tracing::info!(
         agent = %agent_name,
@@ -367,6 +334,64 @@ pub async fn dispatch_rabble_action(
         tokens = tokens,
         "Dispatched rabble action through agent"
     );
+
+    // ── Background housekeeping (does not block response) ──────────────────
+    {
+        let state_bg      = state.clone();
+        let output_bg     = output.clone();
+        let query_bg      = query.to_string();
+        let agent_id_bg   = db_agent.agent_id;
+        let response_bg   = response_text.clone();
+        let action_bg     = action_type.to_string();
+        let agent_name_bg = agent_name.to_string();
+
+        tokio::spawn(async move {
+            // 1. Episode with embedding
+            let mut episode = agent_output_to_episode(agent_id_bg, &query_bg, &output_bg);
+            let embed_text = format!("{} {}", query_bg, &response_bg);
+            if let Ok(embedding) = state_bg.embedder.generate(&embed_text).await {
+                episode.embedding = Some(embedding);
+            }
+            let _ = state_bg.memory_store.store_episode(episode).await;
+
+            // 2. Workspace message
+            let msg = WorkspaceMessage {
+                message_id: Uuid::new_v4(),
+                workspace_id,
+                sender_type: "agent".to_string(),
+                sender_id: agent_id_bg.to_string(),
+                sender_name: Some(agent_name_bg.clone()),
+                content: response_bg.clone(),
+                message_type: action_bg.clone(),
+                metadata: json!({
+                    "action_type": action_bg,
+                    "tokens_used": output_bg.tokens_used,
+                    "confidence": output_bg.confidence,
+                }),
+                created_at: chrono::Utc::now(),
+            };
+            let _ = state_bg.memory_store.store_workspace_message(&msg).await;
+
+            // 3. Gas charge + distribution
+            let (exec_fee, gas_fee) = state_bg.gas_fees.execution_fee(tokens);
+            let total = exec_fee + gas_fee;
+            let agent_ids = get_workspace_agent_ids(&state_bg.db, workspace_id).await;
+            let ws_id_str = workspace_id.to_string();
+            if let Ok(ws_wallet) = get_or_create_wallet(&state_bg.db, "workspace", &ws_id_str).await {
+                let _ = charge_and_distribute(
+                    &state_bg.db,
+                    ws_wallet.wallet_id,
+                    total,
+                    "execution_fee",
+                    &format!("@{} {} ({}tk)", agent_name_bg, action_bg, tokens),
+                    &agent_ids,
+                    None,
+                    Some(workspace_id),
+                )
+                .await;
+            }
+        });
+    }
 
     Ok(response_text)
 }

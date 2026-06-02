@@ -34,10 +34,13 @@ pub async fn enrich_with_kg_context(
     query: &str,
     mut card: AgentCard,
 ) -> AgentCard {
-    let query_embedding = match embedder.generate(query).await {
-        Ok(e) => e,
-        Err(_) => return card,
-    };
+    // Fast-path: skip the external embedding call entirely when the agent's
+    // knowledge graph is empty (no dream cycles have run yet). This avoids
+    // a ~300-800ms external API call that would find nothing and return the
+    // card unchanged — the common case for creature agents.
+    if card.ontology_stats.entities == 0 && card.ontology_stats.relationships == 0 {
+        return card;
+    }
 
     let (rules_res, entities_res) = tokio::join!(
         memory_store.get_agent_semantic_rules(agent_uuid),
@@ -50,6 +53,11 @@ pub async fn enrich_with_kg_context(
     if rules.is_empty() && entities.is_empty() {
         return card;
     }
+
+    let query_embedding = match embedder.generate(query).await {
+        Ok(e) => e,
+        Err(_) => return card,
+    };
 
     const MIN_SIMILARITY: f32 = 0.30;
 
