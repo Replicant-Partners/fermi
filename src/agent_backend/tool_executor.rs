@@ -867,13 +867,28 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
         }
     }
 
-    // ── 3. Non-EvidenceJson JSON (domain contract not caught by is_json_contract_text) ──
-    // e.g. response embedded in prose: "Here is the result: {…}"
+    // ── 3. Prose + fenced or embedded JSON ───────────────────────────────
+    // Agent returned prose followed by ```json{...}``` or prose with {…}
+    // embedded. Extract the JSON block and treat as a domain contract.
+    // This handles "Perfect! I have GBIF data...\n```json\n{...}\n```"
     {
-        let t = text.trim_start();
-        if t.starts_with('{') || t.starts_with('[') {
-            let (summary, findings) = extract_summary_from_json_contract(text);
-            return (make_stub(agent_name, summary, findings, 0.5), 0.5, Some(text.to_string()));
+        // Try fenced block first
+        let extracted = if let Some(fs) = text.find("```json").or_else(|| text.find("```JSON")) {
+            let after = text[fs..].trim_start_matches('`').trim_start_matches("json").trim_start_matches("JSON").trim_start();
+            after.find("```").map(|fe| after[..fe].trim().to_string())
+        } else {
+            None
+        };
+        // Fallback: first { to last }
+        let extracted = extracted.or_else(|| {
+            text.find('{').and_then(|s| text.rfind('}').map(|e| text[s..=e].to_string()))
+        });
+
+        if let Some(candidate) = extracted {
+            if serde_json::from_str::<serde_json::Value>(&candidate).map(|v| v.is_object()).unwrap_or(false) {
+                let (summary, findings) = extract_summary_from_json_contract(&candidate);
+                return (make_stub(agent_name, summary, findings, 0.5), 0.5, Some(candidate));
+            }
         }
     }
 
@@ -1093,5 +1108,38 @@ mod tests {
             ),
             "prey_locator two-phase prompt must NOT bypass the tool loop"
         );
+    }
+
+    /// Regression: when Claude returns prose + ```json fence, the JSON must be
+    /// extracted and returned as reasoning, not swallowed into plain-text summary.
+    /// This is the "Perfect! I have GBIF data...\n```json\n{...}\n```" pattern.
+    #[test]
+    fn parse_evidence_text_extracts_json_from_prose_plus_fence() {
+        let text = "Perfect! I have GBIF data for *Protosticta myristicaensis*.\n\n```json\n{\
+            \"taxonomy\": {\"order\": \"Odonata\", \"species\": \"Protosticta myristicaensis\"},\
+            \"summary\": \"A rare damselfly from the Platystictidae family.\"\
+        }\n```";
+        let (evidence, _conf, reasoning) = super::parse_evidence_text(text, "genome_profiler");
+        assert_eq!(evidence.len(), 1);
+        // Summary must be extracted from the JSON, not contain prose
+        assert_eq!(
+            evidence[0].summary.as_deref(),
+            Some("A rare damselfly from the Platystictidae family."),
+            "summary must come from JSON field, not prose"
+        );
+        // Reasoning must be the extracted JSON, not the full prose+fence text
+        let r = reasoning.unwrap_or_default();
+        assert!(r.contains("Odonata"), "reasoning must contain the JSON content");
+        assert!(!r.contains("Perfect!"), "reasoning must not contain the prose preamble");
+    }
+
+    /// Prose + bare JSON (no fence) must also be handled.
+    #[test]
+    fn parse_evidence_text_extracts_json_from_prose_plus_bare_json() {
+        let text = "Here is the threat assessment: {\"threat_level\": \"low\", \"threats\": [], \"summary\": \"No immediate threats.\"}";
+        let (_evidence, _conf, reasoning) = super::parse_evidence_text(text, "enemy_sensor");
+        let r = reasoning.unwrap_or_default();
+        assert!(r.contains("threat_level"), "reasoning must contain the JSON");
+        assert!(!r.contains("Here is the threat"), "reasoning must not contain the prose");
     }
 }

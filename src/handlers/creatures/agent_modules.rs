@@ -2,22 +2,50 @@
 //!
 //! These are premium features that dispatch to LLM agents and cost gas credits.
 
-/// Strip optional markdown code fences and parse as JSON.
-/// Falls back to `fallback` if parsing still fails after stripping.
-/// Prevents Claude Haiku's habit of wrapping JSON in ```json fences
-/// from causing parse failures and blank UI screens.
+/// Extract and parse the first valid JSON object from agent response text.
+///
+/// Handles all the ways Claude Haiku returns JSON:
+///   - Pure JSON:          {"key": "value"}
+///   - Fenced, no prose:   ```json\n{...}\n```
+///   - Prose + fenced:     "Perfect! Here is the JSON:\n```json\n{...}\n```"
+///   - Prose + bare JSON:  "Here is the result: {...}"
+///
+/// Falls back to `fallback` only if no parseable JSON object is found.
 fn parse_agent_json(text: &str, fallback: serde_json::Value) -> serde_json::Value {
+    // Try 1: bare JSON (most common after our fixes)
     let t = text.trim();
-    let stripped = t
-        .strip_prefix("```json")
-        .or_else(|| t.strip_prefix("```JSON"))
-        .or_else(|| t.strip_prefix("```"))
-        .unwrap_or(t)
-        .trim_start();
-    let stripped = stripped.strip_suffix("```").unwrap_or(stripped).trim();
-    serde_json::from_str(stripped)
-        .or_else(|_| serde_json::from_str(text))
-        .unwrap_or(fallback)
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+        if v.is_object() || v.is_array() { return v; }
+    }
+
+    // Try 2: extract from ```json ... ``` fence (with optional prose before/after)
+    let fence_start = text.find("```json")
+        .or_else(|| text.find("```JSON"))
+        .or_else(|| text.find("```\n{"))
+        .or_else(|| text.find("```\n["));
+    if let Some(fs) = fence_start {
+        let after_fence = text[fs..].trim_start_matches('`').trim_start_matches("json").trim_start_matches("JSON").trim_start();
+        if let Some(fe) = after_fence.find("```") {
+            let candidate = after_fence[..fe].trim();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
+                if v.is_object() || v.is_array() { return v; }
+            }
+        }
+    }
+
+    // Try 3: find first { ... } span in the text (prose + embedded JSON)
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            if end > start {
+                let candidate = &text[start..=end];
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
+                    if v.is_object() { return v; }
+                }
+            }
+        }
+    }
+
+    fallback
 }
 
 use axum::{
