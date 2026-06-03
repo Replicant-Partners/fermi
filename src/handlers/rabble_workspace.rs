@@ -315,15 +315,40 @@ pub async fn dispatch_rabble_action(
         .await
         .map_err(|e| format!("Agent execution failed: {:?}", e))?;
 
-    // Extract response text — this is what the caller needs. Everything
-    // below (embedding, episode store, message store, gas charge) is
-    // housekeeping that does not affect the response. Fire it in the
-    // background so the caller gets the result immediately.
+    // Extract response text — this is what the caller needs.
+    // Primary: metadata.reasoning holds the raw LLM text (the full JSON
+    // for creature agents). Secondary fallback: evidence[0].summary has
+    // the summary extracted by extract_summary_from_json_contract.
+    // Final fallback: synthesise from evidence fields so callers always
+    // get parseable JSON rather than the literal string "(no response)".
     let response_text = output
         .metadata
         .reasoning
         .clone()
+        .or_else(|| {
+            // reasoning was None — try to reconstruct from evidence
+            output.evidence.first().and_then(|e| {
+                let summary = e.summary.as_deref().unwrap_or("");
+                if summary.is_empty() && e.key_findings.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::to_string(&serde_json::json!({
+                        "summary": summary,
+                        "key_findings": e.key_findings,
+                    })).unwrap_or_default())
+                }
+            })
+        })
         .unwrap_or_else(|| "(no response)".to_string());
+
+    tracing::debug!(
+        agent = %agent_name,
+        action = %action_type,
+        response_len = response_text.len(),
+        reasoning_is_some = output.metadata.reasoning.is_some(),
+        evidence_count = output.evidence.len(),
+        "dispatch_rabble_action response_text"
+    );
 
     let tokens = output.tokens_used.unwrap_or(0) as i32;
 

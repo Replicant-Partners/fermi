@@ -798,191 +798,103 @@ fn resolve_openai_provider(provider: &str) -> Result<(String, String), Execution
     Ok((api_key, base_url))
 }
 
-/// Parse evidence from text (handles both JSON and plain text responses)
+/// Parse evidence from text (handles both JSON and plain text responses).
+///
+/// Decision tree:
+/// 1. Valid JSON that looks like a domain-specific contract (enemy_sensor,
+///    genome_profiler, prey_locator, supply_chain_oracle, …): preserve the
+///    full text as `reasoning` (the channel the handler reads), salvage a
+///    summary and key_findings for the evidence card.
+/// 2. Valid JSON that looks like the EvidenceJson shape (has `key_findings`
+///    AND/OR both `summary`+`confidence`/`reasoning`): parse into EvidenceStmt
+///    with `reasoning = data.reasoning`.
+/// 3. Plain text: put into summary + extract bullet findings.
+///
+/// The critical invariant: `reasoning` (the third return value) must contain
+/// the full agent response text whenever the response is non-empty, so that
+/// `dispatch_rabble_action` can return it to the creature-agent handlers for
+/// JSON parsing.
 fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64, Option<String>) {
-    // Short-circuit (issue #4): when the response is itself a structured
-    // JSON object or array (the typical shape from JSON-contract research
-    // agents — supply_chain_oracle, comparator, sidestream_miner, …),
-    // do NOT route the text through EvidenceJson and back into `summary`.
-    //
-    // EvidenceJson has `#[serde(default)]` on every field, so any valid
-    // JSON object deserialises with empty defaults. That used to produce
-    // an EvidenceStmt with `summary: Some("")`, which the downstream
-    // formatter would still try to render — and, when the legacy parser
-    // stuffed the raw JSON into summary, would emit the same JSON twice.
-    //
-    // Skip straight to a content-free evidence stub; the raw text remains
-    // accessible via the third return value (which becomes
-    // `AgentOutput.metadata.reasoning` and from there
-    // `execution_result.metadata.raw_response`).
-    if is_json_contract_text(text) {
-        // Even though the response is a structured JSON contract (not the
-        // EvidenceData shape), try to salvage a human-readable summary and
-        // key findings from well-known fields that creature / research agents
-        // embed directly in their response objects (e.g. enemy_sensor's
-        // `summary`, genome_profiler's `summary`, prey_locator's
-        // `hunting_summary`).  Falling through to empty evidence here is the
-        // root cause of the "Success + empty payload" bug (ABW issue).
-        let (salvaged_summary, salvaged_findings) =
-            extract_summary_from_json_contract(text);
-        let evidence = vec![EvidenceStmt {
+
+    fn make_stub(agent_name: &str, summary: Option<String>, findings: Vec<String>, confidence: f64) -> Vec<EvidenceStmt> {
+        vec![EvidenceStmt {
             id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
             source: format!("Agent: {}", agent_name),
-            summary: salvaged_summary,
+            summary,
             url: None,
-            relevance: Some(0.5),
+            relevance: Some(confidence),
             date: Some(Utc::now().format("%Y-%m-%d").to_string()),
-            strength: Some(0.5),
-            key_findings: salvaged_findings,
-        }];
-        return (evidence, 0.5, Some(text.to_string()));
+            strength: Some(confidence),
+            key_findings: findings,
+        }]
     }
 
-    // Try to extract JSON from the response
+    // ── 1. JSON contract detection ────────────────────────────────────────
+    // is_json_contract_text validates the whole text is parseable JSON.
+    // Creature agents always fall here because their responses are pure JSON.
+    if is_json_contract_text(text) {
+        let (summary, findings) = extract_summary_from_json_contract(text);
+        return (make_stub(agent_name, summary, findings, 0.5), 0.5, Some(text.to_string()));
+    }
+
+    // ── 2. Embedded JSON — try EvidenceJson shape ─────────────────────────
+    // Only match if the text actually contains `key_findings` OR contains
+    // both `summary` and at least one of `confidence`/`reasoning`.
+    // This prevents greedy matching of domain JSON like enemy_sensor's
+    // {"threat_level","threats","summary"} which has a `summary` key but
+    // is NOT an EvidenceJson — it would deserialise with empty defaults
+    // and set reasoning="" causing the handler to receive an empty response.
     let json_text = if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
-            &text[start..=end]
-        } else {
-            text
+        if let Some(end) = text.rfind('}') { &text[start..=end] } else { text }
+    } else { text };
+
+    let looks_like_evidence_json = json_text.contains("\"key_findings\"")
+        || (json_text.contains("\"summary\"")
+            && (json_text.contains("\"confidence\"") || json_text.contains("\"reasoning\"")));
+
+    if looks_like_evidence_json {
+        #[derive(serde::Deserialize)]
+        struct EvidenceJson {
+            #[serde(default)] key_findings: Vec<String>,
+            #[serde(default)] summary: String,
+            #[serde(default)] confidence: f64,
+            #[serde(default)] reasoning: String,
         }
-    } else {
-        text
-    };
-
-    #[derive(serde::Deserialize)]
-    struct EvidenceJson {
-        #[serde(default)]
-        key_findings: Vec<String>,
-        #[serde(default)]
-        summary: String,
-        #[serde(default)]
-        confidence: f64,
-        #[serde(default)]
-        reasoning: String,
-    }
-
-    match serde_json::from_str::<EvidenceJson>(json_text) {
-        Ok(data) => {
-            let confidence = if data.confidence > 0.0 {
-                data.confidence
-            } else {
-                0.5
-            };
-            let evidence = vec![EvidenceStmt {
-                id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
-                source: format!("Agent: {}", agent_name),
-                summary: Some(data.summary),
-                url: None,
-                relevance: Some(confidence),
-                date: Some(Utc::now().format("%Y-%m-%d").to_string()),
-                strength: Some(confidence),
-                key_findings: data.key_findings,
-            }];
-            (evidence, confidence, Some(data.reasoning))
-        }
-        Err(_) => {
-            // Fallback: treat as plain text evidence.
-            //
-            // Special case (issue #4): if the response is itself a structured
-            // JSON object that simply didn't match the EvidenceJson shape
-            // (e.g. supply_chain_oracle's `{items, risks, …}` contract), do
-            // NOT stuff the entire JSON back into the `summary` field — the
-            // downstream formatter would otherwise emit the same JSON twice,
-            // once as the raw response and once as an `**Evidence:**`
-            // addendum. The raw text is already preserved via the third
-            // return value (becomes `AgentOutput.metadata.reasoning`).
-            let looks_like_json_contract = {
-                let t = text.trim_start();
-                t.starts_with('{') || t.starts_with('[')
-            };
-            if looks_like_json_contract {
-                // Safety net: try to salvage summary/findings from well-known
-                // JSON fields (e.g. enemy_sensor `summary`, prey_locator
-                // `hunting_summary`) rather than returning empty evidence.
-                let (salvaged_summary, salvaged_findings) =
-                    extract_summary_from_json_contract(text);
-                let evidence = vec![EvidenceStmt {
-                    id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
-                    source: format!("Agent: {}", agent_name),
-                    summary: salvaged_summary,
-                    url: None,
-                    relevance: Some(0.5),
-                    date: Some(Utc::now().format("%Y-%m-%d").to_string()),
-                    strength: Some(0.5),
-                    key_findings: salvaged_findings,
-                }];
-                return (evidence, 0.5, Some(text.to_string()));
-            }
-
-            // IMPORTANT: preserve the FULL text as summary so downstream
-            // consumers (wiki, evidence panel) can display it completely.
-            // Extract key lines as findings for the evidence card display.
-            let summary = text.to_string();
-
-            // Extract meaningful lines as key findings:
-            // - Bullet points (•, -, *, ▸)
-            // - Numbered items (1., 2.)
-            // - Lines with data signals (%, $, numbers)
-            // - Lines longer than 20 chars (skip headers/blanks)
-            let findings: Vec<String> = text
-                .lines()
-                .filter(|l| {
-                    let trimmed = l.trim();
-                    if trimmed.is_empty() || trimmed.len() < 15 {
-                        return false;
-                    }
-                    // Skip markdown headers and separators
-                    if trimmed.starts_with('#')
-                        || trimmed.starts_with("---")
-                        || trimmed.starts_with("===")
-                    {
-                        return false;
-                    }
-                    // Prefer bullet points, numbered items, and data-rich lines
-                    trimmed.starts_with('-')
-                        || trimmed.starts_with('•')
-                        || trimmed.starts_with('*')
-                        || trimmed.starts_with("▸")
-                        || trimmed
-                            .chars()
-                            .next()
-                            .map(|c| c.is_ascii_digit())
-                            .unwrap_or(false)
-                        || trimmed.contains('%')
-                        || trimmed.contains('$')
-                        || trimmed.contains("p50")
-                        || trimmed.contains("Suggested")
-                        || trimmed.contains("confidence")
-                        || trimmed.contains("relevance")
-                })
-                .take(15)
-                .map(|l| {
-                    let trimmed = l.trim();
-                    // Clean leading bullet chars for consistency
-                    let cleaned = trimmed
-                        .trim_start_matches('-')
-                        .trim_start_matches('•')
-                        .trim_start_matches('*')
-                        .trim_start_matches("▸")
-                        .trim();
-                    cleaned.to_string()
-                })
-                .filter(|s| !s.is_empty())
-                .collect();
-
-            let evidence = vec![EvidenceStmt {
-                id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
-                source: format!("Agent: {}", agent_name),
-                summary: Some(summary),
-                url: None,
-                relevance: Some(0.5),
-                date: Some(Utc::now().format("%Y-%m-%d").to_string()),
-                strength: Some(0.5),
-                key_findings: findings,
-            }];
-            (evidence, 0.5, Some(text.to_string()))
+        if let Ok(data) = serde_json::from_str::<EvidenceJson>(json_text) {
+            let confidence = if data.confidence > 0.0 { data.confidence } else { 0.5 };
+            return (make_stub(agent_name, Some(data.summary), data.key_findings, confidence),
+                    confidence, Some(data.reasoning));
         }
     }
+
+    // ── 3. Non-EvidenceJson JSON (domain contract not caught by is_json_contract_text) ──
+    // e.g. response embedded in prose: "Here is the result: {…}"
+    {
+        let t = text.trim_start();
+        if t.starts_with('{') || t.starts_with('[') {
+            let (summary, findings) = extract_summary_from_json_contract(text);
+            return (make_stub(agent_name, summary, findings, 0.5), 0.5, Some(text.to_string()));
+        }
+    }
+
+    // ── 4. Plain text ─────────────────────────────────────────────────────
+    let findings: Vec<String> = text
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            if t.is_empty() || t.len() < 15 { return false; }
+            if t.starts_with('#') || t.starts_with("---") || t.starts_with("===") { return false; }
+            t.starts_with('-') || t.starts_with('•') || t.starts_with('*') || t.starts_with("▸")
+                || t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                || t.contains('%') || t.contains('$') || t.contains("p50")
+                || t.contains("Suggested") || t.contains("confidence") || t.contains("relevance")
+        })
+        .take(15)
+        .map(|l| l.trim().trim_start_matches(['-','•','*']).trim_start_matches("▸").trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    (make_stub(agent_name, Some(text.to_string()), findings, 0.5), 0.5, Some(text.to_string()))
 }
 
 

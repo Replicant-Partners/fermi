@@ -454,19 +454,29 @@ pub async fn genome_profiler_handler(
                 ));
             }
 
-            // Return cached profile for free if it exists
+            // Return cached profile for free if it exists AND has real content.
+            // An empty taxonomy map means the profile was written during a
+            // pre-fix run when the agent hallucinated or returned empty data —
+            // treat it as a cache miss and re-run the agent.
             let cached: Option<serde_json::Value> = cond_row.as_ref().and_then(|r| {
                 r.try_get::<Option<serde_json::Value>, _>("genome_profile")
                     .ok()
                     .flatten()
             });
 
-            if let Some(profile) = cached {
+            let cache_is_valid = cached.as_ref().map(|p| {
+                p.get("taxonomy")
+                    .and_then(|v| v.as_object())
+                    .map(|m| !m.is_empty())
+                    .unwrap_or(false)
+            }).unwrap_or(false);
+
+            if cache_is_valid {
                 return Ok(Json(json!({
                     "creature_id": creature_id,
                     "cost": 0,
                     "cached": true,
-                    "profile": profile,
+                    "profile": cached.unwrap(),
                 })));
             }
 
