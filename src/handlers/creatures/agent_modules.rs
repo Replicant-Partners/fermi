@@ -2,6 +2,24 @@
 //!
 //! These are premium features that dispatch to LLM agents and cost gas credits.
 
+/// Strip optional markdown code fences and parse as JSON.
+/// Falls back to `fallback` if parsing still fails after stripping.
+/// Prevents Claude Haiku's habit of wrapping JSON in ```json fences
+/// from causing parse failures and blank UI screens.
+fn parse_agent_json(text: &str, fallback: serde_json::Value) -> serde_json::Value {
+    let t = text.trim();
+    let stripped = t
+        .strip_prefix("```json")
+        .or_else(|| t.strip_prefix("```JSON"))
+        .or_else(|| t.strip_prefix("```"))
+        .unwrap_or(t)
+        .trim_start();
+    let stripped = stripped.strip_suffix("```").unwrap_or(stripped).trim();
+    serde_json::from_str(stripped)
+        .or_else(|_| serde_json::from_str(text))
+        .unwrap_or(fallback)
+}
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -182,9 +200,10 @@ pub async fn enemy_sensor_handler(
                 )
             })?;
 
-            let parsed: serde_json::Value = serde_json::from_str(&assessment).unwrap_or_else(
-                |_| json!({ "threat_level": "unknown", "summary": assessment, "threats": [] }),
-            );
+             let parsed: serde_json::Value = parse_agent_json(
+                 &assessment,
+                 json!({ "threat_level": "unknown", "summary": assessment, "threats": [] }),
+             );
 
             // Record in creature log (background)
             let threat_level = parsed
@@ -300,7 +319,7 @@ pub async fn enemy_sensor_handler(
             })?;
 
             let parsed: serde_json::Value =
-                serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
+                parse_agent_json(&result, json!({ "strategy": result }));
 
             // Record in background
             let strategy_cost = gas.enemy_sensor_check;
@@ -477,15 +496,15 @@ pub async fn genome_profiler_handler(
                 .unwrap_or("Unknown");
 
             let query = format!(
-                "Build a phylogenetic profile for {} (order {}). \
-                 Use gbif_taxonomy_tree with {} to get the full taxonomy hierarchy, \
-                 then analyze its genomic context and evolutionary relationships.",
+                "Build a phylogenetic profile for {} (order: {}{}). \
+                 Call gbif_taxonomy_tree first, then gbif_species_search. \
+                 Return the JSON profile described in your instructions.",
                 scientific_name,
                 order,
                 if let Some(key) = gbif_key {
-                    format!("gbif_key {}", key)
+                    format!(", gbif_key: {}", key)
                 } else {
-                    format!("scientific_name \"{}\"", scientific_name)
+                    String::new()
                 },
             );
 
@@ -518,8 +537,9 @@ pub async fn genome_profiler_handler(
                 )
             })?;
 
-            let parsed: serde_json::Value = serde_json::from_str(&profile).unwrap_or_else(
-                |_| json!({ "summary": profile, "taxonomy": {}, "genome": {}, "phylogeny": {} }),
+            let parsed: serde_json::Value = parse_agent_json(
+                &profile,
+                json!({ "summary": profile, "taxonomy": {}, "genome": {}, "phylogeny": {} }),
             );
 
             // Cache + record in background
@@ -740,8 +760,10 @@ pub async fn prey_locator_handler(
                 )
             })?;
 
-            let parsed: serde_json::Value = serde_json::from_str(&result)
-                .unwrap_or_else(|_| json!({ "prey_targets": [], "hunting_summary": result }));
+            let parsed: serde_json::Value = parse_agent_json(
+                &result,
+                json!({ "prey_targets": [], "hunting_summary": result }),
+            );
 
             // Record in background
             let scan_cost = gas.prey_locator_scan;
@@ -869,8 +891,9 @@ pub async fn prey_locator_handler(
                 )
             })?;
 
-            let parsed: serde_json::Value = serde_json::from_str(&plan).unwrap_or_else(
-                |_| json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
+            let parsed: serde_json::Value = parse_agent_json(
+                &plan,
+                json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
             );
 
             // Record in background
@@ -982,7 +1005,7 @@ pub async fn prey_locator_handler(
             })?;
 
             let parsed: serde_json::Value =
-                serde_json::from_str(&result).unwrap_or_else(|_| json!({ "strategy": result }));
+                parse_agent_json(&result, json!({ "strategy": result }));
 
             // Record in background
             let strategy_cost = gas.prey_locator_scan;

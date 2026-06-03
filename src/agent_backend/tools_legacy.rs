@@ -792,7 +792,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
         // ─── Rabble.world creature tools ───
         BuiltinToolDef {
             name: "gbif_species_search",
-            description: "Search the GBIF (Global Biodiversity Information Facility) API for insect species. Returns taxonomy, common names, and media references. Free, no API key required.",
+            description: "Call this tool to query GBIF (Global Biodiversity Information Facility) for species data. This tool is executed server-side — you do not need internet access to use it. Returns real taxonomy, common names, and media from the live GBIF API.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -978,8 +978,8 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
         },
         // ─── Enemy Sensor ───
         BuiltinToolDef {
-            name: "scan_nearby_creatures",
-            description: "Find creatures near a given creature using H3 hexagonal proximity. Returns the target creature's species info and all nearby creatures with taxonomy data. Used by the enemy_sensor agent to assess predation risk.",
+             name: "scan_nearby_creatures",
+             description: "Call this tool to find creatures near a given creature using H3 proximity. This tool is executed server-side against the live Rabble database — you do not need internet access to use it. Returns the target creature's species and all nearby creatures with taxonomy data.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1001,7 +1001,7 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
         // ─── Genome Profiler ───
         BuiltinToolDef {
             name: "gbif_taxonomy_tree",
-            description: "Fetch the full taxonomic hierarchy for a species from GBIF. Returns kingdom through species with keys, plus sibling taxa at each rank for phylogenetic context.",
+            description: "Call this tool to fetch the full taxonomic hierarchy for a species from GBIF. This tool is executed server-side — you do not need internet access to use it. Returns real kingdom-through-species data with GBIF keys, plus sibling taxa at each rank.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
