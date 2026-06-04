@@ -63,6 +63,8 @@ use crate::handlers::rabble_workspace;
 use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
+use agent_bestiary_memory::{ConsolidationLock, ConsolidationWorker, LLMProviderConfig, LLMProviderFactory, ProviderType};
+use std::sync::Arc;
 
 use super::helpers::{
     find_creature_workspace, get_current_state, record_transition, toggle_module,
@@ -1421,7 +1423,131 @@ pub async fn creature_dream_handler(
                     &dream_metadata,
                 )
                 .await;
-                eprintln!("[dream] completed for creature {}", creature_id);
+                eprintln!("[dream] narrative completed for creature {}", creature_id);
+
+                // ── Consolidation: the actual learning step ──────────────
+                // The narrative is the story; consolidation is the memory.
+                // Run ConsolidationWorker for each active creature agent
+                // (enemy_sensor, genome_profiler, prey_locator) that has
+                // accumulated unconsolidated episodes. This extracts rules,
+                // entities, and facts into the knowledge graph so that
+                // enrich_with_kg_context can surface them on future runs.
+                let active_agents = ["enemy_sensor", "genome_profiler", "prey_locator"];
+                let llm_opt = std::env::var("ANTHROPIC_API_KEY").ok().and_then(|key| {
+                    LLMProviderFactory::create(&LLMProviderConfig {
+                        provider_type: ProviderType::Anthropic,
+                        api_key: key,
+                        model: "claude-haiku-4-5-20251001".to_string(),
+                        base_url: None,
+                    }).ok()
+                });
+
+                for agent_name in &active_agents {
+                    // Look up the agent's DB UUID
+                    let agent_uuid: Option<uuid::Uuid> = sqlx::query_scalar(
+                        "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
+                    )
+                    .bind(agent_name)
+                    .fetch_optional(pool_bg)
+                    .await
+                    .ok()
+                    .flatten();
+
+                    let agent_uuid = match agent_uuid {
+                        Some(id) => id,
+                        None => {
+                            eprintln!("[dream] agent {} not found in DB, skipping consolidation", agent_name);
+                            continue;
+                        }
+                    };
+
+                    // Check if there are unconsolidated episodes first (avoid
+                    // creating a lock + job for empty queues)
+                    let episode_count: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM episodes WHERE agent_id = $1 AND consolidated = false",
+                    )
+                    .bind(agent_uuid)
+                    .fetch_optional(pool_bg)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0);
+
+                    if episode_count == 0 {
+                        eprintln!("[dream] {} has no unconsolidated episodes, skipping", agent_name);
+                        continue;
+                    }
+
+                    eprintln!("[dream] consolidating {} ({} episodes)", agent_name, episode_count);
+
+                    let lock = Arc::new(ConsolidationLock::new(
+                        Arc::new(pool_bg.clone()),
+                        format!("dream-{}", creature_id),
+                    ));
+
+                    let worker = match &llm_opt {
+                        Some(llm) => ConsolidationWorker::with_llm(
+                            spawn_state.memory_store.clone(),
+                            lock,
+                            spawn_state.embedder.clone(),
+                            llm.clone(),
+                            format!("dream-{}", creature_id),
+                        ),
+                        None => ConsolidationWorker::new(
+                            spawn_state.memory_store.clone(),
+                            lock,
+                            spawn_state.embedder.clone(),
+                            format!("dream-{}", creature_id),
+                        ),
+                    };
+
+                    match worker.consolidate_agent(agent_uuid, 0.5, 2).await {
+                        Ok(result) => {
+                            eprintln!(
+                                "[dream] {} consolidated: {} episodes, {} rules, {} entities",
+                                agent_name,
+                                result.episodes_processed,
+                                result.rules_extracted,
+                                result.entities_created,
+                            );
+                            // Update last_consolidated_at and dreaming credits
+                            let _ = sqlx::query(
+                                "UPDATE agents SET last_consolidated_at = NOW(),
+                                 dreaming_credits_used = dreaming_credits_used + 1
+                                 WHERE agent_id = $1",
+                            )
+                            .bind(agent_uuid)
+                            .execute(pool_bg)
+                            .await;
+
+                            // Update the in-memory registry's ontology_stats so
+                            // enrich_with_kg_context stops fast-pathing this agent.
+                            // We fetch the live entity count from DB rather than
+                            // using result.entities_created (which is the delta,
+                            // not the total).
+                            if result.entities_created > 0 || result.rules_extracted > 0 {
+                                let total_entities: i64 = sqlx::query_scalar(
+                                    "SELECT COUNT(*) FROM kg_entities WHERE agent_id = $1",
+                                )
+                                .bind(agent_uuid)
+                                .fetch_optional(pool_bg)
+                                .await
+                                .ok()
+                                .flatten()
+                                .unwrap_or(0);
+
+                                if let Ok(mut card) = spawn_state.registry.get(agent_name) {
+                                    card.ontology_stats.entities = total_entities as u32;
+                                    card.ontology_stats.relationships = result.facts_created as u32;
+                                    card.ontology_stats.evolution_commits += 1;
+                                    let _ = spawn_state.registry.update(card);
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("[dream] consolidation failed for {}: {}", agent_name, e),
+                    }
+                }
+                eprintln!("[dream] cycle complete for creature {}", creature_id);
             }
             Err(e) => eprintln!("[dream] failed for creature {}: {}", creature_id, e),
         }
