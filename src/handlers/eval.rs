@@ -1386,3 +1386,161 @@ Return ONLY the rubric sentence. No preamble, no quotes, no extra text."#,
         "message": format!("Generated rubrics for {updated}/{} test cases.", needs_rubric.len()),
     })))
 }
+
+// ─── Batch eval run ───────────────────────────────────────────────────────────
+
+/// POST /api/me/eval/runs/batch
+///
+/// Trigger eval runs across multiple agents in one call.
+///
+/// Request body:
+/// ```json
+/// {
+///   "agent_ids": ["uuid1", "uuid2"] | "all",
+///   "judge": true
+/// }
+/// ```
+///
+/// - `"all"` — every agent owned by the caller that has ≥1 active test case
+/// - `["id1","id2"]` — specific agent UUIDs or names (subset)
+///
+/// Each agent's eval run is spawned as a background task independently,
+/// identical to the single-agent trigger path. Agents with no test cases
+/// are skipped (not an error). Credit is charged per agent that has cases.
+///
+/// Response:
+/// ```json
+/// {
+///   "triggered": 5,
+///   "skipped": 2,
+///   "results": [
+///     { "agent_id": "...", "agent_name": "...", "run_id": "...", "total_cases": 6 },
+///     { "agent_id": "...", "agent_name": "...", "skipped_reason": "no test cases" }
+///   ]
+/// }
+/// ```
+pub async fn batch_eval_run_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(body): Json<BatchEvalRunRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    // Resolve the agent list.
+    let owned_agents = state
+        .memory_store
+        .list_agents_for_owner(&user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let target_agents: Vec<Agent> = match &body.agent_ids {
+        AgentSelection::All => owned_agents,
+        AgentSelection::Subset(ids) => {
+            // Match by UUID or agent_name — whichever the caller provides.
+            owned_agents
+                .into_iter()
+                .filter(|a| {
+                    ids.iter().any(|id| {
+                        id == &a.agent_id.to_string() || id == &a.agent_name
+                    })
+                })
+                .collect()
+        }
+    };
+
+    if target_agents.is_empty() {
+        return Ok(Json(json!({
+            "triggered": 0,
+            "skipped": 0,
+            "results": [],
+            "message": "No matching owned agents found.",
+        })));
+    }
+
+    let judge = body.judge.unwrap_or(false);
+    let mut results: Vec<Value> = Vec::new();
+    let mut triggered = 0usize;
+    let mut skipped = 0usize;
+
+    for agent in target_agents {
+        let agent_name = agent.agent_name.clone();
+        let agent_id_str = agent.agent_id.to_string();
+
+        match trigger_eval_run_core(
+            &state,
+            agent,
+            agent_name.clone(),
+            user_id.clone(),
+            judge,
+            vec![],
+        )
+        .await
+        {
+            Ok((run_id, total_cases)) => {
+                triggered += 1;
+                results.push(json!({
+                    "agent_id": agent_id_str,
+                    "agent_name": agent_name,
+                    "run_id": run_id,
+                    "total_cases": total_cases,
+                    "status": "triggered",
+                }));
+            }
+            Err((StatusCode::BAD_REQUEST, ref msg)) if msg.contains("No test cases") => {
+                skipped += 1;
+                results.push(json!({
+                    "agent_id": agent_id_str,
+                    "agent_name": agent_name,
+                    "status": "skipped",
+                    "skipped_reason": "no test cases",
+                }));
+            }
+            Err((code, msg)) => {
+                skipped += 1;
+                results.push(json!({
+                    "agent_id": agent_id_str,
+                    "agent_name": agent_name,
+                    "status": "error",
+                    "error": format!("{}: {}", code, msg),
+                }));
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "triggered": triggered,
+        "skipped": skipped,
+        "results": results,
+        "message": format!("Triggered {triggered} eval runs, skipped {skipped} agents."),
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct BatchEvalRunRequest {
+    pub agent_ids: AgentSelection,
+    pub judge: Option<bool>,
+}
+
+pub enum AgentSelection {
+    All,
+    Subset(Vec<String>),
+}
+
+impl<'de> serde::Deserialize<'de> for AgentSelection {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let v = serde_json::Value::deserialize(de)?;
+        match v {
+            serde_json::Value::String(s) if s.to_lowercase() == "all" => Ok(AgentSelection::All),
+            serde_json::Value::Array(arr) => {
+                let ids = arr.into_iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
+                Ok(AgentSelection::Subset(ids))
+            }
+            _ => Err(D::Error::custom(
+                "agent_ids must be \"all\" or an array of agent id/name strings",
+            )),
+        }
+    }
+}

@@ -928,6 +928,10 @@ async fn main() {
             post(handlers::eval::generate_rubrics_handler),
         )
         .route(
+            "/api/me/eval/runs/batch",
+            post(handlers::eval::batch_eval_run_handler),
+        )
+        .route(
             "/api/agents/:agent_id/eval/run",
             post(handlers::eval::trigger_eval_run_handler),
         )

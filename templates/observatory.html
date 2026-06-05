@@ -300,7 +300,22 @@
           </select>
         </label>
         <div class="toolbar-sep"></div>
-        <button class="btn btn-eval" id="run-eval-btn" onclick="triggerEvalRun()" disabled>▶ Run eval</button>
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+          <select id="eval-scope" onchange="onEvalScopeChange()" style="background:var(--bg1); color:var(--fg2); border:1px solid var(--bg3); padding:5px 8px; font-family:inherit; font-size:0.82rem;">
+            <option value="single">Single agent</option>
+            <option value="subset">Select agents…</option>
+            <option value="all">All my agents</option>
+          </select>
+          <button class="btn btn-eval" id="run-eval-btn" onclick="triggerEvalRun()" disabled>▶ Run eval</button>
+          <label style="font-size:0.78rem; color:var(--fg4); display:flex; align-items:center; gap:4px;">
+            <input type="checkbox" id="eval-judge" style="accent-color:var(--aqua)"> + Judge
+          </label>
+        </div>
+        <!-- Subset picker — shown when scope = subset -->
+        <div id="eval-subset-wrap" style="display:none; width:100%; margin-top:6px; padding:10px 12px; background:var(--bg1); border:1px solid var(--bg2);">
+          <div style="font-size:0.75rem; color:var(--fg4); margin-bottom:8px;">Select agents to evaluate (ctrl/cmd+click for multiple):</div>
+          <select id="eval-subset-list" multiple onchange="updateRunEvalBtn()" style="width:100%; min-height:100px; background:var(--bg0); color:var(--fg2); border:1px solid var(--bg3); font-family:inherit; font-size:0.8rem; padding:4px;"></select>
+        </div>
         <button class="btn" id="scan-btn" onclick="triggerScan()" disabled>⊙ Scan</button>
         <div class="toolbar-sep"></div>
         <div style="display:flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--fg4)">
@@ -489,6 +504,8 @@
           .filter(a => a.agent_id && a.agent_name)
           .sort((a, b) => (b.total_executions || 0) - (a.total_executions || 0));
 
+        _allAgents = agents;
+
         const sel = document.getElementById("agent-select");
         agents.forEach(a => {
           const opt = document.createElement("option");
@@ -496,6 +513,13 @@
           opt.textContent = `${a.agent_name}  (${a.total_executions || 0} runs)`;
           sel.appendChild(opt);
         });
+
+        // Populate subset picker with same list
+        populateSubsetList(agents.map(a => ({
+          agent_id: a.agent_id,
+          agent_name: a.agent_name,
+        })));
+        updateRunEvalBtn();
 
         // Deep-link: ?agent=id_or_name
         const urlParam = new URLSearchParams(location.search).get("agent");
@@ -518,6 +542,7 @@
       if (!id) return;
       const name = sel.options[sel.selectedIndex].textContent.split("  (")[0].trim();
       await loadAgent(id, name);
+      updateRunEvalBtn();
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1089,49 +1114,155 @@
       }
     }
 
+    // ── Eval scope helpers ────────────────────────────────────────────────────
+    let _allAgents = []; // populated by bootAgentList
+
+    function onEvalScopeChange() {
+      const scope = document.getElementById("eval-scope").value;
+      const wrap = document.getElementById("eval-subset-wrap");
+      wrap.style.display = scope === "subset" ? "" : "none";
+      // Enable run button: single needs an agent selected; subset needs ≥1 checked;
+      // all is always ready once agents are loaded.
+      updateRunEvalBtn();
+    }
+
+    function updateRunEvalBtn() {
+      const scope = document.getElementById("eval-scope").value;
+      const btn = document.getElementById("run-eval-btn");
+      if (scope === "single") {
+        btn.disabled = !_agent;
+      } else if (scope === "subset") {
+        const sel = document.getElementById("eval-subset-list");
+        btn.disabled = !sel || sel.selectedOptions.length === 0;
+      } else {
+        btn.disabled = _allAgents.length === 0;
+      }
+    }
+
+    function populateSubsetList(agents) {
+      const sel = document.getElementById("eval-subset-list");
+      sel.innerHTML = "";
+      agents.forEach(a => {
+        const opt = document.createElement("option");
+        opt.value = a.agent_id || a.value;
+        opt.textContent = a.agent_name || a.label || a.textContent?.split("  (")[0].trim();
+        sel.appendChild(opt);
+      });
+    }
+
     async function triggerEvalRun() {
-      if (!_agent) return;
+      const scope = document.getElementById("eval-scope").value;
+      const judge = document.getElementById("eval-judge").checked;
       const btn = document.getElementById("run-eval-btn");
       btn.disabled = true; btn.className = "btn btn-eval spinning";
-      btn.textContent = "Running eval…";
-      setStatus("Triggering eval run — executing test cases against evaluator registry…", "scanning");
-      try {
-        const r = await fetchJson(
-          `/api/agents/${enc(_agent.agent_id)}/eval/runs`,
-          { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ judge: true }) }
-        );
-        // Eval runs async in background — poll for completion
-        const runId = r.run_id;
-        const totalCases = r.total_cases || "?";
-        setStatus(`Eval running — ${totalCases} test cases · run ${(runId||"").slice(0,8)}… (polling…)`, "scanning");
+      btn.textContent = "Running…";
 
-        // Poll list_eval_runs until the new run appears as completed
-        let completed = false;
-        for (let i = 0; i < 30; i++) {
-          await new Promise(res => setTimeout(res, 2000));
-          try {
-            const runs = await fetchJson(`/api/agents/${enc(_agent.agent_id)}/eval/runs`);
-            const run = (runs.runs || []).find(r2 => r2.run_id === runId);
-            if (run && run.status === "completed") {
-              completed = true;
-              const passPct = run.total_cases > 0 ? Math.round((run.passed / run.total_cases)*100) : null;
-              const pr = passPct != null ? `${passPct}% pass rate · ` : "";
-              setStatus(`Eval complete — ${pr}${run.total_cases || totalCases} cases · run ${runId.slice(0,8)}`, "done");
-              break;
+      try {
+        if (scope === "single") {
+          // ── Single agent path ──────────────────────────────────────────
+          if (!_agent) return;
+          setStatus("Triggering eval run…", "scanning");
+          const r = await fetchJson(
+            `/api/agents/${enc(_agent.agent_id)}/eval/runs`,
+            { method: "POST", headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({ judge }) }
+          );
+          await pollSingleRun(_agent.agent_id, r.run_id, r.total_cases);
+          await refreshAll();
+
+        } else {
+          // ── Batch path (subset or all) ─────────────────────────────────
+          let agentIds;
+          if (scope === "all") {
+            agentIds = "all";
+            setStatus("Triggering eval runs for all your agents…", "scanning");
+          } else {
+            const sel = document.getElementById("eval-subset-list");
+            agentIds = Array.from(sel.selectedOptions).map(o => o.value);
+            if (!agentIds.length) { setStatus("Select at least one agent.", "error"); return; }
+            setStatus(`Triggering eval runs for ${agentIds.length} agent(s)…`, "scanning");
+          }
+
+          const r = await fetchJson(
+            "/api/me/eval/runs/batch",
+            { method: "POST", headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({ agent_ids: agentIds, judge }) }
+          );
+
+          const triggered = r.triggered || 0;
+          const skipped   = r.skipped   || 0;
+          const results   = r.results   || [];
+
+          // Build a readable status
+          const errored = results.filter(x => x.status === "error");
+          let msg = `Batch: ${triggered} triggered · ${skipped} skipped`;
+          if (errored.length) msg += ` · ${errored.length} errors`;
+          setStatus(msg, triggered > 0 ? "done" : "scanning");
+
+          // Show per-agent result in a brief table below the status bar
+          renderBatchResults(results);
+
+          // If the current agent was in the batch, refresh its view
+          if (_agent) {
+            const myResult = results.find(x => x.agent_id === _agent.agent_id);
+            if (myResult?.run_id) {
+              await pollSingleRun(_agent.agent_id, myResult.run_id, myResult.total_cases);
+              await refreshAll();
             }
-          } catch(_) {}
+          }
+          setLastUpdated();
         }
-        if (!completed) {
-          setStatus(`Eval triggered (${totalCases} cases) — refresh in a moment to see results`, "done");
-        }
-        await refreshAll();
-        setLastUpdated();
       } catch(e) {
         setStatus(`Eval run failed: ${e.message}`, "error");
       } finally {
         btn.disabled = false; btn.className = "btn btn-eval";
         btn.textContent = "▶ Run eval";
+        updateRunEvalBtn();
       }
+    }
+
+    async function pollSingleRun(agentId, runId, totalCases) {
+      const shortId = (runId||"").slice(0,8);
+      setStatus(`Eval running — ${totalCases||"?"} cases · run ${shortId}… (polling)`, "scanning");
+      for (let i = 0; i < 30; i++) {
+        await new Promise(res => setTimeout(res, 2000));
+        try {
+          const runs = await fetchJson(`/api/agents/${enc(agentId)}/eval/runs`);
+          const run = (runs.runs || []).find(r => r.run_id === runId);
+          if (run && run.status === "completed") {
+            const passPct = run.total_cases > 0 ? Math.round((run.passed / run.total_cases)*100) : null;
+            const pr = passPct != null ? `${passPct}% pass · ` : "";
+            setStatus(`Eval complete — ${pr}${run.total_cases} cases · run ${shortId}`, "done");
+            return;
+          }
+        } catch(_) {}
+      }
+      setStatus(`Eval triggered — refresh in a moment to see results`, "done");
+    }
+
+    function renderBatchResults(results) {
+      // Append a compact results table just below the status bar.
+      let existing = document.getElementById("batch-results");
+      if (!existing) {
+        existing = document.createElement("div");
+        existing.id = "batch-results";
+        existing.style.cssText = "margin-bottom:12px; font-size:0.75rem; background:var(--bg0); border:1px solid var(--bg2); padding:10px 14px;";
+        document.getElementById("status-bar").after(existing);
+      }
+      existing.innerHTML = `<div style="color:var(--yellow); font-size:0.7rem; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px">Batch eval results</div>` +
+        results.map(r => {
+          const color = r.status === "triggered" ? "var(--green)"
+                      : r.status === "skipped"   ? "var(--fg4)"
+                      :                             "var(--red)";
+          const detail = r.run_id ? `run ${r.run_id.slice(0,8)} · ${r.total_cases} cases`
+                       : r.skipped_reason || r.error || "";
+          return `<div style="display:grid; grid-template-columns:160px 80px 1fr; gap:8px; padding:3px 0; border-bottom:1px dashed var(--bg2)">
+            <span style="color:var(--fg3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${r.agent_name}</span>
+            <span style="color:${color}">${r.status}</span>
+            <span style="color:var(--fg4)">${detail}</span>
+          </div>`;
+        }).join("") +
+        `<div style="margin-top:6px; color:var(--fg4)">Results populate in the agent view as runs complete.</div>`;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
