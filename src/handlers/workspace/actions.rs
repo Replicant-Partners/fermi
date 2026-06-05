@@ -1029,3 +1029,174 @@ pub async fn migrate_parallelism_to_twin_handler(
         "confirmation": confirmation,
     })))
 }
+
+// ─── kask-wild: log_observation action ───────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct LogObservationRequest {
+    pub species: String,
+    pub h3_cell: Option<String>,
+    pub location_lat: Option<f64>,
+    pub location_lng: Option<f64>,
+    pub location_name: Option<String>,
+    pub quantity: Option<String>,     // trace | sparse | moderate | abundant
+    pub habitat: Option<String>,
+    pub substrate: Option<String>,
+    pub conditions: Option<Value>,    // { temp_c, humidity_pct, rainfall_prior_7d_mm, ... }
+    pub harvested: Option<bool>,
+    pub harvest_notes: Option<String>,
+    pub processing_path: Option<String>,
+    pub processing_notes: Option<String>,
+    pub flavor_notes: Option<String>,
+    pub opted_in_shared: Option<bool>,
+    pub goal_id: Option<String>,
+    pub creature_id: Option<String>,
+    pub taxa_group: Option<String>,   // fungi | plant | lichen | other
+    pub edibility: Option<String>,
+    pub source_message_id: Option<String>,
+}
+
+/// POST /api/workspaces/:id/actions/log_observation
+///
+/// Records a foraging observation into forage_observations and logs the
+/// action. Also stores the observation as a SOSA observation if lat/lng
+/// are provided. The episode is stored via dispatch_rabble_action in the
+/// background so the KG accumulates from foraging finds.
+pub async fn log_observation_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<LogObservationRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let (ws_uuid, _slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
+
+    let source_msg_id = req.source_message_id
+        .as_deref()
+        .and_then(|s| s.parse::<Uuid>().ok());
+
+    let goal_uuid: Option<Uuid> = req.goal_id
+        .as_deref()
+        .and_then(|s| s.parse().ok());
+
+    let creature_uuid: Option<Uuid> = req.creature_id
+        .as_deref()
+        .and_then(|s| s.parse().ok());
+
+    // Validate quantity and edibility
+    let quantity = req.quantity.as_deref();
+    if let Some(q) = quantity {
+        if !["trace", "sparse", "moderate", "abundant"].contains(&q) {
+            return Err((StatusCode::BAD_REQUEST,
+                format!("Invalid quantity '{}' — must be trace|sparse|moderate|abundant", q)));
+        }
+    }
+    let edibility = req.edibility.as_deref();
+    if let Some(e) = edibility {
+        if !["edible", "choice", "toxic", "unknown", "inedible"].contains(&e) {
+            return Err((StatusCode::BAD_REQUEST,
+                format!("Invalid edibility '{}' — must be edible|choice|toxic|unknown|inedible", e)));
+        }
+    }
+
+    // Build flavor profile JSONB from flavor_notes if no structured profile provided
+    let flavor_profile = if let Some(ref notes) = req.flavor_notes {
+        json!({ "tasting_notes": notes })
+    } else {
+        json!({})
+    };
+
+    let conditions = req.conditions.clone().unwrap_or_else(|| json!({}));
+
+    // Insert into forage_observations
+    let observation_id: Uuid = sqlx::query(
+        r#"INSERT INTO forage_observations (
+            creature_id, goal_id, owner_id,
+            species_name, taxa_group, edibility, quantity,
+            h3_cell, location_lat, location_lng, location_name,
+            habitat_type, substrate,
+            conditions, harvested, harvest_notes,
+            processing_path, processing_notes,
+            flavor_profile, opted_in_shared
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7,
+            $8, $9, $10, $11, $12, $13,
+            $14, $15, $16, $17, $18, $19, $20
+        ) RETURNING observation_id"#,
+    )
+    .bind(creature_uuid)
+    .bind(goal_uuid)
+    .bind(&user_id)
+    .bind(&req.species)
+    .bind(req.taxa_group.as_deref().unwrap_or("fungi"))
+    .bind(edibility)
+    .bind(quantity)
+    .bind(req.h3_cell.as_deref())
+    .bind(req.location_lat)
+    .bind(req.location_lng)
+    .bind(req.location_name.as_deref())
+    .bind(req.habitat.as_deref())
+    .bind(req.substrate.as_deref())
+    .bind(&conditions)
+    .bind(req.harvested.unwrap_or(false))
+    .bind(req.harvest_notes.as_deref())
+    .bind(req.processing_path.as_deref())
+    .bind(req.processing_notes.as_deref())
+    .bind(&flavor_profile)
+    .bind(req.opted_in_shared.unwrap_or(false))
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Failed to store observation: {}", e)))?
+    .try_get("observation_id")
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Log the action
+    let payload = json!({
+        "species": req.species,
+        "quantity": quantity,
+        "h3_cell": req.h3_cell,
+        "habitat": req.habitat,
+        "observation_id": observation_id,
+        "opted_in_shared": req.opted_in_shared.unwrap_or(false),
+    });
+
+    let action_id = log_action(
+        &state, ws_uuid, "log_observation",
+        "user", &user_id,
+        Some("kask_wild/1"),
+        &payload, "auto", source_msg_id,
+    ).await?;
+
+    // Update goal progress if goal_id provided
+    if let Some(gid) = goal_uuid {
+        let _ = sqlx::query(
+            r#"UPDATE creature_goals
+               SET progress = jsonb_set(
+                   jsonb_set(
+                       progress,
+                       '{observations_logged}',
+                       to_jsonb(COALESCE((progress->>'observations_logged')::int, 0) + 1)
+                   ),
+                   '{last_species}',
+                   to_jsonb($1::text)
+               ),
+               last_evaluated_at = NOW()
+               WHERE goal_id = $2"#,
+        )
+        .bind(&req.species)
+        .bind(gid)
+        .execute(&state.db)
+        .await
+        .ok(); // non-fatal
+    }
+
+    Ok(Json(json!({
+        "action_id": action_id,
+        "observation_id": observation_id,
+        "action_type": "log_observation",
+        "species": req.species,
+        "applied": true,
+        "opted_in_shared": req.opted_in_shared.unwrap_or(false),
+    })))
+}

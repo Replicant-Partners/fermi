@@ -66,6 +66,21 @@ use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 use agent_bestiary_memory::{ConsolidationLock, ConsolidationWorker, LLMProviderConfig, LLMProviderFactory, ProviderType};
 use std::sync::Arc;
 
+#[derive(serde::Deserialize)]
+pub struct ForageRequest {
+    pub action: String,  // "enable" | "disable" | "scout" | "log"
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+    pub species: Option<String>,
+    pub quantity: Option<String>,
+    pub habitat: Option<String>,
+    pub conditions: Option<serde_json::Value>,
+    pub harvest_notes: Option<String>,
+    pub flavor_notes: Option<String>,
+    pub opted_in_shared: Option<bool>,
+    pub goal_id: Option<String>,
+}
+
 use super::helpers::{
     find_creature_workspace, get_current_state, record_transition, toggle_module,
     verify_creature_ownership,
@@ -1572,4 +1587,205 @@ pub async fn creature_dream_handler(
         "dream_cycles": dream_cycles,
         "message": "Dream dispatched — narrative will appear in creature log",
     })))
+}
+
+// ─── Forage Module ────────────────────────────────────────────────────────────
+//
+// Bridges the Rabble creature to kask-app-wild via cross-workspace delegation.
+// The creature provides spatial context (location, species, creature_id);
+// wild_companion provides foraging intelligence using its full tool suite.
+
+/// POST /api/creatures/:creature_id/forage
+pub async fn forage_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(creature_id): Path<uuid::Uuid>,
+    Json(req): Json<ForageRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+    let gas = &state.gas_fees;
+
+    let creature = verify_creature_ownership(pool, creature_id, &user_id).await?;
+
+    match req.action.as_str() {
+        "enable" => {
+            toggle_module(pool, creature_id, "forage", true).await;
+            Ok(Json(json!({ "creature_id": creature_id, "forage": "enabled" })))
+        }
+        "disable" => {
+            toggle_module(pool, creature_id, "forage", false).await;
+            Ok(Json(json!({ "creature_id": creature_id, "forage": "disabled" })))
+        }
+        "scout" => {
+            // Check module enabled
+            let modules: Vec<String> = sqlx::query(
+                "SELECT active_modules FROM creature_conditions WHERE creature_id = $1",
+            )
+            .bind(creature_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .and_then(|r| r.try_get::<Option<Vec<String>>, _>("active_modules").ok().flatten())
+            .unwrap_or_default();
+
+            if !modules.contains(&"forage".to_string()) {
+                return Err((StatusCode::BAD_REQUEST, "Forage module not enabled".to_string()));
+            }
+
+            // Charge gas
+            let wallet = get_or_create_wallet(&state.db, "user", &user_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas.enemy_sensor_check, // reuse same gas cost for now
+                "forage_scout",
+                &format!("Forage scout for creature {}", creature_id),
+                Some(&creature_id.to_string()),
+            )
+            .await?;
+
+            // Get creature location — use request lat if provided,
+            // otherwise look up from creature_state
+            let lat = if req.lat.is_some() {
+                req.lat
+            } else {
+                sqlx::query("SELECT location_lat FROM creature_state WHERE creature_id = $1")
+                    .bind(creature_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|row| row.try_get::<f64, _>("location_lat").ok())
+            };
+
+            let scientific_name: String = creature
+                .try_get("scientific_name")
+                .unwrap_or_else(|_| "Unknown".to_string());
+
+            let location_hint = match (lat, req.lng) {
+                (Some(la), Some(ln)) => format!("at coordinates {:.4}, {:.4}", la, ln),
+                _ => "at current location".to_string(),
+            };
+
+            let query = format!(
+                "Forage scout for creature {} ({}). {}. \
+                 Use inat_observations and openweather_forecast to assess what is likely fruiting nearby. \
+                 Return structured foraging intelligence.",
+                creature_id, scientific_name, location_hint,
+            );
+
+            let workspace_id = find_creature_workspace(pool, creature_id).await?;
+
+            // Find wild workspace for this creature (if any)
+            let wild_workspace_id: Option<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT wild_workspace_id FROM creature_goals
+                 WHERE creature_id = $1 AND status = 'active'
+                 AND wild_workspace_id IS NOT NULL LIMIT 1",
+            )
+            .bind(creature_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(55),
+                rabble_workspace::dispatch_rabble_action(
+                    &state,
+                    workspace_id,
+                    "forage_scout",
+                    "forage_scout",
+                    &query,
+                    &user_id,
+                    Some(creature_id),
+                ),
+            )
+            .await
+            .map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Scout timed out — try again".to_string()))?
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Scout failed: {}", e)))?;
+
+            let parsed = parse_agent_json(
+                &result,
+                json!({ "summary": result, "species_likely": [], "foraging_signal": "unknown" }),
+            );
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "cost": gas.enemy_sensor_check,
+                "wild_workspace_id": wild_workspace_id,
+                "scout": parsed,
+            })))
+        }
+        "log" => {
+            // Log a foraging observation directly (no agent call needed)
+            let species = req.species.as_deref()
+                .ok_or((StatusCode::BAD_REQUEST, "species is required for log action".to_string()))?;
+
+            let flavor_profile = if let Some(ref notes) = req.flavor_notes {
+                json!({ "tasting_notes": notes })
+            } else {
+                json!({})
+            };
+
+            let goal_uuid: Option<uuid::Uuid> = req.goal_id
+                .as_deref()
+                .and_then(|s| s.parse().ok());
+
+            let obs_id: uuid::Uuid = sqlx::query(
+                r#"INSERT INTO forage_observations (
+                    creature_id, goal_id, owner_id,
+                    species_name, taxa_group, quantity,
+                    location_lat, location_lng,
+                    habitat_type, conditions,
+                    harvest_notes, flavor_profile, opted_in_shared
+                ) VALUES ($1,$2,$3,$4,'fungi',$5,$6,$7,$8,$9,$10,$11,$12)
+                RETURNING observation_id"#,
+            )
+            .bind(creature_id)
+            .bind(goal_uuid)
+            .bind(&user_id)
+            .bind(species)
+            .bind(req.quantity.as_deref())
+            .bind(req.lat)
+            .bind(req.lng)
+            .bind(req.habitat.as_deref())
+            .bind(req.conditions.clone().unwrap_or_else(|| json!({})))
+            .bind(req.harvest_notes.as_deref())
+            .bind(&flavor_profile)
+            .bind(req.opted_in_shared.unwrap_or(false))
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to log observation: {}", e)))?
+            .try_get("observation_id")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Update goal progress
+            if let Some(gid) = goal_uuid {
+                let _ = sqlx::query(
+                    "UPDATE creature_goals SET
+                     progress = jsonb_set(progress, '{observations_logged}',
+                         to_jsonb(COALESCE((progress->>'observations_logged')::int, 0) + 1)),
+                     last_evaluated_at = NOW()
+                     WHERE goal_id = $1",
+                )
+                .bind(gid)
+                .execute(&state.db)
+                .await;
+            }
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "observation_id": obs_id,
+                "species": species,
+                "logged": true,
+            })))
+        }
+        other => Err((
+            StatusCode::BAD_REQUEST,
+            format!("Unknown action '{}' — use enable|disable|scout|log", other),
+        )),
+    }
 }

@@ -7,6 +7,7 @@ mod agent_modules;
 mod collections;
 mod devices;
 mod flights;
+mod goals;
 pub(crate) mod helpers;
 mod identity;
 mod query;
@@ -43,7 +44,12 @@ pub use tethering::{
 // ─── Re-exports: agent_modules ─────────────────────────────────────
 pub use agent_modules::{
     creature_dream_handler, creature_level_handler, enemy_sensor_handler, genome_profiler_handler,
-    prey_locator_handler,
+    prey_locator_handler, forage_handler,
+};
+
+// ─── Re-exports: goals ─────────────────────────────────────────────
+pub use goals::{
+    create_goal_handler, list_goals_handler, update_goal_handler,
 };
 
 // ─── Re-exports: identity ──────────────────────────────────────────

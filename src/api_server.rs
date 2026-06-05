@@ -1435,6 +1435,11 @@ async fn main() {
             "/api/workspaces/:workspace_id/actions/annotate",
             post(handlers::workspace::actions::annotate_handler),
         )
+        // kask-wild: foraging observation log action
+        .route(
+            "/api/workspaces/:workspace_id/actions/log_observation",
+            post(handlers::workspace::actions::log_observation_handler),
+        )
         .route(
             "/api/workspaces/:workspace_id/actions/:action_id/accept",
             post(handlers::workspace::actions::accept_action_handler),
