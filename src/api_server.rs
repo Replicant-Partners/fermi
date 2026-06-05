@@ -924,6 +924,10 @@ async fn main() {
             delete(handlers::eval::delete_eval_test_case_handler),
         )
         .route(
+            "/api/agents/:agent_id/eval/test-cases/generate-rubrics",
+            post(handlers::eval::generate_rubrics_handler),
+        )
+        .route(
             "/api/agents/:agent_id/eval/run",
             post(handlers::eval::trigger_eval_run_handler),
         )
@@ -1948,6 +1952,21 @@ async fn main() {
         .route(
             "/api/creatures/:creature_id/prey-locator",
             post(handlers::creatures::prey_locator_handler),
+        )
+        // Forage module — kask-wild bridge: scout, log observation
+        .route(
+            "/api/creatures/:creature_id/forage",
+            post(handlers::creatures::forage_handler),
+        )
+        // Creature goals — standing foraging objectives
+        .route(
+            "/api/creatures/:creature_id/goals",
+            get(handlers::creatures::list_goals_handler)
+                .post(handlers::creatures::create_goal_handler),
+        )
+        .route(
+            "/api/creatures/:creature_id/goals/:goal_id",
+            patch(handlers::creatures::update_goal_handler),
         )
         .route(
             "/api/creatures/:creature_id/telemetry",

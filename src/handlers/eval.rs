@@ -1168,3 +1168,138 @@ fn format_regression_body(details: &Option<Value>) -> String {
     lines.push("Open the eval dashboard to review the run and update the agent.".into());
     lines.join("\n")
 }
+
+// ─── Auto-generate rubrics ────────────────────────────────────────────────────
+
+/// POST /api/agents/:agent_id/eval/test-cases/generate-rubrics
+///
+/// For every active test case that has no rubric, calls the LLM to produce a
+/// Sotopia-appropriate goal_spec rubric string. The rubric describes what a
+/// good agent response to that query should accomplish — the social/epistemic
+/// goal — so Sotopia can evaluate `goal_completion`, `social_capital`, and
+/// `rapport` rather than returning Inapplicable.
+///
+/// The prompt uses the agent's system_prompt as context so the rubric is
+/// calibrated to the agent's persona and domain.
+///
+/// Only rewrites test cases that currently have `rubric IS NULL`.
+/// Returns: `{ updated: N, skipped: N }` where `updated` is the count of
+/// cases that received a new rubric, `skipped` is cases that already had one.
+pub async fn generate_rubrics_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    if db_agent.owner_id.as_deref() != Some(&user_id) && db_agent.tier != "curated" {
+        return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
+    }
+
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "ANTHROPIC_API_KEY not set".into()))?;
+
+    let cases = state
+        .memory_store
+        .list_eval_test_cases(db_agent.agent_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let needs_rubric: Vec<_> = cases.iter().filter(|c| c.is_active && c.rubric.is_none()).collect();
+    let skipped = cases.len() - needs_rubric.len();
+
+    if needs_rubric.is_empty() {
+        return Ok(Json(json!({ "updated": 0, "skipped": skipped, "message": "All active test cases already have rubrics." })));
+    }
+
+    // Truncate system prompt to keep the LLM request compact
+    let system_excerpt = db_agent.system_prompt
+        .as_deref()
+        .unwrap_or("A helpful AI assistant.")
+        .chars()
+        .take(800)
+        .collect::<String>();
+
+    let client = reqwest::Client::new();
+    let mut updated = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+
+    for tc in &needs_rubric {
+        let prompt = format!(
+            r#"You are writing a Sotopia evaluation rubric for a test case.
+
+Agent persona (excerpt):
+{system_excerpt}
+
+Test case query:
+{query}
+
+Write a single concise rubric sentence (max 30 words) describing the social/epistemic goal
+this agent should accomplish when answering this query. Frame it as a goal the agent is trying
+to achieve — not a description of the ideal answer.
+
+Examples of good rubrics:
+- "Help the operator understand which cultivation stage is contributing most to carbon output."
+- "Establish trust by explaining the yield prediction methodology clearly and honestly."
+- "Assist the user in identifying process inefficiencies while maintaining a collaborative tone."
+
+Return ONLY the rubric sentence. No preamble, no quotes, no extra text."#,
+            system_excerpt = system_excerpt,
+            query = tc.query,
+        );
+
+        let resp = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&serde_json::json!({
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 80,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+            }))
+            .send()
+            .await;
+
+        let rubric_text = match resp {
+            Err(e) => {
+                errors.push(format!("{}: network error: {}", tc.test_case_id, e));
+                continue;
+            }
+            Ok(r) => {
+                let body: serde_json::Value = match r.json().await {
+                    Ok(b) => b,
+                    Err(e) => { errors.push(format!("{}: parse error: {}", tc.test_case_id, e)); continue; }
+                };
+                match body["content"][0]["text"].as_str() {
+                    Some(t) => t.trim().to_string(),
+                    None => { errors.push(format!("{}: no text in response", tc.test_case_id)); continue; }
+                }
+            }
+        };
+
+        if rubric_text.is_empty() {
+            errors.push(format!("{}: empty rubric", tc.test_case_id));
+            continue;
+        }
+
+        let updated_tc = EvalTestCase {
+            rubric: Some(rubric_text),
+            updated_at: chrono::Utc::now(),
+            ..((*tc).clone())
+        };
+
+        match state.memory_store.update_eval_test_case(&updated_tc).await {
+            Ok(_) => updated += 1,
+            Err(e) => errors.push(format!("{}: db error: {}", tc.test_case_id, e)),
+        }
+    }
+
+    Ok(Json(json!({
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "message": format!("Generated rubrics for {updated}/{} test cases.", needs_rubric.len()),
+    })))
+}

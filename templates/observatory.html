@@ -215,6 +215,41 @@
       .calib-val { min-width: 36px; text-align: right; font-size: 0.72rem; color: var(--fg3); }
       .calib-n { font-size: 0.68rem; color: var(--fg4); min-width: 28px; }
 
+      /* ── Test case manager ───────────────────────────────────────── */
+      .tc-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 10px; padding: 8px 4px;
+        border-bottom: 1px dashed var(--bg2);
+        align-items: start; font-size: 0.78rem;
+      }
+      .tc-row:last-child { border-bottom: none; }
+      .tc-query { color: var(--fg2); }
+      .tc-rubric-wrap { display: flex; flex-direction: column; gap: 4px; }
+      .tc-rubric-text {
+        color: var(--fg3); font-size: 0.75rem;
+        cursor: pointer; padding: 3px 5px;
+        border: 1px dashed transparent;
+        min-height: 24px;
+      }
+      .tc-rubric-text:hover { border-color: var(--bg3); }
+      .tc-rubric-text.empty { color: var(--fg4); font-style: italic; }
+      .tc-rubric-input {
+        background: var(--bg1); color: var(--fg2);
+        border: 1px solid var(--aqua); padding: 4px 6px;
+        font-family: inherit; font-size: 0.75rem;
+        width: 100%; resize: vertical; min-height: 40px;
+        display: none;
+      }
+      .tc-rubric-input.visible { display: block; }
+      .tc-rubric-actions { display: none; gap: 6px; }
+      .tc-rubric-actions.visible { display: flex; }
+      .tc-rubric-save { font-size: 0.72rem; color: var(--aqua); cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
+      .tc-rubric-cancel { font-size: 0.72rem; color: var(--fg4); cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
+      .tc-badge { font-size: 0.65rem; padding: 1px 6px; border: 1px solid; display: inline-block; }
+      .tc-badge-has { color: var(--green); border-color: var(--green); }
+      .tc-badge-none { color: var(--fg4); border-color: var(--bg3); }
+
       /* ── Eval run trigger button anim ────────────────────────────── */
       @keyframes spin { to { transform: rotate(360deg); } }
       .spinning::before { content:"↻ "; display:inline-block; animation: spin 1s linear infinite; }
@@ -391,13 +426,31 @@
             </div>
           </div>
 
-          <!-- Row 4: Loop health + HITL queue (full width) -->
+          <!-- Row 4: Loop health (full width) -->
           <div class="section span-2">
             <div class="section-head">
               <span class="section-title">Loop health</span>
               <span class="section-meta">RSI feedback loop status for this agent</span>
             </div>
             <div id="loop-health"></div>
+          </div>
+
+          <!-- Row 5: Test case manager (full width) -->
+          <div class="section span-2">
+            <div class="section-head">
+              <span class="section-title">Test cases</span>
+              <span class="section-meta" id="tc-meta"></span>
+              <div style="display:flex; gap:8px; margin-left:auto">
+                <button class="btn btn-eval" id="gen-rubrics-btn" onclick="generateRubrics()">✦ Generate rubrics</button>
+                <button class="btn" onclick="loadTestCases()">↺ Refresh</button>
+              </div>
+            </div>
+            <div id="tc-hint" style="font-size:0.75rem; color:var(--fg4); margin-bottom:10px; display:none">
+              Sotopia evaluates <em>goal_completion</em>, <em>social_capital</em>, and <em>rapport</em> when a rubric is set.
+              Click <strong>✦ Generate rubrics</strong> to auto-generate rubrics for all test cases using the agent's system prompt.
+              You can also edit any rubric inline below.
+            </div>
+            <div id="tc-list"></div>
           </div>
 
         </div><!-- /main-grid -->
@@ -502,13 +555,15 @@
       const id = _agent.agent_id;
       const win = document.getElementById("window-select").value;
 
-      const [tl, dyads, anoms, calib, evalRuns] = await Promise.all([
+      const [tl, dyads, anoms, calib, evalRuns, tcData] = await Promise.all([
         fetchJson(`/api/observatory/agents/${enc(id)}/timeline?window=${win}`),
         fetchJson(`/api/observatory/agents/${enc(id)}/dyads`),
         fetchJson(`/api/observatory/agents/${enc(id)}/anomalies?limit=50`),
         fetchJson(`/api/agents/${enc(id)}/calibration`).catch(() => null),
         fetchJson(`/api/agents/${enc(id)}/eval/runs`).catch(() => null),
+        fetchJson(`/api/agents/${enc(id)}/eval/test-cases`).catch(() => null),
       ]);
+      if (tcData) { _testCases = tcData.test_cases || []; }
 
       _tl = tl; _dyads = dyads; _anoms = anoms; _calib = calib; _evalRuns = evalRuns;
 
@@ -545,6 +600,7 @@
       renderCalibration();
       renderDyads();
       renderLoopHealth();
+      renderTestCases();
     }
 
     // ── Hero cards ────────────────────────────────────────────────────────────
@@ -1146,6 +1202,156 @@
         throw new Error(`${resp.status} ${txt}`);
       }
       return resp.json();
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Test case manager
+    // ──────────────────────────────────────────────────────────────────────────
+    let _testCases = [];
+
+    async function loadTestCases() {
+      if (!_agent) return;
+      try {
+        const data = await fetchJson(`/api/agents/${enc(_agent.agent_id)}/eval/test-cases`);
+        _testCases = data.test_cases || [];
+        renderTestCases();
+      } catch(e) {
+        setText("tc-meta", `error: ${e.message}`);
+      }
+    }
+
+    function renderTestCases() {
+      const cases = _testCases.filter(c => c.is_active);
+      const withRubric = cases.filter(c => c.rubric);
+      setText("tc-meta", `${cases.length} active · ${withRubric.length} with rubric · ${cases.length - withRubric.length} need rubric`);
+
+      const hint = document.getElementById("tc-hint");
+      if (cases.length - withRubric.length > 0) {
+        hint.style.display = "";
+      }
+
+      const el = document.getElementById("tc-list");
+      if (!cases.length) {
+        el.innerHTML = '<div class="empty">No test cases. Test cases are seeded from the agent\'s sample_queries on first load.</div>';
+        return;
+      }
+
+      // Header
+      el.innerHTML = `<div class="tc-row" style="color:var(--yellow); font-size:0.7rem; font-weight:400">
+        <span>Query</span>
+        <span>Rubric <span style="color:var(--fg4); font-weight:normal">(click to edit · drives Sotopia evaluation)</span></span>
+        <span>Status</span>
+      </div>` + cases.map(tc => {
+        const hasRubric = !!tc.rubric;
+        const rubricDisplay = tc.rubric || "no rubric — click to add";
+        const badgeCls = hasRubric ? "tc-badge-has" : "tc-badge-none";
+        const badgeText = hasRubric ? "✓ rubric" : "× missing";
+        return `<div class="tc-row" id="tc-row-${tc.test_case_id}">
+          <span class="tc-query">${escHtml(tc.query)}</span>
+          <div class="tc-rubric-wrap">
+            <span class="tc-rubric-text ${hasRubric ? "" : "empty"}"
+                  id="tc-text-${tc.test_case_id}"
+                  onclick="editRubric('${tc.test_case_id}')"
+                  title="Click to edit rubric">${escHtml(rubricDisplay)}</span>
+            <textarea class="tc-rubric-input"
+                      id="tc-input-${tc.test_case_id}"
+                      rows="2"
+                      placeholder="Describe the social/epistemic goal this agent should accomplish…">${escHtml(tc.rubric || "")}</textarea>
+            <div class="tc-rubric-actions" id="tc-actions-${tc.test_case_id}">
+              <button class="tc-rubric-save" onclick="saveRubric('${tc.test_case_id}')">✓ Save</button>
+              <button class="tc-rubric-cancel" onclick="cancelRubric('${tc.test_case_id}')">✕ Cancel</button>
+            </div>
+          </div>
+          <span class="tc-badge ${badgeCls}" id="tc-badge-${tc.test_case_id}">${badgeText}</span>
+        </div>`;
+      }).join("");
+    }
+
+    function editRubric(tcId) {
+      const textEl  = document.getElementById(`tc-text-${tcId}`);
+      const inputEl = document.getElementById(`tc-input-${tcId}`);
+      const actEl   = document.getElementById(`tc-actions-${tcId}`);
+      textEl.style.display  = "none";
+      inputEl.className = "tc-rubric-input visible";
+      actEl.className   = "tc-rubric-actions visible";
+      inputEl.focus();
+    }
+
+    function cancelRubric(tcId) {
+      const tc = _testCases.find(c => c.test_case_id === tcId);
+      const textEl  = document.getElementById(`tc-text-${tcId}`);
+      const inputEl = document.getElementById(`tc-input-${tcId}`);
+      const actEl   = document.getElementById(`tc-actions-${tcId}`);
+      // Restore original value
+      inputEl.value = tc?.rubric || "";
+      textEl.style.display  = "";
+      inputEl.className = "tc-rubric-input";
+      actEl.className   = "tc-rubric-actions";
+    }
+
+    async function saveRubric(tcId) {
+      const inputEl = document.getElementById(`tc-input-${tcId}`);
+      const rubric = inputEl.value.trim();
+      const textEl  = document.getElementById(`tc-text-${tcId}`);
+      const actEl   = document.getElementById(`tc-actions-${tcId}`);
+      const badgeEl = document.getElementById(`tc-badge-${tcId}`);
+
+      try {
+        await fetchJson(
+          `/api/agents/${enc(_agent.agent_id)}/eval/test-cases/${tcId}`,
+          { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ rubric: rubric || null }) }
+        );
+        // Update local state
+        const tc = _testCases.find(c => c.test_case_id === tcId);
+        if (tc) tc.rubric = rubric || null;
+        // Update display
+        textEl.textContent = rubric || "no rubric — click to add";
+        textEl.className = `tc-rubric-text ${rubric ? "" : "empty"}`;
+        textEl.style.display = "";
+        inputEl.className = "tc-rubric-input";
+        actEl.className = "tc-rubric-actions";
+        badgeEl.textContent = rubric ? "✓ rubric" : "× missing";
+        badgeEl.className = `tc-badge ${rubric ? "tc-badge-has" : "tc-badge-none"}`;
+        // Refresh meta count
+        renderTestCasesMeta();
+      } catch(e) {
+        setStatus(`Failed to save rubric: ${e.message}`, "error");
+      }
+    }
+
+    function renderTestCasesMeta() {
+      const cases = _testCases.filter(c => c.is_active);
+      const withRubric = cases.filter(c => c.rubric);
+      setText("tc-meta", `${cases.length} active · ${withRubric.length} with rubric · ${cases.length - withRubric.length} need rubric`);
+    }
+
+    async function generateRubrics() {
+      if (!_agent) return;
+      const btn = document.getElementById("gen-rubrics-btn");
+      btn.disabled = true;
+      btn.textContent = "Generating…";
+      setStatus("Generating rubrics for test cases without one — this may take a few seconds…", "scanning");
+      try {
+        const r = await fetchJson(
+          `/api/agents/${enc(_agent.agent_id)}/eval/test-cases/generate-rubrics`,
+          { method: "POST" }
+        );
+        setStatus(
+          `${r.message}${r.errors?.length ? ` (${r.errors.length} errors)` : ""}`,
+          r.updated > 0 ? "done" : "scanning"
+        );
+        // Reload test cases to reflect new rubrics
+        await loadTestCases();
+      } catch(e) {
+        setStatus(`Generate rubrics failed: ${e.message}`, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "✦ Generate rubrics";
+      }
+    }
+
+    function escHtml(s) {
+      return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
     }
 
     // ──────────────────────────────────────────────────────────────────────────
