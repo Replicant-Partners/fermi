@@ -1,0 +1,1426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kask.bio — Pre-Seed Pitch Deck · May 2026</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --black: #0a0a0a;
+    --white: #fafaf8;
+    --off-white: #f0ede6;
+    --moss: #3d4a2e;
+    --moss-light: #5a6b40;
+    --amber: #c8860a;
+    --amber-light: #e8a020;
+    --slate: #1e2a1e;
+    --mid: #4a5240;
+    --soft: #8a9478;
+    --line: #2a3424;
+    --highlight: #7ab040;
+    --dim: #2e3828;
+  }
+
+  html { font-size: 16px; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--black);
+    color: var(--white);
+    line-height: 1.5;
+  }
+
+  /* SLIDE CONTAINER */
+  .deck {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0;
+  }
+
+  .slide {
+    width: 100%;
+    min-height: 100vh;
+    padding: 64px 80px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-bottom: 1px solid var(--line);
+    position: relative;
+    page-break-after: always;
+  }
+
+  /* slide number */
+  .slide::before {
+    content: attr(data-n);
+    position: absolute;
+    top: 32px;
+    right: 80px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--soft);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  /* SLIDE VARIANTS */
+  .slide-hero {
+    background: var(--black);
+    min-height: 100vh;
+  }
+
+  .slide-dark {
+    background: var(--slate);
+  }
+
+  .slide-moss {
+    background: var(--moss);
+  }
+
+  .slide-mid {
+    background: var(--dim);
+  }
+
+  /* TYPOGRAPHY */
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--amber-light);
+    margin-bottom: 20px;
+  }
+
+  .hero-tagline {
+    font-size: clamp(36px, 5vw, 68px);
+    font-weight: 800;
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    color: var(--white);
+    margin-bottom: 28px;
+    max-width: 820px;
+  }
+
+  .hero-sub {
+    font-size: 18px;
+    font-weight: 400;
+    color: #c8c8b8;
+    max-width: 640px;
+    line-height: 1.6;
+    margin-bottom: 48px;
+  }
+
+  h2 {
+    font-size: clamp(28px, 3.5vw, 44px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin-bottom: 12px;
+    color: var(--white);
+  }
+
+  h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--white);
+    margin-bottom: 8px;
+  }
+
+  .slide-subtitle {
+    font-size: 16px;
+    color: var(--soft);
+    margin-bottom: 40px;
+    font-weight: 400;
+  }
+
+  p {
+    color: #c0c0b0;
+    font-size: 15px;
+    line-height: 1.65;
+    margin-bottom: 12px;
+  }
+
+  /* STATS BAR */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+    max-width: 840px;
+  }
+
+  .stat {
+    background: var(--dim);
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .stat-value {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--white);
+    letter-spacing: -0.02em;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--soft);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  /* BADGE STRIP */
+  .badge-strip {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 40px;
+  }
+
+  .badge {
+    background: rgba(122, 176, 64, 0.12);
+    border: 1px solid rgba(122, 176, 64, 0.3);
+    color: var(--highlight);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .badge-amber {
+    background: rgba(200, 134, 10, 0.12);
+    border-color: rgba(200, 134, 10, 0.3);
+    color: var(--amber-light);
+  }
+
+  /* GRID LAYOUTS */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 24px;
+  }
+
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+
+  /* CARDS */
+  .card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 24px;
+  }
+
+  .card-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--highlight);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--white);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 10px;
+  }
+
+  .card-body {
+    font-size: 13px;
+    color: #a0a090;
+    line-height: 1.55;
+  }
+
+  /* PROBLEM LIST */
+  .problem-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-top: 16px;
+  }
+
+  .problem-item {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+
+  .problem-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--amber-light);
+    padding-top: 2px;
+  }
+
+  .problem-text strong {
+    display: block;
+    font-size: 15px;
+    color: var(--white);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .problem-text span {
+    font-size: 13px;
+    color: #909080;
+    line-height: 1.55;
+  }
+
+  /* REVENUE STREAMS */
+  .stream-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .stream {
+    display: grid;
+    grid-template-columns: 32px 160px 1fr auto;
+    align-items: center;
+    gap: 20px;
+    padding: 16px 20px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+
+  .stream-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--highlight);
+  }
+
+  .stream-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--white);
+  }
+
+  .stream-desc {
+    font-size: 13px;
+    color: #909080;
+  }
+
+  .stream-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--amber-light);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* MARKET TABLE */
+  .market-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+  }
+
+  .market-table th {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--soft);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    text-align: left;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .market-table td {
+    font-size: 14px;
+    color: #c0c0b0;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(42,52,36,0.6);
+    vertical-align: top;
+  }
+
+  .market-table td:first-child {
+    font-weight: 600;
+    color: var(--white);
+  }
+
+  .market-table td:last-child {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--highlight);
+  }
+
+  .market-table tr.total-row td {
+    border-top: 1px solid var(--line);
+    font-weight: 700;
+    color: var(--white);
+    padding-top: 16px;
+  }
+
+  /* TEAM CARDS */
+  .team-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-top: 8px;
+  }
+
+  .team-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 24px 20px;
+  }
+
+  .team-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--white);
+    margin-bottom: 4px;
+  }
+
+  .team-role {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--amber-light);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  .team-bullets {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .team-bullets li {
+    font-size: 12px;
+    color: #909080;
+    padding-left: 12px;
+    position: relative;
+    line-height: 1.45;
+  }
+
+  .team-bullets li::before {
+    content: '·';
+    position: absolute;
+    left: 0;
+    color: var(--soft);
+  }
+
+  /* NODE CARDS */
+  .node-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+
+  .node-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 22px 24px;
+  }
+
+  .node-location {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .node-location.active { color: var(--highlight); }
+  .node-location.q3 { color: var(--amber-light); }
+  .node-location.dev { color: var(--soft); }
+
+  .node-status {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 2px;
+    margin-bottom: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .status-live { background: rgba(122,176,64,0.15); color: var(--highlight); }
+  .status-q3 { background: rgba(200,134,10,0.12); color: var(--amber-light); }
+  .status-dev { background: rgba(138,148,120,0.12); color: var(--soft); }
+
+  /* ROADMAP */
+  .roadmap {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .roadmap-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .roadmap-row:last-child { border-bottom: none; }
+
+  .roadmap-quarter {
+    background: var(--dim);
+    padding: 18px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--amber-light);
+    display: flex;
+    align-items: center;
+    border-right: 1px solid var(--line);
+  }
+
+  .roadmap-items {
+    padding: 18px 24px;
+    font-size: 13px;
+    color: #b0b0a0;
+    display: flex;
+    align-items: center;
+    line-height: 1.55;
+  }
+
+  /* ASK BOX */
+  .ask-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+    margin-top: 8px;
+  }
+
+  .ask-card {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 24px;
+  }
+
+  .ask-card.primary {
+    border-color: rgba(122,176,64,0.4);
+    background: rgba(122,176,64,0.06);
+  }
+
+  .ask-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--soft);
+    margin-bottom: 8px;
+  }
+
+  .ask-title {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--white);
+    margin-bottom: 12px;
+  }
+
+  /* CLOSING QUOTE */
+  .closing-quote {
+    font-size: clamp(16px, 2vw, 22px);
+    font-weight: 300;
+    color: #c8c8b8;
+    line-height: 1.6;
+    max-width: 820px;
+    border-left: 3px solid var(--highlight);
+    padding-left: 32px;
+    font-style: italic;
+  }
+
+  /* DIVIDER */
+  .divider {
+    width: 48px;
+    height: 2px;
+    background: var(--highlight);
+    margin: 20px 0;
+  }
+
+  .divider-amber {
+    background: var(--amber);
+  }
+
+  /* FOOTNOTE */
+  .footnote {
+    font-size: 11px;
+    color: var(--soft);
+    margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* TABLE — MATH */
+  .math-block {
+    background: var(--dim);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 24px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .math-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 24px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(42,52,36,0.6);
+    font-size: 13px;
+  }
+
+  .math-row:last-child { border-bottom: none; }
+  .math-row .label { color: #909080; }
+  .math-row .value { color: var(--white); font-weight: 600; text-align: right; }
+  .math-row.highlight .label,
+  .math-row.highlight .value { color: var(--highlight); font-weight: 700; }
+
+  /* PRINT */
+  @media print {
+    .slide { min-height: auto; page-break-after: always; }
+    body { background: white; color: black; }
+  }
+
+  /* confidential strip */
+  .conf-strip {
+    position: absolute;
+    bottom: 24px;
+    left: 80px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--soft);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  /* logo word */
+  .logo {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: var(--highlight);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .logo-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 48px;
+  }
+
+  .logo-separator {
+    width: 1px;
+    height: 16px;
+    background: var(--line);
+  }
+
+  .logo-context {
+    font-size: 11px;
+    color: var(--soft);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.1em;
+  }
+
+  /* highlight text */
+  .hl { color: var(--highlight); }
+  .hl-amber { color: var(--amber-light); }
+
+  /* TRACTION ROW */
+  .traction-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+
+  .traction-cell {
+    background: var(--dim);
+    padding: 20px 24px;
+  }
+
+  .traction-metric {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: -0.02em;
+  }
+
+  .traction-label {
+    font-size: 12px;
+    color: var(--soft);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+
+  /* Policy quote block */
+  .policy-quote {
+    background: rgba(200, 134, 10, 0.08);
+    border: 1px solid rgba(200, 134, 10, 0.25);
+    border-left: 3px solid var(--amber);
+    border-radius: 4px;
+    padding: 20px 24px;
+    font-size: 14px;
+    color: #d0c8a0;
+    font-style: italic;
+    line-height: 1.6;
+    margin: 16px 0;
+  }
+
+  .policy-source {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--soft);
+    margin-top: 8px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .signatories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .sig-pill {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: #a0a090;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+</style>
+</head>
+<body>
+<div class="deck">
+
+  <!-- ================================================================
+       SLIDE 01 — HERO
+  ================================================================ -->
+  <div class="slide slide-hero" data-n="01 / 13">
+    <div class="logo-bar">
+      <span class="logo">kask.bio</span>
+      <span class="logo-separator"></span>
+      <span class="logo-context">Pre-Seed · May 2026 · Confidential</span>
+    </div>
+
+    <div class="eyebrow">Opening</div>
+    <h1 class="hero-tagline">Five generative value streams<br>from one bioconversion cycle.</h1>
+
+    <p class="hero-sub">kask.bio builds living products — functional drinks, natural cosmetics, smart materials — and the adaptive intelligence platform that makes each new product faster, cheaper, and better-calibrated than the one before.</p>
+
+    <div class="stats-bar">
+      <div class="stat">
+        <span class="stat-value">5 yr</span>
+        <span class="stat-label">Bootstrapped build</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">82</span>
+        <span class="stat-label">AI agents running</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">3</span>
+        <span class="stat-label">R&amp;D nodes</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">Weeks</span>
+        <span class="stat-label">First product to market</span>
+      </div>
+    </div>
+
+    <div class="badge-strip">
+      <span class="badge">EU Biotech Acts I &amp; II Tailwind</span>
+      <span class="badge">Konstanz Node</span>
+      <span class="badge">Weeks from Market Entry</span>
+      <span class="badge badge-amber">Building in Europe</span>
+    </div>
+
+    <div class="conf-strip">kask.bio · hello@kask.bio</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 02 — THE PROBLEM
+  ================================================================ -->
+  <div class="slide slide-dark" data-n="02 / 13">
+    <div class="eyebrow">The problem</div>
+    <h2>Bio-based industries face a structural bottleneck.</h2>
+    <p class="slide-subtitle">The infrastructure for programmable biological production does not yet exist at scale — and Europe is watching its bio-innovation leave.</p>
+
+    <ul class="problem-list">
+      <li class="problem-item">
+        <span class="problem-num">01</span>
+        <div class="problem-text">
+          <strong>Slow, linear R&amp;D</strong>
+          <span>Traditional biotech bets everything on one candidate. Software-first design principles now make parallel, modular development of the full biological production infrastructure possible. Studies show >90% of single-candidate programmes fail to reach commercial scale.</span>
+        </div>
+      </li>
+      <li class="problem-item">
+        <span class="problem-num">02</span>
+        <div class="problem-text">
+          <strong>One product = one bet</strong>
+          <span>A single SKU creates concentration risk and less systemic resilience. Current market instability demands better risk distribution across verticals and the full supply chain.</span>
+        </div>
+      </li>
+      <li class="problem-item">
+        <span class="problem-num">03</span>
+        <div class="problem-text">
+          <strong>Unclaimed value</strong>
+          <span>Fermentation know-how, process digitalization, and formulation design — most companies generate all of this and monetize none of it. The informatic residue of making things well is itself an asset class the sector has not yet learned to treat as one.</span>
+        </div>
+      </li>
+      <li class="problem-item">
+        <span class="problem-num">04</span>
+        <div class="problem-text">
+          <strong>Europe is funding the science and losing the companies</strong>
+          <span>EU food biotech startups regularly relocate to the US to scale. China already produces the majority of fermentation-derived amino acids and vitamins used in European livestock feed. A joint industry letter signed by Fraunhofer, Kerry, GEA, HTGF, and 20+ others reached the EU Commission in May 2026 — calling this a biosecurity emergency.</span>
+        </div>
+      </li>
+    </ul>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 03 — WHAT KASK DOES
+  ================================================================ -->
+  <div class="slide slide-hero" data-n="03 / 13">
+    <div class="eyebrow">The answer</div>
+    <h2>Adaptive intelligence infrastructure<br>for bioconversion.</h2>
+    <div class="divider"></div>
+
+    <p style="font-size:18px; color:var(--white); font-weight:400; max-width:720px; line-height:1.65; margin-bottom:36px;">
+      We grow products from microbes and their side streams — then sell the products, the recipes, the tools, the data, and share the know-how.<br>
+      <span class="hl" style="font-weight:700;">That's five revenue streams from one bioconversion cycle.</span>
+    </p>
+
+    <div class="grid-3" style="max-width: 980px;">
+      <div class="card">
+        <span class="card-title">The products</span>
+        <p class="card-body">Functional drinks, bioactive cosmetics, living materials — made at our own nodes, sold under our own brand, and white-labelled where relevant.</p>
+      </div>
+      <div class="card">
+        <span class="card-title">The platform</span>
+        <p class="card-body">Adaptive intelligence infrastructure for programmable bioconversion — closed-loop biological systems where every input, output, and side stream is a managed resource. Fermentation is where we start. The architecture is designed for any biological production cycle.</p>
+      </div>
+      <div class="card" style="border-color: rgba(122,176,64,0.3);">
+        <span class="card-title" style="color:var(--highlight);">Sovereign by design — and this is what powers the A2A economy</span>
+        <p class="card-body">Most AI platforms extract value from the people who use them — your data trains their model. ABW is built the other way. Your experiments, your embeddings, your biological IP stay yours. The platform compounds your knowledge back to you — and you can sell it, license it, or share it under conditions you define. This sovereignty is not just a principle. It is the precondition for a functioning agent-to-agent economy: agents can only transact meaningfully on behalf of their owners if what those owners hold is genuinely theirs. We're building a knowledge commons and marketplace, not an extractive platform. Using kask.bio makes you harder to replicate, not easier to replace.</p>
+      </div>
+    </div>
+
+    <p style="margin-top: 28px; font-size: 14px; color: var(--soft); max-width: 680px;">
+      <span class="hl-amber">kask.bio = programmable bioconversion + adaptive intelligence infrastructure.</span> The coupling is the business. The products are the evidence. The platform is the asset.
+    </p>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 04 — VERTICAL INTEGRATION / THE MATH
+  ================================================================ -->
+  <div class="slide slide-mid" data-n="04 / 13">
+    <div class="eyebrow">Economics</div>
+    <h2>60–100× more revenue<br>from the same biology.</h2>
+    <p class="slide-subtitle">Owning steps 2 through 5 is the difference between a commodity supplier and a platform company.</p>
+
+    <div class="grid-2">
+      <div>
+        <p style="font-size:12px; text-transform:uppercase; letter-spacing:0.12em; color:var(--soft); font-family:'JetBrains Mono',monospace; margin-bottom: 14px;">Without vertical integration — commodity</p>
+        <div class="math-block">
+          <div class="math-row"><span class="label">Sell raw SCOBY extract</span><span class="value">€3–5 / litre</span></div>
+          <div class="math-row"><span class="label">Gross margin</span><span class="value">~35%</span></div>
+          <div class="math-row highlight"><span class="label">Revenue / 100L batch</span><span class="value">~€300–500</span></div>
+        </div>
+      </div>
+
+      <div>
+        <p style="font-size:12px; text-transform:uppercase; letter-spacing:0.12em; color:var(--highlight); font-family:'JetBrains Mono',monospace; margin-bottom: 14px;">With vertical integration — kask model</p>
+        <div class="math-block">
+          <div class="math-row"><span class="label">Cosmetic serum (Substrate No.1)</span><span class="value">€90–120 / unit</span></div>
+          <div class="math-row"><span class="label">Electrolyte drink</span><span class="value">€8–14 / can</span></div>
+          <div class="math-row"><span class="label">Process recipe licence</span><span class="value">€15–40k / yr</span></div>
+          <div class="math-row"><span class="label">SimOps SaaS access</span><span class="value">€500–2k / mo</span></div>
+          <div class="math-row highlight"><span class="label">Revenue / 100L batch — all channels</span><span class="value">€18,000–35,000</span></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="footnote" style="margin-top: 20px;">Same biology. Same lab. 60–100× more revenue — because we own the formulation, the brand, the recipe, and the tools.</p>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 05 — THE PLATFORM (ABW)
+  ================================================================ -->
+  <div class="slide slide-dark" data-n="05 / 13">
+    <div class="eyebrow">Technology</div>
+    <h2>ABW — Agent Bestiary World</h2>
+    <p class="slide-subtitle">A recursive self-improving intelligence platform. Five gated feedback loops. Validated against our own production before offered as a service.</p>
+
+    <div class="grid-2">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="card">
+          <div class="card-title" style="color:var(--highlight);">SimOps — Validation Phase</div>
+          <p class="card-body">Real-time sensor pipeline to the bioreactor. Monitors fermentation, predicts batch peaks, recommends adjustments 12–24 hours early. Hardware-agnostic via W3C SOSA abstraction.</p>
+        </div>
+        <div class="card">
+          <div class="card-title" style="color:var(--highlight);">Fermi Console — Validation Phase</div>
+          <p class="card-body">Probabilistic reasoning engine with a purpose-built Forecasting Programming Language (FPL). Models likely outcomes and confidence ranges before any physical experiment is run. Live: <span style="font-family:'JetBrains Mono',monospace; color:var(--soft); font-size:11px;">agent-bestiary.world</span></p>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="card">
+          <div class="card-title" style="color:var(--amber-light);">ΞSYSTEM (Xi) — Active</div>
+          <p class="card-body">Bi-temporal knowledge graph with episodic memory. Every experiment, failed batch, and insight from every node — stored, connected, searchable. QR provenance on every product.</p>
+        </div>
+        <div class="card">
+          <div class="card-title" style="color:var(--amber-light);">Agent Bestiary — 82 agents</div>
+          <p class="card-body">82 AI agents running continuously: literature review, formulation screening, regulatory monitoring, market signal scanning. One monitors EU novel-food regulation changes in real time.</p>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 24px; padding: 20px 24px; background: rgba(122,176,64,0.07); border: 1px solid rgba(122,176,64,0.25); border-left: 3px solid var(--highlight); border-radius: 4px; display: grid; grid-template-columns: 1fr 2fr; gap: 32px; align-items: center;">
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--highlight); margin-bottom:8px;">The deeper architecture</div>
+        <div style="font-size:18px; font-weight:800; color:var(--white); line-height:1.2;">ABW is an agent-to-agent economy.</div>
+      </div>
+      <div>
+        <p style="font-size:13px; color:#b0b0a0; line-height:1.6; margin:0;">Most agent platforms treat agents as tools that humans invoke. ABW is built for a different model: agents transact with agents — discovering capabilities, exchanging work, and generating value — under the guidance of their owners and users. Participants in the network own their agents, their data, and their share of the value those interactions produce. This is not a feature. It is the economic architecture. The A2A interaction layer is what makes ABW a marketplace, not just a platform.</p>
+      </div>
+    </div>
+
+    <div class="badge-strip" style="margin-top: 20px;">
+      <span class="badge">Zero agent trust architecture</span>
+      <span class="badge">Human-in-the-loop escalation</span>
+      <span class="badge">100% generated code target</span>
+      <span class="badge badge-amber">A2A economy · owner-guided</span>
+      <span class="badge badge-amber">S3: internal → external service</span>
+    </div>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 06 — FIVE REVENUE STREAMS
+  ================================================================ -->
+  <div class="slide slide-mid" data-n="06 / 13">
+    <div class="eyebrow">Business model</div>
+    <h2>One lab. Five ways to earn.</h2>
+    <p class="slide-subtitle">Each stream is independent — if one stalls, the others keep running. Each one makes the next stronger.</p>
+
+    <div class="stream-list" style="margin-top: 16px;">
+      <div class="stream">
+        <span class="stream-num">01</span>
+        <span class="stream-name">Sell the product</span>
+        <span class="stream-desc">Direct revenue from drinks, cosmetics, and materials. Fastest stream to activate.</span>
+        <span class="stream-value">€8–14 drink · €90–120 serum<br>70–80% gross margin</span>
+      </div>
+      <div class="stream">
+        <span class="stream-num">02</span>
+        <span class="stream-name">License the recipe</span>
+        <span class="stream-desc">Proven formulations licensed to regional producers in other markets. Near-zero marginal cost once proven.</span>
+        <span class="stream-value">€15–40k / year per licence</span>
+      </div>
+      <div class="stream">
+        <span class="stream-num">03</span>
+        <span class="stream-name">Sell the tools</span>
+        <span class="stream-desc">AMBU bioreactor with open-source firmware. Sold to labs, universities, small producers. Managed support contract generates recurring revenue.</span>
+        <span class="stream-value">Hardware + managed layer</span>
+      </div>
+      <div class="stream">
+        <span class="stream-num">04</span>
+        <span class="stream-name">License the tools</span>
+        <span class="stream-desc">SimOps and Fermi as SaaS for any bio-manufacturer. Currently in validation with external partners.</span>
+        <span class="stream-value">€500–2,000 / month / client</span>
+      </div>
+      <div class="stream">
+        <span class="stream-num">05</span>
+        <span class="stream-name">Run R&amp;D for big players</span>
+        <span class="stream-desc">Large food, cosmetics, and materials companies option what proves out from fast parallel R&amp;D engagements. The highest-leverage stream and the proof case for the platform thesis.</span>
+        <span class="stream-value">€120–300k+ / engagement</span>
+      </div>
+    </div>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 07 — MARKET: NESTED RINGS
+  ================================================================ -->
+  <div class="slide slide-dark" data-n="07 / 13">
+    <div class="eyebrow">Market opportunity</div>
+    <h2>Where kask.bio plays —<br>and where the platform scales to.</h2>
+
+    <div style="display:flex; justify-content:center; align-items:center; flex:1; margin-top: 8px;">
+      <svg viewBox="0 0 600 460" width="100%" style="max-width:680px; display:block;">
+        <defs>
+          <radialGradient id="rg0" cx="50%" cy="50%">
+            <stop offset="0%" stop-color="#9b59b6" stop-opacity="0.14"/>
+            <stop offset="100%" stop-color="#9b59b6" stop-opacity="0.03"/>
+          </radialGradient>
+          <radialGradient id="rg1" cx="50%" cy="50%">
+            <stop offset="0%" stop-color="#7ab040" stop-opacity="0.18"/>
+            <stop offset="100%" stop-color="#7ab040" stop-opacity="0.04"/>
+          </radialGradient>
+          <radialGradient id="rg2" cx="50%" cy="50%">
+            <stop offset="0%" stop-color="#c8860a" stop-opacity="0.20"/>
+            <stop offset="100%" stop-color="#c8860a" stop-opacity="0.05"/>
+          </radialGradient>
+          <radialGradient id="rg3" cx="50%" cy="50%">
+            <stop offset="0%" stop-color="#4a7abf" stop-opacity="0.20"/>
+            <stop offset="100%" stop-color="#4a7abf" stop-opacity="0.05"/>
+          </radialGradient>
+        </defs>
+
+        <!-- Ring 0 — outermost: A2A Economy -->
+        <ellipse cx="300" cy="230" rx="285" ry="218" fill="url(#rg0)" stroke="#9b59b6" stroke-width="1.5" stroke-dasharray="8 4" opacity="0.85"/>
+
+        <!-- Ring 1 — Agentic AI Infrastructure -->
+        <ellipse cx="300" cy="238" rx="218" ry="165" fill="url(#rg3)" stroke="#4a7abf" stroke-width="1.5" stroke-dasharray="5 3" opacity="0.9"/>
+
+        <!-- Ring 2 — Programmable Bioconversion -->
+        <ellipse cx="300" cy="248" rx="148" ry="112" fill="url(#rg2)" stroke="#c8860a" stroke-width="1.5" opacity="0.9"/>
+
+        <!-- Ring 3 — innermost: Synbio & Biomanufacturing -->
+        <ellipse cx="300" cy="256" rx="90" ry="66" fill="url(#rg1)" stroke="#7ab040" stroke-width="1.5" opacity="0.9"/>
+
+        <!-- Subset pills inside ring 3 -->
+        <rect x="228" y="244" width="144" height="17" rx="3" fill="rgba(122,176,64,0.15)" stroke="rgba(122,176,64,0.3)" stroke-width="1"/>
+        <text x="300" y="256.5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#7ab040">precision fermentation</text>
+
+        <rect x="226" y="266" width="148" height="17" rx="3" fill="rgba(122,176,64,0.15)" stroke="rgba(122,176,64,0.3)" stroke-width="1"/>
+        <text x="300" y="278.5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#7ab040">engineered living materials</text>
+
+        <!-- kask.bio dot -->
+        <circle cx="300" cy="302" r="6" fill="#7ab040"/>
+        <text x="314" y="306" font-family="JetBrains Mono, monospace" font-size="11" font-weight="700" fill="#7ab040">kask.bio</text>
+
+        <!-- LABELS -->
+
+        <!-- Ring 0 — A2A Economy -->
+        <text x="300" y="22" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="12" font-weight="700" fill="#c084d8">A2A ECONOMY</text>
+        <text x="300" y="38" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="#9b59b6">$1.5T – $5T by 2030 · McKinsey / Juniper Research</text>
+
+        <!-- Ring 1 — Agentic AI Infra -->
+        <text x="510" y="105" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="700" fill="#6a9abf">AGENTIC AI</text>
+        <text x="510" y="119" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="700" fill="#6a9abf">INFRASTRUCTURE</text>
+        <text x="510" y="133" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#4a7abf">$140B by 2030 · 45%+ CAGR</text>
+        <line x1="480" y1="126" x2="450" y2="140" stroke="#4a7abf" stroke-width="1" stroke-dasharray="3 2"/>
+
+        <!-- Ring 2 — Programmable Bioconversion -->
+        <text x="72" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="700" fill="#e8a020">PROGRAMMABLE</text>
+        <text x="72" y="172" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="700" fill="#e8a020">BIOCONVERSION</text>
+        <text x="72" y="186" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#c8860a">~$32B · 18–20% CAGR</text>
+        <line x1="118" y1="180" x2="158" y2="196" stroke="#c8860a" stroke-width="1" stroke-dasharray="3 2"/>
+
+        <!-- Ring 3 — Synbio -->
+        <text x="300" y="208" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="700" fill="#9aca60">SYNBIO &amp; BIOMANUFACTURING</text>
+
+        <!-- Entry verticals callout -->
+        <text x="30" y="370" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#8a9478">entry verticals:</text>
+        <text x="30" y="384" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#8a9478">drinks · cosmetics · materials</text>
+        <line x1="148" y1="378" x2="292" y2="318" stroke="#5a6b40" stroke-width="1" stroke-dasharray="3 2"/>
+      </svg>
+    </div>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 08 — MARKET: TABLE + EU POLICY
+  ================================================================ -->
+  <div class="slide slide-dark" data-n="08 / 13">
+    <div class="eyebrow">Market &amp; policy tailwind</div>
+    <h2>The numbers — and the mandate.</h2>
+
+    <div class="grid-2" style="margin-top: 16px; gap: 48px;">
+      <div>
+        <table class="market-table">
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Size</th>
+              <th>CAGR</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="background:rgba(155,89,182,0.06);">
+              <td style="color:#c084d8; font-weight:700;">A2A economy</td>
+              <td style="color:#c084d8;">$1.5–5T</td>
+              <td style="color:#c084d8;">by 2030</td>
+            </tr>
+            <tr style="background:rgba(74,122,191,0.06);">
+              <td style="color:#6a9abf; font-weight:700;">Agentic AI infrastructure</td>
+              <td style="color:#6a9abf;">~$140B</td>
+              <td style="color:#6a9abf; font-weight:700;">45%+</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700;">Programmable bioconversion</td>
+              <td>~$32B</td>
+              <td>18–20%</td>
+            </tr>
+            <tr style="color:#909080; font-size:13px;">
+              <td style="padding-left:20px;">↳ synbio &amp; biomanufacturing</td>
+              <td>~$32B</td>
+              <td>18–20%</td>
+            </tr>
+            <tr style="color:#707060; font-size:12px;">
+              <td style="padding-left:32px;">↳ precision fermentation</td>
+              <td>subset</td>
+              <td>—</td>
+            </tr>
+            <tr style="color:#707060; font-size:12px;">
+              <td style="padding-left:32px;">↳ engineered living materials</td>
+              <td>subset</td>
+              <td>—</td>
+            </tr>
+            <tr style="border-top: 1px solid var(--line); color:#8a9478; font-size:12px;">
+              <td style="padding-left:20px;">↳ functional beverages</td>
+              <td>~$12B</td>
+              <td>10%</td>
+            </tr>
+            <tr style="color:#8a9478; font-size:12px;">
+              <td style="padding-left:20px;">↳ bio-based cosmetics</td>
+              <td>~$8B</td>
+              <td>12%</td>
+            </tr>
+            <tr style="color:#8a9478; font-size:12px;">
+              <td style="padding-left:20px;">↳ bio-based materials</td>
+              <td>~$6B</td>
+              <td>16%</td>
+            </tr>
+            <tr style="color:#8a9478; font-size:12px;">
+              <td style="padding-left:20px;">↳ bio-manufacturing instruments</td>
+              <td>~$5B</td>
+              <td>13%</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="margin-top:10px; font-size:11px; color:var(--soft); line-height:1.55;">Sources: McKinsey / Juniper (A2A) · Information Matters Q1 2026 (agentic AI) · Research &amp; Markets Feb 2026 (synbio) · segment data per vertical</p>
+      </div>
+
+      <div>
+        <div class="policy-quote">
+          "Europe is actively exporting its future economic capital… China has explicitly included new protein sources in its national food security and biosecurity strategy. These are not future risks. These are current strategic dependencies."
+          <div class="policy-source">— Joint AgriFoodTech Industry Letter · EU Commission · 18 May 2026</div>
+        </div>
+
+        <div class="signatories">
+          <span class="sig-pill">Fraunhofer IGB</span>
+          <span class="sig-pill">Kerry</span>
+          <span class="sig-pill">GEA</span>
+          <span class="sig-pill">HTGF</span>
+          <span class="sig-pill">TUM Venture Labs</span>
+          <span class="sig-pill">Flora Ventures</span>
+          <span class="sig-pill">+ 20 others</span>
+        </div>
+
+        <p style="margin-top:14px; font-size:13px; color:#a0a090; line-height:1.55;">Every signatory is either a potential R&amp;D partner (Stream 5), distribution partner, or co-investor — companies who have publicly declared they need what kask offers.</p>
+      </div>
+    </div>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 09 — NODE NETWORK &amp; ECONOMICS
+  ================================================================ -->
+  <div class="slide slide-hero" data-n="09 / 13">
+    <div class="eyebrow">Network</div>
+    <h2>Four nodes. One open network.<br>Each node smarter than the last one it helps activate.</h2>
+
+    <div class="node-grid" style="margin-top: 20px;">
+      <div class="node-card">
+        <div class="node-location active">Konstanz, Germany — EU Flagship</div>
+        <span class="node-status status-live">Weeks to live</span>
+        <p class="card-body">40 sqm lab factory. Precision kombuchas, adaptogenic drinks, bacterial cellulose, natural cosmetics. AMBU bioreactor integration is the next hardware milestone. This is where the platform meets physical production reality.</p>
+      </div>
+
+      <div class="node-card">
+        <div class="node-location q3">Monterrey, Mexico — Academic Node</div>
+        <span class="node-status status-q3">Operational · Q4</span>
+        <p class="card-body">Tecnológico de Monterrey as founding academic partner. 1.5+ years active R&amp;D. Sponsored research pipeline. Primary focus: molecular prediction, AI tooling, and computational biology.</p>
+      </div>
+
+      <div class="node-card">
+        <div class="node-location dev">Zürich, Switzerland — Algae Node</div>
+        <span class="node-status status-dev">In development</span>
+        <p class="card-body">ETH Zürich contacts. Focus: algae bioconversion, biological CO₂ capture, closed-loop biological systems. CO₂ from kombucha fermentation becomes feedstock for algae cultivation — waste from one cycle feeds the next.</p>
+      </div>
+
+      <div class="node-card">
+        <div class="node-location dev">Waco, TX, USA — Consumer Microlab</div>
+        <span class="node-status status-dev">In activation</span>
+        <p class="card-body">Social apothecary format. Six independent revenue lines: on-site drinks, packaged product, extract wholesale, lab services, education, formulation consulting. Baylor University adjacency. Phase 1 capital €22–43K.</p>
+      </div>
+    </div>
+
+    <div class="grid-3" style="margin-top: 24px;">
+      <div class="card">
+        <span class="card-title">Per node / month (base)</span>
+        <span class="card-number">€18–28K</span>
+        <p class="card-body">Facility live, AMBU integrated, 3–5 B2B accounts</p>
+      </div>
+      <div class="card">
+        <span class="card-title">10-node network (3 yr)</span>
+        <span class="card-number">$2.2–9M</span>
+        <p class="card-body">Monthly network revenue target</p>
+      </div>
+      <div class="card">
+        <span class="card-title">kask.bio equity per node</span>
+        <span class="card-number">10–25%</span>
+        <p class="card-body">Platform access, ABW backend, tech co-development, and network connectivity in exchange</p>
+      </div>
+    </div>
+
+    <div style="margin-top: 20px; padding: 18px 24px; background: rgba(74,122,191,0.07); border: 1px solid rgba(74,122,191,0.22); border-left: 3px solid #4a7abf; border-radius: 4px; display: grid; grid-template-columns: 180px 1fr; gap: 28px; align-items: center;">
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:#6a9abf; margin-bottom:6px;">Beyond node revenue</div>
+        <div style="font-size:16px; font-weight:800; color:var(--white); line-height:1.25;">The A2A economy layer.</div>
+      </div>
+      <p style="font-size:13px; color:#a0a8b8; line-height:1.6; margin:0;">Node revenue is the foundation. The layer above it is agent-to-agent: each node's agents participate in a network where they can discover, commission, and exchange work with agents from other nodes — under the guidance of their owners. Value generated in those interactions flows back to participants, not to the platform. As the network grows, the A2A interaction volume compounds independently of physical production. The node is where you enter. The A2A economy is where the network effect lives.</p>
+    </div>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 10 — TRACTION
+  ================================================================ -->
+  <div class="slide slide-mid" data-n="10 / 13">
+    <div class="eyebrow">Traction</div>
+    <h2>Bootstrapped. Operating.<br>The platform is real.</h2>
+    <p class="slide-subtitle">No external capital has shaped the direction. Five years of principal capital and sweat equity.</p>
+
+    <div class="traction-grid">
+      <div class="traction-cell">
+        <div class="traction-metric">5 yr</div>
+        <div class="traction-label">Bootstrapped · high six figures<br>principal capital + sweat equity</div>
+      </div>
+      <div class="traction-cell">
+        <div class="traction-metric">82</div>
+        <div class="traction-label">AI agents in production across<br>research, formulation, regulatory, spatial</div>
+      </div>
+      <div class="traction-cell">
+        <div class="traction-metric">6</div>
+        <div class="traction-label">Published white papers:<br>agentic infrastructure, living materials, fermentation</div>
+      </div>
+      <div class="traction-cell">
+        <div class="traction-metric">4</div>
+        <div class="traction-label">Live verticals on ABW:<br>SimOps · Fermi · Rabble · ΞSYSTEM</div>
+      </div>
+      <div class="traction-cell">
+        <div class="traction-metric">3</div>
+        <div class="traction-label">Operating R&amp;D nodes:<br>Konstanz · Monterrey · Zürich (in activation)</div>
+      </div>
+      <div class="traction-cell">
+        <div class="traction-metric">Weeks</div>
+        <div class="traction-label">To first production at Konstanz node<br>EU flagship · labra.studio base</div>
+      </div>
+    </div>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 11 — FOUNDING TEAM
+  ================================================================ -->
+  <div class="slide slide-dark" data-n="11 / 13">
+    <div class="eyebrow">Founding team</div>
+    <h2>Built by people who have been doing this<br>for a long time.</h2>
+
+    <div class="team-grid">
+      <div class="team-card">
+        <div class="team-name">Ilabra</div>
+        <div class="team-role">Co-founder · CTO · Platform Architecture</div>
+        <ul class="team-bullets">
+          <li>30 years in cybernetic systems design</li>
+          <li>Led large R&amp;D teams with significant budgets on high-impact programmes including Silicon Valley product development</li>
+          <li>Built ABW from the ground up across multiple live verticals</li>
+          <li>The kask.bio platform thesis — biological and digital intelligence as a unified design space — is a direct expression of where this work has been heading for a long time</li>
+        </ul>
+      </div>
+
+      <div class="team-card">
+        <div class="team-name">Alena Taranka</div>
+        <div class="team-role">Co-founder · CEO · Physicist · Senior Sensor Architect</div>
+        <ul class="team-bullets">
+          <li>Dipl.-Phys., Yanka Kupala State University of Grodno</li>
+          <li>M.Sc. Advanced Optical Technologies, FAU Erlangen-Nürnberg — Konrad-Adenauer-Stiftung merit scholarship</li>
+          <li>Research Fellowship at SAOT under the German Excellence Initiative</li>
+          <li>Daimler R&amp;D (2016–2021): future automotive lighting and ambient light systems</li>
+          <li>BCS Automotive Interface Solutions (2022–present): Senior Sensor Architect, software-defined vehicle architecture, virtual sensor modelling</li>
+          <li>Potential adjunct faculty, TEC Monterrey</li>
+        </ul>
+      </div>
+
+      <div class="team-card" style="border-color: rgba(200,134,10,0.35);">
+        <div class="team-name">Mario Orellana</div>
+        <div class="team-role">Monterrey Lead · Business &amp; Financial Analyst · Founding Team</div>
+        <ul class="team-bullets">
+          <li>MBA candidate, EGADE Business School — TEC de Monterrey</li>
+          <li>2+ years agentic AI development experience</li>
+          <li>Experienced business and financial analyst</li>
+          <li>Monterrey node liaison — connecting the platform to institutional, commercial, and academic networks in the region</li>
+        </ul>
+        <div style="margin-top: 14px; padding: 8px 10px; background: rgba(200,134,10,0.08); border: 1px solid rgba(200,134,10,0.2); border-radius: 3px; font-size: 11px; color: var(--amber-light); font-family: 'JetBrains Mono', monospace;">
+          Monterrey MX · EGADE · TEC de Monterrey · Operational Q4
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 24px; padding: 16px 20px; background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+      <div>
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.1em; color:var(--soft); font-family:'JetBrains Mono',monospace; margin-bottom:6px;">Known gaps — explicit hire from this raise</div>
+        <p style="font-size:13px; color:#909080; margin:0;">Hardware integration engineer for Ambu finalization · Business development lead as node activation scales</p>
+      </div>
+      <div>
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.1em; color:var(--soft); font-family:'JetBrains Mono',monospace; margin-bottom:6px;">Entity structure</div>
+        <p style="font-size:13px; color:#909080; margin:0;">US LLC (primary investment entity) · German UG (Konstanz) · Swiss AG (in formation) · Mexican operating company (planned)</p>
+      </div>
+    </div>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 12 — ROADMAP
+  ================================================================ -->
+  <div class="slide slide-hero" data-n="12 / 13">
+    <div class="eyebrow">Roadmap</div>
+    <h2>18 months to Series A.<br>The platform is built. The lab is weeks from live.</h2>
+
+    <div class="roadmap" style="margin-top: 24px;">
+      <div class="roadmap-row">
+        <div class="roadmap-quarter">Q2 2026<br><span style="color:var(--highlight); font-size:10px;">NOW</span></div>
+        <div class="roadmap-items">Lab commissioned · AMBU bioreactor live · SimOps on real sensor data · First functional drink batch · Regional Konstanz distribution begins</div>
+      </div>
+      <div class="roadmap-row">
+        <div class="roadmap-quarter">Q3 2026</div>
+        <div class="roadmap-items">Substrate No. 1 into EU specialty wellness retail · Natural cosmetics SKU launch · First repeat-purchase data · Waco node Phase 1 capital deployed</div>
+      </div>
+      <div class="roadmap-row">
+        <div class="roadmap-quarter">Q3–Q4 2026</div>
+        <div class="roadmap-items">First R&amp;D partnership signed (Stream 5) · First external client paying for exploratory R&amp;D · Revenue Stream 5 proven with cash</div>
+      </div>
+      <div class="roadmap-row">
+        <div class="roadmap-quarter">Q4 2026</div>
+        <div class="roadmap-items">Living materials in prototype sales — HUARA-X and trql acoustic panels · First culture library systematic documentation</div>
+      </div>
+      <div class="roadmap-row">
+        <div class="roadmap-quarter">Q1 2027</div>
+        <div class="roadmap-items">Zürich node activated — ETH adjacency · Algae bioconversion PoC begins · SimOps and Fermi enter external commercial beta</div>
+      </div>
+      <div class="roadmap-row" style="border-bottom: none;">
+        <div class="roadmap-quarter" style="color:var(--highlight);">Q2 2027<br><span style="font-size:10px;">SERIES A</span></div>
+        <div class="roadmap-items" style="color: var(--white);">4 products in market · 2+ R&amp;D partnerships · €1.2–1.8M ARR run rate · 3 GCN nodes · 82+ platform agents · InvestEU/IPCEI applications submitted · Full documentation for €8–15M Series A</div>
+      </div>
+    </div>
+
+    <div class="conf-strip">kask.bio · Pre-Seed 2026 · Confidential</div>
+  </div>
+
+  <!-- ================================================================
+       SLIDE 13 — THE ASK
+  ================================================================ -->
+  <div class="slide slide-moss" data-n="13 / 13">
+    <div class="eyebrow">The ask</div>
+    <h2>$2M pre-seed · US LLC · $10M pre-money.</h2>
+    <p class="slide-subtitle">We're not looking for passive capital. We want partners who understand that the platform — not any single product — is the long-term bet.</p>
+
+    <div class="ask-grid">
+      <div class="ask-card primary">
+        <div class="ask-label">Pathway A</div>
+        <div class="ask-title">Invest</div>
+        <p class="card-body">Capital goes to: Konstanz lab final commissioning, four product line launches, platform team growth, Zürich node activation, Waco Phase 1 deployment.</p>
+        <p style="margin-top:10px; font-size:12px; color:var(--soft);">5 years of bootstrap work already priced in. You're buying at the inflection point — not the beginning.</p>
+      </div>
+
+      <div class="ask-card">
+        <div class="ask-label">Pathway B</div>
+        <div class="ask-title">R&amp;D Partnership</div>
+        <p class="card-body">If your internal R&amp;D can't explore new categories fast enough — we run the exploration for you. Joint development. Fast parallel experiments. You option what proves out.</p>
+        <p style="margin-top:10px; font-size:12px; color:var(--soft);">A limited number of first-wave partnerships are open now.</p>
+      </div>
+
+      <div class="ask-card">
+        <div class="ask-label">Pathway C</div>
+        <div class="ask-title">EU Public Funding</div>
+        <p class="card-body">InvestEU · IPCEI Biotech · Biotech Act Regulatory Sandbox. Novel foods, domestic precision fermentation, and bio-manufacturing — all explicitly named in the EU policy stack kask is positioned within.</p>
+      </div>
+    </div>
+
+    <div style="margin-top: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 820px;">
+      <div>
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.1em; color:var(--soft); font-family:'JetBrains Mono',monospace; margin-bottom:10px;">Use of funds</div>
+        <div class="math-block">
+          <div class="math-row"><span class="label">Physical ventures (Konstanz + Waco + 3rd node)</span><span class="value">€600–800K</span></div>
+          <div class="math-row"><span class="label">Platform — ABW to MVP</span><span class="value">€600–800K</span></div>
+          <div class="math-row"><span class="label">Software ventures (Rabble + Fermi partner)</span><span class="value">€400–600K</span></div>
+          <div class="math-row"><span class="label">Team + operations</span><span class="value">€200–400K</span></div>
+          <div class="math-row highlight"><span class="label">Total</span><span class="value">$2M</span></div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; justify-content: flex-end; gap: 10px;">
+        <p style="font-size: 14px; color: #c0c0b0; line-height: 1.6;">The raise is the go-to-market event. The build has been happening — bootstrapped, in loose stealth, for long enough that the platform is real and the institutional relationships are substantive.</p>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--highlight); margin-top: 4px;">hello@kask.bio · kask.bio</div>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--soft);">US LLC SAFE or equity · $10M pre-money</div>
+      </div>
+    </div>
+
+    <div class="conf-strip">kask.bio · hello@kask.bio · May 2026 · Confidential</div>
+  </div>
+
+</div>
+</body>
+</html>

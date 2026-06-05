@@ -96,7 +96,7 @@ Set a **model ladder** so the agent serves all tiers with the right model:
   {
     "tier": "free",
     "provider": "anthropic",
-    "model": "claude-3-haiku-20240307",
+    "model": "claude-haiku-4-5-20251001",
     "note": "Fast, cheap — adequate for single-review classification"
   },
   {
@@ -198,11 +198,11 @@ Create `agents/community/sentiment_analyzer/agent_card.json`:
   "capabilities": {
     "executor": "llm",
     "provider": "anthropic",
-    "model": "claude-3-haiku-20240307",
+    "model": "claude-haiku-4-5-20251001",
     "temperature": 0.1,
     "min_tier": "free",
     "model_ladder": [
-      { "tier": "free",     "provider": "anthropic", "model": "claude-3-haiku-20240307" },
+      { "tier": "free",     "provider": "anthropic", "model": "claude-haiku-4-5-20251001" },
       { "tier": "standard", "provider": "anthropic", "model": "claude-sonnet-4-5" }
     ],
     "capability_gates": {},

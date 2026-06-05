@@ -25,8 +25,7 @@ pub struct LlmJudgeAnthropic {
     pub rubric: Option<String>,
     /// Optional expected output, again sourced from the test case.
     pub expected_output: Option<String>,
-    /// Override the Anthropic model id. Defaults to the legacy
-    /// `claude-3-haiku-20240307`.
+    /// Override the Anthropic model id. Defaults to `claude-haiku-4-5-20251001`.
     pub model: String,
 }
 
@@ -35,7 +34,7 @@ impl Default for LlmJudgeAnthropic {
         Self {
             rubric: None,
             expected_output: None,
-            model: "claude-3-haiku-20240307".to_string(),
+            model: "claude-haiku-4-5-20251001".to_string(),
         }
     }
 }

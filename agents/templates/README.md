@@ -86,7 +86,7 @@ message instead of silently degrading or failing.
 
 ```json
 "model_ladder": [
-  { "tier": "free",     "provider": "anthropic", "model": "claude-3-haiku-20240307" },
+  { "tier": "free",     "provider": "anthropic", "model": "claude-haiku-4-5-20251001" },
   { "tier": "standard", "provider": "anthropic", "model": "claude-sonnet-4-5" },
   { "tier": "premium",  "provider": "anthropic", "model": "claude-opus-4" }
 ],

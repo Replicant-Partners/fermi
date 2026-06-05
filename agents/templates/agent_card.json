@@ -32,10 +32,10 @@
     "provider": "anthropic",
     "//16": "anthropic | mistral | openrouter | qwen | glm",
 
-    "model": "claude-3-haiku-20240307",
+    "model": "claude-haiku-4-5-20251001",
     "//17": "Default model — overridden by model_ladder when a cognition tier is supplied.",
     "//18": "Common choices:",
-    "//19": "  anthropic : claude-3-haiku-20240307  (fast, cheap)",
+    "//19": "  anthropic : claude-haiku-4-5-20251001  (fast, cheap)",
     "//20": "              claude-sonnet-4-5         (balanced)",
     "//21": "              claude-opus-4             (frontier reasoning)",
     "//22": "  openrouter: meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct",
@@ -57,7 +57,7 @@
       {
         "tier": "free",
         "provider": "anthropic",
-        "model": "claude-3-haiku-20240307",
+        "model": "claude-haiku-4-5-20251001",
         "note": "Fast baseline for free-tier users"
       },
       {
