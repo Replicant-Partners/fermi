@@ -9,6 +9,8 @@
 --
 -- PgBouncer-safe. Idempotent.
 
+DO $$ BEGIN
+
 CREATE TABLE IF NOT EXISTS public.creature_goals (
     -- Identity
     goal_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -17,22 +19,17 @@ CREATE TABLE IF NOT EXISTS public.creature_goals (
 
     -- Goal definition
     title          TEXT NOT NULL,
-    description    TEXT NOT NULL,           -- natural language: "Watch for edible fungi near my oak woodland"
+    description    TEXT NOT NULL,
     goal_type      TEXT NOT NULL DEFAULT 'custom'
                        CHECK (goal_type IN (
-                           'species_watch',     -- alert when specific species found
-                           'accumulation',      -- collect N species / observations
-                           'location_scout',    -- build knowledge of a specific place
-                           'condition_track',   -- track microclimate patterns
-                           'bioconversion',     -- full foraging → table chain
-                           'custom'             -- freeform, evaluated by goal_tracker agent
+                           'species_watch',
+                           'accumulation',
+                           'location_scout',
+                           'condition_track',
+                           'bioconversion',
+                           'custom'
                        )),
     parameters     JSONB NOT NULL DEFAULT '{}',
-    -- species_watch:   { target_species[], alert_on_first: bool, radius_km }
-    -- accumulation:    { target_count, taxa_filter, season_filter }
-    -- location_scout:  { h3_cells[], habitat_type, depth: "surface|deep" }
-    -- condition_track: { variables[], location, baseline_period_days }
-    -- bioconversion:   { target_taxa, include_flavor: bool, include_processing: bool }
 
     -- App workspace reference (kask_wild workspace for this goal)
     wild_workspace_id  UUID REFERENCES public.teams(id) ON DELETE SET NULL,
@@ -41,13 +38,9 @@ CREATE TABLE IF NOT EXISTS public.creature_goals (
     status         TEXT NOT NULL DEFAULT 'active'
                        CHECK (status IN ('active', 'achieved', 'paused', 'abandoned')),
     progress       JSONB NOT NULL DEFAULT '{}',
-    -- shape varies by goal_type, e.g.:
-    -- species_watch:  { species_found: [], last_checked_at }
-    -- accumulation:   { count: N, species_list: [], locations_visited: [] }
-    -- bioconversion:  { observations: N, flavor_profiles: [], processing_notes: [] }
 
     -- Scoring (Brier loop)
-    forecast_accuracy  FLOAT,              -- Brier score accumulated over evaluated predictions
+    forecast_accuracy  FLOAT,
     predictions_made   INTEGER DEFAULT 0,
     predictions_scored INTEGER DEFAULT 0,
 
@@ -65,7 +58,10 @@ CREATE INDEX IF NOT EXISTS idx_creature_goals_creature
 CREATE INDEX IF NOT EXISTS idx_creature_goals_owner
     ON public.creature_goals(owner_id);
 
--- updated_at trigger
+END $$;
+
+-- updated_at trigger (outside DO block — CREATE OR REPLACE FUNCTION is DDL
+-- that PgBouncer handles fine at the statement level)
 CREATE OR REPLACE FUNCTION public.touch_creature_goals_updated_at()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
@@ -74,7 +70,12 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_creature_goals_updated_at ON public.creature_goals;
-CREATE TRIGGER trg_creature_goals_updated_at
-    BEFORE UPDATE ON public.creature_goals
-    FOR EACH ROW EXECUTE FUNCTION public.touch_creature_goals_updated_at();
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_creature_goals_updated_at'
+    ) THEN
+        CREATE TRIGGER trg_creature_goals_updated_at
+            BEFORE UPDATE ON public.creature_goals
+            FOR EACH ROW EXECUTE FUNCTION public.touch_creature_goals_updated_at();
+    END IF;
+END $$;
