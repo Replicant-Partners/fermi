@@ -1,0 +1,110 @@
+{
+  "slug": "kask_wild",
+  "name": "Wild",
+  "tagline": "Foraging intelligence — field to table, grounded in microclimate and accumulated observation.",
+  "owner_user_id": "sys",
+  "homepage_url": "https://kask.bio/projects/wild",
+  "icon_url": "https://kask.bio/assets/wild-icon.svg",
+  "description": "Agent-led foraging and wild harvesting intelligence. Combines iNaturalist observation data, MycoBank nomenclature, microclimate forecasting, and a compounding personal knowledge graph to build the foraging expertise of a lifetime into a single creature. Rabble creatures consume Wild via cross-workspace delegation — the creature provides spatial context; Wild provides foraging intelligence.",
+  "composition_slug": "wild_forager",
+  "schema_slug": "kask-wild/1",
+  "schema_json": {
+    "$schema": "kask-wild/1",
+    "description": "Action grammar for the Wild companion agent. Structures the foraging intelligence loop: scout location → assess conditions → identify species → evaluate harvest → log observation → update forecast.",
+    "canonical_document": {
+      "path": "wild/observations.yaml",
+      "description": "The running observation log — species found, locations, conditions, dates, harvest notes, flavor assessments."
+    },
+    "action_types": [
+      {
+        "type": "log_observation",
+        "wild_alias": "record_find",
+        "description": "Record a foraging observation. Creates a SOSA-compatible observation record, stores as an episode for KG accumulation via dream cycles.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/log_observation",
+        "fields": {
+          "species": { "type": "string", "required": true, "description": "Scientific or common name of what was found" },
+          "h3_cell": { "type": "string", "required": false, "description": "H3 cell index of the find location" },
+          "quantity": { "type": "string", "required": false, "enum": ["trace", "sparse", "moderate", "abundant"], "description": "Relative abundance at this location" },
+          "habitat": { "type": "string", "required": false, "description": "Substrate and habitat type e.g. 'oak woodland, leaf litter'" },
+          "conditions": { "type": "object", "required": false, "description": "Observed microclimate: temp_c, humidity_pct, rainfall_prior_7d_mm, soil_moisture" },
+          "harvest_notes": { "type": "string", "required": false, "description": "Notes on harvest quality, maturity, damage" },
+          "flavor_notes": { "type": "string", "required": false, "description": "Tasting notes if consumed: aroma, texture, taste dimensions" },
+          "opted_in_shared": { "type": "boolean", "required": false, "default": false, "description": "Contribute this observation to the shared regional model" }
+        }
+      },
+      {
+        "type": "update_goal",
+        "wild_alias": "advance_goal",
+        "description": "Record progress against a creature's standing foraging goal. Updates the goal's progress JSONB and fires a push notification if the goal condition is met.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/update_goal",
+        "fields": {
+          "goal_id": { "type": "string", "required": true, "description": "UUID of the creature goal" },
+          "progress_delta": { "type": "object", "required": true, "description": "What changed: { new_species, locations_visited, observations_logged, notable_event }" },
+          "goal_achieved": { "type": "boolean", "required": false, "description": "True if the goal condition has been fully met" },
+          "notable_event": { "type": "string", "required": false, "description": "Human-readable description of the notable find e.g. 'First Cantharellus cibarius at this location'" }
+        }
+      },
+      {
+        "type": "annotate_location",
+        "wild_alias": "mark_spot",
+        "description": "Record a named foraging location with habitat characteristics. Persists to wild/locations.yaml. Accumulates into the creature's KG as a location entity.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/annotate",
+        "fields": {
+          "name": { "type": "string", "required": true, "description": "Name for this foraging spot" },
+          "h3_cell": { "type": "string", "required": true, "description": "H3 cell index" },
+          "habitat_type": { "type": "string", "required": true, "description": "e.g. oak_woodland, beech_forest, meadow_edge, coastal" },
+          "known_species": { "type": "array", "items": { "type": "string" }, "required": false, "description": "Species reliably found here" },
+          "seasonal_notes": { "type": "string", "required": false, "description": "When this spot is productive and under what conditions" }
+        }
+      }
+    ]
+  },
+  "workspace_template": {
+    "initial_budget": 800,
+    "default_name_pattern": "Wild — {user} foraging journal",
+    "auto_hire": [
+      "wild_companion",
+      "forage_scout",
+      "condition_forecaster",
+      "species_resolver",
+      "harvest_advisor",
+      "flavor_profiler",
+      "wild_narrator"
+    ],
+    "initial_files": [
+      {
+        "path": "wild/observations.yaml",
+        "content": "# Foraging observation log\n# Each entry: species, location, date, conditions, harvest_notes, flavor_notes\n# Generated and maintained by wild_companion\nobservations: []\n"
+      },
+      {
+        "path": "wild/locations.yaml",
+        "content": "# Named foraging locations\n# Each entry: name, h3_cell, habitat_type, known_species, seasonal_notes\n# Updated by wild_companion via annotate_location actions\nlocations: []\n"
+      },
+      {
+        "path": "wild/goals.yaml",
+        "content": "# Active foraging goals\n# Synced from creature_goals table\n# Updated by goal_tracker agent\ngoals: []\n"
+      },
+      {
+        "path": ".app/manifest.yaml",
+        "content": "app_slug: kask_wild\nschema: kask-wild/1\ncreated_at: auto\n"
+      },
+      {
+        "path": "context/readme.md",
+        "content": "# Wild Foraging Journal\n\nThis workspace accumulates your foraging intelligence over time.\n\n## How it works\n\n1. **Scout** — ask wild_companion what's likely fruiting near your location\n2. **Log** — record what you actually find via log_observation\n3. **Dream** — trigger your creature's dream cycle to distill patterns\n4. **Learn** — future scouts draw on your accumulated knowledge\n\n## Data sources\n- iNaturalist: community observations near your location\n- MycoBank: authoritative fungal nomenclature\n- GBIF: species distribution and taxonomy\n- Openweather: microclimate conditions for fruiting forecasts\n- Your own observations: the most valuable signal\n\n## Privacy\nAll observations are private by default. Opt in to `opted_in_shared: true`\nto contribute to the shared regional model and receive better predictions.\n"
+      }
+    ]
+  },
+  "visibility": "public",
+  "metadata": {
+    "kask_version": "1.0.0",
+    "icon_color": "#4a7c3f",
+    "domain": "foraging",
+    "data_sources": ["iNaturalist", "MycoBank", "GBIF", "Openweather"],
+    "rabble_integration": {
+      "consumed_by": "rabble_creature",
+      "consumption_mechanism": "cross_workspace_delegation",
+      "creature_provides": ["h3_cell", "location_lat", "location_lng", "creature_id", "owner_goals"],
+      "wild_provides": ["forage_intelligence", "condition_forecast", "species_identification", "harvest_advice"]
+    }
+  }
+}

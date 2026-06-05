@@ -169,25 +169,33 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             is_delegation: false,
         },
         BuiltinToolDef {
-            name: "execute_agent",
-            description: "Invoke another agent with a query and get its response. The sub-agent runs a single turn without tools to prevent recursion.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "agent_name": {
-                        "type": "string",
-                        "description": "The name/ID of the agent to invoke"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "The query to send to the agent"
-                    }
-                },
-                "required": ["agent_name", "query"]
-            }),
-            requires_workspace: false,
-            is_delegation: true,
-        },
+             name: "execute_agent",
+             description: "Invoke another agent with a query and get its response. When workspace_id is provided, the sub-agent runs inside that workspace's full context (cross-workspace delegation — used for Rabble creatures to consume kask-app workspaces). Without workspace_id, the sub-agent runs a single turn without tools.",
+             input_schema: json!({
+                 "type": "object",
+                 "properties": {
+                     "agent_id": {
+                         "type": "string",
+                         "description": "The agent_id of the agent to invoke (e.g. 'forage_scout', 'wild_companion')"
+                     },
+                     "agent_name": {
+                         "type": "string",
+                         "description": "Alias for agent_id (legacy parameter name)"
+                     },
+                     "query": {
+                         "type": "string",
+                         "description": "The query to send to the agent"
+                     },
+                     "workspace_id": {
+                         "type": "string",
+                         "description": "Optional: UUID of the target workspace. When provided, the agent runs inside that workspace's context with full tool access (cross-workspace delegation). Used for Rabble creatures to consume kask-app-wild or other app workspaces."
+                     }
+                 },
+                 "required": ["query"]
+             }),
+             requires_workspace: false,
+             is_delegation: true,
+         },
         BuiltinToolDef {
             name: "delegate_to_agent",
             description: "Delegate a task to another workspace agent who will execute with full tool access (image generation, file writing, etc). The delegation appears as a visible message in workspace chat. Use this instead of execute_agent when the target agent needs tools to do its work.",
@@ -1019,6 +1027,99 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             requires_workspace: false,
             is_delegation: false,
         },
+        // ─── Wild / Foraging Tools ────────────────────────────────────
+        BuiltinToolDef {
+            name: "inat_observations",
+            description: "Call this tool to query iNaturalist for recent species observations near a location. Server-side — no API key required. Returns community observations with species, date, photo, quality grade, and coordinates. Use for foraging scouting: what has been observed in this area recently?",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "lat": {
+                        "type": "number",
+                        "description": "Latitude of search centre"
+                    },
+                    "lng": {
+                        "type": "number",
+                        "description": "Longitude of search centre"
+                    },
+                    "radius_km": {
+                        "type": "number",
+                        "description": "Search radius in kilometres (default: 5, max: 50)",
+                        "default": 5
+                    },
+                    "taxon": {
+                        "type": "string",
+                        "description": "Iconic taxon filter: Fungi | Plantae | Animalia etc. (default: Fungi)",
+                        "default": "Fungi"
+                    },
+                    "days_back": {
+                        "type": "integer",
+                        "description": "How many days back to search (default: 30, max: 365)",
+                        "default": 30
+                    },
+                    "quality_grade": {
+                        "type": "string",
+                        "description": "Minimum quality grade: research | needs_id | casual (default: needs_id)",
+                        "enum": ["research", "needs_id", "casual"],
+                        "default": "needs_id"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results to return (default: 20, max: 50)",
+                        "default": 20
+                    }
+                },
+                "required": ["lat", "lng"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "mycobank_lookup",
+            description: "Call this tool to look up authoritative fungal nomenclature from MycoBank. Server-side. Returns accepted name, nomenclatural status, taxonomic classification, synonyms, and MycoBank number. Use for species validation and authoritative naming.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Fungal species name to look up (scientific name)"
+                    },
+                    "include_synonyms": {
+                        "type": "boolean",
+                        "description": "Include synonyms and basionyms in the response (default: true)",
+                        "default": true
+                    }
+                },
+                "required": ["name"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "openweather_forecast",
+            description: "Call this tool to get current weather conditions and 5-day forecast for a location. Server-side — requires OPENWEATHER_API_KEY. Returns temperature, humidity, precipitation, wind, and 5-day outlook. Use for microclimate foraging condition assessment.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "lat": {
+                        "type": "number",
+                        "description": "Latitude"
+                    },
+                    "lng": {
+                        "type": "number",
+                        "description": "Longitude"
+                    },
+                    "include_forecast": {
+                        "type": "boolean",
+                        "description": "Include 5-day forecast in addition to current conditions (default: true)",
+                        "default": true
+                    }
+                },
+                "required": ["lat", "lng"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
         // ─── Web Search ───
         BuiltinToolDef {
             name: "web_search",
@@ -1662,8 +1763,12 @@ impl ToolRegistry {
             "segment_creature_wings" => execute_segment_creature_wings(input, ctx).await,
             "activate_formation" => execute_activate_formation(input, ctx).await,
             "scan_nearby_creatures" => execute_scan_nearby_creatures(input, ctx).await,
-            "gbif_taxonomy_tree" => execute_gbif_taxonomy_tree(input).await,
-            // FMP (Financial Modeling Prep) tools for equity_analyst
+             "gbif_taxonomy_tree" => execute_gbif_taxonomy_tree(input).await,
+             // Wild / foraging tools
+             "inat_observations" => execute_inat_observations(input).await,
+             "mycobank_lookup" => execute_mycobank_lookup(input).await,
+             "openweather_forecast" => execute_openweather_forecast(input).await,
+             // FMP (Financial Modeling Prep) tools for equity_analyst
             "fmp_company_profile" => execute_fmp_api(input, "/stable/profile", &["symbol"]).await,
             "fmp_income_statement" => {
                 execute_fmp_api(
@@ -4054,14 +4159,25 @@ async fn execute_execute_agent(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
+    // Support both "agent_id" (MCP convention) and "agent_name" (legacy)
     let agent_name = input
-        .get("agent_name")
+        .get("agent_id")
+        .or_else(|| input.get("agent_name"))
         .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: agent_name")?;
+        .ok_or("Missing required parameter: agent_id")?;
     let query = input
         .get("query")
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: query")?;
+
+    // Optional cross-workspace delegation: when workspace_id is provided,
+    // the target agent runs inside that workspace's full context (tools,
+    // workspace git, KG). This is the seam between Rabble creatures and
+    // kask-app workspaces (e.g. kask-app-wild).
+    let target_workspace_id: Option<uuid::Uuid> = input
+        .get("workspace_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok());
 
     // Get the target agent card
     let card = ctx
@@ -4103,17 +4219,83 @@ async fn execute_execute_agent(
         cognition_tier: None,
     };
 
-    // Execute via the base executor (no tools — prevents recursion)
-    let output = ctx
-        .registry
-        .execute_agent(&stmt, &context)
-        .await
-        .map_err(|e| format!("Agent execution failed: {}", e))?;
+    let output = if let Some(ws_id) = target_workspace_id {
+        // ── Cross-workspace delegation ────────────────────────────────
+        // Build a full ToolContext for the target workspace so the
+        // delegated agent has access to its workspace git, tools, and KG.
+        // Anti-recursion: use with_workspace_no_delegation to strip
+        // further cross-workspace calls from the sub-agent's tool list.
+        if let Some(ref db) = ctx.db {
+            // Look up workspace slug for git context
+            let slug: String = sqlx::query_scalar(
+                "SELECT slug FROM teams WHERE id = $1",
+            )
+            .bind(ws_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
 
-    // Format the output
+            // Look up the calling agent's DB UUID for current_agent_id
+            let calling_agent_id: Option<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
+            )
+            .bind(agent_name)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+
+            let target_tool_context = std::sync::Arc::new(ToolContext {
+                memory_store: ctx.memory_store.clone(),
+                embedder: ctx.embedder.clone(),
+                registry: ctx.registry.clone(),
+                current_agent_id: calling_agent_id,
+                workspace_id: Some(ws_id),
+                workspace_slug: Some(slug.clone()),
+                workspace_git: ctx.workspace_git.clone(),
+                db: ctx.db.clone(),
+                gas_fees: ctx.gas_fees.clone(),
+                user_id: ctx.user_id.clone(),
+                user_secrets: None,
+                eval_trigger: ctx.eval_trigger.clone(),
+            });
+
+            let tool_executor = crate::agent_backend::tool_executor::ToolAwareExecutor::new(
+                ctx.registry.executor_arc(),
+                ToolRegistry::with_workspace_no_delegation(),
+                target_tool_context,
+            );
+
+            tool_executor
+                .execute(&stmt, &context)
+                .await
+                .map_err(|e| format!("Cross-workspace agent execution failed: {}", e))?
+        } else {
+            // No DB — fall back to base executor
+            ctx.registry
+                .execute_agent(&stmt, &context)
+                .await
+                .map_err(|e| format!("Agent execution failed: {}", e))?
+        }
+    } else {
+        // ── Standard (same-workspace or global) execution ────────────
+        // Execute via the base executor (no tools — prevents recursion
+        // in the common case where workspace_id is not specified).
+        ctx.registry
+            .execute_agent(&stmt, &context)
+            .await
+            .map_err(|e| format!("Agent execution failed: {}", e))?
+    };
+
+    // Format the output — include metadata.reasoning so callers can
+    // parse domain-specific JSON (e.g. forage_scout's structured response)
     let result = json!({
         "agent": output.agent_name,
         "confidence": output.confidence,
+        "status": format!("{:?}", output.status),
+        "response": output.metadata.reasoning,
         "evidence": output.evidence.iter().map(|e| {
             json!({
                 "summary": e.summary,
@@ -5756,6 +5938,368 @@ async fn execute_run_evaluator_registry(
         "agent_id": agent_id,
         "status": "running",
         "note": "Run started in background. Poll with query_eval_runs or query_eval_signals once it completes.",
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── Wild / Foraging tool implementations ──────────────────────────
+
+/// iNaturalist observations near a lat/lng.
+/// Uses the iNaturalist API v2 — no authentication required for reads.
+async fn execute_inat_observations(input: &serde_json::Value) -> Result<String, String> {
+    let lat = input.get("lat").and_then(|v| v.as_f64())
+        .ok_or("lat is required")?;
+    let lng = input.get("lng").and_then(|v| v.as_f64())
+        .ok_or("lng is required")?;
+    let radius_km = input.get("radius_km").and_then(|v| v.as_f64()).unwrap_or(5.0).min(50.0);
+    let taxon = input.get("taxon").and_then(|v| v.as_str()).unwrap_or("Fungi");
+    let days_back = input.get("days_back").and_then(|v| v.as_u64()).unwrap_or(30).min(365);
+    let quality_grade = input.get("quality_grade").and_then(|v| v.as_str()).unwrap_or("needs_id");
+    let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(20).min(50);
+
+    // Calculate date range
+    let d1 = (chrono::Utc::now() - chrono::Duration::days(days_back as i64))
+        .format("%Y-%m-%d").to_string();
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+
+    let url = "https://api.inaturalist.org/v2/observations";
+    let resp = client
+        .get(url)
+        .header("User-Agent", "AgentBestiaryWorld/1.0 (kask.bio/projects/wild)")
+        .query(&[
+            ("lat", lat.to_string()),
+            ("lng", lng.to_string()),
+            ("radius", radius_km.to_string()),
+            ("iconic_taxa[]", taxon.to_string()),
+            ("quality_grade", quality_grade.to_string()),
+            ("d1", d1),
+            ("order_by", "observed_on".to_string()),
+            ("order", "desc".to_string()),
+            ("per_page", limit.to_string()),
+            ("fields", "taxon.name,taxon.preferred_common_name,observed_on,quality_grade,location,photos.url".to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("iNaturalist API request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("iNaturalist API error: {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json().await
+        .map_err(|e| format!("Failed to parse iNaturalist response: {}", e))?;
+
+    let results = data.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+    let total = data.get("total_results").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    // Summarise into a compact form for the agent
+    let observations: Vec<serde_json::Value> = results.iter().map(|obs| {
+        let taxon_name = obs.pointer("/taxon/name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+        let common_name = obs.pointer("/taxon/preferred_common_name").and_then(|v| v.as_str()).unwrap_or("");
+        let date = obs.get("observed_on").and_then(|v| v.as_str()).unwrap_or("");
+        let grade = obs.get("quality_grade").and_then(|v| v.as_str()).unwrap_or("");
+        let location = obs.get("location").and_then(|v| v.as_str()).unwrap_or("");
+        let has_photo = obs.pointer("/photos/0/url").is_some();
+        json!({
+            "species": taxon_name,
+            "common_name": common_name,
+            "observed_on": date,
+            "quality_grade": grade,
+            "location": location,
+            "has_photo": has_photo,
+        })
+    }).collect();
+
+    // Count unique species
+    let mut species_counts: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+    for obs in &results {
+        let name = obs.pointer("/taxon/name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+        *species_counts.entry(name).or_insert(0) += 1;
+    }
+    let mut species_summary: Vec<(&str, u32)> = species_counts.iter().map(|(k, v)| (*k, *v)).collect();
+    species_summary.sort_by(|a, b| b.1.cmp(&a.1));
+
+    serde_json::to_string_pretty(&json!({
+        "search_params": {
+            "lat": lat, "lng": lng,
+            "radius_km": radius_km,
+            "taxon": taxon,
+            "days_back": days_back,
+            "quality_grade": quality_grade,
+        },
+        "total_observations": total,
+        "returned": observations.len(),
+        "species_summary": species_summary.iter().take(10).map(|(s, c)| json!({"species": s, "count": c})).collect::<Vec<_>>(),
+        "observations": observations,
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// MycoBank fungal nomenclature lookup.
+/// Uses the bio-aware MycoBank web services API.
+/// Requires MYCOBANK_API_KEY environment variable (Bearer token).
+/// Falls back to a descriptive error if key is not set.
+async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, String> {
+    let name = input.get("name").and_then(|v| v.as_str())
+        .ok_or("name is required")?;
+    let include_synonyms = input.get("include_synonyms").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    let api_key = std::env::var("MYCOBANK_API_KEY").unwrap_or_default();
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+
+    // If no API key, fall back to GBIF for fungal taxonomy
+    if api_key.is_empty() {
+        // Graceful degradation: use GBIF which covers fungi
+        let gbif_url = "https://api.gbif.org/v1/species/match";
+        let resp = client
+            .get(gbif_url)
+            .header("User-Agent", "AgentBestiaryWorld/1.0 (kask.bio/projects/wild)")
+            .query(&[("name", name), ("kingdom", "Fungi"), ("verbose", "true")])
+            .send()
+            .await
+            .map_err(|e| format!("GBIF fallback request failed: {}", e))?;
+
+        let data: serde_json::Value = resp.json().await
+            .map_err(|e| format!("Failed to parse GBIF response: {}", e))?;
+
+        return serde_json::to_string_pretty(&json!({
+            "source": "GBIF (MycoBank API key not configured)",
+            "query": name,
+            "accepted_name": data.get("species").or_else(|| data.get("canonicalName")),
+            "status": data.get("status"),
+            "rank": data.get("rank"),
+            "kingdom": data.get("kingdom"),
+            "phylum": data.get("phylum"),
+            "class": data.get("class"),
+            "order": data.get("order"),
+            "family": data.get("family"),
+            "genus": data.get("genus"),
+            "gbif_key": data.get("speciesKey").or_else(|| data.get("usageKey")),
+            "confidence": data.get("confidence"),
+            "note": "Configure MYCOBANK_API_KEY for authoritative MycoBank nomenclature"
+        }))
+        .map_err(|e| format!("Serialization error: {}", e));
+    }
+
+    // MycoBank API
+    let base_url = "https://webservices.bio-aware.com/cbsdatabase_new/mycobank/taxonnames";
+    let resp = client
+        .get(base_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("User-Agent", "AgentBestiaryWorld/1.0 (kask.bio/projects/wild)")
+        .query(&[("filter", format!("name startWith '{}'", name))])
+        .send()
+        .await
+        .map_err(|e| format!("MycoBank API request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("MycoBank API error: {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json().await
+        .map_err(|e| format!("Failed to parse MycoBank response: {}", e))?;
+
+    let items = data.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    if items.is_empty() {
+        return Ok(serde_json::to_string_pretty(&json!({
+            "source": "MycoBank",
+            "query": name,
+            "found": false,
+            "message": "No records found in MycoBank for this name"
+        })).unwrap_or_default());
+    }
+
+    // Find the best match — prefer exact name match with valid status
+    let best = items.iter().find(|item| {
+        item.get("name").and_then(|v| v.as_str())
+            .map(|n| n.to_lowercase() == name.to_lowercase())
+            .unwrap_or(false)
+        && item.get("nameStatus").and_then(|v| v.as_str())
+            .map(|s| s != "Illegitimate" && s != "Invalid")
+            .unwrap_or(true)
+    }).or_else(|| items.first());
+
+    let result = best.cloned().unwrap_or(json!({}));
+
+    serde_json::to_string_pretty(&json!({
+        "source": "MycoBank",
+        "query": name,
+        "found": true,
+        "mycobank_number": result.get("mycobankNr"),
+        "accepted_name": result.pointer("/synonymy/currentName").or_else(|| result.get("name")),
+        "name_status": result.get("nameStatus"),
+        "author": result.get("authors"),
+        "year": result.get("year"),
+        "rank": result.get("rank"),
+        "phylum": result.pointer("/classification/phylum"),
+        "class": result.pointer("/classification/class"),
+        "order": result.pointer("/classification/order"),
+        "family": result.pointer("/classification/family"),
+        "genus": result.pointer("/classification/genus"),
+        "synonyms_count": if include_synonyms { items.len() } else { 0 },
+        "url": result.get("mycobankNr").and_then(|n| n.as_str())
+            .map(|n| format!("https://www.mycobank.org/page/Name%20details%20page/field/Mycobank%20%23/{}", n)),
+    }))
+    .map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// OpenWeather current conditions + 5-day forecast.
+/// Requires OPENWEATHER_API_KEY environment variable.
+async fn execute_openweather_forecast(input: &serde_json::Value) -> Result<String, String> {
+    let lat = input.get("lat").and_then(|v| v.as_f64())
+        .ok_or("lat is required")?;
+    let lng = input.get("lng").and_then(|v| v.as_f64())
+        .ok_or("lng is required")?;
+    let include_forecast = input.get("include_forecast").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    let api_key = std::env::var("OPENWEATHER_API_KEY")
+        .map_err(|_| "OPENWEATHER_API_KEY not set. Get a free key at https://openweathermap.org/api".to_string())?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+
+    // Current conditions
+    let current_resp = client
+        .get("https://api.openweathermap.org/data/2.5/weather")
+        .query(&[
+            ("lat", lat.to_string()),
+            ("lon", lng.to_string()),
+            ("appid", api_key.clone()),
+            ("units", "metric".to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("OpenWeather current request failed: {}", e))?;
+
+    if !current_resp.status().is_success() {
+        return Err(format!("OpenWeather API error: {}", current_resp.status()));
+    }
+
+    let current: serde_json::Value = current_resp.json().await
+        .map_err(|e| format!("Failed to parse current weather: {}", e))?;
+
+    let current_summary = json!({
+        "temp_c": current.pointer("/main/temp"),
+        "feels_like_c": current.pointer("/main/feels_like"),
+        "humidity_pct": current.pointer("/main/humidity"),
+        "pressure_hpa": current.pointer("/main/pressure"),
+        "description": current.pointer("/weather/0/description"),
+        "wind_speed_ms": current.pointer("/wind/speed"),
+        "wind_direction_deg": current.pointer("/wind/deg"),
+        "rain_1h_mm": current.pointer("/rain/1h").unwrap_or(&serde_json::Value::Null),
+        "clouds_pct": current.pointer("/clouds/all"),
+        "visibility_m": current.get("visibility"),
+        "sunrise": current.pointer("/sys/sunrise"),
+        "sunset": current.pointer("/sys/sunset"),
+    });
+
+    if !include_forecast {
+        return serde_json::to_string_pretty(&json!({
+            "location": { "lat": lat, "lng": lng },
+            "current": current_summary,
+        }))
+        .map_err(|e| format!("Serialization error: {}", e));
+    }
+
+    // 5-day / 3-hour forecast
+    let forecast_resp = client
+        .get("https://api.openweathermap.org/data/2.5/forecast")
+        .query(&[
+            ("lat", lat.to_string()),
+            ("lon", lng.to_string()),
+            ("appid", api_key),
+            ("units", "metric".to_string()),
+            ("cnt", "40".to_string()), // 5 days × 8 readings/day
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("OpenWeather forecast request failed: {}", e))?;
+
+    let forecast: serde_json::Value = forecast_resp.json().await
+        .map_err(|e| format!("Failed to parse forecast: {}", e))?;
+
+    // Summarise by day
+    let mut daily: std::collections::BTreeMap<String, serde_json::Value> = std::collections::BTreeMap::new();
+    if let Some(list) = forecast.get("list").and_then(|v| v.as_array()) {
+        for entry in list {
+            let dt_txt = entry.get("dt_txt").and_then(|v| v.as_str()).unwrap_or("");
+            let day = dt_txt.split(' ').next().unwrap_or(dt_txt).to_string();
+            let temp = entry.pointer("/main/temp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let rain = entry.pointer("/rain/3h").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let humidity = entry.pointer("/main/humidity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+            let d = daily.entry(day).or_insert(json!({
+                "temps": [], "rain_total_mm": 0.0, "humidity_avg": 0.0, "count": 0
+            }));
+            if let Some(obj) = d.as_object_mut() {
+                if let Some(arr) = obj.get_mut("temps").and_then(|v| v.as_array_mut()) {
+                    arr.push(json!(temp));
+                }
+                let rain_total = obj.get("rain_total_mm").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let hum_acc = obj.get("humidity_avg").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let count = obj.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                obj.insert("rain_total_mm".to_string(), json!(rain_total + rain));
+                obj.insert("humidity_avg".to_string(), json!((hum_acc * count as f64 + humidity) / (count + 1) as f64));
+                obj.insert("count".to_string(), json!(count + 1));
+            }
+        }
+    }
+
+    let forecast_summary: Vec<serde_json::Value> = daily.iter().map(|(day, d)| {
+        let temps = d.get("temps").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let temps_f: Vec<f64> = temps.iter().filter_map(|v| v.as_f64()).collect();
+        let min_t = temps_f.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_t = temps_f.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        json!({
+            "date": day,
+            "temp_min_c": if min_t.is_finite() { min_t } else { 0.0 },
+            "temp_max_c": if max_t.is_finite() { max_t } else { 0.0 },
+            "rain_total_mm": d.get("rain_total_mm"),
+            "humidity_avg_pct": d.get("humidity_avg"),
+        })
+    }).collect();
+
+    // Foraging condition assessment
+    let current_temp = current.pointer("/main/temp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let current_humidity = current.pointer("/main/humidity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let recent_rain: f64 = forecast_summary.iter().take(2)
+        .filter_map(|d| d.get("rain_total_mm").and_then(|v| v.as_f64()))
+        .sum();
+
+    let foraging_signal = if current_temp > 5.0 && current_temp < 25.0 && current_humidity > 70.0 && recent_rain > 5.0 {
+        "good"
+    } else if current_temp > 0.0 && current_temp < 30.0 && current_humidity > 50.0 {
+        "fair"
+    } else {
+        "poor"
+    };
+
+    serde_json::to_string_pretty(&json!({
+        "location": { "lat": lat, "lng": lng },
+        "current": current_summary,
+        "forecast_5day": forecast_summary,
+        "foraging_conditions": {
+            "signal": foraging_signal,
+            "temp_in_range": current_temp > 5.0 && current_temp < 25.0,
+            "humidity_sufficient": current_humidity > 70.0,
+            "recent_rainfall_mm": recent_rain,
+            "note": match foraging_signal {
+                "good" => "Conditions are favourable for fungal fruiting. Scout within 1-4 days.",
+                "fair" => "Conditions are marginal. Check specific species requirements.",
+                _ => "Conditions are unfavourable. Wait for rain and temperature moderation.",
+            }
+        }
     }))
     .map_err(|e| format!("Serialization error: {}", e))
 }
