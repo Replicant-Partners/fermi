@@ -40,13 +40,13 @@ The creature provides spatial context. It knows where it is, what it has seen be
 **Stage 2 — Forest (kask-app-wild):**
 The wild workspace provides foraging intelligence. It knows what's been observed nearby (iNaturalist), what the microclimate predicts (OpenWeather), what the species actually is (MycoBank/GBIF), whether it's safe to harvest (harvest_advisor), and when to pick it.
 
-**Stage 3 — Kitchen (TBD — kask-app-table?):**
-Post-harvest intelligence. Processing pathways, preservation methods, fermentation tracking, flavour development over time. The Redzepi layer — where place, season, and technique meet.
+**Stage 3 — Kitchen (kask-app-wild, gaps to fill):**
+Post-harvest intelligence. Processing pathways, preservation methods, fermentation tracking, flavour development over time. The Redzepi layer — where place, season, and technique meet. This lives in the kask-wild workspace — same app, additional agents to be hired in. Current gaps: `recipe_composer`, `fermentation_tracker`, `preservation_log` agents not yet built.
 
-**Stage 4 — Table (TBD):**
-Recipe composition, menu planning, flavour pairing. Connects to restaurant supply chain, seasonal menus, wild ingredient sourcing intelligence.
+**Stage 4 — Table (kask-app-wild, future agents):**
+Recipe composition, menu planning, flavour pairing. Also kask-wild workspace. Connects to restaurant supply chain, seasonal menus, wild ingredient sourcing intelligence via the same workspace the forager already uses.
 
-*Stages 1-2 are built. Stages 3-4 are designed but not yet implemented.*
+*Stages 1-2 are built. Stages 3-4 share the kask-wild workspace — agent roster gaps to be filled.*
 
 ---
 
@@ -77,15 +77,16 @@ The flavor_profiler agent encodes this thinking dimensionally:
 
 ```
 ABW (backend)
-├── kask-app-wild     ← this spec
+├── kask-app-wild     ← this spec — full bioconversion chain
 │   ├── Stage 1: Field intelligence (creature bridge)
-│   └── Stage 2: Forest intelligence (foraging agents)
-├── kask-app-table    ← future
-│   ├── Stage 3: Kitchen intelligence
-│   └── Stage 4: Table intelligence
+│   ├── Stage 2: Forest intelligence (forage_scout, condition_forecaster)
+│   ├── Stage 3: Kitchen intelligence (harvest_advisor, flavor_profiler + gaps)
+│   └── Stage 4: Table intelligence (recipe_composer + future agents)
 └── rabble            ← consumer surface
     └── creature consumes kask-wild via cross-workspace delegation
 ```
+
+kask-wild is the full chain. No separate kask-app-table. Stages 3-4 extend the same workspace with additional agents as the product matures.
 
 ### Agent roster (kask-wild, v1)
 
@@ -199,36 +200,32 @@ Field identification without image support is incomplete. "Is this a chanterelle
 - Vision agent call: Claude Sonnet vision API accepts image URLs natively
 - New agent or extended harvest_advisor: `specimen_identifier` takes image + location context → returns species assessment + confidence + look-alike warnings
 
-**Upload target options:**
-- A. Cloudflare R2 / S3 (dedicated object storage)
-- B. Workspace git (images commit to workspace, raw URL returned)
-- C. Inline base64 in the API call (no storage, no persistence)
+**Decision: workspace git.**
+Images commit to the workspace git alongside `wild/observations.yaml`. The raw URL becomes the image reference in `forage_observations.photo_urls` and is passed to vision-capable agents. No extra infrastructure — the workspace git is already wired everywhere.
 
-*Decision pending.*
+### Post-processing / kitchen stage
 
-### Post-processing / kitchen stage (kask-app-table?)
+**Decision: kask-wild covers the full chain. No separate kask-app-table.**
 
-The kitchen stage (Stage 3) has enough complexity to warrant its own app:
-- Fermentation tracking (pH, time, temperature, notes)
-- Preservation log (date, method, batch, expected shelf life)
-- Recipe versioning (what worked, what didn't, iteration)
-- Flavour development over time (how does lacto-fermented chanterelle taste at 2 weeks vs 6 weeks?)
+Stages 3-4 extend the same workspace with additional agents. Agents to build:
+- `recipe_composer` — species + quantities + conditions → preparation proposals
+- `fermentation_tracker` — batch log (pH, time, temp, tasting notes at intervals)
+- `preservation_log` — method, date, expected shelf life, batch reference
+- `flavour_journal` — how a preparation develops over time
 
-**Options:**
-- A. Extend kask-wild to cover the full chain (simpler, one workspace)
-- B. Create `kask-app-table` (cleaner separation, kitchen is a different context from field)
-- C. kask.bio web experience (kitchen is desktop, foraging is mobile)
+Workspace git stores the living record alongside observations:
+`wild/observations.yaml`, `wild/ferments/`, `wild/recipes/`, `wild/preservation/`
 
-*Decision pending. `flavor_profiler` and `harvest_advisor` cover 80% of this already; full kitchen tracking is additive.*
+Images (git-based, see above) feed into these agents as visual documentation — fermentation progress photos, plating references, specimen identification.
 
 ### Recipe and menu planning
 
-Connects to restaurant supply chain use case. A Michelin-starred restaurant subscribing to a creature's foraging intelligence needs:
-- Advance planning: "what's likely available next week?"
-- Substitution: "chanterelles are late this year, what can replace them?"
-- Volume estimation: "can you supply 2kg of porcini for Saturday service?"
+Also kask-wild workspace. `recipe_composer` connects field intelligence to table:
+- What's available this week → what can we cook
+- Substitution when a target species is unavailable
+- Restaurant supply chain: volume estimates, advance planning
 
-This is a B2B feature that probably lives in a separate surface (kask.bio web, not Rabble mobile).
+Initially a forager-facing tool. B2B (restaurant subscription) is a later layer on the same foundation.
 
 *Not blocking v1.*
 
@@ -257,10 +254,12 @@ This is a B2B feature that probably lives in a separate surface (kask.bio web, n
 | Flutter: goal creation UI | ⏸ Pending design decisions |
 | Flutter: observation log UI | ⏸ Pending design decisions |
 | Image support (specimen identification) | ⏸ Pending: upload target decision |
-| Post-processing / kitchen stage | ⏸ Pending: kask-wild vs kask-table decision |
+| Post-processing / kitchen stage | ⏸ Pending: recipe_composer, fermentation_tracker agents |
 | Recipe / menu planning | ⏸ Future |
 | Shared regional model | ⏸ Future |
-| kask-app-table | ⏸ Future |
+| recipe_composer agent | ⏸ Future (kask-wild workspace) |
+| fermentation_tracker agent | ⏸ Future (kask-wild workspace) |
+| preservation_log agent | ⏸ Future (kask-wild workspace) |
 
 ---
 
