@@ -498,9 +498,32 @@
     // ──────────────────────────────────────────────────────────────────────────
     async function bootAgentList() {
       try {
-        const resp = await fetch("/api/agents?limit=200");
-        const data = await resp.json();
-        const agents = (data.agents || data || [])
+        // /api/agents/mine — owned agents with correct agent_id UUIDs + total_executions
+        // /api/agents?tier=curated — curated platform agents visible to all
+        const [mineResp, curatedResp] = await Promise.all([
+          fetch("/api/agents/mine"),
+          fetch("/api/agents?tier=curated&limit=200"),
+        ]);
+        const mineData    = mineResp.ok    ? await mineResp.json()    : {};
+        const curatedData = curatedResp.ok ? await curatedResp.json() : {};
+
+        const mineAgents    = (mineData.agents || []).map(a => ({ ...a, _source: "mine" }));
+        // curated list uses agent_name as agent_id in its response shape — normalise
+        const curatedAgents = (curatedData.agents || []).map(a => ({
+          agent_id:   a.uuid || a.agent_id,   // uuid is the real UUID field
+          agent_name: a.agent_id || a.agent_name, // agent_id is actually the name string
+          total_executions: a.execution_stats?.total_executions || 0,
+          _source: "curated",
+        })).filter(a => a.agent_id && a.agent_name);
+
+        // Merge: owned agents first, then curated not already in mine list
+        const ownedIds = new Set(mineAgents.map(a => a.agent_id?.toString()));
+        const combined = [
+          ...mineAgents,
+          ...curatedAgents.filter(a => !ownedIds.has(a.agent_id?.toString())),
+        ];
+
+        const agents = combined
           .filter(a => a.agent_id && a.agent_name)
           .sort((a, b) => (b.total_executions || 0) - (a.total_executions || 0));
 
