@@ -195,6 +195,31 @@ fn extract_sources(ctx: &serde_json::Value) -> Vec<String> {
         sources.extend(try_key(key));
     }
 
+    // ABW episodes store tool outputs under context.tool_invocations[].output
+    // Extract each invocation's output string as a grounding source.
+    if let serde_json::Value::Array(invocations) = &ctx["tool_invocations"] {
+        for inv in invocations {
+            if let Some(output) = inv.get("output").and_then(|v| v.as_str()) {
+                if !output.trim().is_empty() {
+                    sources.push(output.to_string());
+                }
+            }
+        }
+    }
+
+    // Also treat evidence summaries as grounding sources.
+    if let serde_json::Value::Array(evidence) = &ctx["evidence"] {
+        for ev in evidence {
+            for field in &["summary", "key_findings"] {
+                if let Some(s) = ev.get(field).and_then(|v| v.as_str()) {
+                    if !s.trim().is_empty() {
+                        sources.push(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+
     sources
 }
 

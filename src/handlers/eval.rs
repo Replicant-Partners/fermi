@@ -427,13 +427,60 @@ pub async fn run_eval_cases(
 
     // ── Phase 2 evaluator registry — build once outside the loop ──
     //
-    // Note: `judge_enabled` no longer gates whether the registry runs
-    // (the registry is the single source of evaluator output now). It
-    // gates whether the LLM-judge *evaluator* is registered. The
-    // `BrierEvaluator` is always registered — it returns `Inapplicable`
-    // for agents with no resolved forecasts, which the registry skips
-    // silently in aggregation.
-    let registry = build_registry(&state, &db_agent, &agent_name, judge_enabled);
+    // Pre-fetch async signals that the sync build_registry needs:
+    //   1. PersonaConsistencySignal for LifelongBench
+    //   2. ANTHROPIC_API_KEY for LLM-backed evaluators (CharacterEval, WildGuard, Sotopia)
+
+    // LifelongBench: episode count + mean embedding for current persona version.
+    let lifelong_signal: Option<evaluator_lifelong::PersonaConsistencySignal> = async {
+        let persona_version = db_agent.persona_version;
+        // Count episodes for this persona version.
+        let count_row = sqlx::query(
+            "SELECT COUNT(*) AS cnt FROM episodes WHERE agent_id = $1 AND persona_version_at_write = $2"
+        )
+        .bind(db_agent.agent_id)
+        .bind(persona_version)
+        .fetch_one(&state.db)
+        .await
+        .ok()?;
+        let n_prior: i64 = count_row.try_get("cnt").unwrap_or(0);
+        if n_prior < 5 {
+            return None; // evaluator will still return Inapplicable — handled gracefully
+        }
+
+        // Mean embedding for current persona version vs prior version (for cosine).
+        let curr_mean = state.memory_store
+            .mean_embedding_for_persona_version(db_agent.agent_id, persona_version, 50)
+            .await
+            .ok()??;
+
+        // If this is persona version 1, compare against itself (cosine = 1.0 = stable).
+        // For v2+, compare against v-1 to detect inter-version drift.
+        let reference = if persona_version > 1 {
+            state.memory_store
+                .mean_embedding_for_persona_version(db_agent.agent_id, persona_version - 1, 50)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| curr_mean.clone())
+        } else {
+            curr_mean.clone()
+        };
+
+        // Cosine similarity.
+        let cos = agent_bestiary_observability::drift::cosine_similarity(&curr_mean, &reference)
+            .unwrap_or(1.0);
+
+        Some(evaluator_lifelong::PersonaConsistencySignal {
+            within_version_cosine: cos,
+            n_prior_episodes: n_prior as usize,
+        })
+    }.await;
+
+    // LLM config for LLM-backed evaluators.
+    let llm_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+
+    let registry = build_registry(&state, &db_agent, &agent_name, judge_enabled, lifelong_signal, llm_api_key);
     let mut per_case_signals: Vec<AggregatedSignal> = Vec::new();
     let mut any_prefilter_blocked = false;
 
@@ -795,36 +842,73 @@ fn build_registry(
     db_agent: &Agent,
     agent_name: &str,
     judge_enabled: bool,
+    lifelong_signal: Option<evaluator_lifelong::PersonaConsistencySignal>,
+    llm_api_key: Option<String>,
 ) -> EvaluatorRegistry {
     let mut registry = EvaluatorRegistry::new();
 
     // ── Pre-filters (run serially, can short-circuit) ────────────────────
-    // Track B: WildGuard safety pre-filter (pattern-only; LLM fallback opt-in).
-    registry.register(Arc::new(WildGuardEvaluator::new()));
 
-    // Track B: Faithfulness grounding pre-filter.
+    // WildGuard: pattern-only by default; LLM fallback when API key present.
+    let wildguard = if let Some(ref key) = llm_api_key {
+        WildGuardEvaluator::with_llm(Some(evaluator_wildguard::LlmConfig {
+            endpoint: "https://api.anthropic.com/v1/messages".into(),
+            api_key: key.clone(),
+            model: "claude-haiku-4-5-20251001".into(),
+        }))
+    } else {
+        WildGuardEvaluator::new()
+    };
+    registry.register(Arc::new(wildguard));
+
+    // Faithfulness: grounding check — fires when tool_invocations/evidence
+    // are present in episode context (wired in agent_output_to_episode).
     registry.register(Arc::new(FaithfulnessEvaluator::new()));
 
     // ── Dimensional evaluators (run in parallel) ─────────────────────────
+
     if judge_enabled {
         let judge: Arc<dyn agent_bestiary_evaluators::LlmJudge> =
             Arc::new(LlmJudgeAnthropic::new());
         registry.register(Arc::new(LlmJudgeEvaluator::new(judge)));
     }
 
-    // Track B: Sotopia — social goals (requires goal_spec; returns Inapplicable otherwise).
-    registry.register(Arc::new(SotopiaEvaluator::new()));
+    // Sotopia: social goals — fires when test case has a rubric (goal_spec).
+    // With LLM key: structured 1-10 scoring. Without: keyword heuristic.
+    let sotopia = if let Some(ref key) = llm_api_key {
+        SotopiaEvaluator::with_llm(evaluator_sotopia::LlmConfig {
+            endpoint: "https://api.anthropic.com/v1/messages".into(),
+            api_key: key.clone(),
+            model: "claude-haiku-4-5-20251001".into(),
+        })
+    } else {
+        SotopiaEvaluator::new()
+    };
+    registry.register(Arc::new(sotopia));
 
-    // Track B: LifelongBench — persona consistency across sessions.
-    // No signal injected at this stage — the evaluator returns Inapplicable
-    // for the first episode. The eval pipeline injects a signal when it has
-    // timeline data available (Phase 3 integration).
-    registry.register(Arc::new(LifelongBenchEvaluator::new()));
+    // LifelongBench: persona consistency — fires when ≥5 prior episodes exist.
+    // Signal pre-fetched async above and injected here.
+    let lifelong = match lifelong_signal {
+        Some(sig) => LifelongBenchEvaluator::with_signal(sig),
+        None => LifelongBenchEvaluator::new(), // returns Inapplicable gracefully
+    };
+    registry.register(Arc::new(lifelong));
 
-    // Track B: CharacterEval — persona fidelity + value alignment.
-    registry.register(Arc::new(CharacterEvaluator::new()));
+    // CharacterEval: persona fidelity + value alignment — fires for any agent
+    // with a system prompt ≥ 20 chars.
+    // With LLM key: structured scoring. Without: heuristic commitment matching.
+    let character = if let Some(ref key) = llm_api_key {
+        CharacterEvaluator::with_llm(evaluator_character::LlmConfig {
+            endpoint: "https://api.anthropic.com/v1/messages".into(),
+            api_key: key.clone(),
+            model: "claude-haiku-4-5-20251001".into(),
+        })
+    } else {
+        CharacterEvaluator::new()
+    };
+    registry.register(Arc::new(character));
 
-    // Brier calibration (existing).
+    // Brier calibration (hard-verified; existing).
     let resolver: Arc<dyn AgentNameResolver> = Arc::new(StaticAgentNameResolver {
         agent_id: db_agent.agent_id,
         agent_name: agent_name.to_string(),
@@ -834,8 +918,7 @@ fn build_registry(
     );
     registry.register(Arc::new(BrierEvaluator::new(brier_lookup)));
 
-    // Hard-verified signal: projection accuracy for SimOps dynamics/cascade agents.
-    // Inapplicable for non-SimOps agents — the evaluator self-filters by agent name.
+    // Projection accuracy (hard-verified; SimOps only — self-filters).
     let projection_lookup = Arc::new(ProjectionLookupSqlx::new(state.db.clone()));
     registry.register(Arc::new(ProjectionScoringEvaluator::new(projection_lookup)));
 

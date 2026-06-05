@@ -803,13 +803,14 @@
 
     function inapplicableHint(name) {
       const hints = {
-        "sotopia":       "Needs a rubric on the test case to evaluate social goals.",
-        "lifelong_bench":"Needs timeline history across sessions (Phase 3).",
-        "brier":         "Needs resolved fermi_forecasts for this agent.",
+        "sotopia":            "Needs a rubric — click ✦ Generate rubrics below to auto-fill.",
+        "lifelongbench":      "Needs ≥5 prior episodes for this persona version.",
+        "brier":              "Needs resolved fermi_forecasts for this agent.",
         "projection_scoring": "Only fires for simops_dynamics_runner / simops_cascade.",
+        "faithfulness":       "Fires when agent uses tools or returns evidence — run a tool-using query.",
       };
       for (const [k, v] of Object.entries(hints)) {
-        if (name.toLowerCase().includes(k)) return v;
+        if (name.toLowerCase().replace(/[_-]/g,"").includes(k.replace(/[_-]/g,""))) return v;
       }
       return "Check test case configuration.";
     }
