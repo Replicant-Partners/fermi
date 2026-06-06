@@ -1,1544 +1,1221 @@
 <!doctype html>
 <html lang="en" class="theme-hasui">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Observatory — Agent Bestiary</title>
-    <link rel="stylesheet" href="/static/css/variables.css" />
-    <link rel="stylesheet" href="/static/css/common.css" />
-    <link rel="stylesheet" href="/static/css/components.css" />
-    <style>
-      body { font-family: "Berkeley Mono", "JetBrains Mono", monospace; line-height: 1.5; background: var(--bg0-hard); }
-      .container { max-width: 1440px; margin: 0 auto; padding: 24px; }
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Observatory — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;}
+  a{color:var(--fg3);text-decoration:none;}
+  a:hover{color:var(--yellow);}
 
-      /* ── Toolbar ─────────────────────────────────────────────────── */
-      .toolbar {
-        display: flex; align-items: center; gap: 10px;
-        margin-bottom: 20px; flex-wrap: wrap;
-        padding: 12px 16px; background: var(--bg0); border: 1px solid var(--bg2);
-      }
-      .toolbar label { font-size: 0.8rem; color: var(--fg3); display: flex; align-items: center; gap: 6px; }
-      .toolbar select, .toolbar input {
-        background: var(--bg1); color: var(--fg2);
-        border: 1px solid var(--bg3); padding: 5px 8px;
-        font-family: inherit; font-size: 0.82rem; min-width: 0;
-      }
-      #agent-select { min-width: 260px; }
-      .btn {
-        background: transparent; border: 1px solid var(--bg3);
-        padding: 5px 14px; cursor: pointer; font-size: 0.8rem;
-        color: var(--fg3); font-family: inherit;
-      }
-      .btn:hover { border-color: var(--yellow); color: var(--yellow); }
-      .btn-primary { border-color: var(--yellow); color: var(--yellow); }
-      .btn-primary:hover { background: var(--yellow); color: var(--bg0-hard); }
-      .btn-danger { border-color: var(--orange); color: var(--orange); }
-      .btn-eval { border-color: var(--aqua); color: var(--aqua); }
-      .btn-eval:hover { background: var(--aqua); color: var(--bg0-hard); }
-      .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-      .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg4); display: inline-block; vertical-align: middle; margin-right: 4px; }
-      .live-dot.active { background: var(--green); animation: blink 2s infinite; }
-      @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
-      .toolbar-sep { width: 1px; height: 24px; background: var(--bg2); margin: 0 4px; }
-      .last-updated { font-size: 0.72rem; color: var(--fg4); margin-left: auto; }
+  /* ── Layout ── */
+  .obs-shell{display:flex;height:100vh;overflow:hidden;}
+  .obs-left{width:300px;min-width:260px;max-width:340px;border-right:1px solid var(--bg2);display:flex;flex-direction:column;background:var(--bg0);}
+  .obs-right{flex:1;overflow-y:auto;display:flex;flex-direction:column;}
 
-      /* ── Status bar ──────────────────────────────────────────────── */
-      .status-bar {
-        font-size: 0.8rem; padding: 6px 16px; margin-bottom: 16px;
-        border-left: 3px solid transparent;
-      }
-      .status-bar.scanning { border-color: var(--yellow); color: var(--yellow); background: rgba(215,153,33,0.06); }
-      .status-bar.done     { border-color: var(--green);  color: var(--green);  background: rgba(152,151,26,0.06); }
-      .status-bar.error    { border-color: var(--red);    color: var(--red);    background: rgba(204,36,29,0.06); }
+  /* ── Left: header ── */
+  .left-header{padding:14px 14px 10px;border-bottom:1px solid var(--bg2);}
+  .left-header h1{font-size:1rem;color:var(--yellow);margin:0 0 4px;}
+  .left-header .sub{font-size:0.72rem;color:var(--fg4);}
+  .left-header .nav{font-size:0.75rem;margin-top:6px;display:flex;gap:12px;}
 
-      /* ── Hero summary cards ──────────────────────────────────────── */
-      .hero-grid {
-        display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
-        margin-bottom: 20px;
-      }
-      @media (max-width: 1100px) { .hero-grid { grid-template-columns: repeat(3, 1fr); } }
-      @media (max-width: 700px)  { .hero-grid { grid-template-columns: repeat(2, 1fr); } }
-      .hero-card {
-        background: var(--bg0); border: 1px solid var(--bg2);
-        padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
-      }
-      .hero-label { font-size: 0.68rem; color: var(--fg4); text-transform: uppercase; letter-spacing: 1px; }
-      .hero-value { font-size: 1.4rem; font-weight: 600; color: var(--fg1); }
-      .hero-sub   { font-size: 0.72rem; color: var(--fg4); }
-      .hero-badge { display: inline-block; font-size: 0.7rem; padding: 1px 7px; border: 1px solid; }
-      .badge-good  { color: var(--green);  border-color: var(--green); }
-      .badge-warn  { color: var(--yellow); border-color: var(--yellow); }
-      .badge-bad   { color: var(--red);    border-color: var(--red); }
-      .badge-muted { color: var(--fg4);    border-color: var(--bg3); }
+  /* ── Fleet summary bar ── */
+  .fleet-bar{padding:10px 14px;background:var(--bg1);border-bottom:1px solid var(--bg2);font-size:0.75rem;}
+  .fleet-alert{background:rgba(215,153,33,0.1);border-left:3px solid var(--yellow);padding:6px 10px;margin-bottom:8px;font-size:0.75rem;color:var(--yellow);cursor:pointer;}
+  .fleet-alert:hover{background:rgba(215,153,33,0.18);}
+  .fleet-buckets{display:flex;flex-wrap:wrap;gap:6px;}
+  .bucket-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border:1px solid;font-size:0.68rem;cursor:pointer;transition:opacity 0.15s;}
+  .bucket-pill:hover{opacity:0.75;}
+  .bp-newborn   {color:#888;border-color:#555;}
+  .bp-intake    {color:#7ec8e3;border-color:#7ec8e3;}
+  .bp-learning  {color:var(--aqua);border-color:var(--aqua);}
+  .bp-functioning{color:var(--green);border-color:var(--green);}
+  .bp-established{color:#d4af37;border-color:#d4af37;}
+  .bp-flagged   {color:var(--yellow);border-color:var(--yellow);}
 
-      /* ── Main grid ───────────────────────────────────────────────── */
-      .main-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        grid-template-rows: auto auto auto;
-        gap: 14px;
-      }
-      @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
-      .span-2 { grid-column: span 2; }
-      @media (max-width: 900px) { .span-2 { grid-column: span 1; } }
+  /* ── Left: controls ── */
+  .left-controls{padding:8px 10px;border-bottom:1px solid var(--bg2);display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .left-controls input{background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);padding:4px 8px;font-family:inherit;font-size:0.78rem;flex:1;min-width:0;}
+  .left-controls select{background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);padding:4px 6px;font-family:inherit;font-size:0.72rem;}
+  .btn-xs{background:transparent;border:1px solid var(--bg3);padding:3px 8px;font-size:0.72rem;color:var(--fg4);cursor:pointer;font-family:inherit;}
+  .btn-xs:hover{border-color:var(--yellow);color:var(--yellow);}
+  .btn-xs.active{border-color:var(--aqua);color:var(--aqua);}
 
-      /* ── Section cards ───────────────────────────────────────────── */
-      .section {
-        background: var(--bg0); border: 1px solid var(--bg2); padding: 16px;
-      }
-      .section-head {
-        display: flex; align-items: center; justify-content: space-between;
-        margin-bottom: 12px;
-      }
-      .section-title {
-        font-size: 0.78rem; color: var(--yellow);
-        text-transform: uppercase; letter-spacing: 1px;
-      }
-      .section-meta { font-size: 0.72rem; color: var(--fg4); }
-      .empty { font-size: 0.8rem; color: var(--fg4); padding: 12px 0; }
+  /* ── Patient register ── */
+  .register{flex:1;overflow-y:auto;}
+  .reg-row{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--bg2);cursor:pointer;transition:background 0.1s;}
+  .reg-row:hover{background:var(--bg1);}
+  .reg-row.selected{background:var(--bg1);border-left:2px solid var(--yellow);}
+  .reg-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .rd-newborn   {background:#555;}
+  .rd-intake    {background:#7ec8e3;}
+  .rd-learning  {background:var(--aqua);}
+  .rd-functioning{background:var(--green);}
+  .rd-established{background:#d4af37;}
+  .rd-flagged   {background:var(--yellow);animation:pulse 1.5s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+  .reg-name{flex:1;font-size:0.8rem;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .reg-type{font-size:0.65rem;color:var(--fg4);width:56px;text-align:right;flex-shrink:0;}
+  .reg-vitals{display:flex;gap:3px;flex-shrink:0;}
+  .vital-dot{width:6px;height:6px;border-radius:50%;}
+  .reg-executions{font-size:0.65rem;color:var(--fg4);width:28px;text-align:right;flex-shrink:0;}
+  .reg-anom{font-size:0.65rem;color:var(--yellow);width:14px;text-align:right;flex-shrink:0;}
+  .reg-empty{padding:24px 14px;color:var(--fg4);font-size:0.8rem;text-align:center;}
 
-      /* ── Evaluator signal chart ──────────────────────────────────── */
-      .eval-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-        gap: 10px;
-      }
-      .eval-card {
-        background: var(--bg1); border: 1px solid var(--bg2);
-        padding: 10px 12px;
-      }
-      .eval-card-name {
-        font-size: 0.72rem; color: var(--fg3); text-transform: uppercase;
-        letter-spacing: 0.8px; margin-bottom: 6px;
-        display: flex; align-items: center; gap: 6px;
-      }
-      .eval-tier {
-        font-size: 0.62rem; padding: 1px 5px;
-        border: 1px solid var(--bg3); color: var(--fg4);
-      }
-      .eval-tier.prefilter { border-color: var(--orange); color: var(--orange); }
-      .eval-tier.dimensional { border-color: var(--aqua); color: var(--aqua); }
-      .eval-inapplicable { opacity: 0.4; }
-      .eval-inapplicable .eval-card-name { color: var(--fg4); }
-      .eval-score-row {
-        display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
-      }
-      .eval-dim-label { font-size: 0.72rem; color: var(--fg4); min-width: 80px; }
-      .eval-bar-bg { flex: 1; height: 5px; background: var(--bg3); }
-      .eval-bar-fill { height: 5px; transition: width 0.4s; }
-      .eval-dim-val { font-size: 0.72rem; color: var(--fg3); min-width: 32px; text-align: right; }
-      .eval-spark { margin-top: 8px; }
+  /* ── Right: top bar ── */
+  .right-topbar{padding:10px 18px;border-bottom:1px solid var(--bg2);display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--bg0);position:sticky;top:0;z-index:10;}
+  .right-topbar .agent-title{font-size:1rem;color:var(--fg1);font-weight:600;}
+  .right-topbar .agent-sub{font-size:0.75rem;color:var(--fg4);}
+  .right-topbar .maturity-badge{font-size:0.68rem;padding:2px 8px;border:1px solid;text-transform:uppercase;letter-spacing:1px;}
+  .mb-newborn   {color:#888;border-color:#555;}
+  .mb-intake    {color:#7ec8e3;border-color:#7ec8e3;}
+  .mb-learning  {color:var(--aqua);border-color:var(--aqua);}
+  .mb-functioning{color:var(--green);border-color:var(--green);}
+  .mb-established{color:#d4af37;border-color:#d4af37;}
+  .mb-flagged   {color:var(--yellow);border-color:var(--yellow);}
+  .topbar-actions{margin-left:auto;display:flex;gap:8px;align-items:center;}
+  .btn-sm{background:transparent;border:1px solid var(--bg3);padding:4px 12px;font-size:0.75rem;color:var(--fg3);cursor:pointer;font-family:inherit;}
+  .btn-sm:hover{border-color:var(--yellow);color:var(--yellow);}
+  .btn-eval-sm{border-color:var(--aqua);color:var(--aqua);}
+  .btn-eval-sm:hover{background:var(--aqua);color:var(--bg0-hard);}
+  .btn-sm:disabled{opacity:0.35;cursor:not-allowed;}
 
-      /* ── Dimension trend grid ────────────────────────────────────── */
-      .dim-trend-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 10px;
-      }
-      .dim-tile {
-        background: var(--bg1); border: 1px solid var(--bg2);
-        padding: 10px 12px;
-      }
-      .dim-tile-name { font-size: 0.72rem; color: var(--fg3); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 2px; }
-      .dim-tile-val  { font-size: 1.6rem; font-weight: 600; margin-bottom: 2px; }
-      .dim-tile-meta { font-size: 0.68rem; color: var(--fg4); margin-bottom: 6px; }
-      .dim-tile-spark { margin-top: 4px; }
+  /* ── Tabs ── */
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--bg2);padding:0 18px;background:var(--bg0);}
+  .tab{padding:8px 14px;font-size:0.78rem;color:var(--fg4);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;}
+  .tab:hover{color:var(--fg2);}
+  .tab.active{color:var(--yellow);border-bottom-color:var(--yellow);}
+  .tab-badge{font-size:0.6rem;padding:1px 5px;border-radius:8px;background:var(--yellow);color:var(--bg0-hard);margin-left:4px;vertical-align:middle;}
 
-      /* ── Timeline table ──────────────────────────────────────────── */
-      .tl-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-      .tl-table th {
-        color: var(--yellow); font-weight: 400; text-align: left;
-        padding: 4px 6px; border-bottom: 1px solid var(--bg2);
-        font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.8px;
-      }
-      .tl-table td { padding: 5px 6px; border-bottom: 1px dashed var(--bg2); vertical-align: top; }
-      .tl-table tr:last-child td { border-bottom: none; }
-      .tl-table tr:hover td { background: var(--bg1); }
-      .prov-auto-pass       { color: var(--fg4); }
-      .prov-human-approved  { color: var(--green); }
-      .prov-human-corrected { color: var(--aqua); }
-      .prov-synthetic-correction { color: var(--orange); }
-      .drift-high { color: var(--red); }
-      .drift-mid  { color: var(--yellow); }
-      .drift-ok   { color: var(--fg4); }
+  /* ── Tab panels ── */
+  .tab-panel{display:none;padding:18px;}
+  .tab-panel.active{display:block;}
 
-      /* ── Anomaly list ────────────────────────────────────────────── */
-      .anom-row {
-        display: grid; grid-template-columns: 90px 70px 1fr auto;
-        gap: 10px; padding: 7px 4px;
-        border-bottom: 1px dashed var(--bg2); font-size: 0.8rem; align-items: center;
-      }
-      .anom-row:last-child { border-bottom: none; }
-      .anom-kind { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.6px; }
-      .anom-kind.drift    { color: var(--orange); }
-      .anom-kind.conflict { color: var(--red); }
-      .anom-kind.safety   { color: var(--red); font-weight: 600; }
-      .anom-kind.rupture  { color: var(--purple); }
+  /* ── Section card ── */
+  .panel{background:var(--bg0);border:1px solid var(--bg2);padding:14px;margin-bottom:14px;}
+  .panel-title{font-size:0.72rem;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;}
 
-      /* ── Dyad table ──────────────────────────────────────────────── */
-      .dyad-row {
-        display: grid; grid-template-columns: 1fr 60px 60px 70px 40px;
-        gap: 10px; padding: 5px 4px;
-        border-bottom: 1px dashed var(--bg2); font-size: 0.78rem; align-items: center;
-      }
-      .dyad-row:last-child { border-bottom: none; }
+  /* ── Vitals grid ── */
+  .vitals-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;}
+  .vital-card{background:var(--bg1);padding:10px 12px;}
+  .vc-label{font-size:0.65rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:3px;}
+  .vc-value{font-size:1.3rem;font-weight:600;}
+  .vc-sub{font-size:0.65rem;color:var(--fg4);margin-top:2px;}
 
-      /* ── Loop health mini ────────────────────────────────────────── */
-      .loop-row {
-        display: grid; grid-template-columns: 28px 120px 1fr 80px;
-        gap: 10px; padding: 6px 4px;
-        border-bottom: 1px dashed var(--bg2); font-size: 0.78rem; align-items: center;
-      }
-      .loop-row:last-child { border-bottom: none; }
-      .loop-num { font-size: 0.7rem; color: var(--fg4); background: var(--bg2); padding: 2px 5px; text-align: center; }
-      .loop-status-closed  { color: var(--green); }
-      .loop-status-partial { color: var(--yellow); }
-      .loop-status-open    { color: var(--fg4); }
+  /* ── Care plan ── */
+  .care-plan{background:var(--bg1);border-left:3px solid var(--aqua);padding:10px 14px;font-size:0.78rem;color:var(--fg2);}
+  .care-plan.urgent{border-color:var(--yellow);color:var(--yellow);}
 
-      /* ── HITL queue preview ──────────────────────────────────────── */
-      .hitl-row {
-        display: grid; grid-template-columns: 80px 1fr auto;
-        gap: 10px; padding: 7px 4px;
-        border-bottom: 1px dashed var(--bg2); font-size: 0.78rem; align-items: center;
-      }
-      .hitl-row:last-child { border-bottom: none; }
+  /* ── Dim tiles (history) ── */
+  .dim-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;}
+  .dim-tile{background:var(--bg1);border:1px solid var(--bg2);padding:10px 12px;}
+  .dt-name{font-size:0.68rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:2px;}
+  .dt-value{font-size:1.4rem;font-weight:600;margin-bottom:2px;}
+  .dt-meta{font-size:0.65rem;color:var(--fg4);margin-bottom:6px;}
 
-      /* ── Calibration mini-chart ──────────────────────────────────── */
-      .calib-row {
-        display: flex; align-items: center; gap: 10px;
-        padding: 5px 0; border-bottom: 1px dashed var(--bg2); font-size: 0.78rem;
-      }
-      .calib-row:last-child { border-bottom: none; }
-      .calib-domain { min-width: 100px; color: var(--fg3); font-size: 0.72rem; }
-      .calib-bar-bg { flex: 1; height: 6px; background: var(--bg3); }
-      .calib-bar-fill { height: 6px; }
-      .calib-val { min-width: 36px; text-align: right; font-size: 0.72rem; color: var(--fg3); }
-      .calib-n { font-size: 0.68rem; color: var(--fg4); min-width: 28px; }
+  /* ── Eval runs ── */
+  .run-row{display:grid;grid-template-columns:80px 60px 60px 1fr 60px;gap:10px;padding:6px 4px;border-bottom:1px dashed var(--bg2);font-size:0.75rem;align-items:center;}
+  .run-row:last-child{border-bottom:none;}
+  .run-status-completed{color:var(--green);}
+  .run-status-running{color:var(--yellow);}
 
-      /* ── Test case manager ───────────────────────────────────────── */
-      .tc-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr auto;
-        gap: 10px; padding: 8px 4px;
-        border-bottom: 1px dashed var(--bg2);
-        align-items: start; font-size: 0.78rem;
-      }
-      .tc-row:last-child { border-bottom: none; }
-      .tc-query { color: var(--fg2); }
-      .tc-rubric-wrap { display: flex; flex-direction: column; gap: 4px; }
-      .tc-rubric-text {
-        color: var(--fg3); font-size: 0.75rem;
-        cursor: pointer; padding: 3px 5px;
-        border: 1px dashed transparent;
-        min-height: 24px;
-      }
-      .tc-rubric-text:hover { border-color: var(--bg3); }
-      .tc-rubric-text.empty { color: var(--fg4); font-style: italic; }
-      .tc-rubric-input {
-        background: var(--bg1); color: var(--fg2);
-        border: 1px solid var(--aqua); padding: 4px 6px;
-        font-family: inherit; font-size: 0.75rem;
-        width: 100%; resize: vertical; min-height: 40px;
-        display: none;
-      }
-      .tc-rubric-input.visible { display: block; }
-      .tc-rubric-actions { display: none; gap: 6px; }
-      .tc-rubric-actions.visible { display: flex; }
-      .tc-rubric-save { font-size: 0.72rem; color: var(--aqua); cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
-      .tc-rubric-cancel { font-size: 0.72rem; color: var(--fg4); cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
-      .tc-badge { font-size: 0.65rem; padding: 1px 6px; border: 1px solid; display: inline-block; }
-      .tc-badge-has { color: var(--green); border-color: var(--green); }
-      .tc-badge-none { color: var(--fg4); border-color: var(--bg3); }
+  /* ── Evaluator cards ── */
+  .eval-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
+  .eval-card{background:var(--bg1);border:1px solid var(--bg2);padding:10px 12px;}
+  .ec-name{font-size:0.68rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+  .ec-tier{font-size:0.6rem;padding:1px 5px;border:1px solid var(--bg3);color:var(--fg4);}
+  .ec-tier.dimensional{border-color:var(--aqua);color:var(--aqua);}
+  .ec-inapplicable{opacity:0.4;}
+  .dim-bar-row{display:flex;align-items:center;gap:6px;margin-bottom:3px;}
+  .dim-bar-label{font-size:0.68rem;color:var(--fg4);min-width:90px;}
+  .dim-bar-bg{flex:1;height:4px;background:var(--bg3);}
+  .dim-bar-fill{height:4px;}
+  .dim-bar-val{font-size:0.68rem;color:var(--fg3);min-width:28px;text-align:right;}
 
-      /* ── Eval run trigger button anim ────────────────────────────── */
-      @keyframes spin { to { transform: rotate(360deg); } }
-      .spinning::before { content:"↻ "; display:inline-block; animation: spin 1s linear infinite; }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <!-- ── Header ─────────────────────────────────────────────── -->
-      <header style="margin-bottom: 18px; display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px;">
-        <div>
-          <h1 style="font-size:1.35rem; color:var(--yellow); margin:0">
-            Observatory
-            <span style="color:var(--fg4); font-weight:normal; font-size:0.82rem">— per-agent longitudinal view</span>
-          </h1>
-          <div style="margin-top:4px; font-size:0.78rem">
-            <a href="/dashboard" style="color:var(--fg3); text-decoration:none">← Dashboard</a>
-            <span style="margin:0 10px; color:var(--bg3)">·</span>
-            <a href="/observatory/hitl" style="color:var(--fg3); text-decoration:none">Review queue →</a>
-          </div>
-        </div>
-        <span class="last-updated" id="last-updated"></span>
-      </header>
+  /* ── Relationship cards ── */
+  .rel-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;}
+  .rel-card{background:var(--bg1);border:1px solid var(--bg2);padding:12px;}
+  .rc-name{font-size:0.85rem;color:var(--fg1);font-weight:600;margin-bottom:4px;}
+  .rc-id{font-size:0.65rem;color:var(--fg4);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rc-vitals{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:8px;}
+  .rcv-label{font-size:0.6rem;color:var(--fg4);}
+  .rcv-value{font-size:0.85rem;font-weight:600;}
+  .rc-status{font-size:0.65rem;padding:2px 6px;border:1px solid;display:inline-block;}
+  .rcs-strong{color:var(--green);border-color:var(--green);}
+  .rcs-developing{color:var(--aqua);border-color:var(--aqua);}
+  .rcs-new{color:var(--fg4);border-color:var(--bg3);}
+  .rcs-needs_attention{color:var(--yellow);border-color:var(--yellow);}
+  .rc-name-input{background:var(--bg0);border:1px solid var(--bg3);color:var(--fg2);padding:3px 6px;font-family:inherit;font-size:0.75rem;width:100%;margin-top:6px;}
+  .rc-save{font-size:0.68rem;color:var(--aqua);cursor:pointer;background:none;border:none;font-family:inherit;padding:2px 0;}
 
-      <!-- ── Toolbar ────────────────────────────────────────────── -->
-      <div class="toolbar">
-        <label>Agent:
-          <select id="agent-select" onchange="onAgentChange()">
-            <option value="">— select agent —</option>
-          </select>
-        </label>
-        <div class="toolbar-sep"></div>
-        <label>Window:
-          <select id="window-select">
-            <option value="20">20</option>
-            <option value="50" selected>50</option>
-            <option value="100">100</option>
-            <option value="200">200</option>
-          </select>
-        </label>
-        <label>Provider:
-          <select id="provider-filter" onchange="onProviderChange()">
-            <option value="">All providers</option>
-          </select>
-        </label>
-        <div class="toolbar-sep"></div>
-        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
-          <select id="eval-scope" onchange="onEvalScopeChange()" style="background:var(--bg1); color:var(--fg2); border:1px solid var(--bg3); padding:5px 8px; font-family:inherit; font-size:0.82rem;">
-            <option value="single">Single agent</option>
-            <option value="subset">Select agents…</option>
-            <option value="all">All my agents</option>
-          </select>
-          <button class="btn btn-eval" id="run-eval-btn" onclick="triggerEvalRun()" disabled>▶ Run eval</button>
-          <label style="font-size:0.78rem; color:var(--fg4); display:flex; align-items:center; gap:4px;">
-            <input type="checkbox" id="eval-judge" style="accent-color:var(--aqua)"> + Judge
-          </label>
-        </div>
-        <!-- Subset picker — shown when scope = subset -->
-        <div id="eval-subset-wrap" style="display:none; width:100%; margin-top:6px; padding:10px 12px; background:var(--bg1); border:1px solid var(--bg2);">
-          <div style="font-size:0.75rem; color:var(--fg4); margin-bottom:8px;">Select agents to evaluate (ctrl/cmd+click for multiple):</div>
-          <select id="eval-subset-list" multiple onchange="updateRunEvalBtn()" style="width:100%; min-height:100px; background:var(--bg0); color:var(--fg2); border:1px solid var(--bg3); font-family:inherit; font-size:0.8rem; padding:4px;"></select>
-        </div>
-        <button class="btn" id="scan-btn" onclick="triggerScan()" disabled>⊙ Scan</button>
-        <div class="toolbar-sep"></div>
-        <div style="display:flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--fg4)">
-          <span class="live-dot" id="live-dot"></span>
-          <select id="refresh-select" onchange="onRefreshChange()" style="background:transparent; border:none; color:var(--fg4); font-family:inherit; font-size:0.78rem; cursor:pointer;">
-            <option value="0" selected>off</option>
-            <option value="15">15 s</option>
-            <option value="30">30 s</option>
-            <option value="60">60 s</option>
-          </select>
-        </div>
-      </div>
+  /* ── Loop health ── */
+  .loop-row{display:grid;grid-template-columns:32px 140px 1fr 70px;gap:10px;padding:6px 4px;border-bottom:1px dashed var(--bg2);font-size:0.75rem;align-items:start;}
+  .loop-row:last-child{border-bottom:none;}
+  .loop-num{font-size:0.68rem;color:var(--fg4);background:var(--bg2);padding:2px 5px;text-align:center;}
+  .loop-closed{color:var(--green);}
+  .loop-partial{color:var(--yellow);}
+  .loop-open{color:var(--fg4);}
 
-      <!-- ── Status bar ─────────────────────────────────────────── -->
-      <div class="status-bar" id="status-bar" style="display:none"></div>
+  /* ── Test cases ── */
+  .tc-row{display:grid;grid-template-columns:1fr 1fr 60px;gap:8px;padding:7px 4px;border-bottom:1px dashed var(--bg2);font-size:0.75rem;align-items:start;}
+  .tc-row:last-child{border-bottom:none;}
+  .tc-query{color:var(--fg2);}
+  .tc-rubric{color:var(--fg3);font-size:0.72rem;cursor:pointer;padding:2px 4px;border:1px dashed transparent;}
+  .tc-rubric:hover{border-color:var(--bg3);}
+  .tc-rubric.empty{color:var(--fg4);font-style:italic;}
+  .tc-rubric-input{display:none;background:var(--bg1);border:1px solid var(--aqua);color:var(--fg2);padding:3px 5px;font-family:inherit;font-size:0.72rem;width:100%;resize:vertical;min-height:36px;}
+  .tc-rubric-input.show{display:block;}
 
-      <!-- ── Main content (hidden until agent loaded) ───────────── -->
-      <div id="obs-main" style="display:none">
+  /* ── Fleet empty state ── */
+  .fleet-empty{padding:48px 24px;text-align:center;color:var(--fg4);}
+  .fleet-empty h2{font-size:1rem;color:var(--fg2);margin-bottom:8px;}
 
-        <!-- ── Hero cards ──────────────────────────────────────── -->
-        <div class="hero-grid" id="hero-grid">
-          <div class="hero-card">
-            <div class="hero-label">Persona version</div>
-            <div class="hero-value" id="h-pv">—</div>
-            <div class="hero-sub" id="h-pv-sub"></div>
-          </div>
-          <div class="hero-card">
-            <div class="hero-label">Health</div>
-            <div class="hero-value" id="h-score">—</div>
-            <div class="hero-sub" id="h-score-sub"></div>
-          </div>
-          <div class="hero-card">
-            <div class="hero-label">Dimensions tracked</div>
-            <div class="hero-value" id="h-dims">—</div>
-            <div class="hero-sub" id="h-dims-sub"></div>
-          </div>
-          <div class="hero-card">
-            <div class="hero-label">Anomalies (open)</div>
-            <div class="hero-value" id="h-anomalies">—</div>
-            <div class="hero-sub" id="h-anomalies-sub"></div>
-          </div>
-          <div class="hero-card">
-            <div class="hero-label">Calibration</div>
-            <div class="hero-value" id="h-calib">—</div>
-            <div class="hero-sub" id="h-calib-sub"></div>
-          </div>
-          <div class="hero-card">
-            <div class="hero-label">Trend</div>
-            <div class="hero-value" id="h-trend">—</div>
-            <div class="hero-sub" id="h-trend-sub"></div>
-          </div>
-        </div>
+  /* ── Status strip ── */
+  .status-strip{padding:6px 18px;font-size:0.75rem;border-left:3px solid transparent;margin:0 18px 14px;}
+  .ss-scanning{border-color:var(--yellow);color:var(--yellow);background:rgba(215,153,33,0.06);}
+  .ss-done{border-color:var(--green);color:var(--green);background:rgba(152,151,26,0.06);}
+  .ss-error{border-color:var(--red);color:var(--red);background:rgba(204,36,29,0.06);}
 
-        <!-- ── Main grid ───────────────────────────────────────── -->
-        <div class="main-grid">
+  /* ── Provider health panel ── */
+  .prov-row{display:grid;grid-template-columns:140px 60px 60px 1fr;gap:10px;padding:6px 4px;border-bottom:1px dashed var(--bg2);font-size:0.75rem;align-items:center;}
+  .prov-row:last-child{border-bottom:none;}
 
-          <!-- Row 1: Dimension tiles + Evaluator breakdown -->
-          <div class="section span-2">
-            <div class="section-head">
-              <span class="section-title">Dimensions — rolling trend</span>
-              <span class="section-meta" id="dims-meta"></span>
-            </div>
-            <div id="dim-tiles" class="dim-trend-grid"></div>
-          </div>
+  /* ── Anomaly timeline ── */
+  .anom-row{display:grid;grid-template-columns:80px 70px 1fr auto;gap:8px;padding:6px 4px;border-bottom:1px dashed var(--bg2);font-size:0.75rem;align-items:center;}
+  .anom-row:last-child{border-bottom:none;}
+  .ak-drift{color:var(--orange);}
+  .ak-conflict{color:var(--red);}
+  .ak-safety{color:var(--red);font-weight:600;}
+  .ak-rupture{color:var(--purple);}
+  .badge{font-size:0.65rem;padding:1px 6px;border:1px solid;}
+  .bg-good{color:var(--green);border-color:var(--green);}
+  .bg-warn{color:var(--yellow);border-color:var(--yellow);}
+  .bg-muted{color:var(--fg4);border-color:var(--bg3);}
 
-          <!-- Row 2: Evaluator cards + Anomalies -->
-          <div class="section">
-            <div class="section-head">
-              <span class="section-title">Evaluators</span>
-              <span class="section-meta" id="eval-meta"></span>
-            </div>
-            <div id="eval-cards" class="eval-grid"></div>
-          </div>
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar{width:4px;height:4px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:var(--bg3);}
+  </style>
+</head>
+<body>
+<div class="obs-shell">
 
-          <div class="section">
-            <div class="section-head">
-              <span class="section-title">Anomalies</span>
-              <span class="section-meta" id="anom-meta"></span>
-            </div>
-            <div id="anom-list"></div>
-          </div>
-
-          <!-- Row 3: Timeline + Calibration+Dyads -->
-          <div class="section">
-            <div class="section-head">
-              <span class="section-title">Timeline</span>
-              <span class="section-meta" id="tl-meta"></span>
-            </div>
-            <div id="tl-table-wrap" style="overflow-x:auto">
-              <table class="tl-table">
-                <thead>
-                  <tr>
-                    <th>When</th>
-                    <th>Pv</th>
-                    <th>Prov</th>
-                    <th>Dims snapshot</th>
-                    <th>Drift</th>
-                    <th>Flags</th>
-                  </tr>
-                </thead>
-                <tbody id="tl-body"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <div style="display:flex; flex-direction:column; gap:14px;">
-            <!-- Calibration -->
-            <div class="section" style="flex:1">
-              <div class="section-head">
-                <span class="section-title">Calibration</span>
-                <span class="section-meta" id="calib-meta"></span>
-              </div>
-              <div id="calib-list"></div>
-            </div>
-
-            <!-- Dyads -->
-            <div class="section" style="flex:1">
-              <div class="section-head">
-                <span class="section-title">Dyad state</span>
-                <span class="section-meta" id="dyads-meta"></span>
-              </div>
-              <div id="dyads-list"></div>
-            </div>
-          </div>
-
-          <!-- Row 4: Loop health (full width) -->
-          <div class="section span-2">
-            <div class="section-head">
-              <span class="section-title">Loop health</span>
-              <span class="section-meta">RSI feedback loop status for this agent</span>
-            </div>
-            <div id="loop-health"></div>
-          </div>
-
-          <!-- Row 5: Test case manager (full width) -->
-          <div class="section span-2">
-            <div class="section-head">
-              <span class="section-title">Test cases</span>
-              <span class="section-meta" id="tc-meta"></span>
-              <div style="display:flex; gap:8px; margin-left:auto">
-                <button class="btn btn-eval" id="gen-rubrics-btn" onclick="generateRubrics()">✦ Generate rubrics</button>
-                <button class="btn" onclick="loadTestCases()">↺ Refresh</button>
-              </div>
-            </div>
-            <div id="tc-hint" style="font-size:0.75rem; color:var(--fg4); margin-bottom:10px; display:none">
-              Sotopia evaluates <em>goal_completion</em>, <em>social_capital</em>, and <em>rapport</em> when a rubric is set.
-              Click <strong>✦ Generate rubrics</strong> to auto-generate rubrics for all test cases using the agent's system prompt.
-              You can also edit any rubric inline below.
-            </div>
-            <div id="tc-list"></div>
-          </div>
-
-        </div><!-- /main-grid -->
-      </div><!-- /obs-main -->
-
-      <!-- ── Empty state ─────────────────────────────────────────── -->
-      <div id="empty-state" style="padding:48px 0; text-align:center; color:var(--fg4); font-size:0.9rem">
-        Select an agent above to load its observability view.
+  <!-- ── LEFT PANEL ── -->
+  <div class="obs-left">
+    <div class="left-header">
+      <h1>Observatory</h1>
+      <div class="sub">Clinical practice — agent health &amp; behaviour</div>
+      <div class="nav">
+        <a href="/dashboard">← Dashboard</a>
+        <a href="/observatory/hitl">Review queue →</a>
       </div>
     </div>
 
-    <script src="/static/js/widgets/micro-chart.js"></script>
-    <script>
-    // ──────────────────────────────────────────────────────────────────────────
-    // State
-    // ──────────────────────────────────────────────────────────────────────────
-    let _agent = null;         // { agent_id, agent_name }
-    let _tl    = null;         // last timeline response
-    let _dyads = null;
-    let _anoms = null;
-    let _calib = null;
-    let _evalRuns = null;      // last few eval runs
-    let _evalSignals = null;   // signals for most-recent run
-    let _refreshTimer = null;
-    let _loading = false;
-    let _providerFilter = "";
+    <!-- Fleet summary bar -->
+    <div class="fleet-bar" id="fleet-bar">
+      <div id="fleet-alert-area"></div>
+      <div class="fleet-buckets" id="fleet-buckets"></div>
+    </div>
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Boot: load agent list
-    // ──────────────────────────────────────────────────────────────────────────
-    async function bootAgentList() {
-      try {
-        // Fetch agents + providers in parallel
-        const [mineResp, curatedResp, providersResp] = await Promise.all([
-          fetch("/api/agents/mine"),
-          fetch("/api/agents?tier=curated&limit=200"),
-          fetch("/api/me/providers"),
-        ]);
-        const mineData      = mineResp.ok      ? await mineResp.json()      : {};
-        const curatedData   = curatedResp.ok   ? await curatedResp.json()   : {};
-        const providersData = providersResp.ok ? await providersResp.json() : {};
+    <!-- Controls -->
+    <div class="left-controls">
+      <input id="search-input" type="text" placeholder="Search agents…" oninput="filterRegister()"/>
+      <select id="sort-select" onchange="sortRegister()" title="Sort">
+        <option value="urgency">By urgency</option>
+        <option value="name">By name</option>
+        <option value="executions">By usage</option>
+        <option value="health">By health</option>
+      </select>
+    </div>
 
-        // Populate provider filter from live data
-        const providerSel = document.getElementById("provider-filter");
-        (providersData.providers || []).sort().forEach(p => {
-          const opt = document.createElement("option");
-          opt.value = p;
-          // Human-readable labels for known providers
-          const labels = {
-            anthropic: "Anthropic (Claude)",
-            openrouter: "OpenRouter",
-            ollama: "Ollama (local)",
-            mistral: "Mistral",
-            qwen: "Qwen / Alibaba",
-            glm: "GLM / Zhipu",
-            deepseek: "DeepSeek",
-          };
-          opt.textContent = labels[p] || p;
-          providerSel.appendChild(opt);
-        });
+    <!-- Patient register -->
+    <div class="register" id="register">
+      <div class="reg-empty">Loading practice…</div>
+    </div>
 
-        const mineAgents    = (mineData.agents || []).map(a => ({ ...a, _source: "mine" }));
-        // curated list uses agent_name as agent_id in its response shape — normalise
-        const curatedAgents = (curatedData.agents || []).map(a => ({
-          agent_id:   a.uuid || a.agent_id,   // uuid is the real UUID field
-          agent_name: a.agent_id || a.agent_name, // agent_id is actually the name string
-          total_executions: a.execution_stats?.total_executions || 0,
-          _source: "curated",
-        })).filter(a => a.agent_id && a.agent_name);
+    <!-- Bottom: eval scope + run -->
+    <div style="padding:8px 10px;border-top:1px solid var(--bg2);display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--bg0);">
+      <select id="eval-scope" onchange="onEvalScopeChange()" style="background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);padding:4px 6px;font-family:inherit;font-size:0.72rem;flex:1;">
+        <option value="single">This agent</option>
+        <option value="subset">Select agents…</option>
+        <option value="all">All agents</option>
+      </select>
+      <label style="font-size:0.72rem;color:var(--fg4);display:flex;align-items:center;gap:3px;">
+        <input type="checkbox" id="eval-judge" style="accent-color:var(--aqua);"> Judge
+      </label>
+      <button class="btn-xs" id="run-eval-btn" onclick="triggerEvalRun()" disabled>▶ Run eval</button>
+    </div>
+    <!-- Subset picker -->
+    <div id="eval-subset-wrap" style="display:none;padding:8px 10px;background:var(--bg1);border-top:1px solid var(--bg2);">
+      <select id="eval-subset-list" multiple onchange="updateRunBtn()" style="width:100%;min-height:80px;background:var(--bg0);color:var(--fg2);border:1px solid var(--bg3);font-family:inherit;font-size:0.72rem;"></select>
+    </div>
+  </div>
 
-        // Merge: owned agents first, then curated not already in mine list
-        const ownedIds = new Set(mineAgents.map(a => a.agent_id?.toString()));
-        const combined = [
-          ...mineAgents,
-          ...curatedAgents.filter(a => !ownedIds.has(a.agent_id?.toString())),
-        ];
+  <!-- ── RIGHT PANEL ── -->
+  <div class="obs-right" id="obs-right">
 
-        const agents = combined
-          .filter(a => a.agent_id && a.agent_name)
-          .sort((a, b) => (b.total_executions || 0) - (a.total_executions || 0));
+    <!-- Default: fleet overview -->
+    <div id="fleet-view" style="padding:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:1rem;color:var(--fg1);font-weight:600;">Practice overview</div>
+          <div style="font-size:0.75rem;color:var(--fg4);">Select an agent from the register to examine them</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="provider-filter-fleet" onchange="filterByProvider()" style="background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);padding:4px 8px;font-family:inherit;font-size:0.75rem;">
+            <option value="">All providers</option>
+          </select>
+          <button class="btn-sm" onclick="runFleetScan()" id="fleet-scan-btn">⊙ Fleet scan</button>
+          <button class="btn-sm" onclick="autoFormDyads()">⟳ Auto-form dyads</button>
+        </div>
+      </div>
 
-        _allAgents = agents;
+      <!-- Fleet alerts -->
+      <div id="fleet-alerts-panel"></div>
 
-        const sel = document.getElementById("agent-select");
-        agents.forEach(a => {
-          const opt = document.createElement("option");
-          // All API endpoints resolve by agent_name, not UUID.
-          // Store name as value; keep UUID only for dedup logic.
-          opt.value = a.agent_name;
-          opt.dataset.uuid = a.agent_id || "";
-          opt.textContent = `${a.agent_name}  (${a.total_executions || 0} runs)`;
-          sel.appendChild(opt);
-        });
+      <!-- Provider health -->
+      <div class="panel" id="provider-health-panel">
+        <div class="panel-title">Provider health</div>
+        <div id="provider-health-list"><div style="color:var(--fg4);font-size:0.75rem;">Loading…</div></div>
+      </div>
 
-        // Populate subset picker with same list
-        populateSubsetList(agents.map(a => ({
-          agent_id: a.agent_name,   // name used as API key
-          agent_name: a.agent_name,
-        })));
-        updateRunEvalBtn();
+      <!-- Maturity distribution -->
+      <div class="panel">
+        <div class="panel-title">Practice maturity</div>
+        <div id="maturity-chart" style="display:flex;gap:6px;align-items:flex-end;height:60px;"></div>
+        <div id="maturity-legend" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:0.72rem;color:var(--fg4);"></div>
+      </div>
+    </div>
 
-        // Deep-link: ?agent=name_or_uuid
-        const urlParam = new URLSearchParams(location.search).get("agent");
-        if (urlParam) {
-          const match = agents.find(a =>
-            a.agent_name === urlParam ||
-            a.agent_id === urlParam ||
-            (a.agent_id || "").toString() === urlParam
-          );
-          if (match) {
-            sel.value = match.agent_name;
-            await loadAgent(match.agent_name, match.agent_name);
-          }
-        }
-      } catch(e) {
-        setStatus(`Failed to load agent list: ${e.message}`, "error");
-      }
-    }
+    <!-- Agent detail (hidden until selected) -->
+    <div id="agent-view" style="display:none;flex:1;">
+      <div class="right-topbar">
+        <div>
+          <div class="agent-title" id="av-name">—</div>
+          <div class="agent-sub" id="av-sub"></div>
+        </div>
+        <div class="maturity-badge" id="av-maturity-badge"></div>
+        <div class="topbar-actions">
+          <span style="font-size:0.72rem;color:var(--fg4)" id="av-last-updated"></span>
+          <button class="btn-sm btn-eval-sm" id="single-run-btn" onclick="triggerSingleEval()" disabled>▶ Eval</button>
+          <button class="btn-sm" id="scan-btn" onclick="triggerScan()" disabled>⊙ Scan</button>
+          <select id="window-select" style="background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);padding:4px 6px;font-family:inherit;font-size:0.72rem;" onchange="loadAgentData()">
+            <option value="20">20</option><option value="50" selected>50</option><option value="100">100</option>
+          </select>
+          <select id="provider-filter-agent" onchange="applyProviderFilter()" style="background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);padding:4px 6px;font-family:inherit;font-size:0.72rem;">
+            <option value="">All providers</option>
+          </select>
+        </div>
+      </div>
 
-    async function onAgentChange() {
-      const sel = document.getElementById("agent-select");
-      const name = sel.value;   // value is agent_name
-      if (!name) return;
-      await loadAgent(name, name);
-      updateRunEvalBtn();
-    }
+      <!-- Status strip -->
+      <div id="status-strip" style="display:none;" class="status-strip"></div>
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Load / refresh
-    // ──────────────────────────────────────────────────────────────────────────
-    async function loadAgent(agentId, agentName) {
-      if (_loading) return;
-      _loading = true;
-      _agent = { agent_id: agentId, agent_name: agentName };
-      document.getElementById("run-eval-btn").disabled = false;
-      document.getElementById("scan-btn").disabled = false;
-      setStatus("Loading…", "scanning");
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('overview')">Overview</div>
+        <div class="tab" onclick="switchTab('history')">History</div>
+        <div class="tab" onclick="switchTab('relationships')" id="tab-relationships">Relationships</div>
+        <div class="tab" onclick="switchTab('sessions')">Sessions</div>
+        <div class="tab" onclick="switchTab('testcases')" id="tab-tc">Test cases</div>
+        <div class="tab" onclick="switchTab('loops')">Loops</div>
+      </div>
 
-      // Update URL — use name (human-readable, resolves by name in all API calls)
-      const u = new URL(location.href);
-      u.searchParams.set("agent", agentName);
-      history.replaceState(null, "", u.toString());
+      <!-- ── OVERVIEW ── -->
+      <div class="tab-panel active" id="panel-overview">
+        <!-- Care plan -->
+        <div class="care-plan" id="care-plan-box" style="margin-bottom:14px;"></div>
+        <!-- Vitals -->
+        <div class="panel">
+          <div class="panel-title">Vital signs</div>
+          <div class="vitals-grid" id="vitals-grid"></div>
+        </div>
+        <!-- Latest scores -->
+        <div class="panel">
+          <div class="panel-title">Latest scores <span id="scores-meta" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
+          <div class="eval-grid" id="evaluator-cards"></div>
+        </div>
+      </div>
 
-      try {
-        await refreshAll();
-        document.getElementById("obs-main").style.display = "";
-        document.getElementById("empty-state").style.display = "none";
-        setStatus("", "");
-        setLastUpdated();
-        onRefreshChange();
-      } catch(e) {
-        setStatus(`Load failed: ${e.message}`, "error");
-      } finally {
-        _loading = false;
-      }
-    }
+      <!-- ── HISTORY ── -->
+      <div class="tab-panel" id="panel-history">
+        <div class="panel">
+          <div class="panel-title">Dimension trends</div>
+          <div class="dim-grid" id="dim-tiles"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">Anomalies</div>
+          <div id="anom-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">Timeline entries <span id="tl-meta" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
+          <div id="tl-list" style="overflow-x:auto;"></div>
+        </div>
+      </div>
 
-    async function refreshAll() {
-      if (!_agent) return;
-      const id = _agent.agent_id;
-      const win = document.getElementById("window-select").value;
-
-      const [tl, dyads, anoms, calib, evalRuns, tcData] = await Promise.all([
-        fetchJson(`/api/observatory/agents/${enc(id)}/timeline?window=${win}`),
-        fetchJson(`/api/observatory/agents/${enc(id)}/dyads`),
-        fetchJson(`/api/observatory/agents/${enc(id)}/anomalies?limit=50`),
-        fetchJson(`/api/agents/${enc(id)}/calibration`).catch(() => null),
-        fetchJson(`/api/agents/${enc(id)}/eval/runs`).catch(() => null),
-        fetchJson(`/api/agents/${enc(id)}/eval/test-cases`).catch(() => null),
-      ]);
-      if (tcData) { _testCases = tcData.test_cases || []; }
-
-      _tl = tl; _dyads = dyads; _anoms = anoms; _calib = calib; _evalRuns = evalRuns;
-
-      // Fetch signals for most-recent eval run
-      _evalSignals = null;
-      if (evalRuns && evalRuns.runs && evalRuns.runs.length > 0) {
-        const latestRun = evalRuns.runs[0];
-        try {
-          const sigResp = await fetchJson(`/api/agents/${enc(id)}/eval/runs/${latestRun.run_id}/signals`);
-          _evalSignals = sigResp;
-        } catch(_) {}
-      }
-
-      renderAll();
-    }
-
-    async function silentRefresh() {
-      if (!_agent || _loading) return;
-      try {
-        await refreshAll();
-        setLastUpdated();
-      } catch(_) {}
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Render
-    // ──────────────────────────────────────────────────────────────────────────
-    function renderAll() {
-      renderHero();
-      renderDimTiles();
-      renderEvalCards();
-      renderAnomalies();
-      renderTimeline();
-      renderCalibration();
-      renderDyads();
-      renderLoopHealth();
-      renderTestCases();
-    }
-
-    // ── Hero cards ────────────────────────────────────────────────────────────
-    function renderHero() {
-      const tl = _tl || {};
-      const anoms = (_anoms?.anomalies || []);
-      const openAnoms = anoms.filter(a => !a.resolved_at && a.requires_review);
-      const series = tl.trend?.series || {};
-      const dimNames = Object.keys(series);
-      const allMeans = dimNames.map(n => series[n].mean).filter(v => v != null);
-      const overallHealth = allMeans.length ? (allMeans.reduce((a,b)=>a+b,0)/allMeans.length) : null;
-
-      setText("h-pv", `v${tl.persona_version ?? "—"}`);
-      setText("h-pv-sub", _agent?.agent_name || "");
-
-      if (overallHealth != null) {
-        const el = document.getElementById("h-score");
-        el.textContent = `${Math.round(overallHealth*100)}%`;
-        el.style.color = colorFor(overallHealth);
-        setText("h-score-sub", openAnoms.length ? `${openAnoms.length} open anomalies` : "No open anomalies");
-      } else {
-        setText("h-score", "—"); setText("h-score-sub", "No eval data");
-      }
-
-      setText("h-dims", dimNames.length || "0");
-      setText("h-dims-sub", dimNames.length ? dimNames.slice(0,3).join(", ") + (dimNames.length > 3 ? "…" : "") : "Run an eval first");
-
-      const el4 = document.getElementById("h-anomalies");
-      el4.textContent = openAnoms.length;
-      el4.style.color = openAnoms.length > 0 ? "var(--yellow)" : "var(--green)";
-      setText("h-anomalies-sub", openAnoms.length ? "Pending review" : "All clear");
-
-      const calib = _calib;
-      if (calib?.calibration_score != null) {
-        const el5 = document.getElementById("h-calib");
-        el5.textContent = `${Math.round(calib.calibration_score*100)}%`;
-        el5.style.color = colorFor(calib.calibration_score);
-        setText("h-calib-sub", `n=${calib.n_resolved_forecasts ?? 0} · ${calib.trend || "—"}`);
-      } else {
-        setText("h-calib", "—"); setText("h-calib-sub", "No resolved forecasts");
-      }
-
-      // Trend: count improving vs degrading dims
-      const improving = dimNames.filter(n => {
-        const s = series[n];
-        return s.latest != null && s.latest > s.mean + 0.04;
-      }).length;
-      const degrading = dimNames.filter(n => {
-        const s = series[n];
-        return s.latest != null && s.latest < s.mean - 0.04;
-      }).length;
-      const trendEl = document.getElementById("h-trend");
-      if (dimNames.length === 0) {
-        trendEl.textContent = "—"; trendEl.style.color = "var(--fg4)";
-        setText("h-trend-sub", "No data");
-      } else if (degrading > improving) {
-        trendEl.textContent = "↓ Degrading"; trendEl.style.color = "var(--red)";
-        setText("h-trend-sub", `${degrading} dims falling`);
-      } else if (improving > 0) {
-        trendEl.textContent = "↑ Improving"; trendEl.style.color = "var(--green)";
-        setText("h-trend-sub", `${improving} dims rising`);
-      } else {
-        trendEl.textContent = "→ Stable"; trendEl.style.color = "var(--fg4)";
-        setText("h-trend-sub", "Holding steady");
-      }
-    }
-
-    // ── Dimension tiles with sparklines ──────────────────────────────────────
-    function renderDimTiles() {
-      const series = _tl?.trend?.series || {};
-      const entries = (_tl?.entries || []).slice().reverse(); // oldest→newest
-      const dimNames = Object.keys(series).sort();
-      const el = document.getElementById("dim-tiles");
-      setText("dims-meta", `${dimNames.length} tracked · window ${_tl?.window ?? "—"}`);
-
-      if (!dimNames.length) {
-        const runCount = (_evalRuns?.runs || []).length;
-        el.innerHTML = `<div class="empty">${
-          runCount > 0
-            ? `${runCount} eval run(s) found but no dimension scores — prior runs may predate evaluator wiring. Click <strong>▶ Run eval</strong> to generate a fresh baseline.`
-            : 'No scored dimensions yet — click <strong>▶ Run eval</strong> to populate.'
-        }</div>`;
-        return;
-      }
-
-      el.innerHTML = dimNames.map(name => {
-        const s = series[name];
-        const mean = s.mean ?? 0;
-        const std  = s.std_dev ?? 0;
-        const lat  = s.latest ?? mean;
-        const color = colorFor(mean);
-        const arrow = lat > mean + 0.04 ? "↑" : lat < mean - 0.04 ? "↓" : "→";
-        const arrowColor = lat > mean + 0.04 ? "var(--green)" : lat < mean - 0.04 ? "var(--red)" : "var(--fg4)";
-
-        // Build sparkline values from timeline dim_scores
-        const sparkVals = entries.map(e => {
-          const ds = e.dim_scores;
-          if (!ds) return null;
-          const v = typeof ds === "object" ? ds[name] : null;
-          return v != null ? v : null;
-        }).filter(v => v != null);
-
-        const spark = sparkVals.length >= 2
-          ? MicroChart.sparkline(sparkVals, { width: 200, height: 36, color })
-          : `<div style="height:36px; color:var(--fg4); font-size:0.7rem; padding-top:12px">no history yet</div>`;
-
-        return `<div class="dim-tile">
-          <div class="dim-tile-name">${name}</div>
-          <div class="dim-tile-val" style="color:${color}">${pct(mean)}%
-            <span style="font-size:0.9rem; color:${arrowColor}">${arrow}</span>
+      <!-- ── RELATIONSHIPS ── -->
+      <div class="tab-panel" id="panel-relationships">
+        <div class="panel">
+          <div class="panel-title">Social graph — people this agent knows
+            <button class="btn-xs" onclick="autoFormDyads()">⟳ Auto-form dyads</button>
           </div>
-          <div class="dim-tile-meta">σ ${std.toFixed(2)} · n=${sparkVals.length}</div>
-          <div class="dim-tile-spark">${spark}</div>
-        </div>`;
-      }).join("");
-    }
+          <div id="rel-hint" style="font-size:0.75rem;color:var(--fg4);margin-bottom:10px;">
+            Dyads form automatically after 3 interactions. Give them names to track relationships over time.
+          </div>
+          <div class="rel-grid" id="relationships-grid"></div>
+        </div>
+      </div>
 
-    // ── Evaluator cards ───────────────────────────────────────────────────────
-    function renderEvalCards() {
-      const el = document.getElementById("eval-cards");
-      const runs = _evalRuns?.runs || [];
-      const signals = _evalSignals?.signals || [];
-      const latestAgg = _evalRuns?.runs?.[0]?.aggregated_signal;
-      const inapplicable = latestAgg?.inapplicable_evaluators || [];
+      <!-- ── SESSIONS ── -->
+      <div class="tab-panel" id="panel-sessions">
+        <div class="panel">
+          <div class="panel-title">Eval runs <span id="runs-meta" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
+          <div id="runs-list"></div>
+        </div>
+      </div>
 
-      if (!runs.length) {
-        setText("eval-meta", "no runs yet");
-        el.innerHTML = `<div class="empty" style="grid-column:span 3">
-          No eval runs yet. Click <strong>▶ Run eval</strong> to generate the first baseline.
-        </div>`;
-        return;
-      }
-
-      const latestRun = runs[0];
-      setText("eval-meta", `latest run ${timeSince(latestRun.created_at)} · ${runs.length} runs total`);
-
-      // Group signals by evaluator_name
-      const byEval = {};
-      for (const s of signals) {
-        if (!byEval[s.evaluator_name]) {
-          byEval[s.evaluator_name] = { tier: s.evaluator_tier, version: s.evaluator_version, dims: [] };
-        }
-        byEval[s.evaluator_name].dims.push(s);
-      }
-
-      // Build historical sparklines per evaluator+dimension from all runs
-      const allRunIds = runs.slice(0, 20).map(r => r.run_id);
-      // Use dim_scores from timeline entries as proxy (group by evaluator via signal history)
-      // For now use per-run aggregated signal if available
-      const runSeries = {}; // evaluator → dimension → [scores]
-      for (const r of runs.slice(0,20)) {
-        const agg = r.aggregated_signal;
-        if (!agg?.per_dimension) continue;
-        for (const d of agg.per_dimension) {
-          const key = d.dimension;
-          if (!runSeries[key]) runSeries[key] = [];
-          runSeries[key].unshift(d.mean); // oldest→newest
-        }
-      }
-
-      // Render active evaluators
-      let cards = Object.entries(byEval).map(([name, data]) => {
-        const tierCls = data.tier === "prefilter" ? "prefilter" : "dimensional";
-        const dimRows = data.dims.map(s => {
-          const c = colorFor(s.score);
-          const hist = runSeries[s.dimension] || [];
-          const spark = hist.length >= 2
-            ? MicroChart.sparkline(hist, { width: 160, height: 24, color: c })
-            : "";
-          return `<div class="eval-score-row">
-            <span class="eval-dim-label">${s.dimension}</span>
-            <div class="eval-bar-bg">
-              <div class="eval-bar-fill" style="width:${pct(s.score)}%; background:${c}"></div>
+      <!-- ── TEST CASES ── -->
+      <div class="tab-panel" id="panel-testcases">
+        <div class="panel">
+          <div class="panel-title">Test cases
+            <div style="display:flex;gap:6px;">
+              <button class="btn-xs" onclick="generateRubrics()" id="gen-rubrics-btn">✦ Generate rubrics</button>
             </div>
-            <span class="eval-dim-val" style="color:${c}">${pct(s.score)}%</span>
           </div>
-          <div class="eval-spark">${spark}</div>`;
-        }).join("");
+          <div id="tc-hint" style="font-size:0.75rem;color:var(--fg4);margin-bottom:10px;display:none;">
+            Rubrics activate Sotopia evaluation (goal completion, social quality, rapport). Click to edit inline.
+          </div>
+          <div id="tc-list"></div>
+        </div>
+      </div>
 
-        return `<div class="eval-card">
-          <div class="eval-card-name">
-            ${name}
-            <span class="eval-tier ${tierCls}">${data.tier}</span>
-          </div>
-          ${dimRows || '<div class="empty" style="font-size:0.72rem">no dimensions scored</div>'}
-        </div>`;
-      });
+      <!-- ── LOOPS ── -->
+      <div class="tab-panel" id="panel-loops">
+        <div class="panel">
+          <div class="panel-title">RSI feedback loop health</div>
+          <div id="loop-health-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
-      // Inapplicable evaluators (greyed)
-      const inapplCards = inapplicable.map(name => `
-        <div class="eval-card eval-inapplicable">
-          <div class="eval-card-name">
-            ${name}
-            <span class="eval-tier">inapplicable</span>
-          </div>
-          <div style="font-size:0.7rem; color:var(--fg4); padding-top:4px">
-            No signal for this agent / run context.<br>
-            ${inapplicableHint(name)}
-          </div>
-        </div>`);
+<script src="/static/js/widgets/micro-chart.js"></script>
+<script>
+// ════════════════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════════════════
+let _allAgents    = [];   // fleet agents list
+let _agent        = null; // currently selected { agent_id (=name), agent_name }
+let _tl           = null;
+let _dyads        = null;
+let _anoms        = null;
+let _calib        = null;
+let _evalRuns     = null;
+let _evalSignals  = null;
+let _rels         = null;
+let _testCases    = [];
+let _filterMaturity = null;
+let _filterProvider = "";
+let _providerFilter = "";
+let _currentTab   = "overview";
 
-      el.innerHTML = [...cards, ...inapplCards].join("") ||
-        '<div class="empty">Signals written — reload to see breakdown.</div>';
+// ════════════════════════════════════════════════════════════════════════
+// Boot
+// ════════════════════════════════════════════════════════════════════════
+async function boot() {
+  try {
+    const [summaryResp, agentsResp, providersResp] = await Promise.all([
+      fetch("/api/observatory/fleet/summary"),
+      fetch("/api/observatory/fleet/agents"),
+      fetch("/api/me/providers"),
+    ]);
+    const summary   = summaryResp.ok   ? await summaryResp.json()   : {};
+    const agData    = agentsResp.ok    ? await agentsResp.json()    : {};
+    const provData  = providersResp.ok ? await providersResp.json() : {};
+
+    _allAgents = (agData.agents || []).sort(agentUrgencySort);
+
+    renderFleetBar(summary);
+    renderRegister(_allAgents);
+    populateProviderDropdowns(provData.providers || []);
+    renderFleetView(summary);
+
+    // Deep-link
+    const urlParam = new URLSearchParams(location.search).get("agent");
+    if (urlParam) {
+      const match = _allAgents.find(a => a.agent_name === urlParam || a.agent_id === urlParam);
+      if (match) selectAgent(match.agent_id, match.agent_name);
     }
+  } catch(e) {
+    document.getElementById("register").innerHTML = `<div class="reg-empty" style="color:var(--red)">Failed to load: ${e.message}</div>`;
+  }
+}
 
-    function inapplicableHint(name) {
-      const hints = {
-        "sotopia":            "Needs a rubric — click ✦ Generate rubrics below to auto-fill.",
-        "lifelongbench":      "Needs ≥5 prior episodes for this persona version.",
-        "brier":              "Needs resolved fermi_forecasts for this agent.",
-        "projection_scoring": "Only fires for simops_dynamics_runner / simops_cascade.",
-        "faithfulness":       "Fires when agent uses tools or returns evidence — run a tool-using query.",
-      };
-      for (const [k, v] of Object.entries(hints)) {
-        if (name.toLowerCase().replace(/[_-]/g,"").includes(k.replace(/[_-]/g,""))) return v;
-      }
-      return "Check test case configuration.";
+// ════════════════════════════════════════════════════════════════════════
+// Fleet bar + register
+// ════════════════════════════════════════════════════════════════════════
+function renderFleetBar(summary) {
+  const buckets = summary.maturity_buckets || {};
+  const open    = summary.open_anomalies || 0;
+  const alertEl = document.getElementById("fleet-alert-area");
+  alertEl.innerHTML = open > 0
+    ? `<div class="fleet-alert" onclick="filterByMaturity('flagged')">⚑ ${open} agent(s) need attention — click to filter</div>`
+    : "";
+
+  const BUCKET_ORDER = ["flagged","newborn","intake","learning","functioning","established"];
+  const LABELS = {flagged:"⚑ Flagged",newborn:"◌ Newborn",intake:"◔ Intake",learning:"◑ Learning",functioning:"● Functioning",established:"★ Established"};
+  const bucketsEl = document.getElementById("fleet-buckets");
+  bucketsEl.innerHTML = BUCKET_ORDER
+    .filter(k => buckets[k] > 0)
+    .map(k => `<span class="bucket-pill bp-${k}" onclick="filterByMaturity('${k}')">${LABELS[k]||k} ${buckets[k]}</span>`)
+    .join("");
+}
+
+function filterByMaturity(stage) {
+  _filterMaturity = _filterMaturity === stage ? null : stage;
+  document.querySelectorAll(".bucket-pill").forEach(el => {
+    el.style.opacity = (!_filterMaturity || el.className.includes(`bp-${_filterMaturity}`)) ? "1" : "0.3";
+  });
+  renderRegister(_allAgents);
+}
+
+function filterByProvider() {
+  _filterProvider = document.getElementById("provider-filter-fleet").value;
+  renderRegister(_allAgents);
+  renderFleetProviderHealth();
+}
+
+function filterRegister() { renderRegister(_allAgents); }
+function sortRegister()    { _allAgents.sort(sortFn()); renderRegister(_allAgents); }
+
+function sortFn() {
+  const s = document.getElementById("sort-select").value;
+  if (s === "name")       return (a,b) => a.agent_name.localeCompare(b.agent_name);
+  if (s === "executions") return (a,b) => (b.total_executions||0)-(a.total_executions||0);
+  if (s === "health")     return (a,b) => (b.overall_health||0)-(a.overall_health||0);
+  return agentUrgencySort;
+}
+
+function agentUrgencySort(a, b) {
+  const rank = m => ({flagged:0,declining:1,newborn:2,intake:3,learning:4,functioning:5,established:6}[m]??7);
+  return rank(a.maturity) - rank(b.maturity);
+}
+
+const MATURITY_COLORS = {newborn:"#555",intake:"#7ec8e3",learning:"var(--aqua)",functioning:"var(--green)",established:"#d4af37",flagged:"var(--yellow)"};
+
+function renderRegister(agents) {
+  const q = document.getElementById("search-input").value.toLowerCase();
+  const filtered = agents.filter(a => {
+    if (_filterMaturity && a.maturity !== _filterMaturity) return false;
+    if (_filterProvider && a.provider !== _filterProvider) return false;
+    if (q && !a.agent_name.toLowerCase().includes(q) && !(a.agent_type||"").toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const el = document.getElementById("register");
+  if (!filtered.length) { el.innerHTML = '<div class="reg-empty">No agents match the filter.</div>'; return; }
+
+  // Populate subset picker
+  const subSel = document.getElementById("eval-subset-list");
+  subSel.innerHTML = "";
+  filtered.forEach(a => {
+    const opt = document.createElement("option");
+    opt.value = a.agent_name;
+    opt.textContent = a.agent_name;
+    subSel.appendChild(opt);
+  });
+
+  el.innerHTML = filtered.map(a => {
+    const color = MATURITY_COLORS[a.maturity] || "#555";
+    const scores = a.latest_scores || {};
+    const dims = Object.values(scores).slice(0,3);
+    const vdots = dims.map(v => `<div class="vital-dot" style="background:${colorFor(v)}" title="${Math.round(v*100)}%"></div>`).join("");
+    const anomBadge = a.open_anomalies > 0 ? `<span class="reg-anom" title="${a.open_anomalies} open anomaly">⚑</span>` : '<span class="reg-anom"></span>';
+    const selected = _agent && _agent.agent_id === a.agent_name ? " selected" : "";
+    return `<div class="reg-row${selected}" onclick="selectAgent('${a.agent_name}','${a.agent_name}')">
+      <div class="reg-dot rd-${a.maturity}" style="background:${color}"></div>
+      <div class="reg-name" title="${a.agent_name}">${a.agent_name}</div>
+      <div class="reg-type">${(a.agent_type||"").slice(0,8)}</div>
+      <div class="reg-vitals">${vdots}</div>
+      <div class="reg-executions">${fmt_k(a.total_executions||0)}</div>
+      ${anomBadge}
+    </div>`;
+  }).join("");
+}
+
+function fmt_k(n) { return n >= 1000 ? (n/1000).toFixed(1)+"k" : String(n); }
+
+// ════════════════════════════════════════════════════════════════════════
+// Fleet view (right panel default)
+// ════════════════════════════════════════════════════════════════════════
+function renderFleetView(summary) {
+  renderFleetProviderHealth(summary.provider_health);
+  renderMaturityChart(summary.maturity_buckets || {});
+}
+
+function renderFleetProviderHealth(ph) {
+  if (!ph) {
+    // Re-fetch summary for provider data
+    fetch("/api/observatory/fleet/summary").then(r=>r.json()).then(d=>renderFleetProviderHealth(d.provider_health||{}));
+    return;
+  }
+  const el = document.getElementById("provider-health-list");
+  const entries = Object.entries(ph);
+  if (!entries.length) { el.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">No providers detected.</div>'; return; }
+  el.innerHTML = `<div class="prov-row" style="color:var(--yellow);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.8px;">
+    <span>Provider</span><span>Agents</span><span>Flags</span><span></span>
+  </div>` + entries.map(([prov, data]) => {
+    const anom = data.open_anomalies || 0;
+    const count = data.agent_count || 0;
+    const statusColor = anom > 0 ? "var(--yellow)" : "var(--green)";
+    const statusText  = anom > 0 ? `⚑ ${anom} flag${anom>1?"s":""}` : "● healthy";
+    return `<div class="prov-row">
+      <span style="color:var(--fg2)">${provLabel(prov)}</span>
+      <span style="color:var(--fg3)">${count}</span>
+      <span style="color:${statusColor}">${statusText}</span>
+      <span style="color:var(--fg4);font-size:0.68rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(data.agents||[]).slice(0,4).join(", ")}${(data.agents||[]).length>4?"…":""}</span>
+    </div>`;
+  }).join("");
+}
+
+function renderMaturityChart(buckets) {
+  const ORDER = ["newborn","intake","learning","functioning","established","flagged"];
+  const LABELS = {newborn:"Newborn",intake:"Intake",learning:"Learning",functioning:"Functioning",established:"Established",flagged:"Flagged"};
+  const vals = ORDER.map(k => ({ k, v: buckets[k]||0, color: MATURITY_COLORS[k]||"#555" })).filter(x=>x.v>0);
+  const max = Math.max(...vals.map(x=>x.v), 1);
+  document.getElementById("maturity-chart").innerHTML = vals.map(x => {
+    const h = Math.max(4, Math.round((x.v/max)*56));
+    return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;" onclick="filterByMaturity('${x.k}')">
+      <div style="font-size:0.65rem;color:var(--fg4)">${x.v}</div>
+      <div style="width:28px;height:${h}px;background:${x.color};opacity:0.8;"></div>
+    </div>`;
+  }).join("");
+  document.getElementById("maturity-legend").innerHTML = vals.map(x =>
+    `<span style="display:flex;align-items:center;gap:4px;cursor:pointer;" onclick="filterByMaturity('${x.k}')">
+      <span style="width:8px;height:8px;border-radius:50%;background:${x.color};display:inline-block"></span>${LABELS[x.k]}
+    </span>`
+  ).join("");
+}
+
+async function runFleetScan() {
+  const btn = document.getElementById("fleet-scan-btn");
+  btn.disabled = true; btn.textContent = "Scanning…";
+  try {
+    const r = await fetchJson("/api/observatory/fleet/scan", {method:"POST"});
+    const alerts = r.fleet_anomalies || [];
+    const panel = document.getElementById("fleet-alerts-panel");
+    if (!alerts.length) {
+      panel.innerHTML = '<div style="color:var(--green);font-size:0.75rem;padding:8px 0;">✓ No fleet anomalies detected in the last 7 days.</div>';
+    } else {
+      panel.innerHTML = alerts.map(a => `
+        <div class="fleet-alert" style="margin-bottom:8px;border-color:${a.severity==="high"?"var(--red)":a.severity==="medium"?"var(--yellow)":"var(--fg4)"}">
+          <strong>${a.severity.toUpperCase()}</strong> — ${a.affected_agent_count} agents on
+          <strong>${a.suspected_provider}</strong> showing correlated <strong>${a.dimension}</strong>
+          decline (avg ${Math.round(a.avg_decline*100)}% over 7 days)<br>
+          <span style="font-size:0.68rem;color:var(--fg4)">${(a.affected_agents||[]).slice(0,5).join(", ")}${(a.affected_agents||[]).length>5?"…":""}</span>
+        </div>`).join("");
     }
+  } catch(e) { alert("Fleet scan failed: " + e.message); }
+  finally { btn.disabled = false; btn.textContent = "⊙ Fleet scan"; }
+}
 
-    // ── Anomalies ─────────────────────────────────────────────────────────────
-    function renderAnomalies() {
-      const events = (_anoms?.anomalies || []);
-      const open = events.filter(a => !a.resolved_at);
-      setText("anom-meta", `${open.length} open · ${events.length} total`);
-      const el = document.getElementById("anom-list");
+async function autoFormDyads() {
+  try {
+    const r = await fetchJson("/api/observatory/dyads/auto-form", {method:"POST"});
+    setStatus(r.message, "done");
+    if (r.formed > 0 && _agent) await loadAgentData();
+  } catch(e) { setStatus("Auto-form failed: "+e.message, "error"); }
+}
 
-      if (!events.length) {
-        el.innerHTML = '<div class="empty">No anomalies recorded.</div>';
-        return;
-      }
+// ════════════════════════════════════════════════════════════════════════
+// Agent selection + loading
+// ════════════════════════════════════════════════════════════════════════
+async function selectAgent(agentId, agentName) {
+  _agent = { agent_id: agentId, agent_name: agentName };
 
-      el.innerHTML = events.slice(0,15).map(a => {
-        const badge = a.resolved_at
-          ? '<span class="hero-badge badge-good">resolved</span>'
-          : a.requires_review
-          ? '<span class="hero-badge badge-warn">review needed</span>'
-          : '<span class="hero-badge badge-muted">noted</span>';
-        const when = fmtTime(a.created_at);
-        const kindCls = (a.kind || "").toLowerCase();
+  // Update register highlight
+  document.querySelectorAll(".reg-row").forEach(el => el.classList.remove("selected"));
+  document.querySelectorAll(".reg-row").forEach(el => {
+    if (el.querySelector(".reg-name")?.title === agentId) el.classList.add("selected");
+  });
+
+  // Show agent view
+  document.getElementById("fleet-view").style.display = "none";
+  document.getElementById("agent-view").style.display = "flex";
+  document.getElementById("agent-view").style.flexDirection = "column";
+
+  // Update URL
+  const u = new URL(location.href);
+  u.searchParams.set("agent", agentName);
+  history.replaceState(null, "", u.toString());
+
+  // Enable buttons
+  document.getElementById("single-run-btn").disabled = false;
+  document.getElementById("scan-btn").disabled = false;
+  document.getElementById("run-eval-btn").disabled = false;
+
+  setStatus("Loading…", "scanning");
+  await loadAgentData();
+  setStatus("", "");
+}
+
+async function loadAgentData() {
+  if (!_agent) return;
+  const id  = _agent.agent_id;
+  const win = document.getElementById("window-select").value;
+
+  const [tl, dyads, anoms, calib, runs, rels, tcData] = await Promise.all([
+    fetchJson(`/api/observatory/agents/${enc(id)}/timeline?window=${win}`).catch(()=>null),
+    fetchJson(`/api/observatory/agents/${enc(id)}/dyads`).catch(()=>null),
+    fetchJson(`/api/observatory/agents/${enc(id)}/anomalies?limit=50`).catch(()=>null),
+    fetchJson(`/api/agents/${enc(id)}/calibration`).catch(()=>null),
+    fetchJson(`/api/agents/${enc(id)}/eval/runs`).catch(()=>null),
+    fetchJson(`/api/observatory/agents/${enc(id)}/relationships`).catch(()=>null),
+    fetchJson(`/api/agents/${enc(id)}/eval/test-cases`).catch(()=>null),
+  ]);
+
+  _tl = tl; _dyads = dyads; _anoms = anoms; _calib = calib;
+  _evalRuns = runs; _rels = rels;
+  _testCases = tcData?.test_cases || [];
+
+  // Signals for latest run
+  _evalSignals = null;
+  const latestRun = runs?.runs?.[0];
+  if (latestRun?.run_id) {
+    _evalSignals = await fetchJson(`/api/agents/${enc(id)}/eval/runs/${latestRun.run_id}/signals`).catch(()=>null);
+  }
+
+  // Find fleet agent data for this agent
+  const fleetAgent = _allAgents.find(a => a.agent_id === id) || {};
+
+  renderAgentView(fleetAgent);
+  setText("av-last-updated", "Updated " + new Date().toLocaleTimeString());
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Render agent detail
+// ════════════════════════════════════════════════════════════════════════
+function renderAgentView(fa) {
+  // Top bar
+  setText("av-name", fa.agent_name || _agent.agent_name);
+  setText("av-sub", [fa.agent_type, fa.provider, `v${fa.persona_version||1}`, `${fa.total_executions||0} runs`].filter(Boolean).join(" · "));
+  const mbEl = document.getElementById("av-maturity-badge");
+  const m = fa.maturity || "newborn";
+  mbEl.textContent = { newborn:"◌ Newborn", intake:"◔ In intake", learning:"◑ Learning",
+    functioning:"● Functioning", established:"★ Established", flagged:"⚑ Flagged" }[m] || m;
+  mbEl.className = `maturity-badge mb-${m}`;
+
+  // Anomaly tab badge
+  const openAnoms = (_anoms?.anomalies||[]).filter(a=>!a.resolved_at&&a.requires_review).length;
+  document.querySelector('[onclick="switchTab(\'history\')"]').innerHTML =
+    "History" + (openAnoms > 0 ? `<span class="tab-badge">${openAnoms}</span>` : "");
+
+  // Relationship tab badge
+  const relCount = _rels?.relationship_count || 0;
+  document.getElementById("tab-relationships").innerHTML =
+    "Relationships" + (relCount > 0 ? `<span class="tab-badge" style="background:var(--aqua)">${relCount}</span>` : "");
+
+  // TC tab badge
+  const noRubric = _testCases.filter(c=>c.is_active&&!c.rubric).length;
+  document.getElementById("tab-tc").innerHTML =
+    "Test cases" + (noRubric > 0 ? `<span class="tab-badge" style="background:var(--orange)">${noRubric}</span>` : "");
+
+  renderOverviewTab(fa);
+  renderHistoryTab();
+  renderSessionsTab();
+  renderRelationshipsTab();
+  renderTestCasesTab();
+  renderLoopsTab(fa);
+}
+
+// ── Overview ──────────────────────────────────────────────────────────
+function renderOverviewTab(fa) {
+  // Care plan
+  const cp = document.getElementById("care-plan-box");
+  cp.textContent = fa.care_plan || "Loading…";
+  cp.className = "care-plan" + ((fa.open_anomalies||0)>0?" urgent":"");
+
+  // Vitals
+  const series = _tl?.trend?.series || {};
+  const dimNames = Object.keys(series);
+  const allMeans = dimNames.map(n=>series[n].mean).filter(v=>v!=null);
+  const health = allMeans.length ? allMeans.reduce((a,b)=>a+b,0)/allMeans.length : null;
+  const runs = _evalRuns?.runs || [];
+
+  document.getElementById("vitals-grid").innerHTML = [
+    { label:"Overall health", value: health!=null?`${pct(health)}%`:"—", sub: dimNames.length>0?`${dimNames.length} dimensions`:"No eval data", color: health!=null?colorFor(health):"var(--fg4)" },
+    { label:"Eval runs", value: runs.length, sub: runs[0]?`Last: ${timeSince(runs[0].started_at)}`:"Never run", color:"var(--fg2)" },
+    { label:"Open flags", value: (_anoms?.anomalies||[]).filter(a=>!a.resolved_at&&a.requires_review).length, sub:"Pending HITL review", color:(_anoms?.anomalies||[]).filter(a=>!a.resolved_at&&a.requires_review).length>0?"var(--yellow)":"var(--green)" },
+    { label:"Relationships", value: _rels?.relationship_count||0, sub:"Active dyads", color:"var(--fg2)" },
+    { label:"Calibration", value: _calib?.calibration_score!=null?`${pct(_calib.calibration_score)}%`:"—", sub: _calib?.trend||"No data", color:_calib?.calibration_score!=null?colorFor(_calib.calibration_score):"var(--fg4)" },
+    { label:"Persona version", value: `v${fa.persona_version||1}`, sub:`${fa.total_executions||0} total runs`, color:"var(--fg2)" },
+  ].map(v=>`<div class="vital-card">
+    <div class="vc-label">${v.label}</div>
+    <div class="vc-value" style="color:${v.color}">${v.value}</div>
+    <div class="vc-sub">${v.sub}</div>
+  </div>`).join("");
+
+  // Evaluator cards (latest run signals)
+  renderEvalCards();
+}
+
+function renderEvalCards() {
+  const el = document.getElementById("evaluator-cards");
+  const runs = _evalRuns?.runs || [];
+  if (!runs.length) {
+    el.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;grid-column:span 3;">No eval runs yet. Click ▶ Eval to generate baseline.</div>';
+    setText("scores-meta","");
+    return;
+  }
+  setText("scores-meta", `latest run ${timeSince(runs[0].started_at)} · ${runs.length} total`);
+
+  const signals = _evalSignals?.signals || [];
+  const inapplicable = runs[0]?.aggregated_signal?.inapplicable_evaluators || [];
+  const byEval = {};
+  signals.forEach(s => {
+    if (!byEval[s.evaluator_name]) byEval[s.evaluator_name] = {tier:s.evaluator_tier,dims:[]};
+    byEval[s.evaluator_name].dims.push(s);
+  });
+
+  const runSeries = {};
+  runs.slice(0,20).forEach(r => {
+    (r.aggregated_signal?.per_dimension||[]).forEach(d => {
+      if (!runSeries[d.dimension]) runSeries[d.dimension] = [];
+      runSeries[d.dimension].unshift(d.mean);
+    });
+  });
+
+  const activeCards = Object.entries(byEval).map(([name,data]) => {
+    const tierCls = data.tier==="prefilter"?"":"dimensional";
+    const rows = data.dims.map(s => {
+      const c = colorFor(s.score);
+      const hist = runSeries[s.dimension]||[];
+      const spark = hist.length>=2 ? MicroChart.sparkline(hist,{width:140,height:20,color:c}) : "";
+      return `<div class="dim-bar-row">
+        <span class="dim-bar-label">${s.dimension}</span>
+        <div class="dim-bar-bg"><div class="dim-bar-fill" style="width:${pct(s.score)}%;background:${c}"></div></div>
+        <span class="dim-bar-val" style="color:${c}">${pct(s.score)}%</span>
+      </div>${spark?`<div style="margin-bottom:4px">${spark}</div>`:""}`;
+    }).join("");
+    return `<div class="eval-card">
+      <div class="ec-name">${name}<span class="ec-tier ${tierCls}">${data.tier||"dim"}</span></div>
+      ${rows||'<div style="color:var(--fg4);font-size:0.68rem">no scores</div>'}
+    </div>`;
+  });
+
+  const inapplCards = inapplicable.map(name => `
+    <div class="eval-card ec-inapplicable">
+      <div class="ec-name">${name}<span class="ec-tier">inactive</span></div>
+      <div style="font-size:0.68rem;color:var(--fg4)">${inapplicableHint(name)}</div>
+    </div>`);
+
+  el.innerHTML = [...activeCards,...inapplCards].join("") ||
+    '<div style="color:var(--fg4);font-size:0.75rem;">Signals written — reload to see breakdown.</div>';
+}
+
+// ── History ───────────────────────────────────────────────────────────
+function renderHistoryTab() {
+  // Dim tiles with sparklines
+  const series = _tl?.trend?.series || {};
+  const entries = (_tl?.entries||[]).slice().reverse();
+  const dimNames = Object.keys(series).sort();
+  const el = document.getElementById("dim-tiles");
+  if (!dimNames.length) {
+    const rc = (_evalRuns?.runs||[]).length;
+    el.innerHTML = `<div style="color:var(--fg4);font-size:0.75rem;">${rc>0?"Runs exist but no dimension scores — click ▶ Eval for a fresh baseline.":"No data yet — run a baseline eval."}</div>`;
+  } else {
+    el.innerHTML = dimNames.map(name => {
+      const s = series[name];
+      const mean = s.mean??0; const std = s.std_dev??0; const lat = s.latest??mean;
+      const color = colorFor(mean);
+      const arrow = lat > mean+0.04 ? "↑" : lat < mean-0.04 ? "↓" : "→";
+      const arrowColor = lat > mean+0.04 ? "var(--green)" : lat < mean-0.04 ? "var(--red)" : "var(--fg4)";
+      const sparkVals = entries.map(e=>{const ds=e.dim_scores;return ds&&typeof ds==="object"?ds[name]:null}).filter(v=>v!=null);
+      const spark = sparkVals.length>=2 ? MicroChart.sparkline(sparkVals,{width:200,height:32,color}) : `<div style="height:32px;color:var(--fg4);font-size:0.65rem;padding-top:10px">no history</div>`;
+      return `<div class="dim-tile">
+        <div class="dt-name">${name}</div>
+        <div class="dt-value" style="color:${color}">${pct(mean)}% <span style="font-size:0.8rem;color:${arrowColor}">${arrow}</span></div>
+        <div class="dt-meta">σ ${std.toFixed(2)} · n=${sparkVals.length}</div>
+        <div>${spark}</div>
+      </div>`;
+    }).join("");
+  }
+
+  // Anomalies
+  const anoms = (_anoms?.anomalies||[]);
+  document.getElementById("anom-list").innerHTML = anoms.length
+    ? anoms.slice(0,15).map(a => {
+        const badge = a.resolved_at ? '<span class="badge bg-good">resolved</span>'
+          : a.requires_review ? '<span class="badge bg-warn">review</span>'
+          : '<span class="badge bg-muted">noted</span>';
         return `<div class="anom-row">
-          <span class="anom-kind ${kindCls}">${a.kind || "unknown"}</span>
-          <span style="color:${severityColor(a.severity)}; font-size:0.75rem">${a.severity || ""}</span>
-          <span style="color:var(--fg4); font-size:0.75rem">${when}</span>
+          <span class="ak-${(a.kind||"").toLowerCase()}">${a.kind||"unknown"}</span>
+          <span style="color:${sevColor(a.severity)};font-size:0.72rem">${a.severity||""}</span>
+          <span style="color:var(--fg4)">${fmtTime(a.created_at)}</span>
           ${badge}
         </div>`;
-      }).join("");
-    }
+      }).join("")
+    : '<div style="color:var(--fg4);font-size:0.75rem;">No anomalies recorded.</div>';
 
-    function severityColor(s) {
-      const n = parseFloat(s);
-      if (isNaN(n)) return "var(--fg4)";
-      if (n >= 0.7) return "var(--red)";
-      if (n >= 0.4) return "var(--yellow)";
-      return "var(--fg4)";
-    }
+  // Timeline
+  const tl = (_tl?.entries||[]);
+  const pf = _providerFilter;
+  const filtered = pf ? tl.filter(e=>!e.provider_used||e.provider_used===pf) : tl;
+  setText("tl-meta", `${filtered.length} entries`);
+  document.getElementById("tl-list").innerHTML = filtered.length
+    ? `<table style="width:100%;border-collapse:collapse;font-size:0.72rem">
+        <thead><tr style="color:var(--yellow);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.8px">
+          <th style="padding:4px 6px;border-bottom:1px solid var(--bg2);text-align:left">When</th>
+          <th>Pv</th><th>Prov</th><th>Scores</th><th>Drift</th>
+        </tr></thead><tbody>` +
+      filtered.slice(0,30).map(e => {
+        const ds = e.dim_scores||{};
+        const pills = Object.entries(ds).slice(0,3).map(([k,v])=>`<span style="font-size:0.6rem;padding:1px 4px;border:1px solid ${colorFor(v)};color:${colorFor(v)};margin-right:3px">${k.slice(0,8)} ${pct(v)}%</span>`).join("");
+        const drift = e.drift_norm!=null?e.drift_norm.toFixed(3):"—";
+        const dc = e.drift_norm!=null?(e.drift_norm>0.15?"var(--red)":e.drift_norm>0.07?"var(--yellow)":"var(--fg4)"):"var(--fg4)";
+        return `<tr><td style="padding:4px 6px;border-bottom:1px dashed var(--bg2);color:var(--fg4)">${fmtTime(e.created_at)}</td>
+          <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2)">v${e.persona_version}</td>
+          <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2);color:var(--fg4);font-size:0.65rem">${e.provider_used||"—"}</td>
+          <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2)">${pills||"—"}</td>
+          <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2);color:${dc}">${drift}</td></tr>`;
+      }).join("") + "</tbody></table>"
+    : '<div style="color:var(--fg4);font-size:0.75rem;">No timeline entries yet.</div>';
+}
 
-    // ── Timeline ──────────────────────────────────────────────────────────────
-    function renderTimeline() {
-      const entries = (_tl?.entries || []);
-      const filtered = _providerFilter
-        ? entries.filter(e => !e.provider_used || e.provider_used === _providerFilter)
-        : entries;
-      setText("tl-meta", `${filtered.length} entries`);
-      const body = document.getElementById("tl-body");
+// ── Sessions ──────────────────────────────────────────────────────────
+function renderSessionsTab() {
+  const runs = _evalRuns?.runs || [];
+  setText("runs-meta", `${runs.length} runs`);
+  const el = document.getElementById("runs-list");
+  if (!runs.length) {
+    el.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">No eval runs yet. Click ▶ Eval to run the first baseline.</div>';
+    return;
+  }
+  el.innerHTML = `<div class="run-row" style="color:var(--yellow);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.8px">
+    <span>When</span><span>Status</span><span>Pass %</span><span>Signals</span><span>Cases</span>
+  </div>` + runs.slice(0,20).map(r => {
+    const pass = r.total_cases>0?Math.round((r.passed/r.total_cases)*100):null;
+    const agg = r.aggregated_signal;
+    const dims = (agg?.per_dimension||[]).map(d=>`<span style="font-size:0.65rem;padding:1px 4px;border:1px solid ${colorFor(d.mean)};color:${colorFor(d.mean)};margin-right:3px">${d.dimension.slice(0,8)} ${pct(d.mean)}%</span>`).join("");
+    return `<div class="run-row">
+      <span style="color:var(--fg4)">${timeSince(r.started_at)}</span>
+      <span class="run-status-${r.status}">${r.status}</span>
+      <span style="color:${pass!=null?colorFor(pass/100):'var(--fg4)'}">${pass!=null?pass+"%":"—"}</span>
+      <span>${dims||'<span style="color:var(--fg4)">—</span>'}</span>
+      <span style="color:var(--fg4)">${r.total_cases}</span>
+    </div>`;
+  }).join("");
+}
 
-      if (!filtered.length) {
-        body.innerHTML = '<tr><td colspan="6" class="empty">No timeline entries yet.</td></tr>';
-        return;
-      }
+// ── Relationships ─────────────────────────────────────────────────────
+function renderRelationshipsTab() {
+  const el = document.getElementById("relationships-grid");
+  const rels = _rels?.relationships || [];
+  if (!rels.length) {
+    el.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">No dyads formed yet. Dyads auto-form after 3 interactions with the same user. Click ⟳ Auto-form dyads to check.</div>';
+    return;
+  }
+  el.innerHTML = rels.map(r => {
+    const statusCls = `rcs-${r.relationship_status}`;
+    const name = r.display_name || r.human_id || r.dyad_id;
+    return `<div class="rel-card">
+      <div class="rc-name" id="rcn-${r.dyad_id}">${escHtml(name)}</div>
+      <div class="rc-id">${r.dyad_id}</div>
+      <div class="rc-vitals">
+        <div><div class="rcv-label">Rapport</div><div class="rcv-value" style="color:${colorFor(r.rapport)}">${pct(r.rapport)}%</div></div>
+        <div><div class="rcv-label">Trust</div><div class="rcv-value" style="color:${colorFor(r.trust)}">${pct(r.trust)}%</div></div>
+        <div><div class="rcv-label">Sessions</div><div class="rcv-value">${r.episode_count}</div></div>
+      </div>
+      <span class="rc-status ${statusCls}">${r.relationship_status.replace("_"," ")}</span>
+      <div style="margin-top:8px;">
+        <input class="rc-name-input" id="rci-${r.dyad_id}" placeholder="Give this relationship a name…" value="${escHtml(r.display_name||"")}" onkeydown="if(event.key==='Enter')saveDyadName('${r.dyad_id}')"/>
+        <button class="rc-save" onclick="saveDyadName('${r.dyad_id}')">✓ Save name</button>
+      </div>
+    </div>`;
+  }).join("");
+}
 
-      body.innerHTML = filtered.slice(0,30).map(e => {
-        const when  = fmtTime(e.created_at);
-        const flags = (Array.isArray(e.anomaly_flags) && e.anomaly_flags.length)
-          ? e.anomaly_flags.join(", ") : "—";
-        const drift = e.drift_norm != null ? e.drift_norm.toFixed(3) : "—";
-        const driftCls = e.drift_norm != null
-          ? (e.drift_norm > 0.15 ? "drift-high" : e.drift_norm > 0.07 ? "drift-mid" : "drift-ok")
-          : "";
-        const provCls = "prov-" + (e.provenance || "").toLowerCase().replace(/_/g, "-");
+async function saveDyadName(dyadId) {
+  const input = document.getElementById(`rci-${dyadId}`);
+  const name = (input?.value||"").trim();
+  try {
+    await fetchJson(`/api/observatory/dyads/${enc(dyadId)}`, {
+      method:"PATCH", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({display_name: name||null})
+    });
+    if (document.getElementById(`rcn-${dyadId}`)) document.getElementById(`rcn-${dyadId}`).textContent = name || dyadId;
+    setStatus("Relationship name saved.", "done");
+  } catch(e) { setStatus("Save failed: "+e.message,"error"); }
+}
 
-        // Mini dim-score pills from dim_scores object
-        const ds = e.dim_scores || {};
-        const pills = Object.entries(ds).slice(0,4).map(([k, v]) =>
-          `<span style="font-size:0.62rem; padding:1px 5px; border:1px solid ${colorFor(v)}; color:${colorFor(v)}; margin-right:3px">${k.slice(0,8)} ${pct(v)}%</span>`
-        ).join("");
+// ── Test cases ────────────────────────────────────────────────────────
+function renderTestCasesTab() {
+  const cases = _testCases.filter(c=>c.is_active);
+  const noRubric = cases.filter(c=>!c.rubric).length;
+  const hint = document.getElementById("tc-hint");
+  hint.style.display = noRubric > 0 ? "" : "none";
+  const el = document.getElementById("tc-list");
+  if (!cases.length) { el.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">No test cases. Seeded from sample_queries automatically.</div>'; return; }
+  el.innerHTML = `<div class="tc-row" style="color:var(--yellow);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.8px">
+    <span>Query</span><span>Rubric (Sotopia goal)</span><span>Status</span>
+  </div>` + cases.map(tc => {
+    const hasRubric = !!tc.rubric;
+    return `<div class="tc-row" id="tcrow-${tc.test_case_id}">
+      <span class="tc-query">${escHtml(tc.query)}</span>
+      <div>
+        <div class="tc-rubric ${hasRubric?"":"empty"}" id="tct-${tc.test_case_id}" onclick="editTcRubric('${tc.test_case_id}')">${escHtml(tc.rubric||"click to add rubric…")}</div>
+        <textarea class="tc-rubric-input" id="tci-${tc.test_case_id}" rows="2">${escHtml(tc.rubric||"")}</textarea>
+        <div style="display:none" id="tca-${tc.test_case_id}">
+          <button class="rc-save" onclick="saveTcRubric('${tc.test_case_id}')">✓ Save</button>
+          <button class="rc-save" style="color:var(--fg4)" onclick="cancelTcRubric('${tc.test_case_id}')">✕ Cancel</button>
+        </div>
+      </div>
+      <span style="font-size:0.65rem;padding:1px 6px;border:1px solid;${hasRubric?"color:var(--green);border-color:var(--green)":"color:var(--fg4);border-color:var(--bg3)"}">${hasRubric?"✓ active":"× missing"}</span>
+    </div>`;
+  }).join("");
+}
 
-        return `<tr>
-          <td style="color:var(--fg4); white-space:nowrap">${when}</td>
-          <td>v${e.persona_version}</td>
-          <td class="${provCls}">${e.provenance || "—"}</td>
-          <td>${pills || '<span style="color:var(--fg4); font-size:0.72rem">—</span>'}</td>
-          <td class="${driftCls}">${drift}</td>
-          <td style="color:var(--fg4); font-size:0.72rem">${flags}</td>
-        </tr>`;
-      }).join("");
-    }
+function editTcRubric(id) {
+  document.getElementById(`tct-${id}`).style.display="none";
+  const inp=document.getElementById(`tci-${id}`); inp.classList.add("show"); inp.focus();
+  document.getElementById(`tca-${id}`).style.display="";
+}
+function cancelTcRubric(id) {
+  const tc=_testCases.find(c=>c.test_case_id===id);
+  document.getElementById(`tci-${id}`).value=tc?.rubric||"";
+  document.getElementById(`tci-${id}`).classList.remove("show");
+  document.getElementById(`tca-${id}`).style.display="none";
+  document.getElementById(`tct-${id}`).style.display="";
+}
+async function saveTcRubric(id) {
+  const rubric=document.getElementById(`tci-${id}`).value.trim();
+  try {
+    await fetchJson(`/api/agents/${enc(_agent.agent_id)}/eval/test-cases/${id}`,{
+      method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({rubric:rubric||null})
+    });
+    const tc=_testCases.find(c=>c.test_case_id===id);
+    if(tc) tc.rubric=rubric||null;
+    cancelTcRubric(id);
+    const el=document.getElementById(`tct-${id}`);
+    el.textContent=rubric||"click to add rubric…";
+    el.className=`tc-rubric${rubric?"":` empty`}`;
+    renderTestCasesTab(); // refresh badge counts
+  } catch(e){setStatus("Save failed: "+e.message,"error");}
+}
 
-    // ── Calibration ───────────────────────────────────────────────────────────
-    function renderCalibration() {
-      const calib = _calib;
-      const el = document.getElementById("calib-list");
+async function generateRubrics() {
+  const btn=document.getElementById("gen-rubrics-btn");
+  btn.disabled=true; btn.textContent="Generating…";
+  setStatus("Generating rubrics…","scanning");
+  try {
+    const r=await fetchJson(`/api/agents/${enc(_agent.agent_id)}/eval/test-cases/generate-rubrics`,{method:"POST"});
+    setStatus(r.message,"done");
+    const tcData=await fetchJson(`/api/agents/${enc(_agent.agent_id)}/eval/test-cases`).catch(()=>null);
+    if(tcData){_testCases=tcData.test_cases||[]; renderTestCasesTab();}
+  } catch(e){setStatus("Generate failed: "+e.message,"error");}
+  finally{btn.disabled=false;btn.textContent="✦ Generate rubrics";}
+}
 
-      if (!calib) {
-        setText("calib-meta", "");
-        el.innerHTML = '<div class="empty">No calibration data.</div>';
-        return;
-      }
+// ── Loops ─────────────────────────────────────────────────────────────
+function renderLoopsTab(fa) {
+  const runs=_evalRuns?.runs||[];
+  const anoms=_anoms?.anomalies||[];
+  const calib=_calib;
+  const series=_tl?.trend?.series||{};
 
-      const score = calib.calibration_score;
-      setText("calib-meta",
-        score != null
-          ? `${Math.round(score*100)}% · ${calib.trend || "—"} · n=${calib.n_resolved_forecasts || 0}`
-          : "no data"
-      );
+  const loops=[
+    {n:"1a",name:"Individual learning",
+     status:runs.length>0?"closed":Object.keys(series).length>0?"partial":"open",
+     detail:runs.length>0?`${runs.length} eval run(s) · ${Object.keys(series).length} dimensions tracked`:"No eval runs — run a baseline eval."},
+    {n:"1b",name:"Projection accuracy",
+     status:calib?.projection_accuracy_mean!=null?"closed":"open",
+     detail:calib?.projection_accuracy_mean!=null?`${pct(calib.projection_accuracy_mean)}% · n=${calib.n_projection_observations}`:"No real SOSA observations matched yet."},
+    {n:"2",name:"HITL correction",
+     status:anoms.some(a=>a.resolved_at)?"closed":anoms.some(a=>a.requires_review&&!a.resolved_at)?"partial":"open",
+     detail:anoms.filter(a=>a.requires_review&&!a.resolved_at).length>0?`${anoms.filter(a=>a.requires_review&&!a.resolved_at).length} pending — visit Review queue`:anoms.some(a=>a.resolved_at)?"Corrections applied":"No anomalies detected."},
+    {n:"3a",name:"Coherence (inner)",status:"partial",detail:"Auto-attached to workspaces · outer loop needs session history."},
+    {n:"4",name:"Composition evolution",status:"open",detail:"Needs accumulated session patterns."},
+    {n:"5a",name:"Brier calibration",
+     status:calib?.calibration_score!=null&&(calib.n_resolved_forecasts||0)>=5?"closed":calib?.calibration_score!=null?"partial":"open",
+     detail:calib?.calibration_score!=null?`${pct(calib.calibration_score)}% · n=${calib.n_resolved_forecasts||0} · ${calib.trend||"—"}`:"No resolved forecasts yet."},
+  ];
 
-      // Global bar
-      let html = "";
-      if (score != null) {
-        const c = colorFor(score);
-        html += `<div class="calib-row">
-          <span class="calib-domain">Overall</span>
-          <div class="calib-bar-bg"><div class="calib-bar-fill" style="width:${pct(score)}%; background:${c}"></div></div>
-          <span class="calib-val" style="color:${c}">${pct(score)}%</span>
-          <span class="calib-n">n=${calib.n_resolved_forecasts || 0}</span>
-        </div>`;
-      }
+  const ICONS={closed:"✓",partial:"◑",open:"○"};
+  const COLORS={closed:"var(--green)",partial:"var(--yellow)",open:"var(--fg4)"};
+  document.getElementById("loop-health-list").innerHTML = loops.map(l=>`
+    <div class="loop-row">
+      <span class="loop-num">${l.n}</span>
+      <span style="color:var(--fg3)">${l.name}</span>
+      <span style="color:var(--fg4);font-size:0.72rem">${l.detail}</span>
+      <span style="color:${COLORS[l.status]}">${ICONS[l.status]} ${l.status}</span>
+    </div>`).join("");
+}
 
-      // Projection accuracy
-      if (calib.projection_accuracy_mean != null) {
-        const c = colorFor(calib.projection_accuracy_mean);
-        html += `<div class="calib-row">
-          <span class="calib-domain">Projection acc</span>
-          <div class="calib-bar-bg"><div class="calib-bar-fill" style="width:${pct(calib.projection_accuracy_mean)}%; background:${c}"></div></div>
-          <span class="calib-val" style="color:${c}">${pct(calib.projection_accuracy_mean)}%</span>
-          <span class="calib-n">n=${calib.n_projection_observations || 0}</span>
-        </div>`;
-      }
+// ════════════════════════════════════════════════════════════════════════
+// Eval actions
+// ════════════════════════════════════════════════════════════════════════
+async function triggerSingleEval() {
+  if (!_agent) return;
+  const judge = document.getElementById("eval-judge").checked;
+  const btn = document.getElementById("single-run-btn");
+  btn.disabled=true; btn.textContent="Running…";
+  setStatus("Triggering eval run…","scanning");
+  try {
+    const r=await fetchJson(`/api/agents/${enc(_agent.agent_id)}/eval/run`,{
+      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({judge})
+    });
+    await pollRun(_agent.agent_id, r.run_id, r.total_cases);
+    await loadAgentData();
+  } catch(e){setStatus("Eval failed: "+e.message,"error");}
+  finally{btn.disabled=false;btn.textContent="▶ Eval";}
+}
 
-      // Domain breakdown
-      const domains = calib.domain_calibration || {};
-      for (const [domain, data] of Object.entries(domains)) {
-        const v = data.calibration_mean ?? 0;
-        const c = colorFor(v);
-        html += `<div class="calib-row">
-          <span class="calib-domain">${domain}</span>
-          <div class="calib-bar-bg"><div class="calib-bar-fill" style="width:${pct(v)}%; background:${c}"></div></div>
-          <span class="calib-val" style="color:${c}">${pct(v)}%</span>
-          <span class="calib-n">n=${data.n || 0}</span>
-        </div>`;
-      }
+async function triggerScan() {
+  if (!_agent) return;
+  const btn=document.getElementById("scan-btn");
+  btn.disabled=true; btn.textContent="Scanning…";
+  setStatus("Running scan…","scanning");
+  try {
+    const r=await fetchJson(`/api/observatory/agents/${enc(_agent.agent_id)}/scan`,{method:"POST"});
+    setStatus(`Scan: ${r.report?.entries_scanned} entries · ${r.report?.anomalies_detected} anomalies · ${r.report?.duration_ms}ms`,"done");
+    await loadAgentData();
+  } catch(e){setStatus("Scan failed: "+e.message,"error");}
+  finally{btn.disabled=false;btn.textContent="⊙ Scan";}
+}
 
-      // Model accuracy (SimOps)
-      const models = calib.model_accuracy || {};
-      for (const [uri, data] of Object.entries(models)) {
-        const v = data.accuracy_mean ?? 0;
-        const c = colorFor(v);
-        const shortUri = uri.split("/").pop() || uri;
-        html += `<div class="calib-row">
-          <span class="calib-domain" title="${uri}">${shortUri}</span>
-          <div class="calib-bar-bg"><div class="calib-bar-fill" style="width:${pct(v)}%; background:${c}"></div></div>
-          <span class="calib-val" style="color:${c}">${pct(v)}%</span>
-          <span class="calib-n">n=${data.n || 0}</span>
-        </div>`;
-      }
-
-      el.innerHTML = html || '<div class="empty">No calibration breakdown available.</div>';
-    }
-
-    // ── Dyads ─────────────────────────────────────────────────────────────────
-    function renderDyads() {
-      const dyads = _dyads?.dyads || [];
-      setText("dyads-meta", `${dyads.length} tracked`);
-      const el = document.getElementById("dyads-list");
-
-      if (!dyads.length) {
-        el.innerHTML = '<div class="empty">No dyads tracked yet.</div>';
-        return;
-      }
-
-      el.innerHTML = `<div class="dyad-row" style="color:var(--yellow); font-size:0.7rem">
-        <span>dyad</span><span>rapport</span><span>trust</span><span>reciprocity</span><span>n</span>
-      </div>` + dyads.map(d => {
-        const rc = colorFor(d.rapport), tc = colorFor(d.trust), xc = colorFor(d.reciprocity);
-        return `<div class="dyad-row">
-          <span style="color:var(--fg4); overflow:hidden; text-overflow:ellipsis; font-size:0.72rem">${d.dyad_id}</span>
-          <span style="color:${rc}">${d.rapport.toFixed(2)}</span>
-          <span style="color:${tc}">${d.trust.toFixed(2)}</span>
-          <span style="color:${xc}">${d.reciprocity.toFixed(2)}</span>
-          <span style="color:var(--fg4)">${d.episode_count}</span>
-        </div>`;
-      }).join("");
-    }
-
-    // ── Loop health ───────────────────────────────────────────────────────────
-    function renderLoopHealth() {
-      const tl = _tl || {};
-      const calib = _calib;
-      const anoms = _anoms?.anomalies || [];
-      const runs = _evalRuns?.runs || [];
-      const entries = tl.entries || [];
-      const series = tl.trend?.series || {};
-
-      const loops = [
-        {
-          n: "1",
-          name: "Individual learning",
-          status: runs.length > 0 ? "closed" : entries.length > 0 ? "partial" : "open",
-          detail: runs.length > 0
-            ? `${runs.length} eval runs · ${Object.keys(series).length} dimensions tracked`
-            : entries.length > 0
-            ? "Timeline entries exist but no eval runs — trigger a run"
-            : "No episodes or eval runs yet",
-        },
-        {
-          n: "2",
-          name: "HITL correction",
-          status: anoms.some(a => a.requires_review && !a.resolved_at) ? "partial"
-                : anoms.some(a => a.resolved_at) ? "closed" : "open",
-          detail: anoms.filter(a => a.requires_review && !a.resolved_at).length
-            ? `${anoms.filter(a=>a.requires_review&&!a.resolved_at).length} pending review — visit Review queue`
-            : anoms.filter(a => a.resolved_at).length
-            ? `${anoms.filter(a=>a.resolved_at).length} resolved anomalies`
-            : "No anomalies detected",
-        },
-        {
-          n: "3",
-          name: "Workspace coherence",
-          status: "partial",
-          detail: "Inner loop: coherence evaluator auto-attached to workspaces · Outer: needs session history",
-        },
-        {
-          n: "4",
-          name: "Composition evolution",
-          status: "open",
-          detail: "Requires accumulated session patterns via Composition Dreaming",
-        },
-        {
-          n: "5a",
-          name: "Brier calibration",
-          status: calib?.calibration_score != null && calib.n_resolved_forecasts >= 5 ? "closed"
-                : calib?.calibration_score != null ? "partial" : "open",
-          detail: calib?.calibration_score != null
-            ? `Score ${pct(calib.calibration_score)}% · n=${calib.n_resolved_forecasts} · ${calib.trend}`
-            : "No resolved forecasts yet",
-        },
-        {
-          n: "5b",
-          name: "Projection accuracy",
-          status: calib?.projection_accuracy_mean != null ? "closed" : "open",
-          detail: calib?.projection_accuracy_mean != null
-            ? `Score ${pct(calib.projection_accuracy_mean)}% · n=${calib.n_projection_observations}`
-            : "No real SOSA observations matched to projections yet",
-        },
-      ];
-
-      const el = document.getElementById("loop-health");
-      el.innerHTML = loops.map(l => {
-        const cls = `loop-status-${l.status}`;
-        const icon = l.status === "closed" ? "✓" : l.status === "partial" ? "◑" : "○";
-        const color = l.status === "closed" ? "var(--green)" : l.status === "partial" ? "var(--yellow)" : "var(--fg4)";
-        return `<div class="loop-row">
-          <span class="loop-num">${l.n}</span>
-          <span style="color:var(--fg3); font-size:0.78rem">${l.name}</span>
-          <span style="color:var(--fg4); font-size:0.75rem">${l.detail}</span>
-          <span style="color:${color}; font-size:0.78rem">${icon} ${l.status}</span>
-        </div>`;
-      }).join("");
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Actions
-    // ──────────────────────────────────────────────────────────────────────────
-    async function triggerScan() {
-      if (!_agent) return;
-      const btn = document.getElementById("scan-btn");
-      btn.disabled = true; btn.textContent = "Scanning…";
-      setStatus("Running observability scan…", "scanning");
-      try {
-        const r = await fetchJson(`/api/observatory/agents/${enc(_agent.agent_id)}/scan`, { method: "POST" });
-        const rep = r.report;
-        setStatus(
-          `Scan complete — ${rep.entries_scanned} entries · ${rep.anomalies_detected} anomalies · ${rep.drift_computations} drift computations · ${rep.duration_ms}ms`,
-          "done"
-        );
-        await refreshAll();
-        setLastUpdated();
-      } catch(e) {
-        setStatus(`Scan failed: ${e.message}`, "error");
-      } finally {
-        btn.disabled = false; btn.textContent = "⊙ Scan";
-      }
-    }
-
-    // ── Eval scope helpers ────────────────────────────────────────────────────
-    let _allAgents = []; // populated by bootAgentList
-
-    function onEvalScopeChange() {
-      const scope = document.getElementById("eval-scope").value;
-      const wrap = document.getElementById("eval-subset-wrap");
-      wrap.style.display = scope === "subset" ? "" : "none";
-      // Enable run button: single needs an agent selected; subset needs ≥1 checked;
-      // all is always ready once agents are loaded.
-      updateRunEvalBtn();
-    }
-
-    function updateRunEvalBtn() {
-      const scope = document.getElementById("eval-scope").value;
-      const btn = document.getElementById("run-eval-btn");
-      if (scope === "single") {
-        btn.disabled = !_agent;
-      } else if (scope === "subset") {
-        const sel = document.getElementById("eval-subset-list");
-        btn.disabled = !sel || sel.selectedOptions.length === 0;
-      } else {
-        btn.disabled = _allAgents.length === 0;
-      }
-    }
-
-    function populateSubsetList(agents) {
-      const sel = document.getElementById("eval-subset-list");
-      sel.innerHTML = "";
-      agents.forEach(a => {
-        const opt = document.createElement("option");
-        opt.value = a.agent_id || a.value;
-        opt.textContent = a.agent_name || a.label || a.textContent?.split("  (")[0].trim();
-        sel.appendChild(opt);
+async function triggerEvalRun() {
+  const scope=document.getElementById("eval-scope").value;
+  const judge=document.getElementById("eval-judge").checked;
+  const btn=document.getElementById("run-eval-btn");
+  btn.disabled=true; btn.textContent="Running…";
+  try {
+    if(scope==="single"&&_agent){
+      setStatus("Triggering eval run…","scanning");
+      const r=await fetchJson(`/api/agents/${enc(_agent.agent_id)}/eval/run`,{
+        method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({judge})
       });
+      await pollRun(_agent.agent_id,r.run_id,r.total_cases);
+      if(_agent) await loadAgentData();
+    } else {
+      const agent_ids=scope==="all"?"all":Array.from(document.getElementById("eval-subset-list").selectedOptions).map(o=>o.value);
+      if(scope==="subset"&&!agent_ids.length){setStatus("Select agents first.","error");return;}
+      setStatus(`Triggering batch eval (${scope})…`,"scanning");
+      const r=await fetchJson("/api/me/eval/runs/batch",{
+        method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent_ids,judge})
+      });
+      setStatus(`Batch: ${r.triggered} triggered · ${r.skipped} skipped`,"done");
+      // Refresh _allAgents fleet data
+      const fresh=await fetchJson("/api/observatory/fleet/agents").catch(()=>null);
+      if(fresh){_allAgents=fresh.agents.sort(agentUrgencySort);renderRegister(_allAgents);}
+      if(_agent){const myRes=(r.results||[]).find(x=>x.agent_id===_agent.agent_id);if(myRes?.run_id){await pollRun(_agent.agent_id,myRes.run_id,myRes.total_cases);await loadAgentData();}}
     }
+  } catch(e){setStatus("Eval failed: "+e.message,"error");}
+  finally{btn.disabled=false;btn.textContent="▶ Run eval";updateRunBtn();}
+}
 
-    async function triggerEvalRun() {
-      const scope = document.getElementById("eval-scope").value;
-      const judge = document.getElementById("eval-judge").checked;
-      const btn = document.getElementById("run-eval-btn");
-      btn.disabled = true; btn.className = "btn btn-eval spinning";
-      btn.textContent = "Running…";
-
-      try {
-        if (scope === "single") {
-          // ── Single agent path ──────────────────────────────────────────
-          if (!_agent) return;
-          setStatus("Triggering eval run…", "scanning");
-          const r = await fetchJson(
-            `/api/agents/${enc(_agent.agent_id)}/eval/run`,
-            { method: "POST", headers: {"Content-Type":"application/json"},
-              body: JSON.stringify({ judge }) }
-          );
-          await pollSingleRun(_agent.agent_id, r.run_id, r.total_cases);
-          await refreshAll();
-
-        } else {
-          // ── Batch path (subset or all) ─────────────────────────────────
-          let agentIds;
-          if (scope === "all") {
-            agentIds = "all";
-            setStatus("Triggering eval runs for all your agents…", "scanning");
-          } else {
-            const sel = document.getElementById("eval-subset-list");
-            agentIds = Array.from(sel.selectedOptions).map(o => o.value);
-            if (!agentIds.length) { setStatus("Select at least one agent.", "error"); return; }
-            setStatus(`Triggering eval runs for ${agentIds.length} agent(s)…`, "scanning");
-          }
-
-          const r = await fetchJson(
-            "/api/me/eval/runs/batch",
-            { method: "POST", headers: {"Content-Type":"application/json"},
-              body: JSON.stringify({ agent_ids: agentIds, judge }) }
-          );
-
-          const triggered = r.triggered || 0;
-          const skipped   = r.skipped   || 0;
-          const results   = r.results   || [];
-
-          // Build a readable status
-          const errored = results.filter(x => x.status === "error");
-          let msg = `Batch: ${triggered} triggered · ${skipped} skipped`;
-          if (errored.length) msg += ` · ${errored.length} errors`;
-          setStatus(msg, triggered > 0 ? "done" : "scanning");
-
-          // Show per-agent result in a brief table below the status bar
-          renderBatchResults(results);
-
-          // If the current agent was in the batch, refresh its view
-          if (_agent) {
-            const myResult = results.find(x => x.agent_id === _agent.agent_id);
-            if (myResult?.run_id) {
-              await pollSingleRun(_agent.agent_id, myResult.run_id, myResult.total_cases);
-              await refreshAll();
-            }
-          }
-          setLastUpdated();
-        }
-      } catch(e) {
-        setStatus(`Eval run failed: ${e.message}`, "error");
-      } finally {
-        btn.disabled = false; btn.className = "btn btn-eval";
-        btn.textContent = "▶ Run eval";
-        updateRunEvalBtn();
-      }
-    }
-
-    async function pollSingleRun(agentId, runId, totalCases) {
-      const shortId = (runId||"").slice(0,8);
-      setStatus(`Eval running — ${totalCases||"?"} cases · run ${shortId}… (polling)`, "scanning");
-      for (let i = 0; i < 30; i++) {
-        await new Promise(res => setTimeout(res, 2000));
-        try {
-          const runs = await fetchJson(`/api/agents/${enc(agentId)}/eval/runs`);
-          const run = (runs.runs || []).find(r => r.run_id === runId);
-          if (run && run.status === "completed") {
-            const passPct = run.total_cases > 0 ? Math.round((run.passed / run.total_cases)*100) : null;
-            const pr = passPct != null ? `${passPct}% pass · ` : "";
-            setStatus(`Eval complete — ${pr}${run.total_cases} cases · run ${shortId}`, "done");
-            return;
-          }
-        } catch(_) {}
-      }
-      setStatus(`Eval triggered — refresh in a moment to see results`, "done");
-    }
-
-    function renderBatchResults(results) {
-      // Append a compact results table just below the status bar.
-      let existing = document.getElementById("batch-results");
-      if (!existing) {
-        existing = document.createElement("div");
-        existing.id = "batch-results";
-        existing.style.cssText = "margin-bottom:12px; font-size:0.75rem; background:var(--bg0); border:1px solid var(--bg2); padding:10px 14px;";
-        document.getElementById("status-bar").after(existing);
-      }
-      existing.innerHTML = `<div style="color:var(--yellow); font-size:0.7rem; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px">Batch eval results</div>` +
-        results.map(r => {
-          const color = r.status === "triggered" ? "var(--green)"
-                      : r.status === "skipped"   ? "var(--fg4)"
-                      :                             "var(--red)";
-          const detail = r.run_id ? `run ${r.run_id.slice(0,8)} · ${r.total_cases} cases`
-                       : r.skipped_reason || r.error || "";
-          return `<div style="display:grid; grid-template-columns:160px 80px 1fr; gap:8px; padding:3px 0; border-bottom:1px dashed var(--bg2)">
-            <span style="color:var(--fg3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${r.agent_name}</span>
-            <span style="color:${color}">${r.status}</span>
-            <span style="color:var(--fg4)">${detail}</span>
-          </div>`;
-        }).join("") +
-        `<div style="margin-top:6px; color:var(--fg4)">Results populate in the agent view as runs complete.</div>`;
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Auto-refresh
-    // ──────────────────────────────────────────────────────────────────────────
-    function onRefreshChange() {
-      clearInterval(_refreshTimer); _refreshTimer = null;
-      const secs = parseInt(document.getElementById("refresh-select").value, 10);
-      const dot = document.getElementById("live-dot");
-      if (secs > 0 && _agent) {
-        dot.className = "live-dot active";
-        _refreshTimer = setInterval(() => { if (!_loading) silentRefresh(); }, secs * 1000);
-      } else {
-        dot.className = "live-dot";
-      }
-    }
-
-    function onProviderChange() {
-      _providerFilter = document.getElementById("provider-filter").value;
-      if (_tl) { renderTimeline(); renderAnomalies(); }
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Utilities
-    // ──────────────────────────────────────────────────────────────────────────
-    function colorFor(v) {
-      if (v >= 0.75) return "var(--green)";
-      if (v >= 0.55) return "var(--yellow)";
-      return "var(--red)";
-    }
-    function pct(v) { return Math.round((v ?? 0) * 100); }
-    function enc(s) { return encodeURIComponent(s); }
-    function setText(id, t) { const el = document.getElementById(id); if(el) el.textContent = t; }
-
-    function setStatus(msg, cls) {
-      const el = document.getElementById("status-bar");
-      if (!msg) { el.style.display = "none"; return; }
-      el.style.display = "";
-      el.textContent = msg;
-      el.className = "status-bar " + cls;
-    }
-
-    function setLastUpdated() {
-      setText("last-updated", "Updated " + new Date().toLocaleTimeString());
-    }
-
-    function timeSince(iso) {
-      if (!iso) return "—";
-      const diff = Date.now() - new Date(iso).getTime();
-      const m = Math.floor(diff / 60000);
-      if (m < 1) return "just now";
-      if (m < 60) return `${m}m ago`;
-      const h = Math.floor(m / 60);
-      if (h < 24) return `${h}h ago`;
-      return `${Math.floor(h/24)}d ago`;
-    }
-
-    function fmtTime(iso) {
-      if (!iso) return "—";
-      const d = new Date(iso);
-      return d.toLocaleDateString(undefined, {month:"short",day:"numeric"}) + " " +
-             d.toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
-    }
-
-    async function fetchJson(url, opts = {}) {
-      const resp = await fetch(url, opts);
-      if (!resp.ok) {
-        const txt = await resp.text().catch(() => resp.statusText);
-        throw new Error(`${resp.status} ${txt}`);
-      }
-      return resp.json();
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Test case manager
-    // ──────────────────────────────────────────────────────────────────────────
-    let _testCases = [];
-
-    async function loadTestCases() {
-      if (!_agent) return;
-      try {
-        const data = await fetchJson(`/api/agents/${enc(_agent.agent_id)}/eval/test-cases`);
-        _testCases = data.test_cases || [];
-        renderTestCases();
-      } catch(e) {
-        setText("tc-meta", `error: ${e.message}`);
-      }
-    }
-
-    function renderTestCases() {
-      const cases = _testCases.filter(c => c.is_active);
-      const withRubric = cases.filter(c => c.rubric);
-      setText("tc-meta", `${cases.length} active · ${withRubric.length} with rubric · ${cases.length - withRubric.length} need rubric`);
-
-      const hint = document.getElementById("tc-hint");
-      if (cases.length - withRubric.length > 0) {
-        hint.style.display = "";
-      }
-
-      const el = document.getElementById("tc-list");
-      if (!cases.length) {
-        el.innerHTML = '<div class="empty">No test cases. Test cases are seeded from the agent\'s sample_queries on first load.</div>';
+async function pollRun(agentId, runId, totalCases) {
+  const shortId=(runId||"").slice(0,8);
+  setStatus(`Eval running — ${totalCases||"?"} cases · run ${shortId}… (polling)`,"scanning");
+  for(let i=0;i<30;i++){
+    await new Promise(r=>setTimeout(r,2000));
+    try{
+      const runs=await fetchJson(`/api/agents/${enc(agentId)}/eval/runs`);
+      const run=(runs.runs||[]).find(r=>r.run_id===runId);
+      if(run&&run.status==="completed"){
+        const pr=run.total_cases>0?Math.round((run.passed/run.total_cases)*100):null;
+        setStatus(`Eval complete — ${pr!=null?pr+"% pass · ":""}${run.total_cases} cases`,"done");
         return;
       }
+    }catch(_){}
+  }
+  setStatus("Eval triggered — refresh to see results","done");
+}
 
-      // Header
-      el.innerHTML = `<div class="tc-row" style="color:var(--yellow); font-size:0.7rem; font-weight:400">
-        <span>Query</span>
-        <span>Rubric <span style="color:var(--fg4); font-weight:normal">(click to edit · drives Sotopia evaluation)</span></span>
-        <span>Status</span>
-      </div>` + cases.map(tc => {
-        const hasRubric = !!tc.rubric;
-        const rubricDisplay = tc.rubric || "no rubric — click to add";
-        const badgeCls = hasRubric ? "tc-badge-has" : "tc-badge-none";
-        const badgeText = hasRubric ? "✓ rubric" : "× missing";
-        return `<div class="tc-row" id="tc-row-${tc.test_case_id}">
-          <span class="tc-query">${escHtml(tc.query)}</span>
-          <div class="tc-rubric-wrap">
-            <span class="tc-rubric-text ${hasRubric ? "" : "empty"}"
-                  id="tc-text-${tc.test_case_id}"
-                  onclick="editRubric('${tc.test_case_id}')"
-                  title="Click to edit rubric">${escHtml(rubricDisplay)}</span>
-            <textarea class="tc-rubric-input"
-                      id="tc-input-${tc.test_case_id}"
-                      rows="2"
-                      placeholder="Describe the social/epistemic goal this agent should accomplish…">${escHtml(tc.rubric || "")}</textarea>
-            <div class="tc-rubric-actions" id="tc-actions-${tc.test_case_id}">
-              <button class="tc-rubric-save" onclick="saveRubric('${tc.test_case_id}')">✓ Save</button>
-              <button class="tc-rubric-cancel" onclick="cancelRubric('${tc.test_case_id}')">✕ Cancel</button>
-            </div>
-          </div>
-          <span class="tc-badge ${badgeCls}" id="tc-badge-${tc.test_case_id}">${badgeText}</span>
-        </div>`;
-      }).join("");
-    }
+// ════════════════════════════════════════════════════════════════════════
+// Provider dropdowns
+// ════════════════════════════════════════════════════════════════════════
+const PROV_LABELS={anthropic:"Anthropic",openrouter:"OpenRouter",ollama:"Ollama (local)",mistral:"Mistral",qwen:"Qwen / Alibaba",glm:"GLM / Zhipu",deepseek:"DeepSeek"};
+function provLabel(p){return PROV_LABELS[p]||p;}
 
-    function editRubric(tcId) {
-      const textEl  = document.getElementById(`tc-text-${tcId}`);
-      const inputEl = document.getElementById(`tc-input-${tcId}`);
-      const actEl   = document.getElementById(`tc-actions-${tcId}`);
-      textEl.style.display  = "none";
-      inputEl.className = "tc-rubric-input visible";
-      actEl.className   = "tc-rubric-actions visible";
-      inputEl.focus();
-    }
+function populateProviderDropdowns(providers) {
+  [document.getElementById("provider-filter-fleet"),document.getElementById("provider-filter-agent")].forEach(sel => {
+    if (!sel) return;
+    providers.sort().forEach(p => {
+      const opt=document.createElement("option");
+      opt.value=p; opt.textContent=provLabel(p);
+      sel.appendChild(opt);
+    });
+  });
+}
 
-    function cancelRubric(tcId) {
-      const tc = _testCases.find(c => c.test_case_id === tcId);
-      const textEl  = document.getElementById(`tc-text-${tcId}`);
-      const inputEl = document.getElementById(`tc-input-${tcId}`);
-      const actEl   = document.getElementById(`tc-actions-${tcId}`);
-      // Restore original value
-      inputEl.value = tc?.rubric || "";
-      textEl.style.display  = "";
-      inputEl.className = "tc-rubric-input";
-      actEl.className   = "tc-rubric-actions";
-    }
+function applyProviderFilter(){
+  _providerFilter=document.getElementById("provider-filter-agent").value;
+  renderHistoryTab();
+}
 
-    async function saveRubric(tcId) {
-      const inputEl = document.getElementById(`tc-input-${tcId}`);
-      const rubric = inputEl.value.trim();
-      const textEl  = document.getElementById(`tc-text-${tcId}`);
-      const actEl   = document.getElementById(`tc-actions-${tcId}`);
-      const badgeEl = document.getElementById(`tc-badge-${tcId}`);
+// ════════════════════════════════════════════════════════════════════════
+// Tab switching
+// ════════════════════════════════════════════════════════════════════════
+function switchTab(name) {
+  _currentTab=name;
+  document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(p=>p.classList.remove("active"));
+  document.querySelector(`.tab[onclick="switchTab('${name}')"]`)?.classList.add("active");
+  document.getElementById(`panel-${name}`)?.classList.add("active");
+}
 
-      try {
-        await fetchJson(
-          `/api/agents/${enc(_agent.agent_id)}/eval/test-cases/${tcId}`,
-          { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ rubric: rubric || null }) }
-        );
-        // Update local state
-        const tc = _testCases.find(c => c.test_case_id === tcId);
-        if (tc) tc.rubric = rubric || null;
-        // Update display
-        textEl.textContent = rubric || "no rubric — click to add";
-        textEl.className = `tc-rubric-text ${rubric ? "" : "empty"}`;
-        textEl.style.display = "";
-        inputEl.className = "tc-rubric-input";
-        actEl.className = "tc-rubric-actions";
-        badgeEl.textContent = rubric ? "✓ rubric" : "× missing";
-        badgeEl.className = `tc-badge ${rubric ? "tc-badge-has" : "tc-badge-none"}`;
-        // Refresh meta count
-        renderTestCasesMeta();
-      } catch(e) {
-        setStatus(`Failed to save rubric: ${e.message}`, "error");
-      }
-    }
+// ════════════════════════════════════════════════════════════════════════
+// Eval scope
+// ════════════════════════════════════════════════════════════════════════
+function onEvalScopeChange(){
+  const s=document.getElementById("eval-scope").value;
+  document.getElementById("eval-subset-wrap").style.display=s==="subset"?"":"none";
+  updateRunBtn();
+}
+function updateRunBtn(){
+  const s=document.getElementById("eval-scope").value;
+  const btn=document.getElementById("run-eval-btn");
+  if(s==="single") btn.disabled=!_agent;
+  else if(s==="subset") btn.disabled=document.getElementById("eval-subset-list").selectedOptions.length===0;
+  else btn.disabled=_allAgents.length===0;
+}
 
-    function renderTestCasesMeta() {
-      const cases = _testCases.filter(c => c.is_active);
-      const withRubric = cases.filter(c => c.rubric);
-      setText("tc-meta", `${cases.length} active · ${withRubric.length} with rubric · ${cases.length - withRubric.length} need rubric`);
-    }
+// ════════════════════════════════════════════════════════════════════════
+// Utilities
+// ════════════════════════════════════════════════════════════════════════
+function colorFor(v){return v>=0.75?"var(--green)":v>=0.55?"var(--yellow)":"var(--red)";}
+function pct(v){return Math.round((v??0)*100);}
+function enc(s){return encodeURIComponent(s);}
+function escHtml(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function setText(id,t){const e=document.getElementById(id);if(e)e.textContent=t;}
+function sevColor(s){const n=parseFloat(s);if(isNaN(n))return"var(--fg4)";return n>=0.7?"var(--red)":n>=0.4?"var(--yellow)":"var(--fg4)";}
+function inapplicableHint(name){
+  const h={sotopia:"Needs a rubric — click ✦ Generate rubrics.",lifelongbench:"Needs ≥5 prior episodes.",brier:"Needs resolved fermi_forecasts.",projection:"Only for simops_dynamics_runner.",faithfulness:"Fires when agent uses tools."};
+  for(const[k,v] of Object.entries(h)){if(name.toLowerCase().replace(/[_-]/g,"").includes(k.replace(/[_-]/g,"")))return v;}
+  return "Check test case configuration.";
+}
+function fmtTime(iso){if(!iso)return"—";const d=new Date(iso);return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+" "+d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});}
+function timeSince(iso){if(!iso)return"—";const d=Date.now()-new Date(iso).getTime();const m=Math.floor(d/60000);if(m<1)return"just now";if(m<60)return`${m}m ago`;const h=Math.floor(m/60);if(h<24)return`${h}h ago`;return`${Math.floor(h/24)}d ago`;}
+function setStatus(msg,cls){
+  const el=document.getElementById("status-strip");
+  if(!msg){el.style.display="none";return;}
+  el.style.display="";el.textContent=msg;el.className="status-strip ss-"+cls;
+}
 
-    async function generateRubrics() {
-      if (!_agent) return;
-      const btn = document.getElementById("gen-rubrics-btn");
-      btn.disabled = true;
-      btn.textContent = "Generating…";
-      setStatus("Generating rubrics for test cases without one — this may take a few seconds…", "scanning");
-      try {
-        const r = await fetchJson(
-          `/api/agents/${enc(_agent.agent_id)}/eval/test-cases/generate-rubrics`,
-          { method: "POST" }
-        );
-        setStatus(
-          `${r.message}${r.errors?.length ? ` (${r.errors.length} errors)` : ""}`,
-          r.updated > 0 ? "done" : "scanning"
-        );
-        // Reload test cases to reflect new rubrics
-        await loadTestCases();
-      } catch(e) {
-        setStatus(`Generate rubrics failed: ${e.message}`, "error");
-      } finally {
-        btn.disabled = false;
-        btn.textContent = "✦ Generate rubrics";
-      }
-    }
+async function fetchJson(url,opts={}){
+  const r=await fetch(url,opts);
+  if(!r.ok){const t=await r.text().catch(()=>r.statusText);throw new Error(`${r.status} ${t}`);}
+  return r.json();
+}
 
-    function escHtml(s) {
-      return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Boot
-    // ──────────────────────────────────────────────────────────────────────────
-    bootAgentList();
-    </script>
-    <script src="/static/js/widgets/xaman-ek.js"></script>
-  </body>
+boot();
+</script>
+<script src="/static/js/widgets/xaman-ek.js"></script>
+</body>
 </html>

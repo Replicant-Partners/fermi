@@ -944,7 +944,15 @@ async fn main() {
             get(handlers::eval::list_eval_signals_handler),
         )
         // ─── Phase 4 — Observatory (Plane D) ─────────────────────────
-        // See docs/architecture/OBSERVABILITY_IMPL.md
+        // Fleet
+        .route("/api/observatory/fleet/summary",  get(handlers::observatory::fleet_summary_handler))
+        .route("/api/observatory/fleet/scan",     post(handlers::observatory::fleet_scan_handler))
+        .route("/api/observatory/fleet/agents",   get(handlers::observatory::fleet_agents_handler))
+        // Dyads
+        .route("/api/observatory/dyads/auto-form",        post(handlers::observatory::auto_form_dyads_handler))
+        .route("/api/observatory/dyads/:dyad_id",         axum::routing::patch(handlers::observatory::patch_dyad_profile_handler))
+        .route("/api/observatory/agents/:agent_id/relationships", get(handlers::observatory::agent_relationships_handler))
+        // Per-agent
         .route(
             "/api/observatory/agents/:agent_id/timeline",
             get(handlers::observatory::get_agent_timeline_handler),
