@@ -1201,6 +1201,91 @@ pub async fn list_my_agents_handler(
     Ok(Json(json!({ "agents": agent_list })))
 }
 
+/// GET /api/me/providers
+///
+/// Returns the distinct set of LLM providers active across the caller's
+/// agents and their execution history. Used to drive the provider filter
+/// in the observatory — the list is data-driven, not hardcoded.
+///
+/// Sources (unioned, deduplicated, sorted):
+///   1. `agents.llm_provider` for owned agents
+///   2. `agents.model_ladder` JSONB — providers declared in tier rungs
+///   3. `agent_timeline_entries.provider_used` — providers actually observed
+///      in recent execution history (last 90 days)
+///
+/// Response: `{ "providers": ["anthropic", "mistral", "qwen", ...] }`
+pub async fn list_my_providers_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let mut providers: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    // 1. Primary provider from owned agents + model_ladder rungs
+    let agent_rows = sqlx::query(
+        "SELECT llm_provider, model_ladder FROM agents WHERE user_id = $1"
+    )
+    .bind(&user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    for row in &agent_rows {
+        if let Ok(p) = row.try_get::<String, _>("llm_provider") {
+            if !p.is_empty() { providers.insert(p); }
+        }
+        // Extract providers from model_ladder JSONB array
+        if let Ok(ladder) = row.try_get::<serde_json::Value, _>("model_ladder") {
+            if let Some(arr) = ladder.as_array() {
+                for rung in arr {
+                    if let Some(p) = rung.get("provider").and_then(|v| v.as_str()) {
+                        if !p.is_empty() { providers.insert(p.to_string()); }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Providers observed in recent execution history (timeline entries)
+    // Only for agents owned by this user — join via agent ownership.
+    let timeline_rows = sqlx::query(
+        r#"SELECT DISTINCT ate.provider_used
+           FROM agent_timeline_entries ate
+           JOIN agents a ON a.agent_id = ate.agent_id
+           WHERE a.user_id = $1
+             AND ate.provider_used IS NOT NULL
+             AND ate.created_at >= NOW() - INTERVAL '90 days'"#
+    )
+    .bind(&user_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default(); // non-fatal — timeline may be sparse
+
+    for row in &timeline_rows {
+        if let Ok(p) = row.try_get::<String, _>("provider_used") {
+            if !p.is_empty() { providers.insert(p); }
+        }
+    }
+
+    // 3. Also include curated agents' providers — they are part of the
+    //    user's observable fleet even if not owned.
+    let curated_rows = sqlx::query(
+        "SELECT DISTINCT llm_provider FROM agents WHERE user_id IS NULL AND tier = 'curated'"
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    for row in &curated_rows {
+        if let Ok(p) = row.try_get::<String, _>("llm_provider") {
+            if !p.is_empty() { providers.insert(p); }
+        }
+    }
+
+    let list: Vec<&str> = providers.iter().map(String::as_str).collect();
+    Ok(Json(serde_json::json!({ "providers": list })))
+}
+
 pub async fn update_agent_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,

@@ -983,6 +983,10 @@ async fn main() {
             get(handlers::agents::get_agent_calibration_handler),
         )
         .route(
+            "/api/me/providers",
+            get(handlers::agents::list_my_providers_handler),
+        )
+        .route(
             "/api/me/loop-health",
             get(handlers::agents::loop_health_handler),
         )

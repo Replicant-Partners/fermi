@@ -292,11 +292,6 @@
         <label>Provider:
           <select id="provider-filter" onchange="onProviderChange()">
             <option value="">All providers</option>
-            <option value="anthropic">anthropic</option>
-            <option value="ollama">ollama (local)</option>
-            <option value="openrouter">openrouter</option>
-            <option value="mistral">mistral</option>
-            <option value="deepseek">deepseek</option>
           </select>
         </label>
         <div class="toolbar-sep"></div>
@@ -498,14 +493,34 @@
     // ──────────────────────────────────────────────────────────────────────────
     async function bootAgentList() {
       try {
-        // /api/agents/mine — owned agents with correct agent_id UUIDs + total_executions
-        // /api/agents?tier=curated — curated platform agents visible to all
-        const [mineResp, curatedResp] = await Promise.all([
+        // Fetch agents + providers in parallel
+        const [mineResp, curatedResp, providersResp] = await Promise.all([
           fetch("/api/agents/mine"),
           fetch("/api/agents?tier=curated&limit=200"),
+          fetch("/api/me/providers"),
         ]);
-        const mineData    = mineResp.ok    ? await mineResp.json()    : {};
-        const curatedData = curatedResp.ok ? await curatedResp.json() : {};
+        const mineData      = mineResp.ok      ? await mineResp.json()      : {};
+        const curatedData   = curatedResp.ok   ? await curatedResp.json()   : {};
+        const providersData = providersResp.ok ? await providersResp.json() : {};
+
+        // Populate provider filter from live data
+        const providerSel = document.getElementById("provider-filter");
+        (providersData.providers || []).sort().forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p;
+          // Human-readable labels for known providers
+          const labels = {
+            anthropic: "Anthropic (Claude)",
+            openrouter: "OpenRouter",
+            ollama: "Ollama (local)",
+            mistral: "Mistral",
+            qwen: "Qwen / Alibaba",
+            glm: "GLM / Zhipu",
+            deepseek: "DeepSeek",
+          };
+          opt.textContent = labels[p] || p;
+          providerSel.appendChild(opt);
+        });
 
         const mineAgents    = (mineData.agents || []).map(a => ({ ...a, _source: "mine" }));
         // curated list uses agent_name as agent_id in its response shape — normalise
