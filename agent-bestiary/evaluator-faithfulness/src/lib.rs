@@ -68,7 +68,11 @@ impl EvalModel for FaithfulnessEvaluator {
     }
 
     fn tier(&self) -> EvalTier {
-        EvalTier::PreFilter
+        // Dimensional, not PreFilter — grounding is a quality signal, not a
+        // safety gate. PreFilter short-circuits the entire registry when score
+        // < 0.5, which would prevent CharacterEval/Sotopia from running on
+        // agents that have low-grounding responses.
+        EvalTier::Dimensional
     }
 
     fn dimensions(&self) -> Vec<Dimension> {

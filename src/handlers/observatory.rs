@@ -66,7 +66,11 @@ async fn require_owner_or_admin(
     let user_id = principal.user_id();
     let is_owner = db_agent.owner_id.as_deref() == Some(&user_id);
     let is_admin = principal.can_admin();
-    if !is_owner && !is_admin {
+    // Curated agents (owner_id = NULL, tier = "curated") are observable by
+    // any authenticated user — they are platform-level agents not owned by
+    // any individual. Observatory is read-only for non-owners.
+    let is_curated = db_agent.owner_id.is_none() && db_agent.tier == "curated";
+    if !is_owner && !is_admin && !is_curated {
         return Err((StatusCode::FORBIDDEN, "Owner or admin access required".into()));
     }
     Ok(db_agent)

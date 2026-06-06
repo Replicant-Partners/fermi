@@ -730,7 +730,12 @@
       setText("dims-meta", `${dimNames.length} tracked · window ${_tl?.window ?? "—"}`);
 
       if (!dimNames.length) {
-        el.innerHTML = '<div class="empty">No scored dimensions yet — run an eval to populate.</div>';
+        const runCount = (_evalRuns?.runs || []).length;
+        el.innerHTML = `<div class="empty">${
+          runCount > 0
+            ? `${runCount} eval run(s) found but no dimension scores — prior runs may predate evaluator wiring. Click <strong>▶ Run eval</strong> to generate a fresh baseline.`
+            : 'No scored dimensions yet — click <strong>▶ Run eval</strong> to populate.'
+        }</div>`;
         return;
       }
 

@@ -432,9 +432,10 @@ pub async fn run_eval_cases(
     //   2. ANTHROPIC_API_KEY for LLM-backed evaluators (CharacterEval, WildGuard, Sotopia)
 
     // LifelongBench: episode count + mean embedding for current persona version.
-    let lifelong_signal: Option<evaluator_lifelong::PersonaConsistencySignal> = async {
+    // LifelongBench pre-fetch: all errors are non-fatal — evaluator returns
+    // Inapplicable gracefully when signal is None.
+    let lifelong_signal: Option<evaluator_lifelong::PersonaConsistencySignal> = (async {
         let persona_version = db_agent.persona_version;
-        // Count episodes for this persona version.
         let count_row = sqlx::query(
             "SELECT COUNT(*) AS cnt FROM episodes WHERE agent_id = $1 AND persona_version_at_write = $2"
         )
@@ -445,17 +446,13 @@ pub async fn run_eval_cases(
         .ok()?;
         let n_prior: i64 = count_row.try_get("cnt").unwrap_or(0);
         if n_prior < 5 {
-            return None; // evaluator will still return Inapplicable — handled gracefully
+            return None;
         }
-
-        // Mean embedding for current persona version vs prior version (for cosine).
         let curr_mean = state.memory_store
             .mean_embedding_for_persona_version(db_agent.agent_id, persona_version, 50)
             .await
-            .ok()??;
-
-        // If this is persona version 1, compare against itself (cosine = 1.0 = stable).
-        // For v2+, compare against v-1 to detect inter-version drift.
+            .ok()
+            .flatten()?;
         let reference = if persona_version > 1 {
             state.memory_store
                 .mean_embedding_for_persona_version(db_agent.agent_id, persona_version - 1, 50)
@@ -466,16 +463,13 @@ pub async fn run_eval_cases(
         } else {
             curr_mean.clone()
         };
-
-        // Cosine similarity.
         let cos = agent_bestiary_observability::drift::cosine_similarity(&curr_mean, &reference)
             .unwrap_or(1.0);
-
         Some(evaluator_lifelong::PersonaConsistencySignal {
             within_version_cosine: cos,
             n_prior_episodes: n_prior as usize,
         })
-    }.await;
+    }).await;
 
     // LLM config for LLM-backed evaluators.
     let llm_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
