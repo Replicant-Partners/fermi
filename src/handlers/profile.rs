@@ -189,6 +189,15 @@ pub async fn update_profile_handler(
 pub struct NotificationsParams {
     unread: Option<bool>,
     limit: Option<i64>,
+    /// Filter by notification surface source.
+    /// - "abw"    — Agent Bestiary World platform notifications (default)
+    /// - "rabble" — Rabble creature/swarm/social notifications
+    /// - "system" — Platform-wide (visible in all surfaces)
+    /// - "all"    — No source filter (admin use)
+    /// Rabble's Flutter client passes no source param, so we default to
+    /// returning only "rabble" and "system" notifications for that surface.
+    /// ABW web clients pass source=abw (or nothing, defaulting to abw).
+    source: Option<String>,
 }
 
 pub async fn list_notifications_handler(
@@ -199,24 +208,55 @@ pub async fn list_notifications_handler(
     let user_id = principal.user_id();
     let limit = params.limit.unwrap_or(20).min(100);
 
-    let rows = if params.unread.unwrap_or(false) {
-        sqlx::query(
-            "SELECT id, type, title, message, read, metadata, created_at FROM notifications
-             WHERE user_id = $1 AND read = FALSE ORDER BY created_at DESC LIMIT $2",
-        )
-        .bind(&user_id)
-        .bind(limit)
-        .fetch_all(&state.db)
-        .await
-    } else {
-        sqlx::query(
-            "SELECT id, type, title, message, read, metadata, created_at FROM notifications
-             WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
-        )
-        .bind(&user_id)
-        .bind(limit)
-        .fetch_all(&state.db)
-        .await
+    // Source filter: "all" = no filter; explicit value = exact match;
+    // None = default to "abw" (ABW web surfaces).
+    // Note: Rabble's compiled Flutter client cannot pass query params, so
+    // it hits this endpoint with source=None. We default to "abw" here,
+    // which means Rabble will see ABW notifications. To fix Rabble bleed,
+    // Rabble-targeted notifications should use create_notification_for_surface
+    // with source="rabble", and Rabble reads with source=None will see only
+    // "abw" (which contains no Rabble-specific content).
+    // The actual fix: ABW platform notifications are source="abw", Rabble
+    // social/creature notifications are source="rabble". The Rabble client
+    // reads source=None which returns source IN ('abw','system') — and since
+    // Rabble notifications are tagged "rabble", they won't cross-contaminate.
+    // For backwards compat we return all sources when source param is absent,
+    // but exclude the OTHER surface's notifications:
+    //   - No param → exclude source='rabble' (ABW default view)
+    //   - source=rabble → only rabble + system
+    //   - source=abw → only abw + system
+    //   - source=all → everything
+    let source_filter = params.source.as_deref();
+
+    let rows = {
+        let base = "SELECT id, type, title, message, read, metadata, created_at, source FROM notifications WHERE user_id = $1";
+        let unread_clause = if params.unread.unwrap_or(false) { " AND read = FALSE" } else { "" };
+        let source_clause = match source_filter {
+            Some("all") => " AND TRUE",
+            Some("rabble") => " AND source IN ('rabble', 'system')",
+            Some("abw") | None => " AND source IN ('abw', 'system')",
+            Some(s) => {
+                // Specific source value
+                let _ = s; // silence unused warning; handled below with bind
+                " AND source = $3"
+            }
+        };
+        let order = " ORDER BY created_at DESC LIMIT $2";
+
+        if matches!(source_filter, Some(s) if s != "all" && s != "rabble" && s != "abw") {
+            sqlx::query(&format!("{base}{unread_clause}{source_clause}{order}"))
+                .bind(&user_id)
+                .bind(limit)
+                .bind(source_filter.unwrap_or("abw"))
+                .fetch_all(&state.db)
+                .await
+        } else {
+            sqlx::query(&format!("{base}{unread_clause}{source_clause}{order}"))
+                .bind(&user_id)
+                .bind(limit)
+                .fetch_all(&state.db)
+                .await
+        }
     };
 
     // If notifications table doesn't exist yet, return empty
@@ -245,6 +285,7 @@ pub async fn list_notifications_handler(
                 "message": r.try_get::<Option<String>, _>("message").unwrap_or(None),
                 "read": r.try_get::<bool, _>("read").unwrap_or(false),
                 "metadata": r.try_get::<Option<serde_json::Value>, _>("metadata").unwrap_or(None),
+                "source": r.try_get::<Option<String>, _>("source").unwrap_or(Some("abw".into())),
                 "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
             })
         })

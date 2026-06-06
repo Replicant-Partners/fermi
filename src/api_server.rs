@@ -3142,13 +3142,28 @@ pub(crate) async fn create_notification(
     title: &str,
     message: Option<&str>,
 ) {
+    create_notification_for_surface(pool, user_id, notif_type, title, message, "abw").await;
+}
+
+/// Variant that tags the notification with an explicit surface source.
+/// Use `source = "rabble"` for creature/swarm/social notifications so they
+/// don't bleed into the ABW platform UI and vice versa.
+pub(crate) async fn create_notification_for_surface(
+    pool: &PgPool,
+    user_id: &str,
+    notif_type: &str,
+    title: &str,
+    message: Option<&str>,
+    source: &str,
+) {
     let _ = sqlx::query(
-        "INSERT INTO notifications (user_id, type, title, message) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO notifications (user_id, type, title, message, source) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(user_id)
     .bind(notif_type)
     .bind(title)
     .bind(message)
+    .bind(source)
     .execute(pool)
     .await;
 }
