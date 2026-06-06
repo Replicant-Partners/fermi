@@ -2555,6 +2555,27 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
         eprintln!("seed_agents_to_database: no admin user found — curated agents will have no owner until one is set");
     }
 
+    // ── xaman_ek ontology sync check ───────────────────────────────────────
+    // Enforce the maintenance rule: every agent on disk must be named in
+    // xaman_ek's system_prompt. Missing agents mean xaman_ek will give
+    // incorrect navigation and composition advice.
+    let xaman_card = cards.iter().find(|c| c.agent_id == "xaman_ek");
+    if let Some(xc) = xaman_card {
+        let prompt = xc.system_prompt.as_deref().unwrap_or("");
+        let missing: Vec<&str> = cards.iter()
+            .filter(|c| c.agent_id != "xaman_ek")
+            .filter(|c| !prompt.contains(&format!("**{}**", c.agent_id)))
+            .map(|c| c.agent_id.as_str())
+            .collect();
+        if !missing.is_empty() {
+            eprintln!(
+                "⚠  xaman_ek ONTOLOGY DRIFT: {} agent(s) on disk not registered in xaman_ek's system_prompt.\n   Missing: {}\n   Update agents/curated/xaman_ek/agent_card.json per the maintenance rule.",
+                missing.len(),
+                missing.join(", ")
+            );
+        }
+    }
+
     for card in &cards {
         let agent = Agent {
             agent_id: uuid::Uuid::new_v4(),
