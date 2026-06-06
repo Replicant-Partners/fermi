@@ -79,6 +79,8 @@ pub struct ForageRequest {
     pub flavor_notes: Option<String>,
     pub opted_in_shared: Option<bool>,
     pub goal_id: Option<String>,
+    pub photo_urls: Option<Vec<String>>,  // workspace git raw URLs
+    pub photo_url: Option<String>,        // single photo URL for identify action
 }
 
 use super::helpers::{
@@ -1734,14 +1736,26 @@ pub async fn forage_handler(
                 .as_deref()
                 .and_then(|s| s.parse().ok());
 
+            // Collect photo URLs — from array or single field
+            let photo_urls: Vec<String> = req.photo_urls.clone()
+                .unwrap_or_else(|| req.photo_url.as_ref()
+                    .map(|u| vec![u.clone()])
+                    .unwrap_or_default());
+            let photo_urls_val: Option<serde_json::Value> = if photo_urls.is_empty() {
+                None
+            } else {
+                Some(json!(photo_urls))
+            };
+
             let obs_id: uuid::Uuid = sqlx::query(
                 r#"INSERT INTO forage_observations (
                     creature_id, goal_id, owner_id,
                     species_name, taxa_group, quantity,
                     location_lat, location_lng,
                     habitat_type, conditions,
-                    harvest_notes, flavor_profile, opted_in_shared
-                ) VALUES ($1,$2,$3,$4,'fungi',$5,$6,$7,$8,$9,$10,$11,$12)
+                    harvest_notes, flavor_profile, opted_in_shared,
+                    photo_urls
+                ) VALUES ($1,$2,$3,$4,'fungi',$5,$6,$7,$8,$9,$10,$11,$12,$13)
                 RETURNING observation_id"#,
             )
             .bind(creature_id)
@@ -1756,6 +1770,7 @@ pub async fn forage_handler(
             .bind(req.harvest_notes.as_deref())
             .bind(&flavor_profile)
             .bind(req.opted_in_shared.unwrap_or(false))
+            .bind(if photo_urls.is_empty() { None } else { Some(&photo_urls as &Vec<String>) })
             .fetch_one(&state.db)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to log observation: {}", e)))?
@@ -1780,12 +1795,123 @@ pub async fn forage_handler(
                 "creature_id": creature_id,
                 "observation_id": obs_id,
                 "species": species,
+                "photo_urls": photo_urls_val,
                 "logged": true,
             })))
         }
+
+        "identify" => {
+            // Photo-based species identification via Claude vision API.
+            // The client uploads the photo to the workspace git first, then
+            // passes the raw URL here. We build a vision message directly
+            // using the Anthropic messages API with an image URL content block.
+            let photo_url = req.photo_url.as_deref()
+                .ok_or((StatusCode::BAD_REQUEST, "photo_url is required for identify action".to_string()))?;
+
+            let habitat_hint = req.habitat.as_deref().unwrap_or("unknown habitat");
+            let location_hint = match (req.lat, req.lng) {
+                (Some(la), Some(ln)) => format!("{:.4}, {:.4}", la, ln),
+                _ => "unknown".to_string(),
+            };
+
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "ANTHROPIC_API_KEY not set".to_string()))?;
+
+            // Build a vision request: text instruction + image URL block
+            let request_body = json!({
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1024,
+                "system": "You are an expert field mycologist and foraging safety advisor. \
+                           When shown a photo of a wild specimen, you identify the species \
+                           with scientific rigour and provide a clear safety assessment. \
+                           You ALWAYS flag toxic look-alikes. When uncertain, you say so. \
+                           Never recommend harvesting an unidentified specimen. \
+                           Respond in JSON only.",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": photo_url
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": format!(
+                                "Identify this specimen. Location: {}. Habitat: {}.\n\n\
+                                 Respond with JSON only:\n\
+                                 {{\n\
+                                   \"species\": \"scientific name or null if uncertain\",\n\
+                                   \"common_name\": \"common name\",\n\
+                                   \"edibility\": \"choice|edible|inedible|toxic|unknown\",\n\
+                                   \"confidence\": \"high|medium|low\",\n\
+                                   \"identification_notes\": \"key visual features used\",\n\
+                                   \"look_alikes\": [\n\
+                                     {{\"species\": \"name\", \"danger\": \"fatal|toxic|inedible\", \"distinguishing\": \"how to tell apart\"}}\n\
+                                   ],\n\
+                                   \"harvest_window\": \"now|1-2 days|not prime|do not harvest\",\n\
+                                   \"processing_recommendation\": \"brief processing note\",\n\
+                                   \"safety_note\": \"critical safety information — especially if toxic look-alikes exist\"\n\
+                                 }}",
+                                location_hint, habitat_hint
+                            )
+                        }
+                    ]
+                }]
+            });
+
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default();
+
+            let resp = client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Vision API request failed: {}", e)))?;
+
+            if !resp.status().is_success() {
+                let err = resp.text().await.unwrap_or_default();
+                return Err((StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Vision API error: {}", err)));
+            }
+
+            let claude_resp: serde_json::Value = resp.json().await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            let raw_text = claude_resp
+                .pointer("/content/0/text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let identification = parse_agent_json(
+                raw_text,
+                json!({
+                    "species": null,
+                    "edibility": "unknown",
+                    "confidence": "low",
+                    "safety_note": "Could not identify specimen. Do not harvest unidentified fungi.",
+                }),
+            );
+
+            Ok(Json(json!({
+                "creature_id": creature_id,
+                "photo_url": photo_url,
+                "identification": identification,
+            })))
+        }
+
         other => Err((
             StatusCode::BAD_REQUEST,
-            format!("Unknown action '{}' — use enable|disable|scout|log", other),
+            format!("Unknown action '{}' — use enable|disable|scout|log|identify", other),
         )),
     }
 }
