@@ -532,26 +532,32 @@
         const sel = document.getElementById("agent-select");
         agents.forEach(a => {
           const opt = document.createElement("option");
-          opt.value = a.agent_id;
+          // All API endpoints resolve by agent_name, not UUID.
+          // Store name as value; keep UUID only for dedup logic.
+          opt.value = a.agent_name;
+          opt.dataset.uuid = a.agent_id || "";
           opt.textContent = `${a.agent_name}  (${a.total_executions || 0} runs)`;
           sel.appendChild(opt);
         });
 
         // Populate subset picker with same list
         populateSubsetList(agents.map(a => ({
-          agent_id: a.agent_id,
+          agent_id: a.agent_name,   // name used as API key
           agent_name: a.agent_name,
         })));
         updateRunEvalBtn();
 
-        // Deep-link: ?agent=id_or_name
+        // Deep-link: ?agent=name_or_uuid
         const urlParam = new URLSearchParams(location.search).get("agent");
         if (urlParam) {
-          // Try match by value (uuid) or by text
-          const match = agents.find(a => a.agent_id === urlParam || a.agent_name === urlParam);
+          const match = agents.find(a =>
+            a.agent_name === urlParam ||
+            a.agent_id === urlParam ||
+            (a.agent_id || "").toString() === urlParam
+          );
           if (match) {
-            sel.value = match.agent_id;
-            await loadAgent(match.agent_id, match.agent_name);
+            sel.value = match.agent_name;
+            await loadAgent(match.agent_name, match.agent_name);
           }
         }
       } catch(e) {
@@ -561,10 +567,9 @@
 
     async function onAgentChange() {
       const sel = document.getElementById("agent-select");
-      const id = sel.value;
-      if (!id) return;
-      const name = sel.options[sel.selectedIndex].textContent.split("  (")[0].trim();
-      await loadAgent(id, name);
+      const name = sel.value;   // value is agent_name
+      if (!name) return;
+      await loadAgent(name, name);
       updateRunEvalBtn();
     }
 
@@ -579,9 +584,9 @@
       document.getElementById("scan-btn").disabled = false;
       setStatus("Loading…", "scanning");
 
-      // Update URL
+      // Update URL — use name (human-readable, resolves by name in all API calls)
       const u = new URL(location.href);
-      u.searchParams.set("agent", agentId);
+      u.searchParams.set("agent", agentName);
       history.replaceState(null, "", u.toString());
 
       try {
@@ -1186,7 +1191,7 @@
           if (!_agent) return;
           setStatus("Triggering eval run…", "scanning");
           const r = await fetchJson(
-            `/api/agents/${enc(_agent.agent_id)}/eval/runs`,
+            `/api/agents/${enc(_agent.agent_id)}/eval/run`,
             { method: "POST", headers: {"Content-Type":"application/json"},
               body: JSON.stringify({ judge }) }
           );
