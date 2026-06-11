@@ -550,6 +550,15 @@ async fn run_migrations(db: &PgPool) {
         // Enables ProjectionScoringEvaluator (spec 20) to find prior
         // synthetic observations when real measurements arrive.
         "migrations/130_sosa_projection_index.sql",
+        // Creature goal state for Rabble goal-tracking.
+        "migrations/131_creature_goals.sql",
+        // Forage observation types for kask-app-wild.
+        "migrations/132_forage_observations.sql",
+        // Named human-agent relationships (dyad social graph).
+        "migrations/133_dyad_profiles.sql",
+        // Source column on notifications — prevents ABW platform
+        // notifications bleeding into the Rabble surface.
+        "migrations/134_notifications_source.sql",
     ];
 
     for file in &migration_files {

@@ -807,6 +807,16 @@ pub async fn auto_form_dyads_handler(
     principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
+    // Check dyad_profiles table exists (migration 133 may not have run yet)
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='dyad_profiles')"
+    ).fetch_one(&state.db).await.unwrap_or(false);
+    if !table_exists {
+        return Ok(Json(serde_json::json!({
+            "formed": 0,
+            "message": "dyad_profiles table not yet created — migration 133 pending. Will resolve on next deploy.",
+        })));
+    }
     let pairs = sqlx::query(
         r#"SELECT e.agent_id, e.dyad_id, COUNT(*) as cnt,
                   MIN(e.timestamp_ref) as first_at, MAX(e.timestamp_ref) as last_at
@@ -848,6 +858,7 @@ pub async fn agent_relationships_handler(
     let dyads = state.memory_store.list_dyads_for_agent(db_agent.agent_id).await
         .map_err(|e|(StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))?;
     let dyad_ids: Vec<String> = dyads.iter().map(|d|d.dyad_id.clone()).collect();
+    // dyad_profiles may not exist yet (migration 133 pending) — fall back gracefully
     let profiles: std::collections::HashMap<String,serde_json::Value> = if !dyad_ids.is_empty() {
         sqlx::query("SELECT dyad_id,display_name,notes,tags,total_interactions,first_interaction_at,last_interaction_at FROM dyad_profiles WHERE dyad_id=ANY($1)")
         .bind(&dyad_ids).fetch_all(&state.db).await.unwrap_or_default()
@@ -895,6 +906,6 @@ pub async fn patch_dyad_profile_handler(
     .bind(body.get("display_name").and_then(|v|v.as_str()))
     .bind(body.get("notes").and_then(|v|v.as_str()))
     .execute(&state.db).await
-    .map_err(|e|(StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))?;
+    .map_err(|e|(StatusCode::SERVICE_UNAVAILABLE, format!("dyad_profiles unavailable (migration pending?): {}", e)))?;
     Ok(Json(serde_json::json!({"updated":true})))
 }
