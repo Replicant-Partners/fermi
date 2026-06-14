@@ -67,6 +67,14 @@ impl AuthPrincipal {
         }
     }
 
+    /// Return the user ID as a UUID, for binding to UUID columns in the DB.
+    /// The user_id string may be a UUID (from the `users.id` column) or a
+    /// text identifier (Zitadel ID / Ethereum address). This method parses
+    /// the string and returns `None` if it is not a valid UUID.
+    pub fn user_uuid(&self) -> Option<Uuid> {
+        Uuid::parse_str(&self.user_id()).ok()
+    }
+
     pub fn can_write(&self) -> bool {
         match self {
             AuthPrincipal::User(user) => user.role.can_write(),

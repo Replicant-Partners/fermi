@@ -692,8 +692,12 @@ async fn main() {
 
     println!("Connected to database successfully");
 
-    // Run pending migrations on startup
-    run_migrations(&db).await;
+    // Run pending migrations on startup (skip with SKIP_MIGRATIONS=1)
+    if std::env::var("SKIP_MIGRATIONS").unwrap_or_default() != "1" {
+        run_migrations(&db).await;
+    } else {
+        println!("Skipping migrations (SKIP_MIGRATIONS=1)");
+    }
 
     // Belt-and-suspenders: ensure the columns that have repeatedly failed
     // to land via the multi-statement migration runner (PgBouncer + raw_sql
@@ -2855,7 +2859,18 @@ async fn seed_cep_entities(
             embedding: None,
             properties: Some(sf.properties.clone()),
         };
-        match memory_store.store_entity(entity).await {
+        // CEP seed entities have NULL embedding by design (no vector available
+        // at seed time; the consolidation worker may later opportunistically
+        // embed `entity_name` if needed). Stamp source_ref so the row is
+        // identifiable as a CEP seed.
+        let source_ref = serde_json::json!({
+            "kind": "cep_seed",
+            "agent_name": agent_name,
+        });
+        match memory_store
+            .store_entity_with_provenance(entity, None, Some(source_ref))
+            .await
+        {
             Ok(_) => seeded += 1,
             Err(e) => eprintln!(
                 "  Warning: failed to seed CEP entity '{}' for {}: {}",

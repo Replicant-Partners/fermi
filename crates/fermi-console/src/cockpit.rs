@@ -1141,6 +1141,8 @@ impl CockpitState {
                             || combined.contains("perception")
                             || combined.contains("buzz")
                             || combined.contains("narrative")
+                            || combined.contains("social media")
+                            || combined.contains("public opinion")
                         {
                             "sentiment_analyzer"
                         } else if combined.contains("entity")
@@ -1151,8 +1153,25 @@ impl CockpitState {
                             || combined.contains("legal")
                             || combined.contains("compliance")
                             || combined.contains("investigation")
+                            || combined.contains("regime")
+                            || combined.contains("government")
+                            || combined.contains("military")
+                            || combined.contains("security apparatus")
+                            || combined.contains("cohesion")
+                            || combined.contains("supreme leader")
+                            || combined.contains("succession")
                         {
                             "entity_investigator"
+                        } else if combined.contains("protest")
+                            || combined.contains("revolution")
+                            || combined.contains("uprising")
+                            || combined.contains("momentum")
+                            || combined.contains("unrest")
+                            || combined.contains("civil")
+                            || combined.contains("dissent")
+                            || combined.contains("demonstration")
+                        {
+                            "sentiment_analyzer"
                         } else if combined.contains("market")
                             || combined.contains("competition")
                             || combined.contains("competitor")
@@ -1172,9 +1191,25 @@ impl CockpitState {
                             || combined.contains("inflation")
                             || combined.contains("interest rate")
                             || combined.contains("fed")
-                            || combined.contains("policy")
                             || combined.contains("recession")
                             || combined.contains("valuation")
+                            || combined.contains("currency")
+                            || combined.contains("sanction")
+                            || combined.contains("crisis")
+                            || combined.contains("trade")
+                            || combined.contains("fiscal")
+                            || combined.contains("monetary")
+                        {
+                            "macro_forecaster"
+                        } else if combined.contains("policy")
+                            || combined.contains("geopolit")
+                            || combined.contains("diplomat")
+                            || combined.contains("interven")
+                            || combined.contains("external")
+                            || combined.contains("foreign")
+                            || combined.contains("international")
+                            || combined.contains("alliance")
+                            || combined.contains("nuclear")
                         {
                             "macro_forecaster"
                         } else if combined.contains("clinical")
@@ -1185,12 +1220,31 @@ impl CockpitState {
                             || combined.contains("approval")
                         {
                             "biotech_analyst"
+                        } else if combined.contains("stock")
+                            || combined.contains("equity")
+                            || combined.contains("eps")
+                            || combined.contains("p/e")
+                            || combined.contains("earnings")
+                            || combined.contains("share price")
+                            || combined.contains("shareholder")
+                        {
+                            "equity_analyst"
+                        } else if combined.contains("energy")
+                            || combined.contains("oil")
+                            || combined.contains("gas")
+                            || combined.contains("renewable")
+                            || combined.contains("solar")
+                            || combined.contains("wind power")
+                            || combined.contains("carbon")
+                            || combined.contains("emission")
+                        {
+                            "energy_advisor"
                         } else if combined.contains("nba")
                             || combined.contains("basketball")
                             || combined.contains("elo")
                             || combined.contains("home court")
-                            || combined.contains("injury")
-                                && (domain.contains("nba") || domain.contains("basketball"))
+                            || (combined.contains("injury")
+                                && (domain.contains("nba") || domain.contains("basketball")))
                         {
                             "nba_analyst"
                         } else {
@@ -1628,9 +1682,19 @@ impl CockpitState {
                         .unwrap_or_default();
 
                     this.update(cx, |state, cx| {
-                        // Route to the right processor based on agent type
-                        log::info!("[composer] Routing {} to processor (base_id={})", tracking_id, base_id);
-                        if base_id == "macro_forecaster" {
+                        // Route to the right processor based on agent type.
+                        // If a driver-bound agent (compound name like "macro_forecaster_driver_x"),
+                        // always process evidence for that driver regardless of agent type.
+                        let is_driver_bound = tracking_id != base_id; // compound name means it's bound to a driver
+                        log::info!("[composer] Routing {} to processor (base_id={}, driver_bound={})", tracking_id, base_id, is_driver_bound);
+
+                        if is_driver_bound {
+                            // Driver-bound agent: add evidence to the driver first
+                            log::info!("[composer] → process_agent_evidence({}) [driver-bound]", tracking_id);
+                            state.process_agent_evidence(&tracking_id, &result_json);
+                        }
+
+                        if base_id == "macro_forecaster" && !is_driver_bound {
                             log::info!("[composer] → process_macro_forecaster_result");
                             state.process_macro_forecaster_result(&result_json, cx);
                         } else if base_id == "fermi" {
@@ -1739,8 +1803,8 @@ impl CockpitState {
                                     state.process_fermi_recommendation(&result_json, cx);
                                 }
                             }
-                        } else {
-                            // Other agents: add evidence to AST
+                        } else if !is_driver_bound {
+                            // Other agents (not driver-bound): add evidence to AST
                             log::info!("[composer] → process_agent_evidence({})", tracking_id);
                             state.process_agent_evidence(&tracking_id, &result_json);
                         }
@@ -1942,7 +2006,11 @@ impl CockpitState {
             if let Some(run) = self
                 .agent_runs
                 .iter_mut()
-                .find(|r| r.agent_name == agent_id)
+                .find(|r| {
+                    r.agent_name == agent_id
+                        || base_agent_name(&r.agent_name) == agent_id
+                        || r.agent_name.starts_with(agent_id)
+                })
             {
                 run.evidence_count = count;
             }
@@ -5270,8 +5338,11 @@ fn render_driver_card(
     // Agents bound to this driver
     // (In current AST, agents are top-level with driver_refs)
 
-    let has_evidence_gap =
-        assigned_agents.is_empty() && evidence_items.iter().all(|e| !e.id.contains(name));
+    // Check if this driver has any evidence (from its assigned agents or matching evidence items)
+    let has_driver_evidence = assigned_agents
+        .iter()
+        .any(|a| evidence_items.iter().any(|e| evidence_matches_agent(e, a)));
+    let has_evidence_gap = assigned_agents.is_empty() && !has_driver_evidence;
     let any_agent_running = assigned_agents.iter().any(|a| {
         agent_runs
             .iter()
@@ -5455,11 +5526,24 @@ fn render_driver_card(
         )
         // Driver confidence dots (based on evidence coverage or user override)
         .child({
-            let ev_count = assigned_agents
+            // Count evidence from agent runs first, then fall back to
+            // counting evidence items directly (handles cases where
+            // evidence_count wasn't properly updated on the run).
+            let ev_count_from_runs: usize = assigned_agents
                 .iter()
                 .flat_map(|a| agent_runs.iter().filter(move |r| r.agent_name == *a))
                 .map(|r| r.evidence_count)
-                .sum::<usize>();
+                .sum();
+            let ev_count_from_items: usize = assigned_agents
+                .iter()
+                .map(|a| {
+                    evidence_items
+                        .iter()
+                        .filter(|e| evidence_matches_agent(e, a))
+                        .count()
+                })
+                .sum();
+            let ev_count = ev_count_from_runs.max(ev_count_from_items);
             let computed_conf = if ev_count >= 3 {
                 0.8
             } else if ev_count >= 1 {
@@ -11018,21 +11102,51 @@ fn extract_multiplier_near_keyword(text: &str, keyword: &str) -> Option<f64> {
 }
 
 fn base_agent_name(compound_name: &str) -> &str {
-    // Known agent base names
+    // Known agent base names — covers all curated agents.
+    // The compound agent name format is "{base_id}_{driver_name}".
+    // We match against known base IDs to extract the base portion.
     let known = [
         "macro_forecaster",
         "market_research",
         "sentiment_analyzer",
         "entity_investigator",
         "monte_carlo_sim",
+        "equity_analyst",
+        "biotech_analyst",
+        "nba_analyst",
+        "football_analyst",
+        "energy_advisor",
+        "comparator",
+        "performance_coach",
+        "social_media_studio",
+        "simops_advisor",
+        "simops_optimizer",
+        "simops_cascade",
+        "simops_narrator_local",
+        "valuechain_mapper",
+        "ar_cartographer",
+        "ar_choreographer",
+        "wild_companion",
+        "keeper",
+        "reynolds_flock",
+        "embedding_broker",
+        "coherence_evaluator",
+        "publish_coach",
+        "sensor_advisor",
+        "intention_coordinator",
+        "rabble_anchor_manager",
         "fermi",
     ];
+    // Check longest matches first (some names are prefixes of others)
+    let mut best: &str = compound_name;
+    let mut best_len = 0;
     for base in &known {
-        if compound_name.starts_with(base) {
-            return base;
+        if compound_name.starts_with(base) && base.len() > best_len {
+            best = base;
+            best_len = base.len();
         }
     }
-    compound_name
+    best
 }
 
 /// Check if an evidence item is linked to an agent (by base name match).
@@ -11129,7 +11243,15 @@ fn score_evidence_quality(ev: &EvidenceStmt) -> (f64, &'static str, u32) {
 
 fn evidence_matches_agent(evidence: &EvidenceStmt, agent_name: &str) -> bool {
     let base = base_agent_name(agent_name);
-    evidence.source.contains(base) || evidence.id.contains(agent_name)
+    // Evidence IDs are formatted as "{base_agent_id}_{N}" (e.g. "market_research_0")
+    // Agent statement names are "{base_agent_id}_{driver_name}" (e.g. "market_research_economic_crisis")
+    // Match by:
+    // 1. Evidence ID starts with the base agent name followed by "_" (most reliable)
+    // 2. Evidence source text contains the base agent name
+    // 3. Evidence ID contains the full compound agent name
+    evidence.id.starts_with(&format!("{}_", base))
+        || evidence.source.contains(base)
+        || evidence.id.contains(agent_name)
 }
 
 fn clean_fpl_string(s: &str) -> String {

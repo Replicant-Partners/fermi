@@ -203,7 +203,7 @@ pub async fn create_forecast_handler(
           fpl_source, notebook_id, simulation_results, iterations,
           drivers, evidence, agents_used,
           status, visibility, team_id, tags, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+         VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                  $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())",
     )
     .bind(&forecast_id)
@@ -264,9 +264,9 @@ pub async fn get_forecast_handler(
     let pool = &state.db;
 
     let row = sqlx::query(
-        "SELECT f.*, u.display_name AS owner_display_name
+        "SELECT f.*, f.owner_id::text AS owner_id_text, u.name AS owner_display_name
          FROM fermi_forecasts f
-         LEFT JOIN users u ON u.user_id = f.owner_id
+         LEFT JOIN users u ON u.id = f.owner_id
          WHERE f.id = $1",
     )
     .bind(&forecast_id)
@@ -276,7 +276,7 @@ pub async fn get_forecast_handler(
     .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
 
     // Access control: owner, team member, or public
-    let owner_id: String = row.get("owner_id");
+    let owner_id: String = row.get("owner_id_text");
     let visibility: String = row.get("visibility");
     let team_id: Option<Uuid> = row.try_get("team_id").ok();
 
@@ -390,7 +390,7 @@ pub async fn list_forecasts_handler(
     // Default: show own forecasts + shared/public
     bind_idx += 1;
     conditions.push(format!(
-        "(f.owner_id = ${} OR f.visibility IN ('shared', 'public'))",
+        "(f.owner_id = ${}::uuid OR f.visibility IN ('shared', 'public'))",
         bind_idx
     ));
     binds.push(user_id.clone());
@@ -436,12 +436,12 @@ pub async fn list_forecasts_handler(
 
     let where_clause = conditions.join(" AND ");
     let sql = format!(
-        "SELECT f.id, f.owner_id, f.question_text, f.domain, f.predicted_probability,
+        "SELECT f.id, f.owner_id::text AS owner_id, f.question_text, f.domain, f.predicted_probability,
                 f.status, f.brier_score, f.actual_outcome, f.target_date, f.visibility,
                 f.tags, f.created_at, f.updated_at, f.resolved_at,
-                u.display_name AS owner_display_name
+                u.name AS owner_display_name
          FROM fermi_forecasts f
-         LEFT JOIN users u ON u.user_id = f.owner_id
+         LEFT JOIN users u ON u.id = f.owner_id
          WHERE {}
          ORDER BY {} {} NULLS LAST
          LIMIT {} OFFSET {}",
@@ -502,7 +502,7 @@ pub async fn update_forecast_handler(
 
     // Verify ownership
     let row = sqlx::query(
-        "SELECT owner_id, status, predicted_probability FROM fermi_forecasts WHERE id = $1",
+        "SELECT owner_id::text AS owner_id, status, predicted_probability FROM fermi_forecasts WHERE id = $1",
     )
     .bind(&forecast_id)
     .fetch_optional(pool)
@@ -629,7 +629,7 @@ pub async fn delete_forecast_handler(
     let pool = &state.db;
 
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_forecasts WHERE id = $1")
             .bind(&forecast_id)
             .fetch_optional(pool)
             .await
@@ -817,7 +817,7 @@ pub async fn void_forecast_handler(
 
     let result = sqlx::query(
         "UPDATE fermi_forecasts SET status = 'voided', updated_at = NOW()
-         WHERE id = $1 AND owner_id = $2 AND status IN ('draft', 'active')
+         WHERE id = $1 AND owner_id = $2::uuid AND status IN ('draft', 'active')
          RETURNING id",
     )
     .bind(&forecast_id)
@@ -866,7 +866,7 @@ pub async fn update_probability_handler(
 
     // Get current state
     let row = sqlx::query(
-        "SELECT owner_id, status, predicted_probability FROM fermi_forecasts WHERE id = $1",
+        "SELECT owner_id::text AS owner_id, status, predicted_probability FROM fermi_forecasts WHERE id = $1",
     )
     .bind(&forecast_id)
     .fetch_optional(pool)
@@ -945,7 +945,7 @@ pub async fn create_portfolio_handler(
 
     sqlx::query(
         "INSERT INTO fermi_portfolios (id, title, description, owner_id, visibility, team_id, domain, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())",
+         VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, NOW(), NOW())",
     )
     .bind(&portfolio_id)
     .bind(&req.title)
@@ -980,7 +980,8 @@ pub async fn list_portfolios_handler(
     let offset = q.offset.unwrap_or(0);
 
     let rows = sqlx::query(
-        "SELECT p.*,
+        "SELECT p.id, p.title, p.description, p.owner_id::text AS owner_id,
+                p.visibility, p.domain, p.created_at, p.updated_at,
                 (SELECT COUNT(*) FROM fermi_portfolio_forecasts pf WHERE pf.portfolio_id = p.id) AS forecast_count,
                 (SELECT COUNT(*) FROM fermi_portfolio_forecasts pf
                  JOIN fermi_forecasts f ON f.id = pf.forecast_id
@@ -989,7 +990,7 @@ pub async fn list_portfolios_handler(
                  JOIN fermi_forecasts f ON f.id = pf.forecast_id
                  WHERE pf.portfolio_id = p.id AND f.brier_score IS NOT NULL) AS avg_brier
          FROM fermi_portfolios p
-         WHERE p.owner_id = $1 OR p.visibility IN ('shared', 'public')
+         WHERE p.owner_id = $1::uuid OR p.visibility IN ('shared', 'public')
          ORDER BY p.updated_at DESC
          LIMIT $2 OFFSET $3",
     )
@@ -1039,7 +1040,7 @@ pub async fn portfolio_stats_handler(
 
     // Verify access
     let portfolio = sqlx::query(
-        "SELECT owner_id, title, visibility, domain FROM fermi_portfolios WHERE id = $1",
+        "SELECT owner_id::text AS owner_id, title, visibility, domain FROM fermi_portfolios WHERE id = $1",
     )
     .bind(&portfolio_id)
     .fetch_optional(pool)
@@ -1157,7 +1158,7 @@ pub async fn add_forecast_to_portfolio_handler(
 
     // Verify portfolio ownership
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_portfolios WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_portfolios WHERE id = $1")
             .bind(&portfolio_id)
             .fetch_optional(pool)
             .await
@@ -1196,7 +1197,7 @@ pub async fn remove_forecast_from_portfolio_handler(
     let pool = &state.db;
 
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_portfolios WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_portfolios WHERE id = $1")
             .bind(&portfolio_id)
             .fetch_optional(pool)
             .await
@@ -1230,7 +1231,7 @@ pub async fn delete_portfolio_handler(
     let pool = &state.db;
 
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_portfolios WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_portfolios WHERE id = $1")
             .bind(&portfolio_id)
             .fetch_optional(pool)
             .await
@@ -1268,7 +1269,7 @@ pub async fn patch_portfolio_handler(
     let pool = &state.db;
 
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_portfolios WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_portfolios WHERE id = $1")
             .bind(&portfolio_id)
             .fetch_optional(pool)
             .await
@@ -1311,7 +1312,7 @@ pub async fn list_portfolio_forecasts_handler(
 
     // Allow access if owner OR portfolio is public/team
     let portfolio = sqlx::query(
-        "SELECT owner_id, visibility FROM fermi_portfolios WHERE id = $1",
+        "SELECT owner_id::text AS owner_id, visibility FROM fermi_portfolios WHERE id = $1",
     )
     .bind(&portfolio_id)
     .fetch_optional(pool)
@@ -1416,7 +1417,7 @@ pub async fn leaderboard_handler(
         Err(_) => {
             // Fallback: live query (slower but works before first REFRESH)
             sqlx::query(
-                "SELECT f.owner_id, u.display_name,
+                "SELECT f.owner_id::text AS owner_id, u.name AS display_name,
                         COUNT(*) AS total_resolved,
                         AVG(f.brier_score) AS avg_brier_score,
                         MIN(f.brier_score) AS best_brier_score,
@@ -1425,9 +1426,9 @@ pub async fn leaderboard_handler(
                         MAX(f.resolved_at) AS last_resolved_at,
                         ROW_NUMBER() OVER (ORDER BY AVG(f.brier_score) ASC) AS rank
                  FROM fermi_forecasts f
-                 JOIN users u ON u.user_id = f.owner_id
+                 JOIN users u ON u.id = f.owner_id
                  WHERE f.status = 'resolved' AND f.brier_score IS NOT NULL
-                 GROUP BY f.owner_id, u.display_name
+                 GROUP BY f.owner_id, u.name
                  HAVING COUNT(*) >= $1
                  ORDER BY avg_brier_score ASC
                  LIMIT $2 OFFSET $3",
@@ -1507,7 +1508,7 @@ pub async fn my_stats_handler(
             COUNT(DISTINCT DATE(created_at)) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') AS active_days_30d,
             array_agg(DISTINCT domain) FILTER (WHERE domain IS NOT NULL) AS domains
          FROM fermi_forecasts
-         WHERE owner_id = $1",
+         WHERE owner_id = $1::uuid",
     )
     .bind(&user_id)
     .fetch_one(pool)
@@ -1522,7 +1523,7 @@ pub async fn my_stats_handler(
             WHERE status = 'resolved' AND brier_score IS NOT NULL
             GROUP BY owner_id
             HAVING COUNT(*) >= 5
-        ) ranked WHERE owner_id = $1",
+        ) ranked WHERE owner_id = $1::uuid",
     )
     .bind(&user_id)
     .fetch_optional(pool)
@@ -1605,12 +1606,12 @@ pub async fn public_forecasts_handler(
 
     let where_clause = conditions.join(" AND ");
     let sql = format!(
-        "SELECT f.id, f.owner_id, f.question_text, f.domain, f.predicted_probability,
+        "SELECT f.id, f.owner_id::text AS owner_id, f.question_text, f.domain, f.predicted_probability,
                 f.status, f.brier_score, f.actual_outcome, f.target_date,
                 f.tags, f.created_at, f.resolved_at,
-                u.display_name AS owner_display_name
+                u.name AS owner_display_name
          FROM fermi_forecasts f
-         LEFT JOIN users u ON u.user_id = f.owner_id
+         LEFT JOIN users u ON u.id = f.owner_id
          WHERE {}
          ORDER BY {} {} NULLS LAST
          LIMIT {} OFFSET {}",
@@ -1676,7 +1677,7 @@ pub async fn list_forecast_schedules_handler(
     let pool = &state.db;
 
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_forecasts WHERE id = $1")
             .bind(&forecast_id)
             .fetch_optional(pool)
             .await
@@ -1737,7 +1738,7 @@ pub async fn upsert_forecast_schedule_handler(
     let pool = &state.db;
 
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_forecasts WHERE id = $1")
             .bind(&forecast_id)
             .fetch_optional(pool)
             .await
@@ -1796,7 +1797,7 @@ pub async fn delete_forecast_schedule_handler(
     let pool = &state.db;
 
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_forecasts WHERE id = $1")
             .bind(&forecast_id)
             .fetch_optional(pool)
             .await
@@ -1834,7 +1835,7 @@ pub async fn record_schedule_run_handler(
     let pool = &state.db;
 
     let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id FROM fermi_forecasts WHERE id = $1")
+        sqlx::query_scalar("SELECT owner_id::text FROM fermi_forecasts WHERE id = $1")
             .bind(&forecast_id)
             .fetch_optional(pool)
             .await

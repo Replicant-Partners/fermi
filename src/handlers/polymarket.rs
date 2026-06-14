@@ -348,7 +348,7 @@ pub async fn snapshot_handler(
     // ── Get Fermi probability if forecast is linked ────────────
     let (fermi_prob, divergence) = if let Some(ref fc_id) = body.forecast_id {
         let row = sqlx::query(
-            "SELECT predicted_probability FROM fermi_forecasts WHERE id = $1 AND owner_id = $2",
+            "SELECT predicted_probability FROM fermi_forecasts WHERE id = $1 AND owner_id = $2::uuid",
         )
         .bind(fc_id)
         .bind(&user_id)
@@ -454,7 +454,7 @@ pub async fn snapshot_handler(
             "UPDATE fermi_forecasts
              SET metadata = metadata || $1::jsonb,
                  updated_at = NOW()
-             WHERE id = $2 AND owner_id = $3",
+             WHERE id = $2 AND owner_id = $3::uuid",
         )
         .bind(&pm_metadata)
         .bind(fc_id)
@@ -517,7 +517,7 @@ pub async fn link_handler(
     let forecast = sqlx::query(
         "SELECT id, predicted_probability, question_text
          FROM fermi_forecasts
-         WHERE id = $1 AND owner_id = $2",
+         WHERE id = $1 AND owner_id = $2::uuid",
     )
     .bind(&body.forecast_id)
     .bind(&user_id)
@@ -573,7 +573,7 @@ pub async fn link_handler(
         "UPDATE fermi_forecasts
          SET metadata = metadata || $1::jsonb,
              updated_at = NOW()
-         WHERE id = $2 AND owner_id = $3",
+         WHERE id = $2 AND owner_id = $3::uuid",
     )
     .bind(&pm_metadata)
     .bind(&body.forecast_id)
@@ -750,7 +750,7 @@ pub async fn import_handler(
             id, owner_id, question_text, predicted_probability,
             domain, status, visibility,
             tags, metadata, target_date
-        ) VALUES ($1, $2, $3, $4, $5, 'active', 'private', $6, $7, $8::timestamptz)",
+        ) VALUES ($1, $2::uuid, $3, $4, $5, 'active', 'private', $6, $7, $8::timestamptz)",
     )
     .bind(&forecast_id)
     .bind(&user_id)
@@ -993,7 +993,7 @@ pub async fn check_resolutions_handler(
                 f.metadata->'polymarket'->>'pm_event_id' AS pm_event_id,
                 f.metadata->'polymarket'->>'pm_market_id' AS pm_market_id
          FROM fermi_forecasts f
-         WHERE f.owner_id = $1
+         WHERE f.owner_id = $1::uuid
            AND f.status = 'active'
            AND f.metadata->'polymarket' IS NOT NULL
            AND f.metadata->'polymarket'->>'pm_market_id' IS NOT NULL",
@@ -1081,7 +1081,7 @@ pub async fn check_resolutions_handler(
                          resolution_notes = $4,
                          metadata = metadata || $5::jsonb,
                          updated_at = NOW()
-                     WHERE id = $6 AND owner_id = $7 AND status = 'active'",
+                     WHERE id = $6 AND owner_id = $7::uuid AND status = 'active'",
                 )
                 .bind(actual_outcome)
                 .bind(brier as f32)
