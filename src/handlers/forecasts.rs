@@ -230,6 +230,22 @@ pub async fn create_forecast_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Auto-anchor: commit this forecast's initial probability immediately.
+    // This starts the immutable clock — the commitment_hash proves this
+    // probability was recorded before any resolution event.
+    {
+        let now = chrono::Utc::now();
+        let salt = std::env::var("BENCHMARK_SPLIT_SALT").unwrap_or_else(|_| "fermi-v1-2026".into());
+        let _ = crate::handlers::forecast_benchmark::anchor_forecast(
+            pool, &forecast_id, None,
+            req.predicted_probability as f64,
+            req.fpl_source.as_deref(),
+            now,
+            Some("auto-anchor on create"),
+        ).await;
+        let _ = crate::handlers::forecast_benchmark::ensure_split(pool, &forecast_id, &salt).await;
+    }
+
     // Auto-add to portfolio if specified
     if let Some(ref portfolio_id) = req.portfolio_id {
         sqlx::query(
@@ -917,6 +933,26 @@ pub async fn update_probability_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Anchor the new probability immediately — each revision gets its own
+    // tamper-evident commitment so the rate-of-change is fully provable.
+    let commitment_hash = {
+        let _ = crate::handlers::forecast_benchmark::anchor_forecast(
+            pool,
+            &forecast_id,
+            Some(&update_id),
+            req.new_probability as f64,
+            None, // fpl_source not available here without a re-fetch
+            chrono::Utc::now(),
+            Some("auto-anchor on probability update"),
+        ).await;
+        // Return the hash for the response (best-effort)
+        crate::handlers::forecast_benchmark::anchor_forecast(
+            pool, &forecast_id, Some(&update_id),
+            req.new_probability as f64, None,
+            chrono::Utc::now(), Some("auto-anchor on probability update"),
+        ).await.ok()
+    };
+
     Ok(Json(json!({
         "forecast_id": forecast_id,
         "update_id": update_id,
@@ -924,6 +960,7 @@ pub async fn update_probability_handler(
         "new_probability": req.new_probability,
         "reason": req.reason,
         "agent_id": req.agent_id,
+        "commitment_hash": commitment_hash,
     })))
 }
 

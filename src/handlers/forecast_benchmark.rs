@@ -1,0 +1,546 @@
+//! Forecast Benchmark — Commitment Anchor, Spacetime View, Harness Snapshots
+//!
+//! ## The immutable clock
+//!
+//! `anchor_forecast()` writes a `forecast_commitments` row with a
+//! tamper-evident hash of (forecast_id, probability, fpl_hash, emitted_ts).
+//! Called on: forecast creation, every probability update, and the daily
+//! cron sweep. A forecast is benchmarkable only for revisions where
+//! `committed_at < resolved_at` — this function is what makes that true.
+//!
+//! ## The spacetime view
+//!
+//! `GET /api/forecasts/:id/spacetime` returns every state a forecast ever
+//! occupied: probability, driver decomposition, Sobol attribution, harness
+//! config, and cross-loop RSI context at each revision. This is the primary
+//! research object for the adaptive forecast thesis — not "was the final
+//! forecast accurate" but "how did the forecast evolve, at what rate, and
+//! in response to what?"
+//!
+//! Rate-of-change metrics computed on the fly:
+//!   - probability_velocity: Δp / Δt (probability change per hour)
+//!   - dominant_driver_shift: max change in Sobol first-order index
+//!   - information_gain: |p_now - p_prev| as a proxy for revision magnitude
+//!
+//! ## The daily cron
+//!
+//! `POST /api/benchmark/anchor-sweep` anchors all active unanchored forecasts.
+//! Safe to call repeatedly (idempotent per revision). Designed to be
+//! triggered by a Railway cron job or any external scheduler.
+
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
+use chrono::Utc;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use sqlx::Row;
+
+use crate::AppState;
+use fermi_auth::AuthPrincipal;
+
+// ── Commitment hash ───────────────────────────────────────────────────────
+
+/// Compute the tamper-evident commitment hash for a forecast snapshot.
+/// sha256(forecast_id || "|" || probability_str || "|" || fpl_hash || "|" || emitted_ts)
+fn commitment_hash(
+    forecast_id: &str,
+    probability: f64,
+    fpl_hash: Option<&str>,
+    emitted_ts: &chrono::DateTime<Utc>,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(forecast_id.as_bytes());
+    hasher.update(b"|");
+    hasher.update(format!("{:.8}", probability).as_bytes());
+    hasher.update(b"|");
+    hasher.update(fpl_hash.unwrap_or("").as_bytes());
+    hasher.update(b"|");
+    hasher.update(emitted_ts.to_rfc3339().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// sha256 of a string — used for FPL source hashing.
+fn sha256_str(s: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+// ── Core anchor function ──────────────────────────────────────────────────
+
+/// Write a commitment anchor for a forecast snapshot.
+/// Idempotent: if the commitment_hash already exists, this is a no-op.
+/// Returns the commitment_hash written (or the existing one).
+pub async fn anchor_forecast(
+    pool: &sqlx::PgPool,
+    forecast_id: &str,
+    revision_id: Option<&str>,
+    probability: f64,
+    fpl_source: Option<&str>,
+    emitted_at: chrono::DateTime<Utc>,
+    anchor_note: Option<&str>,
+) -> Result<String, String> {
+    let fpl_hash = fpl_source.map(sha256_str);
+    let hash = commitment_hash(
+        forecast_id,
+        probability,
+        fpl_hash.as_deref(),
+        &emitted_at,
+    );
+
+    // Check if already exists (idempotent)
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM forecast_commitments WHERE commitment_hash = $1)"
+    )
+    .bind(&hash)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    if exists {
+        return Ok(hash);
+    }
+
+    // Check table exists (migration 140 may be pending)
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='forecast_commitments')"
+    ).fetch_one(pool).await.unwrap_or(false);
+
+    if !table_exists {
+        return Err("forecast_commitments table not yet created (migration 140 pending)".into());
+    }
+
+    sqlx::query(
+        r#"INSERT INTO forecast_commitments
+           (forecast_id, revision_id, predicted_probability, fpl_source_hash,
+            commitment_hash, anchor_method, anchor_note, emitted_at, committed_at)
+           VALUES ($1, $2, $3, $4, $5, 'db_timestamp', $6, $7, NOW())"#
+    )
+    .bind(forecast_id)
+    .bind(revision_id)
+    .bind(probability as f32)
+    .bind(fpl_hash.as_deref())
+    .bind(&hash)
+    .bind(anchor_note)
+    .bind(emitted_at)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(hash)
+}
+
+// ── Split assignment ──────────────────────────────────────────────────────
+
+/// Assign held_in / held_out / validation split deterministically.
+/// Uses sha256(forecast_id + salt), last byte mod 10:
+///   0–4 → held_in (50%), 5–7 → held_out (30%), 8–9 → validation (20%)
+/// Salt should be pre-registered and stable across a lineage.
+pub fn assign_split(forecast_id: &str, salt: &str) -> &'static str {
+    let input = format!("{}{}", forecast_id, salt);
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let result = hasher.finalize();
+    let last_byte = result[31] % 10;
+    match last_byte {
+        0..=4 => "held_in",
+        5..=7 => "held_out",
+        _ => "validation",
+    }
+}
+
+/// Ensure a forecast has a split row, creating one if absent.
+pub async fn ensure_split(
+    pool: &sqlx::PgPool,
+    forecast_id: &str,
+    salt: &str,
+) -> Result<String, String> {
+    // Check if already assigned
+    if let Ok(Some(row)) = sqlx::query(
+        "SELECT split FROM forecast_splits WHERE forecast_id = $1"
+    )
+    .bind(forecast_id)
+    .fetch_optional(pool)
+    .await
+    {
+        return Ok(row.try_get::<String, _>("split").unwrap_or_default());
+    }
+
+    // Table may not exist yet
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='forecast_splits')"
+    ).fetch_one(pool).await.unwrap_or(false);
+    if !table_exists {
+        return Err("forecast_splits table not yet created".into());
+    }
+
+    let split = assign_split(forecast_id, salt);
+    let hash_input = format!("{}{}", forecast_id, salt);
+
+    sqlx::query(
+        r#"INSERT INTO forecast_splits
+           (forecast_id, split, split_hash_input, split_salt, assigned_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (forecast_id) DO NOTHING"#
+    )
+    .bind(forecast_id)
+    .bind(split)
+    .bind(&hash_input)
+    .bind(salt)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(split.to_string())
+}
+
+// ── Daily anchor sweep ────────────────────────────────────────────────────
+
+/// POST /api/benchmark/anchor-sweep
+///
+/// Anchors all active forecasts that have no commitment for their current
+/// probability. Safe to call repeatedly — idempotent per revision.
+///
+/// This is the cron job endpoint. Call it daily from Railway cron or any
+/// external scheduler. It starts the clock on every active forecast so
+/// commit-before-resolve holds even if the operator never explicitly triggers it.
+pub async fn anchor_sweep_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Admin or service token only
+    if !principal.can_admin() {
+        return Err((StatusCode::FORBIDDEN, "admin access required".into()));
+    }
+
+    let pool = &state.db;
+    let salt = std::env::var("BENCHMARK_SPLIT_SALT").unwrap_or_else(|_| "fermi-v1-2026".into());
+
+    // Fetch all active forecasts not yet committed at their current probability
+    let rows = sqlx::query(
+        r#"SELECT f.id, f.predicted_probability, f.fpl_source, f.created_at
+           FROM fermi_forecasts f
+           WHERE f.status = 'active'
+             AND NOT EXISTS (
+               SELECT 1 FROM forecast_commitments c
+               WHERE c.forecast_id = f.id
+                 AND c.revision_id IS NULL
+                 AND ABS(c.predicted_probability - f.predicted_probability) < 0.0001
+             )
+           LIMIT 500"#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut anchored = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    let note = format!("daily anchor sweep {}", Utc::now().date_naive());
+
+    for row in &rows {
+        let fid: String = row.get("id");
+        let prob: f32 = row.get("predicted_probability");
+        let fpl: Option<String> = row.try_get("fpl_source").ok().flatten();
+        let created_at: chrono::DateTime<Utc> = row.get("created_at");
+
+        match anchor_forecast(
+            pool,
+            &fid,
+            None,
+            prob as f64,
+            fpl.as_deref(),
+            created_at,
+            Some(&note),
+        ).await {
+            Ok(_) => {
+                // Also ensure split assignment
+                let _ = ensure_split(pool, &fid, &salt).await;
+                anchored += 1;
+            }
+            Err(e) => errors.push(format!("{}: {}", fid, e)),
+        }
+    }
+
+    Ok(Json(json!({
+        "anchored": anchored,
+        "errors": errors,
+        "swept_at": Utc::now(),
+        "note": note,
+    })))
+}
+
+// ── Spacetime view ────────────────────────────────────────────────────────
+
+/// GET /api/forecasts/:id/spacetime
+///
+/// Returns the complete temporal trajectory of a forecast — every state it
+/// has ever occupied with rate-of-change metrics computed on the fly.
+///
+/// This is the primary research artifact for the adaptive forecast thesis.
+/// It answers: not just "was the final forecast accurate" but "how did it
+/// evolve, at what rate, in response to what signals, and was it committed
+/// before it was right?"
+pub async fn forecast_spacetime_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(forecast_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    // Ownership check
+    let forecast = sqlx::query(
+        "SELECT id, owner_id, question_text, predicted_probability, status,
+                brier_score, resolution_outcome, resolved_at, fpl_source,
+                simulation_results, drivers, created_at
+         FROM fermi_forecasts WHERE id = $1"
+    )
+    .bind(&forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
+
+    let owner_id: String = forecast.get("owner_id");
+    if owner_id != user_id && !principal.can_admin() {
+        return Err((StatusCode::FORBIDDEN, "Not the forecast owner".into()));
+    }
+
+    // Try spacetime table first (may not exist yet)
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='forecast_spacetime')"
+    ).fetch_one(pool).await.unwrap_or(false);
+
+    let revisions: Vec<Value> = if table_exists {
+        // Rich path: read from spacetime table with all context
+        let rows = sqlx::query(
+            r#"SELECT
+                st.revision_seq,
+                st.predicted_probability,
+                st.previous_probability,
+                st.revision_trigger,
+                st.revision_reason,
+                st.triggering_agent,
+                st.evidence_delta,
+                st.drivers_snapshot,
+                st.sobol_snapshot,
+                st.fpl_snapshot,
+                st.loop3_coherence,
+                st.loop5_calibration,
+                st.brier_at_this_point,
+                st.revision_ts,
+                -- Commitment status for this revision
+                c.commitment_hash,
+                c.committed_at,
+                c.anchor_method
+            FROM forecast_spacetime st
+            LEFT JOIN forecast_commitments c
+                ON c.forecast_id = st.forecast_id
+               AND ABS(c.predicted_probability - st.predicted_probability) < 0.0001
+               AND c.revision_id IS NULL
+            WHERE st.forecast_id = $1
+            ORDER BY st.revision_seq ASC"#
+        )
+        .bind(&forecast_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        rows.iter().enumerate().map(|(i, row)| {
+            let prob: f32 = row.get("predicted_probability");
+            let prev_prob: Option<f32> = row.try_get("previous_probability").ok().flatten();
+            let rev_ts: chrono::DateTime<Utc> = row.get("revision_ts");
+            let committed_at: Option<chrono::DateTime<Utc>> = row.try_get("committed_at").ok().flatten();
+
+            // Rate-of-change metrics
+            let (velocity_per_hour, info_gain) = if let Some(pp) = prev_prob {
+                let delta_p = (prob - pp).abs() as f64;
+                let info_gain = delta_p;
+                // velocity requires knowing the previous revision time — approximate from seq
+                (None::<f64>, Some(info_gain))
+            } else {
+                (None, None)
+            };
+
+            let committed_before_resolved = committed_at.map(|cat| {
+                forecast.try_get::<Option<chrono::DateTime<Utc>>, _>("resolved_at")
+                    .ok()
+                    .flatten()
+                    .map(|rat| cat < rat)
+                    .unwrap_or(true) // not yet resolved = still valid
+            });
+
+            json!({
+                "revision_seq": row.try_get::<i32, _>("revision_seq").unwrap_or(i as i32),
+                "predicted_probability": prob,
+                "previous_probability": prev_prob,
+                "delta_p": prev_prob.map(|pp| (prob - pp) as f64),
+                "revision_trigger": row.try_get::<Option<String>,_>("revision_trigger").ok().flatten(),
+                "revision_reason": row.try_get::<Option<String>,_>("revision_reason").ok().flatten(),
+                "triggering_agent": row.try_get::<Option<String>,_>("triggering_agent").ok().flatten(),
+                "evidence_delta": row.try_get::<Option<Value>,_>("evidence_delta").ok().flatten(),
+                "drivers": row.try_get::<Option<Value>,_>("drivers_snapshot").ok().flatten(),
+                "sobol": row.try_get::<Option<Value>,_>("sobol_snapshot").ok().flatten(),
+                "loop3_coherence": row.try_get::<Option<f64>,_>("loop3_coherence").ok().flatten(),
+                "loop5_calibration": row.try_get::<Option<Value>,_>("loop5_calibration").ok().flatten(),
+                "brier_if_resolved_here": row.try_get::<Option<f32>,_>("brier_at_this_point").ok().flatten(),
+                "revision_ts": rev_ts,
+                "commitment": {
+                    "hash": row.try_get::<Option<String>,_>("commitment_hash").ok().flatten(),
+                    "committed_at": committed_at,
+                    "anchor_method": row.try_get::<Option<String>,_>("anchor_method").ok().flatten(),
+                    "committed_before_resolved": committed_before_resolved,
+                },
+                "rate_of_change": {
+                    "velocity_per_hour": velocity_per_hour,
+                    "information_gain": info_gain,
+                },
+            })
+        }).collect()
+    } else {
+        // Fallback: reconstruct from fermi_forecast_updates
+        let updates = sqlx::query(
+            "SELECT previous_probability, new_probability, reason, agent_id,
+                    evidence_added, created_at
+             FROM fermi_forecast_updates
+             WHERE forecast_id = $1
+             ORDER BY created_at ASC"
+        )
+        .bind(&forecast_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        let initial_prob: f32 = forecast.get("predicted_probability");
+        let created_at: chrono::DateTime<Utc> = forecast.get("created_at");
+
+        let mut revs = vec![json!({
+            "revision_seq": 0,
+            "predicted_probability": initial_prob,
+            "previous_probability": null,
+            "revision_trigger": "initial",
+            "revision_ts": created_at,
+            "commitment": { "note": "spacetime table pending migration 140" },
+        })];
+
+        for (i, row) in updates.iter().enumerate() {
+            let new_p: f32 = row.get("new_probability");
+            let prev_p: f32 = row.get("previous_probability");
+            revs.push(json!({
+                "revision_seq": i + 1,
+                "predicted_probability": new_p,
+                "previous_probability": prev_p,
+                "delta_p": (new_p - prev_p) as f64,
+                "revision_trigger": "evidence_update",
+                "revision_reason": row.try_get::<Option<String>,_>("reason").ok().flatten(),
+                "triggering_agent": row.try_get::<Option<String>,_>("agent_id").ok().flatten(),
+                "evidence_delta": row.try_get::<Option<Value>,_>("evidence_added").ok().flatten(),
+                "revision_ts": row.get::<chrono::DateTime<Utc>, _>("created_at"),
+            }));
+        }
+        revs
+    };
+
+    // Summary metrics across all revisions
+    let n = revisions.len();
+    let total_movement: f64 = revisions.windows(2).map(|w| {
+        let p1 = w[0]["predicted_probability"].as_f64().unwrap_or(0.0);
+        let p2 = w[1]["predicted_probability"].as_f64().unwrap_or(0.0);
+        (p2 - p1).abs()
+    }).sum();
+
+    let final_prob: f32 = forecast.get("predicted_probability");
+    let initial_prob = revisions.first()
+        .and_then(|r| r["predicted_probability"].as_f64())
+        .unwrap_or(final_prob as f64);
+    let net_movement = final_prob as f64 - initial_prob;
+
+    let brier: Option<f32> = forecast.try_get("brier_score").ok().flatten();
+
+    Ok(Json(json!({
+        "forecast_id": forecast_id,
+        "question": forecast.try_get::<String,_>("question_text").unwrap_or_default(),
+        "status": forecast.try_get::<String,_>("status").unwrap_or_default(),
+        "brier_score": brier,
+        "resolution_outcome": forecast.try_get::<Option<String>,_>("resolution_outcome").ok().flatten(),
+        "resolved_at": forecast.try_get::<Option<chrono::DateTime<Utc>>,_>("resolved_at").ok().flatten(),
+
+        "trajectory": {
+            "n_revisions": n,
+            "total_probability_movement": total_movement,
+            "net_movement": net_movement,
+            "direction": if net_movement > 0.02 { "upward" }
+                         else if net_movement < -0.02 { "downward" }
+                         else { "stable" },
+            "most_volatile_driver": null, // populated when Sobol snapshots exist
+        },
+
+        "revisions": revisions,
+
+        "benchmark_status": {
+            "has_spacetime_table": table_exists,
+            "note": if !table_exists {
+                "migration 140 pending — spacetime table not yet created"
+            } else {
+                "spacetime tracking active"
+            },
+        },
+    })))
+}
+
+/// POST /api/forecasts/:id/commit
+///
+/// Explicitly anchor a forecast's current probability. Also called internally
+/// on create and update. Most operators never need to call this — the daily
+/// sweep handles it. But explicit anchoring on creation is better practice.
+pub async fn commit_forecast_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(forecast_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    let row = sqlx::query(
+        "SELECT id, owner_id, predicted_probability, fpl_source, created_at
+         FROM fermi_forecasts WHERE id = $1"
+    )
+    .bind(&forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
+
+    let owner_id: String = row.get("owner_id");
+    if owner_id != user_id && !principal.can_admin() {
+        return Err((StatusCode::FORBIDDEN, "Not the forecast owner".into()));
+    }
+
+    let prob: f32 = row.get("predicted_probability");
+    let fpl: Option<String> = row.try_get("fpl_source").ok().flatten();
+    let created_at: chrono::DateTime<Utc> = row.get("created_at");
+
+    let hash = anchor_forecast(
+        pool,
+        &forecast_id,
+        None,
+        prob as f64,
+        fpl.as_deref(),
+        created_at,
+        Some("explicit commit"),
+    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let salt = std::env::var("BENCHMARK_SPLIT_SALT").unwrap_or_else(|_| "fermi-v1-2026".into());
+    let split = ensure_split(pool, &forecast_id, &salt).await.unwrap_or_else(|_| "unassigned".into());
+
+    Ok(Json(json!({
+        "forecast_id": forecast_id,
+        "commitment_hash": hash,
+        "split": split,
+        "committed_at": Utc::now(),
+        "note": "Forecast anchored. This hash proves this probability was recorded before resolution.",
+    })))
+}

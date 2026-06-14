@@ -559,6 +559,9 @@ async fn run_migrations(db: &PgPool) {
         // Source column on notifications — prevents ABW platform
         // notifications bleeding into the Rabble surface.
         "migrations/134_notifications_source.sql",
+        // Forecast benchmark infrastructure: commitment anchors,
+        // harness snapshots, splits, spacetime trajectory table.
+        "migrations/140_forecast_benchmark.sql",
     ];
 
     for file in &migration_files {
@@ -1765,10 +1768,23 @@ async fn main() {
             delete(handlers::forecasts::delete_forecast_schedule_handler),
         )
         .route(
-            "/api/forecasts/:forecast_id/schedules/:schedule_id/run",
-            post(handlers::forecasts::record_schedule_run_handler),
-        )
-        // ── Portfolio routes ───────────────────────────────────────────
+             "/api/forecasts/:forecast_id/schedules/:schedule_id/run",
+             post(handlers::forecasts::record_schedule_run_handler),
+         )
+         // ── Benchmark routes ───────────────────────────────────────────
+         .route(
+             "/api/forecasts/:forecast_id/spacetime",
+             get(handlers::forecast_benchmark::forecast_spacetime_handler),
+         )
+         .route(
+             "/api/forecasts/:forecast_id/commit",
+             post(handlers::forecast_benchmark::commit_forecast_handler),
+         )
+         .route(
+             "/api/benchmark/anchor-sweep",
+             post(handlers::forecast_benchmark::anchor_sweep_handler),
+         )
+         // ── Portfolio routes ───────────────────────────────────────────
         .route(
             "/api/portfolios",
             post(handlers::forecasts::create_portfolio_handler),
