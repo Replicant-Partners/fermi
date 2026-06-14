@@ -251,6 +251,11 @@ pub struct CockpitState {
     /// Agent completion notifications queued for the parent (FermiConsole) to
     /// drain and display as toasts. Each entry is an agent display name.
     pub pending_toasts: Vec<String>,
+
+    // ── ABW Workspace Integration ─────────────────────────────────
+    /// Workspace ID (UUID) backing this forecast in ABW.
+    /// Spawned from the `fermi_forecast` app on first orchestration.
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +407,7 @@ impl CockpitState {
             schedules: Vec::new(),
             schedules_loading: false,
             pending_toasts: Vec::new(),
+            workspace_id: None,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -517,6 +523,43 @@ impl CockpitState {
         self.sim_results = None;
         self.sim_error = None;
         self.session_cost = 0.0;
+
+        // ── Spawn ABW workspace for this forecast ─────────────────
+        // Each forecast gets a workspace from the fermi_forecast app.
+        // This gives us: workspace messages (agent audit trail),
+        // action log (OODA step tracking), coherence evaluation (Loop 3),
+        // and dashboard visibility.
+        if self.workspace_id.is_none() {
+            let api = self.api.clone();
+            let q = question.clone();
+            cx.spawn(async move |this, cx| {
+                let ws_name = format!(
+                    "Fermi — {}",
+                    q.chars().take(60).collect::<String>()
+                );
+                let desc = Some(q.as_str());
+                match api.spawn_forecast_workspace(&ws_name, desc).await {
+                    Ok(resp) => {
+                        let ws_id = resp
+                            .get("workspace_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        if let Some(ref id) = ws_id {
+                            log::info!("[workspace] Spawned forecast workspace: {}", id);
+                        }
+                        this.update(cx, |state, cx| {
+                            state.workspace_id = ws_id;
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                    Err(e) => {
+                        log::warn!("[workspace] Failed to spawn workspace: {} — forecast will operate without workspace backing", e);
+                    }
+                }
+            })
+            .detach();
+        }
 
         // ── Build the FPL program template ────────────────────────
         // The Assistant analyzes the domain and generates a decomposition.
@@ -1038,6 +1081,38 @@ impl CockpitState {
         // ── Validation hints ──────────────────────────────────────
         self.run_validation_hints();
         self.orchestration_running = false;
+
+        // ── Log decomposition to workspace ────────────────────────
+        if let Some(ref ws_id) = self.workspace_id {
+            let api = self.api.clone();
+            let ws = ws_id.clone();
+            let driver_names: Vec<String> = self.program.drivers().iter()
+                .map(|d| d.display_name.as_deref().unwrap_or(&d.name).to_string())
+                .collect();
+            let question = self.program.question().map(|q| q.text.clone()).unwrap_or_default();
+            let content = format!(
+                "**Decomposition complete** for: \"{}\"\n\n{} drivers identified:\n{}",
+                question.chars().take(100).collect::<String>(),
+                driver_names.len(),
+                driver_names.iter().enumerate()
+                    .map(|(i, n)| format!("{}. {}", i + 1, n))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            let meta = serde_json::json!({
+                "cost_class": "event_append",
+                "fermi_action": "decompose_question",
+                "driver_count": driver_names.len(),
+            });
+            tokio::spawn(async move {
+                let _ = api
+                    .post_workspace_message(
+                        &ws, "agent", "fermi", Some("Fermi Decomposer"),
+                        &content, "execution_result", Some(&meta),
+                    )
+                    .await;
+            });
+        }
 
         // ── Auto-assign + auto-fire agents for all drivers ────────
         // ONLY on initial decomposition — skip if drivers already have agents.
@@ -2080,6 +2155,53 @@ impl CockpitState {
                     }
                 }
             }
+
+            // ── Post evidence to workspace (if workspace exists) ──────
+            // This bridges agent findings into the ABW workspace message
+            // log, making them visible on the dashboard and available for
+            // Loop 3 coherence evaluation.
+            if let Some(ref ws_id) = self.workspace_id {
+                let api = self.api.clone();
+                let ws = ws_id.clone();
+                let agent = agent_id.to_string();
+                let summary = result
+                    .get("evidence")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|e| e.get("summary"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Research complete")
+                    .to_string();
+                let evidence_json = result
+                    .get("evidence")
+                    .cloned()
+                    .unwrap_or(serde_json::json!([]));
+                let meta = serde_json::json!({
+                    "cost_class": "event_append",
+                    "fermi_action": "add_evidence",
+                    "agent_id": agent,
+                    "evidence_count": count,
+                });
+                tokio::spawn(async move {
+                    let content = format!(
+                        "**{}** completed research ({} evidence items):\n\n{}",
+                        base_agent_name(&agent),
+                        count,
+                        summary.chars().take(500).collect::<String>()
+                    );
+                    let _ = api
+                        .post_workspace_message(
+                            &ws,
+                            "agent",
+                            &agent,
+                            Some(base_agent_name(&agent)),
+                            &content,
+                            "execution_result",
+                            Some(&meta),
+                        )
+                        .await;
+                });
+            }
         }
     }
     fn mark_agent_failed(&mut self, agent_name: &str, error: &str) {
@@ -2939,6 +3061,37 @@ impl CockpitState {
                     base_agent_name(&sug.agent_name)
                 ),
             });
+
+            // ── Log distribution update to workspace ──────────────
+            if let Some(ref ws_id) = self.workspace_id {
+                let api = self.api.clone();
+                let ws = ws_id.clone();
+                let content = format!(
+                    "**Distribution update** on driver `{}`:\n- p50: {:.3} → {:.3} ({:+.1}%)\n- Source: {} evidence\n- Rationale: {}",
+                    sug.driver_name,
+                    sug.current_p50,
+                    sug.suggested_p50,
+                    (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0,
+                    base_agent_name(&sug.agent_name),
+                    sug.reasoning.chars().take(200).collect::<String>(),
+                );
+                let meta = serde_json::json!({
+                    "cost_class": "event_append",
+                    "fermi_action": "update_distribution",
+                    "driver": sug.driver_name,
+                    "previous_p50": sug.current_p50,
+                    "updated_p50": sug.suggested_p50,
+                });
+                tokio::spawn(async move {
+                    let _ = api
+                        .post_workspace_message(
+                            &ws, "user", "fermi_console", Some("Fermi Console"),
+                            &content, "system_event", Some(&meta),
+                        )
+                        .await;
+                });
+            }
+
             self.pending_suggestions.retain(|s| s.id != suggestion_id);
             cx.notify();
         }
@@ -5421,7 +5574,7 @@ fn render_driver_card(
                         .min_w(px(0.0))
                         .child(summary),
                 )
-                // Distribution sparkline + curve explanation for continuous drivers
+                // Distribution sparkline for continuous drivers
                 .when(driver.driver_type == DriverType::Continuous, |el| {
                     if let Some(Distribution::Triangular {
                         ref p5,
@@ -5433,18 +5586,23 @@ fn render_driver_card(
                         let v50 = expr_to_f64(p50);
                         let v95 = expr_to_f64(p95);
                         if v95 > v5 {
+                            // Match sparkline bg to card bg so it blends seamlessly
+                            let card_bg = if is_focused {
+                                plotters::prelude::RGBColor(61, 68, 85)  // BG_ACTIVE
+                            } else {
+                                plotters::prelude::RGBColor(39, 45, 56)  // BG_ELEVATED
+                            };
                             let chart_w = 120u32;
                             let chart_h = 24u32;
-                            let rgb_buf = crate::charts::render_distribution_sparkline(
-                                v5, v50, v95, chart_w, chart_h,
+                            let rgb_buf = crate::charts::render_distribution_sparkline_on(
+                                v5, v50, v95, chart_w, chart_h, card_bg,
                             );
                             let render_img =
                                 crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
 
-                            // Build a brief shape explanation from evidence count + skew.
                             let ev_count = evidence_items.len();
                             let spread = v95 - v5;
-                            let skew = (v50 - v5) / spread - 0.5; // negative = left-skewed, positive = right-skewed
+                            let skew = (v50 - v5) / spread - 0.5;
                             let shape_label = if skew.abs() < 0.08 {
                                 "symmetric"
                             } else if skew > 0.0 {
@@ -5452,24 +5610,11 @@ fn render_driver_card(
                             } else {
                                 "left-skewed"
                             };
-                            let width_label = if spread > v50 * 0.5 {
-                                "wide"
-                            } else if spread < v50 * 0.1 {
-                                "narrow"
-                            } else {
-                                "moderate"
-                            };
                             let evidence_label = if ev_count == 0 {
-                                "no evidence yet — using prior".to_string()
-                            } else if ev_count == 1 {
-                                "1 evidence item".to_string()
+                                "no evidence yet".to_string()
                             } else {
-                                format!("{} evidence items", ev_count)
+                                format!("{} evidence item{}", ev_count, if ev_count == 1 { "" } else { "s" })
                             };
-                            let explanation = format!(
-                                "{} {} spread · {}",
-                                width_label, shape_label, evidence_label
-                            );
 
                             el.child(
                                 gpui::img(gpui::ImageSource::Render(render_img))
@@ -5481,7 +5626,7 @@ fn render_driver_card(
                                     .text_size(px(9.0))
                                     .text_color(rgb(theme::FG_FAINT))
                                     .min_w(px(0.0))
-                                    .child(explanation),
+                                    .child(format!("{} spread · {}", shape_label, evidence_label)),
                             )
                         } else {
                             el
@@ -7807,90 +7952,122 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                         }),
                 )
         })
-        // ── Evidence Treemap (compact) ────────────────────────────
+        // ── Driver Sensitivity Bar Chart (native GPUI) ─────────────
+        // Horizontal bars sized by impact spread (p95−p5).
+        // Evidence quality shown as a colored dot at bar end.
+        // Click a bar to focus that driver.
         .when(has_drivers, |el| {
-            let drivers_viz: Vec<crate::charts::DriverViz> = state
+            // Compute driver impact data
+            let drivers_data: Vec<(String, String, f64, usize)> = state
                 .program
                 .drivers()
                 .iter()
                 .map(|d| {
-                    let display = d.display_name.as_deref().unwrap_or(&d.name);
+                    let display = d.display_name.as_deref().unwrap_or(&d.name).to_string();
+                    let name = d.name.clone();
                     let impact = match d.driver_type {
                         DriverType::Continuous => {
                             if let Some(Distribution::Triangular {
                                 ref p5, ref p95, ..
                             }) = d.distribution
                             {
-                                (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.1)
+                                (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
                             } else {
-                                1.0
+                                0.5
                             }
                         }
                         DriverType::Binary => {
-                            d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0) * 10.0
+                            d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0)
                         }
-                        _ => 1.0,
+                        _ => 0.5,
                     };
-                    let evidence_count = state
+                    let ev_count = state
                         .program
                         .evidence_items()
                         .iter()
                         .filter(|e| {
-                            e.id.contains(&d.name)
-                                || state
-                                    .program
-                                    .agents()
-                                    .iter()
-                                    .filter(|a| a.driver_refs.contains(&d.name))
-                                    .any(|a| evidence_matches_agent(e, &a.name))
+                            state.program.agents().iter()
+                                .filter(|a| a.driver_refs.contains(&d.name))
+                                .any(|a| evidence_matches_agent(e, &a.name))
+                                || e.id.contains(&d.name)
                         })
                         .count();
-                    let quality = if evidence_count > 2 {
-                        0.8
-                    } else if evidence_count > 0 {
-                        0.5
-                    } else {
-                        0.2
-                    };
-                    crate::charts::DriverViz {
-                        name: display.to_string(),
-                        impact,
-                        quality,
-                        evidence: state
-                            .program
-                            .evidence_items()
-                            .iter()
-                            .filter(|e| e.id.contains(&d.name))
-                            .filter_map(|e| {
-                                e.summary.as_ref().map(|s| s.chars().take(40).collect())
-                            })
-                            .take(3)
-                            .collect(),
-                    }
+                    (name, display, impact, ev_count)
                 })
                 .collect();
 
-            if !drivers_viz.is_empty() {
-                let chart_w = 420u32;
-                let chart_h = 80u32;
-                let rgb_buf = crate::charts::render_treemap(&drivers_viz, chart_w, chart_h);
-                let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+            let max_impact = drivers_data.iter().map(|(_, _, imp, _)| *imp).fold(0.01_f64, f64::max);
+
+            if !drivers_data.is_empty() {
                 el.child(
                     div()
                         .px(px(12.0))
                         .flex()
                         .flex_col()
+                        .gap(px(2.0))
                         .child(
                             div()
                                 .text_size(px(8.0))
                                 .text_color(rgb(theme::FG_FAINT))
-                                .child("Impact × Evidence (green=strong, gold=partial, red=none)"),
+                                .child("Driver sensitivity (spread)  ·  evidence"),
                         )
-                        .child(
-                            gpui::img(gpui::ImageSource::Render(render_img))
-                                .w(gpui::px(chart_w as f32))
-                                .h(gpui::px(chart_h as f32)),
-                        ),
+                        .children(drivers_data.iter().map(|(name, display, impact, ev_count)| {
+                            let bar_frac = (impact / max_impact).clamp(0.05, 1.0);
+                            let bar_width = (bar_frac * 200.0) as f32;
+                            let ev_color = if *ev_count >= 3 {
+                                theme::GREEN
+                            } else if *ev_count >= 1 {
+                                theme::GOLD
+                            } else {
+                                theme::FG_FAINT
+                            };
+                            let ev_label = if *ev_count > 0 {
+                                format!("{}", ev_count)
+                            } else {
+                                "—".to_string()
+                            };
+                            let n = name.clone();
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.0))
+                                .h(px(14.0))
+                                .cursor_pointer()
+                                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                // Driver label — fixed width, right-aligned
+                                .child(
+                                    div()
+                                        .w(px(100.0))
+                                        .text_size(px(8.0))
+                                        .text_color(rgb(theme::FG_DIM))
+                                        .overflow_hidden()
+                                        .child(display.clone()),
+                                )
+                                // Bar — single color, width proportional to sensitivity
+                                .child(
+                                    div()
+                                        .h(px(8.0))
+                                        .w(px(bar_width))
+                                        .rounded(px(2.0))
+                                        .bg(rgba(0x5CCFE680)),
+                                )
+                                // Impact value
+                                .child(
+                                    div()
+                                        .text_size(px(7.0))
+                                        .text_color(rgb(theme::FG_FAINT))
+                                        .child(format!("{:.2}", impact)),
+                                )
+                                // Evidence dot
+                                .child(
+                                    div()
+                                        .text_size(px(7.0))
+                                        .text_color(rgb(ev_color))
+                                        .child(ev_label),
+                                )
+                        })),
                 )
             } else {
                 el
@@ -8546,7 +8723,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         .px(px(12.0))
                         .py(px(10.0))
                         .rounded(px(6.0))
-                        .bg(rgb(0x2A2210))
+                        .bg(rgb(theme::BG_ELEVATED))
                         .border_1()
                         .border_color(rgb(theme::GOLD))
                         .child(
@@ -8686,31 +8863,30 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     );
                 }
 
-                // Evidence treemap
+                // Driver sensitivity — native GPUI bar chart (no bitmap)
                 if !drivers.is_empty() {
-                    let drivers_viz: Vec<crate::charts::DriverViz> = drivers
+                    let drivers_data: Vec<(String, f64, usize)> = drivers
                         .iter()
                         .map(|d| {
-                            let display = d.display_name.as_deref().unwrap_or(&d.name);
+                            let display = d.display_name.as_deref().unwrap_or(&d.name).to_string();
                             let impact = match d.driver_type {
                                 DriverType::Continuous => {
                                     if let Some(Distribution::Triangular {
                                         ref p5, ref p95, ..
                                     }) = d.distribution
                                     {
-                                        (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.1)
+                                        (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
                                     } else {
-                                        1.0
+                                        0.5
                                     }
                                 }
                                 DriverType::Binary => {
                                     d.probability.unwrap_or(0.5)
                                         * d.impact_multiplier.unwrap_or(1.0)
-                                        * 10.0
                                 }
-                                _ => 1.0,
+                                _ => 0.5,
                             };
-                            let driver_ev_items: Vec<_> = evidence
+                            let ev_count = evidence
                                 .iter()
                                 .filter(|e| {
                                     e.id.contains(&d.name)
@@ -8719,38 +8895,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                             .filter(|a| a.driver_refs.contains(&d.name))
                                             .any(|a| evidence_matches_agent(e, &a.name))
                                 })
-                                .collect();
-                            let quality = if driver_ev_items.is_empty() {
-                                0.2
-                            } else {
-                                driver_ev_items
-                                    .iter()
-                                    .map(|e| score_evidence_quality(e).0)
-                                    .sum::<f64>()
-                                    / driver_ev_items.len() as f64
-                            };
-                            crate::charts::DriverViz {
-                                name: display.to_string(),
-                                impact,
-                                quality,
-                                evidence: evidence
-                                    .iter()
-                                    .filter(|e| e.id.contains(&d.name))
-                                    .filter_map(|e| {
-                                        e.summary.as_ref().map(|s| s.chars().take(40).collect())
-                                    })
-                                    .take(3)
-                                    .collect(),
-                            }
+                                .count();
+                            (display, impact, ev_count)
                         })
                         .collect();
 
-                    if !drivers_viz.is_empty() {
-                        let chart_w = 500u32;
-                        let chart_h = 160u32;
-                        let rgb_buf = crate::charts::render_treemap(&drivers_viz, chart_w, chart_h);
-                        let render_img =
-                            crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                    let max_impact = drivers_data.iter().map(|(_, imp, _)| *imp).fold(0.01_f64, f64::max);
+
+                    if !drivers_data.is_empty() {
                         chart_children.push(
                             div()
                                 .flex()
@@ -8760,13 +8912,51 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     div()
                                         .text_size(px(9.0))
                                         .text_color(rgb(theme::FG_FAINT))
-                                        .child("Driver Impact (size) × Evidence Quality (color)"),
+                                        .child("Driver sensitivity (spread) · evidence"),
                                 )
-                                .child(
-                                    gpui::img(gpui::ImageSource::Render(render_img))
-                                        .w(gpui::px(chart_w as f32))
-                                        .h(gpui::px(chart_h as f32)),
-                                )
+                                .children(drivers_data.iter().map(|(display, impact, ev_count)| {
+                                    let bar_frac = (impact / max_impact).clamp(0.05, 1.0);
+                                    let bar_width = (bar_frac * 280.0) as f32;
+                                    let ev_color = if *ev_count >= 3 {
+                                        theme::GREEN
+                                    } else if *ev_count >= 1 {
+                                        theme::GOLD
+                                    } else {
+                                        theme::FG_FAINT
+                                    };
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .h(px(16.0))
+                                        .child(
+                                            div()
+                                                .w(px(140.0))
+                                                .text_size(px(9.0))
+                                                .text_color(rgb(theme::FG_DIM))
+                                                .overflow_hidden()
+                                                .child(display.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(px(6.0))
+                                                .w(px(bar_width))
+                                                .rounded(px(1.0))
+                                                .bg(rgba(0x5CCFE670)),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(8.0))
+                                                .text_color(rgb(theme::FG_FAINT))
+                                                .child(format!("{:.2}", impact)),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(8.0))
+                                                .text_color(rgb(ev_color))
+                                                .child(if *ev_count > 0 { format!("{}", ev_count) } else { "—".to_string() }),
+                                        )
+                                }))
                                 .into_any_element(),
                         );
                     }

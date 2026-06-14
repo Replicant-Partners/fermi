@@ -1,0 +1,155 @@
+{
+  "slug": "fermi_forecast",
+  "name": "Fermi",
+  "tagline": "Probabilistic forecasting — decompose, research, calibrate, resolve.",
+  "owner_user_id": "sys",
+  "homepage_url": "https://agent-bestiary.world/fermi",
+  "icon_url": "https://agent-bestiary.world/assets/fermi-icon.svg",
+  "description": "Agent-led probabilistic forecasting command center. Decomposes questions into driver trees with Monte Carlo simulation, dispatches research agents per driver, tracks evidence and parameter suggestions, scores forecasts against Polymarket crowd prices, and computes Brier scores on resolution. Each forecast is a workspace with full OODA loop visibility: Observe (evidence collection) → Orient (driver decomposition) → Decide (probability update) → Act (publish/resolve).",
+  "composition_slug": "fermi_fleet",
+  "schema_slug": "fermi-forecast/1",
+  "schema_json": {
+    "$schema": "fermi-forecast/1",
+    "description": "Action grammar for the Fermi forecasting loop. Every structured action the composer emits — decomposition, research dispatch, parameter updates, evidence ingestion, and resolution — conforms to one of these types.",
+    "canonical_document": {
+      "path": "forecast/forecast.fpl",
+      "description": "The FPL (Fermi Probabilistic Language) source — question, drivers, distributions, evidence refs, model expression, and simulation config."
+    },
+    "action_types": [
+      {
+        "type": "decompose_question",
+        "fermi_alias": "decompose",
+        "description": "Break a forecast question into a driver tree with base rate, distributions, and model expression. Replaces the current FPL source. This is the initial OODA Orient step.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/mutate_document",
+        "fields": {
+          "question":    { "type": "string", "required": true,  "description": "The forecast question text" },
+          "base_rate":   { "type": "object", "required": false, "description": "{ reference_class, historical_frequency, sample_size, source }" },
+          "drivers":     { "type": "array",  "required": true,  "description": "Array of driver definitions: { name, type, distribution, rationale, suggested_agent }" },
+          "model":       { "type": "string", "required": false, "description": "FPL model expression combining drivers" },
+          "rationale":   { "type": "string", "required": false, "description": "Why this decomposition was chosen" }
+        }
+      },
+      {
+        "type": "research_driver",
+        "fermi_alias": "research",
+        "description": "Dispatch a research agent to investigate a specific driver. Records the agent assignment and query. This is the OODA Observe step.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/invoke_member",
+        "fields": {
+          "driver_name": { "type": "string", "required": true,  "description": "Name of the driver being researched" },
+          "agent_id":    { "type": "string", "required": true,  "description": "Agent to dispatch, e.g. macro_forecaster, market_research" },
+          "query":       { "type": "string", "required": true,  "description": "Structured research query for the agent" },
+          "schedule":    { "type": "string", "required": false, "enum": ["once", "hourly", "daily", "weekly"], "description": "How often to re-run this research" }
+        }
+      },
+      {
+        "type": "add_evidence",
+        "fermi_alias": "evidence",
+        "description": "Record a new evidence item from agent research or manual entry. Links to a driver via agent binding. This is evidence ingestion within the Observe step.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/annotate",
+        "fields": {
+          "driver_name": { "type": "string", "required": true,  "description": "Driver this evidence pertains to" },
+          "source":      { "type": "string", "required": true,  "description": "Evidence source: agent name, URL, or manual" },
+          "summary":     { "type": "string", "required": true,  "description": "Summary of the finding" },
+          "key_findings": { "type": "array", "required": false, "description": "Specific data points extracted" },
+          "relevance":   { "type": "number", "required": false, "description": "0.0-1.0 relevance score" },
+          "suggested_p50": { "type": "number", "required": false, "description": "Agent-suggested p50 multiplier based on this evidence" }
+        }
+      },
+      {
+        "type": "update_distribution",
+        "fermi_alias": "update_params",
+        "description": "Update a driver's distribution parameters based on evidence. Records the before/after state. This is the OODA Decide step.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/mutate_document",
+        "fields": {
+          "driver_name": { "type": "string", "required": true,  "description": "Driver being updated" },
+          "previous":    { "type": "object", "required": true,  "description": "{ p5, p50, p95 } before update" },
+          "updated":     { "type": "object", "required": true,  "description": "{ p5, p50, p95 } after update" },
+          "evidence_id": { "type": "string", "required": false, "description": "Evidence item that triggered this update" },
+          "rationale":   { "type": "string", "required": false, "description": "Why this adjustment was made" }
+        }
+      },
+      {
+        "type": "resolve_forecast",
+        "fermi_alias": "resolve",
+        "description": "Resolve a forecast with an actual outcome and compute the Brier score. This closes the OODA loop.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/mutate_document",
+        "fields": {
+          "actual_outcome": { "type": "boolean", "required": true,  "description": "Did the event occur?" },
+          "brier_score":    { "type": "number",  "required": true,  "description": "(predicted - actual)^2" },
+          "resolution_source": { "type": "string", "required": false, "description": "How this was resolved: manual, polymarket_oracle, external" },
+          "notes":          { "type": "string",  "required": false, "description": "Resolution notes" }
+        }
+      },
+      {
+        "type": "link_polymarket",
+        "fermi_alias": "link_pm",
+        "description": "Link a Polymarket prediction market to this forecast for crowd-price divergence tracking and auto-resolution.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/annotate",
+        "fields": {
+          "pm_event_id":  { "type": "string", "required": true,  "description": "Polymarket event ID" },
+          "pm_market_id": { "type": "string", "required": true,  "description": "Polymarket market/condition ID" },
+          "pm_question":  { "type": "string", "required": false, "description": "Market question text" },
+          "market_price": { "type": "number", "required": false, "description": "Current crowd probability" }
+        }
+      }
+    ],
+    "parsing": {
+      "description": "Fermi actions are emitted by the cockpit directly, not extracted from prose. The console constructs action JSON and posts to the workspace action endpoints.",
+      "source": "console_direct"
+    },
+    "type_name_map": {
+      "decompose":     "decompose_question",
+      "research":      "research_driver",
+      "evidence":      "add_evidence",
+      "update_params": "update_distribution",
+      "resolve":       "resolve_forecast",
+      "link_pm":       "link_polymarket"
+    }
+  },
+  "workspace_template": {
+    "initial_budget": 500,
+    "default_name_pattern": "Fermi — {date}",
+    "auto_hire": [
+      "fermi",
+      "macro_forecaster",
+      "market_research",
+      "sentiment_analyzer",
+      "entity_investigator",
+      "equity_analyst",
+      "biotech_analyst",
+      "comparator"
+    ],
+    "initial_files": [
+      {
+        "path": "forecast/forecast.fpl",
+        "content": "// Fermi Probabilistic Language — forecast workspace\n// Generated by Fermi Console\n\n// question \"\" \n// driver ... \n// model ... \n// simulate 10000 iterations\n"
+      },
+      {
+        "path": "forecast/evidence.md",
+        "content": "# Evidence Wiki\n\nAll evidence items collected during this forecast's research phase.\n\n---\n"
+      },
+      {
+        "path": ".app/manifest.yaml",
+        "content": "app_slug: fermi_forecast\nschema: fermi-forecast/1\nloop: ooda\n"
+      },
+      {
+        "path": "context/readme.md",
+        "content": "# Fermi Forecast Workspace\n\nThis workspace tracks a single probabilistic forecast through its full lifecycle:\n\n1. **Decompose** — break the question into drivers with distributions\n2. **Research** — dispatch agents to gather evidence per driver\n3. **Calibrate** — update driver parameters based on evidence\n4. **Simulate** — run Monte Carlo to produce the forecast probability\n5. **Resolve** — score against actual outcome (Brier score)\n\n## Files\n- `forecast/forecast.fpl` — the FPL source (canonical document)\n- `forecast/evidence.md` — evidence wiki\n- `.app/manifest.yaml` — app schema reference\n"
+      }
+    ]
+  },
+  "visibility": "public",
+  "metadata": {
+    "version": "1.0.0",
+    "icon_color": "#00b4d8",
+    "domain": "forecasting",
+    "ooda_loop": {
+      "observe":  "Evidence collection via research agents + Polymarket price tracking",
+      "orient":   "Driver decomposition, base rate anchoring, Monte Carlo simulation",
+      "decide":   "Parameter updates (accept/reject suggestions), probability revision",
+      "act":      "Publish forecast, resolve against outcome, Brier scoring"
+    },
+    "polymarket_integration": true,
+    "brier_scoring": true
+  }
+}

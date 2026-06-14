@@ -1,43 +1,34 @@
-//! Chart rendering using plotters — produces RGB pixel buffers.
-//! All charts use the Ayu Mirage theme palette for consistency with the GPUI UI.
+//! Chart rendering — plotters to RGB pixel buffers.
+//!
+//! Tufte rules: no fill, no gradient, no decoration.
+//! Data is bright lines on a dark canvas. That's it.
 
 use plotters::prelude::*;
 use std::sync::Arc;
 
-// ═══════════════════════════════════════════════════════════════════
-// Ayu Mirage Theme Palette
-// ═══════════════════════════════════════════════════════════════════
+// Canvas backgrounds — match GPUI theme values exactly
+const BG: RGBColor = RGBColor(23, 27, 36);          // standalone charts (index, histogram)
+const BG_CARD: RGBColor = RGBColor(39, 45, 56);     // charts inside cards (sparklines) — matches theme::BG_ELEVATED
+const CHROME: RGBColor = RGBColor(40, 47, 58);
+const LABEL: RGBColor = RGBColor(92, 103, 115);
 
-// Exact matches from main.rs theme module (Ayu Mirage)
-const BG_DEEP: RGBColor = RGBColor(23, 27, 36); // 0x171B24 — sidebar/chart bg
-const BG: RGBColor = RGBColor(31, 36, 48); // 0x1F2430 — primary bg
-const BG_ELEVATED: RGBColor = RGBColor(39, 45, 56); // 0x272D38 — panels, cards
-const GRID_LINE: RGBColor = RGBColor(62, 75, 89); // 0x3E4B59 — FG_FAINT
-const AXIS: RGBColor = RGBColor(62, 75, 89); // 0x3E4B59 — same as grid
-const TEXT_DIM: RGBColor = RGBColor(92, 103, 115); // 0x5C6773 — FG_DIM
-const TEXT: RGBColor = RGBColor(203, 204, 198); // 0xCBCCC6 — FG
+// Data colors — one per meaning
+const CYAN: RGBColor = RGBColor(92, 207, 230);
+const GOLD: RGBColor = RGBColor(255, 204, 102);
+const GREEN: RGBColor = RGBColor(186, 230, 126);
 
-// Accent colors — exact Ayu Mirage values
-const CYAN: RGBColor = RGBColor(92, 207, 230); // 0x5CCFE6 — inside view, primary
-const CYAN_DIM: RGBColor = RGBColor(46, 103, 115); // muted cyan for fills
-const GOLD: RGBColor = RGBColor(255, 204, 102); // 0xFFCC66 — outside view, warnings
-const GOLD_DIM: RGBColor = RGBColor(128, 102, 51); // muted gold for fills
-const GREEN: RGBColor = RGBColor(186, 230, 126); // 0xBAE67E — good/high
-const GREEN_DIM: RGBColor = RGBColor(93, 115, 63); // muted green
-const RED: RGBColor = RGBColor(255, 102, 102); // 0xFF6666 — bad/low
-const RED_DIM: RGBColor = RGBColor(128, 51, 51); // muted red
-const BLUE: RGBColor = RGBColor(115, 208, 255); // 0x73D0FF — secondary accent
-const PURPLE: RGBColor = RGBColor(212, 191, 255); // 0xD4BFFF — tertiary
+// Muted cyan for bar fills — hand-picked to read as clearly cyan on dark BG.
+const CYAN_BAR: RGBColor = RGBColor(35, 100, 120);
 
 // ═══════════════════════════════════════════════════════════════════
-// Data Types
+// Public data types
 // ═══════════════════════════════════════════════════════════════════
 
 pub struct DriverViz {
     pub name: String,
     pub impact: f64,
-    pub quality: f64,          // 0.0-1.0 overall evidence quality
-    pub evidence: Vec<String>, // individual evidence summaries
+    pub quality: f64,
+    pub evidence: Vec<String>,
 }
 
 pub struct IndexPoint {
@@ -46,30 +37,10 @@ pub struct IndexPoint {
     pub outside_view: f64,
 }
 
-/// Map evidence quality (0.0-1.0) to a color.
-fn quality_color(q: f64) -> RGBColor {
-    if q < 0.33 {
-        RED
-    } else if q < 0.66 {
-        GOLD
-    } else {
-        GREEN
-    }
-}
-
-/// Map evidence quality to a dim background color.
-fn quality_bg(q: f64) -> RGBColor {
-    if q < 0.33 {
-        RED_DIM
-    } else if q < 0.66 {
-        GOLD_DIM
-    } else {
-        GREEN_DIM
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════
-// Index Comparison Chart (Inside vs Outside over versions)
+// Index Chart — Inside vs Outside view over versions
+//
+// Two clean lines. No fill. Dots at each version.
 // ═══════════════════════════════════════════════════════════════════
 
 pub fn render_index_chart(
@@ -81,87 +52,58 @@ pub fn render_index_chart(
     let mut buf = vec![0u8; (width * height * 3) as usize];
     {
         let root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
-        let _ = root.fill(&BG_DEEP);
+        let _ = root.fill(&BG);
 
-        if !history.is_empty() {
-            let min_v = history
-                .iter()
+        if history.len() >= 2 {
+            let vals: Vec<f64> = history.iter()
                 .flat_map(|p| [p.inside_view, p.outside_view])
-                .fold(f64::INFINITY, f64::min)
-                - 5.0;
-            let max_v = history
-                .iter()
-                .flat_map(|p| [p.inside_view, p.outside_view])
-                .fold(f64::NEG_INFINITY, f64::max)
-                + 5.0;
+                .collect();
+            let min_v = vals.iter().cloned().fold(f64::INFINITY, f64::min) - 2.0;
+            let max_v = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max) + 2.0;
+            let n = history.len();
 
             if let Ok(mut chart) = ChartBuilder::on(&root)
-                .margin(8)
-                .x_label_area_size(18)
-                .y_label_area_size(36)
-                .build_cartesian_2d(0usize..history.len().max(1), min_v..max_v)
+                .margin_top(6).margin_right(8).margin_bottom(4).margin_left(4)
+                .x_label_area_size(14)
+                .y_label_area_size(30)
+                .build_cartesian_2d(0usize..n.saturating_sub(1), min_v..max_v)
             {
-                let _ = chart
-                    .configure_mesh()
-                    .x_labels(5)
-                    .y_labels(4)
-                    .label_style(("sans-serif", 9).into_font().color(&TEXT_DIM))
-                    .axis_style(ShapeStyle::from(AXIS).stroke_width(1))
-                    .light_line_style(ShapeStyle::from(GRID_LINE).stroke_width(1))
+                let _ = chart.configure_mesh()
+                    .x_labels(4).y_labels(3)
+                    .label_style(("sans-serif", 8).into_font().color(&LABEL))
+                    .axis_style(ShapeStyle::from(CHROME).stroke_width(1))
+                    .light_line_style(ShapeStyle::from(CHROME).stroke_width(1))
+                    .bold_line_style(ShapeStyle::from(CHROME).stroke_width(1))
+                    .y_label_formatter(&|v| format!("{:.0}%", v))
                     .draw();
 
-                // Outside view area fill (subtle)
-                let _ = chart.draw_series(AreaSeries::new(
-                    history.iter().enumerate().map(|(i, p)| (i, p.outside_view)),
-                    min_v,
-                    RGBAColor(245, 166, 35, 0.08),
-                ));
-
-                // Inside view area fill (subtle)
-                let _ = chart.draw_series(AreaSeries::new(
-                    history.iter().enumerate().map(|(i, p)| (i, p.inside_view)),
-                    min_v,
-                    RGBAColor(54, 215, 183, 0.12),
-                ));
-
-                // Outside view line (gold, dashed feel via thinner)
+                // Outside view — gold line, thinner
                 let _ = chart.draw_series(LineSeries::new(
                     history.iter().enumerate().map(|(i, p)| (i, p.outside_view)),
-                    ShapeStyle::from(GOLD).stroke_width(2),
+                    ShapeStyle::from(GOLD).stroke_width(1),
                 ));
 
-                // Inside view line (cyan, bold)
+                // Inside view — cyan line, bold
                 let _ = chart.draw_series(LineSeries::new(
                     history.iter().enumerate().map(|(i, p)| (i, p.inside_view)),
                     ShapeStyle::from(CYAN).stroke_width(2),
                 ));
 
-                // Current position markers
-                if current_idx < history.len() {
-                    let p = &history[current_idx];
-                    let _ = chart.draw_series(std::iter::once(Circle::new(
-                        (current_idx, p.inside_view),
-                        5,
-                        ShapeStyle::from(CYAN).filled(),
-                    )));
-                    let _ = chart.draw_series(std::iter::once(Circle::new(
-                        (current_idx, p.outside_view),
-                        4,
-                        ShapeStyle::from(GOLD).filled(),
-                    )));
-                }
-
-                // Version dots on inside line
+                // Dots on inside line
                 for (i, p) in history.iter().enumerate() {
-                    if i != current_idx {
-                        let _ = chart.draw_series(std::iter::once(Circle::new(
-                            (i, p.inside_view),
-                            2,
-                            ShapeStyle::from(CYAN_DIM).filled(),
-                        )));
-                    }
+                    let (size, col) = if i == current_idx { (4, CYAN) } else { (2, CHROME) };
+                    let _ = chart.draw_series(std::iter::once(Circle::new(
+                        (i, p.inside_view), size, ShapeStyle::from(col).filled(),
+                    )));
                 }
             }
+        } else if history.len() == 1 {
+            let p = &history[0];
+            let _ = root.draw(&Text::new(
+                format!("{:.1}%", p.inside_view),
+                (width as i32 / 2 - 15, height as i32 / 2 - 6),
+                ("sans-serif", 12u32).into_font().color(&CYAN),
+            ));
         }
         let _ = root.present();
     }
@@ -169,363 +111,80 @@ pub fn render_index_chart(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Histogram (Simulation Distribution)
+// Histogram — single-color bars, optional percentile markers
 // ═══════════════════════════════════════════════════════════════════
 
 pub fn render_histogram_chart(bins: &[u32], width: u32, height: u32) -> Vec<u8> {
+    render_histogram_with_percentiles(bins, None, width, height)
+}
+
+pub fn render_histogram_with_percentiles(
+    bins: &[u32],
+    percentiles: Option<(f64, f64, f64)>,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
     let mut buf = vec![0u8; (width * height * 3) as usize];
     {
         let root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
-        let _ = root.fill(&BG_DEEP);
+        let _ = root.fill(&BG);
 
         if !bins.is_empty() {
             let max_count = *bins.iter().max().unwrap_or(&1) as f64;
             let n = bins.len();
 
             if let Ok(mut chart) = ChartBuilder::on(&root)
-                .margin(6)
-                .x_label_area_size(14)
-                .y_label_area_size(24)
-                .build_cartesian_2d(0usize..n, 0.0..max_count * 1.05)
+                .margin_top(4).margin_right(4).margin_bottom(4).margin_left(4)
+                .x_label_area_size(12)
+                .y_label_area_size(0)
+                .build_cartesian_2d(0f64..n as f64, 0.0..max_count * 1.08)
             {
-                let _ = chart
-                    .configure_mesh()
-                    .x_labels(5)
-                    .y_labels(3)
-                    .label_style(("sans-serif", 8).into_font().color(&TEXT_DIM))
-                    .axis_style(ShapeStyle::from(AXIS).stroke_width(1))
-                    .light_line_style(ShapeStyle::from(GRID_LINE).stroke_width(1))
+                let _ = chart.configure_mesh()
+                    .disable_mesh()
+                    .x_labels(0).y_labels(0)
                     .draw();
 
-                // Gradient from tails (dim) through body (blue) to peak (cyan)
+                // Bars — hand-picked muted cyan, NOT blended
                 let _ = chart.draw_series(bins.iter().enumerate().map(|(i, &count)| {
-                    let t = if n > 1 {
-                        (i as f64 / (n - 1) as f64 - 0.5).abs() * 2.0
-                    } else {
-                        0.0
-                    };
-                    // t=0 at center, t=1 at edges
-                    let color = if t > 0.7 {
-                        // Tails — muted
-                        BG_ELEVATED
-                    } else if t > 0.4 {
-                        // Shoulders — blue
-                        BLUE
-                    } else {
-                        // Core — cyan
-                        CYAN
-                    };
                     Rectangle::new(
-                        [(i, 0.0), (i + 1, count as f64)],
-                        ShapeStyle::from(color).filled(),
+                        [(i as f64 + 0.08, 0.0), (i as f64 + 0.92, count as f64)],
+                        ShapeStyle::from(CYAN_BAR).filled(),
                     )
                 }));
 
-                // Outline on top of bars for definition
+                // Bar top edge — bright cyan line for definition
                 let _ = chart.draw_series(bins.iter().enumerate().map(|(i, &count)| {
-                    Rectangle::new(
-                        [(i, 0.0), (i + 1, count as f64)],
-                        ShapeStyle::from(BG_DEEP).stroke_width(1),
+                    PathElement::new(
+                        vec![
+                            (i as f64 + 0.08, count as f64),
+                            (i as f64 + 0.92, count as f64),
+                        ],
+                        ShapeStyle::from(CYAN).stroke_width(1),
                     )
                 }));
-            }
-        }
-        let _ = root.present();
-    }
-    buf
-}
 
-// ═══════════════════════════════════════════════════════════════════
-// Treemap (Driver Impact × Evidence Quality Grid)
-//
-// A proper 2D squarified treemap where:
-//   - Each driver gets a rectangle sized proportional to its IMPACT
-//   - Inside each rectangle, a grid of small squares = individual evidence items
-//   - Color of each evidence square = quality of that evidence
-//   - Empty cells (no evidence) are dark/red-tinted
-// ═══════════════════════════════════════════════════════════════════
-
-/// Squarified treemap layout — assigns 2D rectangles to weighted items.
-struct TreemapRect {
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-}
-
-fn layout_treemap(weights: &[f64], width: f64, height: f64) -> Vec<TreemapRect> {
-    let n = weights.len();
-    if n == 0 {
-        return vec![];
-    }
-    if n == 1 {
-        return vec![TreemapRect {
-            x: 0.0,
-            y: 0.0,
-            w: width,
-            h: height,
-        }];
-    }
-
-    // Simple slice-and-dice: alternate horizontal and vertical splits
-    let total: f64 = weights.iter().sum();
-    if total <= 0.0 {
-        return weights
-            .iter()
-            .enumerate()
-            .map(|(i, _)| TreemapRect {
-                x: 0.0,
-                y: (i as f64 / n as f64) * height,
-                w: width,
-                h: height / n as f64,
-            })
-            .collect();
-    }
-
-    let mut rects = Vec::with_capacity(n);
-    let horizontal = width >= height;
-
-    if horizontal {
-        // Split left-to-right
-        let mut x = 0.0;
-        for w in weights {
-            let frac = w / total;
-            let cell_w = frac * width;
-            rects.push(TreemapRect {
-                x,
-                y: 0.0,
-                w: cell_w,
-                h: height,
-            });
-            x += cell_w;
-        }
-    } else {
-        // Split top-to-bottom
-        let mut y = 0.0;
-        for w in weights {
-            let frac = w / total;
-            let cell_h = frac * height;
-            rects.push(TreemapRect {
-                x: 0.0,
-                y,
-                w: width,
-                h: cell_h,
-            });
-            y += cell_h;
-        }
-    }
-
-    // For better aspect ratios with 3+ items, do a 2-level split
-    if n >= 4 && rects.iter().any(|r| r.w / r.h > 4.0 || r.h / r.w > 4.0) {
-        // Split into two groups and recurse
-        let mid = n / 2;
-        let left_total: f64 = weights[..mid].iter().sum();
-        let right_total: f64 = weights[mid..].iter().sum();
-        let left_frac = left_total / total;
-
-        let (lw, lh, rx, ry, rw, rh) = if horizontal {
-            let lw = left_frac * width;
-            (lw, height, lw, 0.0, width - lw, height)
-        } else {
-            let lh = left_frac * height;
-            (width, lh, 0.0, lh, width, height - lh)
-        };
-
-        let left_rects = layout_treemap(&weights[..mid], lw, lh);
-        let right_rects = layout_treemap(&weights[mid..], rw, rh);
-
-        rects.clear();
-        for r in left_rects {
-            rects.push(r);
-        }
-        for r in right_rects {
-            rects.push(TreemapRect {
-                x: r.x + rx,
-                y: r.y + ry,
-                w: r.w,
-                h: r.h,
-            });
-        }
-    }
-
-    rects
-}
-
-pub fn render_treemap(drivers: &[DriverViz], width: u32, height: u32) -> Vec<u8> {
-    let mut buf = vec![0u8; (width * height * 3) as usize];
-    {
-        let root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
-        let _ = root.fill(&BG_DEEP);
-
-        if !drivers.is_empty() {
-            let pad = 4.0;
-            let w = width as f64 - pad * 2.0;
-            let h = height as f64 - pad * 2.0;
-
-            let weights: Vec<f64> = drivers.iter().map(|d| d.impact.max(0.1)).collect();
-            let rects = layout_treemap(&weights, w, h);
-
-            for (i, (driver, rect)) in drivers.iter().zip(rects.iter()).enumerate() {
-                let x0 = (pad + rect.x + 2.0) as i32;
-                let y0 = (pad + rect.y + 2.0) as i32;
-                let x1 = (pad + rect.x + rect.w - 2.0) as i32;
-                let y1 = (pad + rect.y + rect.h - 2.0) as i32;
-
-                if x1 <= x0 || y1 <= y0 {
-                    continue;
-                }
-
-                // Cell background — slightly brighter than chart bg
-                let _ = root.draw(&Rectangle::new(
-                    [(x0, y0), (x1, y1)],
-                    ShapeStyle::from(BG_ELEVATED).filled(),
-                ));
-
-                // Border colored by overall quality
-                let border_col = quality_color(driver.quality);
-                let _ = root.draw(&Rectangle::new(
-                    [(x0, y0), (x1, y1)],
-                    ShapeStyle::from(border_col).stroke_width(1),
-                ));
-
-                // Evidence grid inside the cell
-                let ev_count = driver.evidence.len().max(1);
-                let inner_x = x0 + 3;
-                let inner_y;
-                let inner_w = (x1 - x0 - 6) as f64;
-                let inner_h;
-
-                // Draw driver name at top if enough space
-                let cell_h = (y1 - y0) as f64;
-                let cell_w = (x1 - x0) as f64;
-                if cell_h > 20.0 && cell_w > 30.0 {
-                    let label: String = if driver.name.len() as f64 * 6.5 > cell_w {
-                        driver
-                            .name
-                            .chars()
-                            .take((cell_w / 6.5) as usize)
-                            .collect::<String>()
-                            + "…"
-                    } else {
-                        driver.name.clone()
-                    };
-                    let _ = root.draw(&Text::new(
-                        label,
-                        (x0 + 4, y0 + 3),
-                        ("sans-serif", 10u32).into_font().color(&TEXT),
-                    ));
-                    inner_y = y0 + 16;
-                    inner_h = (y1 - inner_y - 3) as f64;
-                } else {
-                    inner_y = y0 + 2;
-                    inner_h = (y1 - inner_y - 2) as f64;
-                }
-
-                if inner_h <= 2.0 || inner_w <= 2.0 {
-                    continue;
-                }
-
-                // Draw evidence squares in a grid
-                // Each square represents one piece of evidence
-                // Color = quality of that evidence
-                let max_squares = 12; // max evidence items to show
-                let count = ev_count.min(max_squares);
-
-                // Calculate grid dimensions
-                let cols = if inner_w > inner_h {
-                    ((count as f64).sqrt().ceil() as usize).max(1)
-                } else {
-                    ((count as f64).sqrt().floor() as usize).max(1)
-                };
-                let rows = ((count as f64 / cols as f64).ceil() as usize).max(1);
-
-                let sq_w = (inner_w / cols as f64).min(16.0);
-                let sq_h = (inner_h / rows as f64).min(16.0);
-                let sq_size = sq_w.min(sq_h).max(3.0);
-                let gap = 2.0;
-
-                for idx in 0..count {
-                    let col = idx % cols;
-                    let row = idx / cols;
-                    let sx = inner_x as f64 + col as f64 * (sq_size + gap);
-                    let sy = inner_y as f64 + row as f64 * (sq_size + gap);
-
-                    if sx + sq_size > x1 as f64 || sy + sq_size > y1 as f64 {
-                        break;
+                // Percentile lines
+                if let Some((p5, p50, p95)) = percentiles {
+                    for px in [p5 * n as f64, p95 * n as f64] {
+                        let _ = chart.draw_series(std::iter::once(PathElement::new(
+                            vec![(px, 0.0), (px, max_count * 1.05)],
+                            ShapeStyle::from(GOLD).stroke_width(1),
+                        )));
                     }
-
-                    // Color: if we have this evidence item, color by quality; else dark
-                    let sq_quality = if idx < driver.evidence.len() {
-                        driver.quality // use overall quality for now
-                    } else {
-                        0.1 // no evidence — dark
-                    };
-
-                    let sq_col = quality_bg(sq_quality);
-                    let _ = root.draw(&Rectangle::new(
-                        [
-                            (sx as i32, sy as i32),
-                            ((sx + sq_size - 1.0) as i32, (sy + sq_size - 1.0) as i32),
-                        ],
-                        ShapeStyle::from(sq_col).filled(),
-                    ));
-                    // Bright border
-                    let _ = root.draw(&Rectangle::new(
-                        [
-                            (sx as i32, sy as i32),
-                            ((sx + sq_size - 1.0) as i32, (sy + sq_size - 1.0) as i32),
-                        ],
-                        ShapeStyle::from(quality_color(sq_quality)).stroke_width(1),
-                    ));
-                }
-
-                // Impact value label in bottom-right if space
-                if cell_h > 30.0 && cell_w > 50.0 {
-                    let impact_label = format!("{:.1}", driver.impact);
-                    let _ = root.draw(&Text::new(
-                        impact_label,
-                        (x1 - 28, y1 - 13),
-                        ("sans-serif", 9u32).into_font().color(&TEXT_DIM),
-                    ));
-                }
-
-                // Use alternating subtle colors for even/odd cells for visual distinction
-                if i % 2 == 0 {
-                    let _ = root.draw(&Rectangle::new(
-                        [(x0, y0), (x1, y1)],
-                        ShapeStyle::from(RGBAColor(255, 255, 255, 0.02)).filled(),
-                    ));
+                    let _ = chart.draw_series(std::iter::once(PathElement::new(
+                        vec![(p50 * n as f64, 0.0), (p50 * n as f64, max_count * 1.05)],
+                        ShapeStyle::from(GREEN).stroke_width(1),
+                    )));
                 }
             }
-        } // end if !drivers.is_empty()
-
+        }
         let _ = root.present();
     }
     buf
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Utilities
-// ═══════════════════════════════════════════════════════════════════
-
-/// Convert an RGB pixel buffer to a GPUI RenderImage.
-pub fn rgb_to_render_image(rgb_buf: &[u8], width: u32, height: u32) -> Arc<gpui::RenderImage> {
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for chunk in rgb_buf.chunks(3) {
-        rgba.push(chunk.get(0).copied().unwrap_or(0));
-        rgba.push(chunk.get(1).copied().unwrap_or(0));
-        rgba.push(chunk.get(2).copied().unwrap_or(0));
-        rgba.push(255);
-    }
-
-    let img_buf = image::RgbaImage::from_raw(width, height, rgba)
-        .unwrap_or_else(|| image::RgbaImage::new(width, height));
-    let frame = image::Frame::new(img_buf);
-    Arc::new(gpui::RenderImage::new(vec![frame]))
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Distribution Sparkline (mini triangular PDF)
+// Distribution Sparkline — line only, no fill
 // ═══════════════════════════════════════════════════════════════════
 
 pub fn render_distribution_sparkline(
@@ -535,10 +194,22 @@ pub fn render_distribution_sparkline(
     width: u32,
     height: u32,
 ) -> Vec<u8> {
+    render_distribution_sparkline_on(p5, p50, p95, width, height, BG_CARD)
+}
+
+/// Render sparkline with a specific background color so it blends into its container.
+pub fn render_distribution_sparkline_on(
+    p5: f64,
+    p50: f64,
+    p95: f64,
+    width: u32,
+    height: u32,
+    bg: RGBColor,
+) -> Vec<u8> {
     let mut buf = vec![0u8; (width * height * 3) as usize];
     {
         let root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
-        let _ = root.fill(&BG_DEEP);
+        let _ = root.fill(&bg);
 
         if p95 > p5 {
             let range = p95 - p5;
@@ -558,23 +229,17 @@ pub fn render_distribution_sparkline(
             let max_y = points.iter().map(|(_, y)| *y).fold(0.0_f64, f64::max);
             if max_y > 0.0 {
                 if let Ok(mut chart) = ChartBuilder::on(&root)
-                    .margin(2)
+                    .margin(1)
                     .build_cartesian_2d(p5..p95, 0.0..max_y * 1.1)
                 {
-                    // Area fill — cyan tint
-                    let _ = chart.draw_series(AreaSeries::new(
-                        points.iter().cloned(),
-                        0.0,
-                        RGBAColor(54, 215, 183, 0.15),
-                    ));
-                    // Line — cyan
+                    // Line only — no fill
                     let _ = chart.draw_series(LineSeries::new(
                         points.iter().cloned(),
                         ShapeStyle::from(CYAN).stroke_width(1),
                     ));
-                    // p50 marker — green vertical line
+                    // p50 tick
                     let _ = chart.draw_series(std::iter::once(PathElement::new(
-                        vec![(p50, 0.0), (p50, max_y)],
+                        vec![(p50, 0.0), (p50, max_y * 0.35)],
                         ShapeStyle::from(GREEN).stroke_width(1),
                     )));
                 }
@@ -583,4 +248,74 @@ pub fn render_distribution_sparkline(
         let _ = root.present();
     }
     buf
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Treemap — fallback for non-GPUI contexts (kept for compatibility)
+// ═══════════════════════════════════════════════════════════════════
+
+pub fn render_treemap(drivers: &[DriverViz], width: u32, height: u32) -> Vec<u8> {
+    let mut buf = vec![0u8; (width * height * 3) as usize];
+    {
+        let root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
+        let _ = root.fill(&BG);
+
+        if !drivers.is_empty() {
+            let total: f64 = drivers.iter().map(|d| d.impact.max(0.1)).sum();
+            let bar_y0 = 14i32;
+            let bar_y1 = height as i32 - 4;
+            let usable_w = width as f64 - 8.0;
+            let mut x = 4.0f64;
+
+            for d in drivers {
+                let frac = d.impact.max(0.1) / total;
+                let cell_w = frac * usable_w;
+
+                // Fill — muted cyan, NOT blended
+                let _ = root.draw(&Rectangle::new(
+                    [(x as i32 + 1, bar_y0), ((x + cell_w) as i32 - 1, bar_y1)],
+                    ShapeStyle::from(CYAN_BAR).filled(),
+                ));
+                // Border
+                let _ = root.draw(&Rectangle::new(
+                    [(x as i32 + 1, bar_y0), ((x + cell_w) as i32 - 1, bar_y1)],
+                    ShapeStyle::from(CHROME).stroke_width(1),
+                ));
+                // Label
+                if cell_w > 30.0 {
+                    let max_chars = ((cell_w - 8.0) / 5.5) as usize;
+                    let label: String = if d.name.len() > max_chars {
+                        d.name.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "…"
+                    } else {
+                        d.name.clone()
+                    };
+                    let _ = root.draw(&Text::new(
+                        label, (x as i32 + 4, 3),
+                        ("sans-serif", 8u32).into_font().color(&LABEL),
+                    ));
+                }
+                x += cell_w;
+            }
+        }
+        let _ = root.present();
+    }
+    buf
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════════════════
+
+pub fn rgb_to_render_image(rgb_buf: &[u8], width: u32, height: u32) -> Arc<gpui::RenderImage> {
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for chunk in rgb_buf.chunks(3) {
+        rgba.push(chunk.get(0).copied().unwrap_or(0));
+        rgba.push(chunk.get(1).copied().unwrap_or(0));
+        rgba.push(chunk.get(2).copied().unwrap_or(0));
+        rgba.push(255);
+    }
+    let img_buf = image::RgbaImage::from_raw(width, height, rgba)
+        .unwrap_or_else(|| image::RgbaImage::new(width, height));
+    let frame = image::Frame::new(img_buf);
+    Arc::new(gpui::RenderImage::new(vec![frame]))
 }

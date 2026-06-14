@@ -1094,6 +1094,73 @@ impl ApiClient {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Workspaces (Fermi forecast ↔ ABW workspace bridge)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Spawn a workspace from the `fermi_forecast` app.
+    /// Returns { workspace_id, workspace_slug, name, origin, budget, provisioned }.
+    pub async fn spawn_forecast_workspace(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<JsonValue, ApiError> {
+        let mut body = serde_json::json!({ "name": name });
+        if let Some(desc) = description {
+            body["description"] = serde_json::json!(desc);
+        }
+        self.post("/api/apps/fermi_forecast/workspaces", &body)
+            .await
+    }
+
+    /// Post a message to a workspace (agent evidence, system events, etc.).
+    pub async fn post_workspace_message(
+        &self,
+        workspace_id: &str,
+        sender_type: &str,
+        sender_id: &str,
+        sender_name: Option<&str>,
+        content: &str,
+        message_type: &str,
+        metadata: Option<&JsonValue>,
+    ) -> Result<JsonValue, ApiError> {
+        let mut body = serde_json::json!({
+            "sender_type": sender_type,
+            "sender_id": sender_id,
+            "content": content,
+            "message_type": message_type,
+        });
+        if let Some(name) = sender_name {
+            body["sender_name"] = serde_json::json!(name);
+        }
+        if let Some(meta) = metadata {
+            body["metadata"] = meta.clone();
+        }
+        self.post(
+            &format!("/api/workspaces/{}/messages", workspace_id),
+            &body,
+        )
+        .await
+    }
+
+    /// Post a workspace action (decompose, research, update_distribution, etc.).
+    pub async fn post_workspace_action(
+        &self,
+        workspace_id: &str,
+        action_type: &str,
+        payload: &JsonValue,
+    ) -> Result<JsonValue, ApiError> {
+        let mut body = payload.clone();
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("type".to_string(), serde_json::json!(action_type));
+        }
+        self.post(
+            &format!("/api/workspaces/{}/actions/{}", workspace_id, action_type),
+            &body,
+        )
+        .await
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Health
     // ═══════════════════════════════════════════════════════════════
 
