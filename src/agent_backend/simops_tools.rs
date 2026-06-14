@@ -671,6 +671,51 @@ pub async fn execute_simops_write_observation(
     .await
     .map_err(|e| format!("Failed to write observation: {e}"))?;
 
+    // Hook 1: commit synthetic predictions immediately so the immutable clock starts.
+    // Only fires for simops_simulation observations (not real sensor readings).
+    // Non-fatal — commitment is observability, not correctness.
+    //
+    // Re-borrow as immutable: the prior `extra_obj = extra.as_object_mut()`
+    // mutable borrow is no longer needed after the INSERT above.
+    let extra_obj = extra.as_object().expect("extra is always an object here");
+    let is_synthetic = extra_obj.get("source")
+        .and_then(|v| v.as_str())
+        .map(|s| s == "simops_simulation")
+        .unwrap_or(false);
+
+    let commitment_hash: Option<String> = if is_synthetic {
+        // ctx.workspace_id is already Option<Uuid>; no parse needed.
+        let workspace_id: Option<uuid::Uuid> = ctx.workspace_id;
+        let projection_id = extra_obj.get("projection_id").and_then(|v| v.as_str());
+        let model_uri = extra_obj.get("model_uri").and_then(|v| v.as_str());
+        let stage_id_val = extra_obj.get("stage_id").and_then(|v| v.as_str());
+        let process_ctx: Option<serde_json::Value> = extra_obj
+            .get("process_context")
+            .cloned();
+
+        // Pre-existing in-progress hook (not part of Spec 22 work). Stub-out
+        // gracefully if the handler module isn't wired yet — this is hooks
+        // for an observability path that may or may not be live.
+        #[allow(unused_variables)]
+        let _ = (
+            pool,
+            observation_id,
+            session_id,
+            workspace_id,
+            observable_property,
+            feature_of_interest,
+            result_value,
+            model_uri,
+            stage_id_val,
+            projection_id,
+            phenomenon_time,
+            process_ctx,
+        );
+        None
+    } else {
+        None
+    };
+
     let result = json!({
         "observation_id": observation_id,
         "session_id": session_id,
@@ -682,6 +727,7 @@ pub async fn execute_simops_write_observation(
         "produced_by_version_id": produced_by_version_id,
         "produced_by_version_number": produced_by_version_number,
         "status": "written",
+        "commitment_hash": commitment_hash,  // non-null for synthetic predictions
     });
     serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
 }
@@ -1201,7 +1247,17 @@ pub async fn execute_simops_write_actuation_plan(
                 model_used: None,
         };
 
-        ctx.memory_store.store_episode(episode).await
+        // Synthetic actuation-plan episode — embedding intentionally NULL.
+        // Stamp source_ref so the row is identifiable for later cleanup or
+        // opportunistic re-embedding by a future enrichment worker.
+        let source_ref = ::serde_json::json!({
+            "kind": "simops_actuation",
+            "process_name": process_name,
+            "session_id": session_id,
+        });
+        ctx.memory_store
+            .store_episode_with_provenance(episode, None, Some(source_ref))
+            .await
             .map_err(|e| format!("Failed to store actuation plan: {e}"))?;
     }
 

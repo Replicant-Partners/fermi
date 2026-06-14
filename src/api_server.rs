@@ -282,6 +282,22 @@ pub(crate) struct CreatureEvent {
     pub payload: serde_json::Value,
 }
 
+/// Spec 22 §Security — single-use, time-bounded consent token entry for
+/// raw-vector embedding export. Embeddings are invertible, so exporting them
+/// is gated behind an explicit acknowledgement that must be presented to the
+/// export endpoint.
+///
+/// Stored in `AppState.export_consent`. In-process map is sufficient at
+/// solo-dev / single-instance scale; a multi-instance deployment would
+/// promote this to a `consent_tokens` DB table.
+#[derive(Clone)]
+pub(crate) struct ExportConsentEntry {
+    pub agent_id: uuid::Uuid,
+    pub user_id: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub consumed: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: PgPool,
@@ -301,6 +317,10 @@ pub(crate) struct AppState {
     pub(crate) rabble_broadcast: broadcast::Sender<RabbleEvent>,
     pub(crate) creature_broadcast: broadcast::Sender<CreatureEvent>,
     pub(crate) secret_encryptor: Option<Arc<fermi_auth::SecretEncryptor>>,
+    /// Spec 22 §Security — issued by POST .../embeddings/export/consent,
+    /// consumed by GET .../embeddings/export?format=full. Single-use,
+    /// 5-minute TTL. See `ExportConsentEntry`.
+    pub(crate) export_consent: Arc<dashmap::DashMap<String, ExportConsentEntry>>,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -562,6 +582,10 @@ async fn run_migrations(db: &PgPool) {
         // Forecast benchmark infrastructure: commitment anchors,
         // harness snapshots, splits, spacetime trajectory table.
         "migrations/140_forecast_benchmark.sql",
+        // SimOps process benchmark: projection commits, process spacetime,
+        // sample point config. Two-hook architecture: commit on synthetic
+        // write, resolve on real sensor ingest.
+        "migrations/141_process_benchmark.sql",
     ];
 
     for file in &migration_files {
@@ -833,6 +857,11 @@ async fn main() {
         rabble_broadcast: broadcast::channel::<RabbleEvent>(256).0,
         creature_broadcast: broadcast::channel::<CreatureEvent>(512).0,
         secret_encryptor: fermi_auth::SecretEncryptor::from_env().ok().map(Arc::new),
+        // Spec 22 §Security — empty at boot, fills as owners request export.
+        // Single-use 5-min TTL tokens; janitor sweep not needed at solo-dev
+        // scale (a small leak of expired entries is harmless; restart clears
+        // them).
+        export_consent: Arc::new(dashmap::DashMap::new()),
     };
 
     if state.secret_encryptor.is_some() {
@@ -1353,6 +1382,19 @@ async fn main() {
             "/api/agents/:agent_id/embeddings/import",
             post(handlers::agents::import_embeddings_handler),
         )
+        // Spec 22 §UX — Embedding Portability affordance
+        .route(
+            "/api/agents/:agent_id/embeddings/stats",
+            get(handlers::agents::embeddings_stats_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/embeddings/export/consent",
+            post(handlers::agents::embeddings_export_consent_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/embeddings/export",
+            get(handlers::agents::embeddings_export_handler),
+        )
         // Agent execution
         .route(
             "/api/agents/:agent_id/execute",
@@ -1430,9 +1472,19 @@ async fn main() {
         // ── Workspace-aware cascade (reads process + twin from workspace git) ──
         .route(
             "/api/workspaces/:workspace_id/cascade",
-            post(handlers::simops::workspace_cascade_handler),
-        )
-        // ── Generalised App action protocol ──────────────────────────────────
+             post(handlers::simops::workspace_cascade_handler),
+         )
+         // ── SimOps benchmark: process spacetime + sample config ───────────────
+         .route(
+             "/api/simops/workspaces/:workspace_id/process-spacetime",
+             get(handlers::simops_benchmark::process_spacetime_handler),
+         )
+         .route(
+             "/api/simops/workspaces/:workspace_id/sample-config",
+             get(handlers::simops_benchmark::get_sample_config_handler)
+                 .put(handlers::simops_benchmark::put_sample_config_handler),
+         )
+         // ── Generalised App action protocol ──────────────────────────────────
         // Six action types + list/pending/accept/reject + annotations.
         // Isomorphic across companion action blocks, abw CLI, and MCP tools/call.
         .route(

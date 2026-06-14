@@ -18,6 +18,7 @@ pub mod dashboard;
 pub mod eval;
 pub mod eval_brier;
 pub mod forecast_benchmark;
+pub mod simops_benchmark;
 pub mod eval_judge;
 pub mod eval_projection;
 pub mod execution;

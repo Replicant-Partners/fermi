@@ -56,7 +56,7 @@ pub struct ObservationBatch {
     pub observations: Vec<SosaObservation>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct SosaObservation {
     pub sensor_id: Option<Uuid>,
     pub observable_property: String,
@@ -578,6 +578,45 @@ pub async fn ingest_observations_handler(
         .into_iter()
         .collect();
 
+    // Hook 2: resolve real readings against SimOps predictions (fire-and-forget).
+    // For each real observation (not simops_simulation), check if a committed
+    // synthetic prediction exists and write process_spacetime rows.
+    {
+        let pool_bg = state.db.clone();
+        let obs_copy = batch.observations.clone();
+        let derived_copy = derived.clone();
+        let sid = session_id;
+        let wid: Option<uuid::Uuid> = None; // workspace_id not available here; enriched later
+
+        tokio::spawn(async move {
+            for (i, obs) in obs_copy.iter().enumerate() {
+                // Skip synthetic observations — only process real sensor readings
+                let source = obs.extra.as_ref()
+                    .and_then(|e| e.get("source"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if source == "simops_simulation" { continue; }
+
+                let (oid, _) = &derived_copy[i];
+                let conditions = obs.extra.clone();
+
+                let reading = crate::handlers::simops_benchmark::RealReading {
+                    observation_id: *oid,
+                    session_id: sid,
+                    workspace_id: wid,
+                    observable_property: obs.observable_property.clone(),
+                    feature_of_interest: obs.feature_of_interest.clone(),
+                    actual_value: obs.result_value,
+                    measured_at: chrono::Utc::now(),
+                    conditions,
+                };
+                let _ = crate::handlers::simops_benchmark::resolve_against_projection(
+                    &pool_bg, &reading
+                ).await;
+            }
+        });
+    }
+
     // Auto-execute observation_analyst (fire-and-forget)
     {
         let spawn_state = state.clone();
@@ -636,18 +675,43 @@ pub async fn ingest_observations_handler(
 
                     if let Some(row) = db_id {
                         let agent_uuid: Uuid = row.get("agent_id");
-                        let mut episode = agent_output_to_episode(agent_uuid, &prompt, &output);
+                        let episode = agent_output_to_episode(agent_uuid, &prompt, &output);
 
                         let embed_text = format!(
                             "{} {}",
                             prompt,
                             output.metadata.reasoning.as_deref().unwrap_or("")
                         );
-                        if let Ok(embedding) = spawn_state.embedder.generate(&embed_text).await {
-                            episode.embedding = Some(embedding);
-                        }
-
-                        let _ = spawn_state.memory_store.store_episode(episode).await;
+                        let t_embed = tokio::time::Instant::now();
+                        let provenance = match spawn_state
+                            .embedder
+                            .generate_provenanced(&embed_text)
+                            .await
+                        {
+                            Ok(p) => {
+                                tracing::info!(
+                                    elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                                    model = %p.model_id,
+                                    site = "observation_analyst",
+                                    "embed_call"
+                                );
+                                Some(p)
+                            }
+                            Err(_) => None,
+                        };
+                        let source_ref = serde_json::json!({
+                            "kind": "observation_analyst",
+                            "agent_id": agent_uuid,
+                            "session_id": session_id,
+                        });
+                        let _ = spawn_state
+                            .memory_store
+                            .store_episode_with_provenance(
+                                episode,
+                                provenance.as_ref(),
+                                Some(source_ref),
+                            )
+                            .await;
                     }
                     eprintln!(
                         "Observation analyst: analyzed {} observations for session {}",
