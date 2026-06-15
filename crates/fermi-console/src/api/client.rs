@@ -1192,6 +1192,12 @@ impl ApiClient {
         .await
     }
 
+    /// List all fermi_forecast workspaces the user is a member of.
+    /// Returns workspace metadata + params + latest outputs.
+    pub async fn list_forecast_workspaces(&self) -> Result<JsonValue, ApiError> {
+        self.get("/api/apps/fermi_forecast/workspaces").await
+    }
+
     /// Post a workspace action (decompose, research, update_distribution, etc.).
     pub async fn post_workspace_action(
         &self,

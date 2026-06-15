@@ -265,6 +265,19 @@ struct LocalForecast {
     brier_score: Option<f64>,
 }
 
+#[derive(Clone)]
+struct WorkspaceForecast {
+    workspace_id: String,
+    workspace_name: String,
+    team_id: Option<String>,      // from params, e.g. "ARG"
+    team_name: Option<String>,    // from params, e.g. "Argentina"
+    group: Option<String>,        // from params, e.g. "B"
+    program_type: Option<String>, // TEAM_PRIOR, TOURNAMENT_PATH, H2H_MATCH
+    probability: Option<f64>,     // from workspace outputs
+    elo: Option<f64>,             // from params
+    created_at: String,
+}
+
 struct FermiConsole {
     active_panel: Panel,
     focus_handle: FocusHandle,
@@ -323,6 +336,10 @@ struct FermiConsole {
 
     // Local forecasts (from forecasts/ directory)
     local_forecasts: Vec<LocalForecast>,
+
+    // Workspace forecasts (from ABW fermi_forecast app)
+    workspace_forecasts: Vec<WorkspaceForecast>,
+    workspace_forecasts_loading: bool,
 
     // Polymarket integration
     pm_search_input: Entity<TextInput>,
@@ -431,6 +448,8 @@ impl FermiConsole {
             leaderboard: Vec::new(),
             leaderboard_loading: false,
             local_forecasts: Vec::new(),
+            workspace_forecasts: Vec::new(),
+            workspace_forecasts_loading: false,
             pm_search_input,
             pm_search_results: Vec::new(),
             pm_search_loading: false,
@@ -668,6 +687,7 @@ impl FermiConsole {
         self.fetch_agents(cx);
         self.fetch_leaderboard(cx);
         self.load_local_forecasts();
+        self.fetch_workspace_forecasts(cx);
     }
 
     fn fetch_agents(&mut self, cx: &mut Context<Self>) {
@@ -944,6 +964,65 @@ impl FermiConsole {
             .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     }
 
+    fn fetch_workspace_forecasts(&mut self, cx: &mut Context<Self>) {
+        self.workspace_forecasts_loading = true;
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            match api.list_forecast_workspaces().await {
+                Ok(resp) => {
+                    let workspaces = resp
+                        .get("workspaces")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut forecasts: Vec<WorkspaceForecast> = Vec::new();
+                    for ws in &workspaces {
+                        let ws_id = ws.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let created = ws.get("created_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                        // Try to read params from the workspace outputs
+                        let params = api.get_workspace_output(&ws_id, "params").await.ok()
+                            .and_then(|r| r.get("value").cloned());
+                        let prob = api.get_workspace_output(&ws_id, "predicted_probability").await.ok()
+                            .and_then(|r| r.get("value").and_then(|v| v.as_f64()));
+
+                        let team_id = params.as_ref().and_then(|p| p.get("team_id")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let team_name = params.as_ref().and_then(|p| p.get("team_name")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let group = params.as_ref().and_then(|p| p.get("group")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let program_type = params.as_ref().and_then(|p| p.get("program_type")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let elo = params.as_ref().and_then(|p| p.get("elo_current")).and_then(|v| v.as_f64());
+
+                        forecasts.push(WorkspaceForecast {
+                            workspace_id: ws_id,
+                            workspace_name: name,
+                            team_id,
+                            team_name,
+                            group,
+                            program_type,
+                            probability: prob,
+                            elo,
+                            created_at: created,
+                        });
+                    }
+                    this.update(cx, |this, cx| {
+                        this.workspace_forecasts = forecasts;
+                        this.workspace_forecasts_loading = false;
+                        cx.notify();
+                    }).ok();
+                }
+                Err(e) => {
+                    log::error!("Failed to fetch workspace forecasts: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.workspace_forecasts_loading = false;
+                        cx.notify();
+                    }).ok();
+                }
+            }
+        })
+        .detach();
+    }
+
     fn fetch_stats(&mut self, cx: &mut Context<Self>) {
         self.stats_loading = true;
         let api = self.api.clone();
@@ -1082,6 +1161,7 @@ impl FermiConsole {
                 Panel::Portfolio => {
                     self.fetch_forecasts(cx);
                     self.load_local_forecasts();
+                    self.fetch_workspace_forecasts(cx);
                     self.check_pm_resolutions(cx);
                 }
                 _ => {}
@@ -2354,6 +2434,60 @@ impl FermiConsole {
         .detach();
     }
 
+    /// Open a workspace forecast in the Composer. Creates a cockpit connected
+    /// to the workspace, sets the question from params, and pre-populates
+    /// the workspace_id so outputs publish correctly.
+    fn open_workspace_forecast(&mut self, workspace_id: &str, cx: &mut Context<Self>) {
+        let ws_id = workspace_id.to_string();
+
+        // Find the workspace forecast data
+        let wf = self.workspace_forecasts.iter().find(|w| w.workspace_id == ws_id).cloned();
+
+        // Create cockpit if needed
+        if self.cockpit.is_none() {
+            let api = self.api.clone();
+            self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
+        }
+
+        if let Some(ref cockpit) = self.cockpit {
+            let cockpit = cockpit.clone();
+            cockpit.update(cx, |cockpit, cx| {
+                // Set workspace_id so outputs publish to the right workspace
+                cockpit.workspace_id = Some(ws_id.clone());
+
+                // Set question from workspace params
+                if let Some(ref wf) = wf {
+                    let question = if let Some(ref team_name) = wf.team_name {
+                        format!("Will {} win the 2026 FIFA World Cup?", team_name)
+                    } else {
+                        wf.workspace_name.clone()
+                    };
+                    cockpit.question_input.update(cx, |input, cx| {
+                        input.set_text(&question, cx);
+                    });
+
+                    // Set probability if we have one from outputs
+                    if let Some(prob) = wf.probability {
+                        cockpit.predicted_probability = prob;
+                    }
+                }
+
+                cockpit.messages.push(crate::cockpit::AssistantMessage {
+                    node: "workspace".into(),
+                    kind: crate::cockpit::MessageKind::Info,
+                    text: format!(
+                        "Connected to workspace {}. Press Ctrl+Enter to run decomposition, or Ctrl+R to simulate.",
+                        ws_id.chars().take(8).collect::<String>()
+                    ),
+                });
+                cx.notify();
+            });
+        }
+
+        self.active_panel = Panel::Composer;
+        cx.notify();
+    }
+
     fn import_polymarket_forecast(
         &mut self,
         pm_event_id: &str,
@@ -3526,6 +3660,117 @@ impl FermiConsole {
                             theme::GREEN,
                             cx,
                         ))
+                    })
+                    // Workspace forecasts (from ABW fermi_forecast app)
+                    .when(!self.workspace_forecasts.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .bg(theme::bg_elevated())
+                                .rounded(px(8.0))
+                                .border_1()
+                                .border_color(theme::fg_faint())
+                                .child(
+                                    div()
+                                        .px(px(16.0))
+                                        .py(px(10.0))
+                                        .border_b_1()
+                                        .border_color(theme::fg_faint())
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .child(
+                                            div()
+                                                .text_size(px(14.0))
+                                                .text_color(theme::fg())
+                                                .font_weight(FontWeight::BOLD)
+                                                .child(format!(
+                                                    "Workspaces ({})",
+                                                    self.workspace_forecasts.len()
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(theme::fg_faint())
+                                                .child("ABW · fermi_forecast"),
+                                        ),
+                                )
+                                .children(self.workspace_forecasts.iter().map(|wf| {
+                                    let ws_id = wf.workspace_id.clone();
+                                    let display_name = wf.team_name.as_deref()
+                                        .unwrap_or(&wf.workspace_name);
+                                    let group_label = wf.group.as_ref()
+                                        .map(|g| format!("Group {}", g))
+                                        .unwrap_or_default();
+                                    let prob_label = wf.probability
+                                        .map(|p| format!("{:.1}%", p * 100.0))
+                                        .unwrap_or_else(|| "—".to_string());
+                                    let elo_label = wf.elo
+                                        .map(|e| format!("Elo {:.0}", e))
+                                        .unwrap_or_default();
+                                    let ptype = wf.program_type.as_deref().unwrap_or("FORECAST");
+
+                                    div()
+                                        .id(ElementId::Name(format!("ws-{}", ws_id).into()))
+                                        .px(px(16.0))
+                                        .py(px(8.0))
+                                        .border_b_1()
+                                        .border_color(theme::bg_hover())
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme::bg_hover()))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.open_workspace_forecast(&ws_id, cx);
+                                        }))
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(12.0))
+                                        // Probability
+                                        .child(
+                                            div()
+                                                .w(px(55.0))
+                                                .text_size(px(14.0))
+                                                .text_color(theme::cyan())
+                                                .font_weight(FontWeight::BOLD)
+                                                .child(prob_label),
+                                        )
+                                        // Team name
+                                        .child(
+                                            div()
+                                                .flex_grow()
+                                                .min_w(px(0.0))
+                                                .text_size(px(12.0))
+                                                .text_color(theme::fg())
+                                                .child(display_name.to_string()),
+                                        )
+                                        // Group + Elo
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .gap(px(8.0))
+                                                .text_size(px(9.0))
+                                                .text_color(theme::fg_dim())
+                                                .when(!group_label.is_empty(), |el| {
+                                                    el.child(group_label)
+                                                })
+                                                .when(!elo_label.is_empty(), |el| {
+                                                    el.child(elo_label)
+                                                }),
+                                        )
+                                        // Type badge
+                                        .child(
+                                            div()
+                                                .text_size(px(8.0))
+                                                .text_color(theme::fg_faint())
+                                                .px(px(4.0))
+                                                .py(px(1.0))
+                                                .rounded(px(2.0))
+                                                .bg(theme::bg())
+                                                .child(ptype.to_string()),
+                                        )
+                                })),
+                        )
                     })
                     // Local forecasts (saved to disk)
                     .when(!self.local_forecasts.is_empty(), |el| {
