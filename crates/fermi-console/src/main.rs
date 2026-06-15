@@ -340,6 +340,7 @@ struct FermiConsole {
     // Workspace forecasts (from ABW fermi_forecast app)
     workspace_forecasts: Vec<WorkspaceForecast>,
     workspace_forecasts_loading: bool,
+    workspace_section_collapsed: bool,
 
     // Polymarket integration
     pm_search_input: Entity<TextInput>,
@@ -450,6 +451,7 @@ impl FermiConsole {
             local_forecasts: Vec::new(),
             workspace_forecasts: Vec::new(),
             workspace_forecasts_loading: false,
+            workspace_section_collapsed: false,
             pm_search_input,
             pm_search_results: Vec::new(),
             pm_search_loading: false,
@@ -1026,7 +1028,12 @@ impl FermiConsole {
                     }
 
                     this.update(cx, |this, cx| {
-                        this.workspace_forecasts = forecasts;
+                        // Dedup by workspace name (batch script re-runs create duplicates)
+                        let mut seen = std::collections::HashSet::new();
+                        let deduped: Vec<WorkspaceForecast> = forecasts.into_iter()
+                            .filter(|wf| seen.insert(wf.workspace_name.clone()))
+                            .collect();
+                        this.workspace_forecasts = deduped;
                         this.workspace_forecasts_loading = false;
                         cx.notify();
                     }).ok();
@@ -3698,12 +3705,21 @@ impl FermiConsole {
                     })
                     // Workspace forecasts (from ABW fermi_forecast app)
                     .when(self.connected, |el| {
-                        // Dedup by workspace_id (batch script may have been run multiple times)
-                        let mut seen = std::collections::HashSet::new();
-                        let deduped: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
-                            .filter(|wf| seen.insert(wf.workspace_id.clone()))
+                        let count = self.workspace_forecasts.len();
+                        let collapsed = self.workspace_section_collapsed;
+
+                        // Group by program type
+                        let team_priors: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
+                            .filter(|wf| wf.program_type.as_deref() == Some("TEAM_PRIOR"))
                             .collect();
-                        let count = deduped.len();
+                        let tournament_paths: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
+                            .filter(|wf| wf.program_type.as_deref() == Some("TOURNAMENT_PATH"))
+                            .collect();
+                        let other: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
+                            .filter(|wf| wf.program_type.as_deref() != Some("TEAM_PRIOR")
+                                && wf.program_type.as_deref() != Some("TOURNAMENT_PATH"))
+                            .collect();
+
                         el.child(
                             div()
                                 .flex()
@@ -3712,9 +3728,10 @@ impl FermiConsole {
                                 .rounded(px(8.0))
                                 .border_1()
                                 .border_color(theme::fg_faint())
-                                
+                                // Collapsible header
                                 .child(
                                     div()
+                                        .id("ws-section-header")
                                         .px(px(16.0))
                                         .py(px(10.0))
                                         .border_b_1()
@@ -3722,6 +3739,18 @@ impl FermiConsole {
                                         .flex()
                                         .items_center()
                                         .gap(px(8.0))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme::bg_hover()))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.workspace_section_collapsed = !this.workspace_section_collapsed;
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(theme::fg_faint())
+                                                .child(if collapsed { "▶" } else { "▼" }),
+                                        )
                                         .child(
                                             div()
                                                 .text_size(px(14.0))
@@ -3737,10 +3766,26 @@ impl FermiConsole {
                                             div()
                                                 .text_size(px(10.0))
                                                 .text_color(theme::fg_faint())
-                                                .child("ABW · fermi_forecast"),
+                                                .child(format!(
+                                                    "{} teams · {} groups",
+                                                    team_priors.len(),
+                                                    tournament_paths.len(),
+                                                )),
                                         ),
                                 )
-                                .children(deduped.iter().map(|wf| {
+                                // Content (hidden when collapsed)
+                                .when(!collapsed && !team_priors.is_empty(), |el| {
+                                    el.child(
+                                        div()
+                                            .px(px(16.0))
+                                            .py(px(4.0))
+                                            .text_size(px(9.0))
+                                            .text_color(theme::fg_faint())
+                                            .child(format!("Team Priors ({})", team_priors.len())),
+                                    )
+                                })
+                                .when(!collapsed, |el| {
+                                    el.children(team_priors.iter().chain(tournament_paths.iter()).chain(other.iter()).map(|wf| {
                                     let ws_id = wf.workspace_id.clone();
                                     let display_name = wf.team_name.as_deref()
                                         .unwrap_or(&wf.workspace_name);
@@ -3812,9 +3857,10 @@ impl FermiConsole {
                                                 .bg(theme::bg())
                                                 .child(ptype.to_string()),
                                         )
-                                })),
-                        )
-                    })
+                                }))
+                                })  // close .when(!collapsed)
+                        )   // close el.child (the section div)
+                    })  // close .when(self.connected)
                     // Local forecasts (saved to disk)
                     .when(!self.local_forecasts.is_empty(), |el| {
                         el.child(
