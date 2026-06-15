@@ -261,6 +261,13 @@ pub struct CockpitState {
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
     /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
     pub pm_price_history: Vec<(u64, f64)>,
+    /// Index of the histogram bin currently under the cursor in the Wiki
+    /// tab's interactive distribution. `None` when the cursor is outside
+    /// the histogram. Drives the tooltip that surfaces the outcome value,
+    /// bin count, CDF percentile, and distance-to-each-anchor at the
+    /// hovered position. Reset to `None` on forecast switch via
+    /// load_forecast.
+    pub hovered_histogram_bin: Option<usize>,
     /// Polling interval for PM price updates. None = no polling.
     pub pm_poll_interval: Option<std::time::Duration>,
 }
@@ -275,6 +282,13 @@ pub struct SimResults {
     pub iterations: u64,
     pub execution_time_ms: u64,
     pub histogram: Vec<u32>,
+    /// Starting outcome value for each bin in `histogram`. Same length as
+    /// `histogram`. Lets the interactive histogram (Wiki tab) show the
+    /// outcome range under the cursor without having to re-execute the
+    /// simulation. Empty for loaded forecasts whose state.json predates
+    /// this field — those keep the static rendering.
+    pub bin_starts: Vec<f64>,
+    pub bin_width: f64,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -417,6 +431,7 @@ impl CockpitState {
             workspace_id: None,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
+            hovered_histogram_bin: None,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -3670,6 +3685,16 @@ impl CockpitState {
                 log::info!("[sim] Execution OK in {}ms: mean={:.4} median={:.4} p5={:.4} p95={:.4} std={:.4} iters={}",
                     elapsed.as_millis(), results.mean, results.median, results.p5, results.p95, results.std_dev, results.iterations);
                 let histogram_data = results.histogram(20);
+                // Capture bin_starts + bin_width so the interactive
+                // histogram (Wiki tab) can map cursor x → outcome value
+                // without re-executing the simulation.
+                let bin_starts: Vec<f64> =
+                    histogram_data.iter().map(|(start, _)| *start).collect();
+                let bin_width = if bin_starts.len() >= 2 {
+                    bin_starts[1] - bin_starts[0]
+                } else {
+                    0.0
+                };
                 self.sim_results = Some(SimResults {
                     mean: results.mean,
                     median: results.median,
@@ -3679,6 +3704,8 @@ impl CockpitState {
                     iterations: results.iterations as u64,
                     execution_time_ms: elapsed.as_millis() as u64,
                     histogram: histogram_data.iter().map(|(_, c)| *c as u32).collect(),
+                    bin_starts,
+                    bin_width,
                 });
                 self.sim_running = false;
 
@@ -4015,6 +4042,7 @@ impl CockpitState {
         self.agent_runs.clear();
         self.driver_confidence.clear();
         self.inside_view_explanation.clear();
+        self.hovered_histogram_bin = None;
 
         // Try to parse FPL — may fail on old files with bad evidence strings
         let mut fpl_parsed = false;
@@ -4090,6 +4118,8 @@ impl CockpitState {
                         iterations: sim.get("iterations").and_then(|v| v.as_u64()).unwrap_or(0),
                         execution_time_ms: 0,
                         histogram: vec![],
+                        bin_starts: vec![],
+                        bin_width: 0.0,
                     });
                 }
                 // Restore base rate into AST
@@ -5210,6 +5240,12 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                     )
                 }),
         )
+        // ── Three-anchor delta chips ────────────────────────────────
+        // Surfaces (inside − outside), (inside − crowd), (outside − crowd)
+        // immediately under the big probability number — these deltas are
+        // the headline product of the forecasting workflow. Hidden when
+        // no comparison anchor exists yet.
+        .child(render_delta_chips(state))
         .child(
             div()
                 .flex()
@@ -5236,6 +5272,404 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                 .child("Ctrl+S save")
                 .child("Ctrl+E tabs"),
         )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Anchor triad — the three named probabilities (Inside / Outside / Crowd)
+// and their pairwise deltas. These deltas ARE the core value of the
+// forecasting workflow: how does your inside-view model compare to the
+// reference-class outside view AND to the prediction-market crowd?
+// ──────────────────────────────────────────────────────────────────────
+
+/// The three named probability anchors as percentages (0–100), plus the
+/// three pairwise deltas in percentage-points (positive = first > second).
+///
+/// `outside` and `crowd` are `None` when not available. `delta_*` are also
+/// `None` when either side of the comparison is missing.
+#[derive(Debug, Clone, Copy, Default)]
+struct AnchorTriad {
+    inside_pct: f64,
+    outside_pct: Option<f64>,
+    crowd_pct: Option<f64>,
+    /// inside − outside (positive = model above reference class)
+    delta_io_pp: Option<f64>,
+    /// inside − crowd (positive = contrarian-bullish vs market)
+    delta_ic_pp: Option<f64>,
+    /// outside − crowd (positive = ref class above market)
+    delta_oc_pp: Option<f64>,
+}
+
+impl AnchorTriad {
+    fn from_state(state: &CockpitState) -> Self {
+        let inside_pct = state.predicted_probability * 100.0;
+        let outside_pct = state
+            .program
+            .question()
+            .and_then(|q| q.base_rate.as_ref())
+            .map(|br| br.historical_frequency * 100.0);
+        let crowd_pct = state.pm_market_price.map(|p| p * 100.0);
+
+        let delta_io_pp = outside_pct.map(|o| inside_pct - o);
+        let delta_ic_pp = crowd_pct.map(|c| inside_pct - c);
+        let delta_oc_pp = match (outside_pct, crowd_pct) {
+            (Some(o), Some(c)) => Some(o - c),
+            _ => None,
+        };
+
+        Self {
+            inside_pct,
+            outside_pct,
+            crowd_pct,
+            delta_io_pp,
+            delta_ic_pp,
+            delta_oc_pp,
+        }
+    }
+
+    /// True when there's at least one delta to display (so we have a reason
+    /// to render the chip strip at all).
+    fn has_any_delta(&self) -> bool {
+        self.delta_io_pp.is_some()
+            || self.delta_ic_pp.is_some()
+            || self.delta_oc_pp.is_some()
+    }
+}
+
+/// Color a delta by magnitude:
+///   • |Δ| ≤ 3pp  → neutral (convergent — the three views agree)
+///   • |Δ| ≤ 10pp → gold (mild divergence — worth noting)
+///   • |Δ| > 10pp → red (strong divergence — this is the interesting case)
+fn delta_color(delta_pp: f64) -> u32 {
+    let m = delta_pp.abs();
+    if m <= 3.0 {
+        theme::FG_DIM
+    } else if m <= 10.0 {
+        theme::GOLD
+    } else {
+        theme::RED
+    }
+}
+
+/// Render a single delta chip. The label encodes the comparison direction
+/// (e.g. "model − crowd") and the value carries sign + magnitude in pp.
+fn render_delta_chip(label: &str, delta_pp: f64) -> gpui::Div {
+    let sign = if delta_pp > 0.0 { "+" } else { "" };
+    let color = delta_color(delta_pp);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(3.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_1()
+        .border_color(rgb(color))
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(label.to_string()),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(color))
+                .font_weight(FontWeight::BOLD)
+                .child(format!("{}{:.1}pp", sign, delta_pp)),
+        )
+}
+
+/// Render the three-delta chip strip. Returns an empty hidden div when
+/// no anchors exist (the chips only appear once there's something to
+/// compare).
+fn render_delta_chips(state: &CockpitState) -> gpui::Div {
+    let t = AnchorTriad::from_state(state);
+    if !t.has_any_delta() {
+        return div().w(px(0.0)).h(px(0.0));
+    }
+
+    let mut row = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(px(6.0))
+        .text_size(px(11.0));
+
+    if let Some(d) = t.delta_io_pp {
+        row = row.child(render_delta_chip("model − base", d));
+    }
+    if let Some(d) = t.delta_ic_pp {
+        row = row.child(render_delta_chip("model − crowd", d));
+    }
+    if let Some(d) = t.delta_oc_pp {
+        row = row.child(render_delta_chip("base − crowd", d));
+    }
+    row
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Interactive histogram — "feels like a stock chart"
+//
+// Renders the simulation distribution as native GPUI bars (one div per
+// bin) so we can attach hover handlers. The hovered bin's index is
+// stored in state.hovered_histogram_bin and drives a tooltip card
+// above the histogram showing:
+//   • outcome value at the cursor
+//   • bin count + density (probability per unit outcome)
+//   • CDF percentile up to that point
+//   • signed distance to each anchor (inside / outside / crowd)
+//
+// Three vertical reference lines are overlaid at the anchor positions
+// so the user can see where each named view sits within the distribution.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Map a histogram bin index to its center outcome value. When the
+/// `bin_starts` field is populated (new sims), uses the exact stored
+/// values. Falls back to linear interpolation across `[p5, p95]` for
+/// loaded forecasts where bin_starts wasn't persisted.
+fn bin_center(sim: &SimResults, idx: usize) -> f64 {
+    if idx < sim.bin_starts.len() {
+        sim.bin_starts[idx] + sim.bin_width * 0.5
+    } else {
+        let n = sim.histogram.len().max(1);
+        if n == 1 {
+            sim.median
+        } else {
+            sim.p5 + (sim.p95 - sim.p5) * (idx as f64 + 0.5) / n as f64
+        }
+    }
+}
+
+/// Render the simulation distribution as an interactive histogram with
+/// per-bar hover, anchor reference lines, and a live tooltip.
+///
+/// The element is constructed via `cx.listener` per-bar so each bar
+/// updates `state.hovered_histogram_bin` independently. Cost is
+/// negligible (~20 bins per render). The tooltip is rendered above the
+/// bars; bars are stacked horizontally beneath it.
+fn render_interactive_histogram(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+    chart_w: f32,
+    chart_h: f32,
+) -> gpui::AnyElement {
+    let sim_opt = state.sim_results.as_ref();
+    let Some(sim) = sim_opt else {
+        return div().into_any_element();
+    };
+    if sim.histogram.is_empty() {
+        return div().into_any_element();
+    }
+
+    let triad = AnchorTriad::from_state(state);
+    let n_bins = sim.histogram.len();
+    let bar_gap = 1.0_f32;
+    let bar_w = ((chart_w - bar_gap * (n_bins as f32 - 1.0)) / n_bins as f32).max(2.0);
+
+    let max_count = *sim.histogram.iter().max().unwrap_or(&1) as f32;
+    let total: u64 = sim.histogram.iter().map(|&c| c as u64).sum();
+
+    // Map an outcome value (0–1 for prob forecasts; arbitrary for others)
+    // to an x-offset within the histogram. Returns None if outside the
+    // displayed range so the caller can suppress the reference line.
+    let outcome_to_x = {
+        let p5 = sim.p5;
+        let p95 = sim.p95;
+        let span = (p95 - p5).max(1e-9);
+        let w = chart_w;
+        move |outcome_pct: f64| -> Option<f32> {
+            // The histogram is built over the simulation output's actual
+            // (min, max) range. We approximate using (p5, p95) which is
+            // what's reliably stored. Outcome inputs are 0-100 (model %).
+            // For prob forecasts the sim output is itself a probability
+            // in [0,1], so we compare on the same scale by treating the
+            // 0-100 outcome as a 0-1 fraction.
+            let val = outcome_pct / 100.0;
+            if val < p5 || val > p95 {
+                return None;
+            }
+            Some(((val - p5) / span * w as f64) as f32)
+        }
+    };
+
+    // Tooltip text for the currently-hovered bin (if any).
+    let tooltip_lines: Vec<String> = match state.hovered_histogram_bin {
+        Some(idx) if idx < n_bins => {
+            let count = sim.histogram[idx];
+            let outcome = bin_center(sim, idx) * 100.0;
+            let density_pct = if total > 0 {
+                count as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            // CDF up to end of this bin
+            let cdf_count: u64 =
+                sim.histogram[..=idx].iter().map(|&c| c as u64).sum();
+            let cdf_pct = if total > 0 {
+                cdf_count as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            let mut lines = vec![
+                format!("outcome: {:.1}%", outcome),
+                format!("count: {} ({:.1}% of sims)", count, density_pct),
+                format!("CDF: {:.0}th percentile", cdf_pct),
+            ];
+            // Signed distance to each anchor (in pp of outcome).
+            lines.push(format!("Δ from model: {:+.1}pp", outcome - triad.inside_pct));
+            if let Some(o) = triad.outside_pct {
+                lines.push(format!("Δ from base: {:+.1}pp", outcome - o));
+            }
+            if let Some(c) = triad.crowd_pct {
+                lines.push(format!("Δ from crowd: {:+.1}pp", outcome - c));
+            }
+            lines
+        }
+        _ => vec!["hover a bar".to_string()],
+    };
+
+    // ── Tooltip card (always present; content changes with hover) ──
+    let tooltip = div()
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(4.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .text_size(px(9.0))
+        .text_color(rgb(theme::FG_DIM))
+        .children(tooltip_lines.into_iter().map(|line| div().child(line)));
+
+    // ── Bars + reference lines layered together ──
+    // We use a horizontal flex of bars; the anchor reference lines are
+    // overlaid via absolutely-positioned children on the bar container.
+    let mut bars_row = div()
+        .id("histogram-bars-row")
+        .relative()
+        .w(px(chart_w))
+        .h(px(chart_h))
+        .flex()
+        .items_end()
+        .gap(px(bar_gap));
+
+    for idx in 0..n_bins {
+        let count = sim.histogram[idx];
+        let bar_h = if max_count > 0.0 {
+            (count as f32 / max_count) * chart_h * 0.95
+        } else {
+            1.0
+        };
+        let hovered = state.hovered_histogram_bin == Some(idx);
+        bars_row = bars_row.child(
+            div()
+                .id(("hist-bar", idx))
+                .w(px(bar_w))
+                .h(px(bar_h.max(1.0)))
+                .bg(rgb(theme::CYAN))
+                .when(hovered, |el| {
+                    // Hovered bar pops via a gold outline — keeps the bar
+                    // body the same cyan as the rest so the eye lands on
+                    // the affordance, not on a flickering color change.
+                    el.border_1().border_color(rgb(theme::GOLD))
+                })
+                .cursor_pointer()
+                .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                    if *hovered {
+                        if this.hovered_histogram_bin != Some(idx) {
+                            this.hovered_histogram_bin = Some(idx);
+                            cx.notify();
+                        }
+                    } else if this.hovered_histogram_bin == Some(idx) {
+                        this.hovered_histogram_bin = None;
+                        cx.notify();
+                    }
+                })),
+        );
+    }
+
+    // Overlay reference lines for each anchor (inside / outside / crowd).
+    // Each is a thin absolutely-positioned vertical div spanning the
+    // histogram height. Skip silently when outside the [p5, p95] range.
+    let mut overlay = div()
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .w(px(chart_w))
+        .h(px(chart_h));
+
+    if let Some(x) = outcome_to_x(triad.inside_pct) {
+        overlay = overlay.child(
+            div()
+                .absolute()
+                .left(px(x))
+                .top(px(0.0))
+                .w(px(1.5))
+                .h(px(chart_h))
+                .bg(rgb(theme::CYAN)),
+        );
+    }
+    if let Some(o) = triad.outside_pct {
+        if let Some(x) = outcome_to_x(o) {
+            overlay = overlay.child(
+                div()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(0.0))
+                    .w(px(1.5))
+                    .h(px(chart_h))
+                    .bg(rgb(theme::GOLD)),
+            );
+        }
+    }
+    if let Some(c) = triad.crowd_pct {
+        if let Some(x) = outcome_to_x(c) {
+            overlay = overlay.child(
+                div()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(0.0))
+                    .w(px(1.5))
+                    .h(px(chart_h))
+                    .bg(rgb(theme::PURPLE)),
+            );
+        }
+    }
+
+    bars_row = bars_row.child(overlay);
+
+    // ── Compose: tooltip on top, bars below, legend at bottom ──
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .child(tooltip)
+        .child(bars_row)
+        .child(
+            div()
+                .flex()
+                .gap(px(10.0))
+                .text_size(px(8.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(div().text_color(rgb(theme::CYAN)).child("│ model"))
+                .when(triad.outside_pct.is_some(), |el| {
+                    el.child(div().text_color(rgb(theme::GOLD)).child("│ base"))
+                })
+                .when(triad.crowd_pct.is_some(), |el| {
+                    el.child(div().text_color(rgb(theme::PURPLE)).child("│ crowd"))
+                })
+                .child(
+                    div()
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child(format!(
+                            "p5–p95: {:.0}% – {:.0}% · {} iters",
+                            sim.p5 * 100.0,
+                            sim.p95 * 100.0,
+                            sim.iterations
+                        )),
+                ),
+        )
+        .into_any_element()
 }
 
 /// Outside View — base rate, reference class, reasoning.
@@ -8891,7 +9325,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     .unwrap_or("—")
                             )),
                     )
-                }),
+                })
+                // ── Three-anchor delta chips (the core value strip) ──
+                .child(render_delta_chips(state)),
         )
         // ── Inside View (always at top) ───────────────────────────
         .when(!state.inside_view_explanation.is_empty(), |el| {
@@ -9021,21 +9457,139 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 )
             },
         )
+        // ── Crowd (Polymarket) — third anchor in the triad ─────────
+        // Surfaces the prediction-market crowd price alongside the
+        // inside/outside views so the wiki carries the full triad, not
+        // just two of three. The deltas live in the header chip strip;
+        // this block adds the qualitative context (question, volume,
+        // liquidity, confidence band, URL).
+        .when(state.pm_market_price.is_some(), |el| {
+            let triad = AnchorTriad::from_state(state);
+            let pm_price = state.pm_market_price.unwrap_or(0.0);
+            // Reuse the same divergence logic the cockpit panel uses for
+            // visual consistency: compare crowd to the model (inside view).
+            let div_ic = triad.delta_ic_pp.unwrap_or(0.0);
+            let div_color = if div_ic.abs() > 10.0 {
+                theme::RED
+            } else if div_ic.abs() > 3.0 {
+                theme::GOLD
+            } else {
+                theme::FG_DIM
+            };
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .px(px(12.0))
+                    .py(px(10.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::PURPLE))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Crowd View (Prediction Market)"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(format!("{:.1}%", pm_price * 100.0)),
+                            )
+                            .child(div().text_size(px(10.0)).text_color(rgb(div_color)).child(
+                                format!(
+                                    "model − crowd: {}{:.1}pp",
+                                    if div_ic > 0.0 { "+" } else { "" },
+                                    div_ic
+                                ),
+                            )),
+                    )
+                    .when(state.pm_question.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::FG))
+                                .min_w(px(0.0))
+                                .child(
+                                    state
+                                        .pm_question
+                                        .as_deref()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                ),
+                        )
+                    })
+                    // Volume / liquidity / confidence band on one row.
+                    .child({
+                        let mut meta_row = div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(10.0))
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::FG_DIM));
+                        if let Some(vol) = state.pm_volume_24h {
+                            meta_row = meta_row.child(div().child(format!(
+                                "vol 24h: ${:.0}",
+                                vol
+                            )));
+                        }
+                        if let Some(liq) = state.pm_liquidity {
+                            meta_row = meta_row.child(div().child(format!(
+                                "liquidity: ${:.0}",
+                                liq
+                            )));
+                        }
+                        if let Some(ref conf) = state.pm_confidence {
+                            meta_row =
+                                meta_row.child(div().child(format!("confidence: {}", conf)));
+                        }
+                        if let Some(chg) = state.pm_price_change_1w {
+                            let sign = if chg > 0.0 { "+" } else { "" };
+                            meta_row = meta_row.child(div().child(format!(
+                                "Δ1w: {}{:.1}pp",
+                                sign,
+                                chg * 100.0
+                            )));
+                        }
+                        meta_row
+                    })
+                    .when(state.pm_url.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child(format!(
+                                    "↗ {}",
+                                    state.pm_url.as_deref().unwrap_or("")
+                                )),
+                        )
+                    }),
+            )
+        })
         // ── Forecast Index Charts (same as left panel) ────────────
         .when(
             state.sim_results.is_some() || !state.program.drivers().is_empty(),
             |el| {
                 let mut chart_children: Vec<gpui::AnyElement> = Vec::new();
 
-                // Histogram
+                // Interactive histogram with mouseover + anchor lines.
+                // Replaces the static bitmap blit so users can hover any
+                // bar to see outcome value, count, CDF percentile, and
+                // signed distance to each anchor (model / base / crowd).
                 if let Some(ref sim) = state.sim_results {
                     if !sim.histogram.is_empty() {
-                        let chart_w = 500u32;
-                        let chart_h = 100u32;
-                        let rgb_buf =
-                            crate::charts::render_histogram_chart(&sim.histogram, chart_w, chart_h);
-                        let render_img =
-                            crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                        let chart_w = 500.0_f32;
+                        let chart_h = 100.0_f32;
                         chart_children.push(
                             div()
                                 .flex()
@@ -9046,15 +9600,13 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                         .text_size(px(9.0))
                                         .text_color(rgb(theme::FG_FAINT))
                                         .child(format!(
-                                            "Simulation Distribution ({}k iterations)",
+                                            "Simulation Distribution ({}k iterations) — hover bars for details",
                                             sim.iterations / 1000
                                         )),
                                 )
-                                .child(
-                                    gpui::img(gpui::ImageSource::Render(render_img))
-                                        .w(gpui::px(chart_w as f32))
-                                        .h(gpui::px(chart_h as f32)),
-                                )
+                                .child(render_interactive_histogram(
+                                    state, cx, chart_w, chart_h,
+                                ))
                                 .into_any_element(),
                         );
                     }
