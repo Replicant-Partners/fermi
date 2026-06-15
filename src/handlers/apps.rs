@@ -80,12 +80,22 @@ pub struct ListAppsQuery {
     pub include_archived: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SpawnWorkspaceRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub extra_budget: Option<i32>,
     pub auto_hire_override: Option<Vec<String>>,
+    /// Arbitrary parameters bound to this workspace instance.
+    /// Written to `.app/params.json` in the workspace git repo.
+    pub params: Option<Value>,
+    /// Workspace IDs this workspace depends on (upstream).
+    pub depends_on: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchSpawnRequest {
+    pub instances: Vec<SpawnWorkspaceRequest>,
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -495,6 +505,46 @@ pub async fn spawn_workspace_handler(
         .await;
     }
 
+    // 7b. Write params.json if params were provided.
+    if let Some(ref params) = req.params {
+        let params_content = serde_json::to_string_pretty(params).unwrap_or_default();
+        let commit_msg = "App provisioning: params.json";
+        match state.workspace_git.commit_file(&slug_for_git, ".app/params.json", &params_content, commit_msg) {
+            Ok(_) => files_written += 1,
+            Err(e) => tracing::warn!(ws_id = %ws_id, error = %e, "Failed to write params.json during App spawn"),
+        }
+        // Also store params as a workspace output for cross-workspace reads
+        let _ = sqlx::query(
+            "INSERT INTO workspace_outputs (workspace_id, key, value, version, updated_at, updated_by)
+             VALUES ($1, 'params', $2, 1, NOW(), $3)
+             ON CONFLICT (workspace_id, key) DO UPDATE SET value = $2, updated_at = NOW()"
+        )
+        .bind(ws_id)
+        .bind(params)
+        .bind(&caller_id)
+        .execute(&state.db)
+        .await;
+    }
+
+    // 7c. Wire dependency edges if depends_on was specified.
+    let mut deps_wired = 0usize;
+    if let Some(ref depends_on) = req.depends_on {
+        for upstream_id_str in depends_on {
+            if let Ok(upstream_uuid) = upstream_id_str.parse::<Uuid>() {
+                let res = sqlx::query(
+                    "INSERT INTO workspace_dependencies (upstream_id, downstream_id, dependency_type)
+                     VALUES ($1, $2, 'output')
+                     ON CONFLICT (upstream_id, downstream_id) DO NOTHING"
+                )
+                .bind(upstream_uuid)
+                .bind(ws_id)
+                .execute(&state.db)
+                .await;
+                if res.is_ok() { deps_wired += 1; }
+            }
+        }
+    }
+
     // 8. Auto-hire agents.
     // We bypass hire_agent_handler (which has caller ownership/visibility checks)
     // and do a direct INSERT — the App spawn itself is the authorization event.
@@ -536,6 +586,8 @@ pub async fn spawn_workspace_handler(
         "provisioned": {
             "files_written": files_written,
             "agents_hired": agents_hired,
+            "dependencies_wired": deps_wired,
+            "has_params": req.params.is_some(),
         }
     }))))
 }
@@ -762,4 +814,189 @@ pub async fn apps_health_handler(
         "apps":  apps,
         "count": apps.len(),
     })))
+}
+
+// ─── POST /api/apps/:slug/workspaces/batch ───────────────────────────────────
+/// Batch-spawn multiple workspaces from the same App template.
+/// Each instance gets its own name, params, and dependency edges.
+/// Returns all spawned workspace IDs.
+///
+/// This is the mechanism for instantiating prediction portfolios:
+/// 32 team priors, 50 state forecasts, 100 earnings forecasts, etc.
+pub async fn batch_spawn_workspaces_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(slug): Path<String>,
+    Json(req): Json<BatchSpawnRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    if req.instances.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "instances array is empty".into()));
+    }
+    if req.instances.len() > 200 {
+        return Err((StatusCode::BAD_REQUEST, "Maximum 200 instances per batch".into()));
+    }
+
+    let caller_id = principal.user_id();
+
+    // Verify the App exists and is spawnable
+    let app = get_app_row(&state.db, &slug).await?;
+    let visibility = app["visibility"].as_str().unwrap_or("private");
+    if visibility == "private" {
+        let owner_id = app["owner_user_id"].as_str().unwrap_or("");
+        if caller_id != owner_id && !principal.can_admin() {
+            return Err((StatusCode::FORBIDDEN, "This App is private".into()));
+        }
+    }
+    if app["archived_at"].is_string() {
+        return Err((StatusCode::GONE, "This App has been archived".into()));
+    }
+
+    // Parse template once
+    let template = &app["workspace_template"];
+    let base_budget: i32 = template.get("initial_budget")
+        .and_then(|v| v.as_i64()).unwrap_or(100) as i32;
+    let default_auto_hire: Vec<String> = template.get("auto_hire")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let initial_files: Vec<(String, String)> = template.get("initial_files")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter().filter_map(|f| {
+                let path = f.get("path")?.as_str()?.to_string();
+                let content = f.get("content")?.as_str()?.to_string();
+                Some((path, content))
+            }).collect()
+        })
+        .unwrap_or_default();
+    let name_pattern = template.get("default_name_pattern")
+        .and_then(|v| v.as_str())
+        .unwrap_or("{app} workspace");
+
+    let mut results: Vec<Value> = Vec::with_capacity(req.instances.len());
+    let mut errors: Vec<Value> = Vec::new();
+
+    for (idx, instance) in req.instances.iter().enumerate() {
+        // Generate workspace name
+        let ws_name = instance.name.as_deref()
+            .filter(|n| !n.trim().is_empty())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| {
+                name_pattern
+                    .replace("{app}", app["name"].as_str().unwrap_or(&slug))
+                    .replace("{user}", &caller_id)
+                    .replace("{date}", &chrono::Utc::now().format("%Y-%m-%d").to_string())
+            });
+
+        let ws_slug = {
+            let base = slug.chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                .collect::<String>();
+            let suffix = &Uuid::new_v4().to_string()[..8];
+            format!("{}-{}", base, suffix)
+        };
+
+        // Create the workspace (team)
+        let team = match fermi_auth::teams::create_team(
+            &state.db, &ws_name, &ws_slug,
+            instance.description.as_deref(), &caller_id, &slug,
+        ).await {
+            Ok(t) => t,
+            Err(e) => {
+                errors.push(json!({
+                    "index": idx,
+                    "name": ws_name,
+                    "error": format!("{}", e),
+                }));
+                continue;
+            }
+        };
+
+        let ws_id = team.id;
+        let total_budget = base_budget + instance.extra_budget.unwrap_or(0).max(0);
+
+        // Budget
+        if total_budget > 0 {
+            if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id.to_string()).await {
+                let _ = credit_deposit(&state.db, ws_wallet.wallet_id, total_budget, "Batch spawn budget").await;
+                let _ = sqlx::query("UPDATE teams SET workspace_budget = $1 WHERE id = $2")
+                    .bind(total_budget).bind(ws_id).execute(&state.db).await;
+            }
+        }
+
+        // Initial files
+        let mut files_written = 0usize;
+        for (path, content) in &initial_files {
+            if state.workspace_git.commit_file(&ws_slug, path, content, &format!("Batch provisioning: {}", path)).is_ok() {
+                files_written += 1;
+            }
+        }
+
+        // Params
+        if let Some(ref params) = instance.params {
+            let params_content = serde_json::to_string_pretty(params).unwrap_or_default();
+            if state.workspace_git.commit_file(&ws_slug, ".app/params.json", &params_content, "Batch provisioning: params.json").is_ok() {
+                files_written += 1;
+            }
+            let _ = sqlx::query(
+                "INSERT INTO workspace_outputs (workspace_id, key, value, version, updated_at, updated_by)
+                 VALUES ($1, 'params', $2, 1, NOW(), $3)
+                 ON CONFLICT (workspace_id, key) DO UPDATE SET value = $2, updated_at = NOW()"
+            ).bind(ws_id).bind(params).bind(&caller_id).execute(&state.db).await;
+        }
+
+        // Dependencies
+        let mut deps_wired = 0usize;
+        if let Some(ref depends_on) = instance.depends_on {
+            for upstream_str in depends_on {
+                if let Ok(upstream_uuid) = upstream_str.parse::<Uuid>() {
+                    if sqlx::query(
+                        "INSERT INTO workspace_dependencies (upstream_id, downstream_id, dependency_type)
+                         VALUES ($1, $2, 'output') ON CONFLICT DO NOTHING"
+                    ).bind(upstream_uuid).bind(ws_id).execute(&state.db).await.is_ok() {
+                        deps_wired += 1;
+                    }
+                }
+            }
+        }
+
+        // Auto-hire agents
+        let auto_hire = instance.auto_hire_override.as_ref().unwrap_or(&default_auto_hire);
+        let mut agents_hired = 0usize;
+        for agent_name in auto_hire {
+            if let Ok(Some(row)) = sqlx::query(
+                "SELECT agent_id FROM agents WHERE agent_name = $1 AND status IN ('active', 'published', 'draft')"
+            ).bind(agent_name).fetch_optional(&state.db).await {
+                if let Ok(agent_id) = row.try_get::<Uuid, _>("agent_id") {
+                    if sqlx::query(
+                        "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
+                         VALUES ($1, $2, $3, 'system') ON CONFLICT DO NOTHING"
+                    ).bind(ws_id).bind(agent_id).bind(&caller_id).execute(&state.db).await.is_ok() {
+                        agents_hired += 1;
+                    }
+                }
+            }
+        }
+
+        results.push(json!({
+            "index": idx,
+            "workspace_id": ws_id,
+            "workspace_slug": ws_slug,
+            "name": ws_name,
+            "provisioned": {
+                "files_written": files_written,
+                "agents_hired": agents_hired,
+                "dependencies_wired": deps_wired,
+                "has_params": instance.params.is_some(),
+            }
+        }));
+    }
+
+    Ok((StatusCode::CREATED, Json(json!({
+        "app": slug,
+        "spawned": results.len(),
+        "errors": errors.len(),
+        "workspaces": results,
+        "failed": errors,
+    }))))
 }

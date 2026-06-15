@@ -694,6 +694,100 @@ async fn ensure_critical_schema(db: &PgPool) {
          "ALTER TABLE public.composition_versions ADD COLUMN IF NOT EXISTS rejected_by TEXT"),
         ("composition_versions.rejection_note",
          "ALTER TABLE public.composition_versions ADD COLUMN IF NOT EXISTS rejection_note TEXT"),
+
+        // ── Forecast benchmark tables (migration 140) ─────────────
+        // Migration 140 runs through sqlx::raw_sql, which PgBouncer in
+        // transaction mode can split at the CREATE OR REPLACE FUNCTION
+        // dollar-quoted body. When that happens, the entire script aborts
+        // mid-way and the three tables never get created. Symptom: every
+        // call to /api/benchmark/anchor-sweep and /api/forecasts/:id/spacetime
+        // 500s with `relation "forecast_commitments" does not exist`.
+        //
+        // Each CREATE TABLE here is a single statement, so PgBouncer can't
+        // split it. The trigger/function in 140 is non-essential for the
+        // anchor-sweep path (the handler writes directly), so we don't
+        // restore the trigger here — only the tables it depends on.
+        ("harness_snapshots.table",
+         "CREATE TABLE IF NOT EXISTS public.harness_snapshots ( \
+              snapshot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
+              content_hash TEXT NOT NULL UNIQUE, \
+              conductor_card_hash TEXT NOT NULL, \
+              routing_weights_hash TEXT, \
+              specialist_roster_hash TEXT NOT NULL, \
+              bayesops_params_hash TEXT, \
+              conductor_version TEXT NOT NULL, \
+              specialist_roster JSONB NOT NULL, \
+              routing_weights JSONB, \
+              bayesops_params JSONB, \
+              parent_hash TEXT, \
+              surface_changed TEXT, \
+              change_rationale TEXT, \
+              captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
+          )"),
+        ("forecast_commitments.table",
+         "CREATE TABLE IF NOT EXISTS public.forecast_commitments ( \
+              commitment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
+              forecast_id TEXT REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
+              revision_id TEXT REFERENCES public.fermi_forecast_updates(id) ON DELETE SET NULL, \
+              predicted_probability REAL NOT NULL, \
+              fpl_source_hash TEXT, \
+              harness_snapshot_id UUID REFERENCES public.harness_snapshots(snapshot_id), \
+              commitment_hash TEXT NOT NULL UNIQUE, \
+              anchor_method TEXT NOT NULL DEFAULT 'db_timestamp', \
+              anchor_ref TEXT, \
+              anchor_note TEXT, \
+              emitted_at TIMESTAMPTZ NOT NULL, \
+              committed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+              sosa_projection_id TEXT, \
+              CONSTRAINT commitment_has_subject CHECK ( \
+                  forecast_id IS NOT NULL OR sosa_projection_id IS NOT NULL \
+              ) \
+          )"),
+        ("forecast_commitments.idx_forecast",
+         "CREATE INDEX IF NOT EXISTS idx_forecast_commitments_forecast \
+          ON public.forecast_commitments(forecast_id, committed_at DESC)"),
+        ("forecast_commitments.idx_hash",
+         "CREATE INDEX IF NOT EXISTS idx_forecast_commitments_hash \
+          ON public.forecast_commitments(commitment_hash)"),
+        ("forecast_splits.table",
+         "CREATE TABLE IF NOT EXISTS public.forecast_splits ( \
+              forecast_id TEXT PRIMARY KEY REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
+              split TEXT NOT NULL CHECK (split IN ('held_in','held_out','validation')), \
+              split_hash_input TEXT NOT NULL, \
+              split_salt TEXT NOT NULL, \
+              assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+              contamination_status TEXT NOT NULL DEFAULT 'pending' \
+                  CHECK (contamination_status IN ('pending','clean','contaminated','exempt')), \
+              probe_transcript TEXT, \
+              evidence_freeze_cutoff TIMESTAMPTZ \
+          )"),
+        ("forecast_spacetime.table",
+         "CREATE TABLE IF NOT EXISTS public.forecast_spacetime ( \
+              spacetime_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
+              forecast_id TEXT NOT NULL REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
+              revision_seq INTEGER NOT NULL DEFAULT 0, \
+              predicted_probability REAL NOT NULL, \
+              previous_probability REAL, \
+              revision_trigger TEXT, \
+              revision_reason TEXT, \
+              triggering_agent TEXT, \
+              evidence_delta JSONB, \
+              drivers_snapshot JSONB, \
+              base_rate_snapshot JSONB, \
+              fpl_snapshot TEXT, \
+              sobol_snapshot JSONB, \
+              harness_snapshot_id UUID REFERENCES public.harness_snapshots(snapshot_id), \
+              brier_at_this_point REAL, \
+              loop1_signal JSONB, \
+              loop3_coherence REAL, \
+              loop5_calibration JSONB, \
+              committed_at TIMESTAMPTZ, \
+              revision_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+              UNIQUE (forecast_id, revision_seq) \
+          )"),
+        ("forecast_spacetime.idx_forecast",
+         "CREATE INDEX IF NOT EXISTS idx_spacetime_forecast \
+          ON public.forecast_spacetime(forecast_id, revision_seq ASC)"),
     ];
 
     println!("[ensure_critical_schema] running {} column ensures…", alters.len());
@@ -732,6 +826,39 @@ async fn ensure_critical_schema(db: &PgPool) {
             println!("[ensure_critical_schema] present: [{}]", names.join(", "));
         }
         Err(e) => eprintln!("[ensure_critical_schema] verification probe failed: {}", e),
+    }
+
+    // Also probe the forecast benchmark tables so we can see at-a-glance
+    // in Railway logs whether migration 140 (or this ensure block) landed
+    // them. Single query, returns each table name that exists.
+    let bench_probe = sqlx::query(
+        "SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name IN (
+               'harness_snapshots',
+               'forecast_commitments',
+               'forecast_splits',
+               'forecast_spacetime'
+           )
+         ORDER BY table_name",
+    )
+    .fetch_all(db)
+    .await;
+
+    match bench_probe {
+        Ok(rows) => {
+            use sqlx::Row;
+            let names: Vec<String> = rows
+                .iter()
+                .map(|r| r.try_get::<String, _>("table_name").unwrap_or_default())
+                .collect();
+            println!(
+                "[ensure_critical_schema] benchmark tables present: [{}] ({}/4)",
+                names.join(", "),
+                names.len()
+            );
+        }
+        Err(e) => eprintln!("[ensure_critical_schema] benchmark probe failed: {}", e),
     }
 }
 
@@ -1529,6 +1656,7 @@ async fn main() {
         .route("/api/apps/:slug", put(handlers::apps::update_app_handler_full))
         .route("/api/apps/:slug/workspaces", post(handlers::apps::spawn_workspace_handler))
         .route("/api/apps/:slug/workspaces", get(handlers::apps::list_app_workspaces_handler))
+        .route("/api/apps/:slug/workspaces/batch", post(handlers::apps::batch_spawn_workspaces_handler))
         .route("/api/apps/:slug/publish", post(handlers::apps::publish_app_handler))
         .route("/api/apps/:slug/archive", post(handlers::apps::archive_app_handler))
         // ── SimOps direct computation (no LLM — for Compose mode live feedback) ─
