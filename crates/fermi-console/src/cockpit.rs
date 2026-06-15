@@ -5540,7 +5540,9 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                     .cursor_pointer()
                                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        // Replace base rate with PM crowd price
+                                        // Update base rate only — does NOT change the model's
+                                        // inside view probability. The base rate is the outside
+                                        // view anchor; the inside view is your model's output.
                                         if let Some(q) = this.program.question_mut() {
                                             q.base_rate = Some(BaseRate {
                                                 reference_class: format!(
@@ -5558,20 +5560,82 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                                 generated_by: GeneratedBy::Agent("polymarket".into()),
                                             });
                                         }
-                                        this.predicted_probability = pm_price;
+                                        // Do NOT overwrite predicted_probability — that's the inside view
                                         this.messages.push(AssistantMessage {
                                             node: "question".into(),
                                             kind: MessageKind::Info,
                                             text: format!(
-                                                "Base rate updated to Polymarket crowd price: {:.1}%",
-                                                pm_price * 100.0
+                                                "Base rate anchored to Polymarket crowd price: {:.1}%. Your model: {:.1}%",
+                                                pm_price * 100.0,
+                                                this.predicted_probability * 100.0,
                                             ),
                                         });
                                         cx.notify();
                                     }))
-                                    .child("Use as base rate"),
+                                    .child("Anchor base rate"),
                             ),
-                    ),
+                    )
+                    // PM poll schedule selector
+                    .child({
+                        let current_interval = state.pm_poll_interval
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let schedules: Vec<(&str, u64)> = vec![
+                            ("Off", 0),
+                            ("5 min", 300),
+                            ("15 min", 900),
+                            ("30 min", 1800),
+                            ("1 hr", 3600),
+                            ("Daily", 86400),
+                        ];
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .mt(px(4.0))
+                            .child(
+                                div()
+                                    .text_size(px(8.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child("Crowd price refresh:"),
+                            )
+                            .children(schedules.into_iter().map(|(label, secs)| {
+                                let is_active = if secs == 0 {
+                                    current_interval == 0
+                                } else {
+                                    current_interval == secs
+                                };
+                                let s = secs;
+                                div()
+                                    .id(ElementId::Name(format!("pm-poll-{}", secs).into()))
+                                    .px(px(5.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .text_size(px(8.0))
+                                    .cursor_pointer()
+                                    .when(is_active, |el| {
+                                        el.bg(rgb(theme::PURPLE))
+                                            .text_color(rgb(theme::BG_DEEP))
+                                            .font_weight(FontWeight::BOLD)
+                                    })
+                                    .when(!is_active, |el| {
+                                        el.bg(rgb(theme::BG))
+                                            .text_color(rgb(theme::FG_DIM))
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if s == 0 {
+                                            this.stop_pm_poll(cx);
+                                        } else {
+                                            this.set_pm_poll_interval(
+                                                std::time::Duration::from_secs(s),
+                                                cx,
+                                            );
+                                        }
+                                    }))
+                                    .child(label)
+                            }))
+                    }),
             )
         })
 }
