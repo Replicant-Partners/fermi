@@ -76,7 +76,18 @@ impl TwoWriteMemory {
         let synthetic_episode =
             self.build_synthetic_episode(intervention, original_episode.as_ref())?;
         let synthetic_episode_id = synthetic_episode.episode_id;
-        self.store.store_episode(synthetic_episode).await?;
+        // Synthetic correction episode — embedding intentionally deferred. The
+        // consolidation worker may opportunistically embed `episode.query`
+        // later (Spec 22 Phase 1.7a notes this gap). Stamp source_ref so the
+        // deferred-embedding case is identifiable.
+        let source_ref = serde_json::json!({
+            "kind": "synthetic_correction",
+            "reviewer_id": intervention.reviewer_id,
+            "original_episode_id": intervention.episode_id,
+        });
+        self.store
+            .store_episode_with_provenance(synthetic_episode, None, Some(source_ref))
+            .await?;
 
         // ── Write 1 — annotation on the original episode ────────────────
 

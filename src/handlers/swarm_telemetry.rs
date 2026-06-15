@@ -460,20 +460,45 @@ pub async fn ingest_telemetry_handler(
 
                     if let Some(row) = db_id {
                         let agent_uuid: Uuid = row.get("agent_id");
-                        let mut episode =
+                        let episode =
                             agent_output_to_episode(agent_uuid, &summary_prompt, &output);
 
-                        // Generate embedding for the analysis
+                        // Embedding + Spec 22 provenance
                         let embed_text = format!(
                             "{} {}",
                             summary_prompt,
                             output.metadata.reasoning.as_deref().unwrap_or("")
                         );
-                        if let Ok(embedding) = spawn_state.embedder.generate(&embed_text).await {
-                            episode.embedding = Some(embedding);
-                        }
-
-                        let _ = spawn_state.memory_store.store_episode(episode).await;
+                        let t_embed = tokio::time::Instant::now();
+                        let provenance = match spawn_state
+                            .embedder
+                            .generate_provenanced(&embed_text)
+                            .await
+                        {
+                            Ok(p) => {
+                                tracing::info!(
+                                    elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                                    model = %p.model_id,
+                                    site = "swarm_coordinator",
+                                    "embed_call"
+                                );
+                                Some(p)
+                            }
+                            Err(_) => None,
+                        };
+                        let source_ref = serde_json::json!({
+                            "kind": "swarm_coordinator",
+                            "agent_id": agent_uuid,
+                            "session_id": session_id,
+                        });
+                        let _ = spawn_state
+                            .memory_store
+                            .store_episode_with_provenance(
+                                episode,
+                                provenance.as_ref(),
+                                Some(source_ref),
+                            )
+                            .await;
                     }
 
                     eprintln!(

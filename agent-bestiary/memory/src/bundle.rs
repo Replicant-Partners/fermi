@@ -194,6 +194,8 @@ mod tests {
             authority_weight: 0.5,
             dyad_id: None,
             persona_version_at_write: Some(3),
+            provider_used: None,
+            model_used: None,
         }
     }
 

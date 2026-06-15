@@ -18,7 +18,6 @@ members = [
     "agent-bestiary/coherence/crates/coherence-observer",
     "agent-bestiary/coherence/crates/coherence-api",
     "agent-bestiary/coherence/crates/coherence-protocols",
-    "fermi-memory",
     "fermi-auth",
     "fermi-lsp", "crates/fermi-console",
     "crates/simops",
@@ -129,6 +128,7 @@ abw-apps-core = { path = "crates/abw-apps-core" }
 
 # For migration scripts
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+pgvector = { version = "0.4", features = ["sqlx"] }
 anyhow = "1.0"
 serde_yaml = "0.9"
 dotenvy = "0.15"
@@ -179,6 +179,14 @@ path = "src/bin/agent-mcp-server.rs"
 [[bin]]
 name = "migrate-embedding-dimensions"
 path = "scripts/migrate_embedding_dimensions.rs"
+
+[[bin]]
+name = "backfill-embedding-provenance"
+path = "scripts/backfill_embedding_provenance.rs"
+
+[[bin]]
+name = "embedding-anchors"
+path = "scripts/embedding_anchors.rs"
 
 [[bin]]
 name = "brier-backtest-seed"

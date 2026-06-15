@@ -537,17 +537,39 @@ pub async fn run_eval_cases(
                 // executions so the social tracker has something to scope
                 // to. Workspace handlers will populate from sender_id later.
                 ep.dyad_id = Some(format!("eval:{}:{}", db_agent.agent_id, user_id));
-                // Generate embedding
+                // Generate embedding bundled with Spec 22 provenance.
                 let embed_text = format!(
                     "{} {}",
                     tc.query,
                     output.metadata.reasoning.as_deref().unwrap_or("")
                 );
-                if let Ok(embedding) = state.embedder.generate(&embed_text).await {
-                    ep.embedding = Some(embedding);
-                }
+                let t_embed = tokio::time::Instant::now();
+                let provenance =
+                    match state.embedder.generate_provenanced(&embed_text).await {
+                        Ok(p) => {
+                            tracing::info!(
+                                elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                                model = %p.model_id,
+                                site = "eval_runner",
+                                "embed_call"
+                            );
+                            ep.embedding = Some(p.vector.clone());
+                            Some(p)
+                        }
+                        Err(_) => None,
+                    };
+                let source_ref = serde_json::json!({
+                    "kind": "eval_runner",
+                    "agent_id": db_agent.agent_id,
+                    "user_id": user_id,
+                    "test_case_query_len": tc.query.len(),
+                });
                 let stored = ep.clone();
-                let eid = state.memory_store.store_episode(ep).await.ok();
+                let eid = state
+                    .memory_store
+                    .store_episode_with_provenance(ep, provenance.as_ref(), Some(source_ref))
+                    .await
+                    .ok();
                 let ok = matches!(output.status, AgentStatus::Success);
                 (
                     ok,

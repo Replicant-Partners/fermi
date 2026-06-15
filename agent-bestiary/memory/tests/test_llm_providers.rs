@@ -42,7 +42,7 @@ async fn test_anthropic_provider_basic() {
     };
 
     let provider =
-        AnthropicProvider::new(api_key, "claude-3-haiku-20240307".to_string(), None).unwrap();
+        AnthropicProvider::new(api_key, "claude-haiku-4-5-20251001".to_string(), None).unwrap();
 
     let messages = vec![Message {
         role: MessageRole::User,
@@ -58,7 +58,7 @@ async fn test_anthropic_provider_basic() {
     let response = provider.generate_raw(messages, &config).await.unwrap();
 
     assert!(!response.content.is_empty());
-    assert_eq!(response.model, "claude-3-haiku-20240307");
+    assert_eq!(response.model, "claude-haiku-4-5-20251001");
     assert!(response.usage.total_tokens > 0);
     println!(
         "✅ Anthropic provider works! Response: {}",
@@ -173,14 +173,14 @@ async fn test_llm_provider_factory() {
     let config = LLMProviderConfig {
         provider_type: ProviderType::Anthropic,
         api_key,
-        model: "claude-3-haiku-20240307".to_string(),
+        model: "claude-haiku-4-5-20251001".to_string(),
         base_url: None,
     };
 
     let provider = LLMProviderFactory::create(&config).unwrap();
 
     assert_eq!(provider.provider_name(), "anthropic");
-    assert_eq!(provider.model_name(), "claude-3-haiku-20240307");
+    assert_eq!(provider.model_name(), "claude-haiku-4-5-20251001");
     assert!(provider.supports_tools());
 
     let messages = vec![Message {
@@ -213,7 +213,7 @@ async fn test_provider_with_system_message() {
     };
 
     let provider =
-        AnthropicProvider::new(api_key, "claude-3-haiku-20240307".to_string(), None).unwrap();
+        AnthropicProvider::new(api_key, "claude-haiku-4-5-20251001".to_string(), None).unwrap();
 
     let messages = vec![
         Message {
@@ -252,7 +252,7 @@ async fn test_provider_multi_turn() {
     };
 
     let provider =
-        AnthropicProvider::new(api_key, "claude-3-haiku-20240307".to_string(), None).unwrap();
+        AnthropicProvider::new(api_key, "claude-haiku-4-5-20251001".to_string(), None).unwrap();
 
     let messages = vec![
         Message {
@@ -473,7 +473,7 @@ async fn test_llm_integration_with_consolidation() {
     // If we have an Anthropic key, test with LLM
     if let Some(api_key) = get_anthropic_key() {
         let llm = Arc::new(
-            AnthropicProvider::new(api_key, "claude-3-haiku-20240307".to_string(), None).unwrap(),
+            AnthropicProvider::new(api_key, "claude-haiku-4-5-20251001".to_string(), None).unwrap(),
         );
 
         let _worker_with_llm = ConsolidationWorker::with_llm(
@@ -507,7 +507,7 @@ async fn test_generate_structured() {
     };
 
     let provider =
-        AnthropicProvider::new(api_key, "claude-3-haiku-20240307".to_string(), None).unwrap();
+        AnthropicProvider::new(api_key, "claude-haiku-4-5-20251001".to_string(), None).unwrap();
 
     #[derive(serde::Deserialize, Debug)]
     struct MathResponse {

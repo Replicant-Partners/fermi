@@ -110,7 +110,8 @@ pub async fn admin_stats_handler(
         "credits_total_spent": total_spent,
         "transactions_24h": recent_txs,
         "embeddings": {
-            "provider": state.embedder.provider_name(),
+            "model_id": state.embedder.model_id(),
+            "model_version": state.embedder.model_version(),
             "dimension": state.embedder.dimension(),
             "episodes_with_embeddings": episodes_with_embeddings,
             "episodes_without_embeddings": total_episodes - episodes_with_embeddings,

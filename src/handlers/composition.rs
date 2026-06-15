@@ -166,7 +166,15 @@ pub async fn reject_composition_version_handler(
                 provider_used: None,
                 model_used: None,
                     };
-                    let _ = state.memory_store.store_episode(episode).await;
+                    // Synthetic rejection episode — embedding intentionally NULL.
+                    // Stamp source_ref so the row is identifiable for later cleanup.
+                    let source_ref = serde_json::json!({
+                        "kind": "composition_rejection",
+                    });
+                    let _ = state
+                        .memory_store
+                        .store_episode_with_provenance(episode, None, Some(source_ref))
+                        .await;
                 }
             }
         }

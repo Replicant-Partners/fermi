@@ -914,7 +914,31 @@ impl SeedData {
     }
 
     /// Insert all seed data into the database.
+    ///
+    /// Spec 22 note: seed embeddings are deterministic test fixtures from
+    /// `make_embedding(seed)`, not from any real model. They're persisted
+    /// with provenance `model_id="seed/deterministic-test-fixture"` so the
+    /// re-embed worker and `verify_reproducible` test can identify and
+    /// skip them.
     pub async fn seed(&self, store: &crate::store::MemoryStore) -> crate::Result<()> {
+        let seed_source_ref = serde_json::json!({ "kind": "test_seed_data" });
+
+        // Build a synthetic ProvenancedEmbedding for seed rows that have a
+        // vector — the storing fns require provenance for the model_id
+        // metadata even when the vector is synthetic.
+        fn seed_provenance(
+            embedding: &Option<Vec<f32>>,
+            source_text: &str,
+        ) -> Option<crate::ProvenancedEmbedding> {
+            embedding.as_ref().map(|v| crate::ProvenancedEmbedding {
+                vector: v.clone(),
+                source_text: source_text.to_string(),
+                model_id: "seed/deterministic-test-fixture".to_string(),
+                model_version: "seed-v1".to_string(),
+                dim: v.len() as i32,
+            })
+        }
+
         // 1. Agents
         for agent in &self.agents {
             store.upsert_agent(agent.clone()).await?;
@@ -922,7 +946,14 @@ impl SeedData {
 
         // 2. Episodes
         for episode in &self.episodes {
-            store.store_episode(episode.clone()).await?;
+            let prov = seed_provenance(&episode.embedding, &episode.query);
+            store
+                .store_episode_with_provenance(
+                    episode.clone(),
+                    prov.as_ref(),
+                    Some(seed_source_ref.clone()),
+                )
+                .await?;
         }
 
         // 3. Rules (insert all as active first, deactivate later)
@@ -930,12 +961,26 @@ impl SeedData {
             // Store with is_active = true initially; we'll deactivate rejected ones after
             let mut active_rule = rule.clone();
             active_rule.is_active = true;
-            store.store_semantic_rule(active_rule).await?;
+            let prov = seed_provenance(&active_rule.embedding, &active_rule.rule_content);
+            store
+                .store_semantic_rule_with_provenance(
+                    active_rule,
+                    prov.as_ref(),
+                    Some(seed_source_ref.clone()),
+                )
+                .await?;
         }
 
         // 4. Entities
         for entity in &self.entities {
-            store.store_entity(entity.clone()).await?;
+            let prov = seed_provenance(&entity.embedding, &entity.entity_name);
+            store
+                .store_entity_with_provenance(
+                    entity.clone(),
+                    prov.as_ref(),
+                    Some(seed_source_ref.clone()),
+                )
+                .await?;
         }
 
         // 5. Facts
@@ -945,7 +990,19 @@ impl SeedData {
 
         // 6. Communities
         for community in &self.communities {
-            store.store_community(community.clone()).await?;
+            let summary_for_source = community
+                .summary
+                .clone()
+                .or_else(|| community.community_name.clone())
+                .unwrap_or_default();
+            let prov = seed_provenance(&community.embedding, &summary_for_source);
+            store
+                .store_community_with_provenance(
+                    community.clone(),
+                    prov.as_ref(),
+                    Some(seed_source_ref.clone()),
+                )
+                .await?;
         }
 
         // 7. Consolidation jobs

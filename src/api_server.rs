@@ -585,6 +585,29 @@ async fn run_migrations(db: &PgPool) {
         // Source column on notifications — prevents ABW platform
         // notifications bleeding into the Rabble surface.
         "migrations/134_notifications_source.sql",
+        // Spec 22 — Embedding Portability (Phase 1.3): per-row provenance
+        // columns on the five vector tables + append-only embedding_provenance
+        // sidecar log. Pure additive; safe to re-run.
+        "migrations/135_embedding_provenance.sql",
+        // NOTE: migration 136 (NOT NULL enforcement) intentionally NOT in the
+        // boot sequence. It validates "embedding => full provenance" via
+        // ALTER TABLE ADD CONSTRAINT, which fails on unstamped pre-Spec-22
+        // rows. It MUST be run manually AFTER the backfill binary
+        // (scripts/backfill_embedding_provenance.rs) completes:
+        //   PGCONNECT_TIMEOUT=30 psql "$DATABASE_URL" \
+        //     -v ON_ERROR_STOP=1 \
+        //     -f migrations/136_embedding_provenance_not_null.sql
+        // Spec 22 Phase 2.1 — closed-model anchor set table (vendor side
+        // co-embedded with open reference model for translator fitting if
+        // a vendor goes dark).
+        "migrations/137_embedding_anchors.sql",
+        // Fermi-as-App: missing columns on fermi_forecasts (from prior
+        // commit 8c2d5dc but never wired into boot sequence).
+        "migrations/138_fermi_forecasts_missing_columns.sql",
+        // Fermi-as-App: workspace_id FK on fermi_forecasts. Without this,
+        // forecast spawn fails silently and forecasts don't appear as
+        // workspaces alongside other ABW apps.
+        "migrations/139_fermi_workspace_link.sql",
         // Forecast benchmark infrastructure: commitment anchors,
         // harness snapshots, splits, spacetime trajectory table.
         "migrations/140_forecast_benchmark.sql",

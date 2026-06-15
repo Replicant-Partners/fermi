@@ -134,55 +134,115 @@ pub async fn fork_agent(
         .await
         .map_err(|e| format!("Fork count error: {}", e))?;
 
-    // 9. Optionally copy ontology (entities, rules, facts)
+    // 9. Optionally copy ontology (entities, semantic_rules, facts).
+    //
+    // Spec 22 §1.7c fix: the previous SQL referenced a non-existent table
+    // `rules` and used wrong column names on `episodes`. This version uses
+    // the actual schema (see migrations/010) and preserves embedding-provenance
+    // columns so forked vectors carry their original model identity forward.
     if include_ontology {
-        // Copy entities
+        // Copy entities (including embedding + Spec 22 provenance columns)
         sqlx::query(
-            "INSERT INTO entities (id, agent_id, name, entity_type, description, confidence, created_at) \
-             SELECT gen_random_uuid(), $2, name, entity_type, description, confidence, NOW() \
-             FROM entities WHERE agent_id = (SELECT agent_name FROM agents WHERE agent_id = $1)"
+            "INSERT INTO entities (
+                entity_id, agent_id, entity_name, entity_type, summary,
+                t_valid, t_invalid, source_episodes, extraction_confidence,
+                embedding, properties,
+                embedding_model_id, embedding_model_version, embedding_dim,
+                source_text, source_ref, provenance_trusted
+            )
+            SELECT gen_random_uuid(), $2, entity_name, entity_type, summary,
+                   t_valid, t_invalid, source_episodes, extraction_confidence,
+                   embedding, properties,
+                   embedding_model_id, embedding_model_version, embedding_dim,
+                   source_text,
+                   COALESCE(source_ref, '{}'::jsonb)
+                       || jsonb_build_object('forked_from', $1::text),
+                   provenance_trusted
+              FROM entities
+             WHERE agent_id = $1 AND t_invalid IS NULL",
         )
         .bind(source_id)
-        .bind(&fork_name)
+        .bind(new_id)
         .execute(pool)
         .await
         .ok();
 
-        // Copy rules
+        // Copy semantic_rules (real table name)
         sqlx::query(
-            "INSERT INTO rules (id, agent_id, rule_text, confidence, source_episodes, created_at) \
-             SELECT gen_random_uuid(), $2, rule_text, confidence, source_episodes, NOW() \
-             FROM rules WHERE agent_id = (SELECT agent_name FROM agents WHERE agent_id = $1)",
+            "INSERT INTO semantic_rules (
+                rule_id, agent_id, rule_content, rule_description, confidence_score,
+                verification_status, verification_method, source_episode_cluster,
+                episode_count, embedding, is_active,
+                embedding_model_id, embedding_model_version, embedding_dim,
+                source_text, source_ref, provenance_trusted
+            )
+            SELECT gen_random_uuid(), $2, rule_content, rule_description, confidence_score,
+                   verification_status, verification_method, source_episode_cluster,
+                   episode_count, embedding, is_active,
+                   embedding_model_id, embedding_model_version, embedding_dim,
+                   source_text,
+                   COALESCE(source_ref, '{}'::jsonb)
+                       || jsonb_build_object('forked_from', $1::text),
+                   provenance_trusted
+              FROM semantic_rules
+             WHERE agent_id = $1 AND is_active = true",
         )
         .bind(source_id)
-        .bind(&fork_name)
+        .bind(new_id)
         .execute(pool)
         .await
         .ok();
 
-        // Copy facts
+        // Copy facts (no embedding column on facts; see migration 010)
         sqlx::query(
-            "INSERT INTO facts (id, agent_id, subject_entity, predicate, object_entity, confidence, created_at) \
-             SELECT gen_random_uuid(), $2, subject_entity, predicate, object_entity, confidence, NOW() \
-             FROM facts WHERE agent_id = (SELECT agent_name FROM agents WHERE agent_id = $1)"
+            "INSERT INTO facts (
+                fact_id, agent_id, subject_entity_id, predicate, object_entity_id,
+                confidence_score, source_episodes,
+                t_valid, t_invalid, t_created
+            )
+            SELECT gen_random_uuid(), $2, subject_entity_id, predicate, object_entity_id,
+                   confidence_score, source_episodes,
+                   t_valid, t_invalid, NOW()
+              FROM facts
+             WHERE agent_id = $1 AND t_invalid IS NULL",
         )
         .bind(source_id)
-        .bind(&fork_name)
+        .bind(new_id)
         .execute(pool)
         .await
         .ok();
     }
 
-    // 10. Optionally copy embeddings (episodes with embeddings)
+    // 10. Optionally copy embeddings (episodes with embeddings).
+    //
+    // Spec 22 §1.7c fix: corrected column names and preserved provenance.
+    // Forked episodes carry the original model identity forward; source_ref is
+    // annotated with `{"forked_from": <source_agent_id>}` so the audit trail
+    // is preserved.
     if include_embeddings {
         sqlx::query(
-            "INSERT INTO episodes (id, agent_id, content, embedding, role, source, created_at) \
-             SELECT gen_random_uuid(), $2, content, embedding, role, 'fork', NOW() \
-             FROM episodes WHERE agent_id = (SELECT agent_name FROM agents WHERE agent_id = $1) \
-             AND embedding IS NOT NULL",
+            "INSERT INTO episodes (
+                episode_id, agent_id, timestamp_ref, query, context,
+                execution_status, error_details, execution_time_ms,
+                tokens_used, cost_usd, embedding, consolidated, tags,
+                embedding_model_id, embedding_model_version, embedding_dim,
+                source_text, source_ref, provenance_trusted,
+                created_at
+            )
+            SELECT gen_random_uuid(), $2, timestamp_ref, query, context,
+                   execution_status, error_details, execution_time_ms,
+                   tokens_used, cost_usd, embedding, consolidated, tags,
+                   embedding_model_id, embedding_model_version, embedding_dim,
+                   source_text,
+                   COALESCE(source_ref, '{}'::jsonb)
+                       || jsonb_build_object('forked_from', $1::text),
+                   provenance_trusted,
+                   NOW()
+              FROM episodes
+             WHERE agent_id = $1 AND embedding IS NOT NULL",
         )
         .bind(source_id)
-        .bind(&fork_name)
+        .bind(new_id)
         .execute(pool)
         .await
         .ok();

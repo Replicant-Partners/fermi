@@ -2,7 +2,8 @@
 
 use axum::{
     extract::{Extension, Path, Query, State},
-    http::StatusCode,
+    http::{header, StatusCode},
+    response::Response,
     Json,
 };
 use fermi::gas::charge_gas;
@@ -219,6 +220,15 @@ pub async fn list_agents(
                             "credits_remaining": a.dreaming_budget_credits - a.dreaming_credits_used,
                         },
                         "workspace_count": workspace_counts.get(&a.agent_id).copied().unwrap_or(0),
+                        // Spec 22 — surface the agent's embedding intent on
+                        // the card so participants can see what produces
+                        // their vectors. Aggregate provenance stats live at
+                        // GET /api/agents/:id/embeddings/stats.
+                        "embedding": {
+                            "provider": a.embedding_provider,
+                            "model": a.embedding_model,
+                            "dimension": a.embedding_dimension,
+                        },
                         "source": "database",
                     });
 
@@ -946,11 +956,27 @@ pub struct ImportEmbeddingsRequest {
     episodes: Vec<ImportedEpisode>,
 }
 
+/// Imported episode payload.
+///
+/// Spec 22 (Phase 1.6) breaking change: clients MUST supply `model_id`,
+/// `model_version`, `dim`, and `source_text` alongside the vector so the
+/// server can record what produced it. Imports are persisted with
+/// `provenance_trusted = false` because the model identity is asserted by
+/// the client and unverifiable.
 #[derive(Deserialize)]
 pub struct ImportedEpisode {
     query: String,
     summary: Option<String>,
     embedding: Vec<f32>,
+    /// The exact text the client embedded to produce `embedding`. Required.
+    source_text: String,
+    /// Model identifier the client used, in "<provider>/<model>" form
+    /// (e.g. "anthropic/voyage-2"). Required.
+    model_id: String,
+    /// Manual epoch version string the client used (e.g. "2024-01-01"). Required.
+    model_version: String,
+    /// Output dimensionality. Must equal `embedding.len()`.
+    dim: i32,
 }
 
 pub async fn import_embeddings_handler(
@@ -982,7 +1008,8 @@ pub async fn import_embeddings_handler(
         return Err((StatusCode::BAD_REQUEST, "No episodes provided".to_string()));
     }
 
-    // Validate embedding dimensions
+    // Spec 22 §1.6 — validate embedding dimensions AND the client-supplied
+    // provenance fields. The provenance is asserted, not verified.
     for (i, ep) in req.episodes.iter().enumerate() {
         if ep.embedding.len() as i32 != agent.embedding_dimension {
             return Err((
@@ -990,6 +1017,35 @@ pub async fn import_embeddings_handler(
                 format!(
                     "Episode {}: expected {} dimensions, got {}. Embeddings must match agent's embedding model ({}).",
                     i, agent.embedding_dimension, ep.embedding.len(), agent.embedding_model
+                ),
+            ));
+        }
+        if ep.dim != ep.embedding.len() as i32 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Episode {}: declared dim={} does not match embedding length {}",
+                    i,
+                    ep.dim,
+                    ep.embedding.len()
+                ),
+            ));
+        }
+        if ep.model_id.trim().is_empty() || ep.model_version.trim().is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Episode {}: model_id and model_version are required (Spec 22 §1.6)",
+                    i
+                ),
+            ));
+        }
+        if ep.source_text.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Episode {}: source_text is required and must be non-empty (Spec 22 §1.6)",
+                    i
                 ),
             ));
         }
@@ -1019,7 +1075,9 @@ pub async fn import_embeddings_handler(
     )
     .await?;
 
-    // Create episodes with provided embeddings
+    // Create episodes with provided embeddings and client-supplied provenance.
+    // Per Spec 22 §1.6: imports are persisted with `provenance_trusted = false`
+    // because the model identity is asserted, not verifiable.
     let mut imported = 0;
     for ep in &req.episodes {
         let episode = Episode {
@@ -1043,13 +1101,33 @@ pub async fn import_embeddings_handler(
             authority_weight: 0.5,
             dyad_id: None,
             persona_version_at_write: None,
-                provider_used: None,
-                model_used: None,
+            provider_used: None,
+            model_used: None,
         };
 
+        // Client-asserted provenance — mark untrusted via source_ref.
+        let provenance = agent_bestiary_memory::ProvenancedEmbedding {
+            vector: ep.embedding.clone(),
+            source_text: ep.source_text.clone(),
+            model_id: ep.model_id.clone(),
+            model_version: ep.model_version.clone(),
+            dim: ep.dim,
+        };
+        let source_ref = serde_json::json!({
+            "kind": "client_import",
+            "caller": user_id,
+            "trusted": false,
+        });
+
+        // Spec 22 §1.6: client-imported rows are stamped `provenance_trusted=false`.
         state
             .memory_store
-            .store_episode(episode)
+            .store_episode_with_untrusted_provenance(
+                episode,
+                &provenance,
+                Some(source_ref),
+                "client_import",
+            )
             .await
             .map_err(|e| {
                 (
@@ -1065,6 +1143,458 @@ pub async fn import_embeddings_handler(
         "agent_id": agent_id,
         "message": format!("Imported {} episodes with embeddings", imported)
     })))
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Spec 22 §UX — Embedding Portability affordance for the agent card.
+//
+// Three endpoints surface portability state and let owners exercise it:
+//
+//   GET  /api/agents/:id/embeddings/stats           — public, aggregate counts
+//   POST /api/agents/:id/embeddings/export/consent  — owner-only, issues a
+//                                                     scoped one-shot token
+//                                                     acknowledging the
+//                                                     invertibility warning
+//   GET  /api/agents/:id/embeddings/export          — owner-only, JSONL dump;
+//                                                     requires the consent
+//                                                     token in the
+//                                                     `X-Export-Consent` header
+//                                                     for raw-vector exports,
+//                                                     not required for the
+//                                                     source-only format
+//
+// Security posture (Spec 22 §Security):
+//   - Aggregate stats are non-leaky (counts only).
+//   - source_only export rung-1+2: the source corpus + structure are the
+//     SAFE default. The participant owns it; exporting it does not leak.
+//   - full export rung-3: includes the raw vectors. INVERTIBLE — anyone
+//     holding them can recover substantial source content. Requires explicit
+//     consent token and is logged.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Aggregate embedding-portability stats for an agent's episode store.
+///
+/// Returns counts by model_id × trusted, count of NULL-embedded episodes,
+/// and a roll-up trust ratio. Aggregate-only — no source text, no vectors,
+/// no per-row data. Safe for public viewers of any agent.
+pub async fn embeddings_stats_handler(
+    State(state): State<AppState>,
+    Path(agent_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Verify the agent exists (404 otherwise) but don't require auth here.
+    let agent = state
+        .memory_store
+        .get_agent(agent_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?
+        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+
+    let pool = state.memory_store.pool();
+
+    // Episodes — by model_id / model_version / trusted, plus NULL bucket.
+    let by_model = sqlx::query(
+        r#"
+        SELECT
+            COALESCE(embedding_model_id, '__null__')      AS model_id,
+            COALESCE(embedding_model_version, '__null__') AS model_version,
+            COALESCE(embedding_dim, 0)                    AS dim,
+            provenance_trusted                            AS trusted,
+            COUNT(*)                                      AS n,
+            COUNT(embedding) FILTER (WHERE embedding IS NOT NULL) AS n_with_vec
+          FROM episodes
+         WHERE agent_id = $1
+         GROUP BY embedding_model_id, embedding_model_version,
+                  embedding_dim, provenance_trusted
+         ORDER BY n DESC
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stats: {e}")))?;
+
+    let mut by_model_json = Vec::new();
+    let mut total_episodes: i64 = 0;
+    let mut total_with_vector: i64 = 0;
+    let mut total_trusted_with_vector: i64 = 0;
+    for row in &by_model {
+        let model_id: String = row.try_get("model_id").unwrap_or_default();
+        let model_version: String = row.try_get("model_version").unwrap_or_default();
+        let dim: i32 = row.try_get("dim").unwrap_or(0);
+        let trusted: bool = row.try_get("trusted").unwrap_or(false);
+        let n: i64 = row.try_get("n").unwrap_or(0);
+        let n_with_vec: i64 = row.try_get("n_with_vec").unwrap_or(0);
+
+        total_episodes += n;
+        total_with_vector += n_with_vec;
+        if trusted {
+            total_trusted_with_vector += n_with_vec;
+        }
+
+        by_model_json.push(json!({
+            "model_id": if model_id == "__null__" { Value::Null } else { json!(model_id) },
+            "model_version": if model_version == "__null__" {
+                Value::Null
+            } else {
+                json!(model_version)
+            },
+            "dim": if dim == 0 { Value::Null } else { json!(dim) },
+            "trusted": trusted,
+            "episodes": n,
+            "episodes_with_vector": n_with_vec,
+        }));
+    }
+
+    let trust_ratio = if total_with_vector > 0 {
+        (total_trusted_with_vector as f64) / (total_with_vector as f64)
+    } else {
+        0.0
+    };
+
+    // Provenance event-log stats — append-only history.
+    let provenance_total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM embedding_provenance WHERE agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "agent_name": agent.agent_name,
+        "embedding_intent": {
+            "provider": agent.embedding_provider,
+            "model":    agent.embedding_model,
+            "dimension": agent.embedding_dimension,
+        },
+        "episodes": {
+            "total": total_episodes,
+            "with_vector": total_with_vector,
+            "trusted_with_vector": total_trusted_with_vector,
+            "trust_ratio": trust_ratio,
+            "by_model": by_model_json,
+        },
+        "provenance_events_total": provenance_total,
+        "portability": {
+            "source_only_exportable": total_episodes,
+            "full_exportable": total_with_vector,
+            "spec": "Spec 22 — Embedding Portability"
+        }
+    })))
+}
+
+/// Request body for the export consent gate.
+#[derive(Deserialize)]
+pub struct ExportConsentRequest {
+    /// Must equal `"i_understand_embeddings_are_invertible"`. Forces the
+    /// caller to acknowledge the security warning explicitly rather than
+    /// click-through dismiss it.
+    acknowledged_invertibility: String,
+}
+
+/// Owner-only: issue a single-use, time-bounded consent token authorising a
+/// full (raw-vector) export. Returns a 32-char hex token to be presented in
+/// the `X-Export-Consent` header on the subsequent GET .../export call.
+///
+/// Tokens are stored in-process (state.consent_tokens). Single-machine
+/// deployment is fine for now; multi-instance deployments would need a
+/// shared store but we are nowhere near that scale.
+pub async fn embeddings_export_consent_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<uuid::Uuid>,
+    Json(req): Json<ExportConsentRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let agent = state
+        .memory_store
+        .get_agent(agent_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?
+        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+
+    if agent.owner_id.as_deref() != Some(&user_id) {
+        return Err((StatusCode::FORBIDDEN, "Not the agent owner".to_string()));
+    }
+
+    const REQUIRED_PHRASE: &str = "i_understand_embeddings_are_invertible";
+    if req.acknowledged_invertibility != REQUIRED_PHRASE {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "acknowledged_invertibility must equal {:?} (Spec 22 §Security)",
+                REQUIRED_PHRASE
+            ),
+        ));
+    }
+
+    // Issue a single-use token.
+    let token = {
+        use rand::RngCore;
+        let mut bytes = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+    };
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
+
+    state.export_consent.insert(
+        token.clone(),
+        crate::ExportConsentEntry {
+            agent_id,
+            user_id: user_id.clone(),
+            expires_at,
+            consumed: false,
+        },
+    );
+
+    Ok(Json(json!({
+        "token": token,
+        "expires_at": expires_at.to_rfc3339(),
+        "warning": "Raw embeddings are invertible. Anyone holding the exported \
+                    file can recover substantial source content via \
+                    embedding-inversion attacks. Treat the file as if it were \
+                    the source text itself.",
+        "audit_id": format!("export_{}_{}", agent_id, chrono::Utc::now().timestamp()),
+    })))
+}
+
+/// Query params for the export endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ExportQuery {
+    /// `"source_only"` (default) returns source_text + provenance metadata,
+    /// no vectors. `"full"` includes the raw vector and requires a consent
+    /// token in the `X-Export-Consent` header.
+    #[serde(default)]
+    format: Option<String>,
+}
+
+/// Owner-only: streamed JSONL export of the agent's episode store.
+///
+/// Two formats:
+///   - source_only (default): one line per episode with
+///       { episode_id, agent_id, timestamp_ref, query, summary, source_text,
+///         source_ref, embedding_model_id, embedding_model_version,
+///         embedding_dim, provenance_trusted }
+///     SAFE — the source corpus is the participant's actual asset (Spec 22
+///     "what's owned" rungs 1–2). No vectors leak; export is logged.
+///
+///   - full: adds the `embedding` vector. INVERTIBLE — requires the
+///     `X-Export-Consent` token issued by the /consent endpoint.
+pub async fn embeddings_export_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<uuid::Uuid>,
+    Query(q): Query<ExportQuery>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response<String>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+
+    let agent = state
+        .memory_store
+        .get_agent(agent_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?
+        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+
+    if agent.owner_id.as_deref() != Some(&user_id) {
+        return Err((StatusCode::FORBIDDEN, "Not the agent owner".to_string()));
+    }
+
+    let format = q.format.as_deref().unwrap_or("source_only");
+    let include_vectors = match format {
+        "source_only" => false,
+        "full" => true,
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("format must be 'source_only' or 'full', got {:?}", other),
+            ))
+        }
+    };
+
+    // Consent gate for full export.
+    if include_vectors {
+        let token = headers
+            .get("X-Export-Consent")
+            .and_then(|h| h.to_str().ok())
+            .ok_or((
+                StatusCode::FORBIDDEN,
+                "Full export requires X-Export-Consent header. POST to \
+                 /api/agents/:id/embeddings/export/consent first to obtain a \
+                 token. (Spec 22 §Security)"
+                    .to_string(),
+            ))?
+            .to_string();
+
+        let mut entry = state.export_consent.get_mut(&token).ok_or((
+            StatusCode::FORBIDDEN,
+            "Invalid or expired consent token".to_string(),
+        ))?;
+        if entry.consumed {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Consent token already used (single-use)".to_string(),
+            ));
+        }
+        if entry.expires_at < chrono::Utc::now() {
+            return Err((StatusCode::FORBIDDEN, "Consent token expired".to_string()));
+        }
+        if entry.agent_id != agent_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Consent token is for a different agent".to_string(),
+            ));
+        }
+        if entry.user_id != user_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Consent token belongs to a different user".to_string(),
+            ));
+        }
+        entry.consumed = true;
+        drop(entry);
+        // Token consumed — leave it in the map so retries with the same
+        // token explicitly fail rather than silently re-authorize.
+    }
+
+    // Stream episodes. For solo-dev scale this is fine in-memory; if the
+    // agent grows past ~50k episodes we should switch to a body-stream.
+    let pool = state.memory_store.pool();
+    let rows = sqlx::query(
+        r#"
+        SELECT episode_id, agent_id, timestamp_ref, query, context,
+               source_text, source_ref,
+               embedding_model_id, embedding_model_version, embedding_dim,
+               provenance_trusted, embedding
+          FROM episodes
+         WHERE agent_id = $1
+         ORDER BY timestamp_ref ASC
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("export: {e}")))?;
+
+    let mut body = String::with_capacity(rows.len() * 256);
+    // First line: a metadata header describing the export. Lets the importer
+    // verify scope before reading any episode lines.
+    let header_obj = json!({
+        "kind": "abw_embedding_export_header",
+        "spec": "Spec 22",
+        "agent_id": agent_id,
+        "agent_name": agent.agent_name,
+        "format": format,
+        "exported_at": chrono::Utc::now().to_rfc3339(),
+        "exported_by": user_id,
+        "episode_count": rows.len(),
+        "warning": if include_vectors {
+            "Includes raw vectors — INVERTIBLE. Treat as the source corpus itself."
+        } else {
+            "Source corpus + provenance only. Vectors NOT included; safe to share."
+        },
+    });
+    body.push_str(&serde_json::to_string(&header_obj).unwrap());
+    body.push('\n');
+
+    for row in &rows {
+        let episode_id: Uuid = row.try_get("episode_id").unwrap_or_else(|_| Uuid::nil());
+        let timestamp_ref: chrono::DateTime<chrono::Utc> =
+            row.try_get("timestamp_ref").unwrap_or_else(|_| chrono::Utc::now());
+        let query: String = row.try_get("query").unwrap_or_default();
+        let context: Value = row.try_get("context").unwrap_or(Value::Null);
+        let source_text: Option<String> = row.try_get("source_text").ok();
+        let source_ref: Option<Value> = row.try_get("source_ref").ok();
+        let embedding_model_id: Option<String> = row.try_get("embedding_model_id").ok();
+        let embedding_model_version: Option<String> =
+            row.try_get("embedding_model_version").ok();
+        let embedding_dim: Option<i32> = row.try_get("embedding_dim").ok();
+        let provenance_trusted: bool = row.try_get("provenance_trusted").unwrap_or(false);
+
+        // Summary preserved from context for the import round-trip.
+        let summary = context.get("summary").cloned().unwrap_or(Value::Null);
+
+        let mut obj = serde_json::Map::new();
+        obj.insert("episode_id".into(), json!(episode_id));
+        obj.insert("timestamp_ref".into(), json!(timestamp_ref));
+        obj.insert("query".into(), json!(query));
+        obj.insert("summary".into(), summary);
+        obj.insert("source_text".into(), json!(source_text));
+        obj.insert("source_ref".into(), source_ref.unwrap_or(Value::Null));
+        obj.insert("model_id".into(), json!(embedding_model_id));
+        obj.insert("model_version".into(), json!(embedding_model_version));
+        obj.insert("dim".into(), json!(embedding_dim));
+        obj.insert("provenance_trusted".into(), json!(provenance_trusted));
+
+        if include_vectors {
+            let vec_opt: Option<pgvector::Vector> = row.try_get("embedding").ok();
+            if let Some(v) = vec_opt {
+                obj.insert("embedding".into(), json!(v.to_vec()));
+            } else {
+                obj.insert("embedding".into(), Value::Null);
+            }
+        }
+
+        body.push_str(&serde_json::to_string(&Value::Object(obj)).unwrap());
+        body.push('\n');
+    }
+
+    // Audit log: every export is recorded as an embedding_provenance event
+    // with kind="export" — matches Spec 22's "consented, scoped, logged"
+    // requirement and keeps the export trail in the same append-only log
+    // as the original writes.
+    let audit_ref = json!({
+        "kind": "export",
+        "format": format,
+        "exported_by": user_id,
+        "include_vectors": include_vectors,
+        "episode_count": rows.len(),
+    });
+    let _ = sqlx::query(
+        r#"
+        INSERT INTO embedding_provenance (
+            target_table, target_id, agent_id, user_id,
+            source_text, source_ref,
+            model_id, model_version, dim,
+            trusted, notes
+        ) VALUES (
+            'episodes', $1, $2, $3, NULL, $4, $5, $6, $7, $8, $9
+        )
+        "#,
+    )
+    .bind(agent_id)
+    .bind(agent_id)
+    .bind(&user_id)
+    .bind(&audit_ref)
+    .bind(agent.embedding_model.as_str())
+    .bind("export_event")
+    .bind(agent.embedding_dimension)
+    .bind(true)
+    .bind(format!(
+        "export:{}:{}",
+        format,
+        rows.len()
+    ))
+    .execute(pool)
+    .await;
+
+    let filename = format!(
+        "abw_export_{}_{}.jsonl",
+        agent.agent_name,
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename),
+        )
+        .body(body)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("response: {e}")))
 }
 
 pub async fn list_curated_agents_handler(
@@ -1194,6 +1724,13 @@ pub async fn list_my_agents_handler(
                 "workspace_names": abw_names,
                 "workspace_counts_by_origin": other_counts,
                 "workspace_count": total_count,
+                // Spec 22 — embedding intent on dashboard tiles, owner sees
+                // this on every agent they own.
+                "embedding": {
+                    "provider": a.embedding_provider,
+                    "model": a.embedding_model,
+                    "dimension": a.embedding_dimension,
+                },
             })
         })
         .collect();

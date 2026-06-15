@@ -25,8 +25,8 @@ pub use bundle::{AgentCardSnapshot, EpisodeBundle, TranscriptRole, TranscriptTur
 pub use clustering::{DBSCANClustering, EpisodeCluster};
 pub use consolidation::{ConsolidationResult, ConsolidationWorker};
 pub use embeddings::{
-    AnthropicEmbeddings, EmbeddingGenerator, MistralEmbeddings, MockEmbeddings, OpenAIEmbeddings,
-    QwenEmbeddings,
+    AnthropicEmbeddings, EmbeddingGenerator, MistralEmbeddings, MockEmbeddings, NomicEmbeddings,
+    OpenAIEmbeddings, ProvenancedEmbedding, QwenEmbeddings,
 };
 pub use error::{MemoryError, Result};
 pub use llm::{

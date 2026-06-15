@@ -54,7 +54,8 @@ pub async fn health(State(state): State<AppState>) -> Json<Value> {
         "version": "1.0.0",
         "api_version": "v1",
         "embeddings": {
-            "provider": state.embedder.provider_name(),
+            "model_id": state.embedder.model_id(),
+            "model_version": state.embedder.model_version(),
             "dimension": state.embedder.dimension(),
         }
     }))
