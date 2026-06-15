@@ -3987,6 +3987,35 @@ impl CockpitState {
         self.messages.clear();
         let state_path = path.replace(".fpl", ".state.json");
 
+        // Reset all forecast-scoped state before loading the new one. Without
+        // this, opening a forecast that has NO polymarket link leaves the
+        // pm_* fields populated with the *previous* forecast's PM data —
+        // surfacing one forecast's Polymarket event as if it belonged to
+        // every forecast.
+        //
+        // Same reasoning for forecast_id, workspace_id, sim_results, versions,
+        // and agent_runs: every one of them was previously restored
+        // conditionally with no clear-on-absence branch.
+        self.forecast_id = None;
+        self.workspace_id = None;
+        self.pm_event_id = None;
+        self.pm_market_id = None;
+        self.pm_question = None;
+        self.pm_market_price = None;
+        self.pm_volume_24h = None;
+        self.pm_liquidity = None;
+        self.pm_confidence = None;
+        self.pm_price_change_1w = None;
+        self.pm_url = None;
+        self.pm_price_history.clear();
+        self.pm_poll_interval = None;
+        self.versions.clear();
+        self.current_version = 0;
+        self.sim_results = None;
+        self.agent_runs.clear();
+        self.driver_confidence.clear();
+        self.inside_view_explanation.clear();
+
         // Try to parse FPL — may fail on old files with bad evidence strings
         let mut fpl_parsed = false;
         if let Ok(fpl_text) = std::fs::read_to_string(path) {
