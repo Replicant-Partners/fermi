@@ -620,6 +620,12 @@ async fn run_migrations(db: &PgPool) {
         "migrations/142_performance_indices.sql",
         // Workspace outputs (typed KV), dependencies (DAG), status lifecycle.
         "migrations/143_workspace_outputs.sql",
+        // Schema-drift fix: fermi_forecasts was missing updated_at, which
+        // broke publish (INSERT) and edit-save (UPDATE). Same pattern as
+        // 107 and 138 — original CREATE TABLE in 048 lacked the column
+        // and CREATE TABLE IF NOT EXISTS in 094 was a no-op on existing
+        // tables. Idempotent.
+        "migrations/144_fermi_forecasts_updated_at.sql",
     ];
 
     for file in &migration_files {

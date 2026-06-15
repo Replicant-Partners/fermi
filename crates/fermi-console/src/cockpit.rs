@@ -3374,6 +3374,8 @@ impl CockpitState {
             self.pm_volume_24h,
             self.pm_confidence.as_deref(),
             self.pm_price_change_1w,
+            self.sim_results.as_ref(),
+            &self.versions,
         );
 
         let export_path = format!("forecasts/{}.evidence.md", filename);
@@ -4539,6 +4541,8 @@ impl CockpitState {
                     self.pm_volume_24h,
                     self.pm_confidence.as_deref(),
                     self.pm_price_change_1w,
+                    self.sim_results.as_ref(),
+                    &self.versions,
                 );
                 match std::fs::write(&wiki_path, &wiki) {
                     Ok(_) => log::info!("[composer] Saved evidence wiki to {}", wiki_path),
@@ -4932,7 +4936,7 @@ impl Render for CockpitState {
                     // decomposition cost. Inside/outside divergence, driver
                     // impact treemap, and simulation histogram are shown
                     // immediately after the base rate so the user sees value.
-                    .child(render_forecast_index(self))
+                    .child(render_forecast_index(self, cx))
                     // ── 8A: Workflow state transition banner ──────────
                     // Shows clear state after research completes:
                     //   - "Ready to simulate" (agents done, no sim yet)
@@ -5232,12 +5236,20 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
         .gap(px(8.0))
         .child(state.question_input.clone())
         .child(
+            // Header row: probability + inside-view explainer + confidence
+            // + (researching badge) + (publish status). flex_wrap() lets a
+            // long error message or explainer wrap to a second row instead
+            // of pushing siblings into degenerate single-character widths.
+            // min_w(0) on the parent + on text children allows shrinking.
             div()
                 .flex()
+                .flex_wrap()
                 .items_center()
                 .gap(px(16.0))
+                .min_w(px(0.0))
                 .child(
                     div()
+                        .flex_none()
                         .text_size(px(28.0))
                         .text_color(rgb(theme::CYAN))
                         .font_weight(FontWeight::BOLD)
@@ -5249,6 +5261,7 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                             .text_size(px(10.0))
                             .text_color(rgb(theme::FG_DIM))
                             .min_w(px(0.0))
+                            .max_w(px(400.0))
                             .child(state.inside_view_explanation.clone()),
                     )
                     .when(state.forecast_confidence > 0.0, |el| {
@@ -5300,11 +5313,27 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                     )
                 })
                 .when(state.publish_status.is_some(), |el| {
+                    // Color publish status by content. Long error messages
+                    // (e.g. "Failed: Server error: error returned from
+                    // database: ...") were stretching the row and pushing
+                    // the chart/driver column into a degenerate width
+                    // where words broke to one character per line. Cap
+                    // the width and let it wrap.
+                    let msg = state.publish_status.as_deref().unwrap_or("").to_string();
+                    let color = if msg.starts_with("Failed") || msg.contains("error") || msg.contains("Error") {
+                        theme::RED
+                    } else if msg.contains("Publishing") || msg.contains("…") {
+                        theme::GOLD
+                    } else {
+                        theme::GREEN
+                    };
                     el.child(
                         div()
                             .text_size(px(11.0))
-                            .text_color(rgb(theme::GREEN))
-                            .child(state.publish_status.as_deref().unwrap_or("").to_string()),
+                            .text_color(rgb(color))
+                            .max_w(px(360.0))
+                            .min_w(px(0.0))
+                            .child(msg),
                     )
                 }),
         )
@@ -7267,6 +7296,164 @@ fn render_agent_picker(
                     )
                 }),
         )
+        // ── Already-assigned agents (auto + manual) ───────────────
+        // Every agent attached to this driver gets its own schedule
+        // controls here. Previously the ▶ Run Now / 📅 Daily / 📅 Weekly
+        // affordance only appeared on the "Recommended" card, which
+        // meant auto-assigned agents had no way to be scheduled.
+        // Now any agent on the driver — regardless of how it got there
+        // — can be run on-demand or persisted as a recurring schedule.
+        .when(!driver_agents.is_empty(), |el| {
+            el.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child("Currently assigned to this driver:"),
+            )
+            .child({
+                let mut col = div().flex().flex_col().gap(px(6.0));
+                for assigned in &driver_agents {
+                    let agent_id = assigned.clone();
+                    let dn_run = dn.clone();
+                    let aid_run = agent_id.clone();
+                    let dn_daily = dn.clone();
+                    let aid_daily = agent_id.clone();
+                    let dn_weekly = dn.clone();
+                    let aid_weekly = agent_id.clone();
+
+                    // Description from the registry, falling back to a
+                    // generic label so auto-spawned agents (e.g.
+                    // macro_forecaster) still get a row.
+                    let desc = state
+                        .registry
+                        .get(&agent_id)
+                        .ok()
+                        .map(|c| c.metadata.description.clone())
+                        .filter(|d| !d.is_empty())
+                        .unwrap_or_else(|| "Research agent".into());
+
+                    col = col.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .px(px(10.0))
+                            .py(px(8.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG_ELEVATED))
+                            .border_1()
+                            .border_color(rgb(theme::FG_FAINT))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::CYAN))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(agent_id.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_DIM))
+                                            .min_w(px(0.0))
+                                            .child(desc),
+                                    ),
+                            )
+                            // Same three actions as the Recommended card,
+                            // re-issued so auto-assigned agents are
+                            // schedulable.
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(6.0))
+                                    .child(
+                                        div()
+                                            .id(ElementId::Name(
+                                                format!("assigned-run-{}-{}", driver_name, agent_id).into(),
+                                            ))
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::CYAN))
+                                            .px(px(8.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .border_1()
+                                            .border_color(rgb(theme::CYAN))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.assign_agent_to_driver(
+                                                    &dn_run, &aid_run, Schedule::Once, cx,
+                                                );
+                                            }))
+                                            .child("▶ Run Now"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(ElementId::Name(
+                                                format!("assigned-daily-{}-{}", driver_name, agent_id).into(),
+                                            ))
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::GREEN))
+                                            .px(px(8.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .border_1()
+                                            .border_color(rgb(theme::GREEN))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.assign_agent_to_driver(
+                                                    &dn_daily,
+                                                    &aid_daily,
+                                                    Schedule::Every {
+                                                        interval: 1,
+                                                        unit: fermi::ast::TimeUnit::Day,
+                                                    },
+                                                    cx,
+                                                );
+                                            }))
+                                            .child("📅 Daily"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(ElementId::Name(
+                                                format!("assigned-weekly-{}-{}", driver_name, agent_id).into(),
+                                            ))
+                                            .text_size(px(10.0))
+                                            .text_color(rgb(theme::GOLD))
+                                            .px(px(8.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .border_1()
+                                            .border_color(rgb(theme::GOLD))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.assign_agent_to_driver(
+                                                    &dn_weekly,
+                                                    &aid_weekly,
+                                                    Schedule::Every {
+                                                        interval: 1,
+                                                        unit: fermi::ast::TimeUnit::Week,
+                                                    },
+                                                    cx,
+                                                );
+                                            }))
+                                            .child("📅 Weekly"),
+                                    ),
+                            ),
+                    );
+                }
+                col
+            })
+        })
         // ── Recommended agent (highlighted) ───────────────────────
         .child(
             div()
@@ -8619,7 +8806,10 @@ fn render_fermi_banner(
 /// Forecast Index — the key visualization section shown above drivers.
 /// Displays inside/outside divergence, simulation stats, histogram,
 /// index comparison chart, and evidence treemap.
-fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
+fn render_forecast_index(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
     let has_base_rate = state
         .program
         .question()
@@ -8821,7 +9011,9 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                                 )),
                         ),
                 )
-                // Histogram + Index chart SIDE BY SIDE
+                // Histogram + Index chart SIDE BY SIDE — interactive,
+                // matching the Wiki tab. Same renderers, smaller default
+                // dimensions for the composer layout.
                 .child(
                     div()
                         .px(px(12.0))
@@ -8829,76 +9021,42 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                         .gap(px(8.0))
                         // Histogram (left)
                         .when(!sim.histogram.is_empty(), |el| {
-                            let chart_w = 200u32;
-                            let chart_h = 70u32;
-                            let rgb_buf = crate::charts::render_histogram_chart(
-                                &sim.histogram,
-                                chart_w,
-                                chart_h,
-                            );
-                            let render_img =
-                                crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                            let chart_w = 240.0_f32;
+                            let chart_h = 70.0_f32;
                             el.child(
                                 div()
                                     .flex()
                                     .flex_col()
+                                    .gap(px(2.0))
                                     .child(
                                         div()
                                             .text_size(px(8.0))
                                             .text_color(rgb(theme::FG_FAINT))
-                                            .child("Distribution"),
+                                            .child("Distribution — hover bars"),
                                     )
-                                    .child(
-                                        gpui::img(gpui::ImageSource::Render(render_img))
-                                            .w(gpui::px(chart_w as f32))
-                                            .h(gpui::px(chart_h as f32)),
-                                    ),
+                                    .child(render_interactive_histogram(
+                                        state, cx, chart_w, chart_h,
+                                    )),
                             )
                         })
                         // Index chart (right) — only if versions exist
                         .when(state.versions.len() > 0, |el| {
-                            let base_rate = state
-                                .program
-                                .question()
-                                .and_then(|q| q.base_rate.as_ref())
-                                .map(|br| br.historical_frequency * 100.0)
-                                .unwrap_or(50.0);
-                            let crowd_price_pct = state.pm_market_price.map(|p| p * 100.0);
-                            let history: Vec<crate::charts::IndexPoint> = state
-                                .versions
-                                .iter()
-                                .map(|v| crate::charts::IndexPoint {
-                                    label: format!("v{}", v.version),
-                                    inside_view: v.probability * 100.0,
-                                    outside_view: base_rate,
-                                    crowd_price: crowd_price_pct,
-                                })
-                                .collect();
-                            let chart_w = 200u32;
-                            let chart_h = 70u32;
-                            let rgb_buf = crate::charts::render_index_chart(
-                                &history,
-                                history.len().saturating_sub(1),
-                                chart_w,
-                                chart_h,
-                            );
-                            let render_img =
-                                crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                            let chart_w = 240.0_f32;
+                            let chart_h = 70.0_f32;
                             el.child(
                                 div()
                                     .flex()
                                     .flex_col()
+                                    .gap(px(2.0))
                                     .child(
                                         div()
                                             .text_size(px(8.0))
                                             .text_color(rgb(theme::FG_FAINT))
-                                            .child("Model · Base rate · Crowd"),
+                                            .child("Model · Base rate · Crowd — hover versions"),
                                     )
-                                    .child(
-                                        gpui::img(gpui::ImageSource::Render(render_img))
-                                            .w(gpui::px(chart_w as f32))
-                                            .h(gpui::px(chart_h as f32)),
-                                    ),
+                                    .child(render_interactive_index_chart(
+                                        state, cx, chart_w, chart_h,
+                                    )),
                             )
                         }),
                 )
@@ -11103,6 +11261,8 @@ fn generate_evidence_wiki(
     pm_volume_24h: Option<f64>,
     pm_confidence: Option<&str>,
     pm_price_change_1w: Option<f64>,
+    sim_results: Option<&SimResults>,
+    versions: &[ForecastVersion],
 ) -> String {
     let mut md = String::new();
     let question = program
@@ -11231,6 +11391,154 @@ fn generate_evidence_wiki(
             md.push_str(&format!("\n{}\n", r));
         }
         md.push_str("\n---\n\n");
+    }
+
+    // ── Simulation distribution (ASCII histogram) ─────────────────
+    // Renders a fixed-width text histogram of the simulation output so
+    // the visual that lives in the composer/wiki tabs survives a
+    // markdown export. Uses ▁▂▃▄▅▆▇█ block characters scaled to the
+    // tallest bin, plus a markdown table with bin centers + counts.
+    if let Some(sim) = sim_results {
+        if !sim.histogram.is_empty() {
+            md.push_str("## Simulation Distribution\n\n");
+            md.push_str(&format!(
+                "**{} iterations** · p5 = {:.1}% · median = {:.1}% · p95 = {:.1}% · σ = {:.3}\n\n",
+                sim.iterations,
+                sim.p5 * 100.0,
+                sim.median * 100.0,
+                sim.p95 * 100.0,
+                sim.std_dev,
+            ));
+
+            // Inline sparkline.
+            let blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+            let max_count = *sim.histogram.iter().max().unwrap_or(&1) as f64;
+            let spark: String = sim
+                .histogram
+                .iter()
+                .map(|&c| {
+                    let frac = c as f64 / max_count.max(1.0);
+                    let idx = (frac * (blocks.len() - 1) as f64).round() as usize;
+                    blocks[idx.min(blocks.len() - 1)]
+                })
+                .collect();
+            md.push_str(&format!("```\n{}\n```\n\n", spark));
+
+            // Tabular breakdown with bin center, count, and percent.
+            // Only emit if we have bin_starts available (fresh sim);
+            // older loaded forecasts skip the table and keep just the
+            // sparkline.
+            if !sim.bin_starts.is_empty() && sim.bin_starts.len() == sim.histogram.len() {
+                let total: u64 = sim.histogram.iter().map(|&c| c as u64).sum();
+                md.push_str("| Bin center | Count | % of sims |\n|---|---|---|\n");
+                for (i, &c) in sim.histogram.iter().enumerate() {
+                    let center = sim.bin_starts[i] + sim.bin_width * 0.5;
+                    let pct = if total > 0 {
+                        c as f64 / total as f64 * 100.0
+                    } else {
+                        0.0
+                    };
+                    md.push_str(&format!(
+                        "| {:.1}% | {} | {:.1}% |\n",
+                        center * 100.0,
+                        c,
+                        pct
+                    ));
+                }
+                md.push_str("\n");
+            }
+            md.push_str("---\n\n");
+        }
+    }
+
+    // ── Index chart (version history with three anchors) ───────────
+    // Versions over time as a markdown table. Each row shows the three
+    // anchor values + deltas at that point. The wiki tab has an
+    // interactive line chart here; markdown gets the underlying numbers
+    // and a per-row sparkline for the model line.
+    if versions.len() >= 2 {
+        let base_rate_pct = program
+            .question()
+            .and_then(|q| q.base_rate.as_ref())
+            .map(|br| br.historical_frequency * 100.0);
+        let crowd_pct = pm_market_price.map(|p| p * 100.0);
+
+        md.push_str("## Forecast Index (version history)\n\n");
+        let mut header = String::from("| v | timestamp | model |");
+        let mut sep = String::from("|---|---|---|");
+        if base_rate_pct.is_some() {
+            header.push_str(" base |");
+            sep.push_str("---|");
+        }
+        if crowd_pct.is_some() {
+            header.push_str(" crowd |");
+            sep.push_str("---|");
+        }
+        header.push_str(" Δ(model−base) |");
+        sep.push_str("---|");
+        if crowd_pct.is_some() {
+            header.push_str(" Δ(model−crowd) |");
+            sep.push_str("---|");
+        }
+        header.push_str(" note |");
+        sep.push_str("---|");
+        md.push_str(&format!("{}\n{}\n", header, sep));
+
+        for v in versions {
+            let model_pct = v.probability * 100.0;
+            let mut row = format!(
+                "| v{} | {} | {:.1}% |",
+                v.version,
+                v.timestamp.split('T').next().unwrap_or(&v.timestamp),
+                model_pct
+            );
+            if let Some(b) = base_rate_pct {
+                row.push_str(&format!(" {:.1}% |", b));
+            }
+            if let Some(c) = crowd_pct {
+                row.push_str(&format!(" {:.1}% |", c));
+            }
+            if let Some(b) = base_rate_pct {
+                row.push_str(&format!(" {:+.1}pp |", model_pct - b));
+            } else {
+                row.push_str(" — |");
+            }
+            if let Some(c) = crowd_pct {
+                row.push_str(&format!(" {:+.1}pp |", model_pct - c));
+            }
+            // Trim change_summary to fit in the table cell.
+            let note = if v.change_summary.len() > 60 {
+                format!("{}…", &v.change_summary[..57])
+            } else {
+                v.change_summary.clone()
+            };
+            row.push_str(&format!(" {} |", note.replace('|', "\\|")));
+            md.push_str(&row);
+            md.push('\n');
+        }
+
+        // Inline sparkline of the model line so the trend is visible
+        // even before reading the table.
+        let blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        let probs: Vec<f64> = versions.iter().map(|v| v.probability).collect();
+        let min = probs.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = probs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let span = (max - min).max(1e-9);
+        let spark: String = probs
+            .iter()
+            .map(|&p| {
+                let frac = (p - min) / span;
+                let idx = (frac * (blocks.len() - 1) as f64).round() as usize;
+                blocks[idx.min(blocks.len() - 1)]
+            })
+            .collect();
+        md.push_str(&format!(
+            "\n**Model line:** ```{}``` (range {:.1}% – {:.1}%)\n\n",
+            spark,
+            min * 100.0,
+            max * 100.0
+        ));
+        md.push_str("---\n\n");
     }
 
     // ── Drivers with Evidence ─────────────────────────────────────
