@@ -95,11 +95,14 @@ def headers():
         "Content-Type": "application/json",
     }
 
+BATCH_SIZE = 4  # spawn 4 at a time to avoid Neon/Railway timeouts
+TIMEOUT = 180   # seconds per batch
+
 def batch_spawn_team_priors():
-    """Spawn 48 team prior workspaces via batch endpoint."""
-    instances = []
+    """Spawn 48 team prior workspaces in small batches."""
+    all_instances = []
     for team in TEAMS:
-        instances.append({
+        all_instances.append({
             "name": f"Team Prior — {team['team_name']} ({team['team_id']})",
             "description": f"WC 2026 tournament win probability prior for {team['team_name']}. Group {team['group']}, {team['confederation']}.",
             "params": {
@@ -110,38 +113,63 @@ def batch_spawn_team_priors():
                 "confederation": team["confederation"],
                 "is_host": team["is_host"],
                 "elo_current": team["elo"],
-                "elo_trend": 0,  # neutral at start
+                "elo_trend": 0,
             },
         })
 
-    print(f"Spawning {len(instances)} team prior workspaces...")
-    resp = requests.post(
-        f"{API_URL}/api/apps/fermi_forecast/workspaces/batch",
-        headers=headers(),
-        json={"instances": instances},
-        timeout=120,
-    )
-
-    if resp.status_code != 201:
-        print(f"ERROR {resp.status_code}: {resp.text[:500]}")
-        sys.exit(1)
-
-    data = resp.json()
-    print(f"Spawned: {data['spawned']}, Errors: {data['errors']}")
-
-    # Build team_id → workspace_id map
     ws_map = {}
-    for ws in data["workspaces"]:
-        idx = ws["index"]
-        team_id = TEAMS[idx]["team_id"]
-        ws_map[team_id] = str(ws["workspace_id"])
-        print(f"  {team_id}: {ws['workspace_id']} ({ws['name']})")
+    total_spawned = 0
+    total_errors = 0
 
-    if data["failed"]:
-        print(f"\nFailed ({len(data['failed'])}):")
-        for err in data["failed"]:
-            print(f"  [{err['index']}] {err['name']}: {err['error']}")
+    # Spawn in small batches
+    for batch_start in range(0, len(all_instances), BATCH_SIZE):
+        batch = all_instances[batch_start:batch_start + BATCH_SIZE]
+        batch_num = batch_start // BATCH_SIZE + 1
+        total_batches = (len(all_instances) + BATCH_SIZE - 1) // BATCH_SIZE
+        team_ids_in_batch = [TEAMS[batch_start + i]["team_id"] for i in range(len(batch))]
 
+        print(f"  Batch {batch_num}/{total_batches}: {', '.join(team_ids_in_batch)} ...", end=" ", flush=True)
+
+        try:
+            resp = requests.post(
+                f"{API_URL}/api/apps/fermi_forecast/workspaces/batch",
+                headers=headers(),
+                json={"instances": batch},
+                timeout=TIMEOUT,
+            )
+        except requests.exceptions.Timeout:
+            print(f"TIMEOUT (>{TIMEOUT}s)")
+            total_errors += len(batch)
+            continue
+        except requests.exceptions.ConnectionError as e:
+            print(f"CONNECTION ERROR: {e}")
+            total_errors += len(batch)
+            continue
+
+        if resp.status_code != 201:
+            print(f"ERROR {resp.status_code}: {resp.text[:200]}")
+            total_errors += len(batch)
+            continue
+
+        data = resp.json()
+        spawned = data.get("spawned", 0)
+        errors = data.get("errors", 0)
+        total_spawned += spawned
+        total_errors += errors
+
+        for ws in data.get("workspaces", []):
+            global_idx = batch_start + ws["index"]
+            team_id = TEAMS[global_idx]["team_id"]
+            ws_map[team_id] = str(ws["workspace_id"])
+
+        print(f"OK ({spawned} spawned" + (f", {errors} errors)" if errors else ")"))
+
+        if data.get("failed"):
+            for err in data["failed"]:
+                global_idx = batch_start + err["index"]
+                print(f"    FAILED: {TEAMS[global_idx]['team_id']}: {err['error']}")
+
+    print(f"\nTeam priors: {total_spawned} spawned, {total_errors} errors")
     return ws_map
 
 def spawn_group_paths(ws_map):
@@ -150,10 +178,15 @@ def spawn_group_paths(ws_map):
     for team in TEAMS:
         groups.setdefault(team["group"], []).append(team["team_id"])
 
-    instances = []
-    for group, team_ids in sorted(groups.items()):
+    group_ws_map = {}
+    sorted_groups = sorted(groups.items())
+
+    print(f"\nSpawning {len(sorted_groups)} group path workspaces...")
+
+    # Spawn one at a time (each has 4 dependency edges to wire)
+    for group, team_ids in sorted_groups:
         depends_on = [ws_map[tid] for tid in team_ids if tid in ws_map]
-        instances.append({
+        instance = {
             "name": f"Tournament Path — Group {group}",
             "description": f"Group {group} bracket simulation: {', '.join(team_ids)}",
             "params": {
@@ -164,30 +197,41 @@ def spawn_group_paths(ws_map):
                 "n_simulations": 10000,
             },
             "depends_on": depends_on,
-        })
+        }
 
-    print(f"\nSpawning {len(instances)} group path workspaces...")
-    resp = requests.post(
-        f"{API_URL}/api/apps/fermi_forecast/workspaces/batch",
-        headers=headers(),
-        json={"instances": instances},
-        timeout=120,
-    )
+        print(f"  Group {group} ({', '.join(team_ids)}) ...", end=" ", flush=True)
 
-    if resp.status_code != 201:
-        print(f"ERROR {resp.status_code}: {resp.text[:500]}")
-        return {}
+        try:
+            resp = requests.post(
+                f"{API_URL}/api/apps/fermi_forecast/workspaces/batch",
+                headers=headers(),
+                json={"instances": [instance]},
+                timeout=TIMEOUT,
+            )
+        except requests.exceptions.Timeout:
+            print("TIMEOUT")
+            continue
+        except requests.exceptions.ConnectionError as e:
+            print(f"CONNECTION ERROR: {e}")
+            continue
 
-    data = resp.json()
-    print(f"Spawned: {data['spawned']}, Errors: {data['errors']}")
+        if resp.status_code != 201:
+            print(f"ERROR {resp.status_code}: {resp.text[:200]}")
+            continue
 
-    group_ws_map = {}
-    for ws in data["workspaces"]:
-        idx = ws["index"]
-        group = sorted(groups.keys())[idx]
-        group_ws_map[group] = str(ws["workspace_id"])
-        print(f"  Group {group}: {ws['workspace_id']}")
+        data = resp.json()
+        if data.get("workspaces"):
+            ws_id = str(data["workspaces"][0]["workspace_id"])
+            group_ws_map[group] = ws_id
+            deps = data["workspaces"][0].get("provisioned", {}).get("dependencies_wired", 0)
+            print(f"OK → {ws_id} ({deps} deps)")
+        else:
+            print("FAILED")
+            if data.get("failed"):
+                for err in data["failed"]:
+                    print(f"    {err.get('error', 'unknown error')}")
 
+    print(f"\nGroup paths: {len(group_ws_map)} spawned")
     return group_ws_map
 
 
