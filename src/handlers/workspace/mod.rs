@@ -12,7 +12,9 @@ mod core;
 mod messages;
 mod coherence;
 pub mod actions;
+pub mod outputs;
 
 pub use core::*;
 pub use messages::*;
 pub use coherence::*;
+pub use outputs::*;

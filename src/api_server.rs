@@ -618,6 +618,8 @@ async fn run_migrations(db: &PgPool) {
         // Performance: HNSW vector indices for KG hot-path retrieval +
         // partial composite index on episodes (unconsolidated subset).
         "migrations/142_performance_indices.sql",
+        // Workspace outputs (typed KV), dependencies (DAG), status lifecycle.
+        "migrations/143_workspace_outputs.sql",
     ];
 
     for file in &migration_files {
@@ -1620,6 +1622,27 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/annotations/:annotation_id",
             delete(handlers::workspace::actions::resolve_annotation_handler),
+        )
+        // Workspace outputs (typed KV store for cross-workspace data)
+        .route(
+            "/api/workspaces/:workspace_id/outputs",
+            get(handlers::workspace::outputs::list_outputs_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/outputs/:key",
+            put(handlers::workspace::outputs::set_output_handler)
+                .get(handlers::workspace::outputs::get_output_handler)
+                .delete(handlers::workspace::outputs::delete_output_handler),
+        )
+        // Workspace dependencies (DAG edges)
+        .route(
+            "/api/workspaces/:workspace_id/dependencies",
+            get(handlers::workspace::outputs::list_dependencies_handler)
+                .post(handlers::workspace::outputs::add_dependency_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/dependencies/:upstream_id",
+            delete(handlers::workspace::outputs::remove_dependency_handler),
         )
         // Workspace chat
         .route(

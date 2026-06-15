@@ -1142,6 +1142,56 @@ impl ApiClient {
         .await
     }
 
+    /// Set a workspace output (typed KV for cross-workspace consumption).
+    pub async fn set_workspace_output(
+        &self,
+        workspace_id: &str,
+        key: &str,
+        value: &JsonValue,
+    ) -> Result<JsonValue, ApiError> {
+        self.put(
+            &format!("/api/workspaces/{}/outputs/{}", workspace_id, key),
+            &serde_json::json!({ "value": value }),
+        )
+        .await
+    }
+
+    /// Read a workspace output by key.
+    pub async fn get_workspace_output(
+        &self,
+        workspace_id: &str,
+        key: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.get(&format!("/api/workspaces/{}/outputs/{}", workspace_id, key))
+            .await
+    }
+
+    /// List all outputs for a workspace.
+    pub async fn list_workspace_outputs(
+        &self,
+        workspace_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.get(&format!("/api/workspaces/{}/outputs", workspace_id))
+            .await
+    }
+
+    /// Add a dependency edge (this workspace depends on upstream).
+    pub async fn add_workspace_dependency(
+        &self,
+        workspace_id: &str,
+        upstream_id: &str,
+        dependency_type: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            &format!("/api/workspaces/{}/dependencies", workspace_id),
+            &serde_json::json!({
+                "upstream_id": upstream_id,
+                "dependency_type": dependency_type,
+            }),
+        )
+        .await
+    }
+
     /// Post a workspace action (decompose, research, update_distribution, etc.).
     pub async fn post_workspace_action(
         &self,

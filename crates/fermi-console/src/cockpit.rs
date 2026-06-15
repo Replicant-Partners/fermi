@@ -3991,6 +3991,66 @@ impl CockpitState {
                         elapsed.as_millis()
                     ),
                 });
+
+                // ── Publish outputs to workspace ──────────────────
+                // Enables cross-workspace reads (e.g., tournament path
+                // reading team prior outputs).
+                if let Some(ref ws_id) = self.workspace_id {
+                    let api = self.api.clone();
+                    let ws = ws_id.clone();
+                    let prob = self.predicted_probability;
+                    let conf = self.forecast_confidence;
+                    let mean = results.mean;
+                    let p5 = results.p5;
+                    let p95 = results.p95;
+                    let std_dev = results.std_dev;
+                    // Collect Sobol indices if available
+                    let sobol = sensitivity.as_ref().ok().map(|sa| {
+                        let top = sa.top_drivers(10);
+                        top.iter().map(|ds| {
+                            (ds.driver_name.clone(), serde_json::json!({
+                                "first_order": ds.first_order_index,
+                                "total_order": ds.total_order_index,
+                            }))
+                        }).collect::<serde_json::Map<String, serde_json::Value>>()
+                    });
+                    // Driver scores
+                    let driver_scores: serde_json::Map<String, serde_json::Value> = self.program.drivers().iter().map(|d| {
+                        let val = match d.driver_type {
+                            DriverType::Continuous => {
+                                if let Some(Distribution::Triangular { ref p50, .. }) = d.distribution {
+                                    expr_to_f64(p50)
+                                } else { 1.0 }
+                            }
+                            DriverType::Binary => d.probability.unwrap_or(0.5),
+                            _ => 1.0,
+                        };
+                        (d.name.clone(), serde_json::json!(val))
+                    }).collect();
+
+                    tokio::spawn(async move {
+                        // Publish predicted_probability
+                        let _ = api.set_workspace_output(&ws, "predicted_probability",
+                            &serde_json::json!(prob)).await;
+                        // Publish forecast_confidence
+                        let _ = api.set_workspace_output(&ws, "forecast_confidence",
+                            &serde_json::json!(conf)).await;
+                        // Publish simulation_results
+                        let _ = api.set_workspace_output(&ws, "simulation_results",
+                            &serde_json::json!({
+                                "mean": mean, "p5": p5, "p95": p95, "std_dev": std_dev,
+                            })).await;
+                        // Publish driver_scores
+                        let _ = api.set_workspace_output(&ws, "driver_scores",
+                            &serde_json::json!(driver_scores)).await;
+                        // Publish sobol_indices if available
+                        if let Some(si) = sobol {
+                            let _ = api.set_workspace_output(&ws, "sobol_indices",
+                                &serde_json::json!(si)).await;
+                        }
+                        log::info!("[workspace] Published outputs to {}", ws);
+                    });
+                }
             }
             Err(e) => {
                 self.sim_error = Some(format!("Execution error: {:?}", e));
