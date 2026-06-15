@@ -2434,55 +2434,61 @@ impl FermiConsole {
         .detach();
     }
 
-    /// Open a workspace forecast in the Composer. Creates a cockpit connected
-    /// to the workspace, sets the question from params, and pre-populates
-    /// the workspace_id so outputs publish correctly.
+    /// Open a workspace forecast in the Composer. Creates a FRESH cockpit
+    /// connected to the workspace, sets the question from params.
     fn open_workspace_forecast(&mut self, workspace_id: &str, cx: &mut Context<Self>) {
         let ws_id = workspace_id.to_string();
 
         // Find the workspace forecast data
         let wf = self.workspace_forecasts.iter().find(|w| w.workspace_id == ws_id).cloned();
 
-        // Create cockpit if needed
-        if self.cockpit.is_none() {
-            let api = self.api.clone();
-            self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
-        }
+        // Always create a fresh cockpit for each workspace — don't reuse
+        let api = self.api.clone();
+        let cockpit = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
+        self.cockpit = Some(cockpit.clone());
 
-        if let Some(ref cockpit) = self.cockpit {
-            let cockpit = cockpit.clone();
-            cockpit.update(cx, |cockpit, cx| {
-                // Set workspace_id so outputs publish to the right workspace
-                cockpit.workspace_id = Some(ws_id.clone());
+        cockpit.update(cx, |cockpit, cx| {
+            // Set workspace_id so outputs publish to the right workspace
+            cockpit.workspace_id = Some(ws_id.clone());
 
-                // Set question from workspace params
-                if let Some(ref wf) = wf {
-                    let question = if let Some(ref team_name) = wf.team_name {
-                        format!("Will {} win the 2026 FIFA World Cup?", team_name)
-                    } else {
-                        wf.workspace_name.clone()
-                    };
-                    cockpit.question_input.update(cx, |input, cx| {
-                        input.set_text(&question, cx);
-                    });
-
-                    // Set probability if we have one from outputs
-                    if let Some(prob) = wf.probability {
-                        cockpit.predicted_probability = prob;
+            // Set question and data from workspace params
+            if let Some(ref wf) = wf {
+                let question = match wf.program_type.as_deref() {
+                    Some("TEAM_PRIOR") => {
+                        if let Some(ref team_name) = wf.team_name {
+                            format!("Will {} win the 2026 FIFA World Cup?", team_name)
+                        } else {
+                            wf.workspace_name.clone()
+                        }
                     }
-                }
-
-                cockpit.messages.push(crate::cockpit::AssistantMessage {
-                    node: "workspace".into(),
-                    kind: crate::cockpit::MessageKind::Info,
-                    text: format!(
-                        "Connected to workspace {}. Press Ctrl+Enter to run decomposition, or Ctrl+R to simulate.",
-                        ws_id.chars().take(8).collect::<String>()
-                    ),
+                    Some("TOURNAMENT_PATH") => {
+                        if let Some(ref group) = wf.group {
+                            format!("Which team will win Group {}?", group)
+                        } else {
+                            wf.workspace_name.clone()
+                        }
+                    }
+                    _ => wf.workspace_name.clone(),
+                };
+                cockpit.question_input.update(cx, |input, cx| {
+                    input.set_text(&question, cx);
                 });
-                cx.notify();
+
+                if let Some(prob) = wf.probability {
+                    cockpit.predicted_probability = prob;
+                }
+            }
+
+            cockpit.messages.push(crate::cockpit::AssistantMessage {
+                node: "workspace".into(),
+                kind: crate::cockpit::MessageKind::Info,
+                text: format!(
+                    "Workspace: {}. Press Ctrl+Enter to decompose, or Ctrl+R to simulate.",
+                    wf.as_ref().map(|w| w.workspace_name.as_str()).unwrap_or(&ws_id),
+                ),
             });
-        }
+            cx.notify();
+        });
 
         self.active_panel = Panel::Composer;
         cx.notify();
@@ -3663,6 +3669,12 @@ impl FermiConsole {
                     })
                     // Workspace forecasts (from ABW fermi_forecast app)
                     .when(!self.workspace_forecasts.is_empty(), |el| {
+                        // Dedup by workspace_id (batch script may have been run multiple times)
+                        let mut seen = std::collections::HashSet::new();
+                        let deduped: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
+                            .filter(|wf| seen.insert(wf.workspace_id.clone()))
+                            .collect();
+                        let count = deduped.len();
                         el.child(
                             div()
                                 .flex()
@@ -3671,6 +3683,8 @@ impl FermiConsole {
                                 .rounded(px(8.0))
                                 .border_1()
                                 .border_color(theme::fg_faint())
+                                .max_h(px(400.0))
+                                .overflow_hidden()
                                 .child(
                                     div()
                                         .px(px(16.0))
@@ -3685,10 +3699,7 @@ impl FermiConsole {
                                                 .text_size(px(14.0))
                                                 .text_color(theme::fg())
                                                 .font_weight(FontWeight::BOLD)
-                                                .child(format!(
-                                                    "Workspaces ({})",
-                                                    self.workspace_forecasts.len()
-                                                )),
+                                                .child(format!("Workspaces ({})", count)),
                                         )
                                         .child(
                                             div()
@@ -3697,7 +3708,7 @@ impl FermiConsole {
                                                 .child("ABW · fermi_forecast"),
                                         ),
                                 )
-                                .children(self.workspace_forecasts.iter().map(|wf| {
+                                .children(deduped.iter().map(|wf| {
                                     let ws_id = wf.workspace_id.clone();
                                     let display_name = wf.team_name.as_deref()
                                         .unwrap_or(&wf.workspace_name);
