@@ -27,6 +27,7 @@ pub struct WorkspaceCommit {
 
 /// Manages git repositories for workspaces.
 /// Each workspace gets its own repo at `{base_path}/workspaces/{slug}/`.
+#[derive(Clone)]
 pub struct WorkspaceGitManager {
     config: GitConfig,
 }
@@ -209,6 +210,25 @@ impl WorkspaceGitManager {
             timestamp: Utc::now(),
             author: self.config.author_name.clone(),
         })
+    }
+
+    /// Async wrapper for `commit_file` — moves blocking FS/git work to
+    /// Tokio's blocking thread pool (Spec 21 Phase 4.2).
+    /// Use this in async HTTP handlers; use `commit_file` only in sync contexts
+    /// (spawn_blocking closures, tests).
+    pub async fn commit_file_async(
+        &self,
+        slug: String,
+        file_path: String,
+        content: String,
+        message: String,
+    ) -> Result<WorkspaceCommit> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            this.commit_file(&slug, &file_path, &content, &message)
+        })
+        .await
+        .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
     }
 
     /// Commit binary data to the workspace repository.

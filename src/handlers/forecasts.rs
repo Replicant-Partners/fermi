@@ -230,19 +230,42 @@ pub async fn create_forecast_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Auto-anchor: commit this forecast's initial probability immediately.
-    // This starts the immutable clock — the commitment_hash proves this
-    // probability was recorded before any resolution event.
+    // Auto-anchor + harness snapshot at forecast creation.
     {
         let now = chrono::Utc::now();
         let salt = std::env::var("BENCHMARK_SPLIT_SALT").unwrap_or_else(|_| "fermi-v1-2026".into());
-        let _ = crate::handlers::forecast_benchmark::anchor_forecast(
+
+        // Capture harness snapshot (conductor version from agents_used field)
+        let conductor_version = req.agents_used.as_ref()
+            .and_then(|au| au.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|a| a.get("agent_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("fermi");
+        let harness_snapshot_id = crate::handlers::forecast_benchmark::capture_harness_snapshot(
+            pool,
+            conductor_version,
+            req.agents_used.as_ref().unwrap_or(&serde_json::json!([])),
+            None, // routing weights: populated later via calibration endpoint
+            None, // bayesops_params: null until BayesOps operational
+        ).await;
+
+        let commitment_hash = crate::handlers::forecast_benchmark::anchor_forecast(
             pool, &forecast_id, None,
             req.predicted_probability as f64,
             req.fpl_source.as_deref(),
             now,
             Some("auto-anchor on create"),
-        ).await;
+        ).await.ok();
+
+        // Link harness snapshot to the spacetime row if both exist
+        if let (Some(snap_id), Some(_)) = (harness_snapshot_id, commitment_hash.as_ref()) {
+            let _ = sqlx::query(
+                "UPDATE forecast_spacetime SET harness_snapshot_id = $1
+                 WHERE forecast_id = $2 AND revision_seq = 0"
+            ).bind(snap_id).bind(&forecast_id).execute(pool).await;
+        }
+
         let _ = crate::handlers::forecast_benchmark::ensure_split(pool, &forecast_id, &salt).await;
     }
 

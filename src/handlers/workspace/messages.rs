@@ -383,7 +383,8 @@ pub async fn post_workspace_message_handler(
                         let card = resolve_agent_card(&state2, &db_agent);
 
                         // Enrich card with KG context from past dream cycles
-                        let card = enrich_with_kg_context(
+                        let t_kg = tokio::time::Instant::now();
+                        let (card, _kg_query_embedding) = enrich_with_kg_context(
                             &state2.memory_store,
                             &state2.embedder,
                             db_agent.agent_id,
@@ -391,6 +392,7 @@ pub async fn post_workspace_message_handler(
                             card,
                         )
                         .await;
+                        tracing::info!(elapsed_ms = t_kg.elapsed().as_millis() as u64, "kg_context_enrich");
 
                         let agent_stmt = ast::AgentStmt {
                             name: agent_name2.clone(),
@@ -493,18 +495,41 @@ pub async fn post_workspace_message_handler(
                         // Record stats
                         let _ = state2.registry.record_execution(&agent_name2, &output);
 
-                        // Store episode
-                        let mut episode =
+                        // Store episode with Spec 22 provenance
+                        let episode =
                             agent_output_to_episode(db_agent.agent_id, &query2, &output);
                         let embed_text = format!(
                             "{} {}",
                             query2,
                             output.metadata.reasoning.as_deref().unwrap_or("")
                         );
-                        if let Ok(embedding) = state2.embedder.generate(&embed_text).await {
-                            episode.embedding = Some(embedding);
-                        }
-                        let _ = state2.memory_store.store_episode(episode).await;
+                        let t_embed = tokio::time::Instant::now();
+                        let provenance =
+                            match state2.embedder.generate_provenanced(&embed_text).await {
+                                Ok(p) => {
+                                    tracing::info!(
+                                        elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                                        model = %p.model_id,
+                                        site = "workspace_message_at_mention",
+                                        "embed_call"
+                                    );
+                                    Some(p)
+                                }
+                                Err(_) => None,
+                            };
+                        let source_ref = serde_json::json!({
+                            "kind": "workspace_message_at_mention",
+                            "agent_id": db_agent.agent_id,
+                            "workspace_id": ws_uuid2,
+                        });
+                        let _ = state2
+                            .memory_store
+                            .store_episode_with_provenance(
+                                episode,
+                                provenance.as_ref(),
+                                Some(source_ref),
+                            )
+                            .await;
 
                         // Charge execution gas from workspace wallet
                         let tokens = output.tokens_used.unwrap_or(0) as i32;

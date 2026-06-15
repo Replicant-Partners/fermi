@@ -1,13 +1,56 @@
 use crate::{
-    Agent, AgentObservabilityState, AgentUpdate, AgentVersion, AnomalyEvent, CoherenceEvaluation,
-    Community, ConsolidationJob, CorrectionClassification, DyadState, Entity, Episode,
-    EpisodeCorrection, EvalRun, EvalSignal, EvalTestCase, Fact, HitlAction, MarketplaceListing,
-    MarketplaceTransaction, MemoryError, Result, SemanticRule, ShoppingProfile, TimelineEntry,
-    TwoReviewerRequest, VerificationStatus, WorkspaceMessage,
+    embeddings::ProvenancedEmbedding, Agent, AgentObservabilityState, AgentUpdate, AgentVersion,
+    AnomalyEvent, CoherenceEvaluation, Community, ConsolidationJob, CorrectionClassification,
+    DyadState, Entity, Episode, EpisodeCorrection, EvalRun, EvalSignal, EvalTestCase, Fact,
+    HitlAction, MarketplaceListing, MarketplaceTransaction, MemoryError, Result, SemanticRule,
+    ShoppingProfile, TimelineEntry, TwoReviewerRequest, VerificationStatus, WorkspaceMessage,
 };
-use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
+use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction};
 use std::str::FromStr;
 use uuid::Uuid;
+
+/// Spec 22 — append-only sidecar log row for a single embedding write.
+///
+/// Inserted by `MemoryStore::log_embedding_provenance()` from inside the
+/// same transaction as the row write (see `store_episode_with_provenance`
+/// and siblings).
+async fn insert_provenance_row(
+    tx: &mut Transaction<'_, Postgres>,
+    target_table: &str,
+    target_id: Uuid,
+    agent_id: Option<Uuid>,
+    user_id: Option<&str>,
+    provenance: &ProvenancedEmbedding,
+    source_ref: Option<&serde_json::Value>,
+    trusted: bool,
+    notes: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO embedding_provenance (
+            target_table, target_id, agent_id, user_id,
+            source_text, source_ref,
+            model_id, model_version, dim, embedding,
+            trusted, notes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        "#,
+    )
+    .bind(target_table)
+    .bind(target_id)
+    .bind(agent_id)
+    .bind(user_id)
+    .bind(&provenance.source_text)
+    .bind(source_ref)
+    .bind(&provenance.model_id)
+    .bind(&provenance.model_version)
+    .bind(provenance.dim)
+    .bind(pgvector::Vector::from(provenance.vector.clone()))
+    .bind(trusted)
+    .bind(notes)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
 
 /// Common SELECT columns for agent queries
 const AGENT_COLUMNS: &str = r#"
@@ -58,12 +101,93 @@ impl MemoryStore {
         &self.pool
     }
 
-    /// Store an episode in episodic memory
+    /// Store an episode in episodic memory.
+    ///
+    /// **Spec 22 deprecation**: this fn does NOT capture embedding provenance.
+    /// If `episode.embedding` is set, the resulting row will have NULL provenance
+    /// columns and no row will appear in `embedding_provenance`. Prefer
+    /// `store_episode_with_provenance()` for any call path that produces a vector.
+    ///
+    /// Kept as the back-compat surface so existing call sites continue to
+    /// compile while they're migrated one-by-one. The `#[deprecated]` attribute
+    /// makes the compiler flag every un-migrated site.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use `store_episode_with_provenance` to comply with Spec 22 \
+                (embedding portability). This fn writes NULL provenance even \
+                when an embedding is present."
+    )]
     pub async fn store_episode(&self, episode: Episode) -> Result<Uuid> {
+        // Internal back-compat path: writes the row with NO provenance, even if
+        // `episode.embedding` is set. New code should call
+        // `store_episode_with_provenance` and pass an explicit
+        // `ProvenancedEmbedding`.
+        #[allow(deprecated)]
+        self.store_episode_inner(episode, None, None, true, "legacy_no_provenance")
+            .await
+    }
+
+    /// Store an episode with full embedding provenance (Spec 22, Phase 1).
+    ///
+    /// Writes the episode row AND a corresponding `embedding_provenance` event
+    /// row in a single transaction. If `provenance` is `None`, the episode is
+    /// stored with NULL embedding and NULL provenance columns — intentional for
+    /// paths that defer embedding (TwoWriteMemory, composition rejections,
+    /// simops actuation plans).
+    ///
+    /// `source_ref` carries caller-specific context (e.g.
+    /// `{"kind":"execute_handler","execution_id": ...}`); it's stored on the
+    /// row AND on the provenance event.
+    pub async fn store_episode_with_provenance(
+        &self,
+        mut episode: Episode,
+        provenance: Option<&ProvenancedEmbedding>,
+        source_ref: Option<serde_json::Value>,
+    ) -> Result<Uuid> {
+        // Keep `episode.embedding` in sync with provenance if both are present
+        // — the row's embedding column and the provenance.embedding MUST match.
+        if let Some(p) = provenance {
+            episode.embedding = Some(p.vector.clone());
+        }
+        self.store_episode_inner(episode, provenance, source_ref, true, "initial_write")
+            .await
+    }
+
+    /// Store an episode with UNTRUSTED embedding provenance (Spec 22 §1.6).
+    ///
+    /// Used by the client-import path: the client supplies the vector and the
+    /// `model_id`/`model_version`, but we cannot verify that those identities
+    /// actually produced this vector. Persisted with `provenance_trusted=false`
+    /// on the row and on the sidecar event. The re-embed worker (Phase 3)
+    /// treats untrusted rows as eligible for opportunistic verification.
+    pub async fn store_episode_with_untrusted_provenance(
+        &self,
+        mut episode: Episode,
+        provenance: &ProvenancedEmbedding,
+        source_ref: Option<serde_json::Value>,
+        notes: &str,
+    ) -> Result<Uuid> {
+        episode.embedding = Some(provenance.vector.clone());
+        self.store_episode_inner(episode, Some(provenance), source_ref, false, notes)
+            .await
+    }
+
+    /// Internal episode INSERT. Used by both the deprecated `store_episode`
+    /// and the provenance-aware variant. Always runs in a transaction.
+    async fn store_episode_inner(
+        &self,
+        episode: Episode,
+        provenance: Option<&ProvenancedEmbedding>,
+        source_ref: Option<serde_json::Value>,
+        trusted: bool,
+        notes: &str,
+    ) -> Result<Uuid> {
         let embedding_vec = episode
             .embedding
             .as_ref()
             .map(|e| pgvector::Vector::from(e.clone()));
+
+        let mut tx = self.pool.begin().await?;
 
         let row = sqlx::query(
             r#"
@@ -72,10 +196,12 @@ impl MemoryStore {
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
-                provider_used, model_used
+                provider_used, model_used,
+                embedding_model_id, embedding_model_version, embedding_dim,
+                source_text, source_ref, provenance_trusted
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                    $14, $15, $16, $17, $18, $19)
+                    $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
             RETURNING episode_id
             "#,
         )
@@ -98,10 +224,34 @@ impl MemoryStore {
         .bind(episode.persona_version_at_write)
         .bind(&episode.provider_used)
         .bind(&episode.model_used)
-        .fetch_one(&self.pool)
+        .bind(provenance.map(|p| p.model_id.as_str()))
+        .bind(provenance.map(|p| p.model_version.as_str()))
+        .bind(provenance.map(|p| p.dim))
+        .bind(provenance.map(|p| p.source_text.as_str()))
+        .bind(&source_ref)
+        .bind(trusted)
+        .fetch_one(&mut *tx)
         .await?;
 
-        Ok(row.try_get("episode_id")?)
+        let episode_id: Uuid = row.try_get("episode_id")?;
+
+        if let Some(p) = provenance {
+            insert_provenance_row(
+                &mut tx,
+                "episodes",
+                episode_id,
+                Some(episode.agent_id),
+                episode.dyad_id.as_deref(),
+                p,
+                source_ref.as_ref(),
+                trusted,
+                notes,
+            )
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(episode_id)
     }
 
     /// Get an episode by ID
@@ -1250,13 +1400,118 @@ impl MemoryStore {
     // ========== Semantic Memory Operations ==========
 
     /// Stores a new semantic rule
+    /// Store a semantic rule.
+    ///
+    /// **Spec 22 deprecation**: writes NULL embedding-provenance columns even
+    /// if `rule.embedding` is set. New callers should use
+    /// `store_semantic_rule_with_provenance`.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use `store_semantic_rule_with_provenance` (Spec 22)"
+    )]
+    /// Batch insert for semantic rules — used by consolidation to replace N serial inserts.
+    /// Embeddings must already be set on each rule (provenance pre-applied by caller).
+    /// Spec 21 Phase 3.3. Chunks at 500 rows to stay within Postgres param limit.
+    pub async fn store_semantic_rules_batch(&self, rules: &[SemanticRule]) -> Result<usize> {
+        if rules.is_empty() { return Ok(0); }
+        let mut total = 0usize;
+        for chunk in rules.chunks(500) {
+            let mut qb = sqlx::QueryBuilder::new(
+                "INSERT INTO semantic_rules \
+                 (rule_id, agent_id, rule_content, rule_description, confidence_score, \
+                  verification_status, verification_method, source_episode_cluster, \
+                  episode_count, embedding, is_active) "
+            );
+            qb.push_values(chunk.iter(), |mut b, r| {
+                b.push_bind(r.rule_id)
+                 .push_bind(r.agent_id)
+                 .push_bind(&r.rule_content)
+                 .push_bind(&r.rule_description)
+                 .push_bind(r.confidence_score)
+                 .push_bind(r.verification_status.to_string())
+                 .push_bind(&r.verification_method)
+                 .push_bind(&r.source_episode_cluster)
+                 .push_bind(r.episode_count)
+                 .push_bind(r.embedding.as_ref().map(|e| pgvector::Vector::from(e.clone())))
+                 .push_bind(r.is_active);
+            });
+            qb.push(" ON CONFLICT (rule_id) DO NOTHING");
+            total += qb.build().execute(&self.pool).await?.rows_affected() as usize;
+        }
+        Ok(total)
+    }
+
+    /// Batch insert for entities. Spec 21 Phase 3.3.
+    pub async fn store_entities_batch(&self, entities: &[Entity]) -> Result<usize> {
+        if entities.is_empty() { return Ok(0); }
+        let mut total = 0usize;
+        for chunk in entities.chunks(200) {
+            let mut qb = sqlx::QueryBuilder::new(
+                "INSERT INTO entities \
+                 (entity_id, agent_id, entity_name, entity_type, summary, \
+                  t_valid, t_invalid, source_episodes, extraction_confidence, embedding, properties) "
+            );
+            qb.push_values(chunk.iter(), |mut b, e| {
+                b.push_bind(e.entity_id)
+                 .push_bind(e.agent_id)
+                 .push_bind(&e.entity_name)
+                 .push_bind(&e.entity_type)
+                 .push_bind(&e.summary)
+                 .push_bind(e.t_valid)
+                 .push_bind(e.t_invalid)
+                 .push_bind(&e.source_episodes)
+                 .push_bind(e.extraction_confidence)
+                 .push_bind(e.embedding.as_ref().map(|v| pgvector::Vector::from(v.clone())))
+                 .push_bind(&e.properties);
+            });
+            qb.push(" ON CONFLICT (entity_id) DO NOTHING");
+            total += qb.build().execute(&self.pool).await?.rows_affected() as usize;
+        }
+        Ok(total)
+    }
+
     pub async fn store_semantic_rule(&self, rule: SemanticRule) -> Result<()> {
+        #[allow(deprecated)]
+        self.store_semantic_rule_inner(rule, None, None, true, "legacy_no_provenance")
+            .await
+    }
+
+    /// Store a semantic rule with embedding provenance (Spec 22, Phase 1).
+    ///
+    /// Drive-by fix: previously `user_id` was never bound even though the
+    /// column exists on `semantic_rules`. Now bound from `rule.user_id` if the
+    /// field exists. (See migration 010 line 96.)
+    pub async fn store_semantic_rule_with_provenance(
+        &self,
+        mut rule: SemanticRule,
+        provenance: Option<&ProvenancedEmbedding>,
+        source_ref: Option<serde_json::Value>,
+    ) -> Result<()> {
+        if let Some(p) = provenance {
+            rule.embedding = Some(p.vector.clone());
+        }
+        self.store_semantic_rule_inner(rule, provenance, source_ref, true, "initial_write")
+            .await
+    }
+
+    async fn store_semantic_rule_inner(
+        &self,
+        rule: SemanticRule,
+        provenance: Option<&ProvenancedEmbedding>,
+        source_ref: Option<serde_json::Value>,
+        trusted: bool,
+        notes: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO semantic_rules
              (rule_id, agent_id, rule_content, rule_description, confidence_score,
               verification_status, verification_method, source_episode_cluster,
-              episode_count, embedding, is_active)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+              episode_count, embedding, is_active,
+              embedding_model_id, embedding_model_version, embedding_dim,
+              source_text, source_ref, provenance_trusted)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                     $12, $13, $14, $15, $16, $17)",
         )
         .bind(rule.rule_id)
         .bind(rule.agent_id)
@@ -1273,9 +1528,31 @@ impl MemoryStore {
                 .map(|e| pgvector::Vector::from(e.clone())),
         )
         .bind(rule.is_active)
-        .execute(&self.pool)
+        .bind(provenance.map(|p| p.model_id.as_str()))
+        .bind(provenance.map(|p| p.model_version.as_str()))
+        .bind(provenance.map(|p| p.dim))
+        .bind(provenance.map(|p| p.source_text.as_str()))
+        .bind(&source_ref)
+        .bind(trusted)
+        .execute(&mut *tx)
         .await?;
 
+        if let Some(p) = provenance {
+            insert_provenance_row(
+                &mut tx,
+                "semantic_rules",
+                rule.rule_id,
+                Some(rule.agent_id),
+                None,
+                p,
+                source_ref.as_ref(),
+                trusted,
+                notes,
+            )
+            .await?;
+        }
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1297,6 +1574,101 @@ impl MemoryStore {
     }
 
     /// Gets all active semantic rules for an agent
+    /// Top-k active semantic rules ranked by cosine similarity to query_embedding.
+    /// Uses pgvector HNSW ANN — transfers only k rows (Spec 21 Phase 2).
+    /// Returns Err if the HNSW index is not yet built (migration 142 pending).
+    pub async fn get_top_k_semantic_rules(
+        &self,
+        agent_id: Uuid,
+        query_embedding: &[f32],
+        k: i64,
+        min_similarity: f32,
+    ) -> Result<Vec<SemanticRule>> {
+        let query_vec = pgvector::Vector::from(query_embedding.to_vec());
+        let rows = sqlx::query(
+            r#"SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
+                      verification_status, verification_method, source_episode_cluster,
+                      episode_count, embedding, is_active, created_at
+               FROM semantic_rules
+               WHERE agent_id = $2
+                 AND is_active = true
+                 AND embedding IS NOT NULL
+                 AND 1 - (embedding <=> $1) >= $3
+               ORDER BY embedding <=> $1
+               LIMIT $4"#,
+        )
+        .bind(&query_vec)
+        .bind(agent_id)
+        .bind(min_similarity)
+        .bind(k)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(Self::row_to_semantic_rule).collect()
+    }
+
+    /// Top-k episodic entities (similarity-gated) UNION ALL CEP seed entities (always included).
+    /// Uses pgvector HNSW ANN (Spec 21 Phase 2).
+    /// CEP entities (entity_type LIKE 'cep_%') are reference data — must always be included
+    /// regardless of similarity score. Never gate or filter them by similarity.
+    pub async fn get_top_k_entities_with_cep(
+        &self,
+        agent_id: Uuid,
+        query_embedding: &[f32],
+        k_episodic: i64,
+        min_similarity: f32,
+    ) -> Result<Vec<Entity>> {
+        let query_vec = pgvector::Vector::from(query_embedding.to_vec());
+        // Validity column confirmed as t_invalid (store.rs:1722)
+        let rows = sqlx::query(
+            r#"-- Episodic entities: similarity-gated, top-k
+               SELECT entity_id, agent_id, entity_name, entity_type, summary,
+                      t_valid, t_invalid, source_episodes, extraction_confidence, embedding, properties
+               FROM entities
+               WHERE agent_id = $2
+                 AND entity_type NOT LIKE 'cep_%'
+                 AND (t_invalid IS NULL OR t_invalid > NOW())
+                 AND embedding IS NOT NULL
+                 AND 1 - (embedding <=> $1) >= $3
+               ORDER BY embedding <=> $1
+               LIMIT $4
+
+               UNION ALL
+
+               -- CEP seed entities: always included, not similarity-gated
+               SELECT entity_id, agent_id, entity_name, entity_type, summary,
+                      t_valid, t_invalid, source_episodes, extraction_confidence, embedding, properties
+               FROM entities
+               WHERE agent_id = $2
+                 AND entity_type LIKE 'cep_%'
+                 AND (t_invalid IS NULL OR t_invalid > NOW())"#,
+        )
+        .bind(&query_vec)
+        .bind(agent_id)
+        .bind(min_similarity)
+        .bind(k_episodic)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut entities = Vec::new();
+        for row in &rows {
+            let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
+            entities.push(Entity {
+                entity_id: row.try_get("entity_id")?,
+                agent_id: row.try_get("agent_id")?,
+                entity_name: row.try_get("entity_name")?,
+                entity_type: row.try_get("entity_type")?,
+                summary: row.try_get("summary")?,
+                t_valid: row.try_get("t_valid")?,
+                t_invalid: row.try_get("t_invalid")?,
+                source_episodes: row.try_get("source_episodes")?,
+                extraction_confidence: row.try_get("extraction_confidence")?,
+                embedding: embedding.map(|v| v.to_vec()),
+                properties: row.try_get("properties")?,
+            });
+        }
+        Ok(entities)
+    }
+
     pub async fn get_agent_semantic_rules(&self, agent_id: Uuid) -> Result<Vec<SemanticRule>> {
         let rows = sqlx::query(
             "SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
@@ -1378,12 +1750,50 @@ impl MemoryStore {
     // ========== Entity Operations ==========
 
     /// Stores a new entity
+    /// Store an entity.
+    ///
+    /// **Spec 22 deprecation**: writes NULL embedding-provenance columns.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use `store_entity_with_provenance` (Spec 22)"
+    )]
     pub async fn store_entity(&self, entity: Entity) -> Result<()> {
+        #[allow(deprecated)]
+        self.store_entity_inner(entity, None, None, true, "legacy_no_provenance")
+            .await
+    }
+
+    /// Store an entity with embedding provenance (Spec 22, Phase 1).
+    pub async fn store_entity_with_provenance(
+        &self,
+        mut entity: Entity,
+        provenance: Option<&ProvenancedEmbedding>,
+        source_ref: Option<serde_json::Value>,
+    ) -> Result<()> {
+        if let Some(p) = provenance {
+            entity.embedding = Some(p.vector.clone());
+        }
+        self.store_entity_inner(entity, provenance, source_ref, true, "initial_write")
+            .await
+    }
+
+    async fn store_entity_inner(
+        &self,
+        entity: Entity,
+        provenance: Option<&ProvenancedEmbedding>,
+        source_ref: Option<serde_json::Value>,
+        trusted: bool,
+        notes: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO entities
              (entity_id, agent_id, entity_name, entity_type, summary,
-              t_valid, t_invalid, source_episodes, extraction_confidence, embedding, properties)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+              t_valid, t_invalid, source_episodes, extraction_confidence, embedding, properties,
+              embedding_model_id, embedding_model_version, embedding_dim,
+              source_text, source_ref, provenance_trusted)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                     $12, $13, $14, $15, $16, $17)",
         )
         .bind(entity.entity_id)
         .bind(entity.agent_id)
@@ -1401,9 +1811,31 @@ impl MemoryStore {
                 .map(|e| pgvector::Vector::from(e.clone())),
         )
         .bind(&entity.properties)
-        .execute(&self.pool)
+        .bind(provenance.map(|p| p.model_id.as_str()))
+        .bind(provenance.map(|p| p.model_version.as_str()))
+        .bind(provenance.map(|p| p.dim))
+        .bind(provenance.map(|p| p.source_text.as_str()))
+        .bind(&source_ref)
+        .bind(trusted)
+        .execute(&mut *tx)
         .await?;
 
+        if let Some(p) = provenance {
+            insert_provenance_row(
+                &mut tx,
+                "entities",
+                entity.entity_id,
+                Some(entity.agent_id),
+                None,
+                p,
+                source_ref.as_ref(),
+                trusted,
+                notes,
+            )
+            .await?;
+        }
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1799,17 +2231,65 @@ impl MemoryStore {
     }
 
     /// Stores a new community
+    /// Store a community.
+    ///
+    /// **Spec 22 deprecation**: writes NULL embedding-provenance columns.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use `store_community_with_provenance` (Spec 22). Note that \
+                community embeddings are centroids, not single-source vectors; \
+                pass `provenance.source_text = None`-equivalent semantics and \
+                carry the constituent entity ids in `source_ref`."
+    )]
     pub async fn store_community(&self, community: Community) -> Result<()> {
+        #[allow(deprecated)]
+        self.store_community_inner(community, None, None, true, "legacy_no_provenance")
+            .await
+    }
+
+    /// Store a community with embedding provenance (Spec 22, Phase 1).
+    ///
+    /// Communities are centroid embeddings — there is no single "source text"
+    /// that was embedded. By convention the provenance row records the
+    /// concatenated `community_name + summary` as `source_text` and the
+    /// constituent `member_entity_ids` in `source_ref`. The `trusted=false`
+    /// flag is typically appropriate for centroids since they cannot be
+    /// reproduced bit-for-bit from a single text input.
+    pub async fn store_community_with_provenance(
+        &self,
+        mut community: Community,
+        provenance: Option<&ProvenancedEmbedding>,
+        source_ref: Option<serde_json::Value>,
+    ) -> Result<()> {
+        if let Some(p) = provenance {
+            community.embedding = Some(p.vector.clone());
+        }
+        self.store_community_inner(community, provenance, source_ref, true, "initial_write")
+            .await
+    }
+
+    async fn store_community_inner(
+        &self,
+        community: Community,
+        provenance: Option<&ProvenancedEmbedding>,
+        source_ref: Option<serde_json::Value>,
+        trusted: bool,
+        notes: &str,
+    ) -> Result<()> {
         let embedding_vec = community
             .embedding
             .as_ref()
             .map(|e| pgvector::Vector::from(e.clone()));
 
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO communities
              (community_id, agent_id, community_name, summary,
-              member_entity_ids, member_count, embedding, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+              member_entity_ids, member_count, embedding, created_at,
+              embedding_model_id, embedding_model_version, embedding_dim,
+              source_text, source_ref, provenance_trusted)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                     $9, $10, $11, $12, $13, $14)",
         )
         .bind(community.community_id)
         .bind(community.agent_id)
@@ -1819,9 +2299,31 @@ impl MemoryStore {
         .bind(community.member_count)
         .bind(embedding_vec)
         .bind(community.created_at)
-        .execute(&self.pool)
+        .bind(provenance.map(|p| p.model_id.as_str()))
+        .bind(provenance.map(|p| p.model_version.as_str()))
+        .bind(provenance.map(|p| p.dim))
+        .bind(provenance.map(|p| p.source_text.as_str()))
+        .bind(&source_ref)
+        .bind(trusted)
+        .execute(&mut *tx)
         .await?;
 
+        if let Some(p) = provenance {
+            insert_provenance_row(
+                &mut tx,
+                "communities",
+                community.community_id,
+                Some(community.agent_id),
+                None,
+                p,
+                source_ref.as_ref(),
+                trusted,
+                notes,
+            )
+            .await?;
+        }
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -2430,6 +2932,19 @@ impl MemoryStore {
     // ─── Shopping Profiles & Marketplace ────────────────────────────
 
     #[allow(clippy::too_many_arguments)]
+    /// Upsert a shopping profile centroid.
+    ///
+    /// **Spec 22 deprecation**: writes NULL embedding-provenance columns.
+    /// Use `upsert_shopping_profile_with_provenance` for new code.
+    ///
+    /// Note: shopping-profile embeddings are centroids over already-embedded
+    /// episodes. Provenance for the centroid is derived from the
+    /// `member_episode_ids` (passed in `source_ref`), and `source_text` stays
+    /// NULL by design — there is no single text input.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use `upsert_shopping_profile_with_provenance` (Spec 22)"
+    )]
     pub async fn upsert_shopping_profile(
         &self,
         user_id: &str,
@@ -2442,12 +2957,98 @@ impl MemoryStore {
         quality_bias: Option<f64>,
         brand_affinities: &serde_json::Value,
     ) -> Result<Uuid> {
+        self.upsert_shopping_profile_inner(
+            user_id,
+            agent_id,
+            profile_name,
+            composite_embedding,
+            episode_count,
+            category_tags,
+            price_sensitivity,
+            quality_bias,
+            brand_affinities,
+            None, // model_id
+            None, // model_version
+            None, // dim
+            None, // source_ref
+            true, // trusted
+            "legacy_no_provenance",
+        )
+        .await
+    }
+
+    /// Upsert a shopping profile centroid with embedding provenance.
+    ///
+    /// `model_id` / `model_version` / `dim` describe the embedder used for the
+    /// CONSTITUENT episode embeddings whose centroid this profile represents.
+    /// `source_ref` should carry the `member_episode_ids` so the centroid is
+    /// reproducible from its inputs.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_shopping_profile_with_provenance(
+        &self,
+        user_id: &str,
+        agent_id: Uuid,
+        profile_name: &str,
+        composite_embedding: &[f32],
+        episode_count: i32,
+        category_tags: &[String],
+        price_sensitivity: Option<f64>,
+        quality_bias: Option<f64>,
+        brand_affinities: &serde_json::Value,
+        model_id: &str,
+        model_version: &str,
+        dim: i32,
+        source_ref: serde_json::Value,
+    ) -> Result<Uuid> {
+        self.upsert_shopping_profile_inner(
+            user_id,
+            agent_id,
+            profile_name,
+            Some(composite_embedding),
+            episode_count,
+            category_tags,
+            price_sensitivity,
+            quality_bias,
+            brand_affinities,
+            Some(model_id),
+            Some(model_version),
+            Some(dim),
+            Some(source_ref),
+            true,
+            "initial_centroid",
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn upsert_shopping_profile_inner(
+        &self,
+        user_id: &str,
+        agent_id: Uuid,
+        profile_name: &str,
+        composite_embedding: Option<&[f32]>,
+        episode_count: i32,
+        category_tags: &[String],
+        price_sensitivity: Option<f64>,
+        quality_bias: Option<f64>,
+        brand_affinities: &serde_json::Value,
+        model_id: Option<&str>,
+        model_version: Option<&str>,
+        dim: Option<i32>,
+        source_ref: Option<serde_json::Value>,
+        trusted: bool,
+        notes: &str,
+    ) -> Result<Uuid> {
         let embed_vec = composite_embedding.map(|e| pgvector::Vector::from(e.to_vec()));
+        let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
             r#"INSERT INTO shopping_profiles
                 (user_id, agent_id, profile_name, composite_embedding, episode_count,
-                 category_tags, price_sensitivity, quality_bias, brand_affinities, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                 category_tags, price_sensitivity, quality_bias, brand_affinities, updated_at,
+                 embedding_model_id, embedding_model_version, embedding_dim,
+                 source_text, source_ref, provenance_trusted)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(),
+                       $10, $11, $12, NULL, $13, $14)
                ON CONFLICT (user_id, agent_id, profile_name)
                DO UPDATE SET
                  composite_embedding = EXCLUDED.composite_embedding,
@@ -2457,7 +3058,12 @@ impl MemoryStore {
                  price_sensitivity = EXCLUDED.price_sensitivity,
                  quality_bias = EXCLUDED.quality_bias,
                  brand_affinities = EXCLUDED.brand_affinities,
-                 updated_at = NOW()
+                 updated_at = NOW(),
+                 embedding_model_id = EXCLUDED.embedding_model_id,
+                 embedding_model_version = EXCLUDED.embedding_model_version,
+                 embedding_dim = EXCLUDED.embedding_dim,
+                 source_ref = EXCLUDED.source_ref,
+                 provenance_trusted = EXCLUDED.provenance_trusted
                RETURNING profile_id"#,
         )
         .bind(user_id)
@@ -2469,9 +3075,42 @@ impl MemoryStore {
         .bind(price_sensitivity)
         .bind(quality_bias)
         .bind(brand_affinities)
-        .fetch_one(&self.pool)
+        .bind(model_id)
+        .bind(model_version)
+        .bind(dim)
+        .bind(&source_ref)
+        .bind(trusted)
+        .fetch_one(&mut *tx)
         .await?;
-        Ok(row.try_get("profile_id")?)
+        let profile_id: Uuid = row.try_get("profile_id")?;
+
+        // Log to embedding_provenance sidecar if full provenance was supplied.
+        if let (Some(vec), Some(mid), Some(mver), Some(d)) =
+            (composite_embedding, model_id, model_version, dim)
+        {
+            let p = ProvenancedEmbedding {
+                vector: vec.to_vec(),
+                source_text: String::new(), // centroid — empty source_text by design
+                model_id: mid.to_string(),
+                model_version: mver.to_string(),
+                dim: d,
+            };
+            insert_provenance_row(
+                &mut tx,
+                "shopping_profiles",
+                profile_id,
+                Some(agent_id),
+                Some(user_id),
+                &p,
+                source_ref.as_ref(),
+                trusted,
+                notes,
+            )
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(profile_id)
     }
 
     pub async fn get_shopping_profile(

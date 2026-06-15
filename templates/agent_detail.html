@@ -1028,6 +1028,45 @@
                     </div>
                   </div>
 
+                  <!-- Spec 22 — Embedding Portability section.
+                       Public, aggregate-only. The owner-only export controls
+                       live on the Intelligence tab. -->
+                  <div class="section" id="portability-section">
+                    <div class="section-title">
+                      Embedding Portability
+                      <span style="color:var(--fg3);font-size:0.75em;font-weight:normal;margin-left:8px">
+                        you own your knowledge
+                      </span>
+                    </div>
+                    <div class="field-grid">
+                      <div class="field-item">
+                        <div class="field-label">Embedding Model</div>
+                        <div class="field-value">
+                          ${agent.embedding?.provider || "—"} /
+                          <span style="color:var(--aqua)">${agent.embedding?.model || "—"}</span>
+                          <span style="color:var(--fg3);font-size:0.85em">${agent.embedding?.dimension ? `(${agent.embedding.dimension}d)` : ""}</span>
+                        </div>
+                      </div>
+                      <div class="field-item">
+                        <div class="field-label">Provenance Health</div>
+                        <div class="field-value" id="portability-health">loading…</div>
+                      </div>
+                      <div class="field-item">
+                        <div class="field-label">Portable Records</div>
+                        <div class="field-value" id="portability-counts">loading…</div>
+                      </div>
+                    </div>
+                    <div style="margin-top:12px;padding:12px;background:var(--bg1);border-radius:6px;border-left:3px solid var(--aqua);font-size:0.85em;color:var(--fg2)">
+                      <strong style="color:var(--aqua)">Anti-lock-in.</strong>
+                      Every embedding is stored alongside the exact source text and the model that produced it.
+                      The source corpus is what you own — vectors are derivatives.
+                      If a vendor model is deprecated or replaced, the corpus is re-embeddable losslessly under any new model.
+                      <span id="portability-owner-actions" style="display:none">
+                        See the <strong>Intelligence</strong> tab to export your data.
+                      </span>
+                    </div>
+                  </div>
+
                   ${
                     mcpTools.length > 0
                       ? `
@@ -1714,6 +1753,42 @@
               if (el) el.textContent = `${embPointCount} vectors`;
             });
 
+          // Spec 22 — populate the public Embedding Portability section.
+          fetch(`/api/agents/${agentId}/embeddings/stats`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((stats) => {
+              if (!stats) return;
+              const ep = stats.episodes || {};
+              const healthEl = document.getElementById("portability-health");
+              const countsEl = document.getElementById("portability-counts");
+              if (healthEl) {
+                if (ep.with_vector === 0) {
+                  healthEl.innerHTML = `<span style="color:var(--fg3)">no embeddings yet</span>`;
+                } else {
+                  const ratio = (ep.trust_ratio || 0) * 100;
+                  const color =
+                    ratio >= 95 ? "var(--green)" : ratio >= 50 ? "var(--yellow)" : "var(--red)";
+                  healthEl.innerHTML =
+                    `<span style="color:${color};font-weight:600">` +
+                    `${ratio.toFixed(0)}%</span> ` +
+                    `<span style="color:var(--fg3);font-size:0.85em">trusted provenance</span>`;
+                }
+              }
+              if (countsEl) {
+                const total = ep.total || 0;
+                const withVec = ep.with_vector || 0;
+                countsEl.innerHTML =
+                  `${total} <span style="color:var(--fg3);font-size:0.85em">episodes,</span> ` +
+                  `${withVec} <span style="color:var(--fg3);font-size:0.85em">embedded</span>`;
+              }
+              // Stash for the owner-only export panel.
+              window._portabilityStats = stats;
+            })
+            .catch(() => {
+              const healthEl = document.getElementById("portability-health");
+              if (healthEl) healthEl.textContent = "stats unavailable";
+            });
+
           function tick() {
             const c = colors();
             const cw = w();
@@ -2233,8 +2308,88 @@
                 <button class="owner-btn" onclick="saveIntelligenceConfig('${agentId}')" style="border-color:var(--green);color:var(--green)">Save Intelligence Config</button>
                 <span id="intel-save-status" style="margin-left:12px;font-size:0.85em;color:var(--fg3)"></span>
               </div>
+
+              <!-- Spec 22 — Embedding Portability owner panel -->
+              <div class="section" id="intel-portability-section" style="border-top:1px solid var(--bg3);padding-top:18px;margin-top:18px">
+                <div class="section-title">Embedding Portability</div>
+                <div style="font-size:0.82em;color:var(--fg3);margin-bottom:14px">
+                  The source corpus and its provenance are <strong>yours</strong>. Export it in standard formats so you can re-embed it under any future model — or move it off the platform entirely.
+                </div>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px" id="intel-portability-stats">
+                  <div style="background:var(--bg1);padding:10px 12px;border-radius:4px">
+                    <div style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em">Episodes</div>
+                    <div id="intel-port-total" style="font-size:1.4em;color:var(--fg1);font-weight:600">—</div>
+                    <div style="font-size:0.78em;color:var(--fg3)" id="intel-port-with-vec">—</div>
+                  </div>
+                  <div style="background:var(--bg1);padding:10px 12px;border-radius:4px">
+                    <div style="font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em">Trusted Provenance</div>
+                    <div id="intel-port-trust" style="font-size:1.4em;color:var(--fg1);font-weight:600">—</div>
+                    <div style="font-size:0.78em;color:var(--fg3)" id="intel-port-model">—</div>
+                  </div>
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+                  <button class="owner-btn"
+                          onclick="exportEmbeddings('${agentId}', 'source_only')"
+                          style="border-color:var(--green);color:var(--green);text-align:left">
+                    ↓ Export source corpus + provenance (safe)
+                    <span style="font-weight:normal;color:var(--fg3);font-size:0.82em;display:block;margin-top:2px">
+                      JSONL — source_text, model identity, provenance metadata. No raw vectors. Safe to share.
+                    </span>
+                  </button>
+                  <button class="owner-btn"
+                          onclick="exportEmbeddingsFull('${agentId}')"
+                          style="border-color:var(--yellow);color:var(--yellow);text-align:left">
+                    ⚠ Export full data including raw vectors (invertible)
+                    <span style="font-weight:normal;color:var(--fg3);font-size:0.82em;display:block;margin-top:2px">
+                      Includes the embedding vectors. Anyone holding the file can recover substantial source content via embedding-inversion attacks. Requires explicit consent.
+                    </span>
+                  </button>
+                </div>
+
+                <div style="font-size:0.78em;color:var(--fg3);padding:8px 10px;background:var(--bg0);border-radius:4px;border-left:2px solid var(--gray)">
+                  Re-embedding under a different model (Tier 1 portability) lands in a follow-up release. Until then: export the source corpus and re-import after the migration completes.
+                </div>
+
+                <div id="intel-export-status" style="margin-top:10px;font-size:0.85em;color:var(--fg3)"></div>
+              </div>
             </div>`;
         }
+
+        // Reveal the public "see Intelligence tab" hint now that the owner panel exists.
+        const ownerHint = document.getElementById("portability-owner-actions");
+        if (ownerHint) ownerHint.style.display = "inline";
+
+        // Populate the owner-only portability stats card.
+        (async () => {
+          // Use the stats stashed by the Overview tab, or fetch fresh.
+          let stats = window._portabilityStats;
+          if (!stats) {
+            try {
+              const r = await fetch(`/api/agents/${agentId}/embeddings/stats`);
+              if (r.ok) stats = await r.json();
+            } catch (e) {}
+          }
+          if (!stats) return;
+          const ep = stats.episodes || {};
+          const totalEl = document.getElementById("intel-port-total");
+          const withVecEl = document.getElementById("intel-port-with-vec");
+          const trustEl = document.getElementById("intel-port-trust");
+          const modelEl = document.getElementById("intel-port-model");
+          if (totalEl) totalEl.textContent = (ep.total || 0).toLocaleString();
+          if (withVecEl) withVecEl.textContent = `${ep.with_vector || 0} with vectors`;
+          if (trustEl) {
+            const r = (ep.trust_ratio || 0) * 100;
+            const color =
+              r >= 95 ? "var(--green)" : r >= 50 ? "var(--yellow)" : "var(--red)";
+            trustEl.innerHTML = `<span style="color:${color}">${r.toFixed(0)}%</span>`;
+          }
+          if (modelEl) {
+            const intent = stats.embedding_intent || {};
+            modelEl.textContent = `${intent.provider || "—"}/${intent.model || "—"} (${intent.dimension || "?"}d)`;
+          }
+        })();
 
         // --- Populate Manage tab ---
         // Build lifecycle buttons based on current status
@@ -2923,13 +3078,39 @@
             resultEl.innerHTML = `<span style="color:var(--red)">${data.message || res.statusText || "Failed"}</span>`;
             return;
           }
-          const r = data.result;
-          resultEl.innerHTML = `<span style="color:var(--green)">
-            ${r.episodes_processed} episodes processed, ${r.clusters_identified} clusters,
-            ${r.rules_extracted} rules extracted, ${r.entities_created || 0} entities,
-            ${r.facts_created || 0} facts.
-            Dream credits remaining: ${data.dreaming_credits_remaining}
-          </span>`;
+          // Handle both sync (legacy) and async (202 + job_id) responses
+          if (data.status === 'accepted' && data.job_id) {
+            resultEl.innerHTML = `<span style="color:var(--aqua)">Consolidation running… polling for result.</span>`;
+            // Poll for job completion
+            const jobUrl = `/api/agents/${encodeURIComponent(agentId)}/consolidation/jobs/${data.job_id}`;
+            for (let i = 0; i < 30; i++) {
+              await new Promise(r => setTimeout(r, 2000));
+              try {
+                const jobRes = await fetch(jobUrl);
+                const job = await jobRes.json();
+                if (job.status === 'completed' || job.status === 'failed') {
+                  const r = job;
+                  resultEl.innerHTML = job.status === 'failed'
+                    ? `<span style="color:var(--red)">Consolidation failed: ${job.error || 'unknown error'}</span>`
+                    : `<span style="color:var(--green)">
+                        ${r.episodes_processed || 0} episodes · ${r.clusters_identified || 0} clusters ·
+                        ${r.rules_extracted || 0} rules · ${r.entities_created || 0} entities.
+                        Credits remaining: ${r.dreaming_credits_remaining ?? '—'}
+                       </span>`;
+                  break;
+                }
+              } catch(_) {}
+            }
+          } else {
+            // Legacy sync response
+            const r = data.result || data;
+            resultEl.innerHTML = `<span style="color:var(--green)">
+              ${r.episodes_processed} episodes processed, ${r.clusters_identified} clusters,
+              ${r.rules_extracted} rules extracted, ${r.entities_created || 0} entities,
+              ${r.facts_created || 0} facts.
+              Dream credits remaining: ${data.dreaming_credits_remaining}
+            </span>`;
+          }
         } catch (e) {
           resultEl.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
         } finally {
@@ -3363,6 +3544,153 @@
       }
 
       // ── End Intelligence Tab ────────────────────────────────────────
+
+      // ─── Spec 22 — Embedding Portability export helpers ─────────────
+      // The browser cannot trigger an authenticated download directly
+      // from a JS `fetch` for a binary/streaming response, so we use the
+      // Blob-and-temporary-anchor pattern.
+      async function exportEmbeddings(agentId, format) {
+        const statusEl = document.getElementById("intel-export-status");
+        if (statusEl) {
+          statusEl.textContent = "Preparing export…";
+          statusEl.style.color = "var(--fg3)";
+        }
+        try {
+          const r = await fetch(
+            `/api/agents/${agentId}/embeddings/export?format=${encodeURIComponent(format)}`,
+            { credentials: "include" }
+          );
+          if (!r.ok) {
+            const body = await r.text();
+            if (statusEl) {
+              statusEl.textContent = `Export failed: ${body || r.status}`;
+              statusEl.style.color = "var(--red)";
+            }
+            return;
+          }
+          const text = await r.text();
+          downloadAsFile(text, `abw_export_${agentId}_${format}.jsonl`,
+                         "application/x-ndjson");
+          if (statusEl) {
+            const lines = text.split("\n").filter(l => l.trim()).length;
+            statusEl.textContent =
+              `Exported ${lines - 1} episodes (1 header line). ` +
+              `Audit row appended to embedding_provenance.`;
+            statusEl.style.color = "var(--green)";
+          }
+        } catch (e) {
+          if (statusEl) {
+            statusEl.textContent = `Network error: ${e.message}`;
+            statusEl.style.color = "var(--red)";
+          }
+        }
+      }
+
+      async function exportEmbeddingsFull(agentId) {
+        const statusEl = document.getElementById("intel-export-status");
+
+        // Two-step affirmative consent. Spec 22 §Security treats raw-vector
+        // export as a consented, scoped, logged action.
+        const confirmed = window.confirm(
+          "Exporting raw embedding vectors:\n\n" +
+          "• Vectors are INVERTIBLE — anyone holding the exported file can " +
+          "recover substantial source content via embedding-inversion attacks.\n\n" +
+          "• Treat the file as if it were the source corpus itself.\n\n" +
+          "• A consent record is logged to embedding_provenance.\n\n" +
+          "Continue?"
+        );
+        if (!confirmed) {
+          if (statusEl) statusEl.textContent = "Export cancelled.";
+          return;
+        }
+
+        if (statusEl) {
+          statusEl.textContent = "Requesting consent token…";
+          statusEl.style.color = "var(--fg3)";
+        }
+
+        let token;
+        try {
+          const cr = await fetch(
+            `/api/agents/${agentId}/embeddings/export/consent`,
+            {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                acknowledged_invertibility:
+                  "i_understand_embeddings_are_invertible",
+              }),
+            }
+          );
+          if (!cr.ok) {
+            const body = await cr.text();
+            if (statusEl) {
+              statusEl.textContent = `Consent failed: ${body || cr.status}`;
+              statusEl.style.color = "var(--red)";
+            }
+            return;
+          }
+          const cd = await cr.json();
+          token = cd.token;
+        } catch (e) {
+          if (statusEl) {
+            statusEl.textContent = `Consent network error: ${e.message}`;
+            statusEl.style.color = "var(--red)";
+          }
+          return;
+        }
+
+        if (statusEl) {
+          statusEl.textContent = "Downloading full export…";
+          statusEl.style.color = "var(--fg3)";
+        }
+        try {
+          const r = await fetch(
+            `/api/agents/${agentId}/embeddings/export?format=full`,
+            {
+              credentials: "include",
+              headers: { "X-Export-Consent": token },
+            }
+          );
+          if (!r.ok) {
+            const body = await r.text();
+            if (statusEl) {
+              statusEl.textContent = `Export failed: ${body || r.status}`;
+              statusEl.style.color = "var(--red)";
+            }
+            return;
+          }
+          const text = await r.text();
+          downloadAsFile(text, `abw_export_${agentId}_full.jsonl`,
+                         "application/x-ndjson");
+          if (statusEl) {
+            const lines = text.split("\n").filter(l => l.trim()).length;
+            statusEl.textContent =
+              `Exported ${lines - 1} episodes WITH raw vectors. ` +
+              `Audit row appended to embedding_provenance. ` +
+              `Treat the file as sensitive.`;
+            statusEl.style.color = "var(--green)";
+          }
+        } catch (e) {
+          if (statusEl) {
+            statusEl.textContent = `Network error: ${e.message}`;
+            statusEl.style.color = "var(--red)";
+          }
+        }
+      }
+
+      function downloadAsFile(content, filename, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
 
       async function saveAgentValence(agentId) {
         const affect = document.getElementById("valence-affect").value.trim();

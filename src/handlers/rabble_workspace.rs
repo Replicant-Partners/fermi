@@ -254,7 +254,7 @@ pub async fn dispatch_rabble_action(
         card,
     );
 
-    let (cognition_tier, slug, mut card) = tokio::join!(
+    let (cognition_tier, slug, (mut card, _kg_embedding)) = tokio::join!(
         cognition_tier_fut,
         slug_fut,
         kg_fut,
@@ -371,13 +371,32 @@ pub async fn dispatch_rabble_action(
         let agent_name_bg = agent_name.to_string();
 
         tokio::spawn(async move {
-            // 1. Episode with embedding
-            let mut episode = agent_output_to_episode(agent_id_bg, &query_bg, &output_bg);
+            // 1. Episode with embedding + Spec 22 provenance
+            let episode = agent_output_to_episode(agent_id_bg, &query_bg, &output_bg);
             let embed_text = format!("{} {}", query_bg, &response_bg);
-            if let Ok(embedding) = state_bg.embedder.generate(&embed_text).await {
-                episode.embedding = Some(embedding);
-            }
-            let _ = state_bg.memory_store.store_episode(episode).await;
+            let t_embed = tokio::time::Instant::now();
+            let provenance = match state_bg.embedder.generate_provenanced(&embed_text).await {
+                Ok(p) => {
+                    tracing::info!(
+                        elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                        model = %p.model_id,
+                        site = "rabble_workspace_dispatch",
+                        "embed_call"
+                    );
+                    Some(p)
+                }
+                Err(_) => None,
+            };
+            let source_ref = serde_json::json!({
+                "kind": "rabble_workspace_dispatch",
+                "agent_id": agent_id_bg,
+                "workspace_id": workspace_id,
+                "action_type": action_bg,
+            });
+            let _ = state_bg
+                .memory_store
+                .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
+                .await;
 
             // 2. Workspace message
             let msg = WorkspaceMessage {

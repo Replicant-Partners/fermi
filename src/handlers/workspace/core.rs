@@ -24,7 +24,6 @@ use coherence_engine::SettlingEngine;
 use coherence_observer::ConversationObserver;
 
 use fermi::agent_backend::executor::AgentExecutor;
-use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
@@ -603,8 +602,14 @@ pub async fn charge_workspace_gas(
 ///
 /// We deliberately don't include `:` or `@` to keep mention boundaries
 /// unambiguous (so `@a@b` still parses as one mention `a`, not `a@b`).
+// Spec 21 Phase 4.3: compile the at-mention regex once at module init.
+static AT_MENTION_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+fn at_mention_re() -> &'static regex::Regex {
+    AT_MENTION_RE.get_or_init(|| regex::Regex::new(r"@([a-zA-Z0-9_./-]+)").expect("valid regex"))
+}
+
 pub fn parse_at_mention(content: &str) -> Option<(String, String)> {
-    let re = regex::Regex::new(r"@([a-zA-Z0-9_./-]+)").ok()?;
+    let re = at_mention_re();
     let m = re.find(content)?;
     let agent_name = re.captures(content)?.get(1)?.as_str().to_string();
     // Trim trailing punctuation that the regex greedily consumed but

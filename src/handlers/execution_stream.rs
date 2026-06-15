@@ -79,7 +79,8 @@ pub async fn execute_agent_stream_handler(
     let query = body.query.clone();
 
     // ── Enrich card with KG context from past dream cycles ─────────
-    let card = enrich_with_kg_context(
+    let t_kg = tokio::time::Instant::now();
+    let (card, _kg_query_embedding) = enrich_with_kg_context(
         &state.memory_store,
         &state.embedder,
         agent_db_id,
@@ -87,6 +88,7 @@ pub async fn execute_agent_stream_handler(
         card,
     )
     .await;
+    tracing::info!(elapsed_ms = t_kg.elapsed().as_millis() as u64, "kg_context_enrich");
 
     let model = card.capabilities.model.clone();
 
@@ -195,26 +197,49 @@ pub async fn execute_agent_stream_handler(
                 // Record stats
                 let _ = state_clone.registry.record_execution(&agent_id_clone, &output);
 
-                // Store as ADM episode
-                let mut episode = agent_output_to_episode(
+                // Store as ADM episode (with embedding + Spec 22 provenance)
+                let episode = agent_output_to_episode(
                     agent_db_id,
                     &query,
                     &output,
                 );
 
-                // Generate embedding (best effort)
+                // Build the embedded text ONCE; provenance binds it to the vector.
                 let embed_text = format!(
                     "{} {}",
                     query,
                     output.metadata.reasoning.as_deref().unwrap_or("")
                 );
-                match state_clone.embedder.generate(&embed_text).await {
-                    Ok(embedding) => episode.embedding = Some(embedding),
-                    Err(e) => eprintln!("Warning: embedding generation failed: {}", e),
-                }
+                let t_embed = tokio::time::Instant::now();
+                let provenance = match state_clone.embedder.generate_provenanced(&embed_text).await
+                {
+                    Ok(p) => {
+                        tracing::info!(
+                            elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                            model = %p.model_id,
+                            site = "execution_stream_handler",
+                            "embed_call"
+                        );
+                        Some(p)
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: embedding generation failed: {}", e);
+                        None
+                    }
+                };
+
+                let source_ref = serde_json::json!({
+                    "kind": "execute_stream_handler",
+                    "agent_id": agent_db_id,
+                    "query_len": query.len(),
+                });
 
                 // Store episode
-                let episode_id = match state_clone.memory_store.store_episode(episode).await {
+                let episode_id = match state_clone
+                    .memory_store
+                    .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
+                    .await
+                {
                     Ok(id) => Some(id),
                     Err(e) => {
                         eprintln!("Warning: episode storage failed: {}", e);

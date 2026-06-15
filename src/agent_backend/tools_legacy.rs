@@ -3919,21 +3919,60 @@ async fn execute_update_shopping_profile(
         }
     });
 
-    let profile_id = ctx
-        .memory_store
-        .upsert_shopping_profile(
-            user_id,
-            agent_id,
-            profile_name,
-            composite.as_deref(),
-            episode_count,
-            &category_tags,
-            price_sensitivity,
-            quality_bias,
-            &brand_affinities,
-        )
-        .await
-        .map_err(|e| format!("Profile upsert failed: {}", e))?;
+    let episode_ids_for_centroid: Vec<uuid::Uuid> = episodes
+        .iter()
+        .filter(|e| e.embedding.is_some())
+        .map(|e| e.episode_id)
+        .collect();
+
+    let profile_id = if let Some(ref composite_vec) = composite {
+        // Centroid was computed — record full Spec 22 provenance. The centroid
+        // inherits the model identity of the constituent episode embeddings,
+        // which all come from `ctx.embedder` (single shared embedder per
+        // server).
+        let source_ref = json!({
+            "kind": "shopping_profile_centroid",
+            "member_episode_ids": episode_ids_for_centroid,
+            "episode_count": episode_count,
+            "total_weight": total_weight,
+        });
+        ctx.memory_store
+            .upsert_shopping_profile_with_provenance(
+                user_id,
+                agent_id,
+                profile_name,
+                composite_vec,
+                episode_count,
+                &category_tags,
+                price_sensitivity,
+                quality_bias,
+                &brand_affinities,
+                ctx.embedder.model_id(),
+                ctx.embedder.model_version(),
+                ctx.embedder.dimension() as i32,
+                source_ref,
+            )
+            .await
+            .map_err(|e| format!("Profile upsert failed: {}", e))?
+    } else {
+        // No episodes had embeddings → no centroid to compute. Fall back to
+        // the legacy upsert path; the row is created without an embedding.
+        #[allow(deprecated)]
+        ctx.memory_store
+            .upsert_shopping_profile(
+                user_id,
+                agent_id,
+                profile_name,
+                None,
+                episode_count,
+                &category_tags,
+                price_sensitivity,
+                quality_bias,
+                &brand_affinities,
+            )
+            .await
+            .map_err(|e| format!("Profile upsert failed: {}", e))?
+    };
 
     let result = json!({
         "profile_id": profile_id,
@@ -4187,7 +4226,7 @@ async fn execute_execute_agent(
 
     // Enrich card with KG context from past dream cycles
     let card = if let Some(ref db) = ctx.db {
-        crate::agent_backend::kg_context::enrich_with_kg_context_by_name(
+        let (enriched, _) = crate::agent_backend::kg_context::enrich_with_kg_context_by_name(
             &ctx.memory_store,
             &ctx.embedder,
             db,
@@ -4195,7 +4234,8 @@ async fn execute_execute_agent(
             query,
             card,
         )
-        .await
+        .await;
+        enriched
     } else {
         card
     };
@@ -4378,7 +4418,7 @@ async fn execute_delegate_to_agent(
         .map_err(|e| format!("Agent card not found: {}", e))?;
 
     // Enrich card with KG context from past dream cycles
-    let card = crate::agent_backend::kg_context::enrich_with_kg_context(
+    let (card, _) = crate::agent_backend::kg_context::enrich_with_kg_context(
         &ctx.memory_store,
         &ctx.embedder,
         target_agent_id,

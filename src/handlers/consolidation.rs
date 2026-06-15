@@ -196,7 +196,7 @@ pub async fn consolidate_agent_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,
-) -> Result<Json<Value>, (StatusCode, String)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
 
@@ -225,7 +225,7 @@ pub async fn consolidate_agent_handler(
         })?;
 
     if episodes.is_empty() {
-        return Ok(Json(json!({
+        return Ok((StatusCode::OK, Json(json!({
             "status": "completed",
             "agent_id": agent_id,
             "result": {
@@ -235,7 +235,7 @@ pub async fn consolidate_agent_handler(
                 "message": "No unconsolidated episodes found"
             },
             "dreaming_credits_remaining": remaining,
-        })));
+        }))));
     }
 
     // Only charge gas after confirming there's work to do
@@ -257,147 +257,188 @@ pub async fn consolidate_agent_handler(
     )
     .await?;
 
-    // Create consolidation worker and run (with LLM if API key available)
-    let pool = Arc::new(state.db.clone());
-    let lock = Arc::new(ConsolidationLock::new(
-        pool,
-        format!("api-{}", uuid::Uuid::new_v4()),
-    ));
-    let worker = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-        match LLMProviderFactory::create(&LLMProviderConfig {
-            provider_type: ProviderType::Anthropic,
-            api_key,
-            model: "claude-haiku-4-5-20251001".to_string(),
-            base_url: None,
-        }) {
-            Ok(llm) => ConsolidationWorker::with_llm(
-                state.memory_store.clone(),
-                lock,
-                state.embedder.clone(),
-                llm,
-                "api-trigger".to_string(),
-            ),
-            Err(_) => ConsolidationWorker::new(
-                state.memory_store.clone(),
-                lock,
-                state.embedder.clone(),
-                "api-trigger".to_string(),
-            ),
-        }
-    } else {
-        ConsolidationWorker::new(
-            state.memory_store.clone(),
-            lock,
-            state.embedder.clone(),
-            "api-trigger".to_string(),
-        )
-    };
+    // Phase 3.1 (Spec 21): spawn consolidation as background job, return 202 immediately.
+    // Gas is charged before spawn so a job that never starts still has a visible charge.
+    let job_id = uuid::Uuid::new_v4();
+    let spawn_state = state.clone();
+    let spawn_agent_id = db_agent.agent_id;
+    let spawn_agent_name = agent_id.clone();
+    let spawn_remaining = remaining;
 
-    let result = worker
-        .consolidate_agent(db_agent.agent_id, 0.5, 2)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Consolidation failed: {}", e),
-            )
-        })?;
-
-    // Debit dreaming credit
-    sqlx::query(
-        "UPDATE agents SET dreaming_credits_used = dreaming_credits_used + 1, last_consolidated_at = NOW() WHERE agent_id = $1",
-    )
-    .bind(db_agent.agent_id)
-    .execute(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Spawn dream narrator to turn consolidation results into a narrative
-    {
-        let narrator_state = state.clone();
-        let agent_name = agent_id.clone();
-        let agent_db_id = db_agent.agent_id;
-        let ep = result.episodes_processed;
-        let cl = result.clusters_identified;
-        let rx = result.rules_extracted;
-        let rv = result.rules_verified;
-        let ec = result.entities_created;
-        let fc = result.facts_created;
-        tokio::spawn(async move {
-            let narrator_id = "dream_narrator";
-            let card = match narrator_state.registry.get(narrator_id) {
-                Ok(c) => c,
-                Err(_) => return, // narrator not available
-            };
-            let synopsis_input = format!(
-                "Agent \"{}\" just completed a consolidation cycle (dreaming). \
-                 Results: {} episodes processed, {} clusters identified, {} rules extracted, \
-                 {} rules verified, {} entities created, {} facts created. \
-                 Write a brief, engaging narrative about what this agent dreamed.",
-                agent_name, ep, cl, rx, rv, ec, fc
-            );
-            let agent_stmt = ast::AgentStmt {
-                name: narrator_id.to_string(),
-                agent_type: Some(card.agent_type.clone()),
-                query: synopsis_input,
-                executor: Some(ast::ExecutorType::LLM),
-                schedule: None,
-                driver_refs: vec![],
-                depends_on: vec![],
-                confidence_threshold: None,
-            };
-            let program = ast::Program {
-                statements: vec![ast::Statement::Agent(agent_stmt.clone())],
-            };
-            let context = ExecutionContext {
-                program,
-                agent_card: card,
-                creature_id: None,
-                cognition_tier: None,
-            };
-            match narrator_state
-                .registry
-                .execute_agent(&agent_stmt, &context)
-                .await
-            {
-                Ok(output) => {
-                    let narrative = output.metadata.reasoning.unwrap_or_default();
-                    if narrative.is_empty() {
-                        return;
-                    }
-                    // Store on the latest ontology snapshot for this agent
-                    let _ = sqlx::query(
-                        "UPDATE ontology_snapshots SET dream_synopsis = $1 \
-                         WHERE agent_id = $2 AND snapshot_id = (\
-                           SELECT snapshot_id FROM ontology_snapshots \
-                           WHERE agent_id = $2 ORDER BY version DESC LIMIT 1\
-                         )",
-                    )
-                    .bind(&narrative)
-                    .bind(agent_db_id)
-                    .execute(&narrator_state.db)
-                    .await;
-                    eprintln!("Dream narrator: wrote synopsis for {}", agent_name);
-                }
-                Err(e) => {
-                    eprintln!("Dream narrator failed for {}: {:?}", agent_name, e);
-                }
+    tokio::spawn(async move {
+        let pool = Arc::new(spawn_state.db.clone());
+        let lock = Arc::new(ConsolidationLock::new(
+            pool,
+            format!("api-{}", job_id),
+        ));
+        let worker = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+            match LLMProviderFactory::create(&LLMProviderConfig {
+                provider_type: ProviderType::Anthropic,
+                api_key,
+                model: "claude-haiku-4-5-20251001".to_string(),
+                base_url: None,
+            }) {
+                Ok(llm) => ConsolidationWorker::with_llm(
+                    spawn_state.memory_store.clone(),
+                    lock,
+                    spawn_state.embedder.clone(),
+                    llm,
+                    format!("api-{}", job_id),
+                ),
+                Err(_) => ConsolidationWorker::new(
+                    spawn_state.memory_store.clone(),
+                    lock,
+                    spawn_state.embedder.clone(),
+                    format!("api-{}", job_id),
+                ),
             }
-        });
+        } else {
+            ConsolidationWorker::new(
+                spawn_state.memory_store.clone(),
+                lock,
+                spawn_state.embedder.clone(),
+                format!("api-{}", job_id),
+            )
+        };
+
+        match worker.consolidate_agent(spawn_agent_id, 0.5, 2).await {
+            Ok(result) => {
+                // Debit dreaming credit
+                let _ = sqlx::query(
+                    "UPDATE agents SET dreaming_credits_used = dreaming_credits_used + 1, \
+                     last_consolidated_at = NOW() WHERE agent_id = $1",
+                )
+                .bind(spawn_agent_id)
+                .execute(&spawn_state.db)
+                .await;
+
+                // Update job record if it exists
+                let _ = spawn_state.memory_store.update_consolidation_job(
+                    job_id,
+                    result.episodes_processed as i32,
+                    result.clusters_identified as i32,
+                    result.rules_extracted as i32,
+                    result.rules_verified as i32,
+                    result.rules_rejected as i32,
+                    result.entities_created as i32,
+                    result.facts_created as i32,
+                ).await;
+                let _ = spawn_state.memory_store.complete_consolidation_job(
+                    job_id, "completed", None
+                ).await;
+
+                // Spawn dream narrator
+                let ep = result.episodes_processed;
+                let cl = result.clusters_identified;
+                let rx = result.rules_extracted;
+                let rv = result.rules_verified;
+                let ec = result.entities_created;
+                let fc = result.facts_created;
+                let narrator_state = spawn_state.clone();
+                let aname = spawn_agent_name.clone();
+                tokio::spawn(async move {
+                    let narrator_id = "dream_narrator";
+                    let card = match narrator_state.registry.get(narrator_id) {
+                        Ok(c) => c, Err(_) => return,
+                    };
+                    let synopsis_input = format!(
+                        "Agent \"{}\" just completed a consolidation cycle (dreaming). \
+                         Results: {} episodes processed, {} clusters identified, {} rules extracted, \
+                         {} rules verified, {} entities created, {} facts created. \
+                         Write a brief, engaging narrative about what this agent dreamed.",
+                        aname, ep, cl, rx, rv, ec, fc
+                    );
+                    let agent_stmt = ast::AgentStmt {
+                        name: narrator_id.to_string(),
+                        agent_type: Some(card.agent_type.clone()),
+                        query: synopsis_input,
+                        executor: Some(ast::ExecutorType::LLM),
+                        schedule: None,
+                        driver_refs: vec![],
+                        depends_on: vec![],
+                        confidence_threshold: None,
+                    };
+                    let program = ast::Program {
+                        statements: vec![ast::Statement::Agent(agent_stmt.clone())],
+                    };
+                    let context = ExecutionContext {
+                        program, agent_card: card,
+                        creature_id: None, cognition_tier: None,
+                    };
+                    if let Ok(output) = narrator_state.registry.execute_agent(&agent_stmt, &context).await {
+                        let narrative = output.metadata.reasoning.unwrap_or_default();
+                        if !narrative.is_empty() {
+                            let _ = sqlx::query(
+                                "UPDATE ontology_snapshots SET dream_synopsis = $1 \
+                                 WHERE agent_id = $2 AND snapshot_id = (\
+                                   SELECT snapshot_id FROM ontology_snapshots \
+                                   WHERE agent_id = $2 ORDER BY version DESC LIMIT 1)",
+                            ).bind(&narrative).bind(spawn_agent_id).execute(&narrator_state.db).await;
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                tracing::error!(agent_id = %spawn_agent_id, error = %e, "consolidation failed");
+                let _ = spawn_state.memory_store.complete_consolidation_job(
+                    job_id, "failed", Some(e.to_string())
+                ).await;
+            }
+        }
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "status": "accepted",
+            "job_id": job_id,
+            "agent_id": agent_id,
+            "message": "Consolidation started.",
+            "poll": format!("/api/agents/{}/consolidation/jobs/{}", agent_id, job_id),
+            "dreaming_credits_remaining": spawn_remaining - 1,
+        })),
+    ))
+}
+
+/// GET /api/agents/:id/consolidation/jobs/:job_id
+pub async fn get_consolidation_job_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path((agent_id, job_id_str)): Path<(String, String)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let user_id = principal.user_id();
+    if db_agent.owner_id.as_deref() != Some(&user_id) && !principal.can_admin() {
+        return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
     }
+    let job_id: uuid::Uuid = job_id_str.parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid job_id".into()))?;
+
+    let row = sqlx::query(
+        "SELECT job_id, status, episodes_processed, clusters_identified, rules_extracted,
+                rules_verified, rules_rejected, entities_created, facts_created,
+                error_message, started_at, completed_at
+         FROM consolidation_jobs WHERE job_id = $1 AND agent_id = $2"
+    )
+    .bind(job_id)
+    .bind(db_agent.agent_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Job not found".into()))?;
 
     Ok(Json(json!({
-        "status": "completed",
+        "job_id": job_id,
         "agent_id": agent_id,
-        "result": {
-            "episodes_processed": result.episodes_processed,
-            "clusters_identified": result.clusters_identified,
-            "rules_extracted": result.rules_extracted,
-            "rules_verified": result.rules_verified,
-            "rules_rejected": result.rules_rejected,
-            "entities_created": result.entities_created,
-            "facts_created": result.facts_created,
-        },
-        "dreaming_credits_remaining": remaining - 1,
+        "status": row.try_get::<String,_>("status").unwrap_or_default(),
+        "episodes_processed": row.try_get::<i32,_>("episodes_processed").unwrap_or(0),
+        "clusters_identified": row.try_get::<i32,_>("clusters_identified").unwrap_or(0),
+        "rules_extracted": row.try_get::<i32,_>("rules_extracted").unwrap_or(0),
+        "rules_verified": row.try_get::<i32,_>("rules_verified").unwrap_or(0),
+        "entities_created": row.try_get::<i32,_>("entities_created").unwrap_or(0),
+        "facts_created": row.try_get::<i32,_>("facts_created").unwrap_or(0),
+        "error_message": row.try_get::<Option<String>,_>("error_message").ok().flatten(),
+        "started_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>,_>("started_at").ok().flatten(),
+        "completed_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>,_>("completed_at").ok().flatten(),
     })))
 }

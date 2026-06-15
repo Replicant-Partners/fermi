@@ -66,8 +66,11 @@ pub async fn execute_agent_handler(
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let card = resolve_agent_card(&state, &db_agent);
 
-    // 1a. Enrich card with relevant KG context from past dream cycles
-    let card = enrich_with_kg_context(
+    // 1a. Enrich card with relevant KG context from past dream cycles.
+    // Phase 1: returns the query embedding alongside the card so we can
+    // reuse it for episode storage without a second embedding API call.
+    let t_kg = tokio::time::Instant::now();
+    let (card, _kg_query_embedding) = enrich_with_kg_context(
         &state.memory_store,
         &state.embedder,
         db_agent.agent_id,
@@ -75,6 +78,7 @@ pub async fn execute_agent_handler(
         card,
     )
     .await;
+    tracing::info!(elapsed_ms = t_kg.elapsed().as_millis() as u64, agent = %agent_id, "kg_context_enrich");
 
     // 2. Build execution context
     let agent_stmt = ast::AgentStmt {
@@ -134,23 +138,43 @@ pub async fn execute_agent_handler(
     // 4. Record stats in registry
     let _ = state.registry.record_execution(&agent_id, &output);
 
-    // 5. Store as ADM episode (with embedding)
-    let mut episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
+    // 5. Store as ADM episode (with embedding + Spec 22 provenance)
+    let episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
 
-    // Generate embedding from query + output summary
+    // Build the embedded text ONCE and pass the same string to both the embedder
+    // and the storage layer — `generate_provenanced` returns the source_text
+    // bundled with the vector, guaranteeing they cannot drift.
     let embed_text = format!(
         "{} {}",
         body.query,
         output.metadata.reasoning.as_deref().unwrap_or("")
     );
-    match state.embedder.generate(&embed_text).await {
-        Ok(embedding) => episode.embedding = Some(embedding),
-        Err(e) => eprintln!("Warning: embedding generation failed: {}", e),
-    }
+    let t_embed = tokio::time::Instant::now();
+    let provenance = match state.embedder.generate_provenanced(&embed_text).await {
+        Ok(p) => {
+            tracing::info!(
+                elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                model = %p.model_id,
+                site = "execution_handler",
+                "embed_call"
+            );
+            Some(p)
+        }
+        Err(e) => {
+            eprintln!("Warning: embedding generation failed: {}", e);
+            None
+        }
+    };
+
+    let source_ref = serde_json::json!({
+        "kind": "execute_handler",
+        "agent_id": db_agent.agent_id,
+        "query_len": body.query.len(),
+    });
 
     let episode_id = state
         .memory_store
-        .store_episode(episode)
+        .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
         .await
         .map_err(|e| {
             eprintln!("Warning: failed to store episode: {}", e);

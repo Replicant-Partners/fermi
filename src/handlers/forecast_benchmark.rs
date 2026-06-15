@@ -544,3 +544,74 @@ pub async fn commit_forecast_handler(
         "note": "Forecast anchored. This hash proves this probability was recorded before resolution.",
     })))
 }
+
+// ── Harness snapshot writer ───────────────────────────────────────────────
+
+/// Capture the current Fermi harness configuration as a content-addressed
+/// snapshot. Called at forecast creation so every ForecastRecord can be
+/// linked to the exact harness state that produced it.
+///
+/// The harness is the triple:
+///   (conductor_card_hash, routing_weights_hash, specialist_roster_hash)
+///
+/// Returns the snapshot_id and content_hash. Idempotent — if the same
+/// configuration already exists (same content_hash), returns the existing row.
+pub async fn capture_harness_snapshot(
+    pool: &sqlx::PgPool,
+    conductor_version: &str,
+    specialist_roster: &serde_json::Value,  // [{agent_id, version, calibration_score}]
+    routing_weights: Option<&serde_json::Value>,
+    bayesops_params: Option<&serde_json::Value>,
+) -> Option<uuid::Uuid> {
+    // Check table exists
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='harness_snapshots')"
+    ).fetch_one(pool).await.unwrap_or(false);
+    if !exists { return None; }
+
+    // Compute component hashes
+    let conductor_hash = sha256_str(conductor_version);
+    let roster_hash = sha256_str(&serde_json::to_string(specialist_roster).unwrap_or_default());
+    let weights_hash = routing_weights.map(|w| sha256_str(&serde_json::to_string(w).unwrap_or_default()));
+    let bayesops_hash = bayesops_params.map(|b| sha256_str(&serde_json::to_string(b).unwrap_or_default()));
+
+    // Content hash over all components
+    let mut h = Sha256::new();
+    h.update(conductor_hash.as_bytes()); h.update(b"|");
+    h.update(roster_hash.as_bytes()); h.update(b"|");
+    h.update(weights_hash.as_deref().unwrap_or("").as_bytes()); h.update(b"|");
+    h.update(bayesops_hash.as_deref().unwrap_or("").as_bytes());
+    let content_hash = format!("{:x}", h.finalize());
+
+    // Check if already exists
+    if let Ok(Some(row)) = sqlx::query(
+        "SELECT snapshot_id FROM harness_snapshots WHERE content_hash = $1"
+    ).bind(&content_hash).fetch_optional(pool).await {
+        return row.try_get("snapshot_id").ok();
+    }
+
+    // Insert new snapshot
+    let snapshot_id = uuid::Uuid::new_v4();
+    let _ = sqlx::query(
+        r#"INSERT INTO harness_snapshots
+           (snapshot_id, content_hash, conductor_card_hash, routing_weights_hash,
+            specialist_roster_hash, bayesops_params_hash, conductor_version,
+            specialist_roster, routing_weights, bayesops_params, captured_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())"#
+    )
+    .bind(snapshot_id)
+    .bind(&content_hash)
+    .bind(&conductor_hash)
+    .bind(weights_hash.as_deref())
+    .bind(&roster_hash)
+    .bind(bayesops_hash.as_deref())
+    .bind(conductor_version)
+    .bind(specialist_roster)
+    .bind(routing_weights)
+    .bind(bayesops_params)
+    .execute(pool)
+    .await
+    .ok()?;
+
+    Some(snapshot_id)
+}

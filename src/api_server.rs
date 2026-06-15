@@ -321,6 +321,12 @@ pub(crate) struct AppState {
     /// consumed by GET .../embeddings/export?format=full. Single-use,
     /// 5-minute TTL. See `ExportConsentEntry`.
     pub(crate) export_consent: Arc<dashmap::DashMap<String, ExportConsentEntry>>,
+    /// Spec 21 Phase 4.1: shared broadcast from a single PgListener connection.
+    /// Payload: (channel_name, json_payload). SSE handlers subscribe here
+    /// instead of opening a raw PgListener connection per client.
+    /// Capacity 2048 — a receiver lagging >2048 messages gets RecvError::Lagged
+    /// and must re-fetch backfill from the DB (handled in the SSE handler).
+    pub(crate) pg_notify: broadcast::Sender<(String, String)>,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -586,6 +592,9 @@ async fn run_migrations(db: &PgPool) {
         // sample point config. Two-hook architecture: commit on synthetic
         // write, resolve on real sensor ingest.
         "migrations/141_process_benchmark.sql",
+        // Performance: HNSW vector indices for KG hot-path retrieval +
+        // partial composite index on episodes (unconsolidated subset).
+        "migrations/142_performance_indices.sql",
     ];
 
     for file in &migration_files {
@@ -858,10 +867,51 @@ async fn main() {
         creature_broadcast: broadcast::channel::<CreatureEvent>(512).0,
         secret_encryptor: fermi_auth::SecretEncryptor::from_env().ok().map(Arc::new),
         // Spec 22 §Security — empty at boot, fills as owners request export.
-        // Single-use 5-min TTL tokens; janitor sweep not needed at solo-dev
-        // scale (a small leak of expired entries is harmless; restart clears
-        // them).
         export_consent: Arc::new(dashmap::DashMap::new()),
+        // Spec 21 Phase 4.1 — shared pg_notify broadcast (single Postgres LISTEN
+        // connection shared across all SSE subscribers).
+        pg_notify: {
+            let (tx, _) = broadcast::channel::<(String, String)>(2048);
+            // Spawn the shared listener — one Postgres connection total.
+            let tx_bg = tx.clone();
+            let db_url_bg = database_url.clone();
+            tokio::spawn(async move {
+                loop {
+                    match sqlx::postgres::PgListener::connect(&db_url_bg).await {
+                        Ok(mut listener) => {
+                            if let Err(e) = listener
+                                .listen_all(vec!["workspace_messages", "creature_events", "rabble_events"])
+                                .await
+                            {
+                                tracing::error!("pg_notify listen_all failed: {e}");
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                continue;
+                            }
+                            tracing::info!("shared pg_notify listener connected");
+                            loop {
+                                match listener.recv().await {
+                                    Ok(notif) => {
+                                        let _ = tx_bg.send((
+                                            notif.channel().to_string(),
+                                            notif.payload().to_string(),
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("pg_notify recv error: {e}, reconnecting");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("pg_notify connect failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            tx
+        },
     };
 
     if state.secret_encryptor.is_some() {
@@ -1418,10 +1468,14 @@ async fn main() {
             "/api/agents/:agent_id/dreaming/topup",
             post(handlers::consolidation::topup_dreaming_budget_handler),
         )
-        // Consolidation trigger
+        // Consolidation trigger + async job status (Spec 21 Phase 3.1)
         .route(
             "/api/agents/:agent_id/consolidate",
             post(handlers::consolidation::consolidate_agent_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/consolidation/jobs/:job_id",
+            get(handlers::consolidation::get_consolidation_job_handler),
         )
         // ── App registry (Doc 1 — App primitive) ──────────────────────────────
         // Read endpoints (GET /api/apps, GET /api/apps/:slug, GET

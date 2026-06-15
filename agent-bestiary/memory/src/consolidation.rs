@@ -13,7 +13,8 @@
 use crate::{
     generate_structured, Cardinality, ConsolidationLock, DBSCANClustering, EmbeddingGenerator,
     Entity, Episode, EpisodeCluster, ExecutionStatus, Fact, GenerationConfig, LLMProvider,
-    MemoryError, MemoryStore, Message, MessageRole, Result, SemanticRule, VerificationStatus,
+    MemoryError, MemoryStore, Message, MessageRole, ProvenancedEmbedding, Result, SemanticRule,
+    VerificationStatus,
 };
 use chrono::Utc;
 use std::sync::Arc;
@@ -118,10 +119,24 @@ impl ConsolidationWorker {
             .cloned()
             .collect();
 
+        // Phase 3.2 (Spec 21): DBSCAN is O(n²·d) CPU work — move off the async
+        // executor thread with spawn_blocking so the Tokio runtime stays free.
         let mut clusters = Vec::new();
         if !failure_episodes.is_empty() {
-            let clusterer = DBSCANClustering::new(epsilon, min_samples);
-            clusters = clusterer.cluster(failure_episodes)?;
+            let tc = tokio::time::Instant::now();
+            let episodes_for_cluster = failure_episodes.clone();
+            clusters = tokio::task::spawn_blocking(move || {
+                let clusterer = DBSCANClustering::new(epsilon, min_samples);
+                clusterer.cluster(episodes_for_cluster)
+            })
+            .await
+            .map_err(|join_err| crate::MemoryError::InternalError(join_err.to_string()))??;
+            tracing::info!(
+                elapsed_ms = tc.elapsed().as_millis() as u64,
+                episodes = failure_episodes.len(),
+                clusters = clusters.len(),
+                "dbscan_cluster"
+            );
         }
 
         let mut result = ConsolidationResult {
@@ -135,12 +150,21 @@ impl ConsolidationWorker {
         };
 
         // Step 5a: Extract semantic rules from failure clusters
+        // Provenance is carried alongside each rule so the storing fn can stamp
+        // model_id/version/dim and append a provenance event in one transaction.
         for cluster in &clusters {
-            let rules = self.extract_rules_from_cluster(agent_id, cluster).await?;
-            result.rules_extracted += rules.len();
+            let rules_with_prov = self.extract_rules_from_cluster(agent_id, cluster).await?;
+            result.rules_extracted += rules_with_prov.len();
 
-            for rule in rules {
-                self.store.store_semantic_rule(rule).await?;
+            for (rule, provenance) in rules_with_prov {
+                let source_ref = serde_json::json!({
+                    "kind": "consolidation_failure_cluster",
+                    "agent_id": agent_id,
+                    "source_episode_cluster": rule.source_episode_cluster,
+                });
+                self.store
+                    .store_semantic_rule_with_provenance(rule, provenance.as_ref(), Some(source_ref))
+                    .await?;
             }
         }
 
@@ -159,8 +183,19 @@ impl ConsolidationWorker {
                 {
                     Ok(knowledge_rules) => {
                         result.rules_extracted += knowledge_rules.len();
-                        for rule in knowledge_rules {
-                            self.store.store_semantic_rule(rule).await?;
+                        for (rule, provenance) in knowledge_rules {
+                            let source_ref = serde_json::json!({
+                                "kind": "consolidation_knowledge_rule",
+                                "agent_id": agent_id,
+                                "source_episode_cluster": rule.source_episode_cluster,
+                            });
+                            self.store
+                                .store_semantic_rule_with_provenance(
+                                    rule,
+                                    provenance.as_ref(),
+                                    Some(source_ref),
+                                )
+                                .await?;
                         }
                     }
                     Err(e) => {
@@ -176,11 +211,22 @@ impl ConsolidationWorker {
                 .extract_entities_with_llm(agent_id, &episodes, llm)
                 .await
             {
-                Ok(entities) => {
-                    result.entities_created = entities.len();
+                Ok(entities_with_prov) => {
+                    result.entities_created = entities_with_prov.len();
                     let mut stored = Vec::new();
-                    for entity in entities {
-                        self.store.store_entity(entity.clone()).await?;
+                    for (entity, provenance) in entities_with_prov {
+                        let source_ref = serde_json::json!({
+                            "kind": "consolidation_llm_entity",
+                            "agent_id": agent_id,
+                            "source_episodes": entity.source_episodes,
+                        });
+                        self.store
+                            .store_entity_with_provenance(
+                                entity.clone(),
+                                provenance.as_ref(),
+                                Some(source_ref),
+                            )
+                            .await?;
                         stored.push(entity);
                     }
                     stored
@@ -192,12 +238,23 @@ impl ConsolidationWorker {
                     );
                     let mut stored = Vec::new();
                     for episode in episodes.iter().take(100) {
-                        let entities = self
+                        let entities_with_prov = self
                             .extract_entities_from_episode(agent_id, episode)
                             .await?;
-                        result.entities_created += entities.len();
-                        for entity in entities {
-                            self.store.store_entity(entity.clone()).await?;
+                        result.entities_created += entities_with_prov.len();
+                        for (entity, provenance) in entities_with_prov {
+                            let source_ref = serde_json::json!({
+                                "kind": "consolidation_heuristic_entity",
+                                "agent_id": agent_id,
+                                "source_episode": episode.episode_id,
+                            });
+                            self.store
+                                .store_entity_with_provenance(
+                                    entity.clone(),
+                                    provenance.as_ref(),
+                                    Some(source_ref),
+                                )
+                                .await?;
                             stored.push(entity);
                         }
                     }
@@ -207,12 +264,23 @@ impl ConsolidationWorker {
         } else {
             let mut stored = Vec::new();
             for episode in episodes.iter().take(100) {
-                let entities = self
+                let entities_with_prov = self
                     .extract_entities_from_episode(agent_id, episode)
                     .await?;
-                result.entities_created += entities.len();
-                for entity in entities {
-                    self.store.store_entity(entity.clone()).await?;
+                result.entities_created += entities_with_prov.len();
+                for (entity, provenance) in entities_with_prov {
+                    let source_ref = serde_json::json!({
+                        "kind": "consolidation_heuristic_entity",
+                        "agent_id": agent_id,
+                        "source_episode": episode.episode_id,
+                    });
+                    self.store
+                        .store_entity_with_provenance(
+                            entity.clone(),
+                            provenance.as_ref(),
+                            Some(source_ref),
+                        )
+                        .await?;
                     stored.push(entity);
                 }
             }
@@ -266,12 +334,15 @@ impl ConsolidationWorker {
         Ok(result)
     }
 
-    /// Extracts semantic rules from an episode cluster
+    /// Extracts semantic rules from an episode cluster.
+    ///
+    /// Returns each rule paired with its `ProvenancedEmbedding` (if generation
+    /// succeeded) so the persistence layer can stamp full Spec 22 provenance.
     async fn extract_rules_from_cluster(
         &self,
         agent_id: Uuid,
         cluster: &EpisodeCluster,
-    ) -> Result<Vec<SemanticRule>> {
+    ) -> Result<Vec<(SemanticRule, Option<ProvenancedEmbedding>)>> {
         let episode_ids: Vec<Uuid> = cluster.episodes.iter().map(|e| e.episode_id).collect();
 
         // Use LLM if available, otherwise fall back to pattern-based extraction
@@ -291,8 +362,8 @@ impl ConsolidationWorker {
         cluster: &EpisodeCluster,
         episode_ids: &[Uuid],
         llm: &Arc<dyn LLMProvider>,
-    ) -> Result<Vec<SemanticRule>> {
-        let mut rules = Vec::new();
+    ) -> Result<Vec<(SemanticRule, Option<ProvenancedEmbedding>)>> {
+        let mut rules: Vec<(SemanticRule, Option<ProvenancedEmbedding>)> = Vec::new();
 
         // Prepare cluster summary for LLM
         let error_messages: Vec<String> = cluster
@@ -362,9 +433,10 @@ impl ConsolidationWorker {
         // Call LLM with structured output (automatic parsing + graceful degradation)
         let llm_rules: Vec<LLMRule> = generate_structured(llm.as_ref(), messages, &config).await?;
 
-        // Convert to SemanticRule objects
+        // Convert to SemanticRule objects with provenance
         for llm_rule in llm_rules {
-            let embedding = self.embedder.generate(&llm_rule.rule).await.ok();
+            let provenance = self.embedder.generate_provenanced(&llm_rule.rule).await.ok();
+            let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
             let rule = SemanticRule {
                 rule_id: Uuid::new_v4(),
@@ -381,7 +453,7 @@ impl ConsolidationWorker {
                 created_at: chrono::Utc::now(),
             };
 
-            rules.push(rule);
+            rules.push((rule, provenance));
         }
 
         Ok(rules)
@@ -393,8 +465,8 @@ impl ConsolidationWorker {
         agent_id: Uuid,
         cluster: &EpisodeCluster,
         episode_ids: &[Uuid],
-    ) -> Result<Vec<SemanticRule>> {
-        let mut rules = Vec::new();
+    ) -> Result<Vec<(SemanticRule, Option<ProvenancedEmbedding>)>> {
+        let mut rules: Vec<(SemanticRule, Option<ProvenancedEmbedding>)> = Vec::new();
 
         // Extract common error patterns
         let error_messages: Vec<String> = cluster
@@ -415,8 +487,9 @@ impl ConsolidationWorker {
                 None
             };
 
-            // Generate embedding for the rule content
-            let embedding = self.embedder.generate(&rule_content).await.ok();
+            // Generate embedding for the rule content (with provenance)
+            let provenance = self.embedder.generate_provenanced(&rule_content).await.ok();
+            let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
             let rule = SemanticRule {
                 rule_id: Uuid::new_v4(),
@@ -433,7 +506,7 @@ impl ConsolidationWorker {
                 created_at: chrono::Utc::now(),
             };
 
-            rules.push(rule);
+            rules.push((rule, provenance));
         }
 
         Ok(rules)
@@ -444,8 +517,8 @@ impl ConsolidationWorker {
         &self,
         agent_id: Uuid,
         episode: &Episode,
-    ) -> Result<Vec<Entity>> {
-        let mut entities = Vec::new();
+    ) -> Result<Vec<(Entity, Option<ProvenancedEmbedding>)>> {
+        let mut entities: Vec<(Entity, Option<ProvenancedEmbedding>)> = Vec::new();
 
         // For now, simple keyword extraction
         // In production, this would use NER or LLM-based extraction
@@ -459,7 +532,9 @@ impl ConsolidationWorker {
                     .to_string();
 
                 if entity_name.len() > 3 {
-                    let embedding = self.embedder.generate(&entity_name).await.ok();
+                    let provenance =
+                        self.embedder.generate_provenanced(&entity_name).await.ok();
+                    let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
                     let entity = Entity {
                         entity_id: Uuid::new_v4(),
@@ -475,7 +550,7 @@ impl ConsolidationWorker {
                         properties: None,
                     };
 
-                    entities.push(entity);
+                    entities.push((entity, provenance));
                 }
             }
         }
@@ -489,8 +564,8 @@ impl ConsolidationWorker {
         agent_id: Uuid,
         episodes: &[Episode],
         llm: &Arc<dyn LLMProvider>,
-    ) -> Result<Vec<Entity>> {
-        let mut all_entities = Vec::new();
+    ) -> Result<Vec<(Entity, Option<ProvenancedEmbedding>)>> {
+        let mut all_entities: Vec<(Entity, Option<ProvenancedEmbedding>)> = Vec::new();
 
         // Batch episodes into groups of 20 for LLM calls
         for chunk in episodes.chunks(20) {
@@ -566,21 +641,26 @@ impl ConsolidationWorker {
                 }
                 seen.insert(key);
 
-                let embedding = self.embedder.generate(&llm_entity.name).await.ok();
+                let provenance =
+                    self.embedder.generate_provenanced(&llm_entity.name).await.ok();
+                let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
-                all_entities.push(Entity {
-                    entity_id: Uuid::new_v4(),
-                    agent_id,
-                    entity_name: llm_entity.name,
-                    entity_type: llm_entity.entity_type,
-                    summary: Some(llm_entity.summary),
-                    t_valid: Utc::now(),
-                    t_invalid: None,
-                    source_episodes: episode_ids.clone(),
-                    extraction_confidence: 0.8,
-                    embedding,
-                    properties: None,
-                });
+                all_entities.push((
+                    Entity {
+                        entity_id: Uuid::new_v4(),
+                        agent_id,
+                        entity_name: llm_entity.name,
+                        entity_type: llm_entity.entity_type,
+                        summary: Some(llm_entity.summary),
+                        t_valid: Utc::now(),
+                        t_invalid: None,
+                        source_episodes: episode_ids.clone(),
+                        extraction_confidence: 0.8,
+                        embedding,
+                        properties: None,
+                    },
+                    provenance,
+                ));
             }
         }
 
@@ -707,7 +787,7 @@ impl ConsolidationWorker {
         agent_id: Uuid,
         episodes: &[&Episode],
         llm: &Arc<dyn LLMProvider>,
-    ) -> Result<Vec<SemanticRule>> {
+    ) -> Result<Vec<(SemanticRule, Option<ProvenancedEmbedding>)>> {
         let episode_summaries: Vec<String> = episodes
             .iter()
             .map(|e| {
@@ -770,24 +850,31 @@ impl ConsolidationWorker {
 
         let llm_rules: Vec<LLMRule> = generate_structured(llm.as_ref(), messages, &config).await?;
 
-        let mut rules = Vec::new();
+        let mut rules: Vec<(SemanticRule, Option<ProvenancedEmbedding>)> = Vec::new();
         for llm_rule in llm_rules {
-            let embedding = self.embedder.generate(&llm_rule.rule).await.ok();
+            let provenance = self.embedder.generate_provenanced(&llm_rule.rule).await.ok();
+            let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
-            rules.push(SemanticRule {
-                rule_id: Uuid::new_v4(),
-                agent_id,
-                rule_content: llm_rule.rule,
-                rule_description: Some(llm_rule.description),
-                confidence_score: llm_rule.confidence.clamp(0.0, 1.0),
-                verification_status: VerificationStatus::Pending,
-                verification_method: Some(format!("llm_knowledge_extraction:{}", llm.model_name())),
-                source_episode_cluster: episode_ids.clone(),
-                episode_count: episodes.len() as i32,
-                embedding,
-                is_active: true,
-                created_at: Utc::now(),
-            });
+            rules.push((
+                SemanticRule {
+                    rule_id: Uuid::new_v4(),
+                    agent_id,
+                    rule_content: llm_rule.rule,
+                    rule_description: Some(llm_rule.description),
+                    confidence_score: llm_rule.confidence.clamp(0.0, 1.0),
+                    verification_status: VerificationStatus::Pending,
+                    verification_method: Some(format!(
+                        "llm_knowledge_extraction:{}",
+                        llm.model_name()
+                    )),
+                    source_episode_cluster: episode_ids.clone(),
+                    episode_count: episodes.len() as i32,
+                    embedding,
+                    is_active: true,
+                    created_at: Utc::now(),
+                },
+                provenance,
+            ));
         }
 
         Ok(rules)

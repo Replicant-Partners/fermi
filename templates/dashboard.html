@@ -2239,11 +2239,15 @@
             );
             if (res.ok) {
               const data = await res.json();
-              const stats = data.result || {};
-              const summary =
-                stats.episodes_processed != null
-                  ? `${stats.episodes_processed} episodes · ${stats.rules_extracted || 0} rules`
-                  : "done";
+              // Handle both async (202+job_id) and sync (legacy) responses
+              let summary = "done";
+              if (data.status === 'accepted' && data.job_id) {
+                summary = "started (async)";
+              } else {
+                const stats = data.result || {};
+                if (stats.episodes_processed != null)
+                  summary = `${stats.episodes_processed} episodes · ${stats.rules_extracted || 0} rules`;
+              }
               line.innerHTML = `<span style="color:var(--fg1)">${escHtml(t.name)}</span> · <span style="color:var(--green)">✓ ${escHtml(summary)}</span>`;
               ok++;
             } else {

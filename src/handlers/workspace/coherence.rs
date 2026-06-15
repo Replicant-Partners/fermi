@@ -24,7 +24,6 @@ use coherence_engine::SettlingEngine;
 use coherence_observer::ConversationObserver;
 
 use fermi::agent_backend::executor::AgentExecutor;
-use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
