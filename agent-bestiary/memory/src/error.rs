@@ -27,4 +27,7 @@ pub enum MemoryError {
 
     #[error("External API error: {0}")]
     ExternalError(String),
+
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }

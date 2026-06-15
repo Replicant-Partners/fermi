@@ -2406,6 +2406,12 @@ impl FermiConsole {
                 cockpit.pm_confidence = conf;
                 cockpit.pm_price_change_1w = chg_1w;
 
+                // Start polling PM price every 5 minutes by default
+                cockpit.set_pm_poll_interval(
+                    std::time::Duration::from_secs(5 * 60),
+                    cx,
+                );
+
                 // Set initial probability to market price
                 cockpit.predicted_probability = price.clamp(0.01, 0.99);
 
@@ -3707,6 +3713,7 @@ impl FermiConsole {
                                                                     outside_view: forecast
                                                                         .base_rate
                                                                         * 100.0,
+                                                                    crowd_price: None,
                                                                 }
                                                             })
                                                             .collect();

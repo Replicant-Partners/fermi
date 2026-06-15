@@ -7,15 +7,16 @@ use plotters::prelude::*;
 use std::sync::Arc;
 
 // Canvas backgrounds — match GPUI theme values exactly
-const BG: RGBColor = RGBColor(23, 27, 36);          // standalone charts (index, histogram)
-const BG_CARD: RGBColor = RGBColor(39, 45, 56);     // charts inside cards (sparklines) — matches theme::BG_ELEVATED
-const CHROME: RGBColor = RGBColor(40, 47, 58);
+const BG: RGBColor = RGBColor(31, 36, 48);          // matches theme::BG (0x1F2430) — main content area
+const BG_CARD: RGBColor = RGBColor(39, 45, 56);     // matches theme::BG_ELEVATED — cards, panels
+const CHROME: RGBColor = RGBColor(50, 58, 72);
 const LABEL: RGBColor = RGBColor(92, 103, 115);
 
 // Data colors — one per meaning
-const CYAN: RGBColor = RGBColor(92, 207, 230);
-const GOLD: RGBColor = RGBColor(255, 204, 102);
-const GREEN: RGBColor = RGBColor(186, 230, 126);
+const CYAN: RGBColor = RGBColor(92, 207, 230);      // inside view / your model
+const GOLD: RGBColor = RGBColor(255, 204, 102);     // base rate / reference
+const GREEN: RGBColor = RGBColor(186, 230, 126);    // p50 markers
+const PURPLE: RGBColor = RGBColor(212, 191, 255);   // crowd price (Polymarket)
 
 // Muted cyan for bar fills — hand-picked to read as clearly cyan on dark BG.
 const CYAN_BAR: RGBColor = RGBColor(35, 100, 120);
@@ -35,12 +36,13 @@ pub struct IndexPoint {
     pub label: String,
     pub inside_view: f64,
     pub outside_view: f64,
+    pub crowd_price: Option<f64>,  // Polymarket crowd-implied probability
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Index Chart — Inside vs Outside view over versions
+// Index Chart — Inside vs Outside vs Crowd price over time
 //
-// Two clean lines. No fill. Dots at each version.
+// Three lines: cyan (your model), gold (base rate), purple (crowd).
 // ═══════════════════════════════════════════════════════════════════
 
 pub fn render_index_chart(
@@ -55,9 +57,15 @@ pub fn render_index_chart(
         let _ = root.fill(&BG);
 
         if history.len() >= 2 {
-            let vals: Vec<f64> = history.iter()
-                .flat_map(|p| [p.inside_view, p.outside_view])
+            // Collect all values including crowd price for y-axis range
+            let mut vals: Vec<f64> = history.iter()
+                .flat_map(|p| {
+                    let mut v = vec![p.inside_view, p.outside_view];
+                    if let Some(cp) = p.crowd_price { v.push(cp); }
+                    v
+                })
                 .collect();
+            if vals.is_empty() { vals.push(50.0); }
             let min_v = vals.iter().cloned().fold(f64::INFINITY, f64::min) - 2.0;
             let max_v = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max) + 2.0;
             let n = history.len();
@@ -77,11 +85,31 @@ pub fn render_index_chart(
                     .y_label_formatter(&|v| format!("{:.0}%", v))
                     .draw();
 
-                // Outside view — gold line, thinner
+                // Base rate — gold line, thin
                 let _ = chart.draw_series(LineSeries::new(
                     history.iter().enumerate().map(|(i, p)| (i, p.outside_view)),
                     ShapeStyle::from(GOLD).stroke_width(1),
                 ));
+
+                // Crowd price — purple line (only where data exists)
+                let has_crowd = history.iter().any(|p| p.crowd_price.is_some());
+                if has_crowd {
+                    let crowd_points: Vec<(usize, f64)> = history.iter().enumerate()
+                        .filter_map(|(i, p)| p.crowd_price.map(|cp| (i, cp)))
+                        .collect();
+                    if crowd_points.len() >= 2 {
+                        let _ = chart.draw_series(LineSeries::new(
+                            crowd_points.iter().cloned(),
+                            ShapeStyle::from(PURPLE).stroke_width(2),
+                        ));
+                    }
+                    // Crowd dots
+                    for (i, cp) in &crowd_points {
+                        let _ = chart.draw_series(std::iter::once(Circle::new(
+                            (*i, *cp), 2, ShapeStyle::from(PURPLE).filled(),
+                        )));
+                    }
+                }
 
                 // Inside view — cyan line, bold
                 let _ = chart.draw_series(LineSeries::new(

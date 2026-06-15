@@ -256,6 +256,13 @@ pub struct CockpitState {
     /// Workspace ID (UUID) backing this forecast in ABW.
     /// Spawned from the `fermi_forecast` app on first orchestration.
     pub workspace_id: Option<String>,
+
+    // ── Polymarket Price History ──────────────────────────────────
+    /// Time-series of crowd prices, sampled at `pm_poll_interval`.
+    /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
+    pub pm_price_history: Vec<(u64, f64)>,
+    /// Polling interval for PM price updates. None = no polling.
+    pub pm_poll_interval: Option<std::time::Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -408,6 +415,8 @@ impl CockpitState {
             schedules_loading: false,
             pending_toasts: Vec::new(),
             workspace_id: None,
+            pm_price_history: Vec::new(),
+            pm_poll_interval: None,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -434,7 +443,98 @@ impl CockpitState {
         })
         .detach();
 
+        // Start Polymarket price polling timer — fetches crowd price
+        // at the configured interval when a PM market is linked.
+        cx.spawn(async move |this, cx| loop {
+            // Check interval (default: sleep 30s, check if polling is active)
+            let interval = this
+                .update(cx, |state, _cx| state.pm_poll_interval)
+                .ok()
+                .flatten();
+
+            let sleep_ms = interval
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(30_000);
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(sleep_ms))
+                .await;
+
+            // Only poll if we have a linked market and polling is enabled
+            let poll_data = this
+                .update(cx, |state, _cx| {
+                    if state.pm_poll_interval.is_some() {
+                        if let (Some(ref eid), Some(ref mid)) =
+                            (state.pm_event_id.clone(), state.pm_market_id.clone())
+                        {
+                            return Some((state.api.clone(), eid.clone(), mid.clone(),
+                                         state.forecast_id.clone()));
+                        }
+                    }
+                    None
+                })
+                .ok()
+                .flatten();
+
+            if let Some((api, _eid, mid, forecast_id)) = poll_data {
+                let fid = forecast_id.unwrap_or_default();
+                let result = tokio::spawn(async move {
+                    api.pm_snapshot(&fid, &mid).await
+                })
+                .await;
+
+                if let Ok(Ok(resp)) = result {
+                    let price = resp.get("market_price")
+                        .and_then(|v| v.as_f64())
+                        .or_else(|| resp.get("snapshot")
+                            .and_then(|s| s.get("market_price"))
+                            .and_then(|v| v.as_f64()));
+
+                    if let Some(p) = price {
+                        this.update(cx, |state, cx| {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            state.pm_market_price = Some(p);
+                            state.pm_price_history.push((now, p));
+                            // Cap history at 500 points
+                            if state.pm_price_history.len() > 500 {
+                                state.pm_price_history.remove(0);
+                            }
+                            log::info!("[pm-poll] Price update: {:.2}% ({} history points)",
+                                p * 100.0, state.pm_price_history.len());
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                }
+            }
+        })
+        .detach();
+
         s
+    }
+
+    /// Set the PM polling interval. Call after linking a Polymarket market.
+    pub fn set_pm_poll_interval(&mut self, interval: std::time::Duration, cx: &mut Context<Self>) {
+        self.pm_poll_interval = Some(interval);
+        // Seed initial price into history if we have one
+        if let Some(price) = self.pm_market_price {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if self.pm_price_history.is_empty() {
+                self.pm_price_history.push((now, price));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Stop PM polling.
+    pub fn stop_pm_poll(&mut self, cx: &mut Context<Self>) {
+        self.pm_poll_interval = None;
+        cx.notify();
     }
 
     /// Drain pending SSE events from background agent tasks.
@@ -4149,6 +4249,39 @@ impl CockpitState {
                 for a in self.program.agents() {
                     log::info!("[load]   agent={} refs={:?}", a.name, a.driver_refs);
                 }
+                // Restore Polymarket link
+                if let Some(pm) = state_json.get("polymarket").and_then(|v| v.as_object()) {
+                    self.pm_event_id = pm.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    self.pm_market_id = pm.get("market_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    self.pm_question = pm.get("question").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    self.pm_market_price = pm.get("market_price").and_then(|v| v.as_f64());
+                    self.pm_volume_24h = pm.get("volume_24h").and_then(|v| v.as_f64());
+                    self.pm_liquidity = pm.get("liquidity").and_then(|v| v.as_f64());
+                    self.pm_confidence = pm.get("confidence").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    self.pm_price_change_1w = pm.get("price_change_1w").and_then(|v| v.as_f64());
+                    self.pm_url = pm.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    // Restore price history
+                    if let Some(hist) = pm.get("price_history").and_then(|v| v.as_array()) {
+                        self.pm_price_history = hist.iter().filter_map(|h| {
+                            let t = h.get("t").and_then(|v| v.as_u64())?;
+                            let p = h.get("p").and_then(|v| v.as_f64())?;
+                            Some((t, p))
+                        }).collect();
+                    }
+                    if self.pm_event_id.is_some() {
+                        log::info!("[load] Restored Polymarket link: event={}, price={:.1}%, {} history points",
+                            self.pm_event_id.as_deref().unwrap_or("?"),
+                            self.pm_market_price.unwrap_or(0.0) * 100.0,
+                            self.pm_price_history.len());
+                        // Auto-resume PM polling at 5-minute interval
+                        self.pm_poll_interval = Some(std::time::Duration::from_secs(5 * 60));
+                    }
+                }
+                // Restore workspace_id
+                if let Some(ws_id) = state_json.get("workspace_id").and_then(|v| v.as_str()) {
+                    self.workspace_id = Some(ws_id.to_string());
+                }
+
                 self.messages.push(AssistantMessage {
                     node: "load".into(),
                     kind: MessageKind::Info,
@@ -4334,6 +4467,21 @@ impl CockpitState {
                     "driver_confidence": self.driver_confidence.iter()
                         .map(|(k, v)| (k.clone(), serde_json::json!(v)))
                         .collect::<serde_json::Map<String, JsonValue>>(),
+                    "polymarket": serde_json::json!({
+                        "event_id": self.pm_event_id,
+                        "market_id": self.pm_market_id,
+                        "question": self.pm_question,
+                        "market_price": self.pm_market_price,
+                        "volume_24h": self.pm_volume_24h,
+                        "liquidity": self.pm_liquidity,
+                        "confidence": self.pm_confidence,
+                        "price_change_1w": self.pm_price_change_1w,
+                        "url": self.pm_url,
+                        "price_history": self.pm_price_history.iter()
+                            .map(|(ts, p)| serde_json::json!({"t": ts, "p": p}))
+                            .collect::<Vec<_>>(),
+                    }),
+                    "workspace_id": self.workspace_id,
                 });
                 match std::fs::write(
                     &state_path,
@@ -7914,6 +8062,7 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                                 .and_then(|q| q.base_rate.as_ref())
                                 .map(|br| br.historical_frequency * 100.0)
                                 .unwrap_or(50.0);
+                            let crowd_price_pct = state.pm_market_price.map(|p| p * 100.0);
                             let history: Vec<crate::charts::IndexPoint> = state
                                 .versions
                                 .iter()
@@ -7921,6 +8070,7 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                                     label: format!("v{}", v.version),
                                     inside_view: v.probability * 100.0,
                                     outside_view: base_rate,
+                                    crowd_price: crowd_price_pct,
                                 })
                                 .collect();
                             let chart_w = 200u32;
@@ -7941,7 +8091,7 @@ fn render_forecast_index(state: &CockpitState) -> impl IntoElement {
                                         div()
                                             .text_size(px(8.0))
                                             .text_color(rgb(theme::FG_FAINT))
-                                            .child("In vs Out"),
+                                            .child("Model · Base rate · Crowd"),
                                     )
                                     .child(
                                         gpui::img(gpui::ImageSource::Render(render_img))
@@ -8825,6 +8975,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         .and_then(|q| q.base_rate.as_ref())
                         .map(|br| br.historical_frequency * 100.0)
                         .unwrap_or(50.0);
+                    let crowd_price_pct = state.pm_market_price.map(|p| p * 100.0);
                     let history: Vec<crate::charts::IndexPoint> = state
                         .versions
                         .iter()
@@ -8832,6 +8983,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             label: format!("v{}", v.version),
                             inside_view: v.probability * 100.0,
                             outside_view: base_rate,
+                            crowd_price: crowd_price_pct,
                         })
                         .collect();
                     let chart_w = 500u32;
@@ -8852,7 +9004,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 div()
                                     .text_size(px(9.0))
                                     .text_color(rgb(theme::FG_FAINT))
-                                    .child("Inside (cyan) vs Outside (gold) over versions"),
+                                    .child("Model (cyan) · Base rate (gold) · Crowd (purple)"),
                             )
                             .child(
                                 gpui::img(gpui::ImageSource::Render(render_img))
