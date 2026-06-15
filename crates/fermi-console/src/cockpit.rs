@@ -268,6 +268,12 @@ pub struct CockpitState {
     /// hovered position. Reset to `None` on forecast switch via
     /// load_forecast.
     pub hovered_histogram_bin: Option<usize>,
+    /// Index of the version currently under the cursor in the Wiki tab's
+    /// interactive index chart (inside/outside/crowd over time). `None`
+    /// when the cursor is outside the chart. Drives the crosshair +
+    /// tooltip showing the three anchor values and pairwise deltas at
+    /// that point in history. Reset on forecast switch.
+    pub hovered_index_version: Option<usize>,
     /// Polling interval for PM price updates. None = no polling.
     pub pm_poll_interval: Option<std::time::Duration>,
 }
@@ -432,6 +438,7 @@ impl CockpitState {
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             hovered_histogram_bin: None,
+            hovered_index_version: None,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -4043,6 +4050,7 @@ impl CockpitState {
         self.driver_confidence.clear();
         self.inside_view_explanation.clear();
         self.hovered_histogram_bin = None;
+        self.hovered_index_version = None;
 
         // Try to parse FPL — may fail on old files with bad evidence strings
         let mut fpl_parsed = false;
@@ -5667,6 +5675,212 @@ fn render_interactive_histogram(
                             sim.p95 * 100.0,
                             sim.iterations
                         )),
+                ),
+        )
+        .into_any_element()
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Interactive index chart — version-over-time comparison of the three
+// anchors. Keeps the existing bitmap line rendering (GPUI has no line
+// primitive that beats a plotters bitmap for diagonals) but overlays a
+// transparent native layer of one column per version so each version
+// gets per-point hover with a tooltip showing the three values and
+// pairwise deltas at that historical point.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Render the interactive index chart with mouseover crosshair + tooltip.
+///
+/// Bitmap line layer + native hover layer composed in absolute positioning.
+/// The hovered version (if any) drives a vertical crosshair + per-version
+/// tooltip card.
+fn render_interactive_index_chart(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+    chart_w: f32,
+    chart_h: f32,
+) -> gpui::AnyElement {
+    if state.versions.len() < 2 {
+        return div().into_any_element();
+    }
+
+    let base_rate = state
+        .program
+        .question()
+        .and_then(|q| q.base_rate.as_ref())
+        .map(|br| br.historical_frequency * 100.0)
+        .unwrap_or(50.0);
+    let crowd_price_pct = state.pm_market_price.map(|p| p * 100.0);
+
+    let history: Vec<crate::charts::IndexPoint> = state
+        .versions
+        .iter()
+        .map(|v| crate::charts::IndexPoint {
+            label: format!("v{}", v.version),
+            inside_view: v.probability * 100.0,
+            outside_view: base_rate,
+            crowd_price: crowd_price_pct,
+        })
+        .collect();
+
+    let n = history.len();
+    let chart_w_u = chart_w as u32;
+    let chart_h_u = chart_h as u32;
+    let rgb_buf = crate::charts::render_index_chart(
+        &history,
+        n.saturating_sub(1),
+        chart_w_u,
+        chart_h_u,
+    );
+    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w_u, chart_h_u);
+
+    // Per-version hover columns. Each column is centered on the x-pixel
+    // of its data point. Columns are equally spaced from 0 to chart_w.
+    let col_w = chart_w / n as f32;
+
+    // ── Tooltip card ──
+    // Shows three anchor values + pairwise deltas at the hovered version.
+    // Stays mounted so layout doesn't jump; content swaps based on hover.
+    let tooltip_card = match state.hovered_index_version {
+        Some(idx) if idx < n => {
+            let v = &state.versions[idx];
+            let p = &history[idx];
+            let inside = p.inside_view;
+            let outside = p.outside_view;
+            let crowd = p.crowd_price;
+
+            let mut lines: Vec<String> = Vec::new();
+            lines.push(format!(
+                "v{} · {}",
+                v.version,
+                v.timestamp.split('T').next().unwrap_or(&v.timestamp)
+            ));
+            lines.push(format!(
+                "model: {:.1}%   base: {:.1}%{}",
+                inside,
+                outside,
+                crowd.map(|c| format!("   crowd: {:.1}%", c)).unwrap_or_default()
+            ));
+            lines.push(format!(
+                "Δ(model−base): {:+.1}pp{}",
+                inside - outside,
+                crowd
+                    .map(|c| format!(
+                        "   Δ(model−crowd): {:+.1}pp   Δ(base−crowd): {:+.1}pp",
+                        inside - c,
+                        outside - c
+                    ))
+                    .unwrap_or_default()
+            ));
+            if !v.change_summary.is_empty() {
+                lines.push(format!("note: {}", v.change_summary));
+            }
+
+            div()
+                .px(px(8.0))
+                .py(px(4.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                .border_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_DIM))
+                .children(lines.into_iter().map(|line| div().child(line)))
+        }
+        _ => div()
+            .px(px(8.0))
+            .py(px(4.0))
+            .rounded(px(4.0))
+            .bg(rgb(theme::BG_ELEVATED))
+            .border_1()
+            .border_color(rgb(theme::FG_FAINT))
+            .text_size(px(9.0))
+            .text_color(rgb(theme::FG_FAINT))
+            .child("hover a version on the line chart"),
+    };
+
+    // ── Chart layer (bitmap) + hover layer (transparent native) ──
+    let mut hover_layer = div()
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .w(px(chart_w))
+        .h(px(chart_h));
+
+    for idx in 0..n {
+        // Center the column on the data point's x-pixel; same convention
+        // plotters uses (i × col_w + col_w / 2). The column width covers
+        // the full segment so adjacent points don't fight for hover.
+        let col_x = (idx as f32) * col_w;
+        let hovered = state.hovered_index_version == Some(idx);
+        let mut col = div()
+            .id(("idx-col", idx))
+            .absolute()
+            .left(px(col_x))
+            .top(px(0.0))
+            .w(px(col_w))
+            .h(px(chart_h))
+            .cursor_crosshair()
+            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                if *hovered {
+                    if this.hovered_index_version != Some(idx) {
+                        this.hovered_index_version = Some(idx);
+                        cx.notify();
+                    }
+                } else if this.hovered_index_version == Some(idx) {
+                    this.hovered_index_version = None;
+                    cx.notify();
+                }
+            }));
+        // Vertical crosshair line — only drawn when this column is the
+        // hovered one. Thin gold line at the column's center pixel.
+        if hovered {
+            col = col.child(
+                div()
+                    .absolute()
+                    .left(px(col_w / 2.0 - 0.5))
+                    .top(px(0.0))
+                    .w(px(1.0))
+                    .h(px(chart_h))
+                    .bg(rgb(theme::GOLD)),
+            );
+        }
+        hover_layer = hover_layer.child(col);
+    }
+
+    // Composed: tooltip on top, layered chart beneath.
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .child(tooltip_card)
+        .child(
+            div()
+                .relative()
+                .w(px(chart_w))
+                .h(px(chart_h))
+                .child(
+                    gpui::img(gpui::ImageSource::Render(render_img))
+                        .w(gpui::px(chart_w))
+                        .h(gpui::px(chart_h)),
+                )
+                .child(hover_layer),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(px(10.0))
+                .text_size(px(8.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(div().text_color(rgb(theme::CYAN)).child("─ model"))
+                .child(div().text_color(rgb(theme::GOLD)).child("─ base"))
+                .when(crowd_price_pct.is_some(), |el| {
+                    el.child(div().text_color(rgb(theme::PURPLE)).child("─ crowd"))
+                })
+                .child(
+                    div()
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child(format!("{} versions", n)),
                 ),
         )
         .into_any_element()
@@ -9612,34 +9826,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     }
                 }
 
-                // Index comparison chart
+                // Interactive index chart — same bitmap line render as
+                // before, plus a transparent hover layer with one column
+                // per version that drives a crosshair + tooltip showing
+                // the three anchor values + pairwise deltas at that
+                // historical point.
                 if state.versions.len() > 1 {
-                    let base_rate = state
-                        .program
-                        .question()
-                        .and_then(|q| q.base_rate.as_ref())
-                        .map(|br| br.historical_frequency * 100.0)
-                        .unwrap_or(50.0);
-                    let crowd_price_pct = state.pm_market_price.map(|p| p * 100.0);
-                    let history: Vec<crate::charts::IndexPoint> = state
-                        .versions
-                        .iter()
-                        .map(|v| crate::charts::IndexPoint {
-                            label: format!("v{}", v.version),
-                            inside_view: v.probability * 100.0,
-                            outside_view: base_rate,
-                            crowd_price: crowd_price_pct,
-                        })
-                        .collect();
-                    let chart_w = 500u32;
-                    let chart_h = 80u32;
-                    let rgb_buf = crate::charts::render_index_chart(
-                        &history,
-                        history.len().saturating_sub(1),
-                        chart_w,
-                        chart_h,
-                    );
-                    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
+                    let chart_w = 500.0_f32;
+                    let chart_h = 80.0_f32;
                     chart_children.push(
                         div()
                             .flex()
@@ -9649,13 +9843,11 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 div()
                                     .text_size(px(9.0))
                                     .text_color(rgb(theme::FG_FAINT))
-                                    .child("Model (cyan) · Base rate (gold) · Crowd (purple)"),
+                                    .child("Model (cyan) · Base rate (gold) · Crowd (purple) — hover any version for details"),
                             )
-                            .child(
-                                gpui::img(gpui::ImageSource::Render(render_img))
-                                    .w(gpui::px(chart_w as f32))
-                                    .h(gpui::px(chart_h as f32)),
-                            )
+                            .child(render_interactive_index_chart(
+                                state, cx, chart_w, chart_h,
+                            ))
                             .into_any_element(),
                     );
                 }
