@@ -3695,7 +3695,7 @@ impl FermiConsole {
                         ))
                     })
                     // Workspace forecasts (from ABW fermi_forecast app)
-                    .when(!self.workspace_forecasts.is_empty(), |el| {
+                    .when(self.connected, |el| {
                         // Dedup by workspace_id (batch script may have been run multiple times)
                         let mut seen = std::collections::HashSet::new();
                         let deduped: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
@@ -3726,7 +3726,11 @@ impl FermiConsole {
                                                 .text_size(px(14.0))
                                                 .text_color(theme::fg())
                                                 .font_weight(FontWeight::BOLD)
-                                                .child(format!("Workspaces ({})", count)),
+                                                .child(if self.workspace_forecasts_loading {
+                                                    "Workspaces (loading…)".to_string()
+                                                } else {
+                                                    format!("Workspaces ({})", count)
+                                                }),
                                         )
                                         .child(
                                             div()
