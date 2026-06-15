@@ -3218,9 +3218,11 @@ impl FermiConsole {
 
     fn render_portfolio(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
+            .id("portfolio-scroll")
             .flex()
             .flex_col()
             .size_full()
+            .overflow_y_scroll()
             .p(px(24.0))
             .gap(px(16.0))
             .child(
@@ -3710,8 +3712,7 @@ impl FermiConsole {
                                 .rounded(px(8.0))
                                 .border_1()
                                 .border_color(theme::fg_faint())
-                                .max_h(px(400.0))
-                                .overflow_hidden()
+                                
                                 .child(
                                     div()
                                         .px(px(16.0))
