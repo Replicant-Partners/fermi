@@ -244,6 +244,42 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
             is_delegation: false,
         },
         BuiltinToolDef {
+            name: "read_workspace_output",
+            description: "Read a typed output from any workspace. Use this to consume results published by upstream workspaces (e.g., team prior → tournament path). Returns the output value, version, and last update time.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workspace_id": {
+                        "type": "string",
+                        "description": "UUID of the workspace to read from"
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Output key, e.g. 'predicted_probability', 'driver_scores', 'sobol_indices'"
+                    }
+                },
+                "required": ["workspace_id", "key"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "list_workspace_outputs",
+            description: "List all published outputs for a workspace. Returns keys, values, versions, and update times.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workspace_id": {
+                        "type": "string",
+                        "description": "UUID of the workspace to list outputs from"
+                    }
+                },
+                "required": ["workspace_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
             name: "list_workspace_agents",
             description: "List all agents that are members of the current workspace.",
             input_schema: json!({
@@ -1733,6 +1769,8 @@ impl ToolRegistry {
             "execute_agent" => execute_execute_agent(input, ctx).await,
             "list_agents" => execute_list_agents(ctx).await,
             "read_workspace_file" => execute_read_workspace_file(input, ctx).await,
+            "read_workspace_output" => execute_read_workspace_output(input, ctx).await,
+            "list_workspace_outputs" => execute_list_workspace_outputs(input, ctx).await,
             "list_workspace_agents" => execute_list_workspace_agents(ctx).await,
             "generate_image" => execute_generate_image(input).await,
             "edit_image" => execute_edit_image(input).await,
@@ -4582,6 +4620,97 @@ async fn execute_read_workspace_file(
         .await
         .map_err(|e| format!("Join error: {}", e))?
         .map_err(|e| format!("Failed to read file: {}", e))
+}
+
+/// Read a single typed output from any workspace (cross-workspace read).
+async fn execute_read_workspace_output(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let workspace_id = input
+        .get("workspace_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: workspace_id")?;
+    let key = input
+        .get("key")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: key")?;
+
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| "Invalid workspace_id — must be a UUID".to_string())?;
+
+    let pool = ctx.memory_store.pool();
+    let row = sqlx::query(
+        "SELECT value, version, updated_at, updated_by
+         FROM workspace_outputs
+         WHERE workspace_id = $1 AND key = $2",
+    )
+    .bind(ws_uuid)
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Database error: {}", e))?
+    .ok_or_else(|| format!("Output '{}' not found in workspace {}", key, workspace_id))?;
+
+    let value: serde_json::Value = row.get("value");
+    let version: i32 = row.get("version");
+    let updated_at: chrono::DateTime<chrono::Utc> = row.get("updated_at");
+
+    Ok(serde_json::json!({
+        "workspace_id": workspace_id,
+        "key": key,
+        "value": value,
+        "version": version,
+        "updated_at": updated_at.to_rfc3339(),
+    })
+    .to_string())
+}
+
+/// List all published outputs for a workspace (cross-workspace read).
+async fn execute_list_workspace_outputs(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let workspace_id = input
+        .get("workspace_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: workspace_id")?;
+
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| "Invalid workspace_id — must be a UUID".to_string())?;
+
+    let pool = ctx.memory_store.pool();
+    let rows = sqlx::query(
+        "SELECT key, value, version, updated_at
+         FROM workspace_outputs
+         WHERE workspace_id = $1
+         ORDER BY key",
+    )
+    .bind(ws_uuid)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Database error: {}", e))?;
+
+    let outputs: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "key": r.get::<String, _>("key"),
+                "value": r.get::<serde_json::Value, _>("value"),
+                "version": r.get::<i32, _>("version"),
+                "updated_at": r.get::<chrono::DateTime<chrono::Utc>, _>("updated_at").to_rfc3339(),
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "workspace_id": workspace_id,
+        "outputs": outputs,
+        "count": outputs.len(),
+    })
+    .to_string())
 }
 
 async fn execute_list_workspace_agents(ctx: &ToolContext) -> Result<String, String> {
