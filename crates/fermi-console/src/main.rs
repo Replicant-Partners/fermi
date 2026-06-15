@@ -965,33 +965,52 @@ impl FermiConsole {
     }
 
     fn fetch_workspace_forecasts(&mut self, cx: &mut Context<Self>) {
+        if !self.connected {
+            return; // Don't fetch if not signed in
+        }
         self.workspace_forecasts_loading = true;
         let api = self.api.clone();
         cx.spawn(async move |this, cx| {
-            match api.list_forecast_workspaces().await {
-                Ok(resp) => {
+            // Spawn onto tokio runtime for proper I/O
+            let result = tokio::spawn(async move {
+                api.list_forecast_workspaces().await
+            })
+            .await;
+
+            match result {
+                Ok(Ok(resp)) => {
                     let workspaces = resp
                         .get("workspaces")
                         .and_then(|v| v.as_array())
                         .cloned()
                         .unwrap_or_default();
+                    log::info!("[workspaces] Fetched {} fermi_forecast workspaces", workspaces.len());
+
+                    // Parse workspace metadata from the list response — no per-workspace
+                    // HTTP calls. Params are extracted from workspace name pattern.
                     let mut forecasts: Vec<WorkspaceForecast> = Vec::new();
                     for ws in &workspaces {
                         let ws_id = ws.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let created = ws.get("created_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-                        // Try to read params from the workspace outputs
-                        let params = api.get_workspace_output(&ws_id, "params").await.ok()
-                            .and_then(|r| r.get("value").cloned());
-                        let prob = api.get_workspace_output(&ws_id, "predicted_probability").await.ok()
-                            .and_then(|r| r.get("value").and_then(|v| v.as_f64()));
-
-                        let team_id = params.as_ref().and_then(|p| p.get("team_id")).and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let team_name = params.as_ref().and_then(|p| p.get("team_name")).and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let group = params.as_ref().and_then(|p| p.get("group")).and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let program_type = params.as_ref().and_then(|p| p.get("program_type")).and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let elo = params.as_ref().and_then(|p| p.get("elo_current")).and_then(|v| v.as_f64());
+                        // Parse team info from workspace name pattern:
+                        // "Team Prior — Argentina (ARG)" or "Tournament Path — Group B"
+                        let (team_name, team_id, group, program_type, elo) = if name.starts_with("Team Prior") {
+                            // Extract team name from "Team Prior — Name (ID)"
+                            let after_dash = name.strip_prefix("Team Prior — ").unwrap_or(&name);
+                            let tn = after_dash.split(" (").next().unwrap_or(after_dash).to_string();
+                            let tid = after_dash.split('(').nth(1)
+                                .and_then(|s| s.strip_suffix(')'))
+                                .map(|s| s.to_string());
+                            (Some(tn), tid, None, Some("TEAM_PRIOR".to_string()), None)
+                        } else if name.starts_with("Tournament Path") {
+                            let grp = name.strip_prefix("Tournament Path — Group ")
+                                .map(|s| s.to_string());
+                            (None, None, grp, Some("TOURNAMENT_PATH".to_string()), None)
+                        } else {
+                            (None, None, None, None, None)
+                        };
 
                         forecasts.push(WorkspaceForecast {
                             workspace_id: ws_id,
@@ -1000,19 +1019,27 @@ impl FermiConsole {
                             team_name,
                             group,
                             program_type,
-                            probability: prob,
+                            probability: None, // populated later when outputs exist
                             elo,
                             created_at: created,
                         });
                     }
+
                     this.update(cx, |this, cx| {
                         this.workspace_forecasts = forecasts;
                         this.workspace_forecasts_loading = false;
                         cx.notify();
                     }).ok();
                 }
+                Ok(Err(e)) => {
+                    log::error!("[workspaces] Failed to fetch: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.workspace_forecasts_loading = false;
+                        cx.notify();
+                    }).ok();
+                }
                 Err(e) => {
-                    log::error!("Failed to fetch workspace forecasts: {}", e);
+                    log::error!("[workspaces] Task error: {}", e);
                     this.update(cx, |this, cx| {
                         this.workspace_forecasts_loading = false;
                         cx.notify();
