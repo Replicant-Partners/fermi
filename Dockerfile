@@ -32,8 +32,15 @@ RUN sed -i '/"fermi-lsp", "crates\/fermi-console"/d' Cargo.toml && \
 # (fermi-console is not a [dependency], but fermi-lsp might add one later).
 # This is a no-op if the lines aren't present.
 
-# Build only the api-server binary in release mode.
-RUN cargo build --release --bin api-server
+# Build the api-server plus the Spec 22 operator binaries
+# (embedding provenance backfill + anchor management). All share the same
+# dependency graph so this adds almost no incremental compile time.
+# The backfill binary is needed in the runtime image so it can be invoked
+# from a Railway shell against the same DATABASE_URL the api-server uses —
+# important when the operator's local machine can't reach Neon directly.
+RUN cargo build --release --bin api-server \
+    --bin backfill-embedding-provenance \
+    --bin embedding-anchors
 
 # ─── Stage 2: Minimal runtime image ───────────────────────────────
 FROM debian:bookworm-slim
@@ -46,8 +53,10 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the binary from builder.
+# Copy the binaries from builder.
 COPY --from=builder /app/target/release/api-server /app/api-server
+COPY --from=builder /app/target/release/backfill-embedding-provenance /app/backfill-embedding-provenance
+COPY --from=builder /app/target/release/embedding-anchors /app/embedding-anchors
 
 # Copy templates and static assets.
 COPY templates /app/templates
