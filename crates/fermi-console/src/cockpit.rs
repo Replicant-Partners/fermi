@@ -5260,8 +5260,14 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                         div()
                             .text_size(px(10.0))
                             .text_color(rgb(theme::FG_DIM))
-                            .min_w(px(0.0))
-                            .max_w(px(400.0))
+                            // min_w large enough to hold a multi-word phrase,
+                            // not 0 — when the parent flex_wrap()s, the text
+                            // element otherwise shrinks below per-word width
+                            // and GPUI falls back to per-character line breaks
+                            // ("s/t/a/r/t/i/n/g" stacked vertically).
+                            .min_w(px(220.0))
+                            .max_w(px(560.0))
+                            .flex_grow()
                             .child(state.inside_view_explanation.clone()),
                     )
                     .when(state.forecast_confidence > 0.0, |el| {
@@ -8144,6 +8150,242 @@ fn render_driver_editor_and_evidence(
                 .text_color(rgb(theme::FG_FAINT))
                 .child("Values save when you close, switch drivers, or simulate (Ctrl+R)."),
         )
+        // ── Scheduled research for this driver ────────────────────
+        // Every agent attached to this driver — auto-assigned by Fermi
+        // during decomposition OR manually added via the picker — gets
+        // its own schedule controls here. Previously the ▶ / 📅 / 📅
+        // affordance lived only on the picker's "Recommended" card,
+        // which meant auto-spawned agents had no path to be scheduled
+        // without navigating to the picker first. The driver editor is
+        // the natural landing page after Fermi spawns agents for a
+        // driver, so the controls live here too.
+        .when(!driver_agents.is_empty(), |el| {
+            let driver_name_owned = name.to_string();
+            // Convert &str borrows to owned Strings for the closures.
+            let assigned_agents: Vec<String> =
+                driver_agents.iter().map(|s| s.to_string()).collect();
+            // Persisted schedules for this driver (so the operator can
+            // tell at a glance which agents are already on a recurring
+            // schedule vs which are just attached).
+            let driver_schedules: std::collections::HashMap<String, ForecastSchedule> =
+                state
+                    .schedules
+                    .iter()
+                    .filter(|s| s.driver_name == name && s.enabled)
+                    .map(|s| (s.agent_id.clone(), s.clone()))
+                    .collect();
+
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .mt(px(8.0))
+                    .pt(px(8.0))
+                    .border_t_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::CYAN))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!(
+                                "Scheduled research ({})",
+                                assigned_agents.len()
+                            )),
+                    )
+                    .child({
+                        let mut col = div().flex().flex_col().gap(px(6.0));
+                        for agent_id in &assigned_agents {
+                            let agent_id_str = agent_id.clone();
+                            let dn_run = driver_name_owned.clone();
+                            let aid_run = agent_id_str.clone();
+                            let dn_daily = driver_name_owned.clone();
+                            let aid_daily = agent_id_str.clone();
+                            let dn_weekly = driver_name_owned.clone();
+                            let aid_weekly = agent_id_str.clone();
+
+                            // Existing schedule (if any) for this agent
+                            let active = driver_schedules.get(&agent_id_str);
+                            let active_label = active.map(|s| {
+                                if s.interval_hours >= 168 {
+                                    "📅 Weekly".to_string()
+                                } else if s.interval_hours >= 24 {
+                                    "📅 Daily".to_string()
+                                } else {
+                                    format!("⏱ every {}h", s.interval_hours)
+                                }
+                            });
+
+                            // Description from registry, fall back to
+                            // generic so auto-spawned agents render.
+                            let desc = state
+                                .registry
+                                .get(&agent_id_str)
+                                .ok()
+                                .map(|c| c.metadata.description.clone())
+                                .filter(|d| !d.is_empty())
+                                .unwrap_or_else(|| "Research agent".into());
+
+                            col = col.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.0))
+                                    .px(px(10.0))
+                                    .py(px(8.0))
+                                    .rounded(px(4.0))
+                                    .bg(rgb(theme::BG_ELEVATED))
+                                    .border_1()
+                                    .border_color(rgb(theme::FG_FAINT))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .text_color(rgb(theme::CYAN))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .child(agent_id_str.clone()),
+                                            )
+                                            .when(active_label.is_some(), |el| {
+                                                el.child(
+                                                    div()
+                                                        .text_size(px(9.0))
+                                                        .text_color(rgb(theme::GREEN))
+                                                        .px(px(6.0))
+                                                        .py(px(1.0))
+                                                        .rounded(px(3.0))
+                                                        .bg(rgb(theme::BG))
+                                                        .border_1()
+                                                        .border_color(rgb(theme::GREEN))
+                                                        .child(
+                                                            active_label.unwrap().clone(),
+                                                        ),
+                                                )
+                                            })
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(rgb(theme::FG_DIM))
+                                                    .min_w(px(0.0))
+                                                    .child(desc),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap(px(6.0))
+                                            .child(
+                                                div()
+                                                    .id(ElementId::Name(
+                                                        format!(
+                                                            "editor-run-{}-{}",
+                                                            name, agent_id_str
+                                                        )
+                                                        .into(),
+                                                    ))
+                                                    .text_size(px(10.0))
+                                                    .text_color(rgb(theme::CYAN))
+                                                    .px(px(8.0))
+                                                    .py(px(3.0))
+                                                    .rounded(px(3.0))
+                                                    .bg(rgb(theme::BG))
+                                                    .border_1()
+                                                    .border_color(rgb(theme::CYAN))
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                                    .on_click(cx.listener(
+                                                        move |this, _event, _window, cx| {
+                                                            this.assign_agent_to_driver(
+                                                                &dn_run,
+                                                                &aid_run,
+                                                                Schedule::Once,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    ))
+                                                    .child("▶ Run Now"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(ElementId::Name(
+                                                        format!(
+                                                            "editor-daily-{}-{}",
+                                                            name, agent_id_str
+                                                        )
+                                                        .into(),
+                                                    ))
+                                                    .text_size(px(10.0))
+                                                    .text_color(rgb(theme::GREEN))
+                                                    .px(px(8.0))
+                                                    .py(px(3.0))
+                                                    .rounded(px(3.0))
+                                                    .bg(rgb(theme::BG))
+                                                    .border_1()
+                                                    .border_color(rgb(theme::GREEN))
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                                    .on_click(cx.listener(
+                                                        move |this, _event, _window, cx| {
+                                                            this.assign_agent_to_driver(
+                                                                &dn_daily,
+                                                                &aid_daily,
+                                                                Schedule::Every {
+                                                                    interval: 1,
+                                                                    unit:
+                                                                        fermi::ast::TimeUnit::Day,
+                                                                },
+                                                                cx,
+                                                            );
+                                                        },
+                                                    ))
+                                                    .child("📅 Daily"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(ElementId::Name(
+                                                        format!(
+                                                            "editor-weekly-{}-{}",
+                                                            name, agent_id_str
+                                                        )
+                                                        .into(),
+                                                    ))
+                                                    .text_size(px(10.0))
+                                                    .text_color(rgb(theme::GOLD))
+                                                    .px(px(8.0))
+                                                    .py(px(3.0))
+                                                    .rounded(px(3.0))
+                                                    .bg(rgb(theme::BG))
+                                                    .border_1()
+                                                    .border_color(rgb(theme::GOLD))
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                                    .on_click(cx.listener(
+                                                        move |this, _event, _window, cx| {
+                                                            this.assign_agent_to_driver(
+                                                                &dn_weekly,
+                                                                &aid_weekly,
+                                                                Schedule::Every {
+                                                                    interval: 1,
+                                                                    unit:
+                                                                        fermi::ast::TimeUnit::Week,
+                                                                },
+                                                                cx,
+                                                            );
+                                                        },
+                                                    ))
+                                                    .child("📅 Weekly"),
+                                            ),
+                                    ),
+                            );
+                        }
+                        col
+                    }),
+            )
+        })
         // ── Evidence for this driver ──────────────────────────────
         .when(!driver_evidence.is_empty(), |el| {
             el.child(
