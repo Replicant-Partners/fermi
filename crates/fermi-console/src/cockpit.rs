@@ -2777,6 +2777,129 @@ impl CockpitState {
         cx.notify();
     }
 
+    /// Update the schedule for an agent that is ALREADY bound to a driver.
+    ///
+    /// `base_agent_id` is the registry id (e.g. "football_analyst"), NOT the
+    /// bound AST agent name (e.g. "football_analyst_argentina_elo_squad_strength").
+    /// The schedule API is keyed on (forecast_id, driver_name, base_agent_id),
+    /// so passing the bound name produces a wrong, duplicated entry.
+    ///
+    /// Does NOT add a new AgentStmt — that's what `assign_agent_to_driver`
+    /// is for. This is the right call when the user clicks ▶/📅/📅 on an
+    /// already-attached agent.
+    ///
+    /// Schedule::Once → triggers an immediate re-run via fire_agent + clears
+    /// any persisted recurring schedule.
+    /// Schedule::Every / Cron → upserts the persisted schedule. Does not
+    /// fire immediately — the next scheduled invocation will pick it up.
+    pub fn update_schedule_for_assigned_agent(
+        &mut self,
+        driver_name: &str,
+        base_agent_id: &str,
+        schedule: Schedule,
+        cx: &mut Context<Self>,
+    ) {
+        let bound_name = format!("{}_{}", base_agent_id, sanitize_name(driver_name));
+
+        // Update the in-memory AST schedule on the bound agent (if it exists).
+        // This keeps the FPL source in sync — generate_fpl_text reads from
+        // the agents list. If for some reason the bound agent isn't in the
+        // AST (e.g. orphaned schedule from a previous session), we skip the
+        // AST update silently rather than create a new agent.
+        if let Some(a) = self.program.agent_mut(&bound_name) {
+            a.schedule = Some(schedule.clone());
+        } else {
+            log::warn!(
+                "[schedule] update_schedule: bound agent '{}' not in AST — skipping AST mutation",
+                bound_name
+            );
+        }
+
+        // Persist or fire based on schedule kind.
+        match &schedule {
+            Schedule::Once => {
+                // Fire immediately. Use the stored query if we can find it,
+                // otherwise build a generic one so the button still does
+                // something useful.
+                let query = self
+                    .program
+                    .agent(&bound_name)
+                    .map(|a| a.query.clone())
+                    .unwrap_or_else(|| {
+                        let q_text = self
+                            .program
+                            .question()
+                            .map(|q| q.text.clone())
+                            .unwrap_or_default();
+                        format!(
+                            "Research evidence for the '{}' driver in the forecast: \"{}\"",
+                            driver_name, q_text
+                        )
+                    });
+                self.fire_agent(base_agent_id, &query, cx);
+                self.messages.push(AssistantMessage {
+                    node: format!("driver:{}", driver_name),
+                    kind: MessageKind::Info,
+                    text: format!(
+                        "Agent '{}' re-running for '{}' (one-shot).",
+                        base_agent_id, driver_name
+                    ),
+                });
+            }
+            Schedule::Every { interval, unit } => {
+                let interval_hours: i32 = match unit {
+                    fermi::ast::TimeUnit::Minute => 1,
+                    fermi::ast::TimeUnit::Hour => *interval as i32,
+                    fermi::ast::TimeUnit::Day => *interval as i32 * 24,
+                    fermi::ast::TimeUnit::Week => *interval as i32 * 168,
+                    fermi::ast::TimeUnit::Month => *interval as i32 * 720,
+                };
+                let query = self
+                    .program
+                    .agent(&bound_name)
+                    .map(|a| a.query.clone())
+                    .unwrap_or_default();
+                let cadence = format!("every {} {:?}", interval, unit);
+                self.messages.push(AssistantMessage {
+                    node: format!("driver:{}", driver_name),
+                    kind: MessageKind::Info,
+                    text: format!(
+                        "Agent '{}' on '{}': schedule updated to {}.",
+                        base_agent_id, driver_name, cadence
+                    ),
+                });
+                if let Some(fid) = self.forecast_id.clone() {
+                    let req = UpsertScheduleRequest {
+                        agent_id: base_agent_id.to_string(),
+                        driver_name: driver_name.to_string(),
+                        query,
+                        interval_hours,
+                    };
+                    let api = self.api.clone();
+                    cx.spawn(async move |this, cx| {
+                        match api.upsert_forecast_schedule(&fid, &req).await {
+                            Ok(_) => {
+                                this.update(cx, |state, cx| state.load_schedules(cx)).ok();
+                            }
+                            Err(e) => log::warn!("[schedule] upsert failed: {}", e),
+                        }
+                    })
+                    .detach();
+                } else {
+                    log::info!(
+                        "[schedule] no forecast_id yet — schedule only persisted in AST"
+                    );
+                }
+            }
+            Schedule::Cron(_) => {
+                // Cron schedules go through the same upsert path as Every,
+                // but the UI doesn't expose them today. Stub for future.
+                log::warn!("[schedule] cron schedules not yet supported in UI");
+            }
+        }
+        cx.notify();
+    }
+
     /// Re-run a previously completed or failed agent using its stored query.
     pub fn retry_agent(&mut self, agent_name: &str, cx: &mut Context<Self>) {
         // Look up the agent in the AST to get its query
@@ -7319,20 +7442,26 @@ fn render_agent_picker(
             .child({
                 let mut col = div().flex().flex_col().gap(px(6.0));
                 for assigned in &driver_agents {
-                    let agent_id = assigned.clone();
-                    let dn_run = dn.clone();
-                    let aid_run = agent_id.clone();
-                    let dn_daily = dn.clone();
-                    let aid_daily = agent_id.clone();
-                    let dn_weekly = dn.clone();
-                    let aid_weekly = agent_id.clone();
+                    // The AST agent name is the BOUND name
+                    // (`<base>_<driver>`). The schedule API and the
+                    // registry are keyed on the BASE name. Resolve once
+                    // here so the closures below pass the right id.
+                    let bound_name = assigned.clone();
+                    let base_id =
+                        base_agent_id_for_bound(&bound_name, driver_name);
 
-                    // Description from the registry, falling back to a
-                    // generic label so auto-spawned agents (e.g.
-                    // macro_forecaster) still get a row.
+                    let dn_run = dn.clone();
+                    let baid_run = base_id.clone();
+                    let dn_daily = dn.clone();
+                    let baid_daily = base_id.clone();
+                    let dn_weekly = dn.clone();
+                    let baid_weekly = base_id.clone();
+
+                    // Description from the registry — lookup uses the
+                    // BASE agent id so auto-spawned agents still resolve.
                     let desc = state
                         .registry
-                        .get(&agent_id)
+                        .get(&base_id)
                         .ok()
                         .map(|c| c.metadata.description.clone())
                         .filter(|d| !d.is_empty())
@@ -7359,7 +7488,10 @@ fn render_agent_picker(
                                             .text_size(px(11.0))
                                             .text_color(rgb(theme::CYAN))
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .child(agent_id.clone()),
+                                            // Display the BASE agent id, not
+                                            // the bound name (which contains
+                                            // a redundant driver suffix).
+                                            .child(base_id.clone()),
                                     )
                                     .child(
                                         div()
@@ -7379,7 +7511,7 @@ fn render_agent_picker(
                                     .child(
                                         div()
                                             .id(ElementId::Name(
-                                                format!("assigned-run-{}-{}", driver_name, agent_id).into(),
+                                                format!("assigned-run-{}-{}", driver_name, base_id).into(),
                                             ))
                                             .text_size(px(10.0))
                                             .text_color(rgb(theme::CYAN))
@@ -7392,8 +7524,8 @@ fn render_agent_picker(
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                                             .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.assign_agent_to_driver(
-                                                    &dn_run, &aid_run, Schedule::Once, cx,
+                                                this.update_schedule_for_assigned_agent(
+                                                    &dn_run, &baid_run, Schedule::Once, cx,
                                                 );
                                             }))
                                             .child("▶ Run Now"),
@@ -7401,7 +7533,7 @@ fn render_agent_picker(
                                     .child(
                                         div()
                                             .id(ElementId::Name(
-                                                format!("assigned-daily-{}-{}", driver_name, agent_id).into(),
+                                                format!("assigned-daily-{}-{}", driver_name, base_id).into(),
                                             ))
                                             .text_size(px(10.0))
                                             .text_color(rgb(theme::GREEN))
@@ -7414,9 +7546,9 @@ fn render_agent_picker(
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                                             .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.assign_agent_to_driver(
+                                                this.update_schedule_for_assigned_agent(
                                                     &dn_daily,
-                                                    &aid_daily,
+                                                    &baid_daily,
                                                     Schedule::Every {
                                                         interval: 1,
                                                         unit: fermi::ast::TimeUnit::Day,
@@ -7429,7 +7561,7 @@ fn render_agent_picker(
                                     .child(
                                         div()
                                             .id(ElementId::Name(
-                                                format!("assigned-weekly-{}-{}", driver_name, agent_id).into(),
+                                                format!("assigned-weekly-{}-{}", driver_name, base_id).into(),
                                             ))
                                             .text_size(px(10.0))
                                             .text_color(rgb(theme::GOLD))
@@ -7442,9 +7574,9 @@ fn render_agent_picker(
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                                             .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.assign_agent_to_driver(
+                                                this.update_schedule_for_assigned_agent(
                                                     &dn_weekly,
-                                                    &aid_weekly,
+                                                    &baid_weekly,
                                                     Schedule::Every {
                                                         interval: 1,
                                                         unit: fermi::ast::TimeUnit::Week,
@@ -8196,17 +8328,25 @@ fn render_driver_editor_and_evidence(
                     )
                     .child({
                         let mut col = div().flex().flex_col().gap(px(6.0));
-                        for agent_id in &assigned_agents {
-                            let agent_id_str = agent_id.clone();
-                            let dn_run = driver_name_owned.clone();
-                            let aid_run = agent_id_str.clone();
-                            let dn_daily = driver_name_owned.clone();
-                            let aid_daily = agent_id_str.clone();
-                            let dn_weekly = driver_name_owned.clone();
-                            let aid_weekly = agent_id_str.clone();
+                        for bound_name in &assigned_agents {
+                            // The AST has the BOUND name
+                            // (`<base>_<driver>`); the schedule API and the
+                            // registry are keyed on the BASE name. Resolve
+                            // once here so closures + lookups use the
+                            // right id.
+                            let bound = bound_name.clone();
+                            let base_id =
+                                base_agent_id_for_bound(&bound, &driver_name_owned);
 
-                            // Existing schedule (if any) for this agent
-                            let active = driver_schedules.get(&agent_id_str);
+                            let dn_run = driver_name_owned.clone();
+                            let baid_run = base_id.clone();
+                            let dn_daily = driver_name_owned.clone();
+                            let baid_daily = base_id.clone();
+                            let dn_weekly = driver_name_owned.clone();
+                            let baid_weekly = base_id.clone();
+
+                            // Existing persisted schedule keyed on BASE id.
+                            let active = driver_schedules.get(&base_id);
                             let active_label = active.map(|s| {
                                 if s.interval_hours >= 168 {
                                     "📅 Weekly".to_string()
@@ -8217,11 +8357,12 @@ fn render_driver_editor_and_evidence(
                                 }
                             });
 
-                            // Description from registry, fall back to
-                            // generic so auto-spawned agents render.
+                            // Description from registry (BASE id lookup)
+                            // — fall back to a generic label for agents
+                            // that aren't in the registry.
                             let desc = state
                                 .registry
-                                .get(&agent_id_str)
+                                .get(&base_id)
                                 .ok()
                                 .map(|c| c.metadata.description.clone())
                                 .filter(|d| !d.is_empty())
@@ -8248,7 +8389,10 @@ fn render_driver_editor_and_evidence(
                                                     .text_size(px(11.0))
                                                     .text_color(rgb(theme::CYAN))
                                                     .font_weight(FontWeight::SEMIBOLD)
-                                                    .child(agent_id_str.clone()),
+                                                    // Display the BASE id; the
+                                                    // bound name carries a
+                                                    // redundant driver suffix.
+                                                    .child(base_id.clone()),
                                             )
                                             .when(active_label.is_some(), |el| {
                                                 el.child(
@@ -8283,7 +8427,7 @@ fn render_driver_editor_and_evidence(
                                                     .id(ElementId::Name(
                                                         format!(
                                                             "editor-run-{}-{}",
-                                                            name, agent_id_str
+                                                            name, base_id
                                                         )
                                                         .into(),
                                                     ))
@@ -8299,9 +8443,9 @@ fn render_driver_editor_and_evidence(
                                                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                                                     .on_click(cx.listener(
                                                         move |this, _event, _window, cx| {
-                                                            this.assign_agent_to_driver(
+                                                            this.update_schedule_for_assigned_agent(
                                                                 &dn_run,
-                                                                &aid_run,
+                                                                &baid_run,
                                                                 Schedule::Once,
                                                                 cx,
                                                             );
@@ -8314,7 +8458,7 @@ fn render_driver_editor_and_evidence(
                                                     .id(ElementId::Name(
                                                         format!(
                                                             "editor-daily-{}-{}",
-                                                            name, agent_id_str
+                                                            name, base_id
                                                         )
                                                         .into(),
                                                     ))
@@ -8330,9 +8474,9 @@ fn render_driver_editor_and_evidence(
                                                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                                                     .on_click(cx.listener(
                                                         move |this, _event, _window, cx| {
-                                                            this.assign_agent_to_driver(
+                                                            this.update_schedule_for_assigned_agent(
                                                                 &dn_daily,
-                                                                &aid_daily,
+                                                                &baid_daily,
                                                                 Schedule::Every {
                                                                     interval: 1,
                                                                     unit:
@@ -8349,7 +8493,7 @@ fn render_driver_editor_and_evidence(
                                                     .id(ElementId::Name(
                                                         format!(
                                                             "editor-weekly-{}-{}",
-                                                            name, agent_id_str
+                                                            name, base_id
                                                         )
                                                         .into(),
                                                     ))
@@ -8365,9 +8509,9 @@ fn render_driver_editor_and_evidence(
                                                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                                                     .on_click(cx.listener(
                                                         move |this, _event, _window, cx| {
-                                                            this.assign_agent_to_driver(
+                                                            this.update_schedule_for_assigned_agent(
                                                                 &dn_weekly,
-                                                                &aid_weekly,
+                                                                &baid_weekly,
                                                                 Schedule::Every {
                                                                     interval: 1,
                                                                     unit:
@@ -13052,6 +13196,21 @@ fn clean_fpl_string(s: &str) -> String {
         .chars()
         .take(500) // truncate very long strings
         .collect()
+}
+
+/// Parse a bound AST agent name back to its base registry id.
+///
+/// `assign_agent_to_driver` constructs the bound name as
+/// `<base_agent_id>_<sanitize_name(driver_name)>`. This is the inverse:
+/// strip the suffix to recover `<base_agent_id>`. Falls back to the bound
+/// name unchanged when the suffix doesn't match (e.g. agents added by a
+/// path that doesn't follow the convention).
+fn base_agent_id_for_bound(bound_name: &str, driver_name: &str) -> String {
+    let suffix = format!("_{}", sanitize_name(driver_name));
+    bound_name
+        .strip_suffix(&suffix)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| bound_name.to_string())
 }
 
 fn sanitize_name(name: &str) -> String {
