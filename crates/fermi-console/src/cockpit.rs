@@ -5442,12 +5442,12 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                     )
                 })
                 .when(state.publish_status.is_some(), |el| {
-                    // Color publish status by content. Long error messages
-                    // (e.g. "Failed: Server error: error returned from
-                    // database: ...") were stretching the row and pushing
-                    // the chart/driver column into a degenerate width
-                    // where words broke to one character per line. Cap
-                    // the width and let it wrap.
+                    // Render publish status with strict width control:
+                    // a fixed width (not min/max) so the flex_wrap parent
+                    // doesn't squeeze it into a sliver that breaks text
+                    // per-character. Long errors get truncated visually;
+                    // the full message lives in the assistant messages
+                    // panel (the messages.push at the publish call site).
                     let msg = state.publish_status.as_deref().unwrap_or("").to_string();
                     let color = if msg.starts_with("Failed") || msg.contains("error") || msg.contains("Error") {
                         theme::RED
@@ -5456,13 +5456,22 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                     } else {
                         theme::GREEN
                     };
+                    // Show only the first ~80 chars on the badge —
+                    // multi-paragraph DB errors otherwise blow out the
+                    // header layout no matter what wrapping policy we use.
+                    let short = if msg.chars().count() > 80 {
+                        let truncated: String = msg.chars().take(77).collect();
+                        format!("{}…", truncated)
+                    } else {
+                        msg.clone()
+                    };
                     el.child(
                         div()
+                            .flex_none()
+                            .w(px(360.0))
                             .text_size(px(11.0))
                             .text_color(rgb(color))
-                            .max_w(px(360.0))
-                            .min_w(px(0.0))
-                            .child(msg),
+                            .child(short),
                     )
                 }),
         )

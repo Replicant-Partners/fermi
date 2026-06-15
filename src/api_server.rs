@@ -633,6 +633,10 @@ async fn run_migrations(db: &PgPool) {
         // Idempotent: gated on `embedding_model_id IS NULL` per row so
         // re-runs are no-ops once backfill has been applied.
         "migrations/145_embedding_provenance_backfill.sql",
+        // Schema-drift fix: fermi_forecasts.notebook_id was declared
+        // NOT NULL in migration 048 but the fermi-as-app workflow creates
+        // forecasts without a notebook. Same family as 138 and 144.
+        "migrations/146_fermi_forecasts_notebook_nullable.sql",
     ];
 
     for file in &migration_files {
