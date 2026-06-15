@@ -626,6 +626,13 @@ async fn run_migrations(db: &PgPool) {
         // and CREATE TABLE IF NOT EXISTS in 094 was a no-op on existing
         // tables. Idempotent.
         "migrations/144_fermi_forecasts_updated_at.sql",
+        // Spec 22 Phase 1b — backfill pre-Spec-22 embedding rows with
+        // synthetic provenance. Pure-SQL equivalent of the Rust
+        // backfill-embedding-provenance binary, runnable as part of the
+        // boot sequence so operators don't have to remember to run it.
+        // Idempotent: gated on `embedding_model_id IS NULL` per row so
+        // re-runs are no-ops once backfill has been applied.
+        "migrations/145_embedding_provenance_backfill.sql",
     ];
 
     for file in &migration_files {
