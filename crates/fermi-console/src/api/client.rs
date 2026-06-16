@@ -1235,6 +1235,69 @@ impl ApiClient {
         let body = response.text().await?;
         serde_json::from_str(&body).map_err(ApiError::Json)
     }
+
+    // ─── BayesOps R-2 sparkline UX ────────────────────────────────────────
+    //
+    // Three calls power the per-driver sparkline affordance in the forecast
+    // editor (Spec 23 §4):
+    //
+    //   - workspace_bayesops_state: single round-trip on render and after
+    //     every refit event. Returns per-driver latest snapshot + pending fit.
+    //   - accept_pending_fit / reject_pending_fit: targets for the inline
+    //     ✓ / ✗ buttons next to a pending-fit badge.
+    //
+    // Both decision endpoints require workspace membership.
+
+    /// Read every learnable driver's BayesOps state in one call. Returns
+    /// `{ workspace_id, drivers: [{ driver_name, latest_snapshot?, pending_fit? }] }`.
+    /// No auth needed (read-only).
+    pub async fn workspace_bayesops_state(
+        &self,
+        workspace_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.get(&format!("/api/workspaces/{}/bayesops/state", workspace_id))
+            .await
+    }
+
+    /// Accept a pending fit: writes `params.<driver>_fitted`, marks the
+    /// pending row accepted, posts an evidence event. Idempotent on rows
+    /// already accepted.
+    pub async fn accept_pending_fit(
+        &self,
+        pending_id: &str,
+        notes: Option<&str>,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            &format!("/api/bayesops/pending/{}/accept", pending_id),
+            &serde_json::json!({ "notes": notes }),
+        )
+        .await
+    }
+
+    /// Reject a pending fit: marks the pending row rejected with notes,
+    /// posts an evidence event. No params write.
+    pub async fn reject_pending_fit(
+        &self,
+        pending_id: &str,
+        notes: Option<&str>,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            &format!("/api/bayesops/pending/{}/reject", pending_id),
+            &serde_json::json!({ "notes": notes }),
+        )
+        .await
+    }
+
+    /// Trigger a manual refit for a workspace. Same code path as the
+    /// post-commit refit hook on resolution. Useful for the editor's
+    /// "refit now" button.
+    pub async fn refit_workspace(&self, workspace_id: &str) -> Result<JsonValue, ApiError> {
+        self.post(
+            &format!("/api/workspaces/{}/refit", workspace_id),
+            &serde_json::json!({}),
+        )
+        .await
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

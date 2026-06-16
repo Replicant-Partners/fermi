@@ -257,6 +257,22 @@ pub struct CockpitState {
     /// Spawned from the `fermi_forecast` app on first orchestration.
     pub workspace_id: Option<String>,
 
+    // ── BayesOps R-2: Sparkline UX ─────────────────────────────────
+    /// Per-driver pending-fit state, keyed by driver name. Populated by
+    /// `load_bayesops_state()` from `/api/workspaces/:id/bayesops/state`.
+    /// The render_driver_card logic checks this first; if a driver has a
+    /// pending fit, the badge renders the `PendingReview` state with
+    /// inline accept/dismiss buttons, taking precedence over the
+    /// post-sim `LearnableBadgeStatus::Fitted` / `PriorFallback`.
+    ///
+    /// Loaded on workspace mount, after every refit response, and on
+    /// `bayesops_fit_pending` workspace event.
+    pub bayesops_pending: std::collections::HashMap<String, PendingFitState>,
+
+    /// Pending in-flight accept/reject calls per driver name — prevents
+    /// double-click double-submit. Cleared on response.
+    pub bayesops_decisions_in_flight: std::collections::HashSet<String>,
+
     // ── Polymarket Price History ──────────────────────────────────
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
     /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
@@ -328,6 +344,35 @@ pub enum LearnableBadgeStatus {
         n_eff: f64,
         ci_width: f64,
     },
+    /// Spec 23 R-2: the refit hook produced a fit whose impact exceeded
+    /// the auto-accept threshold, so it's staged for the forecaster's
+    /// decision. The badge renders the impact delta and inline ✓/✗
+    /// buttons. Accept writes `params.<driver>_fitted` server-side and
+    /// transitions the badge to `Fitted`. Reject drops the staged fit
+    /// and the badge returns to its prior state.
+    PendingReview {
+        pending_id: String,
+        n_eff: f64,
+        ci_width: f64,
+        /// |rate_after - rate_before| × 100 — what the operator sees on
+        /// the badge ("+6pp"). `None` when impact couldn't be computed.
+        delta_pp: Option<f64>,
+        n_observations: i32,
+    },
+}
+
+/// Snapshot of a server-side pending fit, fetched from
+/// `/api/workspaces/:id/bayesops/state`. Lives on `CockpitState` keyed by
+/// driver name (not inside SimResults, which is a per-run artefact —
+/// pending fits persist across local sim re-runs).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingFitState {
+    pub driver_name: String,
+    pub pending_id: String,
+    pub n_observations: i32,
+    pub n_eff: f64,
+    pub ci_width: f64,
+    pub delta_pp: Option<f64>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -468,6 +513,8 @@ impl CockpitState {
             schedules_loading: false,
             pending_toasts: Vec::new(),
             workspace_id: None,
+            bayesops_pending: std::collections::HashMap::new(),
+            bayesops_decisions_in_flight: std::collections::HashSet::new(),
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             hovered_histogram_bin: None,
@@ -1070,6 +1117,7 @@ impl CockpitState {
                             constraints: vec![],
                             evidence_refs: vec![],
                             learnable: false,
+                            feeds_from: None,
                         }
                     } else {
                         let p5 = drv.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.8);
@@ -1100,6 +1148,7 @@ impl CockpitState {
                             constraints: vec![],
                             evidence_refs: vec![],
                             learnable: false,
+                            feeds_from: None,
                         }
                     };
 
@@ -2651,6 +2700,185 @@ impl CockpitState {
         .detach();
     }
 
+    // ─── BayesOps R-2: pending fits ────────────────────────────────────
+    //
+    // Fetch the server's view of "what fits are pending for this workspace,
+    // per driver." The render path consults `self.bayesops_pending` to
+    // decide whether to show the inline accept/dismiss affordance on a
+    // driver's sparkline badge.
+    //
+    // Called on workspace-mount, after every refit, and whenever a
+    // `bayesops_fit_pending` event lands in the workspace messages.
+
+    pub fn load_bayesops_state(&mut self, cx: &mut Context<Self>) {
+        let Some(ref ws_id) = self.workspace_id else {
+            return;
+        };
+        let ws_id = ws_id.clone();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            match api.workspace_bayesops_state(&ws_id).await {
+                Ok(state_value) => {
+                    let drivers = state_value
+                        .get("drivers")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut pending: std::collections::HashMap<String, PendingFitState> =
+                        std::collections::HashMap::new();
+                    for d in drivers {
+                        let driver_name = d
+                            .get("driver_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if driver_name.is_empty() {
+                            continue;
+                        }
+                        if let Some(p) = d.get("pending_fit") {
+                            if p.is_null() {
+                                continue;
+                            }
+                            let pending_id = p
+                                .get("pending_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if pending_id.is_empty() {
+                                continue;
+                            }
+                            let n_observations =
+                                p.get("n_observations").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                            let n_eff = p.get("n_eff").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let ci_width =
+                                p.get("ci_width").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let delta_pp = p.get("delta_pp").and_then(|v| v.as_f64());
+                            pending.insert(
+                                driver_name.clone(),
+                                PendingFitState {
+                                    driver_name,
+                                    pending_id,
+                                    n_observations,
+                                    n_eff,
+                                    ci_width,
+                                    delta_pp,
+                                },
+                            );
+                        }
+                    }
+                    this.update(cx, |state, cx| {
+                        state.bayesops_pending = pending;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!("[bayesops] load_bayesops_state failed: {}", e);
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub fn accept_bayesops_pending(
+        &mut self,
+        driver_name: &str,
+        pending_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.bayesops_decisions_in_flight.contains(driver_name) {
+            return; // ignore double-clicks
+        }
+        self.bayesops_decisions_in_flight
+            .insert(driver_name.to_string());
+        let driver_name = driver_name.to_string();
+        let pending_id = pending_id.to_string();
+        let api = self.api.clone();
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", driver_name),
+            kind: MessageKind::Info,
+            text: format!("✓ Accepting fit for '{}'…", driver_name),
+        });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = api.accept_pending_fit(&pending_id, None).await;
+            this.update(cx, |state, cx| {
+                state.bayesops_decisions_in_flight.remove(&driver_name);
+                match result {
+                    Ok(_) => {
+                        state.bayesops_pending.remove(&driver_name);
+                        state.messages.push(AssistantMessage {
+                            node: format!("driver:{}", driver_name),
+                            kind: MessageKind::Info,
+                            text: format!(
+                                "✓ Fit accepted for '{}'. Run the forecast to apply.",
+                                driver_name
+                            ),
+                        });
+                    }
+                    Err(e) => {
+                        state.messages.push(AssistantMessage {
+                            node: format!("driver:{}", driver_name),
+                            kind: MessageKind::Error,
+                            text: format!("Failed to accept fit for '{}': {}", driver_name, e),
+                        });
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn reject_bayesops_pending(
+        &mut self,
+        driver_name: &str,
+        pending_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.bayesops_decisions_in_flight.contains(driver_name) {
+            return;
+        }
+        self.bayesops_decisions_in_flight
+            .insert(driver_name.to_string());
+        let driver_name = driver_name.to_string();
+        let pending_id = pending_id.to_string();
+        let api = self.api.clone();
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", driver_name),
+            kind: MessageKind::Info,
+            text: format!("✗ Dismissing fit for '{}'…", driver_name),
+        });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = api.reject_pending_fit(&pending_id, None).await;
+            this.update(cx, |state, cx| {
+                state.bayesops_decisions_in_flight.remove(&driver_name);
+                match result {
+                    Ok(_) => {
+                        state.bayesops_pending.remove(&driver_name);
+                        state.messages.push(AssistantMessage {
+                            node: format!("driver:{}", driver_name),
+                            kind: MessageKind::Info,
+                            text: format!("✗ Fit dismissed for '{}'.", driver_name),
+                        });
+                    }
+                    Err(e) => {
+                        state.messages.push(AssistantMessage {
+                            node: format!("driver:{}", driver_name),
+                            kind: MessageKind::Error,
+                            text: format!("Failed to dismiss fit for '{}': {}", driver_name, e),
+                        });
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Manually trigger a scheduled agent now and bump its next_run_at.
     pub fn run_now_schedule(&mut self, schedule_id: &str, cx: &mut Context<Self>) {
         let sid = schedule_id.to_string();
@@ -3963,6 +4191,12 @@ impl CockpitState {
                     learnable_drivers,
                 });
                 self.sim_running = false;
+                // Spec 23 R-2: refresh server-side pending fits after every
+                // sim run so the sparkline badges reflect any fits the refit
+                // hook may have produced since we last looked.
+                if self.workspace_id.is_some() {
+                    self.load_bayesops_state(cx);
+                }
 
                 // ── Update inside view from simulation ────────────
                 // Update inside view from simulation
@@ -4659,6 +4893,9 @@ impl CockpitState {
                 // Restore workspace_id
                 if let Some(ws_id) = state_json.get("workspace_id").and_then(|v| v.as_str()) {
                     self.workspace_id = Some(ws_id.to_string());
+                    // Spec 23 R-2: prime the pending-fits state from the server
+                    // so sparklines render the right badge immediately on load.
+                    self.load_bayesops_state(cx);
                 }
 
                 self.messages.push(AssistantMessage {
@@ -5364,11 +5601,33 @@ impl Render for CockpitState {
                                 let sug_count = self.pending_suggestions.iter()
                                     .filter(|s| s.driver_name == *name)
                                     .count();
-                                let learnable_status = self
+                                // Spec 23 R-2: pending fits take precedence over
+                                // the per-sim Fitted/PriorFallback badge — they
+                                // represent server-side state the user can act on
+                                // now, vs. last-sim state. Construct a synthetic
+                                // LearnableDriverBadge wrapping the pending state.
+                                let pending_badge: Option<LearnableDriverBadge> = self
+                                    .bayesops_pending
+                                    .get(name)
+                                    .map(|p| LearnableDriverBadge {
+                                        driver_name: p.driver_name.clone(),
+                                        status: LearnableBadgeStatus::PendingReview {
+                                            pending_id: p.pending_id.clone(),
+                                            n_eff: p.n_eff,
+                                            ci_width: p.ci_width,
+                                            delta_pp: p.delta_pp,
+                                            n_observations: p.n_observations,
+                                        },
+                                    });
+                                let sim_badge = self
                                     .sim_results
                                     .as_ref()
                                     .and_then(|sr| sr.learnable_drivers.iter()
-                                        .find(|b| b.driver_name == *name));
+                                        .find(|b| b.driver_name == *name))
+                                    .cloned();
+                                // Pending wins; otherwise fall back to sim badge.
+                                let learnable_status_owned = pending_badge.or(sim_badge);
+                                let learnable_status = learnable_status_owned.as_ref();
                                 render_driver_card(
                                     i,
                                     driver,
@@ -6817,34 +7076,124 @@ fn render_driver_card(
                         .child(type_label),
                 )
                 // BayesOps learnable badge — visible only when the driver
-                // opted in via `learnable: true`. Three states:
-                //   • run hasn't happened yet OR no resolution captured:
-                //     neutral "learnable" chip (cyan)
-                //   • last run used the prior (cold start): yellow chip
-                //   • last run substituted a fit: green chip with n=…
+                // opted in via `learnable: true`. Four states:
+                //   • PendingReview (server-side staged fit): orange chip
+                //     with delta + inline ✓ / ✗ buttons (Spec 23 R-2)
+                //   • Fitted (last sim used a fit): green chip with n=…
+                //   • PriorFallback (last sim used prior, cold start): yellow chip
+                //   • None: neutral "learnable" chip (cyan)
                 .when(driver.learnable, |el| {
-                    let (badge_text, badge_color) = match learnable_status {
-                        Some(LearnableDriverBadge { status: LearnableBadgeStatus::Fitted { n_eff, .. }, .. }) => {
-                            (format!("✓ fit n={:.0}", n_eff), theme::GREEN)
+                    match learnable_status {
+                        Some(LearnableDriverBadge {
+                            status: LearnableBadgeStatus::PendingReview {
+                                pending_id, delta_pp, n_observations, ..
+                            },
+                            driver_name: pending_driver,
+                        }) => {
+                            // Compose label: "↻ pending +6pp" or "↻ pending"
+                            let badge_text = match delta_pp {
+                                Some(d) => format!("↻ pending {:+.1}pp", d),
+                                None => format!("↻ pending (n={})", n_observations),
+                            };
+                            let badge_color = theme::GOLD;
+                            let pending_id = pending_id.clone();
+                            let pending_id_for_reject = pending_id.clone();
+                            let driver_name_accept = pending_driver.clone();
+                            let driver_name_reject = pending_driver.clone();
+                            el.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(badge_color))
+                                    .px(px(5.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::BG))
+                                    .border_1()
+                                    .border_color(rgb(badge_color))
+                                    .flex_shrink_0()
+                                    .child(badge_text),
+                            )
+                            // ✓ Accept button
+                            .child(
+                                div()
+                                    .id(ElementId::Name(
+                                        format!("bayesops-accept-{}", driver_name_accept).into(),
+                                    ))
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::GREEN))
+                                    .px(px(6.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::BG))
+                                    .border_1()
+                                    .border_color(rgb(theme::GREEN))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                    .flex_shrink_0()
+                                    .child("✓")
+                                    .on_click(cx.listener(move |this, event, _window, cx| {
+                                        // Stop the click from focusing the driver card.
+                                        let _ = event;
+                                        this.accept_bayesops_pending(
+                                            &driver_name_accept,
+                                            &pending_id,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            // ✗ Dismiss button
+                            .child(
+                                div()
+                                    .id(ElementId::Name(
+                                        format!("bayesops-reject-{}", driver_name_reject).into(),
+                                    ))
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::RED))
+                                    .px(px(6.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::BG))
+                                    .border_1()
+                                    .border_color(rgb(theme::RED))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                    .flex_shrink_0()
+                                    .child("✗")
+                                    .on_click(cx.listener(move |this, event, _window, cx| {
+                                        let _ = event;
+                                        this.reject_bayesops_pending(
+                                            &driver_name_reject,
+                                            &pending_id_for_reject,
+                                            cx,
+                                        );
+                                    })),
+                            )
                         }
-                        Some(LearnableDriverBadge { status: LearnableBadgeStatus::PriorFallback, .. }) => {
-                            ("⏳ prior".to_string(), theme::GOLD)
+                        _ => {
+                            let (badge_text, badge_color) = match learnable_status {
+                                Some(LearnableDriverBadge {
+                                    status: LearnableBadgeStatus::Fitted { n_eff, .. }, ..
+                                }) => (format!("✓ fit n={:.0}", n_eff), theme::GREEN),
+                                Some(LearnableDriverBadge {
+                                    status: LearnableBadgeStatus::PriorFallback, ..
+                                }) => ("⏳ prior".to_string(), theme::GOLD),
+                                _ => ("◌ learnable".to_string(), theme::CYAN),
+                            };
+                            el.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(badge_color))
+                                    .px(px(5.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .bg(rgb(theme::BG))
+                                    .border_1()
+                                    .border_color(rgb(badge_color))
+                                    .flex_shrink_0()
+                                    .child(badge_text),
+                            )
                         }
-                        None => ("◌ learnable".to_string(), theme::CYAN),
-                    };
-                    el.child(
-                        div()
-                            .text_size(px(9.0))
-                            .text_color(rgb(badge_color))
-                            .px(px(5.0))
-                            .py(px(1.0))
-                            .rounded(px(2.0))
-                            .bg(rgb(theme::BG))
-                            .border_1()
-                            .border_color(rgb(badge_color))
-                            .flex_shrink_0()
-                            .child(badge_text),
-                    )
+                    }
                 })
                 .child(
                     div()
@@ -8310,6 +8659,19 @@ fn render_learnable_toggle(
             ..
         }) => Some((
             "⏳ cold start · using prior · BayesOps has no data yet".into(),
+            theme::GOLD,
+        )),
+        // Spec 23 R-2: a pending fit is staged on the server. This toggle
+        // doesn't gate the decision — the per-driver sparkline badge has the
+        // accept/dismiss buttons. We just show a heads-up chip here.
+        Some(LearnableDriverBadge {
+            status: LearnableBadgeStatus::PendingReview { delta_pp, n_observations, .. },
+            ..
+        }) => Some((
+            match delta_pp {
+                Some(d) => format!("↻ pending fit · Δ{:+.1}pp · n={} · review in sparkline", d, n_observations),
+                None => format!("↻ pending fit · n={} · review in sparkline", n_observations),
+            },
             theme::GOLD,
         )),
         // Either the driver isn't learnable or the sim hasn't run since the
@@ -12954,6 +13316,7 @@ fn make_continuous_driver(
         constraints: vec![],
         evidence_refs: vec![],
         learnable: false,
+        feeds_from: None,
     }
 }
 
@@ -12979,6 +13342,7 @@ fn make_binary_driver(
         constraints: vec![],
         evidence_refs: vec![],
         learnable: false,
+        feeds_from: None,
     }
 }
 

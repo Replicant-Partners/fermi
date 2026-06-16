@@ -1730,6 +1730,15 @@ async fn main() {
         .route("/api/bayesops/optimise_for_target", post(handlers::bayesops::optimise_for_target_handler))
         .route("/api/bayesops/posteriors", get(handlers::bayesops::list_posteriors_handler))
         .route("/api/bayesops/posteriors/:id", delete(handlers::bayesops::evict_posterior_handler))
+        // ── R-2: Sparkline UX endpoints (Spec 23 §4.3) ────────────────────────
+        // Single round-trip for the editor to render every learnable-driver
+        // sparkline in a forecast workspace, plus inline accept/reject.
+        .route("/api/workspaces/:workspace_id/bayesops/state",
+            get(handlers::bayesops::workspace_bayesops_state_handler))
+        .route("/api/bayesops/pending/:pending_id/accept",
+            post(handlers::bayesops::accept_pending_handler))
+        .route("/api/bayesops/pending/:pending_id/reject",
+            post(handlers::bayesops::reject_pending_handler))
         // ── BayesOps refit hook (Spec 23 R-1) ─────────────────────────────────
         // Manual trigger for the same refit_workspace function that fires
         // automatically post-commit from POST /api/workspaces/:id/resolve.

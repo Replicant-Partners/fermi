@@ -332,3 +332,450 @@ fn posterior_not_found(id: Uuid) -> (StatusCode, Json<Value>) {
 // keying off this shape don't have to import posterior_reg directly.
 // (Used to surface `prob_exceeds` return shape in OpenAPI clients.)
 // Intentionally empty; serde tags do the work.
+
+// ═════════════════════════════════════════════════════════════════════════════
+// R-2: Sparkline UX endpoints (Spec 23 §4.3)
+//
+// These power the console's forecast-editor sparkline affordances:
+//   GET  /api/workspaces/:id/bayesops/state   — per-driver pending + snapshot
+//   POST /api/bayesops/pending/:id/accept     — write params, mark accepted
+//   POST /api/bayesops/pending/:id/reject     — mark rejected, no params write
+//
+// State is the single round-trip the editor needs to render every sparkline
+// in a forecast. Accept/reject are inline-button targets.
+// ═════════════════════════════════════════════════════════════════════════════
+
+use sqlx::Row as _;
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceBayesopsState {
+    pub workspace_id: Uuid,
+    pub drivers: Vec<DriverState>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DriverState {
+    pub driver_name: String,
+    /// Most-recent snapshot for this driver, if any. Empty for drivers that
+    /// have never been fit (cold start).
+    pub latest_snapshot: Option<SnapshotSummary>,
+    /// Currently-pending fit, if any. At most one per (workspace, driver)
+    /// per the EXCLUDE constraint on bayesops_pending_fits.
+    pub pending_fit: Option<PendingFit>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SnapshotSummary {
+    pub snapshot_id: Uuid,
+    pub fitted: Value,
+    pub n_observations: i32,
+    pub n_eff: f64,
+    pub ci_width: f64,
+    pub quality: String,
+    pub rate_before: Option<f64>,
+    pub rate_after: Option<f64>,
+    pub decision: String,
+    pub fitted_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PendingFit {
+    pub pending_id: Uuid,
+    pub snapshot_id: Uuid,
+    pub fitted: Value,
+    pub n_observations: i32,
+    pub n_eff: f64,
+    pub ci_width: f64,
+    pub quality: String,
+    pub rate_before: Option<f64>,
+    pub rate_after: Option<f64>,
+    pub delta_pp: Option<f64>,
+    pub staged_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// GET /api/workspaces/:workspace_id/bayesops/state
+///
+/// Single round-trip for the editor: returns per-driver state for every
+/// learnable driver that has either a snapshot or a pending fit (or both).
+/// Drivers that have never been fit don't appear here — the editor uses the
+/// FPL declaration plus the local executor's `learnable_drivers` log to
+/// render their pre-fit baseline.
+///
+/// No auth — read-only against tables the resolution + refit hooks already
+/// gate on workspace membership at write time.
+pub async fn workspace_bayesops_state_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(workspace_id): axum::extract::Path<String>,
+) -> Result<Json<WorkspaceBayesopsState>, (StatusCode, Json<Value>)> {
+    let ws_uuid: Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid workspace_id" }))))?;
+
+    // Pull the latest snapshot per driver (one row per driver via DISTINCT ON).
+    let snapshot_rows = sqlx::query(
+        "SELECT DISTINCT ON (driver_name)
+            driver_name, snapshot_id, fitted, n_observations,
+            n_eff, ci_width, quality, rate_before, rate_after,
+            decision, fitted_at
+         FROM bayesops_posterior_snapshots
+         WHERE workspace_id = $1
+         ORDER BY driver_name, fitted_at DESC",
+    )
+    .bind(ws_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_err)?;
+
+    // Pull every pending fit (still 'pending' status). EXCLUDE constraint
+    // guarantees at most one per (workspace, driver).
+    let pending_rows = sqlx::query(
+        "SELECT
+            pf.pending_id, pf.snapshot_id, pf.driver_name, pf.staged_at,
+            s.fitted, s.n_observations, s.n_eff, s.ci_width, s.quality,
+            s.rate_before, s.rate_after
+         FROM bayesops_pending_fits pf
+         JOIN bayesops_posterior_snapshots s ON s.snapshot_id = pf.snapshot_id
+         WHERE pf.workspace_id = $1 AND pf.status = 'pending'
+         ORDER BY pf.driver_name",
+    )
+    .bind(ws_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_err)?;
+
+    // Index by driver_name, then merge
+    let mut by_driver: HashMap<String, DriverState> = HashMap::new();
+    for r in &snapshot_rows {
+        let driver_name: String = r.get("driver_name");
+        by_driver.insert(
+            driver_name.clone(),
+            DriverState {
+                driver_name,
+                latest_snapshot: Some(SnapshotSummary {
+                    snapshot_id: r.get("snapshot_id"),
+                    fitted: r.get("fitted"),
+                    n_observations: r.get("n_observations"),
+                    n_eff: r.get("n_eff"),
+                    ci_width: r.get("ci_width"),
+                    quality: r.get("quality"),
+                    rate_before: r.get("rate_before"),
+                    rate_after: r.get("rate_after"),
+                    decision: r.get("decision"),
+                    fitted_at: r.get("fitted_at"),
+                }),
+                pending_fit: None,
+            },
+        );
+    }
+    for r in &pending_rows {
+        let driver_name: String = r.get("driver_name");
+        let rate_before: Option<f64> = r.get("rate_before");
+        let rate_after: Option<f64> = r.get("rate_after");
+        let delta_pp = match (rate_before, rate_after) {
+            (Some(b), Some(a)) => Some((a - b).abs() * 100.0),
+            _ => None,
+        };
+        let pending = PendingFit {
+            pending_id: r.get("pending_id"),
+            snapshot_id: r.get("snapshot_id"),
+            fitted: r.get("fitted"),
+            n_observations: r.get("n_observations"),
+            n_eff: r.get("n_eff"),
+            ci_width: r.get("ci_width"),
+            quality: r.get("quality"),
+            rate_before,
+            rate_after,
+            delta_pp,
+            staged_at: r.get("staged_at"),
+        };
+        by_driver
+            .entry(driver_name.clone())
+            .and_modify(|d| d.pending_fit = Some(pending.clone()))
+            .or_insert_with(|| DriverState {
+                driver_name,
+                latest_snapshot: None,
+                pending_fit: Some(pending),
+            });
+    }
+
+    let mut drivers: Vec<DriverState> = by_driver.into_values().collect();
+    drivers.sort_by(|a, b| a.driver_name.cmp(&b.driver_name));
+
+    Ok(Json(WorkspaceBayesopsState {
+        workspace_id: ws_uuid,
+        drivers,
+    }))
+}
+
+// PendingFit is cloned during the merge above — derive Clone.
+impl Clone for PendingFit {
+    fn clone(&self) -> Self {
+        Self {
+            pending_id: self.pending_id,
+            snapshot_id: self.snapshot_id,
+            fitted: self.fitted.clone(),
+            n_observations: self.n_observations,
+            n_eff: self.n_eff,
+            ci_width: self.ci_width,
+            quality: self.quality.clone(),
+            rate_before: self.rate_before,
+            rate_after: self.rate_after,
+            delta_pp: self.delta_pp,
+            staged_at: self.staged_at,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct DecisionRequest {
+    /// Optional free-form notes from the operator.
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+/// POST /api/bayesops/pending/:pending_id/accept
+///
+/// Mark a pending fit accepted, write the params, post an evidence event.
+/// Idempotent on already-accepted rows (returns 200 with status='already_accepted').
+pub async fn accept_pending_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(pending_id): axum::extract::Path<String>,
+    principal: fermi_auth::AuthPrincipal,
+    Json(req): Json<DecisionRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let pending_uuid: Uuid = pending_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid pending_id" }))))?;
+    let user_id = principal.user_id();
+
+    // Pull the pending row + snapshot in one query for context
+    let row = sqlx::query(
+        "SELECT pf.workspace_id, pf.driver_name, pf.status,
+                s.fitted, s.snapshot_id
+         FROM bayesops_pending_fits pf
+         JOIN bayesops_posterior_snapshots s ON s.snapshot_id = pf.snapshot_id
+         WHERE pf.pending_id = $1",
+    )
+    .bind(pending_uuid)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(internal_err)?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "pending fit not found" })),
+        )
+    })?;
+
+    let status: String = row.get("status");
+    if status == "accepted" {
+        return Ok(Json(json!({
+            "status": "already_accepted",
+            "pending_id": pending_uuid
+        })));
+    }
+    if status != "pending" {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("pending fit is in '{}' state; only 'pending' can be accepted", status)
+            })),
+        ));
+    }
+
+    let workspace_id: Uuid = row.get("workspace_id");
+    let driver_name: String = row.get("driver_name");
+    let fitted_json: Value = row.get("fitted");
+    let snapshot_id: Uuid = row.get("snapshot_id");
+
+    // Membership check on the workspace
+    fermi_auth::teams::get_member_role(&state.db, workspace_id, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, Json(json!({ "error": "not a workspace member" }))))?
+        .ok_or((StatusCode::FORBIDDEN, Json(json!({ "error": "not a workspace member" }))))?;
+
+    // Read current params, merge in the fit, write back. Same pattern as
+    // the refit hook's auto-accept path.
+    let current_params: Value = sqlx::query(
+        "SELECT value FROM workspace_outputs WHERE workspace_id = $1 AND key = 'params'",
+    )
+    .bind(workspace_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(internal_err)?
+    .map(|r| r.get::<Value, _>("value"))
+    .unwrap_or(Value::Object(serde_json::Map::new()));
+
+    let mut merged = current_params
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    merged.insert(format!("{}_fitted", driver_name), fitted_json.clone());
+    let merged_value = Value::Object(merged);
+
+    sqlx::query(
+        "INSERT INTO workspace_outputs
+            (workspace_id, key, value, version, updated_at, updated_by)
+         VALUES ($1, 'params', $2, 1, NOW(), $3)
+         ON CONFLICT (workspace_id, key) DO UPDATE SET
+            value = EXCLUDED.value,
+            version = workspace_outputs.version + 1,
+            updated_at = NOW(),
+            updated_by = EXCLUDED.updated_by",
+    )
+    .bind(workspace_id)
+    .bind(&merged_value)
+    .bind(&user_id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_err)?;
+
+    // Mark the pending row as accepted
+    sqlx::query(
+        "UPDATE bayesops_pending_fits
+         SET status='accepted', decided_at=NOW(), decided_by=$2, decision_notes=$3
+         WHERE pending_id=$1",
+    )
+    .bind(pending_uuid)
+    .bind(&user_id)
+    .bind(req.notes.as_deref())
+    .execute(&state.db)
+    .await
+    .map_err(internal_err)?;
+
+    // Post evidence event
+    let _ = sqlx::query(
+        "INSERT INTO workspace_messages
+            (workspace_id, sender_type, sender_id, sender_name, content,
+             message_type, metadata)
+         VALUES ($1, 'system', 'bayesops', 'BayesOps', $2, 'system_event', $3)",
+    )
+    .bind(workspace_id)
+    .bind(format!(
+        "✓ Fit accepted for driver '{}' by {}.",
+        driver_name, user_id
+    ))
+    .bind(json!({
+        "event": "bayesops_fit_decision",
+        "decision": "accepted",
+        "pending_id": pending_uuid,
+        "snapshot_id": snapshot_id,
+        "driver_name": driver_name,
+        "decided_by": user_id,
+        "notes": req.notes,
+    }))
+    .execute(&state.db)
+    .await;
+
+    Ok(Json(json!({
+        "status": "accepted",
+        "pending_id": pending_uuid,
+        "workspace_id": workspace_id,
+        "driver_name": driver_name,
+    })))
+}
+
+/// POST /api/bayesops/pending/:pending_id/reject
+///
+/// Mark a pending fit rejected. No params write. Posts an evidence event so
+/// the rejection is visible in the workspace history.
+pub async fn reject_pending_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(pending_id): axum::extract::Path<String>,
+    principal: fermi_auth::AuthPrincipal,
+    Json(req): Json<DecisionRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let pending_uuid: Uuid = pending_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid pending_id" }))))?;
+    let user_id = principal.user_id();
+
+    let row = sqlx::query(
+        "SELECT workspace_id, driver_name, status, snapshot_id
+         FROM bayesops_pending_fits WHERE pending_id = $1",
+    )
+    .bind(pending_uuid)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(internal_err)?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "pending fit not found" })),
+        )
+    })?;
+
+    let status: String = row.get("status");
+    if status == "rejected" {
+        return Ok(Json(json!({
+            "status": "already_rejected",
+            "pending_id": pending_uuid
+        })));
+    }
+    if status != "pending" {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("pending fit is in '{}' state; only 'pending' can be rejected", status)
+            })),
+        ));
+    }
+
+    let workspace_id: Uuid = row.get("workspace_id");
+    let driver_name: String = row.get("driver_name");
+    let snapshot_id: Uuid = row.get("snapshot_id");
+
+    fermi_auth::teams::get_member_role(&state.db, workspace_id, &user_id)
+        .await
+        .map_err(|_| (StatusCode::FORBIDDEN, Json(json!({ "error": "not a workspace member" }))))?
+        .ok_or((StatusCode::FORBIDDEN, Json(json!({ "error": "not a workspace member" }))))?;
+
+    sqlx::query(
+        "UPDATE bayesops_pending_fits
+         SET status='rejected', decided_at=NOW(), decided_by=$2, decision_notes=$3
+         WHERE pending_id=$1",
+    )
+    .bind(pending_uuid)
+    .bind(&user_id)
+    .bind(req.notes.as_deref())
+    .execute(&state.db)
+    .await
+    .map_err(internal_err)?;
+
+    let _ = sqlx::query(
+        "INSERT INTO workspace_messages
+            (workspace_id, sender_type, sender_id, sender_name, content,
+             message_type, metadata)
+         VALUES ($1, 'system', 'bayesops', 'BayesOps', $2, 'system_event', $3)",
+    )
+    .bind(workspace_id)
+    .bind(format!(
+        "✗ Fit dismissed for driver '{}' by {}.",
+        driver_name, user_id
+    ))
+    .bind(json!({
+        "event": "bayesops_fit_decision",
+        "decision": "rejected",
+        "pending_id": pending_uuid,
+        "snapshot_id": snapshot_id,
+        "driver_name": driver_name,
+        "decided_by": user_id,
+        "notes": req.notes,
+    }))
+    .execute(&state.db)
+    .await;
+
+    Ok(Json(json!({
+        "status": "rejected",
+        "pending_id": pending_uuid,
+        "workspace_id": workspace_id,
+        "driver_name": driver_name,
+    })))
+}
+
+fn internal_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": e.to_string() })),
+    )
+}
