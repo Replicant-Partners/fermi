@@ -273,7 +273,11 @@ impl Executor {
         // caller (and UI) can see exactly which drivers used a fit vs the
         // static prior. See `DriverStmt.learnable` and `BAYESOPS_CONTRACT.md`.
         let mut continuous_drivers: HashMap<String, Distribution> = HashMap::new();
-        let mut binary_drivers: HashMap<String, f64> = HashMap::new();
+        // Binary driver runtime config — see BinaryDriverConfig docs.
+        // The Beta variant carries (alpha, beta) so we can sample a fresh
+        // success probability each iteration, propagating BayesOps epistemic
+        // uncertainty into the outcome distribution.
+        let mut binary_drivers: HashMap<String, BinaryDriverConfig> = HashMap::new();
         let mut discrete_drivers: HashMap<String, (Vec<f64>, Vec<f64>)> = HashMap::new();
         let mut learnable_driver_log: Vec<LearnableDriverResolution> = Vec::new();
         let mut model_expr = None;
@@ -320,8 +324,64 @@ impl Executor {
                         }
                     }
                     DriverType::Binary => {
-                        if let Some(prob) = driver.probability {
-                            binary_drivers.insert(driver.name.clone(), prob);
+                        // Binary learnable mirrors the continuous flow:
+                        //   1. `learnable: true` + Beta posterior in
+                        //      params.<name>_fitted → sample p ~ Beta each iter
+                        //   2. anything else → use the static probability
+                        //
+                        // Only Beta is valid for a binary driver (it's the only
+                        // family with support on [0,1]). Any other family is
+                        // treated as a contract violation: log + fall back to
+                        // the prior so the sim never breaks on a malformed fit.
+                        let (config, source) = if driver.learnable {
+                            match self.fitted_distribution_for(&driver.name) {
+                                Some(posterior::FittedDistribution::Beta { alpha, beta, .. }) => (
+                                    Some(BinaryDriverConfig::BetaPosterior {
+                                        alpha,
+                                        beta,
+                                    }),
+                                    LearnableSource::Fitted {
+                                        fitted: self
+                                            .fitted_distribution_for(&driver.name)
+                                            .expect("just matched"),
+                                    },
+                                ),
+                                Some(other) => {
+                                    eprintln!(
+                                        "warning: binary driver '{}' got a non-Beta fit ({:?}); \
+                                         only Beta is meaningful for a probability — falling back to prior",
+                                        driver.name, other
+                                    );
+                                    let prob = driver.probability;
+                                    (
+                                        prob.map(BinaryDriverConfig::Static),
+                                        LearnableSource::PriorFallback,
+                                    )
+                                }
+                                None => {
+                                    let prob = driver.probability;
+                                    (
+                                        prob.map(BinaryDriverConfig::Static),
+                                        LearnableSource::PriorFallback,
+                                    )
+                                }
+                            }
+                        } else {
+                            (
+                                driver.probability.map(BinaryDriverConfig::Static),
+                                LearnableSource::Static,
+                            )
+                        };
+
+                        if driver.learnable {
+                            learnable_driver_log.push(LearnableDriverResolution {
+                                name: driver.name.clone(),
+                                source,
+                            });
+                        }
+
+                        if let Some(cfg) = config {
+                            binary_drivers.insert(driver.name.clone(), cfg);
                         }
                     }
                     DriverType::Discrete => {
@@ -359,14 +419,30 @@ impl Executor {
                 ctx.set(name.clone(), sample);
             }
 
-            // Sample binary drivers (Bernoulli trials, or use fixed value)
-            for (name, prob) in &binary_drivers {
+            // Sample binary drivers (Bernoulli trials, or use fixed value).
+            //
+            // For a static driver the success probability is constant. For a
+            // learnable Beta-posterior driver we draw a fresh p ~ Beta(α, β)
+            // each iteration before the Bernoulli trial. This propagates the
+            // epistemic uncertainty in p into the outcome distribution: when
+            // BayesOps has few observations (α + β small), individual draws
+            // of p spread wide and the outcome distribution widens; as n_eff
+            // grows the Beta tightens and the outcome looks like a sharp
+            // Bernoulli at the posterior mean.
+            for (name, cfg) in &binary_drivers {
                 let sample = if let Some(&fixed_value) = self.fixed_drivers.get(name) {
                     fixed_value
-                } else if self.rng.gen::<f64>() < *prob {
-                    1.0
                 } else {
-                    0.0
+                    let p = match cfg {
+                        BinaryDriverConfig::Static(p) => *p,
+                        BinaryDriverConfig::BetaPosterior { alpha, beta } => {
+                            // Standard 2-Gamma construction; sample_beta
+                            // accepts (α, β, min=0, max=1) for the canonical
+                            // unit-interval Beta we want here.
+                            sample_beta(&mut self.rng, *alpha, *beta, 0.0, 1.0)
+                        }
+                    };
+                    if self.rng.gen::<f64>() < p { 1.0 } else { 0.0 }
                 };
                 ctx.set(name.clone(), sample);
             }
@@ -772,6 +848,19 @@ pub struct LearnableInfo {
 pub struct LearnableDriverResolution {
     pub name: String,
     pub source: LearnableSource,
+}
+
+/// Runtime config for a binary driver in the Monte Carlo loop. Either a
+/// fixed success probability (the static / cold-start case) or a Beta
+/// posterior over p (the learnable case, when BayesOps has a fit).
+#[derive(Debug, Clone)]
+enum BinaryDriverConfig {
+    /// Constant p across all iterations. Used when the driver isn't
+    /// learnable, or is learnable but no fit is available yet.
+    Static(f64),
+    /// Beta posterior over the success probability. Each iteration draws
+    /// a fresh p ~ Beta(alpha, beta) before the Bernoulli trial.
+    BetaPosterior { alpha: f64, beta: f64 },
 }
 
 /// Where the distribution a learnable driver was sampled from came from.

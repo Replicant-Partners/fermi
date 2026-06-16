@@ -109,6 +109,21 @@ The four supported families match the `posterior::FittedDistribution` enum:
 `FittedDistribution`'s `#[serde(tag="family", rename_all="lowercase")]`
 serialization (see `crates/posterior/src/lib.rs:82`).
 
+### Driver-type / family constraints
+
+| Driver type | Valid `FittedDistribution` families | Behavior on mismatch |
+|-------------|--------------------------------------|----------------------|
+| `continuous` | Beta, Normal, Lognormal, Triangular | — |
+| `binary`    | **Beta only** (over success probability p ∈ [0,1]) | Logged warning, fall back to static prior |
+| `discrete`  | Not yet supported — fits to a categorical distribution are Phase 2+ | No-op (prior used) |
+
+For **binary** learnable drivers, the executor samples `p ~ Beta(α, β)`
+fresh each iteration before running the Bernoulli trial. This propagates
+BayesOps' epistemic uncertainty into the outcome distribution. When n_eff
+is small, the Beta is wide and individual `p` draws vary, widening the
+outcome spread; as n_eff grows, the Beta tightens and outcomes look like
+a sharp Bernoulli at the posterior mean.
+
 When the executor finds `<driver_name>_fitted` in `json_params`, it:
 1. Deserializes to `FittedDistribution`
 2. Converts to FPL `Distribution` via `Self::fitted_to_fpl_distribution`
