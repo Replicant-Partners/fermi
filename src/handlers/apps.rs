@@ -685,6 +685,142 @@ pub async fn archive_app_handler(
     get_app_row(&state.db, &slug).await.map(Json)
 }
 
+// ─── POST /api/apps/:slug/sync-auto-hire ─────────────────────────────────────
+//
+// Reconciles already-spawned workspaces of an App with the current
+// `workspace_template.auto_hire` list. For every existing workspace of
+// this App, ensures each agent in auto_hire has a corresponding
+// `workspace_agents` row (system relationship). Idempotent —
+// re-runs are no-ops once everything is in sync.
+//
+// Use case: the auto_hire list is changed after workspaces have already
+// been spawned. Without this endpoint, those workspaces would never
+// pick up the newly-added agents short of a manual hire-per-workspace
+// loop. This is the batch path. Future: also add an opt-in
+// `dry_run: true` for previewing diffs.
+//
+// Auth: App owner only (or admin). Same model as publish/archive.
+pub async fn sync_auto_hire_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(slug): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let caller_id = principal.user_id();
+    let app = get_app_row(&state.db, &slug).await?;
+    let owner_id = app["owner_user_id"].as_str().unwrap_or("");
+    if caller_id != owner_id && !principal.can_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the App owner can sync auto-hire".into(),
+        ));
+    }
+
+    // Pull the current auto_hire list from the App's workspace_template.
+    let auto_hire: Vec<String> = app["workspace_template"]
+        .get("auto_hire")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if auto_hire.is_empty() {
+        return Ok(Json(json!({
+            "ok": true,
+            "note": "auto_hire is empty — nothing to sync",
+            "workspaces_visited": 0,
+            "hires_added": 0,
+        })));
+    }
+
+    // Resolve agent_name → agent_id once for every agent in auto_hire.
+    // Filter out any agent_name that isn't registered (warn + skip rather
+    // than fail the whole batch — the App may carry agents from another
+    // deployment that simply aren't on this DB).
+    let mut agent_ids: Vec<(String, Uuid)> = Vec::with_capacity(auto_hire.len());
+    let mut skipped_agents: Vec<String> = Vec::new();
+    for name in &auto_hire {
+        let row = sqlx::query(
+            "SELECT agent_id FROM agents WHERE agent_name = $1 AND status IN ('active','published','draft')"
+        )
+        .bind(name)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        match row.and_then(|r| r.try_get::<Uuid, _>("agent_id").ok()) {
+            Some(id) => agent_ids.push((name.clone(), id)),
+            None => skipped_agents.push(name.clone()),
+        }
+    }
+
+    // List every workspace of this App.
+    let workspace_rows = sqlx::query(
+        "SELECT id FROM teams WHERE origin = $1"
+    )
+    .bind(&slug)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // For each (workspace, agent) pair, upsert a workspace_agents row.
+    // ON CONFLICT DO NOTHING makes it idempotent — adding the same agent
+    // twice is a no-op rather than an error.
+    let mut hires_added = 0i64;
+    let mut workspaces_visited = 0usize;
+    let mut per_workspace: Vec<Value> = Vec::new();
+    for ws_row in &workspace_rows {
+        let ws_id: Uuid = match ws_row.try_get("id") {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+        workspaces_visited += 1;
+        let mut added_here = 0i64;
+        for (agent_name, agent_id) in &agent_ids {
+            let res = sqlx::query(
+                "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
+                 VALUES ($1, $2, $3, 'system')
+                 ON CONFLICT (workspace_id, agent_id) DO NOTHING"
+            )
+            .bind(ws_id)
+            .bind(agent_id)
+            .bind(&caller_id)
+            .execute(&state.db)
+            .await;
+            if let Ok(r) = res {
+                let n = r.rows_affected() as i64;
+                added_here += n;
+                if n > 0 {
+                    tracing::info!(
+                        ws_id = %ws_id,
+                        agent = %agent_name,
+                        "sync_auto_hire: added agent to workspace"
+                    );
+                }
+            }
+        }
+        hires_added += added_here;
+        if added_here > 0 {
+            per_workspace.push(json!({
+                "workspace_id": ws_id,
+                "hires_added": added_here,
+            }));
+        }
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "app_slug": slug,
+        "workspaces_visited": workspaces_visited,
+        "hires_added": hires_added,
+        "auto_hire_agents": auto_hire,
+        "skipped_agents_not_in_registry": skipped_agents,
+        "details": per_workspace,
+    })))
+}
+
 // ─── GET /api/apps/:slug/schema ──────────────────────────────────────────────
 //
 // Returns the App's schema_json — the machine-readable action grammar

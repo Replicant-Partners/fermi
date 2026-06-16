@@ -1670,6 +1670,11 @@ async fn main() {
         .route("/api/apps/:slug/workspaces/batch", post(handlers::apps::batch_spawn_workspaces_handler))
         .route("/api/apps/:slug/publish", post(handlers::apps::publish_app_handler))
         .route("/api/apps/:slug/archive", post(handlers::apps::archive_app_handler))
+        // Batch-reconcile auto_hire across all existing workspaces of an App.
+        // Used when auto_hire is edited after workspaces have spawned. The
+        // alternative (manual hire per workspace × per added agent) doesn't
+        // scale once a fleet exists. Idempotent — safe to re-run.
+        .route("/api/apps/:slug/sync-auto-hire", post(handlers::apps::sync_auto_hire_handler))
         // ── SimOps direct computation (no LLM — for Compose mode live feedback) ─
         .route("/api/simops/cascade", post(handlers::simops::cascade_handler))
         // ── SimOps distributional projection (Digital Twin "Generate distribution") ─
