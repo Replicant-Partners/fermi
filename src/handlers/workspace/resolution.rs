@@ -283,34 +283,45 @@ pub async fn resolve_workspace_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // ─────────────────────────────────────────────────────────────────
+    // ── BAYESOPS REFIT HOOK ──────────────────────────────────────────
     //
-    //  ╔══════════════════════════════════════════════════════════════╗
-    //  ║                                                              ║
-    //  ║   BAYESOPS HOOK — INSERT POINT                              ║
-    //  ║                                                              ║
-    //  ║   The parallel BayesOps string fills this in. Spec:         ║
-    //  ║                                                              ║
-    //  ║   1. Call `refit_workspace(ws_uuid)` for THIS workspace.    ║
-    //  ║      Reads:  workspace_outputs[ws_uuid].resolution           ║
-    //  ║              workspace_outputs[ws_uuid].observations[] (opt)║
-    //  ║      Writes: params.<driver_name>_fitted as                 ║
-    //  ║              FittedDistribution JSON                         ║
-    //  ║                                                              ║
-    //  ║   2. For each UPSTREAM workspace whose outputs this one     ║
-    //  ║      consumed (read from workspace_dependencies), call      ║
-    //  ║      `refit_workspace(upstream_id)`. Their priors should    ║
-    //  ║      update against the observed downstream outcome.        ║
-    //  ║                                                              ║
-    //  ║   Failures here MUST NOT propagate to the caller —          ║
-    //  ║   the resolution is already committed. Log and continue.    ║
-    //  ║                                                              ║
-    //  ║   Recommend tokio::spawn so the resolve endpoint stays       ║
-    //  ║   responsive even when refits are heavy.                     ║
-    //  ║                                                              ║
-    //  ╚══════════════════════════════════════════════════════════════╝
+    // Per docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md §3, the resolved
+    // workspace and every upstream workspace whose outputs this one
+    // consumed get a refit. Each refit:
     //
-    let refit_triggered = false; // TODO(bayesops): set to true once wired
+    //   1. Parses the workspace's linked fermi_forecast FPL
+    //   2. For each `driver continuous foo { learnable: true }` finds
+    //      observations via the driver's `feeds_from` extractor against
+    //      upstream resolutions
+    //   3. Calls posterior::fit_marginal
+    //   4. Runs the impact gate (MC twice) and either auto-accepts
+    //      (writes params.<name>_fitted), stages (inserts pending row),
+    //      or hard-blocks (logs snapshot only)
+    //   5. Posts a bayesops_fit_* evidence event to workspace_messages
+    //
+    // The hook runs in a tokio::spawn after tx.commit() — the resolution
+    // is already durable. Per spec failure policy, refit errors are
+    // log-and-continue; they never propagate to the caller.
+    let pool_bg = state.db.clone();
+    let registry_bg = state.extractor_registry.clone();
+    let ws_id_bg = ws_uuid;
+    let upstream_id_bg = ws_uuid;
+    tokio::spawn(async move {
+        let trigger = crate::handlers::workspace::refit::TriggerReason::UpstreamResolution {
+            upstream_workspace_id: upstream_id_bg,
+        };
+        if let Err(e) = crate::handlers::workspace::refit::refit_workspace(
+            &pool_bg, &registry_bg, ws_id_bg, trigger,
+        )
+        .await
+        {
+            tracing::warn!(
+                workspace = %ws_id_bg,
+                error = %e,
+                "BayesOps refit hook failed (log-and-continue per spec)"
+            );
+        }
+    });
 
     Ok(Json(json!({
         "workspace_id":          workspace_id,
@@ -320,7 +331,7 @@ pub async fn resolve_workspace_handler(
         "brier_score":           brier_score,
         "predicted_probability": predicted_probability,
         "downstream_notified":   downstream.len(),
-        "refit_triggered":       refit_triggered,
+        "refit_triggered":       true,
     })))
 }
 

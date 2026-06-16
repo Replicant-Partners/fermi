@@ -367,6 +367,7 @@ impl Parser {
         let constraints = Vec::new();
         let mut evidence_refs = Vec::new();
         let mut learnable = false;
+        let mut feeds_from: Option<crate::ast::FeedsFrom> = None;
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
             // Use consume_identifier_or_keyword so reserved tokens like
@@ -411,6 +412,13 @@ impl Parser {
                     // fitting (see DriverStmt docs).
                     learnable = self.parse_bool_literal()?;
                 }
+                "feeds_from" => {
+                    // Parse the feeds_from block: declares how upstream
+                    // workspace resolutions translate into observations for
+                    // fitting this driver. See ast::FeedsFrom and
+                    // docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md §3.4.
+                    feeds_from = Some(self.parse_feeds_from()?);
+                }
                 _ => {
                     // Skip unknown fields for now
                     self.skip_until_newline_or_rbrace();
@@ -435,6 +443,7 @@ impl Parser {
             constraints,
             evidence_refs,
             learnable,
+            feeds_from,
         })
     }
 
@@ -454,6 +463,143 @@ impl Parser {
             TokenType::Identifier(s) if s == "false" => { self.advance(); Ok(false) }
             _ => Err(ParseError::UnexpectedToken {
                 expected: "boolean (true/false)".to_string(),
+                found: token.token_type.clone(),
+                line: token.line,
+                column: token.column,
+            }),
+        }
+    }
+
+    /// Parse a `feeds_from: { ... }` block on a learnable driver.
+    /// See `ast::FeedsFrom` and docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md §3.4.
+    ///
+    /// Required fields: `source`, `extractor`, `config`.
+    /// Optional field: `auto_accept_threshold_pp`.
+    fn parse_feeds_from(&mut self) -> ParseResult<crate::ast::FeedsFrom> {
+        self.consume_token(TokenType::LBrace, "{")?;
+
+        let mut source: Option<String> = None;
+        let mut extractor: Option<String> = None;
+        let mut config: Option<serde_json::Value> = None;
+        let mut auto_accept_threshold_pp: Option<f64> = None;
+
+        while !self.check(&TokenType::RBrace) && !self.is_at_end() {
+            let field = self.consume_identifier_or_keyword()?;
+            self.consume_token(TokenType::Colon, ":")?;
+
+            match field.as_str() {
+                "source" => source = Some(self.consume_string()?),
+                "extractor" => extractor = Some(self.consume_string()?),
+                "config" => config = Some(self.parse_json_value()?),
+                "auto_accept_threshold_pp" => {
+                    auto_accept_threshold_pp = Some(self.parse_number()?);
+                }
+                _ => {
+                    self.skip_until_newline_or_rbrace();
+                }
+            }
+
+            // Allow but don't require trailing commas between fields.
+            self.match_token(&TokenType::Comma);
+        }
+
+        self.consume_token(TokenType::RBrace, "}")?;
+
+        let source = source.ok_or_else(|| ParseError::UnexpectedToken {
+            expected: "feeds_from requires 'source' field".to_string(),
+            found: self.peek().token_type.clone(),
+            line: self.peek().line,
+            column: self.peek().column,
+        })?;
+        let extractor = extractor.ok_or_else(|| ParseError::UnexpectedToken {
+            expected: "feeds_from requires 'extractor' field".to_string(),
+            found: self.peek().token_type.clone(),
+            line: self.peek().line,
+            column: self.peek().column,
+        })?;
+        let config = config.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+        Ok(crate::ast::FeedsFrom {
+            source,
+            extractor,
+            config,
+            auto_accept_threshold_pp,
+        })
+    }
+
+    /// Parse a JSON-ish value out of the FPL token stream. Supports:
+    ///   - object literals  `{ key: value, ... }` (keys are identifiers or strings)
+    ///   - array literals   `[ a, b, c ]`
+    ///   - string literals  `"text"`
+    ///   - numbers          `42`, `3.14`
+    ///   - booleans         `true`, `false`
+    ///   - null             `null` (as Identifier)
+    ///
+    /// Used by `feeds_from.config` and reusable for any future field that
+    /// needs structured embedded JSON. Returns a `serde_json::Value` so the
+    /// downstream consumer (the Extractor) can use existing serde tooling.
+    fn parse_json_value(&mut self) -> ParseResult<serde_json::Value> {
+        let token = self.peek().clone();
+        match &token.token_type {
+            TokenType::LBrace => {
+                self.advance();
+                let mut map = serde_json::Map::new();
+                while !self.check(&TokenType::RBrace) && !self.is_at_end() {
+                    // Key: identifier-or-keyword OR string literal
+                    let key = if let TokenType::String(s) = &self.peek().token_type.clone() {
+                        let key = s.clone();
+                        self.advance();
+                        key
+                    } else {
+                        self.consume_identifier_or_keyword()?
+                    };
+                    self.consume_token(TokenType::Colon, ":")?;
+                    let value = self.parse_json_value()?;
+                    map.insert(key, value);
+                    self.match_token(&TokenType::Comma);
+                }
+                self.consume_token(TokenType::RBrace, "}")?;
+                Ok(serde_json::Value::Object(map))
+            }
+            TokenType::LBracket => {
+                self.advance();
+                let mut items = Vec::new();
+                while !self.check(&TokenType::RBracket) && !self.is_at_end() {
+                    items.push(self.parse_json_value()?);
+                    self.match_token(&TokenType::Comma);
+                }
+                self.consume_token(TokenType::RBracket, "]")?;
+                Ok(serde_json::Value::Array(items))
+            }
+            TokenType::String(s) => {
+                let v = serde_json::Value::String(s.clone());
+                self.advance();
+                Ok(v)
+            }
+            TokenType::Number(n) => {
+                let v = serde_json::json!(n);
+                self.advance();
+                Ok(v)
+            }
+            TokenType::Boolean(b) => {
+                let v = serde_json::Value::Bool(*b);
+                self.advance();
+                Ok(v)
+            }
+            TokenType::Identifier(s) if s == "true" => {
+                self.advance();
+                Ok(serde_json::Value::Bool(true))
+            }
+            TokenType::Identifier(s) if s == "false" => {
+                self.advance();
+                Ok(serde_json::Value::Bool(false))
+            }
+            TokenType::Identifier(s) if s == "null" => {
+                self.advance();
+                Ok(serde_json::Value::Null)
+            }
+            _ => Err(ParseError::UnexpectedToken {
+                expected: "JSON value (object, array, string, number, bool, null)".to_string(),
                 found: token.token_type.clone(),
                 line: token.line,
                 column: token.column,
@@ -1568,6 +1714,94 @@ driver major_contract binary {
             assert!(matches!(d.driver_type, DriverType::Binary));
             assert_eq!(d.probability, Some(0.65));
             assert_eq!(d.impact_multiplier, Some(1.3));
+        } else {
+            panic!("Expected Driver statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_learnable_driver_with_feeds_from() {
+        // Realistic World Cup team-prior driver: opts into BayesOps, declares
+        // how upstream H2H resolutions translate into observations.
+        let source = r#"
+driver won_in_group_stage continuous {
+    distribution: triangular(0.3, 0.5, 0.7)
+    learnable: true
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "binary_winner_id_match",
+        config: {
+            winner_field: "winner_team_id",
+            match_value: "${workspace.entity_id}"
+        },
+        auto_accept_threshold_pp: 3.0
+    }
+}
+"#;
+        let program = parse_source(source).unwrap();
+        assert_eq!(program.statements.len(), 1);
+        if let Statement::Driver(d) = &program.statements[0] {
+            assert_eq!(d.name, "won_in_group_stage");
+            assert!(d.learnable);
+            let ff = d.feeds_from.as_ref().expect("feeds_from should be Some");
+            assert_eq!(ff.source, "upstream_resolutions");
+            assert_eq!(ff.extractor, "binary_winner_id_match");
+            assert_eq!(ff.auto_accept_threshold_pp, Some(3.0));
+            // Config is a serde_json::Value object; spot-check keys
+            assert_eq!(
+                ff.config.get("winner_field").and_then(|v| v.as_str()),
+                Some("winner_team_id")
+            );
+            assert_eq!(
+                ff.config.get("match_value").and_then(|v| v.as_str()),
+                Some("${workspace.entity_id}")
+            );
+        } else {
+            panic!("Expected Driver statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_feeds_from_without_optional_threshold() {
+        let source = r#"
+driver won continuous {
+    distribution: triangular(0.0, 0.5, 1.0)
+    learnable: true
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "binary_field_value",
+        config: { path: "advanced", value: true }
+    }
+}
+"#;
+        let program = parse_source(source).unwrap();
+        if let Statement::Driver(d) = &program.statements[0] {
+            let ff = d.feeds_from.as_ref().unwrap();
+            assert_eq!(ff.auto_accept_threshold_pp, None);
+            assert_eq!(
+                ff.config.get("value").and_then(|v| v.as_bool()),
+                Some(true)
+            );
+        } else {
+            panic!("Expected Driver statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_driver_without_feeds_from_is_fine() {
+        // Backward compatibility: existing learnable drivers without
+        // feeds_from must still parse — the refit hook will treat them as
+        // fittable only from explicit observations arrays.
+        let source = r#"
+driver legacy continuous {
+    distribution: normal(5.0, 1.0)
+    learnable: true
+}
+"#;
+        let program = parse_source(source).unwrap();
+        if let Statement::Driver(d) = &program.statements[0] {
+            assert!(d.learnable);
+            assert!(d.feeds_from.is_none());
         } else {
             panic!("Expected Driver statement");
         }

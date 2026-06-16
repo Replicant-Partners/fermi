@@ -84,6 +84,42 @@ pub struct DriverStmt {
     /// field above is the prior; the live posterior is read at sim time from
     /// `params.<name>_fitted` (FittedDistribution JSON). Default: false.
     pub learnable: bool,
+    /// How upstream workspace resolutions translate into observations for
+    /// fitting this driver. Only meaningful when `learnable = true`. The
+    /// refit hook (`src/handlers/workspace/refit.rs`) walks
+    /// `workspace_dependencies`, applies the named extractor to each
+    /// upstream's resolution outcome, and folds the result into the
+    /// observation vector before calling `fit_marginal()`.
+    ///
+    /// `None` means the refit hook can still fit this driver from an
+    /// explicit `workspace_outputs[ws].observations.<driver_name>` array,
+    /// but cannot derive observations from upstream resolutions itself.
+    ///
+    /// See `docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md` §3.4.
+    pub feeds_from: Option<FeedsFrom>,
+}
+
+/// Declaration of how a learnable driver derives observations from upstream
+/// workspace resolutions. See `DriverStmt::feeds_from`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeedsFrom {
+    /// Source of observations. Only `"upstream_resolutions"` is supported
+    /// today; the field is a string so future sources (e.g.
+    /// `"downstream_outputs"`, `"by_tag"`) can be added without an AST
+    /// rewrite.
+    pub source: String,
+    /// Name of an [`Extractor`](posterior::Extractor) registered in the
+    /// server's `ExtractorRegistry`. Examples: `binary_winner_id_match`,
+    /// `scalar_field_value`.
+    pub extractor: String,
+    /// Extractor-specific config. Free-form key→value map; the FPL parser
+    /// preserves it as a JSON object. The extractor validates it at refit
+    /// time.
+    pub config: serde_json::Value,
+    /// Optional per-driver override for the auto-accept threshold (in
+    /// percentage points of forecast rate). When `None`, the refit hook
+    /// uses its global default (currently 2.0 pp).
+    pub auto_accept_threshold_pp: Option<f64>,
 }
 
 /// Type of driver

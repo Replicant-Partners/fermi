@@ -336,6 +336,15 @@ pub(crate) struct AppState {
     /// (persistent posterior store is Phase 5).
     pub(crate) posterior_cache:
         Arc<dashmap::DashMap<uuid::Uuid, posterior_reg::ConditionalPosterior>>,
+
+    /// Spec 23 R-1: registry of `Extractor`s used by the BayesOps refit
+    /// hook to derive scalar observations from upstream workspace
+    /// resolution outcomes. Populated at server boot via
+    /// `ExtractorRegistry::with_builtins()`; new extractors can be added
+    /// at boot time only (immutable from then on). See
+    /// `docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md` §3.4 and
+    /// `src/handlers/workspace/refit.rs`.
+    pub(crate) extractor_registry: posterior::ExtractorRegistry,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -654,6 +663,12 @@ async fn run_migrations(db: &PgPool) {
         // downstream workspaces, and is the BayesOps refit hook
         // insertion point.
         "migrations/147_workspace_resolution.sql",
+        // BayesOps refit ledger + pending queue (Phase R-1 of
+        // docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md). bayesops_posterior_snapshots
+        // is the audit ledger consumed by the spacetime view (R-3);
+        // bayesops_pending_fits is the queue consumed by the sparkline
+        // accept/dismiss UX (R-2).
+        "migrations/148_bayesops_refit_ledger.sql",
     ];
 
     for file in &migration_files {
@@ -1100,6 +1115,10 @@ async fn main() {
         },
         // Spec 14 §5.6 — empty at boot, fills as agents/operators fit posteriors.
         posterior_cache: Arc::new(dashmap::DashMap::new()),
+        // Spec 23 R-1 — built-in extractors (binary_winner_id_match,
+        // binary_field_value, scalar_field_value, scalar_difference).
+        // New extractors are added by code change + server restart.
+        extractor_registry: posterior::ExtractorRegistry::with_builtins(),
     };
 
     if state.secret_encryptor.is_some() {
@@ -1711,6 +1730,13 @@ async fn main() {
         .route("/api/bayesops/optimise_for_target", post(handlers::bayesops::optimise_for_target_handler))
         .route("/api/bayesops/posteriors", get(handlers::bayesops::list_posteriors_handler))
         .route("/api/bayesops/posteriors/:id", delete(handlers::bayesops::evict_posterior_handler))
+        // ── BayesOps refit hook (Spec 23 R-1) ─────────────────────────────────
+        // Manual trigger for the same refit_workspace function that fires
+        // automatically post-commit from POST /api/workspaces/:id/resolve.
+        // Useful for re-fitting after observation arrays are updated without
+        // a full resolution, and for the cockpit's "refit now" button.
+        .route("/api/workspaces/:workspace_id/refit",
+            post(handlers::workspace::refit::refit_workspace_handler))
         // Workspace routes
         .route(
             "/api/workspaces",

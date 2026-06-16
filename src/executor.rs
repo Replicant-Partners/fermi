@@ -1088,6 +1088,7 @@ mod tests {
                     constraints: vec![],
                     evidence_refs: vec![],
                     learnable: false,
+                    feeds_from: None,
                 }),
                 Statement::Model(ModelStmt {
                     expression: Expression::Identifier("x".to_string()),
@@ -1145,6 +1146,7 @@ mod tests {
                     constraints: vec![],
                     evidence_refs: vec![],
                     learnable: false,
+                    feeds_from: None,
                 }),
                 Statement::Driver(DriverStmt {
                     name: "y".to_string(),
@@ -1164,6 +1166,7 @@ mod tests {
                     constraints: vec![],
                     evidence_refs: vec![],
                     learnable: false,
+                    feeds_from: None,
                 }),
                 Statement::Model(ModelStmt {
                     expression: Expression::Add(

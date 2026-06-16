@@ -54,6 +54,7 @@ use thiserror::Error;
 pub mod auto;
 pub mod beta;
 pub mod bootstrap;
+pub mod extractors;
 pub mod lognormal;
 pub mod normal;
 pub mod triangular;
@@ -62,6 +63,10 @@ pub mod triangular;
 pub use auto::{fit_auto, kl_to_empirical};
 pub use beta::{fit_beta_conjugate, fit_beta_moments};
 pub use bootstrap::bootstrap_ci;
+pub use extractors::{
+    BinaryFieldValue, BinaryWinnerIdMatch, Extractor, ExtractorDescription, ExtractorError,
+    ExtractorRegistry, ScalarDifference, ScalarFieldValue, WorkspaceContext,
+};
 pub use lognormal::fit_lognormal_moments;
 pub use normal::fit_normal_conjugate;
 pub use triangular::fit_triangular_empirical;
