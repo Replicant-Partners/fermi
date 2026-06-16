@@ -295,6 +295,39 @@ pub struct SimResults {
     /// this field — those keep the static rendering.
     pub bin_starts: Vec<f64>,
     pub bin_width: f64,
+    /// Per-driver record of how each `learnable: true` driver's distribution
+    /// was resolved this run. Drives the status badge on each driver card.
+    /// Empty for forecasts with no learnable drivers (the common case until
+    /// BayesOps wiring is live for a given driver). See
+    /// `fermi::executor::LearnableDriverResolution` for the upstream shape;
+    /// we keep a compact mirror here so SimResults stays cheap to serialize
+    /// without dragging the posterior crate into the console.
+    pub learnable_drivers: Vec<LearnableDriverBadge>,
+}
+
+/// Compact mirror of `fermi::executor::LearnableSource` for the UI layer.
+/// Captures just enough to drive the status badge: which driver, whether
+/// the run used a fit, and (when fitted) the effective observation count
+/// + CI width so the user can see "this prior is now tight because data
+/// supports it".
+#[derive(Debug, Clone, PartialEq)]
+pub struct LearnableDriverBadge {
+    pub driver_name: String,
+    pub status: LearnableBadgeStatus,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LearnableBadgeStatus {
+    /// Marked learnable but no fit was available this run — used the static
+    /// prior. UX: cold-start badge.
+    PriorFallback,
+    /// A `FittedDistribution` was found and used. UX: green badge with
+    /// observation count.
+    Fitted {
+        family: String,
+        n_eff: f64,
+        ci_width: f64,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3421,6 +3454,59 @@ impl CockpitState {
         self.fire_agent("fermi", &query, cx);
     }
 
+    /// Flip the `learnable` flag on a driver. When ON, the driver's static
+    /// distribution becomes the BayesOps prior and `params.<name>_fitted` (if
+    /// present) overrides at sim time. When OFF, the driver behaves as before:
+    /// the distribution is sampled directly.
+    ///
+    /// This is the user-facing entry point for opting individual drivers into
+    /// data-informed parameter fitting. See `docs/fermi/BAYESOPS_CONTRACT.md`.
+    pub fn toggle_driver_learnable(&mut self, name: &str, cx: &mut Context<Self>) {
+        // Persist any in-flight edits to the focused driver first so the FPL
+        // regenerated below reflects the latest p5/p50/p95/etc.
+        self.save_focused_driver(cx);
+
+        let new_state = if let Some(driver) = self.program.driver_mut(name) {
+            driver.learnable = !driver.learnable;
+            driver.learnable
+        } else {
+            return;
+        };
+
+        // Regenerate FPL so the toggle change shows up if the user is also
+        // looking at the raw FPL pane.
+        self.cached_fpl = generate_fpl_text(&self.program);
+
+        // Surface the change as an assistant message so the user sees what
+        // just happened — especially the cold-start hint when turning ON.
+        let (kind, text) = if new_state {
+            (
+                MessageKind::Info,
+                format!(
+                    "🦊 Driver '{}' is now learnable. \
+                     The current distribution is the prior; BayesOps will tighten it \
+                     as observations accumulate. Run a simulation to see resolution status.",
+                    name
+                ),
+            )
+        } else {
+            (
+                MessageKind::Info,
+                format!(
+                    "🦊 Driver '{}' is no longer learnable. \
+                     The distribution will be sampled as-is, ignoring any BayesOps fits.",
+                    name
+                ),
+            )
+        };
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", name),
+            kind,
+            text,
+        });
+        cx.notify();
+    }
+
     pub fn delete_driver(&mut self, name: &str, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.program.remove_driver(name);
@@ -3829,6 +3915,40 @@ impl CockpitState {
                 } else {
                     0.0
                 };
+                // Mirror the executor's learnable-driver resolution log into
+                // a UI-friendly shape. Empty when no driver is `learnable: true`.
+                let learnable_drivers: Vec<LearnableDriverBadge> = results
+                    .learnable_drivers
+                    .iter()
+                    .map(|r| {
+                        let status = match &r.source {
+                            ::fermi::executor::LearnableSource::Fitted { fitted } => {
+                                LearnableBadgeStatus::Fitted {
+                                    family: match fitted {
+                                        ::posterior::FittedDistribution::Beta { .. } => "beta".into(),
+                                        ::posterior::FittedDistribution::Normal { .. } => "normal".into(),
+                                        ::posterior::FittedDistribution::Lognormal { .. } => "lognormal".into(),
+                                        ::posterior::FittedDistribution::Triangular { .. } => "triangular".into(),
+                                    },
+                                    n_eff: fitted.n_eff(),
+                                    ci_width: fitted.ci_width(),
+                                }
+                            }
+                            ::fermi::executor::LearnableSource::PriorFallback => {
+                                LearnableBadgeStatus::PriorFallback
+                            }
+                            ::fermi::executor::LearnableSource::Static => {
+                                // Static drivers aren't logged by the executor
+                                // today; this arm exists only because the enum
+                                // is non-exhaustive. Skip with PriorFallback so
+                                // the UI degrades gracefully.
+                                LearnableBadgeStatus::PriorFallback
+                            }
+                        };
+                        LearnableDriverBadge { driver_name: r.name.clone(), status }
+                    })
+                    .collect();
+
                 self.sim_results = Some(SimResults {
                     mean: results.mean,
                     median: results.median,
@@ -3840,6 +3960,7 @@ impl CockpitState {
                     histogram: histogram_data.iter().map(|(_, c)| *c as u32).collect(),
                     bin_starts,
                     bin_width,
+                    learnable_drivers,
                 });
                 self.sim_running = false;
 
@@ -4315,6 +4436,10 @@ impl CockpitState {
                         histogram: vec![],
                         bin_starts: vec![],
                         bin_width: 0.0,
+                        // Loaded forecasts predating learnable drivers won't
+                        // have this field in state.json — start empty, the
+                        // next live sim fills it in.
+                        learnable_drivers: vec![],
                     });
                 }
                 // Restore base rate into AST
@@ -5239,6 +5364,11 @@ impl Render for CockpitState {
                                 let sug_count = self.pending_suggestions.iter()
                                     .filter(|s| s.driver_name == *name)
                                     .count();
+                                let learnable_status = self
+                                    .sim_results
+                                    .as_ref()
+                                    .and_then(|sr| sr.learnable_drivers.iter()
+                                        .find(|b| b.driver_name == *name));
                                 render_driver_card(
                                     i,
                                     driver,
@@ -5251,6 +5381,7 @@ impl Render for CockpitState {
                                     sug_count,
                                     cx,
                                     &n,
+                                    learnable_status,
                                 )
                             }))
                             // Add driver buttons
@@ -6558,6 +6689,7 @@ fn render_driver_card(
     pending_suggestion_count: usize,
     cx: &mut Context<CockpitState>,
     name: &str,
+    learnable_status: Option<&LearnableDriverBadge>,
 ) -> AnyElement {
     let Some(driver) = driver else {
         return div().child("Unknown driver").into_any_element();
@@ -6684,6 +6816,36 @@ fn render_driver_card(
                         .flex_shrink_0()
                         .child(type_label),
                 )
+                // BayesOps learnable badge — visible only when the driver
+                // opted in via `learnable: true`. Three states:
+                //   • run hasn't happened yet OR no resolution captured:
+                //     neutral "learnable" chip (cyan)
+                //   • last run used the prior (cold start): yellow chip
+                //   • last run substituted a fit: green chip with n=…
+                .when(driver.learnable, |el| {
+                    let (badge_text, badge_color) = match learnable_status {
+                        Some(LearnableDriverBadge { status: LearnableBadgeStatus::Fitted { n_eff, .. }, .. }) => {
+                            (format!("✓ fit n={:.0}", n_eff), theme::GREEN)
+                        }
+                        Some(LearnableDriverBadge { status: LearnableBadgeStatus::PriorFallback, .. }) => {
+                            ("⏳ prior".to_string(), theme::GOLD)
+                        }
+                        None => ("◌ learnable".to_string(), theme::CYAN),
+                    };
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(badge_color))
+                            .px(px(5.0))
+                            .py(px(1.0))
+                            .rounded(px(2.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(rgb(badge_color))
+                            .flex_shrink_0()
+                            .child(badge_text),
+                    )
+                })
                 .child(
                     div()
                         .flex_grow()
@@ -8085,6 +8247,110 @@ fn render_agent_picker(
         })
 }
 
+/// Render the per-driver `learnable` toggle row inside the driver editor.
+///
+/// Two compositions side by side:
+///   1. The toggle pill itself (clickable, shows ON / OFF state).
+///   2. The current resolution status from the last sim — "Frozen" /
+///      "Cold start (prior)" / "Fitted from N obs (±CI)". This is the
+///      live BayesOps signal the user came here to see.
+fn render_learnable_toggle(
+    state: &CockpitState,
+    name: &str,
+    cx: &mut Context<CockpitState>,
+) -> gpui::Div {
+    let driver = state.program.driver(name);
+    let learnable = driver.map(|d| d.learnable).unwrap_or(false);
+
+    // Find the most recent resolution for this driver, if any.
+    let resolution = state
+        .sim_results
+        .as_ref()
+        .and_then(|sr| sr.learnable_drivers.iter().find(|b| b.driver_name == name));
+
+    let (toggle_label, toggle_color, toggle_bg) = if learnable {
+        ("● learnable", theme::CYAN, theme::BG_ELEVATED)
+    } else {
+        ("○ frozen", theme::FG_FAINT, theme::BG)
+    };
+
+    let toggle_name = name.to_string();
+    let toggle = div()
+        .id(ElementId::Name(format!("learnable-toggle-{}", name).into()))
+        .px(px(10.0))
+        .py(px(4.0))
+        .rounded(px(12.0))
+        .border_1()
+        .border_color(rgb(toggle_color))
+        .bg(rgb(toggle_bg))
+        .text_size(px(11.0))
+        .text_color(rgb(toggle_color))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+        .on_click(cx.listener(move |this, _ev, _w, cx| {
+            this.toggle_driver_learnable(&toggle_name, cx);
+        }))
+        .child(toggle_label);
+
+    let status_chip = match resolution {
+        // Driver is learnable and got a BayesOps fit this run — show the
+        // tightness signal. This is the magic moment for the user: their
+        // hand-typed prior was just replaced by a data-informed posterior.
+        Some(LearnableDriverBadge {
+            status: LearnableBadgeStatus::Fitted { family, n_eff, ci_width },
+            ..
+        }) => Some((
+            format!("✓ fitted · {} · n={:.0} · 90% CI ±{:.2}", family, n_eff, ci_width / 2.0),
+            theme::GREEN,
+        )),
+        // Driver is learnable but no fit was found — cold start. The prior
+        // distribution above is being sampled directly.
+        Some(LearnableDriverBadge {
+            status: LearnableBadgeStatus::PriorFallback,
+            ..
+        }) => Some((
+            "⏳ cold start · using prior · BayesOps has no data yet".into(),
+            theme::GOLD,
+        )),
+        // Either the driver isn't learnable or the sim hasn't run since the
+        // toggle was flipped — no chip.
+        None => {
+            if learnable {
+                Some((
+                    "↻ learnable · run sim to see resolution".into(),
+                    theme::FG_DIM,
+                ))
+            } else {
+                None
+            }
+        }
+    };
+
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .w(px(80.0))
+                .child("BayesOps:"),
+        )
+        .child(toggle);
+
+    if let Some((text, color)) = status_chip {
+        row = row.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(color))
+                .child(text),
+        );
+    }
+
+    row
+}
+
 /// Driver editor + evidence panel (shown when a driver is focused).
 fn render_driver_editor_and_evidence(
     state: &CockpitState,
@@ -8213,6 +8479,13 @@ fn render_driver_editor_and_evidence(
                     .child(div().w(px(90.0)).child(state.editor_unit.clone())),
             )
         })
+        // Learnable toggle — opt this driver into BayesOps-managed distribution
+        // fitting. When ON, the `distribution:` above acts as the prior and
+        // BayesOps' fitted posterior (written to `params.<name>_fitted` by the
+        // backend) overrides at sim time. Visual: cyan when learnable, grey
+        // (no border) when frozen. The toggle is render-aware of the current
+        // run's resolution status — see `render_learnable_toggle`.
+        .child(render_learnable_toggle(state, name, cx))
         .when(!is_continuous, |el| {
             el.child(
                 div()
@@ -11560,6 +11833,12 @@ fn generate_fpl_text(program: &Program) -> String {
                 if let Some(ref unit) = driver.unit {
                     lines.push(format!("    unit: \"{}\"", unit));
                 }
+                // Emit `learnable: true` only when set — false is the default,
+                // so omit it for cleanliness. The static `distribution:`
+                // above doubles as the cold-start prior when learnable is on.
+                if driver.learnable {
+                    lines.push("    learnable: true".into());
+                }
                 if let Some(ref rationale) = driver.rationale {
                     lines.push(format!(
                         "    rationale: \"{}\"",
@@ -11575,6 +11854,9 @@ fn generate_fpl_text(program: &Program) -> String {
                 }
                 if let Some(m) = driver.impact_multiplier {
                     lines.push(format!("    impact_multiplier: {}", m));
+                }
+                if driver.learnable {
+                    lines.push("    learnable: true".into());
                 }
                 if let Some(ref rationale) = driver.rationale {
                     lines.push(format!(
