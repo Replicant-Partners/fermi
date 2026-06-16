@@ -366,9 +366,12 @@ impl Parser {
         let mut rationale = None;
         let constraints = Vec::new();
         let mut evidence_refs = Vec::new();
+        let mut learnable = false;
 
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
-            let field = self.consume_identifier()?;
+            // Use consume_identifier_or_keyword so reserved tokens like
+            // `learnable` can be used as field names without re-lexing.
+            let field = self.consume_identifier_or_keyword()?;
             self.consume_token(TokenType::Colon, ":")?;
 
             match field.as_str() {
@@ -402,6 +405,12 @@ impl Parser {
                 "evidence_refs" => {
                     evidence_refs = self.parse_string_array()?;
                 }
+                "learnable" => {
+                    // Accept `learnable: true` / `learnable: false`.
+                    // This opts the driver into BayesOps-managed distribution
+                    // fitting (see DriverStmt docs).
+                    learnable = self.parse_bool_literal()?;
+                }
                 _ => {
                     // Skip unknown fields for now
                     self.skip_until_newline_or_rbrace();
@@ -425,7 +434,31 @@ impl Parser {
             rationale,
             constraints,
             evidence_refs,
+            learnable,
         })
+    }
+
+    /// Parse a `true` or `false` boolean literal.
+    /// Used by driver fields (`learnable: true`) and any other place that
+    /// accepts a boolean. The lexer currently emits booleans as
+    /// `Identifier("true")` / `Identifier("false")` rather than dedicated
+    /// tokens, so we accept either form.
+    fn parse_bool_literal(&mut self) -> ParseResult<bool> {
+        let token = self.peek().clone();
+        match &token.token_type {
+            TokenType::Boolean(b) => {
+                self.advance();
+                Ok(*b)
+            }
+            TokenType::Identifier(s) if s == "true" => { self.advance(); Ok(true) }
+            TokenType::Identifier(s) if s == "false" => { self.advance(); Ok(false) }
+            _ => Err(ParseError::UnexpectedToken {
+                expected: "boolean (true/false)".to_string(),
+                found: token.token_type.clone(),
+                line: token.line,
+                column: token.column,
+            }),
+        }
     }
 
     /// Parse distribution
@@ -1462,6 +1495,7 @@ impl Parser {
             TokenType::Output => { self.advance(); Ok("output".to_string()) }
             TokenType::Source => { self.advance(); Ok("source".to_string()) }
             TokenType::Factor => { self.advance(); Ok("factor".to_string()) }
+            TokenType::Learnable => { self.advance(); Ok("learnable".to_string()) }
             _ => Err(ParseError::UnexpectedToken {
                 expected: "identifier".to_string(),
                 found: token.token_type.clone(),

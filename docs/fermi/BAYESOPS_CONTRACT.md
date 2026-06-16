@@ -1,19 +1,137 @@
-# BayesOps ↔ Fermi Factor-Model Contract
+# BayesOps ↔ Fermi Contract
 
-**Status:** Live for World Cup 2026 team-prior workspaces (48 ws) as of 2026-06-16.
+**Status:** Live as of 2026-06-16. Two contract surfaces — generic learnable
+drivers (the product) and learnable elasticities inside factor models (the
+World Cup demo).
 **Audience:** BayesOps implementation (separate string) needs this to plug in.
 
 ## Summary
 
-Fermi's factor-model executor exposes every `learnable(initial, sigma)` literal
-in an FPL program as a named, externally-overrideable parameter. BayesOps fits
-posteriors against match outcomes and writes updated point estimates back via
-the workspace_outputs API. The next simulation run picks them up.
+Fermi exposes two kinds of externally-overrideable parameters:
 
-No FPL rewriting required. No new endpoints. The contract is the naming
-convention + `.app/params.json` mechanism that already exists.
+1. **Learnable drivers** — any `driver continuous foo { ... learnable: true }`
+   declaration. Acts on the driver's whole distribution: BayesOps writes a
+   `FittedDistribution` JSON to `params.<driver_name>_fitted` and the executor
+   substitutes it for the static prior at sim time. This is the **generic
+   product surface** — any forecast can opt drivers into BayesOps management.
 
-## Read side: discovering what's learnable
+2. **Learnable elasticities** — `learnable(initial, sigma)` literals inside
+   factor formulations and estimate expressions. Acts on a scalar coefficient.
+   Names are auto-assigned positionally (`<owner>_l<idx>`); BayesOps writes
+   point estimates as plain numbers. This is the **factor-model contract**
+   used by the World Cup 2026 demo (48 team prior workspaces).
+
+Both flow through the same mechanism: `.app/params.json` written via
+`PUT /api/workspaces/:id/outputs/params`. The executor reads at sim time, no
+FPL rewriting required.
+
+## Surface 1: Learnable Drivers (generic)
+
+### Declaration
+
+A user marks any driver as learnable in FPL:
+
+```fpl
+driver continuous yield_kg {
+    distribution: triangular(3.0, 5.0, 7.0)
+    learnable: true
+    unit: "kg"
+    rationale: "Cold-start prior from agronomist elicitation."
+}
+```
+
+The `distribution:` block is now interpreted as the **prior** rather than the
+sampling distribution. It's used (a) as a cold-start when no fit exists yet,
+and (b) as the conjugate prior in BayesOps' updating math.
+
+### Read side: discovering learnable drivers
+
+Every sim run publishes a `learnable_drivers` output listing how each
+learnable driver was resolved this run:
+
+```json
+[
+  {
+    "name": "yield_kg",
+    "status": "fitted",
+    "fitted": {
+      "family": "normal",
+      "mean": 4.8,
+      "std_dev": 0.55,
+      "ci_low": 3.7,
+      "ci_high": 5.9,
+      "n_eff": 23.0
+    },
+    "fpl_params": "normal(4.8000, 0.5500)",
+    "ci_width": 2.2,
+    "n_eff": 23.0,
+    "params_key": "yield_kg_fitted"
+  },
+  {
+    "name": "other_driver",
+    "status": "prior_fallback",
+    "reason": "no params.other_driver_fitted in scope"
+  }
+]
+```
+
+Statuses:
+- `fitted`: A valid `FittedDistribution` was found in `params.<name>_fitted`
+  and used at sim time. Returns full fitted parameters + diagnostics.
+- `prior_fallback`: Driver is marked `learnable: true` but no fit exists yet
+  (cold start or BayesOps hasn't run). The static `distribution:` block was
+  used as a prior.
+
+### Write side: BayesOps updates a driver's distribution
+
+BayesOps fits a `posterior::FittedDistribution` from observations, serializes
+it as JSON, and writes it to the workspace's `params` output:
+
+```http
+PUT /api/workspaces/<ws_id>/outputs/params
+{
+  "value": {
+    ... (existing params) ...,
+    "yield_kg_fitted": {
+      "family": "normal",
+      "mean": 4.8,
+      "std_dev": 0.55,
+      "ci_low": 3.7,
+      "ci_high": 5.9,
+      "n_eff": 23.0
+    }
+  }
+}
+```
+
+The four supported families match the `posterior::FittedDistribution` enum:
+`beta`, `normal`, `lognormal`, `triangular`. The JSON shape matches
+`FittedDistribution`'s `#[serde(tag="family", rename_all="lowercase")]`
+serialization (see `crates/posterior/src/lib.rs:82`).
+
+When the executor finds `<driver_name>_fitted` in `json_params`, it:
+1. Deserializes to `FittedDistribution`
+2. Converts to FPL `Distribution` via `Self::fitted_to_fpl_distribution`
+3. Samples from the converted distribution instead of the static prior
+
+Any deserialization error is logged to stderr and the executor silently
+falls back to the prior — i.e. a malformed fit can't break a forecast.
+
+### Verified end-to-end
+
+Cold start with prior `triangular(3, 5, 7)`:
+- mean 5.01, p5..p95 = [3.66, 6.36], std_dev 0.80
+- `learnable_drivers[0].status = "prior_fallback"`
+
+With BayesOps fit `Normal(4.8, 0.55)` from 23 observations:
+- mean 4.81, p5..p95 = [3.91, 5.73], std_dev 0.55  ← **tightened by the fit**
+- `learnable_drivers[0].status = "fitted"`, `n_eff = 23.0`, `ci_width = 2.2`
+
+---
+
+## Surface 2: Learnable Elasticities (factor models)
+
+### Read side: discovering what's learnable
 
 Every factor-model run publishes a `learnable_manifest` output. Example
 (`PUT /api/workspaces/:id/outputs/learnable_manifest`, set by

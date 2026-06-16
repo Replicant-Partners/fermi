@@ -1036,6 +1036,7 @@ impl CockpitState {
                             rationale: Some(rationale.to_string()),
                             constraints: vec![],
                             evidence_refs: vec![],
+                            learnable: false,
                         }
                     } else {
                         let p5 = drv.get("p5").and_then(|v| v.as_f64()).unwrap_or(0.8);
@@ -1065,6 +1066,7 @@ impl CockpitState {
                             rationale: Some(rationale.to_string()),
                             constraints: vec![],
                             evidence_refs: vec![],
+                            learnable: false,
                         }
                     };
 
@@ -12669,6 +12671,7 @@ fn make_continuous_driver(
         rationale: Some(rationale.to_string()),
         constraints: vec![],
         evidence_refs: vec![],
+        learnable: false,
     }
 }
 
@@ -12693,6 +12696,7 @@ fn make_binary_driver(
         rationale: Some(rationale.to_string()),
         constraints: vec![],
         evidence_refs: vec![],
+        learnable: false,
     }
 }
 

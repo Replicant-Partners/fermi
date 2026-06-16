@@ -21,6 +21,8 @@ members = [
     "fermi-auth",
     "fermi-lsp", "crates/fermi-console",
     "crates/simops",
+    "crates/posterior",
+    "crates/posterior-reg",
     "crates/projections",
     "crates/dynamics",
     "crates/abw-cli",
@@ -117,6 +119,13 @@ coherence-observer = { path = "agent-bestiary/coherence/crates/coherence-observe
 simops = { path = "crates/simops" }
 projections = { path = "crates/projections", features = ["simops-executor"] }
 dynamics = { path = "crates/dynamics" }
+
+# BayesOps — domain-neutral parameter fitting (Spec 14)
+# `posterior` (Phase 1, marginal fitting) + `posterior-reg` (Phase 2,
+# conditional fitting with HMC). Used by the HTTP surface at
+# /api/bayesops/* and the MCP tools (fermi_fit_*).
+posterior = { path = "crates/posterior" }
+posterior-reg = { path = "crates/posterior-reg" }
 
 # Auth
 fermi-auth = { path = "fermi-auth" }

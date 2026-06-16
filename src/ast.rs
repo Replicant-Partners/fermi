@@ -54,7 +54,17 @@ pub enum GeneratedBy {
     Human,
 }
 
-/// Driver statement: defines a forecasting driver
+/// Driver statement: defines a forecasting driver.
+///
+/// A driver is "learnable" when the user opts into BayesOps managing its
+/// distribution from historical observations. The static `distribution`
+/// field then acts as the prior: it's used when no fit is available (cold
+/// start) and as the conjugate prior when there's data. At sim time the
+/// executor looks for a `<driver_name>_fitted` JSON value in its parameter
+/// context; if present it overrides the static distribution. This is how
+/// BayesOps' `FittedDistribution` flows back into FPL without rewriting the
+/// source — same pattern as the learnable elasticities contract documented
+/// in docs/fermi/BAYESOPS_CONTRACT.md.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DriverStmt {
     pub name: String,
@@ -70,6 +80,10 @@ pub struct DriverStmt {
     pub rationale: Option<String>,
     pub constraints: Vec<Constraint>,
     pub evidence_refs: Vec<String>,
+    /// When true, BayesOps owns this driver's distribution. The `distribution`
+    /// field above is the prior; the live posterior is read at sim time from
+    /// `params.<name>_fitted` (FittedDistribution JSON). Default: false.
+    pub learnable: bool,
 }
 
 /// Type of driver

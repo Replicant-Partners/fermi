@@ -89,10 +89,14 @@ fn main() -> ExitCode {
         }
     };
 
-    // Flatten params into name -> f64 map (only numeric / boolean fields are
-    // bound for the executor; string fields like team_id/team_name are kept
-    // for output metadata but not for arithmetic).
+    // Split params.json into three buckets:
+    //   numeric_params  → goes into executor.params (f64 ctx; ParamRef reads)
+    //   json_params     → goes into executor.json_params (objects/arrays;
+    //                     BayesOps fitted-distribution overrides live here
+    //                     under keys ending in `_fitted`)
+    //   metadata_params → string fields kept for output traceability only
     let mut numeric_params: HashMap<String, f64> = HashMap::new();
+    let mut json_params: HashMap<String, Value> = HashMap::new();
     let mut metadata_params: HashMap<String, Value> = HashMap::new();
     if let Some(obj) = params_json.as_object() {
         for (k, v) in obj {
@@ -104,6 +108,13 @@ fn main() -> ExitCode {
                 }
                 Value::Bool(b) => {
                     numeric_params.insert(k.clone(), if *b { 1.0 } else { 0.0 });
+                }
+                Value::Object(_) | Value::Array(_) => {
+                    // Structured params — could be a BayesOps fitted
+                    // distribution (e.g. `foo_fitted`) or any other
+                    // domain-specific config. The executor's learnable-driver
+                    // lookup checks json_params for `<name>_fitted` keys.
+                    json_params.insert(k.clone(), v.clone());
                 }
                 _ => {
                     metadata_params.insert(k.clone(), v.clone());
@@ -118,8 +129,9 @@ fn main() -> ExitCode {
         source.len()
     ));
     log(&format!(
-        "Params: {} numeric, {} metadata",
+        "Params: {} numeric, {} json, {} metadata",
         numeric_params.len(),
+        json_params.len(),
         metadata_params.len()
     ));
 
@@ -168,6 +180,7 @@ fn main() -> ExitCode {
         None => Executor::new(iterations),
     };
     executor.set_params(numeric_params.clone());
+    executor.set_json_params(json_params.clone());
 
     log(&format!(
         "Running factor-model simulation: {} iterations{}",
@@ -255,6 +268,41 @@ fn main() -> ExitCode {
             })
         }).collect();
         outputs.insert("learnable_manifest".into(), Value::Array(entries));
+    }
+
+    // Learnable drivers — the second half of the BayesOps contract surface.
+    // Unlike `learnable_manifest` (scalar `learnable(...)` literals inside
+    // estimates/factor formulations), this lists `learnable: true` drivers
+    // and reports how each was resolved THIS RUN: from a fitted distribution
+    // (with full FittedDistribution details), or from the static prior
+    // because no fit was available. UI consumes this for status badges.
+    if !results.learnable_drivers.is_empty() {
+        let entries: Vec<Value> = results.learnable_drivers.iter().map(|r| {
+            match &r.source {
+                fermi::executor::LearnableSource::Fitted { fitted } => {
+                    let key = format!("{}_fitted", r.name);
+                    json!({
+                        "name": r.name,
+                        "status": "fitted",
+                        "fitted": serde_json::to_value(fitted).unwrap_or(Value::Null),
+                        "fpl_params": fitted.to_fpl_params(),
+                        "ci_width": fitted.ci_width(),
+                        "n_eff": fitted.n_eff(),
+                        "params_key": key,
+                    })
+                }
+                fermi::executor::LearnableSource::PriorFallback => json!({
+                    "name": r.name,
+                    "status": "prior_fallback",
+                    "reason": format!("no params.{}_fitted in scope", r.name),
+                }),
+                fermi::executor::LearnableSource::Static => json!({
+                    "name": r.name,
+                    "status": "static",
+                }),
+            }
+        }).collect();
+        outputs.insert("learnable_drivers".into(), Value::Array(entries));
     }
 
     // Echo params for traceability (numeric + metadata).

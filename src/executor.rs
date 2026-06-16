@@ -77,6 +77,11 @@ pub struct ExecutionResults {
     pub estimate_name: Option<String>,
     pub param_bindings: Option<HashMap<String, f64>>,
     pub learnable_manifest: Option<Vec<LearnableInfo>>,
+    /// Per-driver log of how each `learnable: true` driver's distribution
+    /// was resolved this run (fitted, prior-fallback). Empty for programs
+    /// with no learnable drivers. Used by the UI to show status badges
+    /// and by the BayesOps round-trip diagnostics.
+    pub learnable_drivers: Vec<LearnableDriverResolution>,
 }
 
 impl ExecutionResults {
@@ -114,9 +119,16 @@ pub struct Executor {
     /// Optional fixed driver values for conditional execution
     /// Map of driver_name -> fixed_value
     fixed_drivers: std::collections::HashMap<String, f64>,
-    /// Parameter bindings for factor-model programs.
+    /// Numeric parameter bindings.
     /// Populated from `.app/params.json` and accessed via Expression::ParamRef.
+    /// Also serves as the override path for `learnable(...)` literals.
     params: std::collections::HashMap<String, f64>,
+    /// Structured parameter overrides — used by BayesOps to push fitted
+    /// distributions into learnable drivers. The convention is
+    /// `<driver_name>_fitted -> posterior::FittedDistribution JSON`.
+    /// Same `.app/params.json` source; just the non-numeric values
+    /// preserved as JSON instead of dropped.
+    json_params: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl Default for Executor {
@@ -132,6 +144,7 @@ impl Executor {
             rng: StdRng::from_entropy(),
             fixed_drivers: std::collections::HashMap::new(),
             params: std::collections::HashMap::new(),
+            json_params: std::collections::HashMap::new(),
         }
     }
 
@@ -145,6 +158,65 @@ impl Executor {
         self.params.extend(params);
     }
 
+    /// Bulk-set structured (JSON) parameters. Used by the BayesOps round-trip:
+    /// `<driver_name>_fitted -> FittedDistribution JSON`. Numeric scalars go
+    /// via `set_params`; objects/arrays via this method.
+    pub fn set_json_params(&mut self, params: HashMap<String, serde_json::Value>) {
+        self.json_params.extend(params);
+    }
+
+    /// Try to read a `posterior::FittedDistribution` for a learnable driver
+    /// from json_params, keyed `<driver_name>_fitted`. Returns None if the
+    /// key isn't present or the value doesn't deserialize.
+    ///
+    /// This is the read-side of the BayesOps driver contract. The executor
+    /// uses the returned `FittedDistribution` as if the driver had declared
+    /// the equivalent FPL distribution literal.
+    fn fitted_distribution_for(&self, driver_name: &str) -> Option<posterior::FittedDistribution> {
+        let key = format!("{}_fitted", driver_name);
+        let raw = self.json_params.get(&key)?;
+        match serde_json::from_value::<posterior::FittedDistribution>(raw.clone()) {
+            Ok(fd) => Some(fd),
+            Err(e) => {
+                // Don't fail the sim — log and fall back to the static prior.
+                // Wrong-shape overrides are a BayesOps bug, not a Fermi bug.
+                eprintln!(
+                    "warning: driver '{}' learnable override params.{} did not deserialize \
+                     as FittedDistribution ({}); falling back to static prior",
+                    driver_name, key, e
+                );
+                None
+            }
+        }
+    }
+
+    /// Convert a `posterior::FittedDistribution` into an FPL `Distribution`
+    /// that the existing `sample_distribution` machinery can sample from.
+    /// All four FittedDistribution variants map 1:1 to FPL variants.
+    fn fitted_to_fpl_distribution(fd: &posterior::FittedDistribution) -> Distribution {
+        match fd {
+            posterior::FittedDistribution::Beta { alpha, beta, .. } => Distribution::Beta {
+                alpha: Expression::Number(*alpha),
+                beta: Expression::Number(*beta),
+                min: None,
+                max: None,
+            },
+            posterior::FittedDistribution::Normal { mean, std_dev, .. } => Distribution::Normal {
+                mean: Expression::Number(*mean),
+                stddev: Expression::Number(*std_dev),
+            },
+            posterior::FittedDistribution::Lognormal { median, sigma, .. } => Distribution::Lognormal {
+                median: Expression::Number(*median),
+                sigma: Expression::Number(*sigma),
+            },
+            posterior::FittedDistribution::Triangular { p5, p50, p95, .. } => Distribution::Triangular {
+                p5: Expression::Number(*p5),
+                p50: Expression::Number(*p50),
+                p95: Expression::Number(*p95),
+            },
+        }
+    }
+
     /// Create executor with fixed driver values for conditional simulation
     pub fn with_fixed_drivers(
         iterations: usize,
@@ -155,6 +227,7 @@ impl Executor {
             rng: StdRng::from_entropy(),
             fixed_drivers: fixed,
             params: std::collections::HashMap::new(),
+            json_params: std::collections::HashMap::new(),
         }
     }
 
@@ -174,6 +247,7 @@ impl Executor {
             rng: StdRng::seed_from_u64(seed),
             fixed_drivers: std::collections::HashMap::new(),
             params: std::collections::HashMap::new(),
+            json_params: std::collections::HashMap::new(),
         }
     }
 
@@ -189,10 +263,19 @@ impl Executor {
             return self.execute_factor_model(program);
         }
 
-        // Find drivers, model, and base_rate
-        let mut continuous_drivers: HashMap<String, &Distribution> = HashMap::new();
+        // Find drivers, model, and base_rate.
+        //
+        // Continuous-driver distributions are kept as OWNED values rather than
+        // borrows so that learnable drivers can substitute a fitted
+        // distribution (built from a `posterior::FittedDistribution` read out
+        // of json_params) without needing the source AST to mutate. The
+        // resolution log is published alongside the simulation results so the
+        // caller (and UI) can see exactly which drivers used a fit vs the
+        // static prior. See `DriverStmt.learnable` and `BAYESOPS_CONTRACT.md`.
+        let mut continuous_drivers: HashMap<String, Distribution> = HashMap::new();
         let mut binary_drivers: HashMap<String, f64> = HashMap::new();
         let mut discrete_drivers: HashMap<String, (Vec<f64>, Vec<f64>)> = HashMap::new();
+        let mut learnable_driver_log: Vec<LearnableDriverResolution> = Vec::new();
         let mut model_expr = None;
         let mut base_rate: Option<f64> = None;
 
@@ -206,7 +289,33 @@ impl Executor {
                 }
                 Statement::Driver(driver) => match driver.driver_type {
                     DriverType::Continuous => {
-                        if let Some(ref dist) = driver.distribution {
+                        // Resolution order for a continuous driver:
+                        //   1. Marked `learnable: true` AND a valid
+                        //      FittedDistribution lives in
+                        //      params.<name>_fitted → use that.
+                        //   2. Static `distribution: ...` block → use that.
+                        //   3. Nothing → driver is skipped (silent today).
+                        let (resolved_dist, source) = if driver.learnable {
+                            if let Some(fd) = self.fitted_distribution_for(&driver.name) {
+                                (Some(Self::fitted_to_fpl_distribution(&fd)),
+                                 LearnableSource::Fitted { fitted: fd })
+                            } else {
+                                (driver.distribution.clone(),
+                                 LearnableSource::PriorFallback)
+                            }
+                        } else {
+                            (driver.distribution.clone(),
+                             LearnableSource::Static)
+                        };
+
+                        if driver.learnable {
+                            learnable_driver_log.push(LearnableDriverResolution {
+                                name: driver.name.clone(),
+                                source,
+                            });
+                        }
+
+                        if let Some(dist) = resolved_dist {
                             continuous_drivers.insert(driver.name.clone(), dist);
                         }
                     }
@@ -323,6 +432,7 @@ impl Executor {
             estimate_name: None,
             param_bindings: None,
             learnable_manifest: None,
+            learnable_drivers: learnable_driver_log,
         })
     }
 
@@ -546,6 +656,9 @@ impl Executor {
             estimate_name: Some(estimate.name.clone()),
             param_bindings: Some(self.params.clone()),
             learnable_manifest: Some(learnable_names),
+            // Factor-model programs don't use the driver-syntax learnable
+            // path; learnable elasticities live in learnable_manifest.
+            learnable_drivers: Vec::new(),
         })
     }
 
@@ -650,6 +763,30 @@ pub struct LearnableInfo {
     pub sigma: f64,
     /// Where this learnable lives in the AST — informational only.
     pub owner: String,
+}
+
+/// Per-driver record of how a learnable driver's distribution was resolved
+/// in a given simulation run. Published alongside `ExecutionResults` so the
+/// UI can show "fitted from N obs" vs "using prior (no data)" badges.
+#[derive(Debug, Clone)]
+pub struct LearnableDriverResolution {
+    pub name: String,
+    pub source: LearnableSource,
+}
+
+/// Where the distribution a learnable driver was sampled from came from.
+#[derive(Debug, Clone)]
+pub enum LearnableSource {
+    /// Driver wasn't learnable — used the static `distribution: ...` block.
+    /// Included so non-learnable drivers can be reported uniformly if the
+    /// caller wants to. Today we only log learnable ones.
+    Static,
+    /// Driver was learnable AND a valid `params.<name>_fitted` was found.
+    Fitted { fitted: posterior::FittedDistribution },
+    /// Driver was learnable but no fit was available — fell back to the
+    /// static `distribution: ...` block. Surface this in the UI as
+    /// "cold-start / no observations yet".
+    PriorFallback,
 }
 
 impl Executor {
@@ -861,6 +998,7 @@ mod tests {
                     rationale: None,
                     constraints: vec![],
                     evidence_refs: vec![],
+                    learnable: false,
                 }),
                 Statement::Model(ModelStmt {
                     expression: Expression::Identifier("x".to_string()),
@@ -917,6 +1055,7 @@ mod tests {
                     rationale: None,
                     constraints: vec![],
                     evidence_refs: vec![],
+                    learnable: false,
                 }),
                 Statement::Driver(DriverStmt {
                     name: "y".to_string(),
@@ -935,6 +1074,7 @@ mod tests {
                     rationale: None,
                     constraints: vec![],
                     evidence_refs: vec![],
+                    learnable: false,
                 }),
                 Statement::Model(ModelStmt {
                     expression: Expression::Add(
@@ -975,6 +1115,7 @@ mod tests {
             estimate_name: None,
             param_bindings: None,
             learnable_manifest: None,
+            learnable_drivers: Vec::new(),
         };
 
         let histogram = results.histogram(5);
