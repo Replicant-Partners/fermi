@@ -247,7 +247,22 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
         Expression::FunctionCall { name, args } => evaluate_function(name, args, ctx),
 
         // Factor model expressions
-        Expression::LearnablePrior { initial, .. } => Ok(*initial), // Use initial value during evaluation
+        //
+        // LearnablePrior: if the prior has been assigned a name (by
+        // Executor::assign_learnable_names) AND the evaluation context binds
+        // a value for that name, use the bound value. Otherwise fall back to
+        // the prior's `initial`. This is the read-side of the BayesOps
+        // contract: it writes updated values into the workspace's
+        // .app/params.json under the learnable's auto-assigned name, and
+        // the executor binds those into the context at sim time.
+        Expression::LearnablePrior { initial, name, .. } => {
+            if let Some(n) = name {
+                if let Some(v) = ctx.get(n) {
+                    return Ok(v);
+                }
+            }
+            Ok(*initial)
+        }
         Expression::ParamRef(field) => ctx
             .get(field)
             .ok_or_else(|| EvalError::UndefinedVariable(format!("param:{}", field))),

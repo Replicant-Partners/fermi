@@ -15,8 +15,27 @@ param hdi_logit: real
 
 question "Will {team_name} win the 2026 FIFA World Cup?"
 
+// Factor inputs are standardized into roughly the same band as the X_k
+// noise (sigma = sqrt(variance_share) ≈ 0.2-0.5) so the deterministic signal
+// is comparable to stochastic. The executor adds +1.0 to each factor before
+// substitution, so a deterministic contribution of ~0 means "neutral team",
+// negative means "below the field", positive means "above".
+//
+// Calibration constants (Elo-mean=1700, Elo-spread=300, socio-shift=4.0,
+// socio-scale=2.0) are chosen so each factor's deterministic component is
+// roughly O(1) — comparable in scale to its noise term (sigma =
+// sqrt(variance_share)). They are frozen at instantiation; BayesOps owns
+// updates to the learnable elasticities, not these scaling constants.
+// Polymarket sits outside this model as a base-rate divergence reference.
+
 factor X1 "Socioeconomic Capital" {
     inputs: gdp_per_capita_log, population_log, hdi_logit
+    // Center the weighted socio sum (empirical range across confederations
+    // is ~[2.27, 2.94] with mean ~2.6) and scale so cross-confederation
+    // spread maps to roughly [-0.5, +0.5] in factor-space — comparable to
+    // X1's noise sigma = sqrt(0.25) = 0.5. UEFA lands near +0.4, CAF near
+    // -0.5, with CONMEBOL/CONCACAF/AFC clustered in between.
+    formulation: (0.4 * gdp_per_capita_log + 0.3 * population_log + 0.3 * hdi_logit - 2.6) / 0.7
     variance_share: 0.25
     update: static
 }
@@ -30,7 +49,11 @@ factor X2 "Institutional Capacity" {
 
 factor X3 "Dynamic Performance Signal" {
     inputs: elo_current, elo_trend, goal_difference, pass_completion, xg_delta
-    formulation: residual(0.30 * elo_current + 0.15 * elo_trend + 0.20 * goal_difference + 0.15 * pass_completion + 0.20 * xg_delta, X1, X2)
+    // Z-score Elo against tournament-quality field (mean=1700, sd=300) and
+    // mix in the remaining covariates (currently 0 until data fetch lands —
+    // they fall out of the deterministic component and only contribute via
+    // X3's noise term).
+    formulation: residual(0.50 * (elo_current - 1700) / 300 + 0.10 * elo_trend + 0.15 * goal_difference + 0.10 * pass_completion + 0.15 * xg_delta, X1, X2)
     variance_share: 0.25
     update: per_match
 }

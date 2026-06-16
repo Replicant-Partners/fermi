@@ -1010,7 +1010,8 @@ impl Parser {
                     _ => 0.1,
                 };
                 self.consume_token(TokenType::RParen, ")")?;
-                Ok(Expression::LearnablePrior { initial, sigma })
+                // name is assigned later by Executor::assign_learnable_names
+                Ok(Expression::LearnablePrior { initial, sigma, name: None })
             }
             TokenType::Residual => {
                 self.advance();

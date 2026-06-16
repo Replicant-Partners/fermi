@@ -192,6 +192,14 @@ path = "scripts/embedding_anchors.rs"
 name = "brier-backtest-seed"
 path = "scripts/brier_backtest_seed.rs"
 
+[[bin]]
+# Initialize a workspace from an FPL template and params.json — runs the
+# factor-model Monte Carlo locally and emits structured workspace outputs.
+# Used by World Cup batch-initialize and any other ABW app that wants a
+# server-side simulation pass without spinning up the full Fermi loop.
+name = "initialize-workspace"
+path = "scripts/initialize_workspace.rs"
+
 [lib]
 name = "fermi"
 path = "src/lib.rs"

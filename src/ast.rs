@@ -316,9 +316,21 @@ pub enum Expression {
 
     /// Learnable parameter with Gaussian prior.
     /// learnable(initial_value, sigma)
+    ///
+    /// The optional `name` field is assigned by `Executor::assign_learnable_names`
+    /// post-parse — a deterministic, position-based identifier (e.g.
+    /// `tournament_strength_l0`) used as the key BayesOps reads/writes via
+    /// the workspace_outputs API. When `name` is Some, the evaluator looks
+    /// up `params.<name>` before falling back to `initial`.
+    ///
+    /// The parser always emits `name: None`; auto-naming is a pre-execution
+    /// pass so that `learnable(...)` literals in different statements get
+    /// stable identifiers without changing FPL syntax. Later phases may add
+    /// an explicit `learnable[name](initial, sigma)` syntax.
     LearnablePrior {
         initial: f64,
         sigma: f64,
+        name: Option<String>,
     },
 
     /// Parameter reference: param.field_name
@@ -622,8 +634,11 @@ impl fmt::Display for Expression {
             Expression::Residual { raw, upstream } => {
                 write!(f, "residual({}, {})", raw, upstream.join(", "))
             }
-            Expression::LearnablePrior { initial, sigma } => {
-                write!(f, "learnable({}, {})", initial, sigma)
+            Expression::LearnablePrior { initial, sigma, name } => {
+                match name {
+                    Some(n) => write!(f, "learnable[{}]({}, {})", n, initial, sigma),
+                    None => write!(f, "learnable({}, {})", initial, sigma),
+                }
             }
             Expression::ParamRef(field) => write!(f, "param:{}", field),
             Expression::FactorRef(name) => write!(f, "{}", name),

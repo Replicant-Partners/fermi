@@ -1,0 +1,193 @@
+# BayesOps ↔ Fermi Factor-Model Contract
+
+**Status:** Live for World Cup 2026 team-prior workspaces (48 ws) as of 2026-06-16.
+**Audience:** BayesOps implementation (separate string) needs this to plug in.
+
+## Summary
+
+Fermi's factor-model executor exposes every `learnable(initial, sigma)` literal
+in an FPL program as a named, externally-overrideable parameter. BayesOps fits
+posteriors against match outcomes and writes updated point estimates back via
+the workspace_outputs API. The next simulation run picks them up.
+
+No FPL rewriting required. No new endpoints. The contract is the naming
+convention + `.app/params.json` mechanism that already exists.
+
+## Read side: discovering what's learnable
+
+Every factor-model run publishes a `learnable_manifest` output. Example
+(`PUT /api/workspaces/:id/outputs/learnable_manifest`, set by
+`initialize-workspace`):
+
+```json
+[
+  {
+    "name": "tournament_strength_l0",
+    "initial": 1.0,
+    "sigma": 0.2,
+    "owner": "tournament_strength",
+    "current_value": 1.0,
+    "is_overridden": false
+  },
+  {
+    "name": "tournament_strength_l1",
+    "initial": 0.25,
+    "sigma": 0.05,
+    "owner": "tournament_strength",
+    "current_value": 0.25,
+    "is_overridden": false
+  },
+  ...
+]
+```
+
+**Fields:**
+
+- `name`: Stable identifier of the form `<owner>_l<idx>`, where
+  - `<owner>` is the containing statement (factor name like `X3` or estimate
+    name like `tournament_strength`)
+  - `<idx>` is the 0-based positional index of the `learnable(...)` literal
+    within that statement, traversed depth-first source-order
+- `initial`: The prior's point estimate (the first arg to `learnable(...)`)
+- `sigma`: The prior's stddev (the second arg). Treat as a Gaussian prior
+  on the parameter — `N(initial, sigma²)`.
+- `owner`: The containing statement, for context. Informational.
+- `current_value`: The value used in the most recent sim. Equal to `initial`
+  if no override has been written; equal to the override otherwise.
+- `is_overridden`: True iff `params.<name>` is present in
+  `.app/params.json`.
+
+**Stability guarantee:** As long as the FPL template doesn't change, names are
+stable across runs. Adding/removing/reordering `learnable(...)` literals in
+the template renumbers everything from that point forward. Treat `(template_path,
+name)` as the unique key. If you need stronger guarantees later, the parser
+can be extended to accept `learnable[name](...)` syntax (AST already supports
+this via `LearnablePrior.name`).
+
+## Write side: updating a learnable
+
+To update `tournament_strength_l3` (X3 elasticity) from its prior of 0.25 to
+the posterior point estimate of 0.31, BayesOps writes:
+
+```http
+PUT /api/workspaces/<ws_id>/outputs/params
+Content-Type: application/json
+
+{
+  "value": {
+    "team_id": "ARG",
+    "team_name": "Argentina",
+    ... (existing params) ...,
+    "tournament_strength_l3": 0.31
+  }
+}
+```
+
+The `params` workspace output is the canonical source. The Rust executor
+binary (`initialize-workspace`) reads it via the workspaces API and writes
+it back into `.app/params.json` at sim time.
+
+**Convention:** BayesOps reads the full `params` object, merges its updated
+keys, and writes back the full object. Last-writer-wins.
+
+## Re-running the sim
+
+After BayesOps writes updated params:
+
+```bash
+# Manual:
+./target/debug/initialize-workspace \
+    --template templates/world_cup/team_prior.fpl \
+    --params <(curl -s ".../params" | jq .value) \
+    --iterations 10000 --seed 42
+
+# Or via the publish wrapper:
+python3 scripts/world_cup/publish_team_priors.py --only ARG
+```
+
+The wrapper PUTs the resulting outputs (including a fresh
+`tournament_strength` distribution) back to the workspace. The DAG fans the
+update out to dependent workspaces (group paths, etc.).
+
+## Brier feedback loop placement
+
+BayesOps owns the math; Fermi owns the data plumbing:
+
+```
+match resolves
+    ↓
+Polymarket/match API → workspace_outputs/match_outcome  (Fermi writes)
+    ↓
+BayesOps reads:
+  - learnable_manifest (priors)
+  - tournament_strength (forecast distribution)
+  - match_outcome (ground truth)
+    ↓
+BayesOps fits posterior → updated learnable point estimates
+    ↓
+BayesOps writes back to params (PUT /outputs/params)
+    ↓
+Fermi re-runs sim → publishes new tournament_strength
+    ↓
+DAG fans update to group paths, H2H matches
+```
+
+## Per-team-prior learnable inventory
+
+For the 48 team-prior workspaces using `templates/world_cup/team_prior.fpl`,
+each workspace exposes 7 learnables (one per Cobb-Douglas term):
+
+| name | meaning | prior | range |
+|------|---------|-------|-------|
+| `tournament_strength_l0` | intercept A (Cobb-Douglas multiplier) | 1.0 | (0.5, 2.0) |
+| `tournament_strength_l1` | elasticity α on X1 (socio capital) | 0.25 | [0, 1] |
+| `tournament_strength_l2` | elasticity β on X2 (institutional) | 0.20 | [0, 1] |
+| `tournament_strength_l3` | elasticity γ on X3 (dynamic perf / Elo) | 0.25 | [0, 1] |
+| `tournament_strength_l4` | elasticity δ on X4 (squad quality) | 0.15 | [0, 1] |
+| `tournament_strength_l5` | elasticity ε on X5 (tactical eff) | 0.10 | [0, 1] |
+| `tournament_strength_l6` | elasticity ζ on X6 (exogenous, log-linear) | 0.05 | [0, ∞) |
+
+The variance-share constraint (Σ variance_share = 1.0) does NOT bind the
+elasticities themselves. BayesOps is free to fit elasticities however the
+data supports, but the executor's semantic check will warn if variance
+shares drift more than 5% from unity. Variance shares are not currently
+learnable (they live as `variance_share: <const>` in the factor block, not
+as `learnable(...)`); promoting them to learnable is a future change.
+
+## What's NOT in the contract (yet)
+
+- **Cross-workspace updates.** If BayesOps wants to update elasticities
+  consistently across all 48 team priors (because the Cobb-Douglas
+  elasticities are population-level, not per-team), it currently has to
+  PUT 48 separate `params` payloads. A `PATCH /api/apps/:slug/learnables`
+  shared-elasticity endpoint is a future improvement.
+- **Variance share updates.** Per above.
+- **Residualization coefficients.** Phase 4 will compute OLS projection
+  weights at sim time; those aren't `learnable(...)` and aren't exposed.
+- **The softmax temperature** in `publish_team_priors.py`. It's a scoring
+  head, not a model parameter. Update via PR if needed.
+
+## Failure modes & guarantees
+
+- **Override is ignored if name doesn't match a learnable.** The evaluator
+  falls back to `initial`. No error, no warning. (Future: add a strict-mode
+  flag that errors on dangling overrides.)
+- **Override of wrong type breaks the sim.** If `tournament_strength_l3 =
+  "fast"` (string), the JSON loader silently drops it (string params go to
+  metadata, not numeric_params). The sim runs with the prior.
+- **Override outside reasonable range may NaN the Cobb-Douglas.** If
+  BayesOps writes an elasticity of -5, the executor will produce NaN
+  responses and skip those iterations (see `execute_factor_model`'s finite
+  guard). If too many iterations fail, the executor returns
+  `EvaluationError("Factor model produced no finite response samples")`.
+  BayesOps should clamp updates to sane ranges.
+
+## Files
+
+- Contract source: `src/executor.rs::execute_factor_model` (and the
+  `assign_learnable_names` / `collect_learnable_info` helpers)
+- Evaluator override path: `src/evaluator.rs::evaluate` →
+  `Expression::LearnablePrior`
+- CLI emitter: `scripts/initialize_workspace.rs`
+- Batch wrapper: `scripts/world_cup/publish_team_priors.py`
+- Template: `templates/world_cup/team_prior.fpl`
