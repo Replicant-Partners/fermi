@@ -13,8 +13,10 @@ mod messages;
 mod coherence;
 pub mod actions;
 pub mod outputs;
+pub mod resolution;
 
 pub use core::*;
 pub use messages::*;
 pub use coherence::*;
 pub use outputs::*;
+pub use resolution::*;

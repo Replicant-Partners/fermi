@@ -646,6 +646,14 @@ async fn run_migrations(db: &PgPool) {
         // NOT NULL in migration 048 but the fermi-as-app workflow creates
         // forecasts without a notebook. Same family as 138 and 144.
         "migrations/146_fermi_forecasts_notebook_nullable.sql",
+        // Workspace resolution lifecycle — generalises forecast
+        // resolution beyond fermi_forecasts. Single endpoint at
+        // POST /api/workspaces/:id/resolve transitions any workspace
+        // active → completed/failed, writes outcome to both teams
+        // columns AND workspace_outputs, computes Brier, fan-outs to
+        // downstream workspaces, and is the BayesOps refit hook
+        // insertion point.
+        "migrations/147_workspace_resolution.sql",
     ];
 
     for file in &migration_files {
@@ -1819,6 +1827,14 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/dependencies/:upstream_id",
             delete(handlers::workspace::outputs::remove_dependency_handler),
+        )
+        // Workspace resolution — universal lifecycle endpoint that
+        // transitions workspace_status active → completed/failed and
+        // is the single entry point BayesOps refits hook into.
+        // See docs/fermi/WORKSPACE_RESOLUTION.md for the contract.
+        .route(
+            "/api/workspaces/:workspace_id/resolve",
+            post(handlers::workspace::resolution::resolve_workspace_handler),
         )
         // Workspace chat
         .route(
