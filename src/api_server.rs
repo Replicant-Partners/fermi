@@ -327,6 +327,15 @@ pub(crate) struct AppState {
     /// Capacity 2048 — a receiver lagging >2048 messages gets RecvError::Lagged
     /// and must re-fetch backfill from the DB (handled in the SSE handler).
     pub(crate) pg_notify: broadcast::Sender<(String, String)>,
+
+    /// Spec 14 §5.6: in-memory store for fitted ConditionalPosteriors.
+    /// `fit_conditional` returns a `posterior_id: Uuid` keyed in this map; the
+    /// subsequent `predict` / `input_sensitivity` / `compare_scenarios` /
+    /// `prob_exceeds` / `optimise_for_target` endpoints look up the posterior
+    /// by id. **Session-scoped** — posteriors are lost on server restart
+    /// (persistent posterior store is Phase 5).
+    pub(crate) posterior_cache:
+        Arc<dashmap::DashMap<uuid::Uuid, posterior_reg::ConditionalPosterior>>,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -1081,6 +1090,8 @@ async fn main() {
             });
             tx
         },
+        // Spec 14 §5.6 — empty at boot, fills as agents/operators fit posteriors.
+        posterior_cache: Arc::new(dashmap::DashMap::new()),
     };
 
     if state.secret_encryptor.is_some() {
@@ -1672,6 +1683,21 @@ async fn main() {
         // ── SimOps rheology (instantaneous fluid property calculator) ─────────
         .route("/api/simops/rheology", post(handlers::simops::rheology_handler))
         .route("/api/simops/rheology/models", get(handlers::simops::rheology_list_handler))
+        // ── BayesOps (Spec 14 §5.6) — domain-neutral parameter fitting ─────────
+        // Phase 1 (marginal): /fit_marginal
+        // Phase 2 (conditional): /fit_conditional → /predict, /input_sensitivity,
+        //                        /compare_scenarios, /prob_exceeds, /optimise_for_target
+        // Posteriors are cached in-memory (session-scoped). Persistent posterior
+        // store is Phase 5. No auth — these endpoints are pure compute.
+        .route("/api/bayesops/fit_marginal", post(handlers::bayesops::fit_marginal_handler))
+        .route("/api/bayesops/fit_conditional", post(handlers::bayesops::fit_conditional_handler))
+        .route("/api/bayesops/predict", post(handlers::bayesops::predict_handler))
+        .route("/api/bayesops/input_sensitivity", post(handlers::bayesops::input_sensitivity_handler))
+        .route("/api/bayesops/compare_scenarios", post(handlers::bayesops::compare_scenarios_handler))
+        .route("/api/bayesops/prob_exceeds", post(handlers::bayesops::prob_exceeds_handler))
+        .route("/api/bayesops/optimise_for_target", post(handlers::bayesops::optimise_for_target_handler))
+        .route("/api/bayesops/posteriors", get(handlers::bayesops::list_posteriors_handler))
+        .route("/api/bayesops/posteriors/:id", delete(handlers::bayesops::evict_posterior_handler))
         // Workspace routes
         .route(
             "/api/workspaces",

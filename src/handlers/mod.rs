@@ -6,6 +6,7 @@
 
 pub mod admin;
 pub mod apps;
+pub mod bayesops;
 pub mod simops;
 pub mod agent_wallet;
 pub mod agents;

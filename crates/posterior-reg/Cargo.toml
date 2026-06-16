@@ -1,0 +1,52 @@
+[package]
+name = "posterior-reg"
+version = "0.1.0"
+edition = "2021"
+authors = ["Fermi Team"]
+description = "BayesOps Phase 2 — conditional distribution fitting via HMC. Domain-neutral Bayesian regression with a NUTS sampler and an NLPD-driven improvement loop. See docs/specs/14_BAYESOPS_SPEC.md."
+
+[dependencies]
+# Shared types: FittedDistribution, FitMetadata, DataQuality
+posterior = { path = "../posterior" }
+
+# RNG + statistical distributions (CDFs, log-densities, gamma functions)
+rand = "0.8"
+rand_distr = "0.4"
+statrs = "0.16"
+
+# Async runtime — multi-chain parallelism via spawn_blocking
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+
+# Serde: every public struct must round-trip for HTTP + MCP surfaces
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Timestamps for FitMetadata
+chrono = { version = "0.4", features = ["serde"] }
+
+# Typed errors
+thiserror = "1.0"
+
+# Posterior store keying (HTTP surface uses Uuid)
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Logging (sampler diagnostics, divergence warnings)
+tracing = "0.1"
+
+[dev-dependencies]
+# Deterministic tests
+rand = "0.8"
+approx = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "test-util"] }
+
+[features]
+# Default: lean — only linear models with hand-coded gradients
+default = []
+
+# Opt-in: nonlinear / heteroscedastic models that use num-dual AD.
+# Pulls nalgebra + simba into the transitive graph.
+ad = ["dep:num-dual"]
+
+[dependencies.num-dual]
+version = "0.14"
+optional = true

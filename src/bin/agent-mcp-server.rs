@@ -24,6 +24,15 @@ use fermi::ast::AgentStmt;
 use fermi::{Executor, Lexer, Parser, SemanticAnalyzer};
 use fermi::sensitivity::full_sensitivity_analysis;
 
+// BayesOps (Spec 14 §5.6) — fitting and what-if query tools.
+// Same library that backs the HTTP surface at /api/bayesops/*; MCP is
+// stateless so posteriors travel with each call as JSON.
+use posterior::{fit_marginal as bayesops_fit_marginal, DistFamily};
+use posterior_reg::{
+    fit_conditional as bayesops_fit_conditional, ConditionalPosterior, RegressionConfig,
+    WeightedSample,
+};
+
 // Tool: List all available agents
 #[macros::mcp_tool(
     name = "list_agents",
@@ -122,6 +131,105 @@ pub struct FermiSensitivityAnalysisTool {
     pub iterations: Option<u32>,
 }
 
+// ── BayesOps tools (Spec 14 §5.6) ───────────────────────────────────────────
+//
+// Domain-neutral parameter fitting. Backed by `crates/posterior` (marginal)
+// and `crates/posterior-reg` (conditional). The MCP surface is stateless:
+// `fit_conditional` returns the full posterior JSON which the caller passes
+// back to `predict`, `input_sensitivity`, etc. on the next turn.
+
+#[macros::mcp_tool(
+    name = "fermi_fit_marginal",
+    description = "BayesOps: fit a marginal distribution from a vector of scalar observations. Returns a FittedDistribution (Beta/Normal/Lognormal/Triangular) directly usable as FPL Driver parameters. Domain-neutral: works on any scalar outcome history."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiFitMarginalTool {
+    /// Scalar observations to fit.
+    pub observations: Vec<f64>,
+    /// Optional per-observation weights (1.0 = real, 0.0–0.3 = synthetic).
+    /// Must match `observations.len()` if provided.
+    #[serde(default)]
+    pub weights: Option<Vec<f64>>,
+    /// Family: "beta" | "normal" | "lognormal" | "triangular" | "auto" (default).
+    #[serde(default)]
+    pub family: Option<String>,
+    /// Optional human-readable provenance string for the result metadata.
+    #[serde(default)]
+    pub source_description: Option<String>,
+}
+
+#[macros::mcp_tool(
+    name = "fermi_fit_conditional",
+    description = "BayesOps: fit a conditional posterior P(outcome | features, data) via HMC. Returns the full posterior JSON which can be passed to fermi_predict / fermi_input_sensitivity / fermi_compare_scenarios / fermi_prob_exceeds / fermi_optimise_for_target."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiFitConditionalTool {
+    /// Training data as JSON array of `{features: {name: f64}, outcome: f64, weight: f64}`.
+    pub data: serde_json::Value,
+    /// Regression configuration as JSON. Required field: `feature_names: [...]`.
+    pub config: serde_json::Value,
+}
+
+#[macros::mcp_tool(
+    name = "fermi_predict",
+    description = "BayesOps: query a fitted ConditionalPosterior at new feature values. Returns the predictive FittedDistribution suitable for FPL injection."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiPredictTool {
+    /// Posterior JSON as returned by fermi_fit_conditional.
+    pub posterior: serde_json::Value,
+    /// Query feature values as JSON object `{name: f64}`.
+    pub features: serde_json::Value,
+}
+
+#[macros::mcp_tool(
+    name = "fermi_input_sensitivity",
+    description = "BayesOps: Sobol-style sensitivity analysis over a fitted ConditionalPosterior. Returns first-order and total-order indices per feature, identifying which features drive outcome variance."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiInputSensitivityTool {
+    pub posterior: serde_json::Value,
+    /// `{feature_name: [lo, hi]}` over which to compute sensitivity.
+    pub feature_ranges: serde_json::Value,
+    #[serde(default)]
+    pub n_samples: Option<u32>,
+}
+
+#[macros::mcp_tool(
+    name = "fermi_compare_scenarios",
+    description = "BayesOps: compare two feature configurations under a fitted ConditionalPosterior. Returns full predictive distributions for both plus P(A>B), expected gain, and risk ratio."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiCompareScenariosTool {
+    pub posterior: serde_json::Value,
+    pub a: serde_json::Value,
+    pub b: serde_json::Value,
+}
+
+#[macros::mcp_tool(
+    name = "fermi_prob_exceeds",
+    description = "BayesOps: P(outcome >= threshold | features) under a fitted ConditionalPosterior. The core planning-under-constraint query."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiProbExceedsTool {
+    pub posterior: serde_json::Value,
+    pub features: serde_json::Value,
+    pub threshold: f64,
+}
+
+#[macros::mcp_tool(
+    name = "fermi_optimise_for_target",
+    description = "BayesOps: find the value of `free_feature` (holding `fixed_features` constant) that maximises P(outcome >= target_threshold). Returns recommended value, probability at the recommendation, predictive distribution, and the full sensitivity curve."
+)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
+pub struct FermiOptimiseForTargetTool {
+    pub posterior: serde_json::Value,
+    pub fixed_features: serde_json::Value,
+    pub free_feature: String,
+    pub search_range: (f64, f64),
+    pub target_threshold: f64,
+}
+
 /// Custom handler for Agent Bestiary operations
 struct AgentBestiaryHandler {
     registry: Arc<AgentRegistry>,
@@ -152,6 +260,14 @@ impl ServerHandler for AgentBestiaryHandler {
                 AskXamanEkTool::tool(),
                 FermiExecuteFplTool::tool(),
                 FermiSensitivityAnalysisTool::tool(),
+                // BayesOps (Spec 14 §5.6) — domain-neutral parameter fitting
+                FermiFitMarginalTool::tool(),
+                FermiFitConditionalTool::tool(),
+                FermiPredictTool::tool(),
+                FermiInputSensitivityTool::tool(),
+                FermiCompareScenariosTool::tool(),
+                FermiProbExceedsTool::tool(),
+                FermiOptimiseForTargetTool::tool(),
             ],
             meta: None,
             next_cursor: None,
@@ -569,9 +685,184 @@ impl ServerHandler for AgentBestiaryHandler {
                 ]))
             }
 
+            // ── BayesOps tools ───────────────────────────────────────────────
+            "fermi_fit_marginal" => {
+                let tool: FermiFitMarginalTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                let family = parse_dist_family(tool.family.as_deref())
+                    .map_err(CallToolError::from_message)?;
+                let weights = tool.weights.as_deref();
+                let (fitted, mut meta) = bayesops_fit_marginal(&tool.observations, weights, family)
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                if let Some(desc) = tool.source_description {
+                    meta.source_description = desc;
+                }
+                let output = json!({
+                    "fitted": fitted,
+                    "metadata": meta,
+                    "fpl_params": fitted.to_fpl_params(),
+                });
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&output).unwrap().into(),
+                ]))
+            }
+
+            "fermi_fit_conditional" => {
+                let tool: FermiFitConditionalTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                let data: Vec<WeightedSample> = serde_json::from_value(tool.data)
+                    .map_err(|e| CallToolError::from_message(format!("invalid data: {}", e)))?;
+                let config: RegressionConfig = serde_json::from_value(tool.config)
+                    .map_err(|e| CallToolError::from_message(format!("invalid config: {}", e)))?;
+
+                let posterior = bayesops_fit_conditional(&data, &config)
+                    .await
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+                // Return the entire posterior JSON so the caller can pass it back
+                // to predict / sensitivity / etc. The MCP world is stateless —
+                // no server-side cache.
+                let output = serde_json::to_value(&posterior)
+                    .map_err(|e| CallToolError::from_message(format!("serialise posterior: {}", e)))?;
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&output).unwrap().into(),
+                ]))
+            }
+
+            "fermi_predict" => {
+                let tool: FermiPredictTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
+                let features: std::collections::HashMap<String, f64> =
+                    serde_json::from_value(tool.features)
+                        .map_err(|e| CallToolError::from_message(format!("invalid features: {}", e)))?;
+
+                let fitted = posterior.predict(&features)
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+                let output = json!({
+                    "fitted": fitted,
+                    "fpl_params": fitted.to_fpl_params(),
+                });
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&output).unwrap().into(),
+                ]))
+            }
+
+            "fermi_input_sensitivity" => {
+                let tool: FermiInputSensitivityTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
+                let feature_ranges: std::collections::HashMap<String, (f64, f64)> =
+                    serde_json::from_value(tool.feature_ranges)
+                        .map_err(|e| CallToolError::from_message(format!("invalid feature_ranges: {}", e)))?;
+                let n = tool.n_samples.unwrap_or(256u32);
+
+                let result = posterior.input_sensitivity(&feature_ranges, n as usize)
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&json!({ "sensitivity": result })).unwrap().into(),
+                ]))
+            }
+
+            "fermi_compare_scenarios" => {
+                let tool: FermiCompareScenariosTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
+                let a: std::collections::HashMap<String, f64> = serde_json::from_value(tool.a)
+                    .map_err(|e| CallToolError::from_message(format!("invalid scenario a: {}", e)))?;
+                let b: std::collections::HashMap<String, f64> = serde_json::from_value(tool.b)
+                    .map_err(|e| CallToolError::from_message(format!("invalid scenario b: {}", e)))?;
+
+                let comp = posterior.compare_scenarios(&a, &b)
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&comp).unwrap().into(),
+                ]))
+            }
+
+            "fermi_prob_exceeds" => {
+                let tool: FermiProbExceedsTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
+                let features: std::collections::HashMap<String, f64> = serde_json::from_value(tool.features)
+                    .map_err(|e| CallToolError::from_message(format!("invalid features: {}", e)))?;
+
+                let probability = posterior.prob_exceeds(&features, tool.threshold)
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&json!({ "probability": probability })).unwrap().into(),
+                ]))
+            }
+
+            "fermi_optimise_for_target" => {
+                let tool: FermiOptimiseForTargetTool = serde_json::from_value(
+                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
+                )
+                .map_err(|e| CallToolError::new(e))?;
+
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
+                let fixed: std::collections::HashMap<String, f64> = serde_json::from_value(tool.fixed_features)
+                    .map_err(|e| CallToolError::from_message(format!("invalid fixed_features: {}", e)))?;
+
+                let result = posterior.optimise_for_target(
+                    &fixed,
+                    &tool.free_feature,
+                    tool.search_range,
+                    tool.target_threshold,
+                )
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+                Ok(CallToolResult::text_content(vec![
+                    serde_json::to_string_pretty(&result).unwrap().into(),
+                ]))
+            }
+
             _ => Err(CallToolError::unknown_tool(params.name)),
         }
     }
+}
+
+/// Parse a family string into the typed `DistFamily` enum.
+///
+/// Note: this file glob-imports `rust_mcp_sdk::*` which brings its own `Result`
+/// type into scope. We use a fully-qualified `std::result::Result` so we get
+/// the standard one.
+fn parse_dist_family(name: Option<&str>) -> std::result::Result<DistFamily, String> {
+    Ok(match name.unwrap_or("auto").to_lowercase().as_str() {
+        "beta" => DistFamily::Beta,
+        "normal" => DistFamily::Normal,
+        "lognormal" => DistFamily::Lognormal,
+        "triangular" => DistFamily::Triangular,
+        "auto" | "" => DistFamily::Auto,
+        other => return std::result::Result::Err(format!("unknown family '{}'", other)),
+    })
 }
 
 /// Parse an FPL program string through the full lexer → parser → semantic pipeline.
@@ -711,9 +1002,12 @@ async fn main() -> SdkResult<()> {
         client_task_store: None,
     });
 
-    eprintln!("🚀 Fermi Agent Bestiary MCP Server started");
-    eprintln!("   Tools: list_agents, get_agent, execute_agent, save_agent, search_agents, get_catalogue, ask_xaman_ek");
-    eprintln!("   FPL:   fermi_execute_fpl, fermi_sensitivity_analysis");
+    eprintln!("Fermi Agent Bestiary MCP Server started");
+    eprintln!("   Tools:    list_agents, get_agent, execute_agent, save_agent, search_agents, get_catalogue, ask_xaman_ek");
+    eprintln!("   FPL:      fermi_execute_fpl, fermi_sensitivity_analysis");
+    eprintln!("   BayesOps: fermi_fit_marginal, fermi_fit_conditional, fermi_predict,");
+    eprintln!("             fermi_input_sensitivity, fermi_compare_scenarios,");
+    eprintln!("             fermi_prob_exceeds, fermi_optimise_for_target");
 
     server.start().await
 }
