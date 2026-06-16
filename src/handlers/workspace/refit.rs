@@ -186,8 +186,8 @@ async fn refit_workspace_with_visited(
     }
 
     let workspace = load_workspace(pool, workspace_id).await?;
-    let fpl_source = load_forecast_fpl(pool, workspace_id).await?;
-    let program = parse_fpl(&fpl_source)?;
+    let linked = load_forecast_fpl(pool, workspace_id).await?;
+    let program = parse_fpl(&linked.fpl_source)?;
 
     let learnable_drivers = collect_learnable_drivers(&program);
     let mut outcome = RefitOutcome::new(workspace_id, learnable_drivers.len());
@@ -207,7 +207,7 @@ async fn refit_workspace_with_visited(
             registry,
             workspace_id,
             &workspace,
-            &fpl_source,
+            &linked,
             &program,
             driver,
             &ws_context,
@@ -287,7 +287,7 @@ async fn refit_one_driver(
     registry: &ExtractorRegistry,
     workspace_id: Uuid,
     workspace: &WorkspaceRow,
-    fpl_source: &str,
+    linked: &LinkedForecast,
     program: &fermi::ast::Program,
     driver: &LearnableDriver,
     ws_context: &WorkspaceContext,
@@ -337,7 +337,7 @@ async fn refit_one_driver(
     );
 
     let (rate_before, rate_after) =
-        compute_impact(fpl_source, program, current_params, &proposed_params);
+        compute_impact(&linked.fpl_source, program, current_params, &proposed_params);
     let delta_pp = match (rate_before, rate_after) {
         (Some(before), Some(after)) => (after - before).abs() * 100.0,
         _ => 0.0, // No scorable rate — skip the gate, default to AutoAccept
@@ -369,6 +369,26 @@ async fn refit_one_driver(
         DecisionKind::AutoAccept => {
             write_fitted_params(pool, workspace_id, &driver.name, &fitted, &workspace.slug)
                 .await?;
+
+            // Spec 23 R-3 Piece 1: write a fermi_forecast_updates row so the
+            // forecast_spacetime trigger fires with revision_trigger =
+            // 'bayesops_refit'. The previous probability is the forecast's
+            // currently-stored probability; the new one is the impact-gate's
+            // rate_after when available, else the same as before.
+            let new_probability = rate_after.unwrap_or(linked.current_probability);
+            let _ = write_spacetime_update(
+                pool,
+                &linked.forecast_id,
+                linked.current_probability,
+                new_probability,
+                &driver.name,
+                snapshot_id,
+                rate_before,
+                rate_after,
+                observations.len(),
+            )
+            .await;
+
             emit_event(
                 pool,
                 workspace_id,
@@ -538,9 +558,22 @@ fn derive_entity_id(slug: &str) -> Option<String> {
     }
 }
 
-async fn load_forecast_fpl(pool: &PgPool, workspace_id: Uuid) -> Result<String, RefitError> {
+/// Minimal context the refit hook needs from `fermi_forecasts` to do its
+/// job: the FPL to parse, the forecast_id to attribute spacetime rows to,
+/// and the current `predicted_probability` so an auto-accept can compute
+/// the new rate and write a `fermi_forecast_updates` row with
+/// `previous_probability = current` (Spec 23 R-3 Piece 1).
+#[derive(Debug, Clone)]
+struct LinkedForecast {
+    forecast_id: String,
+    fpl_source: String,
+    current_probability: f64,
+}
+
+async fn load_forecast_fpl(pool: &PgPool, workspace_id: Uuid) -> Result<LinkedForecast, RefitError> {
     let row = sqlx::query(
-        "SELECT fpl_source FROM fermi_forecasts
+        "SELECT id, fpl_source, predicted_probability
+         FROM fermi_forecasts
          WHERE workspace_id = $1
          ORDER BY created_at DESC
          LIMIT 1",
@@ -550,10 +583,18 @@ async fn load_forecast_fpl(pool: &PgPool, workspace_id: Uuid) -> Result<String, 
     .await?
     .ok_or(RefitError::NoForecast(workspace_id))?;
 
-    row.try_get::<Option<String>, _>("fpl_source")
+    let forecast_id: String = row.get("id");
+    let fpl_source = row
+        .try_get::<Option<String>, _>("fpl_source")
         .ok()
         .flatten()
-        .ok_or(RefitError::NoFplSource(workspace_id))
+        .ok_or(RefitError::NoFplSource(workspace_id))?;
+    let current_probability: f32 = row.try_get("predicted_probability").unwrap_or(0.5);
+    Ok(LinkedForecast {
+        forecast_id,
+        fpl_source,
+        current_probability: current_probability as f64,
+    })
 }
 
 fn parse_fpl(source: &str) -> Result<fermi::ast::Program, RefitError> {
@@ -893,6 +934,91 @@ async fn write_fitted_params(
         .execute(pool)
         .await;
     }
+
+    Ok(())
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SPACETIME WIRE-UP (Spec 23 R-3 Piece 1)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// When the refit hook auto-accepts a fit, it writes a fermi_forecast_updates
+// row tagged with revision_trigger = 'bayesops_refit'. The trigger
+// fn_forecast_spacetime_on_update (migration 149) reads that tag and writes
+// a forecast_spacetime row with the correct revision_trigger value, instead
+// of the generic 'evidence_update'.
+//
+// This is what makes BayesOps refits visible alongside agent runs, evidence
+// additions, and schedule re-runs in the GET /api/forecasts/:id/spacetime
+// endpoint that already exists.
+
+/// Insert a `fermi_forecast_updates` row attributed to a BayesOps refit.
+/// Returns Ok(()) on success; the caller logs errors and continues per the
+/// refit hook's log-and-continue failure policy.
+#[allow(clippy::too_many_arguments)]
+async fn write_spacetime_update(
+    pool: &PgPool,
+    forecast_id: &str,
+    previous_probability: f64,
+    new_probability: f64,
+    driver_name: &str,
+    snapshot_id: Uuid,
+    rate_before: Option<f64>,
+    rate_after: Option<f64>,
+    n_observations: usize,
+) -> Result<(), RefitError> {
+    // Skip the write if the probability didn't materially change — keeps
+    // the spacetime view from getting polluted with no-op revisions.
+    if (new_probability - previous_probability).abs() < 1e-4 {
+        return Ok(());
+    }
+
+    let update_id = Uuid::new_v4().to_string();
+    let reason = format!(
+        "BayesOps refit accepted: driver '{}' fitted from {} observations",
+        driver_name, n_observations
+    );
+
+    // The `evidence_added` JSONB captures the BayesOps-specific context so
+    // the spacetime endpoint can reconstruct what drove this revision when
+    // it renders.
+    let evidence_added = json!({
+        "kind": "bayesops_refit",
+        "driver_name": driver_name,
+        "snapshot_id": snapshot_id,
+        "rate_before": rate_before,
+        "rate_after": rate_after,
+        "n_observations": n_observations,
+    });
+
+    sqlx::query(
+        "INSERT INTO fermi_forecast_updates
+            (id, forecast_id, previous_probability, new_probability,
+             reason, agent_id, evidence_added, revision_trigger, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'bayesops_refit', NOW())",
+    )
+    .bind(&update_id)
+    .bind(forecast_id)
+    .bind(previous_probability as f32)
+    .bind(new_probability as f32)
+    .bind(&reason)
+    .bind(Option::<String>::None) // no agent attribution; refits are systemic
+    .bind(&evidence_added)
+    .execute(pool)
+    .await?;
+
+    // Also update fermi_forecasts.predicted_probability so future refits see
+    // the new baseline. Without this every refit would compare against the
+    // original probability and the deltas would inflate.
+    sqlx::query(
+        "UPDATE fermi_forecasts
+         SET predicted_probability = $2, updated_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(forecast_id)
+    .bind(new_probability as f32)
+    .execute(pool)
+    .await?;
 
     Ok(())
 }

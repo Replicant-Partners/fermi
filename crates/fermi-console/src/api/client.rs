@@ -1298,6 +1298,15 @@ impl ApiClient {
         )
         .await
     }
+
+    /// Spec 23 R-3 Piece 2: fetch the unified forecast timeline.
+    /// Returns rate + market traces plus a chronological event list
+    /// (BayesOps fits, agent runs, upstream resolutions, system events,
+    /// market polls). Drives the Trajectory tab in the cockpit.
+    pub async fn forecast_timeline(&self, forecast_id: &str) -> Result<JsonValue, ApiError> {
+        self.get(&format!("/api/forecasts/{}/timeline", forecast_id))
+            .await
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

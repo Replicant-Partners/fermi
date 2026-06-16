@@ -1395,8 +1395,12 @@ impl FermiConsole {
                     crate::cockpit::RightTab::Edit => crate::cockpit::RightTab::Fpl,
                     crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Wiki,
                     crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Schedules,
-                    crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Edit,
+                    crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Trajectory,
+                    crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Edit,
                 };
+                if cockpit.right_tab == crate::cockpit::RightTab::Trajectory {
+                    cockpit.load_timeline(cx);
+                }
             });
             cx.notify();
         }

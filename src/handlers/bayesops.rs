@@ -551,7 +551,8 @@ pub async fn accept_pending_handler(
     // Pull the pending row + snapshot in one query for context
     let row = sqlx::query(
         "SELECT pf.workspace_id, pf.driver_name, pf.status,
-                s.fitted, s.snapshot_id
+                s.fitted, s.snapshot_id,
+                s.rate_before, s.rate_after, s.n_observations
          FROM bayesops_pending_fits pf
          JOIN bayesops_posterior_snapshots s ON s.snapshot_id = pf.snapshot_id
          WHERE pf.pending_id = $1",
@@ -587,6 +588,9 @@ pub async fn accept_pending_handler(
     let driver_name: String = row.get("driver_name");
     let fitted_json: Value = row.get("fitted");
     let snapshot_id: Uuid = row.get("snapshot_id");
+    let rate_before: Option<f64> = row.get("rate_before");
+    let rate_after: Option<f64> = row.get("rate_after");
+    let n_observations: i32 = row.get("n_observations");
 
     // Membership check on the workspace
     fermi_auth::teams::get_member_role(&state.db, workspace_id, &user_id)
@@ -642,6 +646,73 @@ pub async fn accept_pending_handler(
     .execute(&state.db)
     .await
     .map_err(internal_err)?;
+
+    // Spec 23 R-3 Piece 1: write a fermi_forecast_updates row so the
+    // forecast_spacetime trigger surfaces this acceptance in the timeline.
+    // We look up the linked forecast by workspace_id; if there isn't one
+    // (rare — pending fits are created by the refit hook which already
+    // skips workspaces with no forecast), we log and continue.
+    if let Ok(Some(forecast_row)) = sqlx::query(
+        "SELECT id, predicted_probability
+         FROM fermi_forecasts
+         WHERE workspace_id = $1
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(workspace_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        let forecast_id: String = forecast_row.get("id");
+        let current_prob: f32 = forecast_row
+            .try_get("predicted_probability")
+            .unwrap_or(0.5);
+        let prev = current_prob as f64;
+        let new_p = rate_after.unwrap_or(prev);
+
+        if (new_p - prev).abs() >= 1e-4 {
+            let update_id = Uuid::new_v4().to_string();
+            let reason = format!(
+                "BayesOps refit accepted (operator review): driver '{}' fitted from {} observations",
+                driver_name, n_observations
+            );
+            let evidence_added = json!({
+                "kind": "bayesops_refit",
+                "decision": "operator_accepted",
+                "pending_id": pending_uuid,
+                "driver_name": driver_name,
+                "snapshot_id": snapshot_id,
+                "rate_before": rate_before,
+                "rate_after": rate_after,
+                "n_observations": n_observations,
+                "decided_by": user_id,
+            });
+            let _ = sqlx::query(
+                "INSERT INTO fermi_forecast_updates
+                    (id, forecast_id, previous_probability, new_probability,
+                     reason, agent_id, evidence_added, revision_trigger, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'bayesops_refit', NOW())",
+            )
+            .bind(&update_id)
+            .bind(&forecast_id)
+            .bind(prev as f32)
+            .bind(new_p as f32)
+            .bind(&reason)
+            .bind(Option::<String>::None)
+            .bind(&evidence_added)
+            .execute(&state.db)
+            .await;
+
+            let _ = sqlx::query(
+                "UPDATE fermi_forecasts
+                 SET predicted_probability = $2, updated_at = NOW()
+                 WHERE id = $1",
+            )
+            .bind(&forecast_id)
+            .bind(new_p as f32)
+            .execute(&state.db)
+            .await;
+        }
+    }
 
     // Post evidence event
     let _ = sqlx::query(

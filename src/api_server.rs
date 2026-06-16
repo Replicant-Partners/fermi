@@ -669,6 +669,11 @@ async fn run_migrations(db: &PgPool) {
         // bayesops_pending_fits is the queue consumed by the sparkline
         // accept/dismiss UX (R-2).
         "migrations/148_bayesops_refit_ledger.sql",
+        // Spec 23 R-3 Piece 1: lets BayesOps refits tag their
+        // fermi_forecast_updates rows so the forecast_spacetime trigger
+        // surfaces them with the right revision_trigger value instead of
+        // the generic 'evidence_update'.
+        "migrations/149_forecast_updates_trigger_kind.sql",
     ];
 
     for file in &migration_files {
@@ -2154,6 +2159,14 @@ async fn main() {
          .route(
              "/api/forecasts/:forecast_id/spacetime",
              get(handlers::forecast_benchmark::forecast_spacetime_handler),
+         )
+         // Spec 23 R-3 Piece 2: unified timeline aggregator. Pulls rate
+         // revisions, BayesOps fit events, agent runs, system events, and
+         // polymarket observations into one chronological event list +
+         // separate trace arrays for the line chart.
+         .route(
+             "/api/forecasts/:forecast_id/timeline",
+             get(handlers::forecast_benchmark::forecast_timeline_handler),
          )
          .route(
              "/api/forecasts/:forecast_id/commit",

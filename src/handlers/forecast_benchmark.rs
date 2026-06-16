@@ -219,6 +219,23 @@ pub async fn anchor_sweep_handler(
     let pool = &state.db;
     let salt = std::env::var("BENCHMARK_SPLIT_SALT").unwrap_or_else(|_| "fermi-v1-2026".into());
 
+    // Defensive: if migration 140 hasn't run on this DB yet, the
+    // NOT EXISTS subquery below blows up with a raw "relation ...
+    // does not exist" 500. Detect early and return a structured 503
+    // so the cron caller sees actionable text, not a SQL panic string.
+    let commitments_table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='forecast_commitments')"
+    ).fetch_one(pool).await.unwrap_or(false);
+    if !commitments_table_exists {
+        return Ok(Json(json!({
+            "anchored": 0,
+            "errors": ["forecast_commitments table not yet created (migration 140 pending on this DB)"],
+            "swept_at": Utc::now(),
+            "note": "no-op: schema not yet migrated",
+            "migration_required": "migrations/140_forecast_benchmark.sql",
+        })));
+    }
+
     // Fetch all active forecasts not yet committed at their current probability
     let rows = sqlx::query(
         r#"SELECT f.id, f.predicted_probability, f.fpl_source, f.created_at
@@ -292,10 +309,16 @@ pub async fn forecast_spacetime_handler(
     let pool = &state.db;
 
     // Ownership check
+    //
+    // NB: the canonical schema (migrations 048/094/107) names the resolution
+    // outcome column `actual_outcome` (BOOLEAN). An earlier draft of this
+    // handler referenced a nonexistent `resolution_outcome` column, which
+    // 500'd every spacetime call on any DB that wasn't a freshly-seeded dev
+    // env. Stick to `actual_outcome` and project it to a string downstream.
     let forecast = sqlx::query(
         "SELECT id, owner_id, question_text, predicted_probability, status,
-                brier_score, resolution_outcome, resolved_at, fpl_source,
-                simulation_results, drivers, created_at
+                brier_score, actual_outcome, resolved_at, fpl_source,
+                simulation_results, drivers, created_at, team_id
          FROM fermi_forecasts WHERE id = $1"
     )
     .bind(&forecast_id)
@@ -305,8 +328,29 @@ pub async fn forecast_spacetime_handler(
     .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
 
     let owner_id: String = forecast.get("owner_id");
+    // Spec 23 R-3: spacetime is the demo's visible trajectory surface; gating
+    // it to owner-only blocks the WC forecast portfolio scenario where
+    // multiple users watch the same forecast. Soften to:
+    //   - owner (always)
+    //   - admin (always)
+    //   - any member of the forecast's linked workspace (team_id) — covers
+    //     the WC portfolio sharing case
     if owner_id != user_id && !principal.can_admin() {
-        return Err((StatusCode::FORBIDDEN, "Not the forecast owner".into()));
+        let team_id: Option<uuid::Uuid> = forecast.try_get("team_id").ok().flatten();
+        let allowed = match team_id {
+            Some(tid) => fermi_auth::teams::get_member_role(pool, tid, &user_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some(),
+            None => false,
+        };
+        if !allowed {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Not the forecast owner or a member of its workspace".into(),
+            ));
+        }
     }
 
     // Try spacetime table first (may not exist yet)
@@ -459,13 +503,19 @@ pub async fn forecast_spacetime_handler(
     let net_movement = final_prob as f64 - initial_prob;
 
     let brier: Option<f32> = forecast.try_get("brier_score").ok().flatten();
+    let actual: Option<bool> = forecast.try_get("actual_outcome").ok().flatten();
+    let resolution_outcome = actual.map(|b| if b { "yes" } else { "no" });
 
     Ok(Json(json!({
         "forecast_id": forecast_id,
         "question": forecast.try_get::<String,_>("question_text").unwrap_or_default(),
         "status": forecast.try_get::<String,_>("status").unwrap_or_default(),
         "brier_score": brier,
-        "resolution_outcome": forecast.try_get::<Option<String>,_>("resolution_outcome").ok().flatten(),
+        // Projected from fermi_forecasts.actual_outcome (BOOLEAN).
+        // Stays "resolution_outcome" in the API surface so existing
+        // clients don't need to change.
+        "resolution_outcome": resolution_outcome,
+        "actual_outcome": actual,
         "resolved_at": forecast.try_get::<Option<chrono::DateTime<Utc>>,_>("resolved_at").ok().flatten(),
 
         "trajectory": {
@@ -614,4 +664,269 @@ pub async fn capture_harness_snapshot(
     .ok()?;
 
     Some(snapshot_id)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Spec 23 R-3 Piece 2 — Forecast Timeline
+// ═══════════════════════════════════════════════════════════════════
+//
+// GET /api/forecasts/:forecast_id/timeline
+//
+// Unified chronological event stream for a forecast — the read side of the
+// "spacetime view" the demo paper describes. Aggregates from several tables
+// the rest of the system already writes:
+//
+//   - forecast_spacetime          → rate trace points (one per revision)
+//   - bayesops_posterior_snapshots → BayesOps fit events (auto/staged/blocked)
+//   - workspace_messages           → agent runs (execution_result),
+//                                    system events (incl. bayesops_fit_*,
+//                                    upstream_resolved, schedule fires)
+//   - fermi_market_observations    → polymarket price snapshots
+//
+// One round-trip; client renders the timeline. No new write paths needed —
+// every event source is already populated by upstream handlers.
+
+/// GET /api/forecasts/:forecast_id/timeline
+pub async fn forecast_timeline_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(forecast_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    // ── Forecast + auth ──────────────────────────────────────────────
+    let forecast = sqlx::query(
+        "SELECT id, owner_id, team_id, workspace_id, question_text,
+                predicted_probability, fpl_source, created_at, resolved_at
+         FROM fermi_forecasts WHERE id = $1",
+    )
+    .bind(&forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
+
+    let owner_id: String = forecast.get("owner_id");
+    if owner_id != user_id && !principal.can_admin() {
+        // Same softened gate as forecast_spacetime_handler.
+        let team_id: Option<uuid::Uuid> = forecast.try_get("team_id").ok().flatten();
+        let allowed = match team_id {
+            Some(tid) => fermi_auth::teams::get_member_role(pool, tid, &user_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some(),
+            None => false,
+        };
+        if !allowed {
+            return Err((StatusCode::FORBIDDEN, "Not allowed".into()));
+        }
+    }
+
+    let workspace_id: Option<uuid::Uuid> = forecast.try_get("workspace_id").ok().flatten();
+
+    // ── 1. Rate revisions from forecast_spacetime ──────────────────
+    let revisions: Vec<Value> = sqlx::query(
+        "SELECT revision_seq, predicted_probability, previous_probability,
+                revision_trigger, revision_reason, triggering_agent,
+                evidence_delta, revision_ts
+         FROM forecast_spacetime
+         WHERE forecast_id = $1
+         ORDER BY revision_ts ASC",
+    )
+    .bind(&forecast_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|row| {
+        let ts: chrono::DateTime<chrono::Utc> = row.get("revision_ts");
+        json!({
+            "kind": "rate_revision",
+            "ts": ts.to_rfc3339(),
+            "revision_seq": row.get::<i32, _>("revision_seq"),
+            "predicted_probability": row.get::<f32, _>("predicted_probability"),
+            "previous_probability": row.try_get::<Option<f32>, _>("previous_probability").ok().flatten(),
+            "revision_trigger": row.try_get::<Option<String>, _>("revision_trigger").ok().flatten(),
+            "reason": row.try_get::<Option<String>, _>("revision_reason").ok().flatten(),
+            "triggering_agent": row.try_get::<Option<String>, _>("triggering_agent").ok().flatten(),
+            "evidence_delta": row.try_get::<Option<Value>, _>("evidence_delta").ok().flatten(),
+        })
+    })
+    .collect();
+
+    // Build the rate series — what the chart traces. Includes the initial
+    // probability so consumers always have at least one point.
+    let initial_prob: Option<f32> = forecast.try_get("predicted_probability").ok();
+    let mut rate_series: Vec<Value> = Vec::new();
+    if let Some(p) = initial_prob {
+        let created: chrono::DateTime<chrono::Utc> = forecast.get("created_at");
+        rate_series.push(json!({
+            "ts": created.to_rfc3339(),
+            "rate": p,
+        }));
+    }
+    for r in &revisions {
+        rate_series.push(json!({
+            "ts": r["ts"],
+            "rate": r["predicted_probability"],
+        }));
+    }
+
+    // ── 2. BayesOps fit events ─────────────────────────────────────
+    let bayesops_events: Vec<Value> = if let Some(ws_id) = workspace_id {
+        sqlx::query(
+            "SELECT snapshot_id, driver_name, decision, n_observations,
+                    n_eff, ci_width, rate_before, rate_after, fitted_at
+             FROM bayesops_posterior_snapshots
+             WHERE workspace_id = $1
+             ORDER BY fitted_at ASC",
+        )
+        .bind(ws_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| {
+            let ts: chrono::DateTime<chrono::Utc> = row.get("fitted_at");
+            let rate_before: Option<f64> = row.try_get("rate_before").ok().flatten();
+            let rate_after: Option<f64> = row.try_get("rate_after").ok().flatten();
+            let delta_pp = match (rate_before, rate_after) {
+                (Some(b), Some(a)) => Some((a - b).abs() * 100.0),
+                _ => None,
+            };
+            json!({
+                "kind": "bayesops_fit",
+                "ts": ts.to_rfc3339(),
+                "snapshot_id": row.get::<uuid::Uuid, _>("snapshot_id"),
+                "driver_name": row.get::<String, _>("driver_name"),
+                "decision": row.get::<String, _>("decision"),
+                "n_observations": row.get::<i32, _>("n_observations"),
+                "n_eff": row.get::<f64, _>("n_eff"),
+                "ci_width": row.get::<f64, _>("ci_width"),
+                "rate_before": rate_before,
+                "rate_after": rate_after,
+                "delta_pp": delta_pp,
+            })
+        })
+        .collect()
+    } else {
+        Vec::new()
+    };
+
+    // ── 3. Workspace events from workspace_messages ─────────────────
+    // Captures every "this happened in the workspace" event the system
+    // already records: agent runs (execution_result), system events
+    // (resolutions, bayesops_fit_decision, upstream_resolved), and the
+    // schedule-fire log messages the cockpit posts ("⏰ Auto-running...").
+    let workspace_events: Vec<Value> = if let Some(ws_id) = workspace_id {
+        sqlx::query(
+            "SELECT message_id, sender_type, sender_id, sender_name,
+                    content, message_type, metadata, created_at
+             FROM workspace_messages
+             WHERE workspace_id = $1
+               AND message_type IN ('execution_result', 'system_event', 'system')
+             ORDER BY created_at ASC",
+        )
+        .bind(ws_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| {
+            let ts: chrono::DateTime<chrono::Utc> = row.get("created_at");
+            let msg_type: String = row.get("message_type");
+            let metadata: Value = row.try_get("metadata").unwrap_or(Value::Null);
+            // Detect the event sub-kind from message_type + metadata.event
+            // (the convention the resolution + refit + bayesops handlers
+            // all use).
+            let kind = match msg_type.as_str() {
+                "execution_result" => "agent_run".to_string(),
+                "system_event" => {
+                    metadata
+                        .get("event")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "system_event".to_string())
+                }
+                other => other.to_string(),
+            };
+            json!({
+                "kind": kind,
+                "ts": ts.to_rfc3339(),
+                "message_id": row.get::<uuid::Uuid, _>("message_id"),
+                "sender_type": row.get::<String, _>("sender_type"),
+                "sender_id": row.get::<String, _>("sender_id"),
+                "sender_name": row.try_get::<Option<String>, _>("sender_name").ok().flatten(),
+                "content": row.get::<String, _>("content"),
+                "metadata": metadata,
+            })
+        })
+        .collect()
+    } else {
+        Vec::new()
+    };
+
+    // ── 4. Market data: Polymarket observations ────────────────────
+    let market_series: Vec<Value> = sqlx::query(
+        "SELECT market_price, volume_total, observation_time, pm_event_id
+         FROM fermi_market_observations
+         WHERE forecast_id = $1
+         ORDER BY observation_time ASC",
+    )
+    .bind(&forecast_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|row| {
+        let ts: chrono::DateTime<chrono::Utc> = row.get("observation_time");
+        json!({
+            "ts": ts.to_rfc3339(),
+            "market_price": row.get::<f32, _>("market_price"),
+            "volume_total": row.try_get::<Option<f32>, _>("volume_total").ok().flatten(),
+            "pm_event_id": row.try_get::<Option<String>, _>("pm_event_id").ok().flatten(),
+        })
+    })
+    .collect();
+
+    // ── 5. Merge into one chronologically-ordered event list ──────
+    // The client needs `events` chronological so it can render them as
+    // dots on a shared time axis. `rate_series` and `market_series` are
+    // kept as separate arrays for the line-chart traces.
+    let mut events: Vec<Value> = Vec::with_capacity(
+        revisions.len() + bayesops_events.len() + workspace_events.len(),
+    );
+    events.extend(revisions);
+    events.extend(bayesops_events);
+    events.extend(workspace_events);
+    events.sort_by(|a, b| {
+        let ta = a.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+        let tb = b.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+        ta.cmp(tb)
+    });
+
+    let span = json!({
+        "forecast_created_at": forecast.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+            .ok()
+            .map(|t| t.to_rfc3339()),
+        "forecast_resolved_at": forecast.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at")
+            .ok()
+            .flatten()
+            .map(|t| t.to_rfc3339()),
+        "event_count": events.len(),
+        "rate_revision_count": rate_series.len(),
+        "market_observation_count": market_series.len(),
+    });
+
+    Ok(Json(json!({
+        "forecast_id": forecast_id,
+        "question": forecast.try_get::<Option<String>, _>("question_text").ok().flatten(),
+        "workspace_id": workspace_id,
+        "rate_series": rate_series,
+        "market_series": market_series,
+        "events": events,
+        "span": span,
+    })))
 }

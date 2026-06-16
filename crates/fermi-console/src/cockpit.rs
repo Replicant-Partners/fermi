@@ -71,6 +71,11 @@ pub enum RightTab {
     Fpl,
     Wiki,
     Schedules,
+    /// Spec 23 R-3: chronological event view of the forecast — rate +
+    /// market traces, plus dots for every BayesOps fit, agent run,
+    /// upstream resolution, and market poll. The "spacetime" view from
+    /// the spec, scoped to this forecast.
+    Trajectory,
 }
 
 /// A live event from an SSE agent execution stream.
@@ -265,13 +270,23 @@ pub struct CockpitState {
     /// inline accept/dismiss buttons, taking precedence over the
     /// post-sim `LearnableBadgeStatus::Fitted` / `PriorFallback`.
     ///
-    /// Loaded on workspace mount, after every refit response, and on
+    /// Loaded on workspace mount, after every refit, and on
     /// `bayesops_fit_pending` workspace event.
     pub bayesops_pending: std::collections::HashMap<String, PendingFitState>,
 
     /// Pending in-flight accept/reject calls per driver name — prevents
     /// double-click double-submit. Cleared on response.
     pub bayesops_decisions_in_flight: std::collections::HashSet<String>,
+
+    // ── R-3 Trajectory view ────────────────────────────────────────
+    /// Cached response from GET /api/forecasts/:id/timeline. None when
+    /// the tab hasn't been opened yet or the load failed. Refreshed when
+    /// the user clicks the Trajectory tab.
+    pub timeline_data: Option<JsonValue>,
+    /// True while a timeline fetch is in flight.
+    pub timeline_loading: bool,
+    /// Error message from the last timeline fetch, if any.
+    pub timeline_error: Option<String>,
 
     // ── Polymarket Price History ──────────────────────────────────
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
@@ -515,6 +530,9 @@ impl CockpitState {
             workspace_id: None,
             bayesops_pending: std::collections::HashMap::new(),
             bayesops_decisions_in_flight: std::collections::HashSet::new(),
+            timeline_data: None,
+            timeline_loading: false,
+            timeline_error: None,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             hovered_histogram_bin: None,
@@ -2870,6 +2888,44 @@ impl CockpitState {
                             kind: MessageKind::Error,
                             text: format!("Failed to dismiss fit for '{}': {}", driver_name, e),
                         });
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // ─── R-3 Trajectory: timeline fetch ────────────────────────────────
+    //
+    // Pulls the unified event stream for this forecast from
+    // /api/forecasts/:id/timeline. Called when the user clicks the
+    // Trajectory tab; the response is cached in `timeline_data` so
+    // re-renders don't re-fetch.
+
+    pub fn load_timeline(&mut self, cx: &mut Context<Self>) {
+        let Some(forecast_id) = self.forecast_id.clone() else {
+            self.timeline_error =
+                Some("Save the forecast first to see its trajectory.".to_string());
+            cx.notify();
+            return;
+        };
+        self.timeline_loading = true;
+        self.timeline_error = None;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.forecast_timeline(&forecast_id).await;
+            this.update(cx, |state, cx| {
+                state.timeline_loading = false;
+                match result {
+                    Ok(data) => {
+                        state.timeline_data = Some(data);
+                        state.timeline_error = None;
+                    }
+                    Err(e) => {
+                        state.timeline_error = Some(e.to_string());
                     }
                 }
                 cx.notify();
@@ -5721,6 +5777,9 @@ impl Render for CockpitState {
                                 RightTab::Wiki => render_wiki_tab(self, cx).into_any_element(),
                                 RightTab::Schedules => {
                                     render_schedules_tab(self, cx).into_any_element()
+                                }
+                                RightTab::Trajectory => {
+                                    render_trajectory_tab(self, cx).into_any_element()
                                 }
                             }),
                     )
@@ -10371,6 +10430,7 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
         (RightTab::Fpl, "FPL"),
         (RightTab::Wiki, "Wiki"),
         (RightTab::Schedules, "Schedules"),
+        (RightTab::Trajectory, "Trajectory"),
     ];
 
     div()
@@ -10407,6 +10467,9 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                     this.right_tab = t;
                     if t == RightTab::Fpl || t == RightTab::Wiki {
                         this.cached_fpl = generate_fpl_text(&this.program);
+                    }
+                    if t == RightTab::Trajectory {
+                        this.load_timeline(cx);
                     }
                     cx.notify();
                 }))
@@ -10652,6 +10715,336 @@ fn render_schedules_tab(
     };
 
     div().flex().flex_col().size_full().child(body)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// R-3 Trajectory tab
+// ═══════════════════════════════════════════════════════════════════
+//
+// Renders the forecast's spacetime as the spec describes (§5): rate trace
+// over time + a chronological event list correlating to it. The event
+// list is what makes "what made the rate move?" answerable for every
+// kind of evidence — BayesOps fits, agent runs, upstream resolutions,
+// market polls, system events.
+//
+// This is the MVP shape: rate summary header, then a vertical event
+// list with each event as a coloured card. A future polish pass can
+// add the line-chart overlay (the data is already in `rate_series` /
+// `market_series` arrays on the response). The event list alone is the
+// load-bearing affordance — the user can trace causation by reading
+// rows.
+
+fn render_trajectory_tab(
+    state: &CockpitState,
+    _cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let body = if state.timeline_loading {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .text_color(rgb(theme::FG_DIM))
+            .child("Loading trajectory…")
+            .into_any_element()
+    } else if let Some(err) = &state.timeline_error {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .text_color(rgb(theme::RED))
+            .child(format!("Failed to load trajectory: {}", err))
+            .into_any_element()
+    } else if let Some(data) = &state.timeline_data {
+        render_trajectory_body(data).into_any_element()
+    } else {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .text_color(rgb(theme::FG_DIM))
+            .child("Click Trajectory to load this forecast's event history.")
+            .into_any_element()
+    };
+
+    div().flex().flex_col().size_full().child(body)
+}
+
+fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
+    // Span summary at the top — "1 rate revision, 3 BayesOps fits, 12
+    // agent runs, 4 market polls."
+    let span = data.get("span").cloned().unwrap_or(JsonValue::Null);
+    let event_count = span
+        .get("event_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let rate_count = span
+        .get("rate_revision_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let market_count = span
+        .get("market_observation_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    // Rate series: current and earliest values for the header
+    let rate_series = data
+        .get("rate_series")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let first_rate = rate_series
+        .first()
+        .and_then(|v| v.get("rate"))
+        .and_then(|v| v.as_f64());
+    let last_rate = rate_series
+        .last()
+        .and_then(|v| v.get("rate"))
+        .and_then(|v| v.as_f64());
+    let net_change_pp = match (first_rate, last_rate) {
+        (Some(f), Some(l)) => Some((l - f) * 100.0),
+        _ => None,
+    };
+
+    let header = div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .px(px(16.0))
+        .py(px(12.0))
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .child(
+            div()
+                .text_size(px(14.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(theme::FG))
+                .child("Trajectory"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(px(16.0))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("{} events", event_count))
+                .child(format!("{} rate revisions", rate_count))
+                .child(format!("{} market observations", market_count))
+                .child(match (first_rate, last_rate, net_change_pp) {
+                    (Some(f), Some(l), Some(d)) => {
+                        format!("{:.1}% → {:.1}% ({:+.1}pp)", f * 100.0, l * 100.0, d)
+                    }
+                    _ => "no rate revisions yet".into(),
+                }),
+        );
+
+    // Event list
+    let events = data
+        .get("events")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let event_list = if events.is_empty() {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .flex_grow()
+            .text_color(rgb(theme::FG_DIM))
+            .child("No events yet — resolve an upstream workspace or run an agent to start the trajectory.")
+            .into_any_element()
+    } else {
+        div()
+            .id("trajectory-event-list")
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .overflow_y_scroll()
+            .px(px(16.0))
+            .py(px(8.0))
+            .gap(px(6.0))
+            .children(events.iter().map(render_trajectory_event))
+            .into_any_element()
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .size_full()
+        .child(header)
+        .child(event_list)
+}
+
+fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
+    let kind = ev.get("kind").and_then(|v| v.as_str()).unwrap_or("event");
+    let ts = ev.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Per-kind colour + glyph + summary text.
+    let (color, glyph, headline, detail) = match kind {
+        "rate_revision" => {
+            let prob = ev
+                .get("predicted_probability")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let prev = ev
+                .get("previous_probability")
+                .and_then(|v| v.as_f64());
+            let trigger = ev
+                .get("revision_trigger")
+                .and_then(|v| v.as_str())
+                .unwrap_or("update");
+            let headline = match prev {
+                Some(p) => format!(
+                    "Rate {:.1}% → {:.1}% ({:+.1}pp) via {}",
+                    p * 100.0,
+                    prob * 100.0,
+                    (prob - p) * 100.0,
+                    trigger
+                ),
+                None => format!("Rate initialised at {:.1}%", prob * 100.0),
+            };
+            let detail = ev
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            (theme::CYAN, "●", headline, detail)
+        }
+        "bayesops_fit" => {
+            let driver = ev.get("driver_name").and_then(|v| v.as_str()).unwrap_or("?");
+            let decision = ev
+                .get("decision")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let n = ev.get("n_observations").and_then(|v| v.as_i64()).unwrap_or(0);
+            let delta_pp = ev.get("delta_pp").and_then(|v| v.as_f64());
+            let headline = match delta_pp {
+                Some(d) => format!(
+                    "BayesOps fit · {} · {} (n={}, Δ{:+.1}pp)",
+                    driver, decision, n, d
+                ),
+                None => format!("BayesOps fit · {} · {} (n={})", driver, decision, n),
+            };
+            let (color, glyph) = match decision {
+                "auto_accepted" => (theme::GREEN, "✓"),
+                "staged" => (theme::GOLD, "↻"),
+                "hard_blocked" => (theme::RED, "⚠"),
+                _ => (theme::FG_DIM, "?"),
+            };
+            (color, glyph, headline, String::new())
+        }
+        "agent_run" => {
+            let sender = ev
+                .get("sender_name")
+                .and_then(|v| v.as_str())
+                .or_else(|| ev.get("sender_id").and_then(|v| v.as_str()))
+                .unwrap_or("agent");
+            let confidence = ev
+                .get("metadata")
+                .and_then(|m| m.get("confidence"))
+                .and_then(|v| v.as_f64());
+            let headline = match confidence {
+                Some(c) => format!("Agent run · {} (confidence {:.0}%)", sender, c * 100.0),
+                None => format!("Agent run · {}", sender),
+            };
+            let detail = ev
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .chars()
+                .take(180)
+                .collect::<String>();
+            (theme::PURPLE, "✎", headline, detail)
+        }
+        "upstream_resolved" => {
+            let outcome = ev
+                .get("metadata")
+                .and_then(|m| m.get("outcome"))
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            let headline = "Upstream workspace resolved".to_string();
+            (theme::GOLD, "⇪", headline, outcome)
+        }
+        "bayesops_fit_accepted"
+        | "bayesops_fit_pending"
+        | "bayesops_fit_failed"
+        | "bayesops_fit_decision" => {
+            let driver = ev
+                .get("metadata")
+                .and_then(|m| m.get("driver_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let headline = format!("BayesOps event · {} · {}", kind, driver);
+            let detail = ev
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            (theme::CYAN, "📊", headline, detail)
+        }
+        _ => {
+            let headline = ev
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or(kind)
+                .chars()
+                .take(120)
+                .collect::<String>();
+            (theme::FG_DIM, "·", format!("{} · {}", kind, headline), String::new())
+        }
+    };
+
+    let ts_short = ts
+        .split('T')
+        .collect::<Vec<_>>()
+        .get(0..2)
+        .map(|p| p.join(" "))
+        .unwrap_or_else(|| ts.to_string());
+
+    let mut card = div()
+        .flex()
+        .flex_col()
+        .gap(px(2.0))
+        .px(px(10.0))
+        .py(px(6.0))
+        .rounded(px(4.0))
+        .border_l_2()
+        .border_color(rgb(color))
+        .bg(rgb(theme::BG_ELEVATED))
+        .child(
+            div()
+                .flex()
+                .gap(px(8.0))
+                .items_center()
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(color))
+                        .font_weight(FontWeight::BOLD)
+                        .child(format!("{} {}", glyph, headline)),
+                )
+                .child(
+                    div()
+                        .flex_grow()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(ts_short),
+                ),
+        );
+
+    if !detail.is_empty() {
+        card = card.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(detail),
+        );
+    }
+
+    card.into_any_element()
 }
 
 fn render_fpl_tab(state: &CockpitState) -> impl IntoElement {
