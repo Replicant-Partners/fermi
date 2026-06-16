@@ -1,0 +1,65 @@
+// TEAM_PRIOR — Tournament win probability prior for a single national team.
+// Six orthogonal factors with Cobb-Douglas response function.
+// Parameterized: instantiated per team from data CSV.
+
+param team_id: string
+param team_name: string
+param confederation: string
+param group: string
+param is_host: bool
+param elo_current: real
+param elo_trend: real
+param gdp_per_capita_log: real
+param population_log: real
+param hdi_logit: real
+
+question "Will {team_name} win the 2026 FIFA World Cup?"
+
+factor X1 "Socioeconomic Capital" {
+    inputs: gdp_per_capita_log, population_log, hdi_logit
+    variance_share: 0.25
+    update: static
+}
+
+factor X2 "Institutional Capacity" {
+    inputs: player_penetration_rate, league_revenue_log, confederation_coefficient
+    formulation: residual(0.4 * player_penetration_rate + 0.3 * league_revenue_log + 0.3 * confederation_coefficient, X1)
+    variance_share: 0.20
+    update: static
+}
+
+factor X3 "Dynamic Performance Signal" {
+    inputs: elo_current, elo_trend, goal_difference, pass_completion, xg_delta
+    formulation: residual(0.30 * elo_current + 0.15 * elo_trend + 0.20 * goal_difference + 0.15 * pass_completion + 0.20 * xg_delta, X1, X2)
+    variance_share: 0.25
+    update: per_match
+}
+
+factor X4 "Squad Quality Index" {
+    inputs: market_value_concentration, top5_league_pct, squad_depth_score, avg_age_adjusted
+    formulation: residual(0.25 * market_value_concentration + 0.30 * top5_league_pct + 0.25 * squad_depth_score + 0.20 * avg_age_adjusted, X1, X2, X3)
+    variance_share: 0.15
+    update: per_match
+}
+
+factor X5 "Tactical Efficiency" {
+    inputs: shot_conversion_rate, defensive_duel_win_pct, pressing_intensity, set_piece_efficiency
+    formulation: residual(0.25 * shot_conversion_rate + 0.25 * defensive_duel_win_pct + 0.25 * pressing_intensity + 0.25 * set_piece_efficiency, X1, X2, X3, X4)
+    variance_share: 0.10
+    update: per_match
+}
+
+factor X6 "Exogenous Context" {
+    inputs: host_status, climate_delta, rest_days, altitude_delta
+    formulation: residual(0.4 * host_status + 0.2 * climate_delta + 0.2 * rest_days + 0.2 * altitude_delta, X1, X2, X3, X4, X5)
+    variance_share: 0.05
+    update: per_fixture
+}
+
+estimate tournament_strength as: learnable(1.0, 0.2) * (X1 ^ learnable(0.25, 0.05)) * (X2 ^ learnable(0.20, 0.05)) * (X3 ^ learnable(0.25, 0.05)) * (X4 ^ learnable(0.15, 0.05)) * (X5 ^ learnable(0.10, 0.05)) * exp(learnable(0.05, 0.02) * X6)
+
+output tournament_win_probability: derived
+output reach_final_probability: derived
+output reach_semifinal_probability: derived
+
+simulate 10000 iterations

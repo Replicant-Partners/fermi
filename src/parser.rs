@@ -121,8 +121,13 @@ impl Parser {
             TokenType::Agent => Ok(Statement::Agent(self.parse_agent()?)),
             TokenType::Model => Ok(Statement::Model(self.parse_model()?)),
             TokenType::Simulate => Ok(Statement::Simulate(self.parse_simulate()?)),
+            TokenType::Factor => Ok(Statement::Factor(self.parse_factor()?)),
+            TokenType::Param => Ok(Statement::Param(self.parse_param()?)),
+            TokenType::Import => Ok(Statement::Import(self.parse_import()?)),
+            TokenType::Estimate => Ok(Statement::Estimate(self.parse_estimate()?)),
+            TokenType::Output => Ok(Statement::Output(self.parse_output()?)),
             _ => Err(ParseError::UnexpectedToken {
-                expected: "statement keyword (question, driver, evidence, agent, model, simulate)"
+                expected: "statement keyword (question, driver, evidence, agent, model, simulate, factor, param, import, estimate, output)"
                     .to_string(),
                 found: token.token_type.clone(),
                 line: token.line,
@@ -976,12 +981,56 @@ impl Parser {
                 let name = id.clone();
                 self.advance();
 
+                // Check for param.field reference (e.g., param.elo_current)
+                if name == "param" && self.check(&TokenType::Colon) {
+                    // Handle param:field_name (colon syntax)
+                    self.advance();
+                    let field = self.consume_identifier()?;
+                    return Ok(Expression::ParamRef(field));
+                }
+
                 // Check for function call
                 if self.check(&TokenType::LParen) {
                     self.parse_function_call(name)
                 } else {
                     Ok(Expression::Identifier(name))
                 }
+            }
+            // Factor model expression keywords
+            TokenType::Learnable => {
+                self.advance();
+                self.consume_token(TokenType::LParen, "(")?;
+                let initial = match self.parse_expression()? {
+                    Expression::Number(n) => n,
+                    _ => 1.0,
+                };
+                self.consume_token(TokenType::Comma, ",")?;
+                let sigma = match self.parse_expression()? {
+                    Expression::Number(n) => n,
+                    _ => 0.1,
+                };
+                self.consume_token(TokenType::RParen, ")")?;
+                Ok(Expression::LearnablePrior { initial, sigma })
+            }
+            TokenType::Residual => {
+                self.advance();
+                self.consume_token(TokenType::LParen, "(")?;
+                let raw = self.parse_expression()?;
+                let mut upstream = Vec::new();
+                while self.check(&TokenType::Comma) {
+                    self.advance();
+                    let factor_name = self.consume_identifier()?;
+                    upstream.push(factor_name);
+                }
+                self.consume_token(TokenType::RParen, ")")?;
+                Ok(Expression::Residual { raw: Box::new(raw), upstream })
+            }
+            TokenType::Exp => {
+                self.advance();
+                self.consume_token(TokenType::LParen, "(")?;
+                let inner = self.parse_expression()?;
+                self.consume_token(TokenType::RParen, ")")?;
+                Ok(Expression::Exp(Box::new(inner)))
             }
             TokenType::LParen => {
                 self.advance();
@@ -1187,6 +1236,237 @@ impl Parser {
             )
         {
             self.advance();
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Factor Model Parsing
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Parse: factor X1 "Socioeconomic Capital" { inputs: ..., formulation: ..., variance_share: 0.25, update: static }
+    fn parse_factor(&mut self) -> ParseResult<FactorStmt> {
+        self.consume_keyword(TokenType::Factor, "factor")?;
+        let name = self.consume_identifier()?;
+        let label = if self.check_string() {
+            self.consume_string()?
+        } else {
+            name.clone()
+        };
+        self.skip_newlines();
+
+        let mut inputs = Vec::new();
+        let mut formulation = None;
+        let mut variance_share = 0.0;
+        let mut update_frequency = UpdateFreq::Static;
+
+        if self.check(&TokenType::LBrace) {
+            self.advance(); // consume {
+            self.skip_newlines();
+
+            while !self.check(&TokenType::RBrace) && !self.is_at_end() {
+                self.skip_newlines();
+                if self.check(&TokenType::RBrace) { break; }
+
+                let field = self.consume_identifier_or_keyword()?;
+                self.consume_token(TokenType::Colon, ":")?;
+
+                match field.as_str() {
+                    "inputs" => {
+                        // inputs: name1, name2, name3
+                        loop {
+                            let input_name = self.consume_identifier()?;
+                            inputs.push(FactorInput {
+                                name: input_name,
+                                input_type: ParamType::Real,
+                            });
+                            if self.check(&TokenType::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    "formulation" => {
+                        formulation = Some(self.parse_expression()?);
+                    }
+                    "variance_share" => {
+                        let expr = self.parse_expression()?;
+                        variance_share = match expr {
+                            Expression::Number(n) => n,
+                            Expression::Probability(p) => p,
+                            _ => 0.0,
+                        };
+                    }
+                    "update" => {
+                        let val = self.consume_identifier_or_keyword()?;
+                        update_frequency = match val.as_str() {
+                            "static" => UpdateFreq::Static,
+                            "per_match" => UpdateFreq::PerMatch,
+                            "tournament_start" => UpdateFreq::TournamentStart,
+                            "per_fixture" => UpdateFreq::PerFixture,
+                            _ => UpdateFreq::Static,
+                        };
+                    }
+                    _ => {
+                        // Skip unknown fields
+                        let _ = self.parse_expression();
+                    }
+                }
+                self.skip_newlines();
+            }
+            self.consume_token(TokenType::RBrace, "}")?;
+        }
+
+        Ok(FactorStmt {
+            name,
+            label,
+            inputs,
+            formulation,
+            variance_share,
+            update_frequency,
+        })
+    }
+
+    /// Parse: param team_id: string
+    fn parse_param(&mut self) -> ParseResult<ParamDecl> {
+        self.consume_keyword(TokenType::Param, "param")?;
+        let name = self.consume_identifier()?;
+        self.consume_token(TokenType::Colon, ":")?;
+        let type_name = self.consume_identifier_or_keyword()?;
+        let param_type = match type_name.as_str() {
+            "real" | "float" | "f64" => ParamType::Real,
+            "int" | "integer" | "i64" => ParamType::Int,
+            "string" | "str" | "text" => ParamType::Str,
+            "bool" | "boolean" => ParamType::Bool,
+            _ => ParamType::Str,
+        };
+
+        // Optional default value
+        let default_value = if self.check(&TokenType::Equals) {
+            self.advance();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(ParamDecl { name, param_type, default_value })
+    }
+
+    /// Parse: import factor X1 with ( input1 = expr, input2 = expr )
+    fn parse_import(&mut self) -> ParseResult<ImportStmt> {
+        self.consume_keyword(TokenType::Import, "import")?;
+        // Optional "factor" keyword
+        if self.check(&TokenType::Factor) {
+            self.advance();
+        }
+        let factor_name = self.consume_identifier()?;
+
+        let mut bindings = Vec::new();
+        // "with" keyword + parenthesized bindings
+        if self.check_identifier("with") {
+            self.advance();
+            self.consume_token(TokenType::LParen, "(")?;
+            self.skip_newlines();
+
+            while !self.check(&TokenType::RParen) && !self.is_at_end() {
+                self.skip_newlines();
+                if self.check(&TokenType::RParen) { break; }
+                let input_name = self.consume_identifier()?;
+                self.consume_token(TokenType::Equals, "=")?;
+                let value = self.parse_expression()?;
+                bindings.push((input_name, value));
+                if self.check(&TokenType::Comma) {
+                    self.advance();
+                }
+                self.skip_newlines();
+            }
+            self.consume_token(TokenType::RParen, ")")?;
+        }
+
+        Ok(ImportStmt { factor_name, bindings })
+    }
+
+    /// Parse: estimate tournament_strength as: expression
+    fn parse_estimate(&mut self) -> ParseResult<EstimateStmt> {
+        self.consume_keyword(TokenType::Estimate, "estimate")?;
+        let name = self.consume_identifier()?;
+        // Optional "as" keyword
+        if self.check_identifier("as") {
+            self.advance();
+        }
+        if self.check(&TokenType::Colon) {
+            self.advance();
+        }
+        let expression = self.parse_expression()?;
+
+        Ok(EstimateStmt { name, expression })
+    }
+
+    /// Parse: output p_win: expression  OR  output p_win: derived
+    fn parse_output(&mut self) -> ParseResult<OutputStmt> {
+        self.consume_keyword(TokenType::Output, "output")?;
+        let name = self.consume_identifier()?;
+
+        let mut expression = None;
+        let mut is_derived = false;
+
+        if self.check(&TokenType::Colon) {
+            self.advance();
+            if self.check_identifier("derived") {
+                self.advance();
+                is_derived = true;
+            } else {
+                expression = Some(self.parse_expression()?);
+            }
+        }
+
+        Ok(OutputStmt { name, expression, is_derived })
+    }
+
+    /// Skip over newline tokens.
+    fn skip_newlines(&mut self) {
+        while self.check(&TokenType::Newline) && !self.is_at_end() {
+            self.advance();
+        }
+    }
+
+    /// Check if the current token is an identifier with a specific value
+    fn check_identifier(&self, expected: &str) -> bool {
+        matches!(&self.peek().token_type, TokenType::Identifier(s) if s == expected)
+    }
+
+    /// Check if current token is a string literal
+    fn check_string(&self) -> bool {
+        matches!(&self.peek().token_type, TokenType::String(_))
+    }
+
+    /// Consume an identifier or keyword token — returns the text.
+    /// Keywords are valid as field names inside blocks.
+    fn consume_identifier_or_keyword(&mut self) -> ParseResult<String> {
+        let token = self.peek().clone();
+        match &token.token_type {
+            TokenType::Identifier(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(s)
+            }
+            // Allow keywords as identifiers in field position
+            TokenType::Inputs => { self.advance(); Ok("inputs".to_string()) }
+            TokenType::Formulation => { self.advance(); Ok("formulation".to_string()) }
+            TokenType::VarianceShare => { self.advance(); Ok("variance_share".to_string()) }
+            TokenType::Update => { self.advance(); Ok("update".to_string()) }
+            TokenType::Static => { self.advance(); Ok("static".to_string()) }
+            TokenType::PerMatch => { self.advance(); Ok("per_match".to_string()) }
+            TokenType::PerFixture => { self.advance(); Ok("per_fixture".to_string()) }
+            TokenType::Output => { self.advance(); Ok("output".to_string()) }
+            TokenType::Source => { self.advance(); Ok("source".to_string()) }
+            TokenType::Factor => { self.advance(); Ok("factor".to_string()) }
+            _ => Err(ParseError::UnexpectedToken {
+                expected: "identifier".to_string(),
+                found: token.token_type.clone(),
+                line: token.line,
+                column: token.column,
+            }),
         }
     }
 }

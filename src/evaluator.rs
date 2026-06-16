@@ -246,6 +246,24 @@ pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {
         // Function calls (built-in functions)
         Expression::FunctionCall { name, args } => evaluate_function(name, args, ctx),
 
+        // Factor model expressions
+        Expression::LearnablePrior { initial, .. } => Ok(*initial), // Use initial value during evaluation
+        Expression::ParamRef(field) => ctx
+            .get(field)
+            .ok_or_else(|| EvalError::UndefinedVariable(format!("param:{}", field))),
+        Expression::FactorRef(name) => ctx
+            .get(name)
+            .ok_or_else(|| EvalError::UndefinedVariable(format!("factor:{}", name))),
+        Expression::Exp(inner) => {
+            let val = evaluate(inner, ctx)?;
+            Ok(val.exp())
+        }
+        Expression::Residual { raw, .. } => {
+            // During Monte Carlo evaluation, residualization has already been applied
+            // as a pre-processing step. Here we just evaluate the raw expression.
+            evaluate(raw, ctx)
+        }
+
         // These should not appear in model expressions
         Expression::String(_) => Err(EvalError::TypeError(
             "String and Date literals cannot be used in model expressions".to_string(),

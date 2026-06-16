@@ -19,6 +19,12 @@ pub enum Statement {
     Agent(AgentStmt),
     Model(ModelStmt),
     Simulate(SimulateStmt),
+    // Factor model extensions
+    Factor(FactorStmt),
+    Param(ParamDecl),
+    Import(ImportStmt),
+    Estimate(EstimateStmt),
+    Output(OutputStmt),
 }
 
 /// Question statement: defines the forecast question
@@ -186,6 +192,76 @@ pub struct SimulateStmt {
     pub target: Option<Expression>,
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Factor Model Extensions — 6-factor orthogonal decomposition
+// ═══════════════════════════════════════════════════════════════════
+
+/// Factor declaration: defines an orthogonal factor with inputs, formulation, and variance share.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactorStmt {
+    pub name: String,
+    pub label: String,
+    pub inputs: Vec<FactorInput>,
+    pub formulation: Option<Expression>,
+    pub variance_share: f64,
+    pub update_frequency: UpdateFreq,
+}
+
+/// A single input to a factor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactorInput {
+    pub name: String,
+    pub input_type: ParamType,
+}
+
+/// Update frequency for a factor.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpdateFreq {
+    Static,
+    PerMatch,
+    TournamentStart,
+    PerFixture,
+}
+
+/// Parameter declaration: typed parameter bound at instantiation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamDecl {
+    pub name: String,
+    pub param_type: ParamType,
+    pub default_value: Option<Expression>,
+}
+
+/// Parameter types.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParamType {
+    Real,
+    Int,
+    Str,
+    Bool,
+}
+
+/// Import statement: import a factor with bound values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportStmt {
+    pub factor_name: String,
+    pub bindings: Vec<(String, Expression)>,
+}
+
+/// Estimate statement: defines a response function (e.g., Cobb-Douglas).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EstimateStmt {
+    pub name: String,
+    pub expression: Expression,
+}
+
+/// Output declaration: a named output derived from the model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputStmt {
+    pub name: String,
+    pub expression: Option<Expression>,
+    pub is_derived: bool,
+}
+
 /// Expressions - used in models, distributions, constraints
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
@@ -229,6 +305,30 @@ pub enum Expression {
         name: String,
         args: Vec<Expression>,
     },
+
+    // Factor model expressions
+    /// Residualize a raw expression against upstream factors.
+    /// residual(raw_expr, X1, X2, ...) → orthogonalized value
+    Residual {
+        raw: Box<Expression>,
+        upstream: Vec<String>,
+    },
+
+    /// Learnable parameter with Gaussian prior.
+    /// learnable(initial_value, sigma)
+    LearnablePrior {
+        initial: f64,
+        sigma: f64,
+    },
+
+    /// Parameter reference: param.field_name
+    ParamRef(String),
+
+    /// Factor reference: X1, X2, etc. — resolved at runtime
+    FactorRef(String),
+
+    /// Exponential function: exp(expr)
+    Exp(Box<Expression>),
 }
 
 
@@ -304,6 +404,42 @@ impl Program {
             Statement::Simulate(s) => Some(s),
             _ => None,
         })
+    }
+
+    pub fn factors(&self) -> Vec<&FactorStmt> {
+        self.statements.iter().filter_map(|s| match s {
+            Statement::Factor(f) => Some(f),
+            _ => None,
+        }).collect()
+    }
+
+    pub fn params(&self) -> Vec<&ParamDecl> {
+        self.statements.iter().filter_map(|s| match s {
+            Statement::Param(p) => Some(p),
+            _ => None,
+        }).collect()
+    }
+
+    pub fn imports(&self) -> Vec<&ImportStmt> {
+        self.statements.iter().filter_map(|s| match s {
+            Statement::Import(i) => Some(i),
+            _ => None,
+        }).collect()
+    }
+
+    pub fn estimates(&self) -> Vec<&EstimateStmt> {
+        self.statements.iter().filter_map(|s| match s {
+            Statement::Estimate(e) => Some(e),
+            _ => None,
+        }).collect()
+    }
+
+    pub fn add_factor(&mut self, factor: FactorStmt) {
+        self.statements.push(Statement::Factor(factor));
+    }
+
+    pub fn add_param(&mut self, param: ParamDecl) {
+        self.statements.push(Statement::Param(param));
     }
 
     // ── Mutable accessors ─────────────────────────────────────────
@@ -416,8 +552,13 @@ impl fmt::Display for Statement {
             Statement::Driver(d) => write!(f, "Driver({})", d.name),
             Statement::Evidence(e) => write!(f, "Evidence({})", e.id),
             Statement::Agent(a) => write!(f, "Agent({})", a.name),
-            Statement::Model(m) => write!(f, "Model"),
+            Statement::Model(_m) => write!(f, "Model"),
             Statement::Simulate(s) => write!(f, "Simulate({} iterations)", s.iterations),
+            Statement::Factor(fac) => write!(f, "Factor({} \"{}\")", fac.name, fac.label),
+            Statement::Param(p) => write!(f, "Param({})", p.name),
+            Statement::Import(i) => write!(f, "Import({})", i.factor_name),
+            Statement::Estimate(e) => write!(f, "Estimate({})", e.name),
+            Statement::Output(o) => write!(f, "Output({})", o.name),
         }
     }
 }
@@ -478,6 +619,15 @@ impl fmt::Display for Expression {
                 }
                 write!(f, ")")
             }
+            Expression::Residual { raw, upstream } => {
+                write!(f, "residual({}, {})", raw, upstream.join(", "))
+            }
+            Expression::LearnablePrior { initial, sigma } => {
+                write!(f, "learnable({}, {})", initial, sigma)
+            }
+            Expression::ParamRef(field) => write!(f, "param:{}", field),
+            Expression::FactorRef(name) => write!(f, "{}", name),
+            Expression::Exp(inner) => write!(f, "exp({})", inner),
         }
     }
 }

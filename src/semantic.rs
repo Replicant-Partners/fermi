@@ -146,6 +146,9 @@ impl SemanticAnalyzer {
             Statement::Question(question) => {
                 self.analyze_question(question);
             }
+            // Factor model statements — validated at a higher level
+            Statement::Factor(_) | Statement::Param(_) | Statement::Import(_)
+            | Statement::Estimate(_) | Statement::Output(_) => {}
         }
     }
 
@@ -677,6 +680,12 @@ impl SemanticAnalyzer {
                 // Function calls in distributions are handled in distribution validation
                 Type::Number
             }
+            // Factor model expressions — all produce numbers
+            Expression::Residual { .. } => Type::Number,
+            Expression::LearnablePrior { .. } => Type::Number,
+            Expression::ParamRef(_) => Type::Number,
+            Expression::FactorRef(_) => Type::Number,
+            Expression::Exp(_) => Type::Number,
         }
     }
 
