@@ -699,7 +699,12 @@ pub async fn archive_app_handler(
 // loop. This is the batch path. Future: also add an opt-in
 // `dry_run: true` for previewing diffs.
 //
-// Auth: App owner only (or admin). Same model as publish/archive.
+// Auth: caller must be the App owner OR a platform admin OR own at
+// least one workspace within this App. The last branch is for curated
+// platform apps (`owner_user_id = "sys"`) where users who have spawned
+// workspaces should be able to reconcile their fleet with the App's
+// current auto_hire — they have skin in the game and the operation is
+// idempotent + only adds curated agents from the manifest.
 pub async fn sync_auto_hire_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -708,10 +713,31 @@ pub async fn sync_auto_hire_handler(
     let caller_id = principal.user_id();
     let app = get_app_row(&state.db, &slug).await?;
     let owner_id = app["owner_user_id"].as_str().unwrap_or("");
-    if caller_id != owner_id && !principal.can_admin() {
+
+    let is_owner = caller_id == owner_id;
+    let is_admin = principal.can_admin();
+    let has_workspace_in_app: bool = if !is_owner && !is_admin {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM teams t
+                JOIN team_members m ON m.team_id = t.id
+                WHERE t.origin = $1 AND m.member_id = $2
+             )"
+        )
+        .bind(&slug)
+        .bind(&caller_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !is_owner && !is_admin && !has_workspace_in_app {
         return Err((
             StatusCode::FORBIDDEN,
-            "Only the App owner can sync auto-hire".into(),
+            "Sync auto-hire requires App owner, platform admin, \
+             or membership in at least one workspace of this App".into(),
         ));
     }
 
