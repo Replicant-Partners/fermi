@@ -315,6 +315,46 @@ as `learnable(...)`); promoting them to learnable is a future change.
   `EvaluationError("Factor model produced no finite response samples")`.
   BayesOps should clamp updates to sane ranges.
 
+## Research agent orchestra (factor inputs → BayesOps inputs)
+
+Factor-model inputs that BayesOps eventually fits against don't appear from
+thin air — they come from research agents in the Fermi orchestra. Each
+factor in `team_prior.fpl` has a designated agent that emits evidence with
+structured numeric values:
+
+| Factor | Agent | Reads | Emits |
+|--------|-------|-------|-------|
+| X1 Socioeconomic Capital | `macro_data_agent` | World Bank, UNDP HDR | gdp_per_capita_log, population_log, hdi_logit |
+| X2 Institutional Capacity | `football_institution_agent` | FIFA Big Count, Deloitte | player_penetration_rate, league_revenue_log, confederation_coefficient |
+| X3 Dynamic Performance | `football_analyst` (v1.1+) | API-Football, FBref, StatsBomb | elo_current, elo_trend, goal_difference, pass_completion, xg_delta |
+| X4 Squad Quality | `football_analyst` (v1.1+) | Transfermarkt, Big-5 leagues | market_value_concentration, top5_league_pct, squad_depth_score, avg_age_adjusted |
+| X5 Tactical Efficiency | `football_analyst` (v1.1+) | StatsBomb, FBref | shot_conversion_rate, defensive_duel_win_pct, pressing_intensity, set_piece_efficiency |
+| X6 Exogenous Context | `fixture_context_agent` | Weather APIs, venue geodata | host_status, climate_delta, rest_days, altitude_delta |
+
+All four agents emit the standard Fermi-orchestra `[MULTIPLIER]` finding
+format and conform to the agent-card schema (validated by
+`test_all_curated_agents_have_valid_cards`). They are auto-hired into every
+`fermi_forecast` workspace via `apps/fermi_forecast.json::auto_hire`.
+
+## Harness benchmarking integration
+
+Each agent run captured by the workspace contributes to the
+`harness_snapshots.specialist_roster` JSONB: `[{agent_id, version,
+calibration_score}, …]`. The composite `content_hash` over conductor +
+roster + routing weights + bayesops_params makes the entire
+configuration reproducible: anyone re-creating the same hash gets the
+same forecast.
+
+Implications when an agent changes:
+- Bumping an agent's `version` (e.g. `football_analyst` 1.0.0 → 1.1.0
+  for factor awareness) **invalidates the previous harness hash**. New
+  forecasts get a new snapshot row; old forecasts stay tied to the
+  prior hash. This is intentional: it lets BayesOps separate
+  performance signal pre- and post-agent-change.
+- `performance.avg_brier_impact` per agent is auto-updated as
+  forecasts resolve. Over time this surfaces which agents are
+  carrying signal vs noise for a given forecast type.
+
 ## Files
 
 - Contract source: `src/executor.rs::execute_factor_model` (and the
@@ -324,3 +364,10 @@ as `learnable(...)`); promoting them to learnable is a future change.
 - CLI emitter: `scripts/initialize_workspace.rs`
 - Batch wrapper: `scripts/world_cup/publish_team_priors.py`
 - Template: `templates/world_cup/team_prior.fpl`
+- Research agents:
+  - `agents/curated/macro_data_agent/` (X1)
+  - `agents/curated/football_institution_agent/` (X2)
+  - `agents/curated/football_analyst/` (X3-X5, v1.1+)
+  - `agents/curated/fixture_context_agent/` (X6)
+- Auto-hire wiring: `apps/fermi_forecast.json::workspace_template.auto_hire`
+- Harness snapshot capture: `src/handlers/forecast_benchmark.rs::capture_harness_snapshot`

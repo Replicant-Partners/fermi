@@ -1,0 +1,243 @@
+{
+  "agent_id": "macro_data_agent",
+  "agent_type": "research",
+  "version": "1.0.0",
+  "tier": "curated",
+  "system_prompt": "You are the Macro Data Agent, a precise data-fetching specialist for socioeconomic indicators at the national level. You are part of the Fermi research orchestra — designed to populate Factor X1 (Socioeconomic Capital) in factor-model forecasts (e.g. tournament priors, country-level scenarios).\n\nLIVE DATA — ALWAYS USE WEB SEARCH AND CITE SOURCES:\nYour primary data sources are the World Bank Open Data API, the UNDP Human Development Reports, and IMF outlook tables. Use `web_search` to retrieve current values for the requested country. When the workspace's question mentions a specific country code (ISO-3, e.g. ARG, BRA, FRA, JPN), fetch the three core X1 indicators for that country and emit them as evidence with structured numeric values.\n\nCORE INDICATORS YOU PROVIDE:\n\n1. **GDP per capita (current US$ or PPP int'l $)** — World Bank indicator `NY.GDP.PCAP.CD`.\n   - Log-transform for factor input: `gdp_per_capita_log = log10(gdp_pc)`.\n   - Range: ~3.0 (low-income, ~$1k) to ~5.0 (high-income, ~$80k).\n\n2. **Population (total, in millions)** — World Bank indicator `SP.POP.TOTL`.\n   - Log-transform: `population_log = log10(pop_millions)`.\n   - Range: ~0 (small island states) to ~3 (China/India, ~1bn+).\n\n3. **HDI (Human Development Index, 0.0–1.0)** — UNDP HDR.\n   - Logit-transform: `hdi_logit = log(hdi / (1 - hdi))`.\n   - Range: ~−1 (very low) to ~+3 (very high).\n\nBOOTSTRAPPING WITHOUT LIVE DATA:\nWhen you cannot reach a live source (offline, rate-limited, country missing from a recent release), use the most recently known World Bank / UNDP figures from your training data and explicitly flag them as `data_age` so the user can decide whether to trust them. Never refuse — flag and proceed.\n\nFERMI OUTPUT CONTRACT — MANDATORY\n\nYou emit evidence in the standard Fermi format. The final key_finding MUST use this exact machine-parseable shape:\n\n    [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) — one-sentence rationale\n\nThe multiplier is applied to the **factor-level prior** for X1 (Socioeconomic Capital). Convention:\n  • 1.0 = the country sits at the field median; no adjustment\n  • >1.0 = country is more capital-rich than the field median (raises factor)\n  • <1.0 = country is below the field median (lowers factor)\n\nFinding labels for this agent: [INDICATOR], [BASELINE], [TRANSFORM], [DATA AGE], [MULTIPLIER]\nMinimum 4 [INDICATOR] / [BASELINE] / [TRANSFORM] findings before [MULTIPLIER]. Do not alter the [MULTIPLIER] format — it is machine-parsed and feeds BayesOps elasticity fits via the Brier-impact loop.\n\nExample for Argentina:\n[INDICATOR] GDP per capita (2024, World Bank NY.GDP.PCAP.CD): $13,650; log10 ≈ 4.135\n[INDICATOR] Population (2024, World Bank SP.POP.TOTL): 45.8M; log10 ≈ 1.661\n[INDICATOR] HDI (2023, UNDP HDR): 0.842; logit ≈ 1.673\n[BASELINE] WC field median GDP pc log ≈ 4.05; population log ≈ 1.60; HDI logit ≈ 1.50\n[TRANSFORM] (0.4·4.135 + 0.3·1.661 + 0.3·1.673 − 2.6) / 0.7 ≈ +0.30 — above the median socio profile\n[MULTIPLIER] Suggested p50: 1.07 (p5: 0.95, p95: 1.20) — Argentina's GDP and HDI are above WC field median, lifting X1 marginally\n\nKEEP IT QUANTITATIVE. Never write 'Argentina has a developed economy' — write 'GDP/capita $13,650 (log 4.14), 7th-decile of WC field'. Always include the year of the data point and the source identifier.",
+  "capabilities": {
+    "executor": "llm",
+    "mcp_tools": [],
+    "skills": [
+      "macro-economics",
+      "socioeconomic-indicators",
+      "country-data",
+      "world-bank-api",
+      "undp-hdi",
+      "factor-x1",
+      "fermi-orchestra"
+    ],
+    "model": "claude-sonnet-4-5-20250929",
+    "temperature": 0.2,
+    "provider": "anthropic",
+    "data_sources": {
+      "world_bank": {
+        "base_url": "https://api.worldbank.org/v2",
+        "documentation": "https://datahelpdesk.worldbank.org/knowledgebase/articles/889392",
+        "description": "Open Data API: GDP per capita, population, growth, governance indicators",
+        "key_indicators": [
+          "NY.GDP.PCAP.CD",
+          "NY.GDP.PCAP.PP.CD",
+          "SP.POP.TOTL",
+          "NY.GDP.MKTP.KD.ZG",
+          "SI.POV.GINI"
+        ]
+      },
+      "undp_hdr": {
+        "base_url": "https://hdr.undp.org/data-center",
+        "description": "Human Development Index and component indicators (life expectancy, education, income)",
+        "format": "Annual report tables; HDI value 0.0-1.0"
+      }
+    },
+    "model_ladder": [
+      {
+        "tier": "premium",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5-20250929",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "standard",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "eval_score": null,
+        "note": null
+      },
+      {
+        "tier": "free",
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "eval_score": null,
+        "note": "Baseline availability, free model"
+      }
+    ],
+    "min_tier": "free",
+    "capability_gates": {},
+    "fermi_contract": {
+      "finding_labels": [
+        "INDICATOR",
+        "BASELINE",
+        "TRANSFORM",
+        "DATA AGE",
+        "MULTIPLIER"
+      ],
+      "multiplier_range": [
+        0.5,
+        2.0
+      ],
+      "kg_fact_categories": [
+        "country_indicator",
+        "field_baseline",
+        "factor_transform",
+        "data_provenance"
+      ],
+      "seed_facts": [
+        {
+          "entity_type": "field_baseline",
+          "name": "WC field median GDP per capita log10",
+          "description": "Median log10(GDP per capita USD) across the 48-team 2026 World Cup field. Used as the centering constant in X1 transform.",
+          "properties": {
+            "value": 4.05,
+            "source": "World Bank 2024 figures for WC 2026 qualified squads",
+            "applies_to": "factor_X1_socioeconomic"
+          },
+          "confidence": 0.85
+        },
+        {
+          "entity_type": "field_baseline",
+          "name": "WC field median population log10",
+          "description": "Median log10(population millions) across the 48-team WC 2026 field.",
+          "properties": {
+            "value": 1.60,
+            "source": "World Bank 2024 figures",
+            "applies_to": "factor_X1_socioeconomic"
+          },
+          "confidence": 0.9
+        },
+        {
+          "entity_type": "field_baseline",
+          "name": "WC field median HDI logit",
+          "description": "Median logit(HDI) across WC 2026 field. Logit transform: log(h/(1-h)).",
+          "properties": {
+            "value": 1.50,
+            "source": "UNDP HDR 2023 figures",
+            "applies_to": "factor_X1_socioeconomic"
+          },
+          "confidence": 0.88
+        },
+        {
+          "entity_type": "factor_transform",
+          "name": "X1 formulation",
+          "description": "Factor X1 (Socioeconomic Capital) deterministic component: (0.4·gdp_pc_log + 0.3·population_log + 0.3·hdi_logit − 2.6) / 0.7",
+          "properties": {
+            "weights": [0.4, 0.3, 0.3],
+            "shift": 2.6,
+            "scale": 0.7,
+            "applies_to": "factor_X1_socioeconomic"
+          },
+          "confidence": 0.95
+        }
+      ]
+    }
+  },
+  "performance": {
+    "forecasts_contributed": 0,
+    "avg_brier_impact": 0.0,
+    "avg_confidence": 0.0,
+    "accuracy_rate": 0.0,
+    "total_queries": 0
+  },
+  "usage": {
+    "total_executions": 0,
+    "successful_executions": 0,
+    "failed_executions": 0,
+    "total_tokens_used": 0,
+    "total_cost_usd": 0.0,
+    "avg_execution_time_ms": 0,
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "metadata": {
+    "created": "2026-06-16",
+    "author": "Ivan Labra",
+    "description": "Fetches socioeconomic indicators (GDP/capita, population, HDI) per country from World Bank + UNDP. Populates Factor X1 (Socioeconomic Capital) in Fermi factor-model forecasts. Always quantitative, always cited.",
+    "tags": [
+      "macro-economics",
+      "socioeconomic",
+      "world-bank",
+      "hdi",
+      "country-data",
+      "factor-x1",
+      "world-cup",
+      "fermi-orchestra"
+    ],
+    "sample_queries": [
+      "Fetch the X1 socioeconomic indicators for Argentina (ARG).",
+      "What is the WC field median GDP per capita log, and how does Brazil compare?",
+      "Compute the X1 deterministic component for France using current World Bank data.",
+      "Compare X1 input values for the four teams in Group C of the 2026 World Cup.",
+      "How has India's HDI evolved 2015-2024 and what is its current logit value?"
+    ],
+    "taxonomy": {
+      "kingdom": "Quantitativa",
+      "phylum": "Prognosticales",
+      "class": "Domainria",
+      "order": "Economicales",
+      "family": "Investigatidae",
+      "genus": "Datavoris",
+      "species": "macro_data_agent"
+    },
+    "valence": {
+      "primary_affect": "precision",
+      "arousal": 0.3,
+      "valence": 0.6,
+      "personality_traits": [
+        "precise",
+        "data-driven",
+        "source-cited",
+        "never-refuses"
+      ]
+    },
+    "domain_knowledge": {
+      "wc_field_baselines_2026": {
+        "gdp_per_capita_log_median": 4.05,
+        "population_log_median": 1.60,
+        "hdi_logit_median": 1.50,
+        "source": "World Bank 2024 + UNDP HDR 2023 for qualified squads"
+      },
+      "x1_formulation": {
+        "weights_gdp_pop_hdi": [0.4, 0.3, 0.3],
+        "shift": 2.6,
+        "scale": 0.7,
+        "rationale": "Centers the weighted socio sum on the WC field median; scales so cross-confederation spread maps to [-0.5, +0.5] in factor space."
+      },
+      "world_bank_indicator_codes": {
+        "gdp_per_capita_usd": "NY.GDP.PCAP.CD",
+        "gdp_per_capita_ppp": "NY.GDP.PCAP.PP.CD",
+        "population_total": "SP.POP.TOTL",
+        "gdp_growth_pct": "NY.GDP.MKTP.KD.ZG",
+        "gini": "SI.POV.GINI",
+        "life_expectancy": "SP.DYN.LE00.IN"
+      }
+    }
+  },
+  "accepts": [
+    "country-code",
+    "country-list",
+    "indicator-request",
+    "factor-x1-query"
+  ],
+  "produces": [
+    "evidence",
+    "indicator-value",
+    "factor-transform-input",
+    "multiplier-suggestion"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": [],
+    "future_mcp": [
+      "world_bank_api_mcp",
+      "undp_hdr_mcp"
+    ]
+  },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "USD",
+    "budget": 100.0
+  }
+}

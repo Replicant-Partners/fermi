@@ -117,7 +117,11 @@
       "entity_investigator",
       "equity_analyst",
       "biotech_analyst",
-      "comparator"
+      "comparator",
+      "football_analyst",
+      "macro_data_agent",
+      "football_institution_agent",
+      "fixture_context_agent"
     ],
     "initial_files": [
       {
