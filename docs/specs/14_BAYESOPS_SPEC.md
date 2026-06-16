@@ -1,24 +1,35 @@
 # BayesOps: Data-Informed Distribution Fitting for Fermi
-## Specification & Roadmap — v0.2
+## Specification & Roadmap — v0.3
 
-**Status:** Active — Phase 1 not yet started; Phases 2–5 roadmap  
+**Status:** Active — Phase 1 in progress; Phases 2–5 roadmap  
 **Author:** Ivan Labra  
-**Date:** 2026-05-23, revised 2026-06-03  
-**Replaces:** v0.1 (discarded — too SimOps-specific, conflated two MC loops)
+**Date:** 2026-05-23, revised 2026-06-03, revised 2026-06-16  
+**Replaces:** v0.2 (Spec 20 status updated; migration 140 dependency added; JSONB
+persistence sub-task added to Phase 1)
 
-> **Current state (2026-06-03):** Neither `crates/posterior` nor `crates/posterior-reg` exists yet.
-> Zero implementation. The spec is complete and the seam is designed correctly.
+> **Current state (2026-06-16):** Neither `crates/posterior` nor `crates/posterior-reg` exists
+> yet in code. Phase 1 implementation begins this session. Spec 14 architecture and contract
+> are unchanged from v0.2 — only minor sequencing and persistence notes are revised.
 >
-> **What changed with Spec 20 (2026-05-30):** Spec 20 (`20_SIMOPS_PROJECTION_SCORING.md`) closes
-> Loop 1/5 for SimOps via a *different mechanism* — deferred hard-verifier scoring that feeds
-> semantic rules into the agent's KG context. That is harness-level learning (Loop A is BayesOps;
-> Loop 1/5 is Spec 20). They are complementary not competing. See Spec 20 §12 for the composition.
-> Spec 20 should ship first. BayesOps Phase 1 begins once Spec 20's `ProjectionScoringEvaluator`
-> has accumulated enough real observations to validate the minimum-data regime assumption.
+> **Spec 20 status (updated 2026-06-16):** `ProjectionScoringEvaluator` is **code-complete and
+> wired**: `agent-bestiary/evaluators/src/projection_scoring.rs:81`, registered at
+> `src/handlers/eval.rs:939`, with migration 130 (`migrations/130_sosa_projection_index.sql`)
+> in the repo. The only remaining Spec 20 gate is **operational deployment + real-observation
+> accumulation**, not implementation. BayesOps Phase 1 implementation no longer blocks on
+> Spec 20 code — it can proceed in parallel and validate against (a) synthetic data with known
+> ground truth and (b) whatever real SOSA observations have accumulated by Phase 1 acceptance.
+> Phase 4 (`simops` integration) still requires real observations because the validation gate
+> is "NLPD on held-out real runs improves over OLS baseline."
+>
+> **Migration 140 commitment (added 2026-06-16):** `harness_snapshots.bayesops_params_hash` and
+> `harness_snapshots.bayesops_params JSONB` columns already exist in the schema (see
+> `migrations/140_forecast_benchmark.sql:42,48`). The `forecast_commitments` infrastructure
+> currently writes `bayesops_params: null`. Phase 1 must produce a `FittedDistribution` that
+> serializes cleanly to that JSONB column, so the existing benchmark infrastructure can begin
+> recording BayesOps-fitted parameter hashes the moment Phase 4 lands.
 >
 > **Scope decision unchanged:** Phase 1 (`crates/posterior`, simple marginal fitting) is the
-> entry point. Phases 2–5 remain roadmap — do not begin until Phase 1 is validated against
-> real cultivation run history.
+> entry point. Phases 2–5 remain roadmap — Phase 4 still gated on real cultivation run history.
 
 ---
 
@@ -304,8 +315,22 @@ pub struct RegressionConfig {
     pub sampler: SamplerConfig,      // chains, draws, warmup
     pub improvement: ImprovementConfig, // max_iters, stop_after_n_flat
     pub feature_names: Vec<String>,  // declared order for reproducibility
+    pub seed: Option<u64>,           // top-level deterministic seed; chains derive from it
 }
 ```
+
+**Feature-name semantics (clarification, 2026-06-16):**
+
+- `RegressionConfig::feature_names` is **the source of truth** for the regression's
+  feature column order. It is declared once per fit and never inferred from data.
+- Each `WeightedSample::features` map MUST contain every key in `feature_names`.
+  Missing keys are a hard error (`RegressionError::MissingFeature`).
+- Extra keys in `features` beyond `feature_names` are silently ignored. This lets
+  callers carry richer metadata in the map (e.g. provenance tags) without polluting
+  the regression input.
+- Order in the `feature_names` vector is the order used by `predict_mean`,
+  `predict_std`, dual-number gradients, and Sobol analysis. Two fits with the same
+  `feature_names` vector and the same data are bitwise-identical (modulo `seed`).
 
 ### 5.2 The ConditionalPosterior
 
@@ -450,7 +475,27 @@ pub struct SamplerDiagnostics {
 }
 ```
 
-Gradient computation: dual-number automatic differentiation via `dual_num` crate for the built-in model variants. This is analytically tractable for all 5 variants and avoids nightly-only enzyme AD.
+Gradient computation strategy (revised 2026-06-16):
+
+- **LinearNormal**, **LinearStudentT** — hand-coded analytical gradients. The
+  log-likelihood gradient for these is 5–10 lines of arithmetic and is
+  bitwise-identical across runs.
+- **NonlinearNormal**, **HeteroscedasticNormal**, **HierarchicalNormal** —
+  dual-number forward-mode AD via the `num-dual` crate (active fork of
+  `dual_num`, MIT/Apache, last released 2025-10).
+
+Every model's gradient is verified against finite differences to 1e-6 in the
+test suite. This keeps the heavy `nalgebra` dependency that `num-dual` pulls
+behind a feature flag (`ad`) so the simple-model path stays lean.
+
+**Mass matrix (Phase 2a limitation, recorded 2026-06-16):** Phase 2a ships with
+an **identity mass matrix**. This is sufficient for `LinearNormal` location
+parameters (intercept + β) — R-hat converges to < 1.05 in ~500 draws — but
+the scale parameter `log_sigma` mixes more slowly (R-hat ~1.3–1.5 in the same
+budget) because its curvature differs from the location parameters. **Phase 2b
+adds diagonal mass-matrix adaptation during warmup** (Stan-style), which closes
+this gap. End-to-end acceptance tests record both regimes: < 1.10 for location
+params, < 1.5 for scale params, with a comment pointing to this section.
 
 ### 5.5 The NLPD Improvement Loop
 
@@ -469,6 +514,48 @@ async fn improvement_loop(
     config: &RegressionConfig,
 ) -> Result<(Box<dyn RegressionModel>, Posterior, Vec<(String, f64)>), RegressionError>
 ```
+
+### 5.6 Surfaces (added 2026-06-16)
+
+BayesOps is a Fermi-general capability, not a SimOps add-on. It applies anywhere
+parameters need to be fit from collected evidence: forecast calibration, agent
+ranking, FPL Evidence strength, SimOps cascades, or any future predictive model.
+To make this concrete, Phase 2 exposes three surfaces, built in this order:
+
+**(a) Pure library** — `crates/posterior` and `crates/posterior-reg` are the only
+canonical home of the fitting logic. Every other surface is a thin adapter.
+This is the surface SimOps (Phase 4) and the agent runtime consume directly when
+they live in the same process.
+
+**(b) HTTP** — `src/handlers/bayesops.rs` (new) exposes the fitting and
+querying API at `POST /api/bayesops/*`:
+
+| Endpoint | Body | Returns |
+|---|---|---|
+| `/api/bayesops/fit_marginal` | `{ observations: f64[], weights?: f64[], family: "beta"\|"normal"\|"lognormal"\|"triangular"\|"auto" }` | `{ fitted: FittedDistribution, metadata: FitMetadata }` |
+| `/api/bayesops/fit_conditional` | `{ data: WeightedSample[], config: RegressionConfig }` | `{ posterior_id: Uuid, diagnostics, nlpd, metadata }` (server-side cache of the posterior keyed by `posterior_id`) |
+| `/api/bayesops/predict` | `{ posterior_id, features: {name: f64} }` | `FittedDistribution` |
+| `/api/bayesops/input_sensitivity` | `{ posterior_id, feature_ranges, n_samples? }` | `{ [feature]: InputSensitivity }` |
+| `/api/bayesops/compare_scenarios` | `{ posterior_id, a, b }` | `ScenarioComparison` |
+| `/api/bayesops/prob_exceeds` | `{ posterior_id, features, threshold }` | `{ probability: f64 }` |
+| `/api/bayesops/optimise_for_target` | `{ posterior_id, fixed_features, free_feature, search_range, target_threshold }` | `OptimisationResult` |
+
+Phase 2 ships an **in-memory** posterior cache (DashMap keyed by Uuid). The
+persistent posterior store is Phase 5 (see §10) — until then, posteriors are
+session-scoped.
+
+**(c) MCP tools** — registered in `src/bin/agent-mcp-server.rs`, one MCP tool
+per HTTP endpoint, same names:
+`fermi_fit_marginal`, `fermi_fit_conditional`, `fermi_predict`,
+`fermi_input_sensitivity`, `fermi_compare_scenarios`, `fermi_prob_exceeds`,
+`fermi_optimise_for_target`. This is what agents call when authoring an FPL
+program from data they have at hand.
+
+**Coupling note:** the HTTP and MCP surfaces live in `fermi` (root crate), not in
+`posterior` or `posterior-reg`. The library crates remain
+domain-and-transport-neutral per §9. The same library function backs all three
+surfaces — `to_fpl_params()` is the shared output type and round-trips through
+the FPL parser (Phase 1 acceptance test).
 
 ---
 
@@ -678,6 +765,7 @@ flowchart TD
 | `fit_marginal(obs, weights, Auto)` | Selects correct family for Beta/Normal/Lognormal synthetic data |
 | `to_fpl_params()` | Output is valid FPL Driver syntax, round-trips through parser |
 | `DataQuality` thresholds | Sufficient/Sparse/Insufficient correctly classified |
+| `FittedDistribution` serde round-trip → `harness_snapshots.bayesops_params JSONB` | `serde_json::to_value(&fitted)` then `from_value` is identity (modulo `FitMetadata`'s `fitted_at` precision). This unblocks Phase 4 wiring without further changes to migration 140. |
 
 ---
 
@@ -767,6 +855,8 @@ ordered path from now to completion and answers the question "what do I actually
 | `src/executor.rs` MC loop | Unchanged — just consumes whatever parameters are in the AST |
 | `crates/simops/src/predictor.rs` | Will be extended in Phase 4 (behind feature flag) |
 | Migration 130 (SOSA projection index) | Must be deployed before real observation volume accumulates |
+| Migration 140 (`harness_snapshots`, `forecast_commitments`) | Reserved columns `bayesops_params_hash` and `bayesops_params JSONB` already exist (`migrations/140_forecast_benchmark.sql:42,48`). `FittedDistribution` must serde-round-trip to that JSONB column. Currently null — see placeholder at `src/handlers/forecasts.rs:250`. |
+| `agent-bestiary/evaluators/src/projection_scoring.rs` | Spec 20 evaluator, code-complete. Produces the `projection_accuracy` signal Phase 1 acceptance uses to confirm fits are improving with more data. |
 
 ### 12.2 What each phase actually touches
 
@@ -778,14 +868,19 @@ parser change, no console change, no executor change.
 
 ```
 New files:    crates/posterior/Cargo.toml
-              crates/posterior/src/lib.rs
-              crates/posterior/src/beta.rs
-              crates/posterior/src/normal.rs
-              crates/posterior/src/lognormal.rs
-              crates/posterior/src/bootstrap.rs
-              crates/posterior/src/auto.rs
+              crates/posterior/src/lib.rs        (FittedDistribution, FitMetadata, DataQuality,
+                                                 PosteriorError, DistFamily, fit_marginal())
+              crates/posterior/src/beta.rs       (conjugate + method-of-moments)
+              crates/posterior/src/normal.rs     (weighted conjugate)
+              crates/posterior/src/lognormal.rs  (log-space moments)
+              crates/posterior/src/triangular.rs (empirical percentiles)
+              crates/posterior/src/bootstrap.rs  (weighted resampling CI)
+              crates/posterior/src/auto.rs       (family selection by KL-to-empirical-CDF)
 Modified:     Cargo.toml  (add workspace member — 1 line)
-Touch count:  6 new files, 1 line change
+Touch count:  8 new files, 1 line change
+
+The crate has no dependency on `fermi`, `simops`, `posterior-reg`, or anything FPL.
+Its only deps are `rand`, `statrs`, `serde`, `serde_json`, `chrono`, `thiserror`.
 ```
 
 **Phase 2–3 — `crates/posterior-reg`. Still no changes to FPL or console.**
