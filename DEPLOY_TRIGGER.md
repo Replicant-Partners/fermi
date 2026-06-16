@@ -1,12 +1,11 @@
-# Deploy trigger 2026-06-16T13:43:11Z
+# Deploy trigger 2026-06-16T14:18:50Z
 
-Loosen sync-auto-hire auth: workspace members of an App can now sync
-its auto_hire (not just App owners / platform admins). Curated platform
-apps (sys-owned) need this so users who have spawned workspaces can
-reconcile their fleet without an admin-scoped API key. The operation
-remains idempotent and only adds agents declared in the App manifest.
+sync-auto-hire performance fix: replace 720-roundtrip nested loop with
+a single bulk INSERT using Postgres `unnest` cross-product. Previous
+version was timing out at the Railway proxy layer for the 60-workspace
+WC fleet. New shape is one network roundtrip per call, sub-second.
 
 After deploy:
   curl -X POST $API/api/apps/fermi_forecast/sync-auto-hire \
     -H "Authorization: Bearer $ABW_API_KEY"
-should now succeed for the user who spawned the WC workspaces.
+should return in <2s with `hires_added` populated.

@@ -761,29 +761,36 @@ pub async fn sync_auto_hire_handler(
         })));
     }
 
-    // Resolve agent_name → agent_id once for every agent in auto_hire.
-    // Filter out any agent_name that isn't registered (warn + skip rather
-    // than fail the whole batch — the App may carry agents from another
-    // deployment that simply aren't on this DB).
-    let mut agent_ids: Vec<(String, Uuid)> = Vec::with_capacity(auto_hire.len());
-    let mut skipped_agents: Vec<String> = Vec::new();
-    for name in &auto_hire {
-        let row = sqlx::query(
-            "SELECT agent_id FROM agents WHERE agent_name = $1 AND status IN ('active','published','draft')"
-        )
-        .bind(name)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Resolve all agent_name → agent_id in ONE query (instead of N).
+    // Names not in the registry are reported but don't fail the batch.
+    let agent_rows = sqlx::query(
+        "SELECT agent_name, agent_id FROM agents
+         WHERE agent_name = ANY($1) AND status IN ('active','published','draft')"
+    )
+    .bind(&auto_hire)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        match row.and_then(|r| r.try_get::<Uuid, _>("agent_id").ok()) {
-            Some(id) => agent_ids.push((name.clone(), id)),
-            None => skipped_agents.push(name.clone()),
+    let mut agent_ids: Vec<Uuid> = Vec::with_capacity(agent_rows.len());
+    let mut found_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for r in &agent_rows {
+        if let (Ok(name), Ok(id)) = (
+            r.try_get::<String, _>("agent_name"),
+            r.try_get::<Uuid, _>("agent_id"),
+        ) {
+            agent_ids.push(id);
+            found_names.insert(name);
         }
     }
+    let skipped_agents: Vec<String> = auto_hire
+        .iter()
+        .filter(|n| !found_names.contains(*n))
+        .cloned()
+        .collect();
 
-    // List every workspace of this App.
-    let workspace_rows = sqlx::query(
+    // List every workspace of this App in one query.
+    let workspace_ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT id FROM teams WHERE origin = $1"
     )
     .bind(&slug)
@@ -791,50 +798,71 @@ pub async fn sync_auto_hire_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // For each (workspace, agent) pair, upsert a workspace_agents row.
-    // ON CONFLICT DO NOTHING makes it idempotent — adding the same agent
-    // twice is a no-op rather than an error.
-    let mut hires_added = 0i64;
-    let mut workspaces_visited = 0usize;
-    let mut per_workspace: Vec<Value> = Vec::new();
-    for ws_row in &workspace_rows {
-        let ws_id: Uuid = match ws_row.try_get("id") {
-            Ok(id) => id,
-            Err(_) => continue,
-        };
-        workspaces_visited += 1;
-        let mut added_here = 0i64;
-        for (agent_name, agent_id) in &agent_ids {
-            let res = sqlx::query(
-                "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
-                 VALUES ($1, $2, $3, 'system')
-                 ON CONFLICT (workspace_id, agent_id) DO NOTHING"
-            )
-            .bind(ws_id)
-            .bind(agent_id)
-            .bind(&caller_id)
-            .execute(&state.db)
-            .await;
-            if let Ok(r) = res {
-                let n = r.rows_affected() as i64;
-                added_here += n;
-                if n > 0 {
-                    tracing::info!(
-                        ws_id = %ws_id,
-                        agent = %agent_name,
-                        "sync_auto_hire: added agent to workspace"
-                    );
-                }
+    let workspaces_visited = workspace_ids.len();
+
+    // Bulk-upsert all (workspace, agent) pairs in ONE INSERT.
+    //
+    // Postgres `unnest` + cross-product is the standard pattern for bulk
+    // inserts without prepared-statement multi-row VALUES (which sqlx
+    // doesn't support natively for variable-length arrays). We build two
+    // parallel arrays — one per pair — and unnest them together.
+    //
+    // For a fleet of 60 workspaces × 12 agents = 720 pairs, this is ONE
+    // network roundtrip instead of 720. Latency drops from minutes to
+    // sub-second.
+    //
+    // RETURNING workspace_id lets us count per-workspace hires_added so
+    // the response detail isn't lost in the bulk shape.
+    let (hires_added, per_workspace): (i64, Vec<Value>) = if !workspace_ids.is_empty() && !agent_ids.is_empty() {
+        // Build the cross-product of (workspace_id, agent_id) pairs.
+        let mut ws_col: Vec<Uuid> = Vec::with_capacity(workspace_ids.len() * agent_ids.len());
+        let mut ag_col: Vec<Uuid> = Vec::with_capacity(workspace_ids.len() * agent_ids.len());
+        for ws in &workspace_ids {
+            for ag in &agent_ids {
+                ws_col.push(*ws);
+                ag_col.push(*ag);
             }
         }
-        hires_added += added_here;
-        if added_here > 0 {
-            per_workspace.push(json!({
-                "workspace_id": ws_id,
-                "hires_added": added_here,
-            }));
+
+        let inserted_rows = sqlx::query(
+            "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
+             SELECT ws, ag, $3, 'system'
+             FROM unnest($1::uuid[], $2::uuid[]) AS pairs(ws, ag)
+             ON CONFLICT (workspace_id, agent_id) DO NOTHING
+             RETURNING workspace_id"
+        )
+        .bind(&ws_col)
+        .bind(&ag_col)
+        .bind(&caller_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("bulk hire insert failed: {}", e)))?;
+
+        // Aggregate per-workspace.
+        let mut counts: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
+        for r in &inserted_rows {
+            if let Ok(ws) = r.try_get::<Uuid, _>("workspace_id") {
+                *counts.entry(ws).or_insert(0) += 1;
+            }
         }
-    }
+        let total = inserted_rows.len() as i64;
+        let details: Vec<Value> = counts
+            .iter()
+            .map(|(ws, n)| json!({ "workspace_id": ws, "hires_added": n }))
+            .collect();
+
+        tracing::info!(
+            app_slug = %slug,
+            workspaces = workspaces_visited,
+            agents = agent_ids.len(),
+            hires_added = total,
+            "sync_auto_hire: bulk insert complete"
+        );
+
+        (total, details)
+    } else {
+        (0, Vec::new())
+    };
 
     Ok(Json(json!({
         "ok": true,
