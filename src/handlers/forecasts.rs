@@ -49,6 +49,13 @@ pub struct CreateForecastRequest {
     pub tags: Option<Vec<String>>,
     pub portfolio_id: Option<String>, // auto-add to portfolio on creation
     pub status: Option<String>,       // "draft" or "active" (default: "draft")
+    /// Optional ABW workspace UUID to link this forecast to. When set,
+    /// `fermi_forecasts.workspace_id` is populated, which is the link the
+    /// BayesOps refit hook (Spec 23 R-1) and the forecast spacetime
+    /// trigger (migration 140/149) use to find the FPL and accumulate
+    /// rate revisions. Without this, the forecast exists but is
+    /// disconnected from any workspace-backed agent runtime.
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,6 +202,10 @@ pub async fn create_forecast_handler(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
     let team_id: Option<Uuid> = req.team_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+    let workspace_id: Option<Uuid> = req
+        .workspace_id
+        .as_ref()
+        .and_then(|s| Uuid::parse_str(s).ok());
 
     sqlx::query(
         "INSERT INTO fermi_forecasts
@@ -202,9 +213,9 @@ pub async fn create_forecast_handler(
           predicted_probability, confidence_interval_low, confidence_interval_high,
           fpl_source, notebook_id, simulation_results, iterations,
           drivers, evidence, agents_used,
-          status, visibility, team_id, tags, created_at, updated_at)
+          status, visibility, team_id, workspace_id, tags, created_at, updated_at)
          VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                 $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())",
+                 $14, $15, $16, $17, $18, $19, $20, $21, NOW(), NOW())",
     )
     .bind(&forecast_id)
     .bind(&user_id)
@@ -225,6 +236,7 @@ pub async fn create_forecast_handler(
     .bind(status)
     .bind(visibility)
     .bind(team_id)
+    .bind(workspace_id)
     .bind(&tags)
     .execute(pool)
     .await

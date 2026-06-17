@@ -249,6 +249,92 @@ def batch_spawn_team_priors():
     return ws_map
 
 
+def load_team_prior_template():
+    """Read the FPL template once, return as a string for per-team substitution."""
+    tmpl_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "templates", "world_cup", "team_prior.fpl"
+    )
+    if not os.path.exists(tmpl_path):
+        print(f"WARNING: team_prior.fpl template not found at {tmpl_path}")
+        return None
+    with open(tmpl_path) as f:
+        return f.read()
+
+
+def render_fpl_for_team(template: str, team: dict) -> str:
+    """Render the FPL template for one team by substituting `{team_name}`
+    in the `question` line. Param values are passed separately to the
+    executor via params.json; we don't substitute them into the FPL text
+    itself — the parser reads `param` declarations and the executor binds
+    runtime values from the params file.
+    """
+    return template.replace("{team_name}", team["team_name"])
+
+
+def create_forecasts_per_team(ws_map: dict, template: str | None) -> dict:
+    """For each team-prior workspace, POST /api/forecasts with the per-team
+    FPL and workspace_id link. Returns {team_id: forecast_id}.
+
+    This is what makes the BayesOps refit hook, forecast spacetime, and
+    Polymarket linkage all work: they all join through
+    fermi_forecasts.workspace_id.
+    """
+    if not template:
+        print("  No FPL template available; skipping forecast creation.")
+        return {}
+
+    forecast_map: dict[str, str] = {}
+    print(f"  Creating fermi_forecasts rows for {len(ws_map)} team-prior workspaces…")
+
+    for team in TEAMS:
+        tid = team["team_id"]
+        ws_id = ws_map.get(tid)
+        if not ws_id:
+            continue
+
+        fpl_source = render_fpl_for_team(template, team)
+        body = {
+            "question_text": f"Will {team['team_name']} win the 2026 FIFA World Cup?",
+            "predicted_probability": 0.02,  # cold-start prior; 1/48 ≈ 0.021
+            "domain": "sports",
+            "fpl_source": fpl_source,
+            "status": "active",
+            "visibility": "shared",
+            "tags": [
+                "wc2026",
+                f"group-{team['group'].lower()}",
+                team["confederation"].lower(),
+            ],
+            "workspace_id": ws_id,
+        }
+
+        try:
+            resp = requests.post(
+                f"{API_URL}/api/forecasts",
+                headers=headers(),
+                json=body,
+                timeout=TIMEOUT,
+            )
+        except requests.exceptions.RequestException as e:
+            print(f"    {tid}: FAIL (request error: {e})")
+            continue
+
+        if resp.status_code not in (200, 201):
+            print(f"    {tid}: FAIL (HTTP {resp.status_code}: {resp.text[:200]})")
+            continue
+
+        data = resp.json()
+        fid = data.get("forecast_id") or data.get("id")
+        if fid:
+            forecast_map[tid] = fid
+        else:
+            print(f"    {tid}: FAIL (no forecast id in response: {data})")
+        time.sleep(0.05)
+
+    print(f"  Forecasts created: {len(forecast_map)} / {len(ws_map)}")
+    return forecast_map
+
+
 def spawn_group_paths(ws_map):
     """Spawn 12 group_path workspaces with dependencies wired."""
     # Build group → team_ids index
@@ -355,23 +441,37 @@ def main():
     if len(ws_map) != len(TEAMS):
         print(f"WARNING: spawned {len(ws_map)}/{len(TEAMS)} team-priors. Stopping; review and rerun.")
         with open(map_path, "w") as f:
-            json.dump({"team_priors": ws_map, "group_paths": {}}, f, indent=2)
+            json.dump(
+                {"team_priors": ws_map, "group_paths": {}, "forecasts": {}},
+                f, indent=2,
+            )
         sys.exit(1)
     print()
 
-    # ── 3. Spawn group paths ──────────────────────────────────────
-    print("─── Phase 3: spawn group-path workspaces ───")
+    # ── 3. Create per-team fermi_forecasts rows ───────────────────
+    print("─── Phase 3: create forecasts linked to team-prior workspaces ───")
+    template = load_team_prior_template()
+    forecast_map = create_forecasts_per_team(ws_map, template)
+    print()
+
+    # ── 4. Spawn group paths ──────────────────────────────────────
+    print("─── Phase 4: spawn group-path workspaces ───")
     group_map = spawn_group_paths(ws_map)
     print()
 
-    # ── 4. Persist map ────────────────────────────────────────────
-    combined = {"team_priors": ws_map, "group_paths": group_map}
+    # ── 5. Persist map ────────────────────────────────────────────
+    combined = {
+        "team_priors": ws_map,
+        "group_paths": group_map,
+        "forecasts": forecast_map,
+    }
     with open(map_path, "w") as f:
         json.dump(combined, f, indent=2)
     print(f"Workspace map written: {map_path}")
     print(f"  team_priors:  {len(ws_map)}")
+    print(f"  forecasts:    {len(forecast_map)}")
     print(f"  group_paths:  {len(group_map)}")
-    print(f"  total:        {len(ws_map) + len(group_map)}")
+    print(f"  total ws:     {len(ws_map) + len(group_map)}")
     print()
     print("Next steps:")
     print(f"  curl -X POST '{API_URL}/api/apps/fermi_forecast/sync-auto-hire' \\\\")
