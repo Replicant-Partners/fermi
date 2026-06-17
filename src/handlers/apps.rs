@@ -605,12 +605,19 @@ pub async fn list_app_workspaces_handler(
     let _app = get_app_row(&state.db, &slug).await?;
 
     // Return workspaces this user is a member of, filtered to origin = slug.
+    //
+    // LEFT JOIN fermi_forecasts so the response carries `forecast_id` for
+    // workspace-backed forecasts. NULL for non-fermi-forecast Apps, harmless.
+    // This is the link the console uses to load the FPL when opening a
+    // workspace from the dashboard.
     let rows = sqlx::query(
         r#"SELECT t.id, t.name, t.slug, t.description, t.owner_id,
                   t.workspace_budget, t.workspace_spent, t.origin,
-                  t.created_at
+                  t.created_at,
+                  f.id::text AS forecast_id
            FROM teams t
            JOIN team_members m ON m.team_id = t.id
+           LEFT JOIN fermi_forecasts f ON f.workspace_id = t.id
            WHERE t.origin = $1 AND m.member_id = $2
            ORDER BY t.created_at DESC"#,
     )
@@ -630,6 +637,7 @@ pub async fn list_app_workspaces_handler(
         "spent":       r.try_get::<i32, _>("workspace_spent").unwrap_or(0),
         "origin":      r.try_get::<String, _>("origin").unwrap_or_default(),
         "created_at":  r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|t| t.to_rfc3339()),
+        "forecast_id": r.try_get::<Option<String>, _>("forecast_id").ok().flatten(),
     })).collect();
 
     Ok(Json(json!({ "workspaces": workspaces, "total": workspaces.len() })))

@@ -269,6 +269,11 @@ struct LocalForecast {
 struct WorkspaceForecast {
     workspace_id: String,
     workspace_name: String,
+    /// The linked `fermi_forecasts.id`, if this workspace is backed by a
+    /// fermi_forecast row (the only path that surfaces the FPL + drivers in
+    /// the cockpit). Populated by the server via LEFT JOIN on
+    /// `fermi_forecasts.workspace_id` in `/api/apps/fermi_forecast/workspaces`.
+    forecast_id: Option<String>,
     team_id: Option<String>,      // from params, e.g. "ARG"
     team_name: Option<String>,    // from params, e.g. "Argentina"
     group: Option<String>,        // from params, e.g. "B"
@@ -995,6 +1000,7 @@ impl FermiConsole {
                         let ws_id = ws.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let created = ws.get("created_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let forecast_id = ws.get("forecast_id").and_then(|v| v.as_str()).map(String::from);
 
                         // Parse team info from workspace name pattern:
                         // "Team Prior — Argentina (ARG)" or "Tournament Path — Group B"
@@ -1017,6 +1023,7 @@ impl FermiConsole {
                         forecasts.push(WorkspaceForecast {
                             workspace_id: ws_id,
                             workspace_name: name,
+                            forecast_id,
                             team_id,
                             team_name,
                             group,
@@ -2473,21 +2480,35 @@ impl FermiConsole {
     }
 
     /// Open a workspace forecast in the Composer. Creates a FRESH cockpit
-    /// connected to the workspace, sets the question from params.
+    /// connected to the workspace, sets the question from params, and — if
+    /// the workspace is backed by a `fermi_forecasts` row — fetches the
+    /// forecast and parses its FPL into `cockpit.program` so the Edit tab
+    /// shows the actual drivers/agents/decomposition instead of "# Empty
+    /// program".
+    ///
+    /// Without the FPL load, opening a workspace-backed team prior shows a
+    /// blank cockpit even though the DB row has a fully-rendered 6-factor +
+    /// 2-learnable-driver FPL (~6KB). This is the path used by R-1 refit
+    /// (triggers off workspace observations), R-2 sparkles (read from
+    /// workspace_bayesops_state), and R-3 trajectory (forecast_timeline).
     fn open_workspace_forecast(&mut self, workspace_id: &str, cx: &mut Context<Self>) {
         let ws_id = workspace_id.to_string();
 
         // Find the workspace forecast data
         let wf = self.workspace_forecasts.iter().find(|w| w.workspace_id == ws_id).cloned();
+        let forecast_id = wf.as_ref().and_then(|w| w.forecast_id.clone());
 
         // Always create a fresh cockpit for each workspace — don't reuse
         let api = self.api.clone();
-        let cockpit = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
+        let cockpit = cx.new(|cx| CockpitState::new(api.clone(), self.registry.clone(), cx));
         self.cockpit = Some(cockpit.clone());
 
         cockpit.update(cx, |cockpit, cx| {
             // Set workspace_id so outputs publish to the right workspace
             cockpit.workspace_id = Some(ws_id.clone());
+            // Wire forecast_id so Trajectory, refit, and sparkline endpoints
+            // know which forecast to query.
+            cockpit.forecast_id = forecast_id.clone();
 
             // Set question and data from workspace params
             if let Some(ref wf) = wf {
@@ -2527,6 +2548,71 @@ impl FermiConsole {
             });
             cx.notify();
         });
+
+        // Fetch + parse FPL from the linked forecast row (if any). Same async
+        // pattern as fetch_workspace_forecasts: spawn onto the tokio runtime
+        // so reqwest has its driver, then update the cockpit entity.
+        if let Some(fid) = forecast_id {
+            let cockpit_handle = cockpit.clone();
+            cx.spawn(async move |_this, cx| {
+                let result = tokio::spawn(async move {
+                    api.get_forecast(&fid).await
+                }).await;
+
+                match result {
+                    Ok(Ok(forecast)) => {
+                        let Some(fpl_text) = forecast.fpl_source else {
+                            log::warn!("[workspace-open] forecast {} has no fpl_source", forecast.id);
+                            return;
+                        };
+                        // Parse on the runtime thread; mutate cockpit on the UI thread.
+                        let parsed = ::fermi::lexer::Lexer::new(&fpl_text)
+                            .tokenize()
+                            .ok()
+                            .and_then(|tokens| ::fermi::parser::Parser::new(tokens).parse().ok());
+
+                        cockpit_handle.update(cx, |cockpit, cx| {
+                            cockpit.cached_fpl = fpl_text.clone();
+                            match parsed {
+                                Some(program) => {
+                                    cockpit.program = program;
+                                    // Re-derive question from parsed program if present —
+                                    // the FPL is the source of truth for resolution criteria.
+                                    if let Some(q) = cockpit.program.question() {
+                                        cockpit.question_input.update(cx, |input, cx| {
+                                            input.set_text(&q.text, cx);
+                                        });
+                                    }
+                                    cockpit.predicted_probability = forecast.predicted_probability;
+                                    cockpit.messages.push(crate::cockpit::AssistantMessage {
+                                        node: "load".into(),
+                                        kind: crate::cockpit::MessageKind::Info,
+                                        text: format!(
+                                            "Loaded FPL from forecast ({} bytes).",
+                                            fpl_text.len()
+                                        ),
+                                    });
+                                }
+                                None => {
+                                    cockpit.messages.push(crate::cockpit::AssistantMessage {
+                                        node: "load".into(),
+                                        kind: crate::cockpit::MessageKind::Warning,
+                                        text: "FPL parse failed — showing raw source only.".into(),
+                                    });
+                                }
+                            }
+                            cx.notify();
+                        }).ok();
+                    }
+                    Ok(Err(e)) => {
+                        log::error!("[workspace-open] get_forecast failed: {}", e);
+                    }
+                    Err(e) => {
+                        log::error!("[workspace-open] task join error: {}", e);
+                    }
+                }
+            }).detach();
+        }
 
         self.active_panel = Panel::Composer;
         cx.notify();

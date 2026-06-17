@@ -414,6 +414,7 @@ pub async fn get_forecast_handler(
         "resolution_notes": row.try_get::<Option<String>, _>("resolution_notes").ok().flatten(),
         "visibility": visibility,
         "team_id": team_id,
+        "workspace_id": row.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten().map(|u| u.to_string()),
         "tags": row.try_get::<Vec<String>, _>("tags").ok(),
         "portfolios": portfolios,
         "update_history": update_history,
