@@ -4035,10 +4035,35 @@ impl CockpitState {
         self.sim_running = true;
         self.sim_error = None;
 
-        // Generate FPL and cache it
-        self.cached_fpl = generate_fpl_text(&self.program);
+        // ── Source-of-truth selection for the FPL we run ────────────────
+        //
+        // The cockpit data model (`self.program`) represents the legacy
+        // linear "outside view + drivers" composition. `generate_fpl_text`
+        // serializes it back to FPL — but it ONLY emits question +
+        // drivers. Factor blocks (`factor X1 {...}`), `estimate ... as:`
+        // expressions, and learnable() function calls all get dropped
+        // because they're not part of the cockpit AST.
+        //
+        // That's fine when the user composed the forecast from scratch
+        // here. But when we hydrated the cockpit from a workspace-backed
+        // forecast (Spec 23 team priors), the cached_fpl is the rich
+        // 6-factor program loaded by open_forecast / open_workspace_forecast.
+        // Regenerating from `self.program` strips the model and we run a
+        // 2-driver-only simulation that has no scoring expression.
+        //
+        // Heuristic: if cached_fpl contains a factor-model construct, use
+        // it as-is. Otherwise it came from this cockpit's composer and is
+        // safe to regenerate.
+        let preserve_loaded_fpl = !self.cached_fpl.is_empty()
+            && (self.cached_fpl.contains("factor ")
+                || self.cached_fpl.contains("estimate ")
+                || self.cached_fpl.contains("learnable("));
 
-        if self.program.drivers().is_empty() {
+        if !preserve_loaded_fpl {
+            self.cached_fpl = generate_fpl_text(&self.program);
+        }
+
+        if self.program.drivers().is_empty() && !preserve_loaded_fpl {
             self.sim_error = Some("No drivers defined. Add drivers first.".into());
             self.sim_running = false;
             cx.notify();
@@ -4089,8 +4114,13 @@ impl CockpitState {
             log::warn!("[sim] Fixed zero-driver '{}' → neutral 0.8/1.0/1.2", name);
         }
 
-        if !driver_names_to_fix.is_empty() {
-            // Regenerate FPL after fixing
+        if !driver_names_to_fix.is_empty() && !preserve_loaded_fpl {
+            // Regenerate FPL after fixing the zero-driver. On the
+            // preserve-loaded path we leave cached_fpl untouched —
+            // factor-model programs aren't subject to the zero-driver
+            // collapse heuristic anyway (the multiplicative Cobb-Douglas
+            // estimate has its own bounds), and rewriting it would
+            // destroy the model expression.
             self.cached_fpl = generate_fpl_text(&self.program);
         }
 

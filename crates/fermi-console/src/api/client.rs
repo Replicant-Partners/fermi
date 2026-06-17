@@ -137,6 +137,13 @@ pub struct Forecast {
     /// fire workspace-scoped endpoints (BayesOps state, refit, set output).
     #[serde(default)]
     pub workspace_id: Option<String>,
+    /// Free-form metadata JSON written by various handlers. Notably:
+    ///   metadata.polymarket = { pm_event_id, pm_market_id, pm_url,
+    ///     last_market_price, last_volume_24h, … }
+    /// is set by polymarket::link_handler. The cockpit reads this to
+    /// hydrate the PM panel when opening a workspace-backed forecast.
+    #[serde(default)]
+    pub metadata: Option<JsonValue>,
     pub tags: Option<Vec<String>>,
     pub portfolios: Option<Vec<String>>,
     pub update_history: Option<Vec<ForecastUpdate>>,

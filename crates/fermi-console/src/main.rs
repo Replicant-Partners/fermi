@@ -1622,7 +1622,10 @@ impl FermiConsole {
                             .text_size(px(10.0))
                             .text_color(theme::fg_dim())
                             .mt(px(2.0))
-                            .child("v0.2.0 — Sprint 3"),
+                            // Pulled from the crate's compile-time version so a
+                            // Cargo.toml bump suffices — no stringly-typed drift
+                            // between the cargo manifest and the footer label.
+                            .child(format!("v{} — BayesOps", env!("CARGO_PKG_VERSION"))),
                     ),
             )
     }
@@ -2664,6 +2667,14 @@ impl FermiConsole {
                     // workspace outputs). Without this, the Trajectory tab
                     // would render but the live refit cascade would 404.
                     let ws_id = forecast.workspace_id.clone();
+                    // metadata.polymarket carries the linked market shape
+                    // written by polymarket::link_handler. Hydrate the PM
+                    // fields off this so the cockpit shows the current
+                    // crowd price + delta even on first open.
+                    let pm = forecast
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.get("polymarket").cloned());
 
                     cockpit_handle.update(cx, |cockpit, cx| {
                         // Wire the question text — even if FPL parse fails
@@ -2673,6 +2684,26 @@ impl FermiConsole {
                         });
                         cockpit.predicted_probability = prob;
                         cockpit.workspace_id = ws_id;
+
+                        // ── Polymarket hydration ────────────────────────
+                        // metadata.polymarket shape is what
+                        // polymarket::link_handler wrote. The pm_market_price
+                        // etc. fields on the cockpit are what the right-side
+                        // panel reads to render the crowd-vs-fermi delta.
+                        if let Some(pm) = pm.as_ref() {
+                            cockpit.pm_event_id = pm.get("pm_event_id").and_then(|v| v.as_str()).map(String::from);
+                            cockpit.pm_market_id = pm.get("pm_market_id").and_then(|v| v.as_str()).map(String::from);
+                            cockpit.pm_question = pm.get("pm_question").and_then(|v| v.as_str()).map(String::from);
+                            cockpit.pm_market_price = pm.get("last_market_price").and_then(|v| v.as_f64());
+                            cockpit.pm_volume_24h = pm.get("last_volume_24h").and_then(|v| v.as_f64());
+                            cockpit.pm_url = pm.get("pm_url").and_then(|v| v.as_str()).map(String::from);
+                            cockpit.pm_confidence = pm.get("last_confidence").and_then(|v| v.as_str()).map(String::from);
+                            // Resume PM price polling at 5 min — matches the
+                            // legacy local-mode restore behavior.
+                            if cockpit.pm_event_id.is_some() {
+                                cockpit.pm_poll_interval = Some(std::time::Duration::from_secs(5 * 60));
+                            }
+                        }
 
                         if let Some(fpl) = fpl_text.as_ref() {
                             cockpit.cached_fpl = fpl.clone();

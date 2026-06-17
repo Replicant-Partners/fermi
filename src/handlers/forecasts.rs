@@ -420,6 +420,11 @@ pub async fn get_forecast_handler(
         "visibility": visibility,
         "team_id": team_id,
         "workspace_id": row.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten().map(|u| u.to_string()),
+        // metadata.polymarket carries the linked PM market shape written by
+        // polymarket::link_handler — pm_event_id, pm_market_id, pm_url,
+        // last_market_price, last_volume_24h, etc. Surfacing it here lets
+        // the console hydrate the PM panel without a second round-trip.
+        "metadata": row.try_get::<Option<JsonValue>, _>("metadata").ok().flatten(),
         "tags": row.try_get::<Vec<String>, _>("tags").ok(),
         "portfolios": portfolios,
         "update_history": update_history,
