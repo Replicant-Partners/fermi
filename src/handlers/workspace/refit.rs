@@ -312,15 +312,43 @@ async fn refit_one_driver(
     }
 
     // ── Step 2: fit ──────────────────────────────────────────────────────
+    //
+    // When fit_marginal can't produce a posterior (e.g. n=1 with no
+    // variance, all observations identical, etc.), we still leave a
+    // durable trace so the demo's "why isn't there a posterior yet?"
+    // story is answerable. Without this, failed fits are invisible —
+    // the HTTP response says `errored` but workspace_messages stays
+    // empty and the Trajectory tab has nothing to render.
     let family = guess_family(&observations);
     let (fitted, fit_metadata) = match fit_marginal(&observations, None, family) {
         Ok(r) => r,
         Err(e) => {
+            let reason = format!("fit_marginal: {}", e);
+            let _ = emit_event(
+                pool,
+                workspace_id,
+                "bayesops_fit_failed",
+                &format!(
+                    "⏳ Refit waiting on more data: driver '{}' has {} observation{} (need ≥2 for a parametric fit). Will re-try after the next resolution.",
+                    driver.name,
+                    observations.len(),
+                    if observations.len() == 1 { "" } else { "s" }
+                ),
+                json!({
+                    "event": "bayesops_fit_failed",
+                    "reason": "fit_marginal_error",
+                    "driver_name": driver.name,
+                    "n_observations": observations.len(),
+                    "family_attempted": family_label(family),
+                    "error_detail": reason,
+                    "triggered_by": triggered_by.as_provenance_string(),
+                }),
+            )
+            .await;
+
             return Ok(DriverOutcome {
                 driver_name: driver.name.clone(),
-                decision: DriverDecision::Errored {
-                    reason: format!("fit_marginal: {}", e),
-                },
+                decision: DriverDecision::Errored { reason },
                 n_observations: observations.len(),
                 note: None,
                 snapshot_id: None,
