@@ -132,6 +132,29 @@ impl WorkspaceGitManager {
         Ok(repo)
     }
 
+    /// Delete the on-disk workspace repository. Used by the admin
+    /// wipe-fermi-forecasts handler (Spec 23 demo cleanup).
+    ///
+    /// Returns `Ok(true)` if the directory existed and was deleted,
+    /// `Ok(false)` if it didn't exist (idempotent — safe to call on a
+    /// slug whose repo was already gone), `Err(_)` on I/O failure.
+    ///
+    /// **This is destructive and irrecoverable**: the entire git history
+    /// for the workspace is removed. The caller is responsible for
+    /// confirming intent (typically via an admin-only HTTP endpoint).
+    pub fn delete_workspace_repo(&self, slug: &str) -> Result<bool> {
+        let path = self.repo_path(slug);
+        if !path.exists() {
+            return Ok(false);
+        }
+        fs::remove_dir_all(&path).map_err(|e| {
+            error!(slug, error = %e, "failed to delete workspace repo");
+            OntologyError::IoError(e)
+        })?;
+        info!(slug, "workspace repo deleted");
+        Ok(true)
+    }
+
     /// Commit a file to the workspace repository.
     /// Creates parent directories as needed. Returns the commit info.
     pub fn commit_file(

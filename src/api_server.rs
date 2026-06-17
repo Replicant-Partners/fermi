@@ -2272,6 +2272,14 @@ async fn main() {
             "/api/admin/agent-ownership-reassign",
             post(handlers::admin::admin_agent_ownership_reassign_handler),
         )
+        // Spec 23 demo cleanup — one-shot wipe of every workspace
+        // spawned by the Fermi Forecast App + cascading rows across
+        // BayesOps and forecast tables. Requires admin auth and an
+        // exact confirmation token. Supports dry_run for sanity checks.
+        .route(
+            "/api/admin/wipe-fermi-forecasts",
+            post(handlers::admin::admin_wipe_fermi_forecasts_handler),
+        )
         .route(
             "/api/admin/waitlist",
             get(handlers::admin::admin_list_waitlist_handler)

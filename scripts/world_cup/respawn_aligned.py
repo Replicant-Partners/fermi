@@ -116,51 +116,62 @@ def confirm(prompt):
     return answer == "yes"
 
 
-def delete_workspace(ws_id):
-    """Hard delete via DELETE /api/workspaces/:id."""
+def wipe_via_admin(dry_run: bool):
+    """Call POST /api/admin/wipe-fermi-forecasts to nuke all
+    fermi_forecast workspaces system-wide. See src/handlers/admin.rs.
+
+    The platform has no DELETE /api/workspaces/:id endpoint by design;
+    forecasts are durable artifacts. The admin wipe endpoint is the
+    single sanctioned way to bulk-clear them.
+    """
+    body = {"confirm": "WIPE_ALL_FERMI_FORECASTS", "dry_run": dry_run}
+    print(f"  POST /api/admin/wipe-fermi-forecasts (dry_run={dry_run})…")
     try:
-        resp = requests.delete(
-            f"{API_URL}/api/workspaces/{ws_id}",
+        resp = requests.post(
+            f"{API_URL}/api/admin/wipe-fermi-forecasts",
             headers=headers(),
-            timeout=TIMEOUT,
+            json=body,
+            timeout=TIMEOUT * 3,
         )
-        if resp.status_code in (200, 204, 404):
-            return True, None
-        return False, f"HTTP {resp.status_code}: {resp.text[:160]}"
     except requests.exceptions.RequestException as e:
-        return False, str(e)
+        print(f"  ERROR: request failed: {e}")
+        return None
+
+    if resp.status_code != 200:
+        print(f"  ERROR: HTTP {resp.status_code}: {resp.text[:400]}")
+        return None
+
+    data = resp.json()
+    print(f"  workspaces:    {data.get('workspaces')}")
+    print(f"  forecasts:     {data.get('forecasts')}")
+    if dry_run:
+        wd = data.get("would_delete", {})
+    else:
+        wd = data.get("deleted", {})
+        print(f"  repos_deleted: {data.get('repos_deleted')}")
+        repo_failures = data.get("repo_failures", [])
+        if repo_failures:
+            print(f"  repo_failures: {len(repo_failures)}")
+            for f in repo_failures[:5]:
+                print(f"    {f.get('slug')}: {f.get('error')}")
+    print("  table counts:")
+    for tbl, cnt in sorted(wd.items()):
+        print(f"    {tbl:35s} {cnt}")
+    return data
 
 
-def hard_delete_existing(map_path):
-    """Read workspace_map.json and DELETE every UUID listed."""
-    if not os.path.exists(map_path):
-        print(f"  No existing workspace_map.json at {map_path}; nothing to delete.")
-        return
-
-    with open(map_path) as f:
-        old = json.load(f)
-
-    targets = []
-    for team_id, ws_id in old.get("team_priors", {}).items():
-        targets.append(("team_prior", team_id, ws_id))
-    for group, ws_id in old.get("group_paths", {}).items():
-        targets.append(("group_path", group, ws_id))
-
-    print(f"  Hard deleting {len(targets)} existing workspaces…")
-    failures = []
-    for kind, key, ws_id in targets:
-        ok, err = delete_workspace(ws_id)
-        marker = "OK" if ok else f"FAIL ({err})"
-        print(f"    [{kind:11s}] {key:5s} {ws_id} … {marker}")
-        if not ok:
-            failures.append((kind, key, ws_id, err))
-        time.sleep(0.05)
-    print(f"  Deleted: {len(targets) - len(failures)}; Failed: {len(failures)}")
-    return failures
+# Chunk size for batch spawn calls.
+#
+# Each instance triggers serial server-side work (git init, params
+# commit, dependency wiring, auto-hire across ~12 agents) totalling
+# ~3-5s per workspace. 48 in one batch = ~4 minutes server-side =
+# client timeout. 8 per chunk = ~40s, comfortably inside the request
+# timeout we set on `requests.post` below.
+CHUNK_SIZE = 8
 
 
 def batch_spawn_team_priors():
-    """Spawn 48 team-prior workspaces via batch endpoint."""
+    """Spawn 48 team-prior workspaces in chunked batches."""
     instances = []
     for team in TEAMS:
         instances.append({
@@ -186,36 +197,54 @@ def batch_spawn_team_priors():
             },
         })
 
-    print(f"  Batch spawning {len(instances)} team-prior workspaces…")
-    resp = requests.post(
-        f"{API_URL}/api/apps/fermi_forecast/workspaces/batch",
-        headers=headers(),
-        json={"instances": instances},
-        timeout=TIMEOUT * 2,
-    )
-    if resp.status_code != 201:
-        print(f"  ERROR {resp.status_code}: {resp.text[:300]}")
-        return {}
-
-    data = resp.json()
     ws_map = {}
-    for ws in data.get("workspaces", []):
-        params = ws.get("params") or ws.get("provisioned", {}).get("params") or {}
-        # Some endpoints echo params in the response; others don't. Fall back
-        # to matching on slug or workspace_name.
-        team_id = params.get("team_id")
-        if not team_id:
-            name = ws.get("name", "")
-            # "Team Prior — Argentina (ARG)" → "ARG"
-            if "(" in name and name.endswith(")"):
-                team_id = name.rsplit("(", 1)[-1].rstrip(")")
-        if team_id:
-            ws_map[team_id] = str(ws["workspace_id"])
-    print(f"  Spawned: {len(ws_map)}")
-    failed = data.get("failed", [])
-    if failed:
-        print(f"  Failures: {len(failed)}")
-        for err in failed:
+    failed_total = []
+
+    n_chunks = (len(instances) + CHUNK_SIZE - 1) // CHUNK_SIZE
+    print(f"  Batch spawning {len(instances)} team-priors in {n_chunks} chunks of {CHUNK_SIZE}…")
+
+    for chunk_idx in range(n_chunks):
+        start = chunk_idx * CHUNK_SIZE
+        chunk = instances[start:start + CHUNK_SIZE]
+        names = [it["name"].split("—")[-1].strip() for it in chunk]
+        print(f"  [chunk {chunk_idx + 1}/{n_chunks}] {len(chunk)} workspaces: "
+              f"{', '.join(names[:3])}{'…' if len(names) > 3 else ''}", flush=True)
+
+        try:
+            resp = requests.post(
+                f"{API_URL}/api/apps/fermi_forecast/workspaces/batch",
+                headers=headers(),
+                json={"instances": chunk},
+                timeout=TIMEOUT * 3,  # 180s per chunk — comfortable margin
+            )
+        except requests.exceptions.RequestException as e:
+            print(f"    FAIL: request error: {e}")
+            continue
+
+        if resp.status_code != 201:
+            print(f"    FAIL: HTTP {resp.status_code}: {resp.text[:240]}")
+            continue
+
+        data = resp.json()
+        chunk_spawned = 0
+        for ws in data.get("workspaces", []):
+            params = ws.get("params") or ws.get("provisioned", {}).get("params") or {}
+            team_id = params.get("team_id")
+            if not team_id:
+                name = ws.get("name", "")
+                if "(" in name and name.endswith(")"):
+                    team_id = name.rsplit("(", 1)[-1].rstrip(")")
+            if team_id:
+                ws_map[team_id] = str(ws["workspace_id"])
+                chunk_spawned += 1
+        failed_total.extend(data.get("failed", []))
+        print(f"    OK: {chunk_spawned}/{len(chunk)} spawned")
+        time.sleep(0.5)  # be polite between chunks
+
+    print(f"  Total spawned: {len(ws_map)} / {len(instances)}")
+    if failed_total:
+        print(f"  Failures: {len(failed_total)}")
+        for err in failed_total[:10]:
             print(f"    {err}")
     return ws_map
 
@@ -296,19 +325,29 @@ def main():
 
     map_path = os.path.join(os.path.dirname(__file__), "workspace_map.json")
 
-    # ── 1. Confirm + delete ──────────────────────────────────────
-    if os.path.exists(map_path):
-        with open(map_path) as f:
-            old = json.load(f)
-        n_old = len(old.get("team_priors", {})) + len(old.get("group_paths", {}))
-        print(f"Existing workspaces to HARD DELETE: {n_old}")
-        if not confirm("This is destructive. Continue?"):
+    # ── 1. Wipe via admin endpoint ────────────────────────────────
+    #
+    # Dry-run first to show the operator exactly what will be deleted,
+    # require confirmation, then run the actual wipe. Idempotent on
+    # repeat runs (if everything's already gone, counts are zero).
+    print("─── Phase 1: wipe existing fermi_forecast state ───")
+    print("  Step 1a: dry-run")
+    dry = wipe_via_admin(dry_run=True)
+    if dry is None:
+        print("Aborted: dry-run failed.")
+        sys.exit(1)
+    print()
+    if dry.get("workspaces", 0) == 0 and dry.get("forecasts", 0) == 0:
+        print("  Nothing to wipe — skipping live wipe.")
+    else:
+        if not confirm(f"  Step 1b: live wipe. Destructive. Continue?"):
             print("Aborted.")
             sys.exit(0)
-        print()
-        print("─── Phase 1: hard delete ───")
-        hard_delete_existing(map_path)
-        print()
+        live = wipe_via_admin(dry_run=False)
+        if live is None:
+            print("Aborted: live wipe failed.")
+            sys.exit(1)
+    print()
 
     # ── 2. Spawn team priors ──────────────────────────────────────
     print("─── Phase 2: spawn team-prior workspaces ───")

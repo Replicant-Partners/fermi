@@ -1116,3 +1116,336 @@ pub async fn admin_agent_ownership_reassign_handler(
         "results": results,
     })))
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Spec 23 demo cleanup — POST /api/admin/wipe-fermi-forecasts
+// ═══════════════════════════════════════════════════════════════════
+//
+// One-shot administrative wipe of every workspace spawned by the
+// Fermi Forecast App (origin = 'fermi_forecast') plus every cascading
+// row across BayesOps tables, forecast tables, and workspace tables.
+//
+// **Destructive.** Requires an exact confirmation token in the body
+// and admin auth. Supports a dry-run mode that returns row counts
+// without writing.
+//
+// This is needed because the existing forecast portfolio was spawned
+// against a speculative team-to-group mapping that doesn't match the
+// real WC 2026 draw, and the platform has no in-place archive
+// operation that would let us reuse the workspaces. Cleanup +
+// fresh respawn gets us to a known-good base state.
+//
+// Designed to be:
+//   - **All-or-nothing**: the entire DB wipe happens in one
+//     transaction. If anything fails midway, nothing is deleted.
+//   - **Idempotent on repos**: filesystem repo cleanup logs per-slug
+//     failures but doesn't abort the response. Re-running on a
+//     partially-cleaned state is safe.
+//   - **Auditable**: returns per-table counts of what was removed
+//     so the operator has a paper trail.
+
+#[derive(Deserialize)]
+pub struct WipeFermiForecastsRequest {
+    /// Must equal the literal string "WIPE_ALL_FERMI_FORECASTS".
+    /// Typo guard — defends against fat-finger curl calls.
+    pub confirm: String,
+    /// When true, return what would be deleted without actually deleting.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+const WIPE_CONFIRMATION: &str = "WIPE_ALL_FERMI_FORECASTS";
+
+pub async fn admin_wipe_fermi_forecasts_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<WipeFermiForecastsRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    if req.confirm != WIPE_CONFIRMATION {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "confirm field must equal exactly '{}' (got '{}')",
+                WIPE_CONFIRMATION, req.confirm
+            ),
+        ));
+    }
+
+    // ── 1. Enumerate target workspaces + forecasts + slugs ──────────
+    //
+    // We hold these IDs separately because we'll need:
+    //   (a) workspace_ids to filter workspace_* tables
+    //   (b) forecast_ids  to filter forecast_* tables
+    //   (c) slugs         to clean up filesystem repos after commit
+    //
+    // Collected before any DELETE runs so a DB failure mid-transaction
+    // doesn't leave us with the IDs but no way to know what to clean up
+    // on disk.
+
+    let target_workspaces: Vec<(uuid::Uuid, String)> = sqlx::query(
+        "SELECT id, slug FROM teams WHERE origin = 'fermi_forecast'",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("enumerate workspaces: {}", e)))?
+    .into_iter()
+    .map(|row| {
+        let id: uuid::Uuid = row.get("id");
+        let slug: String = row.get("slug");
+        (id, slug)
+    })
+    .collect();
+
+    let workspace_ids: Vec<uuid::Uuid> = target_workspaces.iter().map(|(id, _)| *id).collect();
+    let slugs: Vec<String> = target_workspaces.iter().map(|(_, slug)| slug.clone()).collect();
+
+    let target_forecast_ids: Vec<String> = if workspace_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query("SELECT id FROM fermi_forecasts WHERE workspace_id = ANY($1)")
+            .bind(&workspace_ids)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("enumerate forecasts: {}", e)))?
+            .into_iter()
+            .map(|row| row.get::<String, _>("id"))
+            .collect()
+    };
+
+    let n_workspaces = workspace_ids.len();
+    let n_forecasts = target_forecast_ids.len();
+
+    // ── 2. Count what would be deleted, per table ──────────────────
+    //
+    // Cheap. Always runs (dry-run mode short-circuits before the
+    // delete pass; non-dry-run uses these counts for the response).
+    let counts = count_targets(&state.db, &workspace_ids, &target_forecast_ids).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("count phase: {}", e)))?;
+
+    if req.dry_run {
+        return Ok(Json(json!({
+            "dry_run": true,
+            "would_delete": counts,
+            "workspaces": n_workspaces,
+            "forecasts": n_forecasts,
+            "slugs_to_clean": slugs.len(),
+        })));
+    }
+
+    // ── 3. Cascade delete inside a transaction ─────────────────────
+    let mut tx = state.db.begin().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("begin tx: {}", e)))?;
+
+    macro_rules! delete_by_ws {
+        ($sql:expr, $label:literal) => {
+            sqlx::query($sql)
+                .bind(&workspace_ids)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
+                              format!("delete {}: {}", $label, e)))?
+        };
+    }
+
+    macro_rules! delete_by_fc {
+        ($sql:expr, $label:literal) => {
+            sqlx::query($sql)
+                .bind(&target_forecast_ids)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
+                              format!("delete {}: {}", $label, e)))?
+        };
+    }
+
+    if !workspace_ids.is_empty() {
+        // BayesOps ledger (R-1) — pending_fits references snapshots so go first
+        delete_by_ws!(
+            "DELETE FROM bayesops_pending_fits WHERE workspace_id = ANY($1)",
+            "bayesops_pending_fits"
+        );
+        delete_by_ws!(
+            "DELETE FROM bayesops_posterior_snapshots WHERE workspace_id = ANY($1)",
+            "bayesops_posterior_snapshots"
+        );
+
+        // Workspace runtime state
+        delete_by_ws!(
+            "DELETE FROM workspace_messages WHERE workspace_id = ANY($1)",
+            "workspace_messages"
+        );
+        delete_by_ws!(
+            "DELETE FROM workspace_outputs WHERE workspace_id = ANY($1)",
+            "workspace_outputs"
+        );
+        delete_by_ws!(
+            "DELETE FROM workspace_agents WHERE workspace_id = ANY($1)",
+            "workspace_agents"
+        );
+        delete_by_ws!(
+            "DELETE FROM workspace_dependencies
+             WHERE upstream_id = ANY($1) OR downstream_id = ANY($1)",
+            "workspace_dependencies"
+        );
+    }
+
+    if !target_forecast_ids.is_empty() {
+        // Forecast benchmark / spacetime infrastructure (migrations 140, 094)
+        delete_by_fc!(
+            "DELETE FROM forecast_spacetime WHERE forecast_id = ANY($1)",
+            "forecast_spacetime"
+        );
+        delete_by_fc!(
+            "DELETE FROM forecast_commitments WHERE forecast_id = ANY($1)",
+            "forecast_commitments"
+        );
+        // forecast_splits may not exist in all envs
+        let _ = sqlx::query("DELETE FROM forecast_splits WHERE forecast_id = ANY($1)")
+            .bind(&target_forecast_ids)
+            .execute(&mut *tx)
+            .await; // ignore — best-effort
+        delete_by_fc!(
+            "DELETE FROM fermi_forecast_updates WHERE forecast_id = ANY($1)",
+            "fermi_forecast_updates"
+        );
+        delete_by_fc!(
+            "DELETE FROM fermi_market_observations WHERE forecast_id = ANY($1)",
+            "fermi_market_observations"
+        );
+        delete_by_fc!(
+            "DELETE FROM fermi_portfolio_forecasts WHERE forecast_id = ANY($1)",
+            "fermi_portfolio_forecasts"
+        );
+        delete_by_fc!(
+            "DELETE FROM fermi_forecast_schedules WHERE forecast_id = ANY($1)",
+            "fermi_forecast_schedules"
+        );
+
+        // The forecasts themselves
+        delete_by_fc!(
+            "DELETE FROM fermi_forecasts WHERE id = ANY($1)",
+            "fermi_forecasts"
+        );
+    }
+
+    if !workspace_ids.is_empty() {
+        // Workspace shells last (FK targets above)
+        delete_by_ws!(
+            "DELETE FROM team_members WHERE team_id = ANY($1)",
+            "team_members"
+        );
+        delete_by_ws!(
+            "DELETE FROM teams WHERE id = ANY($1)",
+            "teams"
+        );
+    }
+
+    tx.commit().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit tx: {}", e)))?;
+
+    // ── 4. Repo cleanup (after DB commit) ─────────────────────────
+    //
+    // Per-slug. Log failures, continue. Failures here don't roll back
+    // the DB — the workspaces are already gone from the database; an
+    // orphaned repo is a disk-space issue, not a correctness issue.
+    let mut repos_deleted = 0usize;
+    let mut repo_failures: Vec<Value> = Vec::new();
+    for slug in &slugs {
+        match state.workspace_git.delete_workspace_repo(slug) {
+            Ok(true) => repos_deleted += 1,
+            Ok(false) => {} // repo didn't exist — fine
+            Err(e) => {
+                repo_failures.push(json!({
+                    "slug": slug,
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "dry_run": false,
+        "deleted": counts,
+        "workspaces": n_workspaces,
+        "forecasts": n_forecasts,
+        "repos_deleted": repos_deleted,
+        "repo_failures": repo_failures,
+    })))
+}
+
+async fn count_targets(
+    db: &sqlx::PgPool,
+    workspace_ids: &[uuid::Uuid],
+    forecast_ids: &[String],
+) -> Result<Value, sqlx::Error> {
+    let mut counts = serde_json::Map::new();
+
+    async fn count_ws(
+        db: &sqlx::PgPool,
+        sql: &str,
+        ids: &[uuid::Uuid],
+    ) -> Result<i64, sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let row = sqlx::query(sql).bind(ids).fetch_one(db).await?;
+        Ok(row.try_get::<i64, _>("c").unwrap_or(0))
+    }
+    async fn count_fc(
+        db: &sqlx::PgPool,
+        sql: &str,
+        ids: &[String],
+    ) -> Result<i64, sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let row = sqlx::query(sql).bind(ids).fetch_one(db).await?;
+        Ok(row.try_get::<i64, _>("c").unwrap_or(0))
+    }
+
+    counts.insert("bayesops_pending_fits".into(), json!(
+        count_ws(db, "SELECT COUNT(*) AS c FROM bayesops_pending_fits WHERE workspace_id = ANY($1)", workspace_ids).await?
+    ));
+    counts.insert("bayesops_posterior_snapshots".into(), json!(
+        count_ws(db, "SELECT COUNT(*) AS c FROM bayesops_posterior_snapshots WHERE workspace_id = ANY($1)", workspace_ids).await?
+    ));
+    counts.insert("workspace_messages".into(), json!(
+        count_ws(db, "SELECT COUNT(*) AS c FROM workspace_messages WHERE workspace_id = ANY($1)", workspace_ids).await?
+    ));
+    counts.insert("workspace_outputs".into(), json!(
+        count_ws(db, "SELECT COUNT(*) AS c FROM workspace_outputs WHERE workspace_id = ANY($1)", workspace_ids).await?
+    ));
+    counts.insert("workspace_agents".into(), json!(
+        count_ws(db, "SELECT COUNT(*) AS c FROM workspace_agents WHERE workspace_id = ANY($1)", workspace_ids).await?
+    ));
+    counts.insert("workspace_dependencies".into(), json!(
+        count_ws(db, "SELECT COUNT(*) AS c FROM workspace_dependencies WHERE upstream_id = ANY($1) OR downstream_id = ANY($1)", workspace_ids).await?
+    ));
+    counts.insert("forecast_spacetime".into(), json!(
+        count_fc(db, "SELECT COUNT(*) AS c FROM forecast_spacetime WHERE forecast_id = ANY($1)", forecast_ids).await?
+    ));
+    counts.insert("forecast_commitments".into(), json!(
+        count_fc(db, "SELECT COUNT(*) AS c FROM forecast_commitments WHERE forecast_id = ANY($1)", forecast_ids).await?
+    ));
+    counts.insert("fermi_forecast_updates".into(), json!(
+        count_fc(db, "SELECT COUNT(*) AS c FROM fermi_forecast_updates WHERE forecast_id = ANY($1)", forecast_ids).await?
+    ));
+    counts.insert("fermi_market_observations".into(), json!(
+        count_fc(db, "SELECT COUNT(*) AS c FROM fermi_market_observations WHERE forecast_id = ANY($1)", forecast_ids).await?
+    ));
+    counts.insert("fermi_portfolio_forecasts".into(), json!(
+        count_fc(db, "SELECT COUNT(*) AS c FROM fermi_portfolio_forecasts WHERE forecast_id = ANY($1)", forecast_ids).await?
+    ));
+    counts.insert("fermi_forecast_schedules".into(), json!(
+        count_fc(db, "SELECT COUNT(*) AS c FROM fermi_forecast_schedules WHERE forecast_id = ANY($1)", forecast_ids).await?
+    ));
+    counts.insert("fermi_forecasts".into(), json!(forecast_ids.len()));
+    counts.insert("team_members".into(), json!(
+        count_ws(db, "SELECT COUNT(*) AS c FROM team_members WHERE team_id = ANY($1)", workspace_ids).await?
+    ));
+    counts.insert("teams".into(), json!(workspace_ids.len()));
+
+    Ok(Value::Object(counts))
+}
