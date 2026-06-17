@@ -81,6 +81,53 @@ factor X6 "Exogenous Context" {
 
 estimate tournament_strength as: learnable(1.0, 0.2) * (X1 ^ learnable(0.25, 0.05)) * (X2 ^ learnable(0.20, 0.05)) * (X3 ^ learnable(0.25, 0.05)) * (X4 ^ learnable(0.15, 0.05)) * (X5 ^ learnable(0.10, 0.05)) * exp(learnable(0.05, 0.02) * X6)
 
+// ─── BayesOps learnable drivers (Spec 23) ──────────────────────────────
+//
+// These drivers sit alongside the factor model. They give the BayesOps
+// R-1 refit hook concrete observation streams to fit, separate from the
+// factor-model elasticities (which use the params.<owner>_lN contract).
+//
+// won_rate: binary win/loss outcome per resolved match.
+//   - Cold-start prior: Beta-like uniform in (0,1) via Triangular(0.2, 0.5, 0.8)
+//   - Observations: 1.0 on win, 0.0 on loss, drawn from upstream resolution
+//     outcomes whose winner_team_id matches this workspace's entity.
+//   - After K matches: posterior tightens around the team's actual win rate.
+//
+// form_signal: continuous goal differential per resolved match (real-valued).
+//   - Cold-start prior: centered at zero with moderate spread.
+//   - Observations: outcome.goal_differential (positive = team scored more
+//     than conceded that match).
+//   - After K matches: posterior reflects recent form trend.
+//
+// Both drivers are sourced from upstream resolutions via the workspace
+// dependency graph (workspace_dependencies). The Spec 23 R-1 refit hook
+// fires on every resolution upstream of this workspace.
+
+driver continuous won_rate {
+    distribution: triangular(0.2, 0.5, 0.8)
+    learnable: true
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "binary_winner_id_match",
+        config: {
+            winner_field: "winner_team_id",
+            match_value: "${workspace.entity_id}"
+        }
+    }
+}
+
+driver continuous form_signal {
+    distribution: normal(0.0, 1.0)
+    learnable: true
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "scalar_field_value",
+        config: {
+            path: "goal_differential"
+        }
+    }
+}
+
 output tournament_win_probability: derived
 output reach_final_probability: derived
 output reach_semifinal_probability: derived
