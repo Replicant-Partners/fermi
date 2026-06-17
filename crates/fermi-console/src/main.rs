@@ -4564,21 +4564,46 @@ impl FermiConsole {
             .when(is_selected, |el| {
                 let is_active = forecast.status == "active";
                 let fid = forecast.id.clone();
+                let fid_open = forecast.id.clone();
                 let fq = forecast.question_text.clone();
                 let fprob = forecast.predicted_probability;
+                let _ = fprob;
                 el.child(render_forecast_detail(forecast))
                     .child(self.render_forecast_portfolio_row(&forecast.id, cx))
-                    .when(is_active, |el| {
-                        el.child(
-                            div()
-                                .px(px(24.0))
-                                .py(px(10.0))
-                                .border_t_1()
-                                .border_color(theme::fg_faint())
-                                .flex()
-                                .items_center()
-                                .gap(px(10.0))
-                                .child(
+                    // Action row: Open in cockpit + (when active) Resolve.
+                    // The inline detail above shows metadata; the cockpit
+                    // shows the FPL, drivers, Trajectory tab, and BayesOps
+                    // events. The button is the explicit handoff between
+                    // those two views.
+                    .child(
+                        div()
+                            .px(px(24.0))
+                            .py(px(10.0))
+                            .border_t_1()
+                            .border_color(theme::fg_faint())
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("open-cockpit-{}", fid_open)))
+                                    .px(px(14.0))
+                                    .py(px(5.0))
+                                    .rounded(px(5.0))
+                                    .border_1()
+                                    .border_color(rgb(theme::CYAN))
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::CYAN))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::bg_hover()))
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.open_forecast(&fid_open, cx);
+                                    }))
+                                    .child("→ Open in Cockpit"),
+                            )
+                            .when(is_active, |el| {
+                                el.child(
                                     div()
                                         .text_size(px(10.0))
                                         .text_color(theme::fg_faint())
@@ -4607,9 +4632,9 @@ impl FermiConsole {
                                             cx.notify();
                                         }))
                                         .child("⚡ Resolve"),
-                                ),
-                        )
-                    })
+                                )
+                            }),
+                    )
             })
     }
 
