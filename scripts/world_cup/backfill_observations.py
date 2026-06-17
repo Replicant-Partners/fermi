@@ -181,10 +181,6 @@ def backfill_team(team_id, workspace_id, dry_run=False):
             continue
         new_matches.append(obs)
 
-    if not new_matches:
-        print(f"  {team_id}: all {len(own_fixtures)} fixtures already recorded.")
-        return 0
-
     # Build the merged observations object:
     #   - top-level `won_rate` / `form_signal` flat arrays (what refit reads)
     #   - top-level `matches` array of full records (for audit / extractors)
@@ -192,9 +188,10 @@ def backfill_team(team_id, workspace_id, dry_run=False):
     all_matches = matches_existing + new_matches
     merged["matches"] = all_matches
 
-    # Recompute per-driver arrays from the full matches list so re-runs
-    # are idempotent and consistent even if a previous run left a
-    # stale per-driver array behind.
+    # Recompute per-driver arrays from the full matches list. This is
+    # what makes re-runs upgrade older structures to the current shape:
+    # even if no new matches were appended, a previously-broken layout
+    # (matches-only, no per-driver arrays) gets rewritten correctly.
     merged["won_rate"] = [
         1.0 if m.get("result") == "won" else 0.0
         for m in all_matches
@@ -203,6 +200,17 @@ def backfill_team(team_id, workspace_id, dry_run=False):
         float(m.get("goal_differential", 0))
         for m in all_matches
     ]
+
+    # Skip the write only when the existing object is already byte-for-byte
+    # what we'd write. Catches no-op re-runs without making the script
+    # silently stale.
+    if not dry_run and existing == merged:
+        print(
+            f"  {team_id}: already up to date "
+            f"(matches={len(all_matches)}, won_rate={merged['won_rate']}, "
+            f"form_signal={merged['form_signal']})"
+        )
+        return 0
 
     if dry_run:
         print(f"  {team_id}: would append {len(new_matches)} obs (dry-run)")
