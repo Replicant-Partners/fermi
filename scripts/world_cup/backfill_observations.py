@@ -146,7 +146,20 @@ def write_observations(workspace_id, observations):
 
 
 def backfill_team(team_id, workspace_id, dry_run=False):
-    """For one team, append every fixture they played to their observations."""
+    """For one team, append every fixture they played to their observations.
+
+    The refit hook (src/handlers/workspace/refit.rs::read_observations_array)
+    reads observations at the top level of `workspace_outputs[ws].observations`
+    as `{ <driver_name>: [f64, ...] }` — a flat per-driver array.
+
+    For the WC team_prior FPL we ship two learnable drivers:
+      - won_rate     → 1.0 on win, 0.0 on loss/draw (binary winner match)
+      - form_signal  → signed goal differential per match
+
+    We also keep a `matches` array of full per-match records alongside, both
+    for auditing and as raw material for any future driver extractors that
+    want to read structured outcomes.
+    """
     own_fixtures = [
         f for f in FIXTURES
         if f[2] == team_id or f[3] == team_id
@@ -172,8 +185,24 @@ def backfill_team(team_id, workspace_id, dry_run=False):
         print(f"  {team_id}: all {len(own_fixtures)} fixtures already recorded.")
         return 0
 
+    # Build the merged observations object:
+    #   - top-level `won_rate` / `form_signal` flat arrays (what refit reads)
+    #   - top-level `matches` array of full records (for audit / extractors)
     merged = dict(existing)
-    merged["matches"] = matches_existing + new_matches
+    all_matches = matches_existing + new_matches
+    merged["matches"] = all_matches
+
+    # Recompute per-driver arrays from the full matches list so re-runs
+    # are idempotent and consistent even if a previous run left a
+    # stale per-driver array behind.
+    merged["won_rate"] = [
+        1.0 if m.get("result") == "won" else 0.0
+        for m in all_matches
+    ]
+    merged["form_signal"] = [
+        float(m.get("goal_differential", 0))
+        for m in all_matches
+    ]
 
     if dry_run:
         print(f"  {team_id}: would append {len(new_matches)} obs (dry-run)")
@@ -181,11 +210,16 @@ def backfill_team(team_id, workspace_id, dry_run=False):
             print(f"    {m['date']} vs {m['opponent_team_id']}: "
                   f"{m['result']} ({m['own_goals']}–{m['opp_goals']}, "
                   f"diff {m['goal_differential']:+d})")
+        print(f"    → won_rate     = {merged['won_rate']}")
+        print(f"    → form_signal  = {merged['form_signal']}")
         return len(new_matches)
 
     ok, err = write_observations(workspace_id, merged)
     if ok:
-        print(f"  {team_id}: wrote {len(new_matches)} obs ({len(merged['matches'])} total)")
+        print(
+            f"  {team_id}: wrote {len(new_matches)} obs ({len(merged['matches'])} total, "
+            f"won_rate={merged['won_rate']}, form_signal={merged['form_signal']})"
+        )
     else:
         print(f"  {team_id}: FAILED — {err}")
     return len(new_matches) if ok else 0
