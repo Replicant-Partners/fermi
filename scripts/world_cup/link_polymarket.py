@@ -46,7 +46,7 @@ TEAM_NAME_TO_ID = {
     "Czechia": "CZE", "Czech Republic": "CZE",
     # Group B
     "Canada": "CAN",
-    "Bosnia & Herzegovina": "BIH", "Bosnia and Herzegovina": "BIH",
+    "Bosnia & Herzegovina": "BIH", "Bosnia and Herzegovina": "BIH", "Bosnia-Herzegovina": "BIH",
     "Qatar": "QAT",
     "Switzerland": "CHE",
     # Group C
@@ -212,10 +212,8 @@ def main():
 
     if unmatched_markets:
         print(f"WARNING: {len(unmatched_markets)} Polymarket markets couldn't be matched to a team:")
-        for um in unmatched_markets[:8]:
+        for um in unmatched_markets:
             print(f"  - {um}")
-        if len(unmatched_markets) > 8:
-            print(f"  ... and {len(unmatched_markets) - 8} more")
         print()
 
     # Now link each forecast to its market
