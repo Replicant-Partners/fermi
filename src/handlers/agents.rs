@@ -2405,9 +2405,11 @@ pub async fn get_agent_calibration_handler(
 
     let n_resolved = forecast_rows.len();
     let brier_mean: Option<f64> = if n_resolved > 0 {
+        // brier_score column is REAL → f32 in sqlx.
         let sum: f64 = forecast_rows
             .iter()
-            .filter_map(|r| r.try_get::<f64, _>("brier_score").ok())
+            .filter_map(|r| r.try_get::<f32, _>("brier_score").ok())
+            .map(|v| v as f64)
             .sum();
         Some(sum / n_resolved as f64)
     } else {
@@ -2421,8 +2423,9 @@ pub async fn get_agent_calibration_handler(
         std::collections::HashMap::new();
 
     for row in &forecast_rows {
-        let score: f64 = match row.try_get::<f64, _>("brier_score") {
-            Ok(s) => s,
+        // brier_score is REAL → f32 in sqlx; cast to f64 for downstream math.
+        let score: f64 = match row.try_get::<f32, _>("brier_score") {
+            Ok(s) => s as f64,
             Err(_) => continue,
         };
         // forecast_calibration = 1 - brier (higher is better)

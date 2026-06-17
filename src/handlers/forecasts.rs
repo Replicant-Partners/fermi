@@ -369,8 +369,9 @@ pub async fn get_forecast_handler(
         .map(|u| {
             json!({
                 "id": u.try_get::<String, _>("id").ok(),
-                "previous_probability": u.try_get::<f64, _>("previous_probability").ok(),
-                "new_probability": u.try_get::<f64, _>("new_probability").ok(),
+                // Postgres REAL → sqlx f32. Cast to f64 only for JSON.
+                "previous_probability": u.try_get::<f32, _>("previous_probability").ok().map(|v| v as f64),
+                "new_probability": u.try_get::<f32, _>("new_probability").ok().map(|v| v as f64),
                 "reason": u.try_get::<Option<String>, _>("reason").ok().flatten(),
                 "agent_id": u.try_get::<Option<String>, _>("agent_id").ok().flatten(),
                 "evidence_added": u.try_get::<Option<JsonValue>, _>("evidence_added").ok().flatten(),
@@ -396,9 +397,13 @@ pub async fn get_forecast_handler(
         "domain": row.try_get::<Option<String>, _>("domain").ok().flatten(),
         "resolution_criteria": row.try_get::<Option<String>, _>("resolution_criteria").ok().flatten(),
         "target_date": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("target_date").ok().flatten().map(|t| t.to_rfc3339()),
-        "predicted_probability": row.try_get::<f64, _>("predicted_probability").ok(),
-        "confidence_interval_low": row.try_get::<Option<f64>, _>("confidence_interval_low").ok().flatten(),
-        "confidence_interval_high": row.try_get::<Option<f64>, _>("confidence_interval_high").ok().flatten(),
+        // fermi_forecasts.predicted_probability is REAL → sqlx f32. The list,
+        // detail, and portfolio serializers all hit this — the bug here makes
+        // every forecast probability render as null in the API even when the
+        // row is NOT NULL in the DB.
+        "predicted_probability": row.try_get::<f32, _>("predicted_probability").ok().map(|v| v as f64),
+        "confidence_interval_low": row.try_get::<Option<f32>, _>("confidence_interval_low").ok().flatten().map(|v| v as f64),
+        "confidence_interval_high": row.try_get::<Option<f32>, _>("confidence_interval_high").ok().flatten().map(|v| v as f64),
         "fpl_source": row.try_get::<Option<String>, _>("fpl_source").ok().flatten(),
         "notebook_id": row.try_get::<Option<String>, _>("notebook_id").ok().flatten(),
         "simulation_results": row.try_get::<Option<JsonValue>, _>("simulation_results").ok().flatten(),
@@ -408,7 +413,7 @@ pub async fn get_forecast_handler(
         "agents_used": row.try_get::<JsonValue, _>("agents_used").ok(),
         "status": row.try_get::<String, _>("status").ok(),
         "actual_outcome": row.try_get::<Option<bool>, _>("actual_outcome").ok().flatten(),
-        "brier_score": row.try_get::<Option<f64>, _>("brier_score").ok().flatten(),
+        "brier_score": row.try_get::<Option<f32>, _>("brier_score").ok().flatten().map(|v| v as f64),
         "resolved_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at").ok().flatten().map(|t| t.to_rfc3339()),
         "resolved_by": row.try_get::<Option<String>, _>("resolved_by").ok().flatten(),
         "resolution_notes": row.try_get::<Option<String>, _>("resolution_notes").ok().flatten(),
@@ -520,9 +525,11 @@ pub async fn list_forecasts_handler(
                 "owner_display_name": r.try_get::<Option<String>, _>("owner_display_name").ok().flatten(),
                 "question_text": r.try_get::<String, _>("question_text").ok(),
                 "domain": r.try_get::<Option<String>, _>("domain").ok().flatten(),
-                "predicted_probability": r.try_get::<f64, _>("predicted_probability").ok(),
+                // Postgres REAL → sqlx f32. See get_forecast_handler for the
+                // full rationale; same bug in three list-style serializers.
+                "predicted_probability": r.try_get::<f32, _>("predicted_probability").ok().map(|v| v as f64),
                 "status": r.try_get::<String, _>("status").ok(),
-                "brier_score": r.try_get::<Option<f64>, _>("brier_score").ok().flatten(),
+                "brier_score": r.try_get::<Option<f32>, _>("brier_score").ok().flatten().map(|v| v as f64),
                 "actual_outcome": r.try_get::<Option<bool>, _>("actual_outcome").ok().flatten(),
                 "target_date": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("target_date").ok().flatten().map(|t| t.to_rfc3339()),
                 "visibility": r.try_get::<String, _>("visibility").ok(),
@@ -1182,9 +1189,9 @@ pub async fn portfolio_stats_handler(
             json!({
                 "id": r.try_get::<String, _>("id").ok(),
                 "question_text": r.try_get::<String, _>("question_text").ok(),
-                "predicted_probability": r.try_get::<f64, _>("predicted_probability").ok(),
+                "predicted_probability": r.try_get::<f32, _>("predicted_probability").ok().map(|v| v as f64),
                 "actual_outcome": r.try_get::<Option<bool>, _>("actual_outcome").ok().flatten(),
-                "brier_score": r.try_get::<Option<f64>, _>("brier_score").ok().flatten(),
+                "brier_score": r.try_get::<Option<f32>, _>("brier_score").ok().flatten().map(|v| v as f64),
                 "resolved_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at").ok().flatten().map(|t| t.to_rfc3339()),
             })
         })
@@ -1710,9 +1717,11 @@ pub async fn public_forecasts_handler(
                 "owner_display_name": r.try_get::<Option<String>, _>("owner_display_name").ok().flatten(),
                 "question_text": r.try_get::<String, _>("question_text").ok(),
                 "domain": r.try_get::<Option<String>, _>("domain").ok().flatten(),
-                "predicted_probability": r.try_get::<f64, _>("predicted_probability").ok(),
+                // Postgres REAL → sqlx f32. See get_forecast_handler for the
+                // full rationale; same bug in three list-style serializers.
+                "predicted_probability": r.try_get::<f32, _>("predicted_probability").ok().map(|v| v as f64),
                 "status": r.try_get::<String, _>("status").ok(),
-                "brier_score": r.try_get::<Option<f64>, _>("brier_score").ok().flatten(),
+                "brier_score": r.try_get::<Option<f32>, _>("brier_score").ok().flatten().map(|v| v as f64),
                 "actual_outcome": r.try_get::<Option<bool>, _>("actual_outcome").ok().flatten(),
                 "target_date": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("target_date").ok().flatten().map(|t| t.to_rfc3339()),
                 "tags": r.try_get::<Vec<String>, _>("tags").ok(),
