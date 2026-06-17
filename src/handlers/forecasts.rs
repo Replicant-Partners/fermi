@@ -1437,10 +1437,13 @@ pub async fn list_portfolio_forecasts_handler(
                 "id":                   r.get::<String, _>("id"),
                 "question_text":        r.get::<String, _>("question_text"),
                 // REAL columns → f32 in sqlx; cast to f64 at the JSON
-                // boundary. Using `.get` (not try_get) here is fine because
-                // these columns are NOT NULL on the live schema, but we still
-                // need the correct primitive type or the call panics → 502.
-                "predicted_probability":r.get::<f32, _>("predicted_probability") as f64,
+                // boundary. Empirically the WC fleet has rows with NULL
+                // predicted_probability (some spawn paths left the column
+                // unset even though the schema declares NOT NULL — likely a
+                // pre-fix bind silently coerced to NULL). Treat it as
+                // Option<f32> here so a bad row degrades to null in the
+                // response instead of panicking the handler.
+                "predicted_probability":r.get::<Option<f32>, _>("predicted_probability").map(|v| v as f64),
                 "status":               r.get::<String, _>("status"),
                 "brier_score":          r.get::<Option<f32>, _>("brier_score").map(|v| v as f64),
                 "actual_outcome":       r.get::<Option<bool>, _>("actual_outcome"),
