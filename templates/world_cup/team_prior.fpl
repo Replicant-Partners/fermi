@@ -103,7 +103,7 @@ estimate tournament_strength as: learnable(1.0, 0.2) * (X1 ^ learnable(0.25, 0.0
 // dependency graph (workspace_dependencies). The Spec 23 R-1 refit hook
 // fires on every resolution upstream of this workspace.
 
-driver continuous won_rate {
+driver won_rate continuous {
     distribution: triangular(0.2, 0.5, 0.8)
     learnable: true
     feeds_from: {
@@ -116,7 +116,7 @@ driver continuous won_rate {
     }
 }
 
-driver continuous form_signal {
+driver form_signal continuous {
     distribution: normal(0.0, 1.0)
     learnable: true
     feeds_from: {
