@@ -2618,6 +2618,117 @@ impl FermiConsole {
         cx.notify();
     }
 
+    /// Open a forecast in the Composer by forecast_id. Used by the Portfolio
+    /// detail view: clicking a forecast row drops the user into a hydrated
+    /// cockpit without making them navigate via the workspace dashboard.
+    ///
+    /// Same hydration path as open_workspace_forecast — fetch the forecast,
+    /// parse fpl_source into cockpit.program, set forecast_id + workspace_id
+    /// + predicted_probability so the Trajectory tab, refit, and sparkline
+    /// endpoints all work. The only difference is the starting point is the
+    /// forecast itself, not a workspace card.
+    fn open_forecast(&mut self, forecast_id: &str, cx: &mut Context<Self>) {
+        let fid = forecast_id.to_string();
+
+        // Fresh cockpit per drill-in. The "reuse existing cockpit" path
+        // bites us with stale pm_*, versions, agent_runs from the
+        // previous forecast — see the comment block around CockpitState
+        // reset for the long-form reasoning.
+        let api = self.api.clone();
+        let cockpit = cx.new(|cx| CockpitState::new(api.clone(), self.registry.clone(), cx));
+        self.cockpit = Some(cockpit.clone());
+
+        cockpit.update(cx, |cockpit, _cx| {
+            cockpit.forecast_id = Some(fid.clone());
+        });
+
+        let cockpit_handle = cockpit.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = tokio::spawn(async move {
+                api.get_forecast(&fid).await
+            }).await;
+
+            match result {
+                Ok(Ok(forecast)) => {
+                    let fpl_text = forecast.fpl_source.clone();
+                    let parsed = fpl_text.as_ref().and_then(|s| {
+                        ::fermi::lexer::Lexer::new(s)
+                            .tokenize()
+                            .ok()
+                            .and_then(|tokens| ::fermi::parser::Parser::new(tokens).parse().ok())
+                    });
+                    let q_text = forecast.question_text.clone();
+                    let prob = forecast.predicted_probability;
+                    // Workspace link, when present, lets the cockpit fire
+                    // workspace-scoped endpoints (BayesOps state, refit,
+                    // workspace outputs). Without this, the Trajectory tab
+                    // would render but the live refit cascade would 404.
+                    let ws_id = forecast.workspace_id.clone();
+
+                    cockpit_handle.update(cx, |cockpit, cx| {
+                        // Wire the question text — even if FPL parse fails
+                        // the user at least sees the question.
+                        cockpit.question_input.update(cx, |input, cx| {
+                            input.set_text(&q_text, cx);
+                        });
+                        cockpit.predicted_probability = prob;
+                        cockpit.workspace_id = ws_id;
+
+                        if let Some(fpl) = fpl_text.as_ref() {
+                            cockpit.cached_fpl = fpl.clone();
+                        }
+
+                        match parsed {
+                            Some(program) => {
+                                cockpit.program = program;
+                                // FPL is the source of truth for the question
+                                // when present (resolution criteria live in
+                                // the program's question node).
+                                if let Some(q) = cockpit.program.question() {
+                                    cockpit.question_input.update(cx, |input, cx| {
+                                        input.set_text(&q.text, cx);
+                                    });
+                                }
+                                cockpit.messages.push(crate::cockpit::AssistantMessage {
+                                    node: "load".into(),
+                                    kind: crate::cockpit::MessageKind::Info,
+                                    text: format!(
+                                        "Loaded forecast ({} bytes FPL).",
+                                        fpl_text.as_ref().map(String::len).unwrap_or(0)
+                                    ),
+                                });
+                            }
+                            None if fpl_text.is_some() => {
+                                cockpit.messages.push(crate::cockpit::AssistantMessage {
+                                    node: "load".into(),
+                                    kind: crate::cockpit::MessageKind::Warning,
+                                    text: "FPL parse failed — showing raw source only.".into(),
+                                });
+                            }
+                            None => {
+                                cockpit.messages.push(crate::cockpit::AssistantMessage {
+                                    node: "load".into(),
+                                    kind: crate::cockpit::MessageKind::Info,
+                                    text: "Forecast has no FPL — starting empty cockpit.".into(),
+                                });
+                            }
+                        }
+                        cx.notify();
+                    }).ok();
+                }
+                Ok(Err(e)) => {
+                    log::error!("[open-forecast] get_forecast failed: {}", e);
+                }
+                Err(e) => {
+                    log::error!("[open-forecast] task join error: {}", e);
+                }
+            }
+        }).detach();
+
+        self.active_panel = Panel::Composer;
+        cx.notify();
+    }
+
     fn import_polymarket_forecast(
         &mut self,
         pm_event_id: &str,
@@ -3172,6 +3283,7 @@ impl FermiConsole {
                                                 .map(|b| format!("{:.3}", b))
                                                 .unwrap_or_default();
 
+                                            let fid_click = fid.clone();
                                             div()
                                                 .id(SharedString::from(format!("pf-row-{}", fid)))
                                                 .px(px(14.0))
@@ -3181,7 +3293,17 @@ impl FermiConsole {
                                                 .flex()
                                                 .items_center()
                                                 .gap(px(8.0))
+                                                .cursor_pointer()
                                                 .hover(|s| s.bg(theme::bg_hover()))
+                                                // Clicking the row (anywhere except the explicit ✕
+                                                // remove button, which has its own listener and
+                                                // stops the bubble) drills into the cockpit. This
+                                                // is the path that lets a user go from "I see
+                                                // 48 forecasts in WC sims" to "I'm staring at
+                                                // Argentina's FPL and Trajectory" in one click.
+                                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                    this.open_forecast(&fid_click, cx);
+                                                }))
                                                 // Question text
                                                 .child(
                                                     div()

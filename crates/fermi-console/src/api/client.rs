@@ -132,6 +132,11 @@ pub struct Forecast {
     pub resolution_notes: Option<String>,
     pub visibility: String,
     pub team_id: Option<String>,
+    /// The ABW workspace this forecast is backed by, when set. Populated by
+    /// the server JOIN in get_forecast_handler. The cockpit needs this to
+    /// fire workspace-scoped endpoints (BayesOps state, refit, set output).
+    #[serde(default)]
+    pub workspace_id: Option<String>,
     pub tags: Option<Vec<String>>,
     pub portfolios: Option<Vec<String>>,
     pub update_history: Option<Vec<ForecastUpdate>>,
