@@ -128,6 +128,53 @@ driver form_signal continuous {
     }
 }
 
+// ─── Research agents (BAYESOPS_CONTRACT.md §3, table) ──────────────────
+//
+// Each factor X_k has a designated curated agent that owns its inputs.
+// `driver_refs` here points at the two learnable BayesOps drivers — the
+// agents publish evidence into those streams, which then feed the R-1
+// refit hook. The factor inputs themselves are param-bound at workspace
+// instantiation (CSV from respawn_aligned.py), so the agents' real job is
+// to keep those values fresh as the tournament progresses, not to bind
+// them on first run.
+//
+// Without these blocks the cockpit's Drivers panel renders "⚠ No agents
+// — assign one" on every driver, which makes the workspace look empty
+// even though `workspace_agents` has the same four hires at the
+// runtime-membership layer.
+
+agent macro_data_agent {
+    type: "research"
+    query: "GDP per capita, population, HDI for {team_name}"
+    executor: "llm"
+    driver_refs: ["won_rate", "form_signal"]
+    schedule: every 1 month
+}
+
+agent football_institution_agent {
+    type: "research"
+    query: "Player registration, league revenue, confederation strength for {team_name}"
+    executor: "llm"
+    driver_refs: ["won_rate", "form_signal"]
+    schedule: every 1 month
+}
+
+agent football_analyst {
+    type: "research"
+    query: "Elo rating, recent form, squad quality, tactical metrics for {team_name}"
+    executor: "llm"
+    driver_refs: ["won_rate", "form_signal"]
+    schedule: every 1 week
+}
+
+agent fixture_context_agent {
+    type: "research"
+    query: "Venue, weather, rest days, altitude for {team_name} upcoming fixtures"
+    executor: "llm"
+    driver_refs: ["won_rate", "form_signal"]
+    schedule: every 3 days
+}
+
 output tournament_win_probability: derived
 output reach_final_probability: derived
 output reach_semifinal_probability: derived

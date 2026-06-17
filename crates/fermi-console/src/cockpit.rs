@@ -3758,8 +3758,10 @@ impl CockpitState {
         };
 
         // Regenerate FPL so the toggle change shows up if the user is also
-        // looking at the raw FPL pane.
-        self.cached_fpl = generate_fpl_text(&self.program);
+        // looking at the raw FPL pane — but only if the cached FPL is in
+        // the cockpit AST's representable subset. For factor-model loaded
+        // forecasts this is a no-op (see regenerate_cached_fpl_if_safe).
+        self.regenerate_cached_fpl_if_safe();
 
         // Surface the change as an assistant message so the user sees what
         // just happened — especially the cold-start hint when turning ON.
@@ -3850,7 +3852,7 @@ impl CockpitState {
     /// Export the evidence wiki as a Markdown file and open it.
     pub fn export_wiki_markdown(&mut self, _cx: &mut Context<Self>) {
         self.save_focused_driver(_cx);
-        self.cached_fpl = generate_fpl_text(&self.program);
+        self.regenerate_cached_fpl_if_safe();
 
         let filename = self
             .program
@@ -4054,14 +4056,8 @@ impl CockpitState {
         // Heuristic: if cached_fpl contains a factor-model construct, use
         // it as-is. Otherwise it came from this cockpit's composer and is
         // safe to regenerate.
-        let preserve_loaded_fpl = !self.cached_fpl.is_empty()
-            && (self.cached_fpl.contains("factor ")
-                || self.cached_fpl.contains("estimate ")
-                || self.cached_fpl.contains("learnable("));
-
-        if !preserve_loaded_fpl {
-            self.cached_fpl = generate_fpl_text(&self.program);
-        }
+        let preserve_loaded_fpl = Self::cached_fpl_is_richer_than_ast(&self.cached_fpl);
+        self.regenerate_cached_fpl_if_safe();
 
         if self.program.drivers().is_empty() && !preserve_loaded_fpl {
             self.sim_error = Some("No drivers defined. Add drivers first.".into());
@@ -4115,13 +4111,9 @@ impl CockpitState {
         }
 
         if !driver_names_to_fix.is_empty() && !preserve_loaded_fpl {
-            // Regenerate FPL after fixing the zero-driver. On the
-            // preserve-loaded path we leave cached_fpl untouched —
-            // factor-model programs aren't subject to the zero-driver
-            // collapse heuristic anyway (the multiplicative Cobb-Douglas
-            // estimate has its own bounds), and rewriting it would
-            // destroy the model expression.
-            self.cached_fpl = generate_fpl_text(&self.program);
+            // Regenerate FPL after fixing the zero-driver. Guarded so we
+            // never overwrite a factor-model loaded FPL.
+            self.regenerate_cached_fpl_if_safe();
         }
 
         // ── Debug: log driver state before simulation ─────────────
@@ -4638,7 +4630,46 @@ impl CockpitState {
     // ═══════════════════════════════════════════════════════════════
 
     pub fn refresh_fpl_cache(&mut self, _cx: &App) {
+        self.regenerate_cached_fpl_if_safe();
+    }
+
+    /// Rebuild `cached_fpl` from `self.program` ONLY if doing so won't lose
+    /// information.
+    ///
+    /// `generate_fpl_text` is a partial serializer — it covers question +
+    /// drivers + a handful of model expression shapes the cockpit AST can
+    /// represent, but it does NOT round-trip factor blocks
+    /// (`factor X1 {...}`), Cobb-Douglas `estimate ... as:` lines, or
+    /// `learnable(mean, sd)` priors. Calling it on a workspace-backed team
+    /// prior FPL strips all of those, leaving a 2-driver shell that won't
+    /// simulate.
+    ///
+    /// Guard: if the current cached_fpl already contains a richer construct
+    /// than the generator can emit, leave it alone. The user is presumably
+    /// looking at the loaded FPL in the FPL tab; they don't want it nuked
+    /// because they toggled a learnable flag or saved a version.
+    ///
+    /// Call sites that need to commit user-edited driver state into the
+    /// cached FPL (toggle learnable, save version, export wiki, run sim)
+    /// all go through here. The cost: for true factor-model forecasts, the
+    /// FPL tab won't reflect cockpit-side driver edits until the user
+    /// publishes via the server PUT path (which uses the program AST). This
+    /// is the right trade-off until the cockpit AST grows real
+    /// factor/estimate/learnable representations.
+    fn regenerate_cached_fpl_if_safe(&mut self) {
+        if Self::cached_fpl_is_richer_than_ast(&self.cached_fpl) {
+            return;
+        }
         self.cached_fpl = generate_fpl_text(&self.program);
+    }
+
+    /// Returns true when cached_fpl contains constructs that the
+    /// cockpit AST + `generate_fpl_text` cannot round-trip.
+    pub(crate) fn cached_fpl_is_richer_than_ast(fpl: &str) -> bool {
+        !fpl.is_empty()
+            && (fpl.contains("factor ")
+                || fpl.contains("estimate ")
+                || fpl.contains("learnable("))
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -5011,7 +5042,7 @@ impl CockpitState {
     }
     pub fn save_forecast(&mut self, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
-        self.cached_fpl = generate_fpl_text(&self.program);
+        self.regenerate_cached_fpl_if_safe();
 
         // Create version snapshot with descriptive change summary
         self.current_version += 1;
