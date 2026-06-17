@@ -74,10 +74,24 @@ pub async fn validate_api_key(pool: &PgPool, key: &str) -> Result<AuthPrincipal,
 
     let prefix = &key[..12];
 
-    // Find candidate keys by prefix
-    let rows = sqlx::query_as::<_, (Uuid, String, String, String, Vec<String>)>(
+    // Find candidate keys by prefix.
+    //
+    // We also pull the owning user's `role` here so that an API key issued
+    // by a platform admin inherits admin authority on this request without
+    // requiring the operator to manually attach an "admin" scope on every
+    // key. The console's API-key UI doesn't expose scopes today, so without
+    // this inheritance the only way for an admin to use the JSON API
+    // surface for admin operations is to hand-edit the database. That
+    // would defeat the "every operation goes through a handler" principle.
+    //
+    // The inheritance is conservative — we only ADD scopes derived from
+    // the user's role; we don't remove or override explicitly-granted
+    // scopes. So a key with explicit "write" scope still has "write"
+    // regardless of the user's role, and a key with no scopes still
+    // gets "admin"/"write" only because the user has those rights.
+    let rows = sqlx::query_as::<_, (Uuid, String, String, String, Vec<String>, Option<String>)>(
         r#"
-        SELECT ak.key_id, ak.key_hash, u.user_id, ak.name, ak.scopes
+        SELECT ak.key_id, ak.key_hash, u.user_id, ak.name, ak.scopes, u.role
         FROM api_keys ak
         JOIN users u ON ak.user_id = u.id
         WHERE ak.key_prefix = $1
@@ -92,7 +106,7 @@ pub async fn validate_api_key(pool: &PgPool, key: &str) -> Result<AuthPrincipal,
 
     // Verify hash against each candidate
     let argon2 = Argon2::default();
-    for (key_id, key_hash, user_id, name, scopes) in &rows {
+    for (key_id, key_hash, user_id, name, scopes, user_role) in &rows {
         let parsed_hash = PasswordHash::new(key_hash).map_err(|_| AuthError::InvalidToken)?;
         if argon2.verify_password(key.as_bytes(), &parsed_hash).is_ok() {
             // Update last_used_at and request_count
@@ -107,11 +121,33 @@ pub async fn validate_api_key(pool: &PgPool, key: &str) -> Result<AuthPrincipal,
             .execute(pool)
             .await;
 
+            // Merge user-role-derived scopes into the key's scopes.
+            // 'admin' role → grants "admin" + "write"
+            // 'developer' role → grants "write"
+            // 'viewer' role / NULL → no derived scopes
+            let mut effective_scopes = scopes.clone();
+            match user_role.as_deref() {
+                Some("admin") => {
+                    if !effective_scopes.iter().any(|s| s == "admin") {
+                        effective_scopes.push("admin".to_string());
+                    }
+                    if !effective_scopes.iter().any(|s| s == "write") {
+                        effective_scopes.push("write".to_string());
+                    }
+                }
+                Some("developer") => {
+                    if !effective_scopes.iter().any(|s| s == "write") {
+                        effective_scopes.push("write".to_string());
+                    }
+                }
+                _ => {}
+            }
+
             return Ok(AuthPrincipal::ApiKey(ApiKey {
                 key_id: *key_id,
                 user_id: user_id.clone(),
                 name: name.clone(),
-                scopes: scopes.clone(),
+                scopes: effective_scopes,
             }));
         }
     }
