@@ -1436,9 +1436,13 @@ pub async fn list_portfolio_forecasts_handler(
             json!({
                 "id":                   r.get::<String, _>("id"),
                 "question_text":        r.get::<String, _>("question_text"),
-                "predicted_probability":r.get::<f64, _>("predicted_probability"),
+                // REAL columns → f32 in sqlx; cast to f64 at the JSON
+                // boundary. Using `.get` (not try_get) here is fine because
+                // these columns are NOT NULL on the live schema, but we still
+                // need the correct primitive type or the call panics → 502.
+                "predicted_probability":r.get::<f32, _>("predicted_probability") as f64,
                 "status":               r.get::<String, _>("status"),
-                "brier_score":          r.get::<Option<f64>, _>("brier_score"),
+                "brier_score":          r.get::<Option<f32>, _>("brier_score").map(|v| v as f64),
                 "actual_outcome":       r.get::<Option<bool>, _>("actual_outcome"),
                 "resolved_at":          r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at")
                                          .map(|d| d.to_rfc3339()),
