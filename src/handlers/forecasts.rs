@@ -574,12 +574,14 @@ pub async fn update_forecast_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
 
-    let owner_id: String = row.get("owner_id");
+    // Defensive try_get on owner_id / status — column types in prod don't
+    // always match the declared migration. Same lesson as update_probability.
+    let owner_id: String = row.try_get("owner_id").unwrap_or_default();
     if owner_id != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your forecast".into()));
     }
 
-    let current_status: String = row.get("status");
+    let current_status: String = row.try_get("status").unwrap_or_default();
     if current_status == "resolved" {
         return Err((
             StatusCode::CONFLICT,
@@ -596,8 +598,14 @@ pub async fn update_forecast_handler(
             ));
         }
 
-        let current_prob: f64 = row.get("predicted_probability");
-        if (new_prob - current_prob).abs() > 0.001 {
+        // predicted_probability is REAL → f32 in sqlx.
+        let current_prob: f32 = row
+            .try_get::<f32, _>("predicted_probability")
+            .unwrap_or(0.0);
+        // Compare in f64 (req.predicted_probability domain), bind f32 (DB
+        // column type) on insert.
+        let new_prob_f32 = new_prob as f32;
+        if (new_prob - current_prob as f64).abs() > 0.001 {
             // Record the probability update
             sqlx::query(
                 "INSERT INTO fermi_forecast_updates
@@ -607,7 +615,7 @@ pub async fn update_forecast_handler(
             .bind(Uuid::new_v4().to_string())
             .bind(&forecast_id)
             .bind(current_prob)
-            .bind(new_prob)
+            .bind(new_prob_f32)
             .execute(pool)
             .await
             .ok();
@@ -938,12 +946,16 @@ pub async fn update_probability_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
 
-    let owner_id: String = row.get("owner_id");
+    // Defensive try_get — the column is TEXT in migrations but UUID in
+    // prod for the WC dataset. The earlier handler explicitly aliased to
+    // ::text in the SELECT above; we still go through try_get to ensure
+    // a single bad row never panics the handler into a 502.
+    let owner_id: String = row.try_get("owner_id").unwrap_or_default();
     if owner_id != user_id {
         return Err((StatusCode::FORBIDDEN, "Not your forecast".into()));
     }
 
-    let status: String = row.get("status");
+    let status: String = row.try_get("status").unwrap_or_default();
     if status != "active" && status != "draft" {
         return Err((
             StatusCode::CONFLICT,
@@ -951,10 +963,19 @@ pub async fn update_probability_handler(
         ));
     }
 
-    let previous_probability: f64 = row.get("predicted_probability");
+    // predicted_probability is REAL → sqlx f32. Reading it as f64 panics
+    // with a type mismatch. Cast at the boundary.
+    let previous_probability: f32 = row
+        .try_get::<f32, _>("predicted_probability")
+        .unwrap_or(0.0);
 
-    // Record the update
+    // Record the update. previous_probability and new_probability are REAL
+    // in the DB so we bind f32 — sqlx silently coerces f64→REAL by lossy
+    // round-trip but production has been observed leaving the value NULL
+    // when the type mismatches at bind time. Going through f32 explicitly
+    // makes the contract unambiguous.
     let update_id = Uuid::new_v4().to_string();
+    let new_prob_f32 = req.new_probability as f32;
     sqlx::query(
         "INSERT INTO fermi_forecast_updates
          (id, forecast_id, previous_probability, new_probability, reason, agent_id, evidence_added, created_at)
@@ -963,7 +984,7 @@ pub async fn update_probability_handler(
     .bind(&update_id)
     .bind(&forecast_id)
     .bind(previous_probability)
-    .bind(req.new_probability)
+    .bind(new_prob_f32)
     .bind(&req.reason)
     .bind(&req.agent_id)
     .bind(&req.evidence_added)
@@ -971,11 +992,11 @@ pub async fn update_probability_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Update the forecast's current probability
+    // Update the forecast's current probability.
     sqlx::query(
         "UPDATE fermi_forecasts SET predicted_probability = $1, updated_at = NOW() WHERE id = $2",
     )
-    .bind(req.new_probability)
+    .bind(new_prob_f32)
     .bind(&forecast_id)
     .execute(pool)
     .await
