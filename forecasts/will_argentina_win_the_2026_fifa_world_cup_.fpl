@@ -1,7 +1,7 @@
 question "Will Argentina win the 2026 FIFA World Cup?"
 
 driver socio_capital continuous {
-    distribution: triangular(0, 0, 0)
+    distribution: triangular(0.8, 1, 1.2)
     rationale: "Macro capacity for footballing investment: GDP, population, HDI."
 }
 
@@ -11,7 +11,7 @@ driver institutional_capacity continuous {
 }
 
 driver dynamic_performance continuous {
-    distribution: triangular(0, 0, 0)
+    distribution: triangular(0.8, 1, 1.2)
     learnable: true
     rationale: "Recent form and Elo trajectory — refits as match outcomes accumulate."
 }
@@ -140,37 +140,93 @@ For World Cup 2026 specifically: Argentina's institutional setup is **optimized 
 
 evidence football_analyst_0 {
     source: "Agent: football_analyst"
-    summary: "# SQUAD QUALITY EVIDENCE: ARGENTINA 2026 WORLD CUP
-
-Based on comprehensive analysis of Argentina's 26-player World Cup 2026 squad, here is the evidence for the **squad_quality** driver (Factor X4 in the factor model):
+    summary: "Perfect! Now I have comprehensive data. Let me compile the squad quality evidence for Argentina's 2026 World Cup forecast.
 
 ---
 
-## KEY FINDINGS
+## SQUAD QUALITY EVIDENCE: ARGENTINA AT 2026 FIFA WORLD CUP
 
-**[BASE RATE]** Historical World Cup winners average squad market value: €850M-1.2B (2018-2022 winners). Argentina 2026 squad valued at €807.5M (Transfermarkt), ranking 7th globally behind France (€1.52B), England (€1.36B), Spain (€1.22B), Portugal (€1.01B), Germany (€947M), and Brazil (€928M).
+### FACTOR X4 — SQUAD QUALITY INDEX RESEARCH
 
-**[X4 SIGNAL - MARKET VALUE]** Argentina squad total market value €807.5M places them in top quartile of 48 World Cup teams but 13% below Brazil, 15% below Germany, and 47% below France. This represents a relative decline from their 2022 position when they were closer to European elite valuations.
+**[BASE RATE]** World Cup winners historically field squads valued in the top 5 globally. The 2022 Argentina squad was valued at ~€650M (4th globally). Champions typically have 75%+ of squad in Big-5 European leagues and top-10 players averaging €60M+ market value.
 
-**[X4 SIGNAL - TOP-5 LEAGUE REPRESENTATION]** Big-5 European league players identified in squad: **Premier League (6)**: E. Martinez (Aston Villa), Enzo Fernandez (Chelsea), Alexis Mac Allister (Liverpool), Lisandro Martinez (Man Utd), Cristian Romero (Tottenham), Giovani Lo Celso (Real Betis). **La Liga (5)**: Julian Alvarez, Thiago Almada, Nicolas Gonzalez, Giuliano Simeone (all Atletico Madrid), Rodrigo De Paul (Inter Miami - formerly La Liga). **Serie A (2)**: Lautaro Martinez (Inter Milan), Nico Paz (Como). **Bundesliga (1)**: Exequiel Palacios (Bayer Leverkusen). **Total Big-5: ~14 of 26 players = 54%** — below elite European nations (France 85%+, England 92%+, Spain 81%+).
+**[MARKET VALUE ABSOLUTE]** Argentina's 2026 squad is valued at **€807.5 million** (Transfermarkt, June 2026), ranking **7th globally** among World Cup participants. This represents a +24% increase from their 2022 championship squad (€650M), but they are significantly outvalued by:
+- France: €1.52 billion (1.88× Argentina)
+- England: €1.36 billion (1.68× Argentina)  
+- Spain: €1.22 billion (1.51× Argentina)
+- Portugal: €1.01 billion (1.25× Argentina)
+- Germany: €947 million (1.17× Argentina)
+- Brazil: €928 million (1.15× Argentina)
 
-**[X4 SIGNAL - SQUAD DEPTH]** Depth analysis reveals concerning gaps: Only 3 goalkeepers all aged 32+ (E. Martinez 33, Rulli 33, Musso 32). Defensive depth relies on 38-year-old Otamendi as starting CB. Backup striker quality drops significantly after Lautaro Martinez and Alvarez. Midfield depth strong with Fernandez/Mac Allister/Paredes/De Paul but limited tactical variety in profiles.
+**[MARKET VALUE CONCENTRATION]** Top-5 player concentration analysis reveals **moderate concentration risk**:
+- **Top 3 players**: Lautaro Martínez (€110M), Julián Álvarez (€90M), Enzo Fernández (€80M) = **€280M** (34.7% of squad value)
+- **Lionel Messi**: Now valued at only €14.2M at age 38 (MLS depreciation), down from €50M+ in 2022
+- **Top-5 concentration**: Estimated ~€350-380M = **43-47% of total squad value** — higher than ideal (optimal: 35-40%)
+- **Implication**: Heavy reliance on 3-5 core players; injury to Lautaro or Álvarez would severely impact attacking output
 
-**[X4 SIGNAL - AGE PROFILE]** Average squad age **27.04 years** (tied 23rd youngest of 48 teams). Age distribution problematic: 6 players aged 30+ including key starters (Otamendi 38, Di Maria 38, Messi 38, E. Martinez 33, Tagliafico 33). Only 8 World Cup debutants in 2026 — heavy reliance on 2022 core creates succession risk. Age span 16 years (Otamendi 38 to Barco/Paz 22).
+**[BIG-5 LEAGUE REPRESENTATION]** Argentina fields **17 of 26 players (65.4%)** in Europe's Big-5 leagues:
+- **La Liga**: 7 players (26.9%) — largest single league representation (Atlético Madrid alone sends 6 players)
+- **Premier League**: 5 players (19.2%) — Emiliano Martínez, Lisandro Martínez, Romero, Fernández, Mac Allister
+- **Ligue 1**: 5 players (19.2%) — Rulli, Balerdi, Medina, Tagliafico, Barco
+- **Serie A**: 1 player (3.8%) — Lautaro Martínez (Inter)
+- **Bundesliga**: 1 player (3.8%) — Palacios (Bayer Leverkusen)
+- **Outside Big-5**: 9 players (34.6%) — includes Messi (MLS), Paredes (Boca), Montiel (River Plate), Otamendi (Benfica)
 
-**[X4 SIGNAL - MARKET VALUE CONCENTRATION]** Top-5 players by estimated market value: Enzo Fernandez (€75M), Alexis Mac Allister (€70M), Lautaro Martinez (€110M), Julian Alvarez (€90M), Cristian Romero (€65M). **Top-5 concentration = €410M / €807.5M = 51%** of total squad value — high concentration indicates star-dependent squad with limited depth quality. Compare to France where top-5 = ~35% (more balanced depth).
+**Comparative context**: Top contenders average 75-85% Big-5 representation. Argentina's 65.4% is **below elite standard**, dragged down by MLS/South American-based veterans and aging stars returning home.
 
-**[X4 SIGNAL - DOMESTIC LEAGUE DISTRIBUTION]** Non-Big-5 players: **MLS (2)**: Messi, De Paul (Inter Miami). **Portuguese Liga (1)**: Otamendi (Benfica). **Argentine Primera (2)**: Paredes (Boca), Montiel (River Plate). **Brazilian Serie A (1)**: Lopez (Palmeiras). **French Ligue 1 (2)**: Balerdi, Medina (Marseille). **Dutch Eredivisie (1)**: Tagliafico (Ajax). **Ligue 1/Other (3)**: Barco (Strasbourg), Senesi (Bournemouth). This 46% non-Big-5 representation is **above average for CONMEBOL** but below European elite standards.
+**[AGE PROFILE & PEAK WINDOW]** Average squad age: **27.04-28.62 years** (sources vary; median estimate ~27.8 years):
+- **Peak age range (24-29)**: ~15 players (58%)
+- **30+ veterans**: 9 players (35%) — includes Messi (38), Otamendi (38), Paredes (32), Di María retired
+- **Under-24 emerging talent**: 3 players (12%) — Barco, Almada, Simeone
+- **Goalkeeper age concern**: All 3 GKs are 32+ (Emiliano Martínez 33, Rulli 34, Musso 32)
 
-**[FACTOR]** Argentina's X4 Squad Quality Index shows **mixed signals**: Market value places them in top-7 globally but 13-47% below main European rivals. Big-5 league representation at 54% is respectable but trails elite European squads by 25-40 percentage points. Squad depth concerns in defense (aging Otamendi) and goalkeeper (all 32+). Market value concentration at 51% indicates star-dependency vulnerability. Age profile at 27.04 years masks bimodal distribution with critical aging veterans (Messi 38, Otamendi 38) and limited integration of next generation.
+**Assessment**: Squad is at the **tail end of its peak window**. Core 2022 winners (Messi, Otamendi, De Paul, Paredes) are 4 years older. This is likely Argentina's **final elite cycle** with this generation. Age profile is **above optimal** for a World Cup winner (ideal: 26.5-27.5 years).
 
-**[MULTIPLIER]** Suggested p50: **0.92** (p5: 0.75, p95: 1.10) — Factor X4 squad quality sits below tournament elite tier; market value 7th globally, Big-5 representation 54% vs 80%+ for European favorites, and concerning depth/age profile in key positions reduces Argentina's structural advantage relative to France/England/Spain squads.
+**[SQUAD DEPTH ANALYSIS]** Position-by-position depth quality:
+
+- **Goalkeeper**: Elite starter (Emiliano Martínez, top-3 globally) but **thin depth** — Rulli and Musso are solid but aging backups. No elite young GK in pipeline.
+  
+- **Defense**: **Strong depth** at center-back (Romero, Lisandro Martínez, Otamendi, Balerdi, Medina — 5 quality options). Full-backs adequate but not elite (Molina, Tagliafico, Montiel). Depth score: **7.5/10**.
+
+- **Midfield**: **Elite depth** — arguably the squad's greatest strength. Mac Allister, Fernández, De Paul, Paredes, Palacios, Lo Celso all capable of starting. Mix of creativity, ball-winning, and box-to-box profiles. Depth score: **9/10**.
+
+- **Attack**: **Moderate depth with concentration risk**. Elite strikers (Lautaro, Álvarez) but **heavy reliance on aging Messi** for creativity. Almada, Nico González, Simeone are promising but unproven at World Cup level. Loss of Di María (retired 2024) removes a proven big-game performer. Depth score: **6.5/10**.
+
+**Overall squad depth score: 7.3/10** — strong in midfield and defense, vulnerable in attack if Messi underperforms or Lautaro/Álvarez injured.
+
+**[TOURNAMENT EXPERIENCE]** **18 of 26 players (69%)** were part of the 2022 World Cup-winning squad — exceptional continuity and championship DNA. Only 8 debutants. This is a **massive intangible advantage**: squad knows how to win knockout matches, handle pressure, and execute Scaloni's system.
+
+**[COMPARATIVE SQUAD QUALITY vs. TOP CONTENDERS]**
+
+| Team | Market Value | Big-5 % | Avg Age | Depth Score | X4 Rank |
+|------|-------------|---------|---------|-------------|---------|
+| France | €1.52B | ~82% | 26.1 | 9/10 | 1st |
+| England | €1.36B | ~88% | 26.8 | 8.5/10 | 2nd |
+| Spain | €1.22B | ~92% | 25.9 | 8/10 | 3rd |
+| Brazil | €928M | ~78% | 27.3 | 7.5/10 | 5th |
+| **Argentina** | **€808M** | **65%** | **27.8** | **7.3/10** | **6th-7th** |
+
+Argentina ranks **6th-7th in raw squad quality** among realistic title contenders, behind France, England, Spain, Portugal, and roughly level with Brazil/Germany.
 
 ---
 
-**RELEVANCE SCORE**: 0.95 — Squad quality is a primary structural driver for tournament success probability.
+### X4 FACTOR SYNTHESIS
 
-**CONFIDENCE**: 0.82 — Market value and league distribution data highly reliable; some uncertainty in translating squad metrics to tournament performance given Argentina's proven tournament mentality and tactical cohesion under Scaloni."
+**[X4 SIGNAL]** Squad market value €807.5M ranks 7th globally (0.53× France, 0.87× Brazil). Big-5 league representation 65.4% is **below elite standard** (vs. 75-85% for top contenders). Market value concentration: top-5 players = ~47% of squad value (high concentration risk). Average age 27.8 years — **at tail end of peak window**, with 35% of squad 30+. Squad depth strong in midfield (9/10) and defense (7.5/10), but vulnerable in attack (6.5/10) due to Messi age (38) and reliance on Lautaro/Álvarez duo.
+
+**[X4 COMPARATIVE]** Argentina's X4 profile is **above tournament median** but **below the elite tier**. France, England, and Spain all field younger, deeper, and more valuable squads with higher Big-5 representation. Argentina's key X4 advantages: (1) **elite midfield depth** — best in the tournament, (2) **championship experience** — 69% of squad won 2022 WC, (3) **tactical cohesion** under Scaloni. Key X4 weaknesses: (1) **aging attack** — Messi 38, limited proven depth behind Lautaro/Álvarez, (2) **low Big-5 %** — 9 players outside elite competition, (3) **concentration risk** — top-3 players = 35% of value.
+
+**[X4 TRAJECTORY]** This is Argentina's **final elite cycle** with this generation. Squad quality has **peaked and is now declining** due to age. 2026 represents the **last realistic window** for this core to win. Post-2026, expect significant drop-off as Messi, Otamendi, Paredes, and other 30+ veterans retire or decline sharply.
+
+**[X4 HISTORICAL CONTEXT]** Argentina's X4 profile mirrors **Italy 2006** (aging squad, 7th in market value, won on experience + tactical cohesion) more than **France 2018** (young, deep, 2nd in value). Historical precedent: **only 2 of last 8 World Cup winners** (Italy 2006, Argentina 2022) ranked outside top-5 in squad value. Both had exceptional intangibles (tactical mastery, championship mentality). Argentina 2026 needs to replicate that formula.
+
+**[MULTIPLIER]** Suggested p50: **0.85** (p5: 0.65, p95: 1.10) — Squad quality (X4) is **below elite tier** but compensated by intangibles (experience, midfield depth, Scaloni system). Market value rank (7th), age profile (tail of peak), and Big-5 % (65%) all suggest Argentina is **not the strongest squad on paper**, justifying 15% downward adjustment from a neutral X4 prior. Upper bound (1.10) reflects championship experience premium; lower bound (0.65) reflects concentration risk and age-related decline scenarios.
+
+---
+
+**CONFIDENCE IN FINDINGS: 0.88** — High confidence due to comprehensive Transfermarkt data, detailed squad breakdowns, and comparative analysis across all major contenders. Uncertainty stems from intangible factors (Messi's final tournament motivation, Scaloni's tactical adjustments) that don't fully show in market value metrics.
+
+**RELEVANCE SCORE: 0.95** — Squad quality is a **primary driver** of World Cup success. X4 directly addresses the forecast question and provides quantitative basis for probabilistic adjustment."
     relevance: 0.5p
     date: 2026-06-18
 }
