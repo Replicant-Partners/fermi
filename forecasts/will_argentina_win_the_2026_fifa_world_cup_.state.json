@@ -1,8 +1,8 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 7,
-  "predicted_probability": 0.022386516102842813,
-  "inside_view_explanation": "Starting from a 2.1% base rate, our model slightly increases the probability to 2.2%. The key factors are: socio_capital, institutional_capacity, dynamic_performance. Most influential: dynamic_performance (49%), squad_quality (17%), institutional_capacity (13%).",
+  "current_version": 8,
+  "predicted_probability": 0.022312671669113965,
+  "inside_view_explanation": "Starting from a 2.1% base rate, our model slightly increases the probability to 2.2%. The key factors are: socio_capital, institutional_capacity, dynamic_performance. Most influential: dynamic_performance (52%), squad_quality (18%), institutional_capacity (15%).",
   "forecast_confidence": 0.4783333333333332,
   "versions": [
     {
@@ -46,14 +46,20 @@
       "timestamp": "2026-06-18 13:25",
       "probability": 0.022386516102842813,
       "change_summary": "2.2% (→), 6 drivers, 4 evidence"
+    },
+    {
+      "version": 8,
+      "timestamp": "2026-06-18 13:30",
+      "probability": 0.022312671669113965,
+      "change_summary": "2.2% (→), 6 drivers, 4 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.9686473313730063,
-    "median": 0.9325970490675637,
-    "p5": 0.5573736808088329,
-    "p95": 1.4991741225071828,
-    "std_dev": 0.29064201618786284,
+    "mean": 0.9654521395289698,
+    "median": 0.9264135414440351,
+    "p5": 0.5530354135017289,
+    "p95": 1.5061891481063914,
+    "std_dev": 0.2945215354008626,
     "iterations": 10000
   },
   "base_rate": {

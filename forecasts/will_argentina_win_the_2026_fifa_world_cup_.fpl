@@ -1,7 +1,7 @@
 question "Will Argentina win the 2026 FIFA World Cup?"
 
 driver socio_capital continuous {
-    distribution: triangular(0.75, 1, 1.1)
+    distribution: triangular(0.95, 1.15, 1.4)
     rationale: "Macro capacity for footballing investment: GDP, population, HDI."
 }
 
