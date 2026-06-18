@@ -761,6 +761,36 @@ async fn ensure_critical_schema(db: &PgPool) {
               change_rationale TEXT, \
               captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
           )"),
+        // fermi_forecast_updates is declared in migration 094 but some
+        // deploys (notably the live one) appear to be missing it — the
+        // /update-probability endpoint 500s with "relation does not exist".
+        // Ensure it here as critical schema so the rate-update path works
+        // even when the migration history is incomplete. Schema mirrors
+        // 094§143.
+        ("fermi_forecast_updates.table",
+         "CREATE TABLE IF NOT EXISTS public.fermi_forecast_updates ( \
+              id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, \
+              forecast_id TEXT NOT NULL REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
+              previous_probability REAL NOT NULL, \
+              new_probability REAL NOT NULL, \
+              reason TEXT, \
+              agent_id TEXT, \
+              evidence_added JSONB, \
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+              revision_trigger TEXT CHECK ( \
+                  revision_trigger IS NULL OR revision_trigger IN ( \
+                      'initial', 'evidence_update', 'agent_correction', \
+                      'schedule_rerun', 'manual', 'bayesops_refit' \
+                  ) \
+              ) \
+          )"),
+        ("fermi_forecast_updates.idx_forecast",
+         "CREATE INDEX IF NOT EXISTS idx_forecast_updates_forecast \
+          ON public.fermi_forecast_updates(forecast_id)"),
+        ("fermi_forecast_updates.idx_time",
+         "CREATE INDEX IF NOT EXISTS idx_forecast_updates_time \
+          ON public.fermi_forecast_updates(created_at)"),
+
         ("forecast_commitments.table",
          "CREATE TABLE IF NOT EXISTS public.forecast_commitments ( \
               commitment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
@@ -825,6 +855,47 @@ async fn ensure_critical_schema(db: &PgPool) {
         ("forecast_spacetime.idx_forecast",
          "CREATE INDEX IF NOT EXISTS idx_spacetime_forecast \
           ON public.forecast_spacetime(forecast_id, revision_seq ASC)"),
+
+        // Trigger function that propagates every insert into
+        // fermi_forecast_updates into a new forecast_spacetime row, which
+        // is what the Trajectory tab reads. Without this the
+        // /update-probability handler succeeds but the trajectory endpoint
+        // shows no rate movement and the cockpit's spacetime view stays
+        // frozen at the initial probability. Migration 140§201 + 149§49
+        // declare the same function — we replicate it here so deploys with
+        // an incomplete migrations history still get the propagation wire.
+        ("forecast_spacetime.trigger_fn",
+         "CREATE OR REPLACE FUNCTION public.fn_forecast_spacetime_on_update() \
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$ \
+          BEGIN \
+              INSERT INTO public.forecast_spacetime ( \
+                  forecast_id, revision_seq, predicted_probability, previous_probability, \
+                  revision_trigger, revision_reason, triggering_agent, evidence_delta, \
+                  fpl_snapshot, revision_ts \
+              ) \
+              SELECT \
+                  NEW.forecast_id, \
+                  COALESCE(( \
+                      SELECT MAX(revision_seq) + 1 \
+                      FROM public.forecast_spacetime \
+                      WHERE forecast_id = NEW.forecast_id \
+                  ), 1), \
+                  NEW.new_probability, \
+                  NEW.previous_probability, \
+                  COALESCE(NEW.revision_trigger, 'evidence_update'), \
+                  NEW.reason, \
+                  NEW.agent_id, \
+                  NEW.evidence_added, \
+                  (SELECT fpl_source FROM public.fermi_forecasts WHERE id = NEW.forecast_id), \
+                  NEW.created_at; \
+              RETURN NEW; \
+          END; \
+          $$"),
+        ("forecast_spacetime.trigger",
+         "DROP TRIGGER IF EXISTS trg_forecast_spacetime ON public.fermi_forecast_updates; \
+          CREATE TRIGGER trg_forecast_spacetime \
+              AFTER INSERT ON public.fermi_forecast_updates \
+              FOR EACH ROW EXECUTE FUNCTION public.fn_forecast_spacetime_on_update()"),
     ];
 
     println!("[ensure_critical_schema] running {} column ensures…", alters.len());
