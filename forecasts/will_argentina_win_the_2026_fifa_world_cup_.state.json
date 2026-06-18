@@ -1,202 +1,86 @@
 {
-  "forecast_id": "949f5764-5b11-4cc5-978f-798a65cc66e8",
-  "current_version": 4,
-  "predicted_probability": 0.022262280389574975,
-  "inside_view_explanation": "Raw model output: 0.02 (no base rate for normalization) Most influential: squad_quality (31%), institutional_capacity (18%), tactical_efficiency (15%).",
-  "forecast_confidence": 0.5333333333333333,
+  "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
+  "current_version": 1,
+  "predicted_probability": 0.09300000220537186,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-18 11:19",
-      "probability": 0.021879257634282112,
-      "change_summary": "Initial: 2.2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-18 11:20",
-      "probability": 0.021879257634282112,
-      "change_summary": "2.2% (→), 6 drivers, 4 evidence, 3 agents"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-18 11:21",
-      "probability": 0.022262280389574975,
-      "change_summary": "2.2% (→), 6 drivers, 4 evidence, 4 agents"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-18 11:22",
-      "probability": 0.022262280389574975,
-      "change_summary": "2.2% (→), 6 drivers, 4 evidence, 4 agents"
+      "timestamp": "2026-06-18 11:25",
+      "probability": 0.09300000220537186,
+      "change_summary": "Initial: 9.3% base=2%, 6 drivers, 1 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.022262280389574975,
-    "median": 0.021813767968139983,
-    "p5": 0.014843890178580186,
-    "p95": 0.031340020947653494,
-    "std_dev": 0.005079772594970344,
-    "iterations": 10000
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups, 8 distinct winners",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via socio_capital, institutional_capacity, dynamic_performance, squad_quality, tactical_efficiency, fixture_context."
   },
-  "base_rate": null,
   "evidence": [
     {
       "id": "macro_data_agent_0",
       "source": "Agent: macro_data_agent",
-      "summary": "Now let me compile the specific numerical data I need from training data and the web results to build the evidence base:\n\n---\n\n## SOCIOECONOMIC CAPITAL EVIDENCE FOR ARGENTINA (2026 FIFA WORLD CUP FORECAST)\n\n### 1. KEY DATA POINTS — ARGENTINA 2024/2025\n\n**[INDICATOR]** GDP per capita (current US$, 2024, World Bank NY.GDP.PCAP.CD / Trading Economics): **$12,667**  \n- Log₁₀(12,667) = **4.103**  \n- Source: Trading Economics / World Bank, 2024 data\n\n**[INDICATOR]** GDP per capita PPP (current international $, 2024, World Bank NY.GDP.PCAP.PP.CD): **$26,547–$30,176** (range across sources)  \n- Median estimate: **~$27,000**  \n- Log₁₀(27,000) = **4.431**  \n- Sources: Trading Economics ($26,547), World Bank compilation ($30,176), TheGlobalEconomy ($26,772), Statista ($25,740)\n\n**[INDICATOR]** Population (total, 2024, World Bank SP.POP.TOTL): **45.70 million**  \n- Log₁₀(45.70) = **1.660**  \n- Source: World Bank / Trading Economics, 2024\n\n**[INDICATOR]** HDI (Human Development Index, 2023, UNDP HDR): **0.870**  \n- Logit(0.870) = ln(0.870 / 0.130) = ln(6.692) = **1.901**  \n- Source: UNDP Human Development Report 2024 (data year 2023), World Scorecard\n\n**[DATA AGE]** All indicators are current: GDP and population from 2024 World Bank / Trading Economics releases; HDI from UNDP HDR 2024 (2023 data year). No bootstrapping required.\n\n---\n\n### 2. HISTORICAL BASE RATE — WORLD CUP WINNERS' SOCIOECONOMIC PROFILES\n\n**[BASELINE]** Recent World Cup winners (2010–2022) socioeconomic snapshot at time of victory:\n\n| Year | Winner    | GDP/capita (current US$) | Population (M) | HDI (approx.) | Log GDP/cap | Log Pop |\n|------|-----------|--------------------------|----------------|---------------|-------------|---------|\n| 2022 | Argentina | $13,962                  | 45.5           | 0.842         | 4.145       | 1.658   |\n| 2018 | France    | ~$42,000                 | 67.0           | 0.901         | 4.623       | 1.826   |\n| 2014 | Germany   | ~$48,000                 | 81.0           | 0.916         | 4.681       | 1.908   |\n| 2010 | Spain     | ~$31,000                 | 46.5           | 0.878         | 4.491       | 1.667   |\n\n**[BASELINE]** Median World Cup winner (2010–2022):  \n- GDP/capita (current US$): **~$37,000** → log₁₀ ≈ **4.568**  \n- Population: **~56M** → log₁₀ ≈ **1.748**  \n- HDI: **~0.884** → logit ≈ **1.93**\n\n**[BASELINE]** Argentina 2024 vs. median recent winner:  \n- GDP/capita: $12,667 vs. $37,000 → **66% below** median winner  \n- Population: 45.7M vs. 56M → **82% of** median (within range)  \n- HDI: 0.870 vs. 0.884 → **98% of** median (near-parity)\n\n**[BASELINE]** Argentina 2024 vs. 2026 World Cup field median (estimated from training data for 48-team field):  \n- Field median GDP/capita (current US$): **~$11,000** (log ≈ 4.04)  \n- Field median population: **~40M** (log ≈ 1.60)  \n- Field median HDI: **~0.75** (logit ≈ 1.10)\n\n**Argentina sits ABOVE the 2026 field median** on all three indicators but **BELOW the historical winner median** on GDP/capita.\n\n---\n\n### 3. TRANSFORM & MULTIPLIER CALCULATION\n\n**[TRANSFORM]** Standard X1 (Socioeconomic Capital) factor formula:  \n```\nX1 = 0.4 × log₁₀(GDP_pc) + 0.3 × log₁₀(Pop) + 0.3 × logit(HDI)\n```\n\n**Argentina 2024 (current US$ basis):**\n```\nX1_ARG = 0.4 × 4.103 + 0.3 × 1.660 + 0.3 × 1.901\n         = 1.641 + 0.498 + 0.570\n         = 2.709\n```\n\n**2026 WC field median (estimated):**\n```\nX1_field = 0.4 × 4.04 + 0.3 × 1.60 + 0.3 × 1.10\n          = 1.616 + 0.480 + 0.330\n          = 2.426\n```\n\n**Recent WC winner median (2010–2022):**\n```\nX1_winner = 0.4 × 4.568 + 0.3 × 1.748 + 0.3 × 1.93\n           = 1.827 + 0.524 + 0.579\n           = 2.930\n```\n\n**[TRANSFORM]** Argentina's X1 relative position:\n- vs. field median: (2.709 − 2.426) / 0.7 ≈ **+0.40 σ** → **~65th percentile** of field\n- vs. winner median: (2.709 − 2.930) / 0.7 ≈ **−0.32 σ** → **~37th percentile** of historical winners\n\n**[TRANSFORM]** Argentina is a **socioeconomic outlier among recent winners** — the only champion since 2010 with GDP/capita below $30k. However, Argentina's **population scale (45.7M) and HDI (0.870) are within the winner envelope**, suggesting that **macro capacity for footballing investment is adequate but not exceptional** relative to European winners.\n\n---\n\n### 4. SUGGESTED MULTIPLIER & CONFIDENCE\n\n**[MULTIPLIER]** Suggested p50: **1.05** (p5: **0.92**, p95: **1.18**) — Argentina's GDP/capita is 66% below the recent winner median but 15% above the 2026 field median; population and HDI are near-parity with historical winners, providing sufficient macro capacity for elite football infrastructure despite lower absolute wealth.\n\n**Rationale:**\n1. **Argentina 2024 GDP/capita ($12,667) is comparable to Argentina 2022 ($13,962)** when they won — demonstrating that **this level of socioeconomic capital is empirically sufficient** for World Cup victory.\n2. **HDI (0.870) and population (45.7M) place Argentina in the 60–70th percentile of the 2026 field**, well above the median qualifier.\n3. **Relative to the field**, Argentina's X1 factor is **+0.40 σ above median** → modest positive adjustment warranted.\n4. **Relative to historical winners**, Argentina is **−0.32 σ below median** → tempers the adjustment.\n5. **Net effect**: Argentina's socioeconomic capital is **slightly favorable vs. the field** but **not a differentiator vs. top European contenders** (France, Germany, Spain, England all have GDP/capita $40k–$55k).\n\n**Confidence: 0.82**\n\n**Justification for confidence:**\n- **High data quality** (0.95): World Bank, UNDP, Trading Economics — authoritative, current (2024), consistent across sources.\n- **Strong historical precedent** (0.85): Argentina 2022 victory at nearly identical socioeconomic profile provides direct empirical validation.\n- **Model uncertainty** (0.75): The X1 factor formula weights are heuristic; the relationship between GDP/capita and World Cup success is **non-linear** (Uruguay 1930/1950, Brazil 1958–2002 won at lower GDP/capita than current European powers).\n- **Aggregate confidence**: (0.95 × 0.85 × 0.75)^(1/3) ≈ **0.82**\n\n---\n\n### SUMMARY TABLE\n\n| Metric                     | Argentina 2024 | 2026 Field Median | Recent Winner Median | ARG Percentile (Field) | ARG Percentile (Winners) |\n|----------------------------|----------------|-------------------|----------------------|------------------------|--------------------------|\n| GDP/capita (current US$)   | $12,667        | ~$11,000          | ~$37,000             | ~60th                  | ~37th                    |\n| Population (millions)      | 45.7           | ~40               | ~56                  | ~65th                  | ~45th                    |\n| HDI                        | 0.870          | ~0.75             | ~0.884               | ~70th                  | ~48th                    |\n| **X1 Factor (composite)**  | **2.709**      | **2.426**         | **2.930**            | **~65th**              | **~37th**                |\n\n**Conclusion:** Argentina's socioeconomic capital is **above-median for the 2026 field** but **below-median for historical winners**. The 2022 victory at a nearly identical profile validates that this level of macro capacity is **sufficient but not exceptional**. Suggested multiplier: **1.05** (modest upward adjustment vs. field baseline, tempered by below-winner-median GDP/capita).",
+      "summary": "# SOCIOECONOMIC CAPITAL (X1) — ARGENTINA, 2026 FIFA WORLD CUP\n\n## CORE INDICATORS\n\n**[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$12,667** (Trading Economics, World Bank source)  \n- Log₁₀ transformation: log₁₀(12,667) = **4.103**\n\n**[INDICATOR]** Population (2024, World Bank SP.POP.TOTL): **45,696,159** (45.7 million)  \n- Log₁₀ transformation: log₁₀(45.7) = **1.660**\n\n**[INDICATOR]** HDI (2023, UNDP Human Development Report 2025, Table 1): **0.865**  \n- Logit transformation: log(0.865 / (1 - 0.865)) = log(0.865 / 0.135) = log(6.407) = **1.857**\n\n**[DATA AGE]** All three indicators are current: GDP/capita and population from 2024 World Bank data; HDI from UNDP HDR 2025 (published May 2025, covering 2023 data). Argentina ranks **47th globally** in HDI (Very High Human Development category).\n\n---\n\n## FIELD BASELINE — 2026 WORLD CUP (48 TEAMS)\n\n**[BASELINE]** The 2026 World Cup field spans extreme socioeconomic diversity:\n- **Richest participants**: USA ($53,202), Switzerland, Norway, Qatar (all >$60k GDP/capita)\n- **Poorest participants**: DR Congo ($752), Haiti (~$1,800), Curaçao (small-island economy)\n- **Per-capita range**: 71× gap between richest and poorest (World Data Lab analysis)\n\n**[BASELINE]** Estimated field **median GDP per capita**: ~$15,000–$18,000  \n- Upper tercile (16 teams): Advanced economies (Western Europe, North America, Japan, South Korea, Australia) — GDP/capita >$30k\n- Middle tercile (16 teams): Upper-middle-income (Argentina, Brazil, Mexico, Uruguay, Saudi Arabia, Iran, Türkiye) — GDP/capita $8k–$25k\n- Lower tercile (16 teams): Lower-middle and low-income (North/Sub-Saharan Africa, Central America, Oceania minnows) — GDP/capita <$8k\n\n**[BASELINE]** Estimated field **median HDI**: ~0.78–0.82 (High Human Development)  \n- Argentina's 0.865 places it in the **upper quartile** of the tournament field\n\n**[BASELINE]** Estimated field **median population (log)**: ~1.5–1.7 (30–50 million)  \n- Argentina at 45.7M (log 1.660) sits near the field median\n\n---\n\n## FACTOR TRANSFORMATION\n\n**[TRANSFORM]** Using standard X1 (Socioeconomic Capital) factor weights:\n- **40% GDP/capita (log)**: 0.40 × 4.103 = 1.641\n- **30% Population (log)**: 0.30 × 1.660 = 0.498\n- **30% HDI (logit)**: 0.30 × 1.857 = 0.557\n\n**[TRANSFORM]** Raw factor score: 1.641 + 0.498 + 0.557 = **2.696**\n\n**[TRANSFORM]** Standardization vs. WC 2026 field baseline:\n- Field median raw score (estimated): ~2.50 (based on median GDP/capita log ~4.20, pop log ~1.60, HDI logit ~1.30)\n- Argentina deviation: +0.20 standard deviations above field median\n- **Argentina sits in the 60th–65th percentile** of the tournament's socioeconomic distribution\n\n**[TRANSFORM]** Key insight: Argentina's **HDI (0.865) significantly exceeds** the field median (~0.78), driven by high educational attainment (18.8 years expected schooling) and life expectancy (77.4 years). However, its **GDP/capita ($12,667) is below** the field median (~$16k), reflecting recent economic volatility and currency depreciation.\n\n---\n\n## MULTIPLIER OUTPUT\n\n**[MULTIPLIER]** Suggested p50: **1.05** (p5: 0.92, p95: 1.18) — Argentina's socioeconomic profile sits modestly above the 2026 World Cup field median, driven by strong human development indicators (HDI 0.865, 47th globally) that offset below-median GDP per capita ($12,667). The country's 45.7M population provides a large talent pool comparable to Spain, while educational infrastructure supports elite athlete development. However, economic instability limits the multiplier effect relative to wealthier European/North American competitors.",
       "relevance": 0.5,
       "date": "2026-06-18",
       "key_findings": [
-        "[INDICATOR]** GDP per capita (current US$, 2024, World Bank NY.GDP.PCAP.CD / Trading Economics): **$12,667**",
-        "Log₁₀(12,667) = **4.103**",
-        "Source: Trading Economics / World Bank, 2024 data",
-        "[INDICATOR]** GDP per capita PPP (current international $, 2024, World Bank NY.GDP.PCAP.PP.CD): **$26,547–$30,176** (range across sources)",
-        "Median estimate: **~$27,000**",
-        "Log₁₀(27,000) = **4.431**",
-        "Sources: Trading Economics ($26,547), World Bank compilation ($30,176), TheGlobalEconomy ($26,772), Statista ($25,740)",
-        "[INDICATOR]** Population (total, 2024, World Bank SP.POP.TOTL): **45.70 million**",
-        "Log₁₀(45.70) = **1.660**",
-        "Source: World Bank / Trading Economics, 2024",
-        "[INDICATOR]** HDI (Human Development Index, 2023, UNDP HDR): **0.870**",
-        "Logit(0.870) = ln(0.870 / 0.130) = ln(6.692) = **1.901**",
-        "Source: UNDP Human Development Report 2024 (data year 2023), World Scorecard",
-        "[DATA AGE]** All indicators are current: GDP and population from 2024 World Bank / Trading Economics releases; HDI from UNDP HDR 2024 (2023 data year). No bootstrapping required.",
-        "[BASELINE]** Recent World Cup winners (2010–2022) socioeconomic snapshot at time of victory:"
-      ]
-    },
-    {
-      "id": "football_institution_agent_0",
-      "source": "Agent: football_institution_agent",
-      "summary": "Excellent. Now I have enough data. Let me compile the institutional capacity assessment for Argentina:\n\n---\n\n## INSTITUTIONAL CAPACITY ASSESSMENT: ARGENTINA (Factor X2)\n**Context:** 2026 FIFA World Cup forecast  \n**Agent:** Football Institution Agent  \n**Date:** June 2026\n\n---\n\n### ROLE CLARIFICATION\n\n⚠️ **Important:** You requested research on the **'dynamic_performance' driver** (recent form, Elo trajectory, match outcomes). That factor is **not** my domain — I am the **Institutional Capacity specialist (X2)**.\n\nHowever, I can provide the institutional infrastructure assessment for Argentina that feeds the broader forecast model. If you need dynamic performance analysis, please route to the appropriate performance/form specialist agent.\n\n---\n\n### KEY FINDINGS: ARGENTINA INSTITUTIONAL CAPACITY\n\n**[PENETRATION]** FIFA-registered players (Wikipedia, citing FIFA data): **331,811 registered players** in a population of **46.06 million** (2024) → **720 registered players per 100k inhabitants**. This is moderately high for CONMEBOL but below European elite penetration rates (Germany ~900/100k, Iceland ~5,800/100k). Argentina also reports 2.33 million unregistered players, indicating massive grassroots participation but lower formalization than UEFA nations.\n\n**[LEAGUE REVENUE]** Liga Profesional Argentina: No consolidated league revenue figure available in Deloitte Money League (which focuses on top-20 European clubs). Individual club data: River Plate and Boca Juniors peaked at **~$215M annual revenue each in 2018** (Grokipedia, citing Forbes), but currency crises have since eroded valuations relative to Brazilian and European rivals. Estimated current aggregate top-division revenue: **~$400-500M** (extrapolating from club-level data and Reddit league-tier comparisons placing Liga Argentina alongside Eredivisie/Liga MX). Log₁₀(450M) ≈ **8.65** — mid-tier globally, far below top-5 European leagues (Premier League ~€7B, La Liga ~€2B).\n\n**[CONFEDERATION]** CONMEBOL confederation coefficient: **~0.92–0.95** relative to UEFA (1.00). Evidence:\n  - **2025 FIFA Club World Cup:** In 12 direct UEFA–CONMEBOL matchups, European clubs won 6, CONMEBOL won 3, drew 3 (Wikipedia, 2025 CWC). CONMEBOL underperformed but remained competitive.\n  - **Historic parity:** Botafogo (Copa Libertadores 2024 winner) defeated the UEFA Champions League winner in the 2025 CWC final, ending a 13-year drought (beIN Sports, June 2025).\n  - **Structural depth:** Brazil holds 6 consecutive Copa Libertadores titles (2019–2024), but Argentine clubs (River, Boca) remain perennial contenders. CONMEBOL is the clear #2 confederation globally.\n\n**[INSTITUTIONAL SIGNAL]** Argentina's **youth academy density** and **coaching infrastructure** are world-class:\n  - AFA expanded regional scouting networks and centralized U-15/U-17 training hubs under Julio Grondona (1990s–2000s), producing consistent talent pipelines (Grokipedia, Argentina U-17 page).\n  - **3,377 clubs** and **37,161 officials** (FIFA Big Count via Wikipedia) — exceptional organizational density for a 46M population.\n  - Argentina has won **23 official international titles** (most in the world, Wikipedia) and produced 3 FIFA World Cup Golden Ball winners (Maradona 1986, Messi 2014 & 2022).\n  - However, **economic instability** (currency crises, inflation) has weakened the domestic league's ability to retain talent. Most elite players export to Europe early, reducing the domestic league's competitive quality relative to its institutional depth.\n\n**[DATA AGE]** Player registration data: FIFA Big Count (last comprehensive update ~2020–2023, exact year unclear from Wikipedia citation). League revenue: 2018 peak figures; 2024 estimates extrapolated. Confederation performance: 2025 Club World Cup (recent). All data sources are within 1–3 years; no critical staleness.\n\n---\n\n### HISTORICAL BASE RATE / COMPARABLE PRECEDENT\n\n**Question:** How do institutional metrics correlate with World Cup success for CONMEBOL nations?\n\n- **Uruguay (1950, 2010 semifinal):** Population 3.4M, but **highest per-capita player penetration in CONMEBOL** (~1,200/100k) and strong domestic league (Peñarol, Nacional). Institutional density >> demographic scale.\n- **Brazil (5 World Cups):** Largest player base (2M+ registered), strongest CONMEBOL league revenue (~$1.5B), UEFA-level confederation strength. Institutional capacity consistently at global maximum.\n- **Argentina (3 World Cups, most recent 2022):** Mid-tier player penetration, mid-tier league revenue, but **elite youth development infrastructure** and **historic institutional memory** (23 titles). Institutional capacity exceeds league financials due to academy quality and cultural embeddedness.\n\n**Precedent:** Nations with **strong youth academies + CONMEBOL confederation strength** but **mid-tier domestic leagues** (Argentina, Uruguay) consistently outperform their league revenue. The institutional multiplier for Argentina should reflect **academy quality > league revenue**.\n\n---\n\n### SUGGESTED MULTIPLIER ADJUSTMENT\n\n**[MULTIPLIER]** Suggested p50: **1.10** (p5: **0.95**, p95: **1.30**) — Argentina's institutional capacity slightly exceeds the field median due to elite youth infrastructure and CONMEBOL strength, but economic instability and mid-tier league revenue prevent a higher boost.\n\n**Rationale:**\n- **Upward pressure:** World-class academy system (AFA hubs, 3,377 clubs), CONMEBOL confederation strength (~0.93 vs UEFA 1.00), historic institutional memory (23 titles, Messi/Maradona legacy).\n- **Downward pressure:** Mid-tier league revenue (~$450M vs Brazil ~$1.5B, Europe €2B+), currency crises eroding domestic competitiveness, player export dependency (most talent leaves for Europe before age 23).\n- **Net effect:** Modest positive multiplier (1.10) with wide uncertainty (0.95–1.30) reflecting tension between elite academies and weakened domestic league.\n\n---\n\n### CONFIDENCE ASSESSMENT\n\n**Confidence: 0.75** (moderate-high)\n\n**Reasoning:**\n- ✅ **Strong data:** Player registration (FIFA), confederation performance (2025 CWC), youth infrastructure (AFA documentation).\n- ⚠️ **Weak data:** No consolidated Liga Profesional revenue figure; estimates extrapolated from club-level and tier-comparison sources.\n- ✅ **Clear precedent:** Argentina's 2022 World Cup win and historic performance align with the \"elite academies + mid-tier league\" institutional profile.\n- ⚠️ **Uncertainty:** Economic volatility (inflation, currency) could further degrade domestic league quality between now and 2026, widening the p5–p95 range.\n\n---\n\n### SUMMARY FOR FACTOR MODEL\n\n| **Input**                     | **Value**                  | **Source**                          |\n|-------------------------------|----------------------------|-------------------------------------|\n| Player penetration rate       | 720 / 100k                 | FIFA Big Count via Wikipedia (2023) |\n| League revenue (log₁₀)        | 8.65 (~$450M)              | Extrapolated from Forbes 2018 + tier comparisons |\n| Confederation coefficient     | 0.93                       | 2025 FIFA CWC results               |\n| **X2 Multiplier (p50)**       | **1.10**                   | Agent synthesis                     |\n| **X2 Multiplier (p5–p95)**    | **0.95 – 1.30**            | Agent synthesis                     |\n\n---\n\n**Next step:** Route to the **dynamic_performance agent** for Elo trajectory, recent form (2024–2026 qualifiers/friendlies), and injury/squad-depth analysis. That agent will populate the performance driver you originally requested.",
-      "relevance": 0.5,
-      "date": "2026-06-18",
-      "key_findings": [
-        "Context:** 2026 FIFA World Cup forecast",
-        "Agent:** Football Institution Agent",
-        "Date:** June 2026",
-        "[PENETRATION]** FIFA-registered players (Wikipedia, citing FIFA data): **331,811 registered players** in a population of **46.06 million** (2024) → **720 registered players per 100k inhabitants**. This is moderately high for CONMEBOL but below European elite penetration rates (Germany ~900/100k, Iceland ~5,800/100k). Argentina also reports 2.33 million unregistered players, indicating massive grassroots participation but lower formalization than UEFA nations.",
-        "[LEAGUE REVENUE]** Liga Profesional Argentina: No consolidated league revenue figure available in Deloitte Money League (which focuses on top-20 European clubs). Individual club data: River Plate and Boca Juniors peaked at **~$215M annual revenue each in 2018** (Grokipedia, citing Forbes), but currency crises have since eroded valuations relative to Brazilian and European rivals. Estimated current aggregate top-division revenue: **~$400-500M** (extrapolating from club-level data and Reddit league-tier comparisons placing Liga Argentina alongside Eredivisie/Liga MX). Log₁₀(450M) ≈ **8.65** — mid-tier globally, far below top-5 European leagues (Premier League ~€7B, La Liga ~€2B).",
-        "[CONFEDERATION]** CONMEBOL confederation coefficient: **~0.92–0.95** relative to UEFA (1.00). Evidence:",
-        "**2025 FIFA Club World Cup:** In 12 direct UEFA–CONMEBOL matchups, European clubs won 6, CONMEBOL won 3, drew 3 (Wikipedia, 2025 CWC). CONMEBOL underperformed but remained competitive.",
-        "**Historic parity:** Botafogo (Copa Libertadores 2024 winner) defeated the UEFA Champions League winner in the 2025 CWC final, ending a 13-year drought (beIN Sports, June 2025).",
-        "**Structural depth:** Brazil holds 6 consecutive Copa Libertadores titles (2019–2024), but Argentine clubs (River, Boca) remain perennial contenders. CONMEBOL is the clear #2 confederation globally.",
-        "[INSTITUTIONAL SIGNAL]** Argentina's **youth academy density** and **coaching infrastructure** are world-class:",
-        "AFA expanded regional scouting networks and centralized U-15/U-17 training hubs under Julio Grondona (1990s–2000s), producing consistent talent pipelines (Grokipedia, Argentina U-17 page).",
-        "**3,377 clubs** and **37,161 officials** (FIFA Big Count via Wikipedia) — exceptional organizational density for a 46M population.",
-        "Argentina has won **23 official international titles** (most in the world, Wikipedia) and produced 3 FIFA World Cup Golden Ball winners (Maradona 1986, Messi 2014 & 2022).",
-        "However, **economic instability** (currency crises, inflation) has weakened the domestic league's ability to retain talent. Most elite players export to Europe early, reducing the domestic league's competitive quality relative to its institutional depth.",
-        "[DATA AGE]** Player registration data: FIFA Big Count (last comprehensive update ~2020–2023, exact year unclear from Wikipedia citation). League revenue: 2018 peak figures; 2024 estimates extrapolated. Confederation performance: 2025 Club World Cup (recent). All data sources are within 1–3 years; no critical staleness."
-      ]
-    },
-    {
-      "id": "football_analyst_0",
-      "source": "Agent: football_analyst",
-      "summary": "# TACTICAL EFFICIENCY EVIDENCE — ARGENTINA 2026 WORLD CUP\n\n## KEY DATA POINTS (with sources and dates)\n\n**SHOT CONVERSION RATE (Copa America 2024 — API-Football, June-July 2024)**\n- **Argentina vs Canada (Group Stage, June 21, 2024)**: 19 total shots, 9 on target, 2 goals = **10.5% conversion rate**, 22.2% on-target conversion\n- **Argentina vs Canada (Semi-Final, July 10, 2024)**: 11 total shots, 3 on target, 2 goals = **18.2% conversion rate**, 66.7% on-target conversion\n- **Argentina vs Colombia (Final, July 15, 2024)**: 11 total shots, 6 on target, 1 goal = **9.1% conversion rate**, 16.7% on-target conversion\n- **Average across Copa America 2024 knockout rounds**: ~12.6% total shot conversion, ~35% on-target conversion\n\n**xG EFFICIENCY (Copa America 2024 — API-Football)**\n- **vs Canada (Group)**: 3.02 xG, 2 goals = **-1.02 underperformance** (-34% below xG)\n- **vs Canada (Semi)**: 2.20 xG, 2 goals = **-0.20 underperformance** (-9% below xG)\n- **vs Colombia (Final)**: 1.04 xG, 1 goal = **-0.04 underperformance** (-4% below xG)\n- **Tournament aggregate**: Argentina scored 15 goals across 7 matches (2.14 goals/game) — API-Football data shows they failed to score in 0 matches\n\n**DEFENSIVE DUELS & PRESSING (2024 evidence)**\n- **Pass completion under pressure**: 82-91% across Copa America knockout matches (API-Football)\n- **Possession control**: 45-64% possession in knockout rounds, showing tactical flexibility\n- **Web source (Threads.com, June 16, 2026)**: Argentina averages **17 shots per game** in their attacking system\n- **Web source (Unexpected Goals, June 14, 2026)**: Reference to USA's PPDA of 6.6 vs Paraguay suggests Argentina faces teams with varying press intensities\n\n**SET-PIECE EFFICIENCY (2022 World Cup reference)**\n- **API-Football WC2022 data**: Argentina penalty conversion 92.31% (12/13 successful) — elite efficiency in high-pressure situations\n- **Goals timing (WC2022)**: 37.5% of goals scored in extra time/106-120 minutes, showing late-game tactical efficiency\n\n**SHOT VOLUME & QUALITY (Recent form)**\n- **2024 Copa America**: Argentina averaged 11-19 shots per match in knockout rounds\n- **Inside-box shots**: 79-91% of shots from inside the penalty area (high-quality shot selection)\n- **Shots on target %**: 47-55% across knockout matches (above typical 33% international average)\n\n## HISTORICAL BASE RATE — WORLD CUP WINNERS' TACTICAL EFFICIENCY\n\n**Shot Conversion Benchmarks:**\n- **Typical World Cup winner shot conversion**: 12-15% (historical average across 2010-2022 tournaments)\n- **Argentina 2022 World Cup**: 15 goals from ~120 shots across 7 matches = **12.5% conversion rate**\n- **Elite tournament teams**: 10-18% conversion range, with clinical finishing in knockout stages\n\n**Defensive Solidity:**\n- **Argentina 2022 WC**: 1.1 goals conceded per game (8 goals in 7 matches), 3 clean sheets (43% clean sheet rate)\n- **World Cup winners average**: 0.8-1.2 goals conceded per game\n- **Argentina Copa 2024**: Strong defensive metrics with goals_prevented ranging from -0.59 to +0.95 per match\n\n**Pressing & Tactical Discipline:**\n- **Historical WC winners**: Moderate pressing intensity (PPDA 8-12), prioritizing defensive shape over high press\n- **Argentina tactical flexibility**: Shifts between 4-3-3 and 4-4-2 based on game state (API-Football lineups data)\n- **Web source (Squawka, June 17, 2026)**: Argentina described as \"old school\" with \"relational\" play rather than rigid positional structures\n\n## FACTOR X5 ANALYSIS (Tactical Efficiency for WC2026)\n\n[X5 SIGNAL] Shot conversion 12.6% in Copa 2024 knockouts — slightly below elite 15% benchmark but within championship range. On-target conversion 35% shows quality shot selection.\n\n[X5 SIGNAL] xG efficiency mixed: -34% underperformance vs Canada (group), but improved to -4% in final. Tournament-wide 2.14 goals/game with 0 scoreless matches = consistent offensive output.\n\n[X5 SIGNAL] Set-piece efficiency elite: 92.31% penalty conversion (WC2022), 37.5% of goals in late-game situations (106-120 min) demonstrates clutch tactical execution under pressure.\n\n[X5 SIGNAL] Defensive duels strong: 82-91% pass completion under pressure, 43% clean sheet rate (WC2022), goals_prevented metrics ranging +0.95 to -0.59 across Copa 2024 matches.\n\n[X5 SIGNAL] Shot quality superior: 79-91% of shots from inside penalty area, 47-55% shots on target (vs 33% international average). Volume of 17 shots/game provides multiple scoring opportunities.\n\n## KEY FINDINGS\n\n[BASE RATE] World Cup winners historically convert 12-15% of shots, maintain 0.8-1.2 goals conceded/game, and achieve 40-50% clean sheet rates in knockout stages.\n\n[MATCH STATS] Argentina Copa 2024: 12.6% shot conversion, 2.14 goals/game, 47-55% shots on target, 82-91% pass completion under pressure — all within championship parameters.\n\n[TACTICAL EFFICIENCY] Set-piece mastery (92.31% penalties) and late-game execution (37.5% goals in 106-120 min) provide decisive edges in tight knockout matches.\n\n[DEFENSIVE STRUCTURE] 1.1 goals conceded/game (WC2022), tactical flexibility between 4-3-3/4-4-2 formations, strong positional discipline despite \"relational\" rather than rigid positional play.\n\n[SHOT QUALITY] 79-91% shots from inside box, 17 shots/game average, elite shot selection compensates for moderate conversion rate — volume × quality = consistent goal production.\n\n[FACTOR] X5 tactical efficiency places Argentina in top quartile of WC2026 field: elite set-piece conversion, superior shot quality/volume, proven defensive solidity, and clutch late-game execution.\n\n[MULTIPLIER] Suggested p50: 1.05 (p5: 0.85, p95: 1.30) — Tactical efficiency slightly above WC winner baseline via set-piece mastery and shot quality, but moderate conversion rate prevents higher multiplier.\n\n## CONFIDENCE & RELEVANCE\n\n**Confidence**: 0.75 — Strong recent tournament data (Copa 2024) and WC2022 baseline, but limited 2025-2026 international match data. Shot conversion shows variance (9-18% range across matches), and xG underperformance in some matches raises questions about clinical finishing consistency.\n\n**Relevance**: 0.90 — Tactical efficiency (X5 factor) is highly relevant to tournament success. Set-piece efficiency and late-game execution are proven differentiators in knockout football. Argentina's metrics align with historical WC winner profiles, though not exceptional enough to warrant major upward adjustment.\n\n**Key Uncertainty**: Shot conversion variance (9.1% to 18.2% across Copa 2024 knockouts) suggests tactical efficiency is match-dependent. Against elite defensive opponents (Colombia final: 9.1%), conversion drops significantly. WC2026 knockout opponents likely stronger than Copa 2024 field.",
-      "relevance": 0.5,
-      "date": "2026-06-18",
-      "key_findings": [
-        "SHOT CONVERSION RATE (Copa America 2024 — API-Football, June-July 2024)**",
-        "**Argentina vs Canada (Group Stage, June 21, 2024)**: 19 total shots, 9 on target, 2 goals = **10.5% conversion rate**, 22.2% on-target conversion",
-        "**Argentina vs Canada (Semi-Final, July 10, 2024)**: 11 total shots, 3 on target, 2 goals = **18.2% conversion rate**, 66.7% on-target conversion",
-        "**Argentina vs Colombia (Final, July 15, 2024)**: 11 total shots, 6 on target, 1 goal = **9.1% conversion rate**, 16.7% on-target conversion",
-        "**Average across Copa America 2024 knockout rounds**: ~12.6% total shot conversion, ~35% on-target conversion",
-        "xG EFFICIENCY (Copa America 2024 — API-Football)**",
-        "**vs Canada (Group)**: 3.02 xG, 2 goals = **-1.02 underperformance** (-34% below xG)",
-        "**vs Canada (Semi)**: 2.20 xG, 2 goals = **-0.20 underperformance** (-9% below xG)",
-        "**vs Colombia (Final)**: 1.04 xG, 1 goal = **-0.04 underperformance** (-4% below xG)",
-        "**Tournament aggregate**: Argentina scored 15 goals across 7 matches (2.14 goals/game) — API-Football data shows they failed to score in 0 matches",
-        "DEFENSIVE DUELS & PRESSING (2024 evidence)**",
-        "**Pass completion under pressure**: 82-91% across Copa America knockout matches (API-Football)",
-        "**Possession control**: 45-64% possession in knockout rounds, showing tactical flexibility",
-        "**Web source (Threads.com, June 16, 2026)**: Argentina averages **17 shots per game** in their attacking system",
-        "**Web source (Unexpected Goals, June 14, 2026)**: Reference to USA's PPDA of 6.6 vs Paraguay suggests Argentina faces teams with varying press intensities"
-      ]
-    },
-    {
-      "id": "fixture_context_agent_0",
-      "source": "Agent: fixture_context_agent",
-      "summary": "# FIXTURE CONTEXT ANALYSIS: ARGENTINA AT 2026 FIFA WORLD CUP\n\n## KEY DATA POINTS\n\n[HOST] **Non-host status**: Argentina is NOT a co-host (USA/Canada/Mexico are). Host_status = 0. Historical data shows host nations have ~26% win rate vs ~5% baseline (FutbolUpdate, 2024), and >90% advance from group stage when playing all group matches at home (CAWC Soccer 2026). Argentina receives NO host advantage.\n\n[CLIMATE] **Climate delta: MODERATE DISADVANTAGE**\n- **Argentina baseline**: Buenos Aires (31m elevation) has hot, humid summers with temperatures 25-30°C (77-86°F) and high humidity (Britannica, 2026; SA Vacations, 2024)\n- **Group J venues**: \n  - Match 1 (June 16): Kansas City, MO (Arrowhead Stadium, 257m elevation)\n  - Match 2 (June 22): Arlington, TX (AT&T Stadium, 184m elevation)  \n  - Match 3 (June 27): Location TBD from fixture list\n- **Dallas/Arlington June climate**: Average highs 95°F (35°C), humidity 60-67%, heat index 107.6°F/42°C (Climate-Data.org, Weather Atlas 2026)\n- **Climate delta assessment**: Argentine players are acclimated to humid subtropical conditions similar to southeastern US. Temperature differential is minimal (~5°C). Climate_delta ≈ 0.15 (slight disadvantage due to extreme heat index in Texas venues, but within tolerance range for South American teams).\n\n[REST DAYS] **Standard group-stage schedule: NEUTRAL**\n- Group J runs June 16-27, 2026 (Wikipedia, 2026)\n- Match 1: June 16 vs Algeria (Kansas City)\n- Match 2: June 22 vs Austria (Arlington) — **6 rest days**\n- Match 3: June 27 vs Jordan — **5 rest days**\n- **Assessment**: Both intervals exceed the 3-day threshold for full recovery. FIFA 2026 format provides \"balanced rest time between competing teams\" (Bleacher Report, 2026). Rest_days normalized score ≈ 0.85 (above baseline, no congestion penalty).\n\n[ALTITUDE] **Minimal altitude delta: NEUTRAL TO SLIGHT ADVANTAGE**\n- **Argentina training base**: Buenos Aires at 31m above sea level (Elevation.city); most Argentine domestic venues <100m\n- **Group J venues**: Kansas City 257m, Arlington 184m — effectively sea level\n- **Comparison**: Argentina regularly plays CONMEBOL qualifiers at extreme altitude (La Paz 3,600m, Quito 2,850m per ESPN 2023). North American venues represent ZERO altitude challenge.\n- **Altitude_delta**: -0.05 (slight advantage — opponents may include European teams less altitude-adapted, while Argentina is altitude-resilient from CONMEBOL experience)\n\n[TOURNAMENT AVG] **Exogenous context across tournament progression**\n- If Argentina advances (high probability as defending champions in moderate Group J), knockout venues span 16 US/Canada/Mexico cities\n- Mexico City Estadio Azteca (2,200m) hosts some knockout matches — Argentina has proven altitude performance\n- Most knockout venues are temperate, sea-level locations (Miami, LA, NYC area)\n- No systematic environmental headwinds beyond group stage\n\n## HISTORICAL BASE RATE\n\n**Non-host defending champions**: \n- 1962 Brazil (Chile WC): Won again\n- 1966 Brazil (England WC): Group stage exit\n- 1990 Argentina (Italy WC): Runners-up\n- 1994 Germany (USA WC): Quarter-finals\n- 1998 Brazil (France WC): Runners-up\n- 2002 France (Korea/Japan WC): Group stage exit\n- 2010 Italy (South Africa WC): Group stage exit\n- 2014 Spain (Brazil WC): Group stage exit\n- 2018 Germany (Russia WC): Group stage exit\n\n**Pattern**: Defending champions WITHOUT host advantage show high variance. Recent trend (2002-2018) shows 4/5 failed to reach semi-finals. However, Argentina's specific fixture context (neutral climate, zero altitude challenge, adequate rest) removes typical environmental penalties.\n\n## MULTIPLIER ASSESSMENT\n\n**Factor decomposition**:\n- Host status: 0.00 (no advantage, but also no away-team penalty in neutral North America)\n- Climate delta: -0.05 (marginal disadvantage in Texas heat, offset by subtropical acclimation)\n- Rest days: +0.10 (optimal 5-6 day intervals, no congestion)\n- Altitude delta: +0.05 (sea-level venues favor Argentina's altitude-resilient squad)\n\n**Net exogenous context effect**: +0.10 relative to field-average team\n\nThe current prior (p50=1.00) assumes neutral exogenous context. Argentina faces SLIGHTLY FAVORABLE conditions: no host disadvantage in a co-hosted tournament, climate within tolerance, excellent rest schedule, and zero altitude challenge despite being altitude-proven.\n\n[MULTIPLIER] Suggested p50: **1.05** (p5: 0.95, p95: 1.15) — Argentina faces marginally favorable exogenous conditions with no systematic environmental headwinds; the slight uplift reflects optimal rest scheduling and altitude neutrality, offset by non-host status in a host-advantaged tournament.\n\n## CONFIDENCE ASSESSMENT\n\n**Confidence: 0.75**\n\n**Rationale**: High confidence in venue/altitude data (verified through multiple sources), moderate confidence in climate impact (well-documented but team-specific acclimation varies), and moderate confidence in rest-day effects (FIFA research is robust but 2026's 48-team format is untested at scale). The p5-p95 range reflects uncertainty around how Argentina's specific squad composition handles June heat in Texas venues.",
-      "relevance": 0.5,
-      "date": "2026-06-18",
-      "key_findings": [
-        "[HOST] **Non-host status**: Argentina is NOT a co-host (USA/Canada/Mexico are). Host_status = 0. Historical data shows host nations have ~26% win rate vs ~5% baseline (FutbolUpdate, 2024), and >90% advance from group stage when playing all group matches at home (CAWC Soccer 2026). Argentina receives NO host advantage.",
-        "**Argentina baseline**: Buenos Aires (31m elevation) has hot, humid summers with temperatures 25-30°C (77-86°F) and high humidity (Britannica, 2026; SA Vacations, 2024)",
-        "**Group J venues**:",
-        "Match 1 (June 16): Kansas City, MO (Arrowhead Stadium, 257m elevation)",
-        "Match 2 (June 22): Arlington, TX (AT&T Stadium, 184m elevation)",
-        "Match 3 (June 27): Location TBD from fixture list",
-        "**Dallas/Arlington June climate**: Average highs 95°F (35°C), humidity 60-67%, heat index 107.6°F/42°C (Climate-Data.org, Weather Atlas 2026)",
-        "**Climate delta assessment**: Argentine players are acclimated to humid subtropical conditions similar to southeastern US. Temperature differential is minimal (~5°C). Climate_delta ≈ 0.15 (slight disadvantage due to extreme heat index in Texas venues, but within tolerance range for South American teams).",
-        "Group J runs June 16-27, 2026 (Wikipedia, 2026)",
-        "Match 1: June 16 vs Algeria (Kansas City)",
-        "Match 2: June 22 vs Austria (Arlington) — **6 rest days**",
-        "Match 3: June 27 vs Jordan — **5 rest days**",
-        "**Assessment**: Both intervals exceed the 3-day threshold for full recovery. FIFA 2026 format provides \"balanced rest time between competing teams\" (Bleacher Report, 2026). Rest_days normalized score ≈ 0.85 (above baseline, no congestion penalty).",
-        "**Argentina training base**: Buenos Aires at 31m above sea level (Elevation.city); most Argentine domestic venues <100m",
-        "**Group J venues**: Kansas City 257m, Arlington 184m — effectively sea level"
+        "[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$12,667** (Trading Economics, World Bank source)",
+        "Log₁₀ transformation: log₁₀(12,667) = **4.103**",
+        "[INDICATOR]** Population (2024, World Bank SP.POP.TOTL): **45,696,159** (45.7 million)",
+        "Log₁₀ transformation: log₁₀(45.7) = **1.660**",
+        "[INDICATOR]** HDI (2023, UNDP Human Development Report 2025, Table 1): **0.865**",
+        "Logit transformation: log(0.865 / (1 - 0.865)) = log(0.865 / 0.135) = log(6.407) = **1.857**",
+        "[DATA AGE]** All three indicators are current: GDP/capita and population from 2024 World Bank data; HDI from UNDP HDR 2025 (published May 2025, covering 2023 data). Argentina ranks **47th globally** in HDI (Very High Human Development category).",
+        "[BASELINE]** The 2026 World Cup field spans extreme socioeconomic diversity:",
+        "**Richest participants**: USA ($53,202), Switzerland, Norway, Qatar (all >$60k GDP/capita)",
+        "**Poorest participants**: DR Congo ($752), Haiti (~$1,800), Curaçao (small-island economy)",
+        "**Per-capita range**: 71× gap between richest and poorest (World Data Lab analysis)",
+        "[BASELINE]** Estimated field **median GDP per capita**: ~$15,000–$18,000",
+        "Upper tercile (16 teams): Advanced economies (Western Europe, North America, Japan, South Korea, Australia) — GDP/capita >$30k",
+        "Middle tercile (16 teams): Upper-middle-income (Argentina, Brazil, Mexico, Uruguay, Saudi Arabia, Iran, Türkiye) — GDP/capita $8k–$25k",
+        "Lower tercile (16 teams): Lower-middle and low-income (North/Sub-Saharan Africa, Central America, Oceania minnows) — GDP/capita <$8k"
       ]
     }
   ],
   "agents": [
     {
-      "name": "macro_data_agent_socio_capital",
+      "name": "macro_data_agent",
       "agent_type": "research",
-      "query": "For the forecast: \"Will Argentina win the 2026 FIFA World Cup?\" Research evidence for the 'socio_capital' driver. Current estimate: p5=0.80, p50=1.00, p95=1.20 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Macro capacity for footballing investment: GDP, population, HDI. Be specific and quantitative — numbers, percentages, named sources.",
-      "schedule": "Some(Once)",
+      "query": "GDP per capita, population, HDI for Argentina (2024–2026 latest available)",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
       "driver_refs": [
         "socio_capital"
       ]
     },
     {
-      "name": "football_institution_agent_institutional_capacity",
+      "name": "football_institution_agent",
       "agent_type": "research",
-      "query": "For the forecast: \"Will Argentina win the 2026 FIFA World Cup?\" Research evidence for the 'institutional_capacity' driver. Current estimate: p5=0.75, p50=1.00, p95=1.30 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Federation strength, league development, player pipeline depth. Be specific and quantitative — numbers, percentages, named sources.",
-      "schedule": "Some(Once)",
+      "query": "Player registration, top-flight league revenue, confederation coefficient for Argentina",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
       "driver_refs": [
         "institutional_capacity"
       ]
     },
     {
-      "name": "football_institution_agent_dynamic_performance",
+      "name": "football_analyst",
       "agent_type": "research",
-      "query": "For the forecast: \"Will Argentina win the 2026 FIFA World Cup?\" Research evidence for the 'dynamic_performance' driver. Current estimate: p5=0.80, p50=1.00, p95=1.20 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Recent form and Elo trajectory — refits as match outcomes accumulate. Be specific and quantitative — numbers, percentages, named sources.",
-      "schedule": "Some(Once)",
+      "query": "Latest Elo rating, last 5 matches form, key player availability, market value distribution for Argentina",
+      "schedule": "Some(Every { interval: 1, unit: Week })",
       "driver_refs": [
-        "dynamic_performance"
-      ]
-    },
-    {
-      "name": "football_analyst_squad_quality",
-      "agent_type": "research",
-      "query": "For the forecast: \"Will Argentina win the 2026 FIFA World Cup?\" Research evidence for the 'squad_quality' driver. Current estimate: p5=0.70, p50=1.00, p95=1.35 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Top-flight league penetration + market-value concentration; updates as injuries / form are reported. Be specific and quantitative — numbers, percentages, named sources.",
-      "schedule": "Some(Once)",
-      "driver_refs": [
-        "squad_quality"
-      ]
-    },
-    {
-      "name": "football_analyst_dynamic_performance",
-      "agent_type": "research",
-      "query": "For the forecast: \"Will Argentina win the 2026 FIFA World Cup?\" Research evidence for the 'dynamic_performance' driver. Current estimate: p5=0.80, p50=1.00, p95=1.20 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Recent form and Elo trajectory — refits as match outcomes accumulate. Be specific and quantitative — numbers, percentages, named sources.",
-      "schedule": "Some(Every { interval: 1, unit: Day })",
-      "driver_refs": [
-        "dynamic_performance"
-      ]
-    },
-    {
-      "name": "football_analyst_tactical_efficiency",
-      "agent_type": "research",
-      "query": "For the forecast: \"Will Argentina win the 2026 FIFA World Cup?\" Research evidence for the 'tactical_efficiency' driver. Current estimate: p5=0.80, p50=1.00, p95=1.25 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Shot conversion, defensive duels, pressing intensity — observable per-match. Be specific and quantitative — numbers, percentages, named sources.",
-      "schedule": "Some(Once)",
-      "driver_refs": [
+        "dynamic_performance",
+        "squad_quality",
         "tactical_efficiency"
       ]
     },
     {
-      "name": "fixture_context_agent_fixture_context",
+      "name": "fixture_context_agent",
       "agent_type": "research",
-      "query": "For the forecast: \"Will Argentina win the 2026 FIFA World Cup?\" Research evidence for the 'fixture_context' driver. Current estimate: p5=0.90, p50=1.00, p95=1.10 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Per-fixture context: venue, climate, rest, altitude. Volatile, refreshed per match. Be specific and quantitative — numbers, percentages, named sources.",
-      "schedule": "Some(Every { interval: 1, unit: Week })",
+      "query": "Upcoming fixtures for Argentina: venue, climate, rest days, altitude, opponent travel burden",
+      "schedule": "Some(Every { interval: 3, unit: Day })",
       "driver_refs": [
         "fixture_context"
       ]
@@ -204,16 +88,16 @@
   ],
   "driver_confidence": {},
   "polymarket": {
-    "event_id": null,
-    "market_id": null,
-    "question": null,
-    "market_price": null,
-    "volume_24h": null,
+    "event_id": "30615",
+    "market_id": "558938",
+    "question": "Will Argentina win the 2026 FIFA World Cup?",
+    "market_price": 0.1155,
+    "volume_24h": 6057139.718464001,
     "liquidity": null,
-    "confidence": null,
+    "confidence": "Very High",
     "price_change_1w": null,
-    "url": null,
+    "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": []
   },
-  "workspace_id": null
+  "workspace_id": "c7f6cd62-a3a3-4efb-ad35-8e126ce2f2a4"
 }
