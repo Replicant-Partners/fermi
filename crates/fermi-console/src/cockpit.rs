@@ -274,6 +274,20 @@ pub struct CockpitState {
     /// Spawned from the `fermi_forecast` app on first orchestration.
     pub workspace_id: Option<String>,
 
+    /// The workspace's `params` output as a flat key→Value map. Loaded
+    /// on workspace mount and passed into the Executor via set_params /
+    /// set_json_params before each simulation. Carries:
+    ///   - per-team scalar bindings (elo_current, gdp_per_capita_log, …)
+    ///     written by the spawn script
+    ///   - `<driver>_fitted` JSON written by the BayesOps refit-accept
+    ///     handler so the next sim picks up the fitted posterior
+    ///
+    /// Without this, Ctrl+R uses an empty param context and the WC
+    /// team_prior's distribution expressions fail with "Undefined
+    /// variable: gdp_per_capita_log" (silently 0.0-substituted today,
+    /// which is why every team gets nearly the same rate).
+    pub workspace_params: serde_json::Map<String, serde_json::Value>,
+
     // ── BayesOps R-2: Sparkline UX ─────────────────────────────────
     /// Per-driver pending-fit state, keyed by driver name. Populated by
     /// `load_bayesops_state()` from `/api/workspaces/:id/bayesops/state`.
@@ -540,6 +554,7 @@ impl CockpitState {
             schedules_loading: false,
             pending_toasts: Vec::new(),
             workspace_id: None,
+            workspace_params: serde_json::Map::new(),
             bayesops_pending: std::collections::HashMap::new(),
             bayesops_decisions_in_flight: std::collections::HashSet::new(),
             timeline_data: None,
@@ -2351,14 +2366,18 @@ impl CockpitState {
                         .and_then(|a| a.driver_refs.first().cloned());
 
                     if let Some(dn) = driver_name {
+                        // Read the driver's current center across all the
+                        // distribution shapes our templates use (not just
+                        // Triangular). For expression-typed args the
+                        // literal isn't available — fall back to 1.0 so
+                        // the comparison test below still has a finite
+                        // anchor and the suggestion gets shown rather than
+                        // silently filtered.
                         let current_p50 = self
                             .program
                             .driver(&dn)
                             .and_then(|d| d.distribution.as_ref())
-                            .map(|dist| match dist {
-                                Distribution::Triangular { p50, .. } => expr_to_f64(p50),
-                                _ => 1.0,
-                            })
+                            .map(distribution_center_or_default)
                             .unwrap_or(1.0);
 
                         // Only create suggestion if meaningfully different (>1% change)
@@ -3011,6 +3030,58 @@ impl CockpitState {
     // Called on workspace-mount, after every refit, and whenever a
     // `bayesops_fit_pending` event lands in the workspace messages.
 
+    /// Fetch the workspace's `params` output from the server and store it
+    /// on `self.workspace_params`. Called on workspace mount, after every
+    /// BayesOps accept (so a freshly-fitted distribution flows into the
+    /// next sim), and after any local set_workspace_output mutation.
+    ///
+    /// The params object holds two distinct shapes:
+    ///   - Scalar bindings written by the spawn script: `elo_current`,
+    ///     `gdp_per_capita_log`, etc. The Executor picks these up via
+    ///     `set_params`.
+    ///   - JSON-typed fitted distributions written by accept-pending:
+    ///     `<driver>_fitted`. The Executor picks these up via
+    ///     `set_json_params`. Read-side is `fitted_distribution_for`.
+    pub fn load_workspace_params(&mut self, cx: &mut Context<Self>) {
+        let Some(ref ws_id) = self.workspace_id else {
+            return;
+        };
+        let ws_id = ws_id.clone();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            match api.get_workspace_output(&ws_id, "params").await {
+                Ok(resp) => {
+                    // The handler returns either {"value": <obj>} or the
+                    // raw object directly depending on whether the row
+                    // exists. Tolerate both shapes.
+                    let value = resp
+                        .get("value")
+                        .cloned()
+                        .unwrap_or(resp);
+                    let map = value.as_object().cloned().unwrap_or_default();
+                    let n = map.len();
+                    this.update(cx, |state, cx| {
+                        state.workspace_params = map;
+                        log::info!(
+                            "[workspace-params] loaded {} keys for {}",
+                            n, ws_id
+                        );
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[workspace-params] load failed for {}: {} \
+                         — sim will fall back to empty param context",
+                        ws_id, e
+                    );
+                }
+            }
+        })
+        .detach();
+    }
+
     pub fn load_bayesops_state(&mut self, cx: &mut Context<Self>) {
         let Some(ref ws_id) = self.workspace_id else {
             return;
@@ -3116,6 +3187,12 @@ impl CockpitState {
                                 driver_name
                             ),
                         });
+                        // Re-fetch workspace params so the freshly-written
+                        // `<driver>_fitted` lands in self.workspace_params
+                        // and the very next Ctrl+R picks it up via
+                        // set_json_params. Without this the user has to
+                        // close + reopen to see the fit's effect.
+                        state.load_workspace_params(cx);
                     }
                     Err(e) => {
                         state.messages.push(AssistantMessage {
@@ -3876,25 +3953,104 @@ impl CockpitState {
             .find(|s| s.id == suggestion_id)
             .cloned();
         if let Some(sug) = sug {
+            // ── Mutate the driver distribution to reflect the agent's
+            //    suggested center value ────────────────────────────────
+            //
+            // Previously this only fired on Triangular distributions and
+            // computed a `ratio = suggested / expr_to_f64(old_p50)` to
+            // scale p95. That broke in two ways on the WC team_prior:
+            //
+            //   (1) `dynamic_performance` is `normal(mean_expr, 0.20)`,
+            //       so the Triangular match arm silently no-op'd and the
+            //       suggestion appeared accepted without moving anything.
+            //
+            //   (2) Other drivers use `triangular(0.6 + 0.4*(...), ...)`
+            //       — expression args, not Number literals. expr_to_f64
+            //       returns 0.0 for any non-Number expression, so the
+            //       ratio went to inf/0 and p95 got rewritten to garbage.
+            //
+            // The simpler, correct shape: write the suggested center
+            // directly. If the driver was a Triangular with literal args,
+            // also re-derive p5/p95 around the new center using the same
+            // half-width the original literals carried so the spread
+            // shape is preserved. If the literals were expressions (or
+            // it's a Normal), we just rewrite the center and leave the
+            // original spread expression alone — accepting the price
+            // that BayesOps will refit the spread on its own loop.
             if let Some(driver) = self.program.driver_mut(&sug.driver_name) {
                 if let Some(ref mut dist) = driver.distribution {
-                    if let Distribution::Triangular {
-                        ref p5,
-                        ref mut p50,
-                        ref mut p95,
-                        ..
-                    } = dist
-                    {
-                        let old_val = expr_to_f64(p50);
-                        let ratio = if old_val > 0.0 {
-                            sug.suggested_p50 / old_val
-                        } else {
-                            1.0
-                        };
-                        *p50 = Expression::Number(sug.suggested_p50);
-                        // Scale p95 proportionally to preserve spread shape
-                        let old_p95 = expr_to_f64(p95);
-                        *p95 = Expression::Number(old_p95 * ratio);
+                    match dist {
+                        Distribution::Triangular { p5, p50, p95 } => {
+                            let new_center = sug.suggested_p50;
+                            // Try to preserve the original spread when both
+                            // p5 and p95 were literals. Otherwise just
+                            // pin the center; spread stays as the
+                            // expression that was there.
+                            let lo = match p5 {
+                                Expression::Number(n) => Some(*n),
+                                _ => None,
+                            };
+                            let hi = match p95 {
+                                Expression::Number(n) => Some(*n),
+                                _ => None,
+                            };
+                            let old_center = match p50 {
+                                Expression::Number(n) => Some(*n),
+                                _ => None,
+                            };
+                            *p50 = Expression::Number(new_center);
+                            if let (Some(lo_v), Some(hi_v), Some(c_v)) = (lo, hi, old_center) {
+                                let half_lo = c_v - lo_v;
+                                let half_hi = hi_v - c_v;
+                                *p5 = Expression::Number(new_center - half_lo);
+                                *p95 = Expression::Number(new_center + half_hi);
+                            }
+                        }
+                        Distribution::Normal { mean, .. } => {
+                            // Replace the center expression with the
+                            // suggested literal; stddev untouched. The
+                            // template's normal(0.85 + 0.30 * (elo-1700)/300,
+                            // 0.20) becomes normal(<suggested>, 0.20). On
+                            // re-render of the FPL tab the operator can see
+                            // their override.
+                            *mean = Expression::Number(sug.suggested_p50);
+                        }
+                        Distribution::Lognormal { median, .. } => {
+                            *median = Expression::Number(sug.suggested_p50);
+                        }
+                        Distribution::Uniform { low, high } => {
+                            // Re-center: pin the midpoint to suggested,
+                            // preserve half-width if both bounds are
+                            // literals.
+                            let lo = match low {
+                                Expression::Number(n) => Some(*n),
+                                _ => None,
+                            };
+                            let hi = match high {
+                                Expression::Number(n) => Some(*n),
+                                _ => None,
+                            };
+                            if let (Some(lo_v), Some(hi_v)) = (lo, hi) {
+                                let half = (hi_v - lo_v) / 2.0;
+                                *low = Expression::Number(sug.suggested_p50 - half);
+                                *high = Expression::Number(sug.suggested_p50 + half);
+                            }
+                        }
+                        Distribution::Beta { .. } => {
+                            // Beta parameter mapping isn't a simple "set the
+                            // center" — alpha/beta interact with min/max.
+                            // Skip for now; surface to the user instead of
+                            // silently dropping their click.
+                            self.messages.push(AssistantMessage {
+                                node: format!("driver:{}", sug.driver_name),
+                                kind: MessageKind::Warning,
+                                text: format!(
+                                    "Beta distributions don't support direct p50 override yet. \
+                                     Edit the driver manually or wait for BayesOps to refit."
+                                ),
+                            });
+                            return;
+                        }
                     }
                 }
             }
@@ -4488,6 +4644,57 @@ impl CockpitState {
         };
 
         let mut executor = ::fermi::executor::Executor::new(10_000);
+
+        // ── Bind workspace params into the Executor ──────────────────
+        //
+        // workspace_params is a flat key→Value map pulled from
+        // workspace_outputs[ws].params. Two contributors:
+        //   - Spawn-time scalar bindings (elo_current=1850, etc.) written
+        //     by respawn_aligned.py from the team CSV.
+        //   - BayesOps fitted distributions (`<driver>_fitted` → JSON)
+        //     written by the accept_pending handler.
+        //
+        // The Executor takes scalars via set_params (reachable as plain
+        // identifiers in distribution-arg expressions) and structured
+        // overrides via set_json_params (read by fitted_distribution_for
+        // for learnable drivers). Without this wire, the WC team_prior's
+        // `normal((elo_current - 1700) / 300, 0.20)` resolves to
+        // EvalError(UndefinedVariable("elo_current")) and every team
+        // collapses onto the same rate.
+        let mut numeric_params: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
+        let mut json_params: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        for (k, v) in &self.workspace_params {
+            // Numbers get bound as scalars. Booleans coerce to 0.0/1.0
+            // because the executor's evaluator only knows f64. Strings
+            // are skipped — distribution-args don't reference them.
+            // Object/Array values go to json_params (BayesOps fits live
+            // there).
+            match v {
+                serde_json::Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        numeric_params.insert(k.clone(), f);
+                    }
+                }
+                serde_json::Value::Bool(b) => {
+                    numeric_params.insert(k.clone(), if *b { 1.0 } else { 0.0 });
+                }
+                serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                    json_params.insert(k.clone(), v.clone());
+                }
+                _ => {} // String / Null — skip, not a numeric/structured param
+            }
+        }
+        let n_numeric = numeric_params.len();
+        let n_json = json_params.len();
+        executor.set_params(numeric_params);
+        executor.set_json_params(json_params);
+        log::info!(
+            "[sim] Bound {} scalar + {} JSON params from workspace",
+            n_numeric, n_json
+        );
+
         match executor.execute(&parsed) {
             Ok(results) => {
                 let elapsed = start.elapsed();
@@ -10949,7 +11156,18 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.right_tab = t;
                     if t == RightTab::Fpl || t == RightTab::Wiki {
-                        this.cached_fpl = generate_fpl_text(&this.program);
+                        // Refresh the cached_fpl so the FPL/Wiki view shows
+                        // recent driver edits — but only if the AST emitter
+                        // can faithfully round-trip the loaded program.
+                        // Workspace-backed forecasts (factor/agent/param/
+                        // feeds_from blocks) MUST stay as the loaded source;
+                        // see regenerate_cached_fpl_if_safe for the long-form
+                        // rationale. Without this guard, tabbing to the FPL
+                        // or Wiki view of a workspace-backed forecast would
+                        // strip its agents+drivers down to a 2-driver shell
+                        // and the next Ctrl+R would fail with "Undefined
+                        // variable: dynamic_performance".
+                        this.regenerate_cached_fpl_if_safe();
                     }
                     if t == RightTab::Trajectory {
                         this.load_timeline(cx);
@@ -14936,6 +15154,40 @@ fn expr_to_f64(expr: &Expression) -> f64 {
     match expr {
         Expression::Number(n) => *n,
         _ => 0.0,
+    }
+}
+
+/// Best-effort "what's the center of this distribution?" without binding any
+/// per-team params. Returns 1.0 for any distribution whose center is an
+/// expression (rather than a literal), which is what the WC team_prior
+/// uses for socio_capital and dynamic_performance — without a fallback
+/// the suggestion-comparison divides by zero and every suggestion either
+/// gets filtered out or compared against a meaningless anchor.
+///
+/// 1.0 is a reasonable default for the team_prior because the
+/// multiplicative model is calibrated so each driver lands near 1.0 for an
+/// average team. For other templates it's still a usable anchor — the
+/// suggestion's reasoning text carries the real story; the numeric anchor
+/// is just for display.
+fn distribution_center_or_default(dist: &Distribution) -> f64 {
+    match dist {
+        Distribution::Triangular { p50, .. } => match p50 {
+            Expression::Number(n) => *n,
+            _ => 1.0,
+        },
+        Distribution::Normal { mean, .. } => match mean {
+            Expression::Number(n) => *n,
+            _ => 1.0,
+        },
+        Distribution::Lognormal { median, .. } => match median {
+            Expression::Number(n) => *n,
+            _ => 1.0,
+        },
+        Distribution::Uniform { low, high } => match (low, high) {
+            (Expression::Number(l), Expression::Number(h)) => (l + h) / 2.0,
+            _ => 1.0,
+        },
+        Distribution::Beta { .. } => 0.5,
     }
 }
 

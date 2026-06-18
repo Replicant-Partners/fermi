@@ -2567,6 +2567,10 @@ impl FermiConsole {
             // Wire forecast_id so Trajectory, refit, and sparkline endpoints
             // know which forecast to query.
             cockpit.forecast_id = forecast_id.clone();
+            // Fetch the workspace's params output so the next Ctrl+R
+            // binds elo_current / gdp_per_capita_log / etc. into the
+            // Executor's evaluation context.
+            cockpit.load_workspace_params(cx);
 
             // Set question and data from workspace params
             if let Some(ref wf) = wf {
@@ -2739,6 +2743,14 @@ impl FermiConsole {
                         });
                         cockpit.predicted_probability = prob;
                         cockpit.workspace_id = ws_id;
+                        // If we have a workspace, fetch its params output
+                        // so the next Ctrl+R can bind per-team scalars
+                        // (elo_current, gdp_per_capita_log, …) and any
+                        // BayesOps-fitted distributions (`<driver>_fitted`)
+                        // into the Executor.
+                        if cockpit.workspace_id.is_some() {
+                            cockpit.load_workspace_params(cx);
+                        }
 
                         // ── Polymarket hydration ────────────────────────
                         // metadata.polymarket shape is what
