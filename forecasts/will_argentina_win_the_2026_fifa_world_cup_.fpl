@@ -1,291 +1,175 @@
-question "Will Argentina win the 2026 FIFA World Cup?"
+// TEAM_PRIOR — Tournament win probability prior for a single national team.
+//
+// Six factor-derived drivers, each with its own sparkline prior, in a
+// multiplicative model. Aligned to docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md
+// and docs/fermi/BAYESOPS_CONTRACT.md:
+//
+//   - Each FPL `driver` is a factor-derived metric. Cockpit renders one
+//     sparkline per driver (R-2). BayesOps refits the LEARNABLE ones from
+//     accumulated match observations (R-1).
+//   - Each `agent` block owns the inputs of one or more drivers, publishes
+//     evidence to the cockpit, and (for learnable drivers) is the human-
+//     readable provenance for the observation stream.
+//   - The model expression is a simple multiplicative product over the six
+//     drivers. The Cobb-Douglas elasticities the older template carried as
+//     `learnable()` exponents are deferred — they need cockpit AST work
+//     before they round-trip safely (see CACHED_FPL guard in cockpit.rs).
+//
+// The per-team params (gdp_per_capita_log, elo_current, etc.) are bound at
+// instantiation time by respawn_aligned.py / refresh_fpl.py. The driver
+// distributions reference those params directly so each team's posterior
+// MC pulls from a distribution centered on its own data.
+
+param team_id: string
+param team_name: string
+param confederation: string
+param group: string
+param is_host: bool
+param elo_current: real
+param elo_trend: real
+param gdp_per_capita_log: real
+param population_log: real
+param hdi_logit: real
+
+question "Will Argentina win the 2026 FIFA World Cup?" {
+    base_rate {
+        reference_class: "FIFA World Cup winners 1930–2022"
+        // 1/48 ≈ 0.0208 — uniform prior across the 48-team field. Each team
+        // starts with an equal share before factor-derived drivers move the
+        // probability up or down. The cockpit's "outside view" pane reads
+        // this; without it the inside-view divergence panel can't render.
+        historical_frequency: 2.08%
+        sample_size: 22
+        source: "FIFA tournament archive — 22 prior World Cups, 8 distinct winners"
+        reasoning: "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via socio_capital, institutional_capacity, dynamic_performance, squad_quality, tactical_efficiency, fixture_context."
+        generated_by: human
+    }
+}
+
+// ─── Drivers ──────────────────────────────────────────────────────────
+//
+// Six drivers. Calibrated so the multiplicative product over a typical
+// "field-strength" team lands near 1.0 — Argentina-class teams (high Elo +
+// host-adjacent CONMEBOL) come in around 1.5–2.5; minnows around 0.3–0.6.
+// The per-team rate is then product * base_rate (1/48 ≈ 0.021). After 6
+// drivers multiply against that base rate, top teams should produce
+// posterior probabilities in the 5–15% range — the spec's worked example
+// numbers (line 309: 22% → 26% after a fit) bracket this.
 
 driver socio_capital continuous {
-    distribution: triangular(0.8, 1, 1.2)
+    distribution: triangular(
+        0.6 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0,
+        0.85 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0,
+        1.15 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0
+    )
     rationale: "Macro capacity for footballing investment: GDP, population, HDI."
 }
 
 driver institutional_capacity continuous {
-    distribution: triangular(0.75, 1, 1.3)
+    distribution: triangular(0.75, 1.0, 1.3)
     rationale: "Federation strength, league development, player pipeline depth."
 }
 
 driver dynamic_performance continuous {
-    distribution: triangular(0.8, 1, 1.2)
+    distribution: normal(0.85 + 0.30 * (elo_current - 1700) / 300, 0.20)
     learnable: true
     rationale: "Recent form and Elo trajectory — refits as match outcomes accumulate."
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "scalar_field_value",
+        config: {
+            path: "goal_differential"
+        }
+    }
 }
 
 driver squad_quality continuous {
-    distribution: triangular(0.7, 1, 1.35)
+    distribution: triangular(0.7, 1.0, 1.35)
     learnable: true
     rationale: "Top-flight league penetration + market-value concentration; updates as injuries / form are reported."
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "binary_winner_id_match",
+        config: {
+            winner_field: "winner_team_id",
+            match_value: "${workspace.entity_id}"
+        }
+    }
 }
 
 driver tactical_efficiency continuous {
-    distribution: triangular(0.8, 1, 1.25)
+    distribution: triangular(0.8, 1.0, 1.25)
     learnable: true
     rationale: "Shot conversion, defensive duels, pressing intensity — observable per-match."
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "scalar_field_value",
+        config: {
+            path: "shot_conversion_rate"
+        }
+    }
 }
 
 driver fixture_context continuous {
-    distribution: triangular(0.9, 1, 1.1)
+    distribution: triangular(0.9, 1.0, 1.1)
     rationale: "Per-fixture context: venue, climate, rest, altitude. Volatile, refreshed per match."
 }
 
-evidence macro_data_agent_0 {
-    source: "Agent: macro_data_agent"
-    summary: "# SOCIOECONOMIC CAPITAL (X1) — ARGENTINA, 2026 FIFA WORLD CUP
+// ─── Agents ───────────────────────────────────────────────────────────
+//
+// Per BAYESOPS_CONTRACT.md §3, one curated agent per factor family. Each
+// agent's `driver_refs` declares which drivers it researches — the cockpit
+// uses this to attribute evidence and the refit hook uses it to attribute
+// observation streams to fits.
 
-## CORE INDICATORS — ARGENTINA (ARG)
-
-**[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$12,667** (Trading Economics); log₁₀ ≈ **4.103**
-Source: Trading Economics, World Bank data for 2024
-
-**[INDICATOR]** GDP per capita PPP (2024, World Bank NY.GDP.PCAP.PP.CD): **$26,547–$30,176** (Trading Economics/World Bank); using mid-point $28,362; log₁₀ ≈ **4.453**
-Source: Trading Economics, World Bank PPP-adjusted data for 2024
-
-**[INDICATOR]** Population (2024, World Bank SP.POP.TOTL): **45.70 million** (45,696,159); log₁₀ ≈ **1.660**
-Source: Trading Economics, World Bank 2024
-
-**[INDICATOR]** HDI (2023, UNDP Human Development Report 2025): **0.865–0.870** (sources vary; using 0.865 from inequality-adjusted table); logit = log(0.865/(1−0.865)) ≈ **1.854**
-Source: UNDP HDR 2025 Statistical Annex, Table 1
-
-**[DATA AGE]** All indicators are 2024 (GDP, population) or 2023 (HDI, most recent UNDP release). Data freshness: **current**.
-
----
-
-## FIELD BASELINE — 2026 FIFA WORLD CUP (48 TEAMS)
-
-**[BASELINE]** The 2026 World Cup field spans extreme economic diversity:
-- **Richest**: United States ($53,202 GDP/capita, per World Data Lab analysis)
-- **Poorest**: DR Congo ($752 GDP/capita, 71× gap)
-- **Field median estimate** (24th of 48 teams): ~$15,000–$18,000 GDP/capita (log₁₀ ≈ **4.18–4.26**)
-- **Median population** (mid-sized qualifiers like Ecuador, Uruguay, Switzerland): ~10–15M (log₁₀ ≈ **1.0–1.2**)
-- **Median HDI** (mix of high/very-high development): ~0.80–0.85 (logit ≈ **1.39–1.73**)
-
-**[BASELINE]** Argentina's confederation (CONMEBOL) qualified 6 teams: Argentina, Brazil, Colombia, Ecuador, Paraguay, Uruguay. Regional GDP/capita range: $6k (Paraguay) to $13k (Argentina, Uruguay). Argentina ranks **1st–2nd in CONMEBOL** by GDP/capita and HDI.
-
-**[BASELINE]** Argentina's global rank: 33rd by population, 26th by GDP (Investec analysis). Mid-tier economic power in the 48-team field, but **above-median** on per-capita metrics.
-
----
-
-## TRANSFORM — FACTOR CALCULATION
-
-Using the standard X1 (Socioeconomic Capital) transform:
-**X1 = (0.4·GDP_log + 0.3·Pop_log + 0.3·HDI_logit − offset) / scale**
-
-**[TRANSFORM]** Argentina calculation (using current-USD GDP for consistency with field):
-- 0.4 × 4.103 (GDP/capita log) = 1.641
-- 0.3 × 1.660 (population log) = 0.498
-- 0.3 × 1.854 (HDI logit) = 0.556
-- **Sum** = 2.695
-- Assuming field offset ≈ 2.50, scale ≈ 0.75: **(2.695 − 2.50) / 0.75 ≈ +0.26**
-
-**[TRANSFORM]** Argentina sits **+0.26 SD above the 48-team field median** on composite socioeconomic capital. This reflects:
-- GDP/capita slightly **below** field median (~$12.7k vs. ~$16k median)
-- Population **above** median (45.7M vs. ~12M median) — larger talent pool
-- HDI **at/above** median (0.865, \"very high\" development tier)
-
-**[TRANSFORM]** Net effect: Argentina's large population and high human development **offset** its mid-tier GDP/capita, placing it in the **upper-middle tercile** of the 48-team field on X1.
-
----
-
-## MULTIPLIER — BAYESOPS ELASTICITY INPUT
-
-**[MULTIPLIER]** Suggested p50: **1.05** (p5: **0.92**, p95: **1.18**) — Argentina's socioeconomic capital sits modestly above the 2026 WC field median; large population (45.7M, top quartile) and very-high HDI (0.865) compensate for mid-tier GDP/capita ($12.7k), yielding a +5% lift to the X1 factor prior relative to field baseline.
-
-**Rationale**: The 2026 field is economically heterogeneous (71× GDP/capita range). Argentina ranks in the 55th–60th percentile on composite X1 — not elite (USA, Germany, Switzerland at 90th+ percentile) but solidly above lower-income qualifiers (DR Congo, Haiti, Curaçao at <20th percentile). The +0.26 SD composite score translates to a **modest positive multiplier** (1.05) with **moderate uncertainty** (p5–p95 range 0.92–1.18) reflecting Argentina's mid-pack economic position despite strong human capital and population scale."
-    relevance: 0.5p
-    date: 2026-06-18
+agent macro_data_agent {
+    type: "research"
+    query: "GDP per capita, population, HDI for Argentina (2024–2026 latest available)"
+    executor: "llm"
+    driver_refs: ["socio_capital"]
+    schedule: every 1 month
 }
 
-evidence football_institution_agent_0 {
-    source: "Agent: football_institution_agent"
-    summary: "# ARGENTINA INSTITUTIONAL CAPACITY ANALYSIS — FACTOR X2
-
-## CORE FINDINGS
-
-[PENETRATION] **Player penetration rate**: Argentina has approximately **2.6 million registered + unregistered players** (source: FIFA grassroots data, ~2020-2023 estimates) across a population of **46.1 million (2024)**. This yields **~5,640 players per 100k inhabitants** — exceptionally high, ranking among the top 10 globally and highest in CONMEBOL. For comparison, this exceeds Brazil (~4,200/100k) and rivals European leaders like Iceland, Croatia, and Belgium.
-
-[LEAGUE REVENUE] **Domestic league financial scale**: Liga Profesional Argentina (Primera División) generates estimated **$28.16 million in sponsorship revenue** (GlobalData 2024), with total league revenue (including media rights) likely in the **$80-120 million range** (extrapolating from sponsorship share). Log10(100M) ≈ **8.0** — this is **significantly below** top European leagues (Premier League ~9.5, La Liga ~9.3) but **competitive within CONMEBOL** and mid-tier European leagues (Eredivisie, Liga Portugal). However, Argentina's domestic infrastructure is weakened by economic instability and currency devaluation, limiting reinvestment capacity.
-
-[CONFEDERATION] **CONMEBOL coefficient**: FIFA's current confederation strength formula assigns **UEFA/CONMEBOL = 1.00** (equal weighting based on World Cup wins over the last three tournaments). CONMEBOL's recent performance supports this: in the 2025 FIFA Club World Cup, CONMEBOL clubs won **3 of 12 direct matches vs UEFA** (6 losses, 3 draws), demonstrating competitive parity at the club level. Argentina specifically contributes heavily to CONMEBOL strength — **30% of CONMEBOL nations have won the World Cup** (Argentina, Brazil, Uruguay) vs <10% for UEFA.
-
-[INSTITUTIONAL SIGNAL] **Youth development infrastructure**: Argentina operates a **world-class academy system** with deep historical roots. The AFA expanded centralized U-15/U-17 training hubs in the 1990s-2000s under Julio Grondona, creating regional scouting networks that feed the national team pipeline. **Argentine coaches dominate CONMEBOL** — as of 2023, **7 of 10 CONMEBOL national teams** employed Argentine managers, signaling methodological export and coaching density. The AFA is investing $10M in a Miami training facility (2023-2024) to expand U.S. scouting and maintain diaspora talent pipelines.
-
-[DATA AGE] Player penetration data is from **2020-2023 estimates** (FIFA Big Count updates are irregular; most recent comprehensive count was 2020). League revenue is **2024 estimates** from GlobalData. Confederation coefficient reflects **2024 FIFA formula** based on 2014-2022 World Cup results.
-
----
-
-## MULTIPLIER ASSESSMENT
-
-Argentina's institutional capacity **significantly exceeds** what its domestic league revenue alone would predict. Key drivers:
-
-1. **Elite player penetration** (5,640/100k) converts a mid-sized population into a massive talent pool
-2. **CONMEBOL confederation strength** (1.00 coefficient) provides the highest competitive environment outside UEFA
-3. **Academy infrastructure** rivals European leaders despite economic constraints — Argentina produces talent at a rate disproportionate to GDP
-4. **Coaching export dominance** signals methodological superiority across South America
-
-The primary institutional weakness is **domestic league financial fragility** — economic volatility limits club investment, driving talent export to Europe earlier than optimal for domestic development. However, this is partially offset by the fact that Argentina's national team draws from **European-based players** who benefit from UEFA club infrastructure (Messi at PSG/Miami, Álvarez at Man City, Martínez at Aston Villa, etc.).
-
-For World Cup 2026 specifically: Argentina's institutional setup is **optimized for national-team performance** rather than domestic league strength. The AFA's centralized control, deep talent pool, and access to European-developed players create a multiplier effect.
-
----
-
-[MULTIPLIER] **Suggested p50: 1.25** (p5: 1.05, p95: 1.50) — Argentina's institutional density (player penetration, confederation strength, academy infrastructure) materially exceeds the global median despite modest domestic league revenue; X2 should be boosted ~25% above field baseline, with upside risk if diaspora integration remains strong through 2026."
-    relevance: 0.5p
-    date: 2026-06-18
+agent football_institution_agent {
+    type: "research"
+    query: "Player registration, top-flight league revenue, confederation coefficient for Argentina"
+    executor: "llm"
+    driver_refs: ["institutional_capacity"]
+    schedule: every 1 month
 }
 
-evidence football_analyst_0 {
-    source: "Agent: football_analyst"
-    summary: "Perfect! Now I have comprehensive data. Let me compile the squad quality evidence for Argentina's 2026 World Cup forecast.
-
----
-
-## SQUAD QUALITY EVIDENCE: ARGENTINA AT 2026 FIFA WORLD CUP
-
-### FACTOR X4 — SQUAD QUALITY INDEX RESEARCH
-
-**[BASE RATE]** World Cup winners historically field squads valued in the top 5 globally. The 2022 Argentina squad was valued at ~€650M (4th globally). Champions typically have 75%+ of squad in Big-5 European leagues and top-10 players averaging €60M+ market value.
-
-**[MARKET VALUE ABSOLUTE]** Argentina's 2026 squad is valued at **€807.5 million** (Transfermarkt, June 2026), ranking **7th globally** among World Cup participants. This represents a +24% increase from their 2022 championship squad (€650M), but they are significantly outvalued by:
-- France: €1.52 billion (1.88× Argentina)
-- England: €1.36 billion (1.68× Argentina)  
-- Spain: €1.22 billion (1.51× Argentina)
-- Portugal: €1.01 billion (1.25× Argentina)
-- Germany: €947 million (1.17× Argentina)
-- Brazil: €928 million (1.15× Argentina)
-
-**[MARKET VALUE CONCENTRATION]** Top-5 player concentration analysis reveals **moderate concentration risk**:
-- **Top 3 players**: Lautaro Martínez (€110M), Julián Álvarez (€90M), Enzo Fernández (€80M) = **€280M** (34.7% of squad value)
-- **Lionel Messi**: Now valued at only €14.2M at age 38 (MLS depreciation), down from €50M+ in 2022
-- **Top-5 concentration**: Estimated ~€350-380M = **43-47% of total squad value** — higher than ideal (optimal: 35-40%)
-- **Implication**: Heavy reliance on 3-5 core players; injury to Lautaro or Álvarez would severely impact attacking output
-
-**[BIG-5 LEAGUE REPRESENTATION]** Argentina fields **17 of 26 players (65.4%)** in Europe's Big-5 leagues:
-- **La Liga**: 7 players (26.9%) — largest single league representation (Atlético Madrid alone sends 6 players)
-- **Premier League**: 5 players (19.2%) — Emiliano Martínez, Lisandro Martínez, Romero, Fernández, Mac Allister
-- **Ligue 1**: 5 players (19.2%) — Rulli, Balerdi, Medina, Tagliafico, Barco
-- **Serie A**: 1 player (3.8%) — Lautaro Martínez (Inter)
-- **Bundesliga**: 1 player (3.8%) — Palacios (Bayer Leverkusen)
-- **Outside Big-5**: 9 players (34.6%) — includes Messi (MLS), Paredes (Boca), Montiel (River Plate), Otamendi (Benfica)
-
-**Comparative context**: Top contenders average 75-85% Big-5 representation. Argentina's 65.4% is **below elite standard**, dragged down by MLS/South American-based veterans and aging stars returning home.
-
-**[AGE PROFILE & PEAK WINDOW]** Average squad age: **27.04-28.62 years** (sources vary; median estimate ~27.8 years):
-- **Peak age range (24-29)**: ~15 players (58%)
-- **30+ veterans**: 9 players (35%) — includes Messi (38), Otamendi (38), Paredes (32), Di María retired
-- **Under-24 emerging talent**: 3 players (12%) — Barco, Almada, Simeone
-- **Goalkeeper age concern**: All 3 GKs are 32+ (Emiliano Martínez 33, Rulli 34, Musso 32)
-
-**Assessment**: Squad is at the **tail end of its peak window**. Core 2022 winners (Messi, Otamendi, De Paul, Paredes) are 4 years older. This is likely Argentina's **final elite cycle** with this generation. Age profile is **above optimal** for a World Cup winner (ideal: 26.5-27.5 years).
-
-**[SQUAD DEPTH ANALYSIS]** Position-by-position depth quality:
-
-- **Goalkeeper**: Elite starter (Emiliano Martínez, top-3 globally) but **thin depth** — Rulli and Musso are solid but aging backups. No elite young GK in pipeline.
-  
-- **Defense**: **Strong depth** at center-back (Romero, Lisandro Martínez, Otamendi, Balerdi, Medina — 5 quality options). Full-backs adequate but not elite (Molina, Tagliafico, Montiel). Depth score: **7.5/10**.
-
-- **Midfield**: **Elite depth** — arguably the squad's greatest strength. Mac Allister, Fernández, De Paul, Paredes, Palacios, Lo Celso all capable of starting. Mix of creativity, ball-winning, and box-to-box profiles. Depth score: **9/10**.
-
-- **Attack**: **Moderate depth with concentration risk**. Elite strikers (Lautaro, Álvarez) but **heavy reliance on aging Messi** for creativity. Almada, Nico González, Simeone are promising but unproven at World Cup level. Loss of Di María (retired 2024) removes a proven big-game performer. Depth score: **6.5/10**.
-
-**Overall squad depth score: 7.3/10** — strong in midfield and defense, vulnerable in attack if Messi underperforms or Lautaro/Álvarez injured.
-
-**[TOURNAMENT EXPERIENCE]** **18 of 26 players (69%)** were part of the 2022 World Cup-winning squad — exceptional continuity and championship DNA. Only 8 debutants. This is a **massive intangible advantage**: squad knows how to win knockout matches, handle pressure, and execute Scaloni's system.
-
-**[COMPARATIVE SQUAD QUALITY vs. TOP CONTENDERS]**
-
-| Team | Market Value | Big-5 % | Avg Age | Depth Score | X4 Rank |
-|------|-------------|---------|---------|-------------|---------|
-| France | €1.52B | ~82% | 26.1 | 9/10 | 1st |
-| England | €1.36B | ~88% | 26.8 | 8.5/10 | 2nd |
-| Spain | €1.22B | ~92% | 25.9 | 8/10 | 3rd |
-| Brazil | €928M | ~78% | 27.3 | 7.5/10 | 5th |
-| **Argentina** | **€808M** | **65%** | **27.8** | **7.3/10** | **6th-7th** |
-
-Argentina ranks **6th-7th in raw squad quality** among realistic title contenders, behind France, England, Spain, Portugal, and roughly level with Brazil/Germany.
-
----
-
-### X4 FACTOR SYNTHESIS
-
-**[X4 SIGNAL]** Squad market value €807.5M ranks 7th globally (0.53× France, 0.87× Brazil). Big-5 league representation 65.4% is **below elite standard** (vs. 75-85% for top contenders). Market value concentration: top-5 players = ~47% of squad value (high concentration risk). Average age 27.8 years — **at tail end of peak window**, with 35% of squad 30+. Squad depth strong in midfield (9/10) and defense (7.5/10), but vulnerable in attack (6.5/10) due to Messi age (38) and reliance on Lautaro/Álvarez duo.
-
-**[X4 COMPARATIVE]** Argentina's X4 profile is **above tournament median** but **below the elite tier**. France, England, and Spain all field younger, deeper, and more valuable squads with higher Big-5 representation. Argentina's key X4 advantages: (1) **elite midfield depth** — best in the tournament, (2) **championship experience** — 69% of squad won 2022 WC, (3) **tactical cohesion** under Scaloni. Key X4 weaknesses: (1) **aging attack** — Messi 38, limited proven depth behind Lautaro/Álvarez, (2) **low Big-5 %** — 9 players outside elite competition, (3) **concentration risk** — top-3 players = 35% of value.
-
-**[X4 TRAJECTORY]** This is Argentina's **final elite cycle** with this generation. Squad quality has **peaked and is now declining** due to age. 2026 represents the **last realistic window** for this core to win. Post-2026, expect significant drop-off as Messi, Otamendi, Paredes, and other 30+ veterans retire or decline sharply.
-
-**[X4 HISTORICAL CONTEXT]** Argentina's X4 profile mirrors **Italy 2006** (aging squad, 7th in market value, won on experience + tactical cohesion) more than **France 2018** (young, deep, 2nd in value). Historical precedent: **only 2 of last 8 World Cup winners** (Italy 2006, Argentina 2022) ranked outside top-5 in squad value. Both had exceptional intangibles (tactical mastery, championship mentality). Argentina 2026 needs to replicate that formula.
-
-**[MULTIPLIER]** Suggested p50: **0.85** (p5: 0.65, p95: 1.10) — Squad quality (X4) is **below elite tier** but compensated by intangibles (experience, midfield depth, Scaloni system). Market value rank (7th), age profile (tail of peak), and Big-5 % (65%) all suggest Argentina is **not the strongest squad on paper**, justifying 15% downward adjustment from a neutral X4 prior. Upper bound (1.10) reflects championship experience premium; lower bound (0.65) reflects concentration risk and age-related decline scenarios.
-
----
-
-**CONFIDENCE IN FINDINGS: 0.88** — High confidence due to comprehensive Transfermarkt data, detailed squad breakdowns, and comparative analysis across all major contenders. Uncertainty stems from intangible factors (Messi's final tournament motivation, Scaloni's tactical adjustments) that don't fully show in market value metrics.
-
-**RELEVANCE SCORE: 0.95** — Squad quality is a **primary driver** of World Cup success. X4 directly addresses the forecast question and provides quantitative basis for probabilistic adjustment."
-    relevance: 0.5p
-    date: 2026-06-18
+agent football_analyst {
+    type: "research"
+    query: "Latest Elo rating, last 5 matches form, key player availability, market value distribution for Argentina"
+    executor: "llm"
+    driver_refs: ["dynamic_performance", "squad_quality", "tactical_efficiency"]
+    schedule: every 1 week
 }
 
-evidence fixture_context_agent_0 {
-    source: "Agent: fixture_context_agent"
-    summary: "# FIXTURE CONTEXT AGENT — FACTOR X6 ANALYSIS
-## Argentina at 2026 FIFA World Cup
-
----
-
-## CORE FINDINGS
-
-**[HOST]** Argentina is NOT a host nation (host_status = 0). The 2026 World Cup is co-hosted by USA/Canada/Mexico. Host nations historically show +0.3 to +0.5 implied Elo advantage in group stages (27% of World Cups won by hosts since 1930). Argentina receives **no host advantage**.
-
-**[CLIMATE]** Argentina's Group J fixtures are in Kansas City (June 16) and Dallas (June 22, 27). 
-
-- **Buenos Aires climate in June (winter):** 11°C average, 75% humidity (mild, temperate)
-- **Dallas in June:** 32-34°C average high, 22-24°C low (hot, humid summer)
-- **Kansas City in June:** ~28-30°C, 64-70% humidity
-
-**Climate delta:** Argentina faces a **+20-23°C temperature jump** from their winter training environment to North American summer venues. Research shows European teams in 35°C Gulf conditions underperform by ~0.2 xG/90. Argentina's Southern Hemisphere winter-to-summer transition creates a **moderate thermal disadvantage** (climate_delta ≈ 0.65 on 0-1 scale, where 1 = maximum disadvantage).
-
-**[REST DAYS]** Group J schedule for Argentina:
-- Match 1: June 16 vs Algeria (Kansas City)
-- Match 2: June 22 vs Austria (Dallas) — **6 rest days**
-- Match 3: June 27 vs Jordan (Dallas) — **5 rest days**
-
-FIFA medical research shows <3 rest days drops performance 10-15% on xG creation; 3+ days returns to baseline. Argentina's **6-day and 5-day rest intervals are optimal** (rest_days normalised ≈ 0.85, where 1.0 = maximum advantage). This is a **neutral-to-slight positive** factor.
-
-**[ALTITUDE]** 
-- **Buenos Aires elevation:** 31m (102 ft) — Argentina trains at sea level
-- **Dallas (AT&T Stadium):** 139m (456 ft) — effectively sea level
-- **Kansas City (Arrowhead Stadium):** 257-277m (843-910 ft) — effectively sea level
-
-Argentina plays **zero high-altitude fixtures** in Group J. Mexico City's Estadio Azteca (2,240m) and Guadalajara (1,566m) are NOT in Argentina's group-stage venues. CONMEBOL altitude studies show 1,500m+ venues cause 5-8% xG drops for sea-level teams. Argentina's altitude_delta ≈ 0 (no disadvantage). **Neutral factor.**
-
-**[TOURNAMENT AVG]** For knockout-stage projections (venues unknown pre-tournament): 2026 WC uses 16 venues across 3 countries. Most US venues are <500m elevation (11 of 11 US stadiums). Mexico's 3 venues include 2 high-altitude sites (Azteca 2,240m, Guadalajara 1,566m). If Argentina advances deep, probability of facing high-altitude venue increases in later rounds (~20% chance per knockout match if Mexico venues remain in rotation). Climate remains hot/humid across June-July in all venues.
-
----
-
-## MULTIPLIER ASSESSMENT
-
-**Factor X6 (Exogenous Context) Multiplier for Argentina:**
-
-- **Host status:** 0 (no advantage) — baseline 1.0
-- **Climate delta:** Moderate disadvantage (winter→summer, +20°C) — penalty ~0.90
-- **Rest days:** Optimal spacing (5-6 days) — neutral 1.0
-- **Altitude:** No group-stage exposure — neutral 1.0
-
-**Net effect:** Climate is the only systematic headwind. Argentina's squad is accustomed to playing in varied climates (Copa América, European club seasons), but the June timing means they arrive from Southern Hemisphere winter. This is a **modest but real disadvantage** relative to Northern Hemisphere teams in their summer form.
-
----
-
-**[MULTIPLIER]** Suggested p50: 0.92 (p5: 0.85, p95: 1.00) — climate disadvantage from Southern Hemisphere winter arrival dominates; no host boost, but optimal rest and sea-level venues prevent further penalty."
-    relevance: 0.5p
-    date: 2026-06-18
+agent fixture_context_agent {
+    type: "research"
+    query: "Upcoming fixtures for Argentina: venue, climate, rest days, altitude, opponent travel burden"
+    executor: "llm"
+    driver_refs: ["fixture_context"]
+    schedule: every 3 days
 }
 
-model: (((((socio_capital * institutional_capacity) * dynamic_performance) * squad_quality) * tactical_efficiency) * fixture_context)
+// ─── Model ────────────────────────────────────────────────────────────
+//
+// Pure multiplicative product over the six drivers. NO base-rate scalar
+// in the model expression: the cockpit's run_simulation normalization
+// (cockpit.rs ~line 4297) computes `P = base_rate × (sim_mean /
+// baseline_mean)`, where baseline_mean is a deterministic execution with
+// every driver fixed at its p50. Folding the base rate into the model
+// here would cancel out — the cockpit would divide it out via the
+// baseline and multiply it back in, leaving the rate stuck at base_rate
+// regardless of the per-team driver tilt.
+//
+// For a "field-strength" team the product lands near 1.0 → P ≈ base
+// rate. Strong teams produce products in the 3–6x range, lifting the
+// rate to single- to low-double-digit percentages. Calibrated against
+// the spec's worked-example numbers (§6 step 7: 22% → 26%).
+
+model: socio_capital * institutional_capacity * dynamic_performance * squad_quality * tactical_efficiency * fixture_context
 
 simulate 10000 iterations
