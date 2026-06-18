@@ -1,6 +1,6 @@
 {
   "forecast_id": "90f6f04f-29e2-47aa-88c2-b75ef5dc7ffb",
-  "current_version": 1,
+  "current_version": 2,
   "predicted_probability": 0.019999999552965164,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -10,6 +10,12 @@
       "timestamp": "2026-06-18 12:22",
       "probability": 0.019999999552965164,
       "change_summary": "Initial: 2.0% base=2%, 6 drivers, 0 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-06-18 12:22",
+      "probability": 0.019999999552965164,
+      "change_summary": "2.0% (→), 6 drivers, 1 evidence"
     }
   ],
   "sim_results": null,
@@ -20,7 +26,26 @@
     "source": "FIFA tournament archive — 22 prior World Cups, 8 distinct winners",
     "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via socio_capital, institutional_capacity, dynamic_performance, squad_quality, tactical_efficiency, fixture_context."
   },
-  "evidence": [],
+  "evidence": [
+    {
+      "id": "macro_data_agent_0",
+      "source": "Agent: macro_data_agent",
+      "summary": "Based on the search results, I have the following data points. Let me compile the structured evidence:\n\n---\n\n## **UNITED STATES — SOCIOECONOMIC CAPITAL INDICATORS (2024–2025)**\n\n### **Core Indicators**\n\n**[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$86,601** (calculated from total GDP $29,184.89 billion ÷ 337 million population); log₁₀ ≈ **4.937**\n\n**[INDICATOR]** Population (2025, U.S. Census Bureau): **341.78 million**; log₁₀ ≈ **2.534**\n\n**[INDICATOR]** HDI (2023, UNDP HDR): **0.938**; logit = log(0.938 / (1 − 0.938)) ≈ **2.709**\n\n**[DATA AGE]** GDP and population data are 2024–2025 official estimates (World Bank, U.S. Census Bureau); HDI is 2023 UNDP release (most recent internationally comparable figure as of 2026).\n\n---\n\n### **Factor Transformation & Multiplier**\n\n**[BASELINE]** Global high-income median benchmarks: GDP per capita log ≈ 4.65; population log ≈ 1.50; HDI logit ≈ 2.20\n\n**[TRANSFORM]** Composite X1 score using standard weights (0.4 GDP, 0.3 Pop, 0.3 HDI):\n- (0.4 × 4.937 + 0.3 × 2.534 + 0.3 × 2.709 − 2.6) / 0.7 ≈ **+1.12** — substantially above global high-income median\n\n**[MULTIPLIER]** Suggested p50: **1.25** (p5: **1.10**, p95: **1.45**) — United States exhibits top-decile GDP/capita ($86.6k, 4th globally) and HDI (0.938, 20th globally), with the largest absolute economy; X1 factor receives strong positive adjustment relative to any international field median\n\n---\n\n### **Rationale**\n\nThe United States maintains the world's largest nominal GDP ($29.2 trillion, 2024) and a GDP per capita in the top 5 globally. The HDI of 0.938 places it in the \"very high human development\" category (20th globally), though slightly below Nordic leaders (Iceland 0.972, Switzerland 0.970). The population of 342 million provides substantial absolute market scale. All three indicators converge on a **top-quartile socioeconomic capital profile**, justifying a multiplier well above unity for any factor model comparing the U.S. to a global or regional field.",
+      "relevance": 0.5,
+      "date": "2026-06-18",
+      "key_findings": [
+        "[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$86,601** (calculated from total GDP $29,184.89 billion ÷ 337 million population); log₁₀ ≈ **4.937**",
+        "[INDICATOR]** Population (2025, U.S. Census Bureau): **341.78 million**; log₁₀ ≈ **2.534**",
+        "[INDICATOR]** HDI (2023, UNDP HDR): **0.938**; logit = log(0.938 / (1 − 0.938)) ≈ **2.709**",
+        "[DATA AGE]** GDP and population data are 2024–2025 official estimates (World Bank, U.S. Census Bureau); HDI is 2023 UNDP release (most recent internationally comparable figure as of 2026).",
+        "[BASELINE]** Global high-income median benchmarks: GDP per capita log ≈ 4.65; population log ≈ 1.50; HDI logit ≈ 2.20",
+        "[TRANSFORM]** Composite X1 score using standard weights (0.4 GDP, 0.3 Pop, 0.3 HDI):",
+        "(0.4 × 4.937 + 0.3 × 2.534 + 0.3 × 2.709 − 2.6) / 0.7 ≈ **+1.12** — substantially above global high-income median",
+        "[MULTIPLIER]** Suggested p50: **1.25** (p5: **1.10**, p95: **1.45**) — United States exhibits top-decile GDP/capita ($86.6k, 4th globally) and HDI (0.938, 20th globally), with the largest absolute economy; X1 factor receives strong positive adjustment relative to any international field median",
+        "The United States maintains the world's largest nominal GDP ($29.2 trillion, 2024) and a GDP per capita in the top 5 globally. The HDI of 0.938 places it in the \"very high human development\" category (20th globally), though slightly below Nordic leaders (Iceland 0.972, Switzerland 0.970). The population of 342 million provides substantial absolute market scale. All three indicators converge on a **top-quartile socioeconomic capital profile**, justifying a multiplier well above unity for any factor model comparing the U.S. to a global or regional field."
+      ]
+    }
+  ],
   "agents": [
     {
       "name": "macro_data_agent",

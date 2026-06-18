@@ -1,175 +1,75 @@
-// TEAM_PRIOR — Tournament win probability prior for a single national team.
-//
-// Six factor-derived drivers, each with its own sparkline prior, in a
-// multiplicative model. Aligned to docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md
-// and docs/fermi/BAYESOPS_CONTRACT.md:
-//
-//   - Each FPL `driver` is a factor-derived metric. Cockpit renders one
-//     sparkline per driver (R-2). BayesOps refits the LEARNABLE ones from
-//     accumulated match observations (R-1).
-//   - Each `agent` block owns the inputs of one or more drivers, publishes
-//     evidence to the cockpit, and (for learnable drivers) is the human-
-//     readable provenance for the observation stream.
-//   - The model expression is a simple multiplicative product over the six
-//     drivers. The Cobb-Douglas elasticities the older template carried as
-//     `learnable()` exponents are deferred — they need cockpit AST work
-//     before they round-trip safely (see CACHED_FPL guard in cockpit.rs).
-//
-// The per-team params (gdp_per_capita_log, elo_current, etc.) are bound at
-// instantiation time by respawn_aligned.py / refresh_fpl.py. The driver
-// distributions reference those params directly so each team's posterior
-// MC pulls from a distribution centered on its own data.
-
-param team_id: string
-param team_name: string
-param confederation: string
-param group: string
-param is_host: bool
-param elo_current: real
-param elo_trend: real
-param gdp_per_capita_log: real
-param population_log: real
-param hdi_logit: real
-
-question "Will United States win the 2026 FIFA World Cup?" {
-    base_rate {
-        reference_class: "FIFA World Cup winners 1930–2022"
-        // 1/48 ≈ 0.0208 — uniform prior across the 48-team field. Each team
-        // starts with an equal share before factor-derived drivers move the
-        // probability up or down. The cockpit's "outside view" pane reads
-        // this; without it the inside-view divergence panel can't render.
-        historical_frequency: 2.08%
-        sample_size: 22
-        source: "FIFA tournament archive — 22 prior World Cups, 8 distinct winners"
-        reasoning: "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via socio_capital, institutional_capacity, dynamic_performance, squad_quality, tactical_efficiency, fixture_context."
-        generated_by: human
-    }
-}
-
-// ─── Drivers ──────────────────────────────────────────────────────────
-//
-// Six drivers. Calibrated so the multiplicative product over a typical
-// "field-strength" team lands near 1.0 — Argentina-class teams (high Elo +
-// host-adjacent CONMEBOL) come in around 1.5–2.5; minnows around 0.3–0.6.
-// The per-team rate is then product * base_rate (1/48 ≈ 0.021). After 6
-// drivers multiply against that base rate, top teams should produce
-// posterior probabilities in the 5–15% range — the spec's worked example
-// numbers (line 309: 22% → 26% after a fit) bracket this.
+question "Will United States win the 2026 FIFA World Cup?"
 
 driver socio_capital continuous {
-    distribution: triangular(
-        0.6 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0,
-        0.85 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0,
-        1.15 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0
-    )
+    distribution: triangular(0, 0, 0)
     rationale: "Macro capacity for footballing investment: GDP, population, HDI."
 }
 
 driver institutional_capacity continuous {
-    distribution: triangular(0.75, 1.0, 1.3)
+    distribution: triangular(0.75, 1, 1.3)
     rationale: "Federation strength, league development, player pipeline depth."
 }
 
 driver dynamic_performance continuous {
-    distribution: normal(0.85 + 0.30 * (elo_current - 1700) / 300, 0.20)
     learnable: true
     rationale: "Recent form and Elo trajectory — refits as match outcomes accumulate."
-    feeds_from: {
-        source: "upstream_resolutions",
-        extractor: "scalar_field_value",
-        config: {
-            path: "goal_differential"
-        }
-    }
 }
 
 driver squad_quality continuous {
-    distribution: triangular(0.7, 1.0, 1.35)
+    distribution: triangular(0.7, 1, 1.35)
     learnable: true
     rationale: "Top-flight league penetration + market-value concentration; updates as injuries / form are reported."
-    feeds_from: {
-        source: "upstream_resolutions",
-        extractor: "binary_winner_id_match",
-        config: {
-            winner_field: "winner_team_id",
-            match_value: "${workspace.entity_id}"
-        }
-    }
 }
 
 driver tactical_efficiency continuous {
-    distribution: triangular(0.8, 1.0, 1.25)
+    distribution: triangular(0.8, 1, 1.25)
     learnable: true
     rationale: "Shot conversion, defensive duels, pressing intensity — observable per-match."
-    feeds_from: {
-        source: "upstream_resolutions",
-        extractor: "scalar_field_value",
-        config: {
-            path: "shot_conversion_rate"
-        }
-    }
 }
 
 driver fixture_context continuous {
-    distribution: triangular(0.9, 1.0, 1.1)
+    distribution: triangular(0.9, 1, 1.1)
     rationale: "Per-fixture context: venue, climate, rest, altitude. Volatile, refreshed per match."
 }
 
-// ─── Agents ───────────────────────────────────────────────────────────
-//
-// Per BAYESOPS_CONTRACT.md §3, one curated agent per factor family. Each
-// agent's `driver_refs` declares which drivers it researches — the cockpit
-// uses this to attribute evidence and the refit hook uses it to attribute
-// observation streams to fits.
+evidence macro_data_agent_0 {
+    source: "Agent: macro_data_agent"
+    summary: "Based on the search results, I have the following data points. Let me compile the structured evidence:
 
-agent macro_data_agent {
-    type: "research"
-    query: "GDP per capita, population, HDI for United States (2024–2026 latest available)"
-    executor: "llm"
-    driver_refs: ["socio_capital"]
-    schedule: every 1 month
+---
+
+## **UNITED STATES — SOCIOECONOMIC CAPITAL INDICATORS (2024–2025)**
+
+### **Core Indicators**
+
+**[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$86,601** (calculated from total GDP $29,184.89 billion ÷ 337 million population); log₁₀ ≈ **4.937**
+
+**[INDICATOR]** Population (2025, U.S. Census Bureau): **341.78 million**; log₁₀ ≈ **2.534**
+
+**[INDICATOR]** HDI (2023, UNDP HDR): **0.938**; logit = log(0.938 / (1 − 0.938)) ≈ **2.709**
+
+**[DATA AGE]** GDP and population data are 2024–2025 official estimates (World Bank, U.S. Census Bureau); HDI is 2023 UNDP release (most recent internationally comparable figure as of 2026).
+
+---
+
+### **Factor Transformation & Multiplier**
+
+**[BASELINE]** Global high-income median benchmarks: GDP per capita log ≈ 4.65; population log ≈ 1.50; HDI logit ≈ 2.20
+
+**[TRANSFORM]** Composite X1 score using standard weights (0.4 GDP, 0.3 Pop, 0.3 HDI):
+- (0.4 × 4.937 + 0.3 × 2.534 + 0.3 × 2.709 − 2.6) / 0.7 ≈ **+1.12** — substantially above global high-income median
+
+**[MULTIPLIER]** Suggested p50: **1.25** (p5: **1.10**, p95: **1.45**) — United States exhibits top-decile GDP/capita ($86.6k, 4th globally) and HDI (0.938, 20th globally), with the largest absolute economy; X1 factor receives strong positive adjustment relative to any international field median
+
+---
+
+### **Rationale**
+
+The United States maintains the world's largest nominal GDP ($29.2 trillion, 2024) and a GDP per capita in the top 5 globally. The HDI of 0.938 places it in the \"very high human development\" category (20th globally), though slightly below Nordic leaders (Iceland 0.972, Switzerland 0.970). The population of 342 million provides substantial absolute market scale. All three indicators converge on a **top-quartile socioeconomic capital profile**, justifying a multiplier well above unity for any factor model comparing the U.S. to a global or regional field."
+    relevance: 0.5p
+    date: 2026-06-18
 }
 
-agent football_institution_agent {
-    type: "research"
-    query: "Player registration, top-flight league revenue, confederation coefficient for United States"
-    executor: "llm"
-    driver_refs: ["institutional_capacity"]
-    schedule: every 1 month
-}
-
-agent football_analyst {
-    type: "research"
-    query: "Latest Elo rating, last 5 matches form, key player availability, market value distribution for United States"
-    executor: "llm"
-    driver_refs: ["dynamic_performance", "squad_quality", "tactical_efficiency"]
-    schedule: every 1 week
-}
-
-agent fixture_context_agent {
-    type: "research"
-    query: "Upcoming fixtures for United States: venue, climate, rest days, altitude, opponent travel burden"
-    executor: "llm"
-    driver_refs: ["fixture_context"]
-    schedule: every 3 days
-}
-
-// ─── Model ────────────────────────────────────────────────────────────
-//
-// Pure multiplicative product over the six drivers. NO base-rate scalar
-// in the model expression: the cockpit's run_simulation normalization
-// (cockpit.rs ~line 4297) computes `P = base_rate × (sim_mean /
-// baseline_mean)`, where baseline_mean is a deterministic execution with
-// every driver fixed at its p50. Folding the base rate into the model
-// here would cancel out — the cockpit would divide it out via the
-// baseline and multiply it back in, leaving the rate stuck at base_rate
-// regardless of the per-team driver tilt.
-//
-// For a "field-strength" team the product lands near 1.0 → P ≈ base
-// rate. Strong teams produce products in the 3–6x range, lifting the
-// rate to single- to low-double-digit percentages. Calibrated against
-// the spec's worked-example numbers (§6 step 7: 22% → 26%).
-
-model: socio_capital * institutional_capacity * dynamic_performance * squad_quality * tactical_efficiency * fixture_context
+model: (((((socio_capital * institutional_capacity) * dynamic_performance) * squad_quality) * tactical_efficiency) * fixture_context)
 
 simulate 10000 iterations
