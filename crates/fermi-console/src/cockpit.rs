@@ -157,6 +157,18 @@ pub struct ForecastVersion {
     pub change_summary: String,
 }
 
+/// A schedule the FPL declares but the operator hasn't yet pushed to the
+/// server. Pre-populates the Schedules tab so the operator can review +
+/// batch-save the agent×driver fan-out instead of clicking through each
+/// driver one by one to attach a cadence.
+#[derive(Debug, Clone)]
+pub struct ScheduleDraft {
+    pub agent_id: String,
+    pub driver_name: String,
+    pub query: String,
+    pub interval_hours: i32,
+}
+
 pub struct CockpitState {
     // ── The FPL Program (source of truth) ─────────────────────────
     pub program: Program,
@@ -2714,6 +2726,179 @@ impl CockpitState {
                     .ok();
                 }
             }
+        })
+        .detach();
+    }
+
+    /// Walk the program's agents and return one schedule-draft per
+    /// `(agent, driver_ref)` pair that declares a recurring `Schedule::Every`
+    /// but isn't yet persisted in `self.schedules`. This drives the
+    /// Schedules tab's pre-population: when the FPL ships with a full set
+    /// of agent blocks (as the WC team-prior template does), the operator
+    /// sees every agent×driver pair laid out with its declared cadence and
+    /// can batch-persist them instead of clicking through each driver in
+    /// the program tree.
+    ///
+    /// Drafts are NOT auto-persisted. The user explicitly confirms either
+    /// per-row ("Save") or in bulk ("Save all from FPL"). This matches the
+    /// spec's "operator drives the demo" stance.
+    pub fn fpl_declared_schedule_drafts(&self) -> Vec<ScheduleDraft> {
+        let mut drafts: Vec<ScheduleDraft> = Vec::new();
+        for agent in self.program.agents() {
+            // Only recurring schedules pre-populate. Schedule::Once is a
+            // one-shot fire from the UI; Schedule::Cron isn't surfaced
+            // anywhere else in the UI yet either.
+            let Some(Schedule::Every { interval, unit }) = agent.schedule.as_ref() else {
+                continue;
+            };
+            let interval_hours: i32 = match unit {
+                fermi::ast::TimeUnit::Minute => 1,
+                fermi::ast::TimeUnit::Hour => *interval as i32,
+                fermi::ast::TimeUnit::Day => *interval as i32 * 24,
+                fermi::ast::TimeUnit::Week => *interval as i32 * 168,
+                fermi::ast::TimeUnit::Month => *interval as i32 * 720,
+            };
+            for driver_name in &agent.driver_refs {
+                // Skip if this exact (agent, driver) pair is already
+                // persisted on the server — we don't want to nag the user
+                // to re-save schedules that exist.
+                let already_persisted = self.schedules.iter().any(|s| {
+                    s.agent_id == agent.name && s.driver_name == *driver_name
+                });
+                if already_persisted {
+                    continue;
+                }
+                drafts.push(ScheduleDraft {
+                    agent_id: agent.name.clone(),
+                    driver_name: driver_name.clone(),
+                    query: agent.query.clone(),
+                    interval_hours,
+                });
+            }
+        }
+        // Stable order by driver then agent so the list doesn't jump around
+        // between renders.
+        drafts.sort_by(|a, b| {
+            a.driver_name
+                .cmp(&b.driver_name)
+                .then(a.agent_id.cmp(&b.agent_id))
+        });
+        drafts
+    }
+
+    /// Persist a single schedule draft via the same upsert path the
+    /// per-driver 📅 buttons use. On success refreshes `self.schedules` so
+    /// the row migrates from the "drafts from FPL" section into the
+    /// persisted-schedules list.
+    pub fn save_schedule_draft(&mut self, draft: ScheduleDraft, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            self.messages.push(AssistantMessage {
+                node: "schedule".into(),
+                kind: MessageKind::Warning,
+                text: "Publish this forecast first (Ctrl+P) before persisting schedules.".into(),
+            });
+            cx.notify();
+            return;
+        };
+        let api = self.api.clone();
+        let req = UpsertScheduleRequest {
+            agent_id: draft.agent_id.clone(),
+            driver_name: draft.driver_name.clone(),
+            query: draft.query.clone(),
+            interval_hours: draft.interval_hours,
+        };
+        cx.spawn(async move |this, cx| {
+            match api.upsert_forecast_schedule(&fid, &req).await {
+                Ok(_) => {
+                    this.update(cx, |state, cx| {
+                        state.messages.push(AssistantMessage {
+                            node: format!("driver:{}", req.driver_name),
+                            kind: MessageKind::Info,
+                            text: format!(
+                                "Saved {} on '{}' (every {}h).",
+                                req.agent_id, req.driver_name, req.interval_hours
+                            ),
+                        });
+                        state.load_schedules(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!("[schedule] save_draft failed: {}", e);
+                    this.update(cx, |state, cx| {
+                        state.messages.push(AssistantMessage {
+                            node: "schedule".into(),
+                            kind: MessageKind::Error,
+                            text: format!("Failed to save {}: {}", req.agent_id, e),
+                        });
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Batch-save every FPL-declared schedule draft that isn't yet
+    /// persisted. Sequential upserts (not concurrent) so the messages
+    /// surface in order and a partial failure doesn't leave the user
+    /// uncertain about which saved.
+    pub fn save_all_schedule_drafts(&mut self, cx: &mut Context<Self>) {
+        let drafts = self.fpl_declared_schedule_drafts();
+        if drafts.is_empty() {
+            return;
+        }
+        let Some(fid) = self.forecast_id.clone() else {
+            self.messages.push(AssistantMessage {
+                node: "schedule".into(),
+                kind: MessageKind::Warning,
+                text: "Publish this forecast first (Ctrl+P) before persisting schedules.".into(),
+            });
+            cx.notify();
+            return;
+        };
+        let api = self.api.clone();
+        let n = drafts.len();
+        cx.spawn(async move |this, cx| {
+            let mut saved = 0usize;
+            let mut failed: Vec<String> = Vec::new();
+            for draft in &drafts {
+                let req = UpsertScheduleRequest {
+                    agent_id: draft.agent_id.clone(),
+                    driver_name: draft.driver_name.clone(),
+                    query: draft.query.clone(),
+                    interval_hours: draft.interval_hours,
+                };
+                match api.upsert_forecast_schedule(&fid, &req).await {
+                    Ok(_) => saved += 1,
+                    Err(e) => failed.push(format!("{}: {}", draft.agent_id, e)),
+                }
+            }
+            this.update(cx, |state, cx| {
+                state.messages.push(AssistantMessage {
+                    node: "schedule".into(),
+                    kind: if failed.is_empty() {
+                        MessageKind::Info
+                    } else {
+                        MessageKind::Warning
+                    },
+                    text: format!(
+                        "Saved {}/{} FPL-declared schedules.{}",
+                        saved,
+                        n,
+                        if failed.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" Failures: {}.", failed.join(", "))
+                        }
+                    ),
+                });
+                state.load_schedules(cx);
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
@@ -10697,16 +10882,180 @@ fn render_schedules_tab(
             )
             .into_any_element()
     } else if schedules.is_empty() {
-        div()
-            .p(px(20.0))
-            .text_size(px(11.0))
-            .text_color(rgb(theme::FG_DIM))
-            .child(
-                "No scheduled agents yet.\n\n\
-                 Click a driver in the program tree, then 📅 Daily or 📅 Weekly to schedule \
-                 recurring research. Overdue schedules auto-fire when this forecast is reopened.",
-            )
-            .into_any_element()
+        // Pre-populate from FPL-declared agent×driver pairs so the
+        // operator can review + batch-save the schedule fan-out instead of
+        // attaching cadences one driver at a time. WC team_prior fans out
+        // to 6 driver×agent pairs (4 agents, 3 of which research one
+        // driver each + football_analyst on three). Doing that by hand on
+        // 48 workspaces costs serious clicks.
+        let drafts = state.fpl_declared_schedule_drafts();
+        if drafts.is_empty() {
+            div()
+                .p(px(20.0))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "No scheduled agents yet.\n\n\
+                     Click a driver in the program tree, then 📅 Daily or 📅 Weekly to schedule \
+                     recurring research. Overdue schedules auto-fire when this forecast is reopened.",
+                )
+                .into_any_element()
+        } else {
+            let n = drafts.len();
+            let header = div()
+                .px(px(14.0))
+                .py(px(10.0))
+                .border_b_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .child(
+                    div()
+                        .flex_grow()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(rgb(theme::FG))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(format!("{} schedule draft{} declared by FPL", n, if n == 1 { "" } else { "s" })),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .child(
+                                    "Each row is an agent×driver pair the FPL ships with a recurring \
+                                     cadence but isn't yet persisted on the server. Use 'Save all' to \
+                                     batch-persist them, or save individually with the row buttons.",
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("save-all-schedules")
+                        .px(px(12.0))
+                        .py(px(5.0))
+                        .rounded(px(5.0))
+                        .border_1()
+                        .border_color(rgb(theme::CYAN))
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::CYAN))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.save_all_schedule_drafts(cx);
+                        }))
+                        .child(format!("→ Save all {}", n)),
+                );
+
+            let rows: Vec<AnyElement> = drafts
+                .into_iter()
+                .map(|draft| {
+                    let label_interval = if draft.interval_hours >= 168 {
+                        format!("every {} week", draft.interval_hours / 168)
+                    } else if draft.interval_hours >= 24 {
+                        format!("every {} day", draft.interval_hours / 24)
+                    } else {
+                        format!("every {}h", draft.interval_hours)
+                    };
+                    let row_id = format!(
+                        "save-draft-{}-{}",
+                        sanitize_name(&draft.agent_id),
+                        sanitize_name(&draft.driver_name)
+                    );
+                    let draft_for_save = draft.clone();
+                    div()
+                        .px(px(14.0))
+                        .py(px(8.0))
+                        .border_b_1()
+                        .border_color(rgb(theme::FG_FAINT))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .child(
+                            div()
+                                .flex_grow()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .child(
+                                            div()
+                                                .text_size(px(11.0))
+                                                .text_color(rgb(theme::CYAN))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(draft.agent_id.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(9.0))
+                                                .text_color(rgb(theme::FG_DIM))
+                                                .child("→"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(rgb(theme::FG))
+                                                .child(draft.driver_name.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(9.0))
+                                                .text_color(rgb(theme::FG_DIM))
+                                                .child(label_interval),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::FG_DIM))
+                                        .child({
+                                            let q = &draft.query;
+                                            if q.chars().count() > 110 {
+                                                format!("{}…", q.chars().take(108).collect::<String>())
+                                            } else {
+                                                q.clone()
+                                            }
+                                        }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(row_id))
+                                .px(px(10.0))
+                                .py(px(3.0))
+                                .rounded(px(4.0))
+                                .border_1()
+                                .border_color(rgb(theme::GREEN))
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::GREEN))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.save_schedule_draft(draft_for_save.clone(), cx);
+                                }))
+                                .child("Save"),
+                        )
+                        .into_any_element()
+                })
+                .collect();
+
+            div()
+                .flex()
+                .flex_col()
+                .child(header)
+                .children(rows)
+                .into_any_element()
+        }
     } else {
         // Group schedules by driver for clearer display
         let mut by_driver: std::collections::BTreeMap<String, Vec<ForecastSchedule>> =
