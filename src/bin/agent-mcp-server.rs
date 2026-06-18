@@ -33,6 +33,42 @@ use posterior_reg::{
     WeightedSample,
 };
 
+// -- Schema-friendly JSON-object passthrough -------------------------------
+//
+// `rust-mcp-macros::JsonSchema` (rust-mcp-sdk 0.8) emits
+// `{"type": "unknown"}` for any field whose Rust type it cannot introspect
+// (e.g. `serde_json::Value`, multi-segment paths, tuples). Anthropic's
+// strict JSON-Schema validator (used by Claude Opus 4.7 and friends)
+// rejects such schemas with `tools.N.custom.input_schema: JSON schema is
+// invalid` — which the host (Zed → Kilo ACP → Anthropic) surfaces as a
+// silent turn failure.
+//
+// To keep heterogeneous JSON inputs (posteriors, feature dicts, etc.)
+// while emitting a *valid* draft-2020-12 schema, we use a `#[serde(transparent)]`
+// newtype `JsonObject` whose own `json_schema()` returns
+// `{"type":"object","additionalProperties":true}`. The derive macro's
+// "nested struct" branch (might_be_struct → call `Ty::json_schema()`)
+// picks this up automatically, with no derive change needed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct JsonObject(pub serde_json::Value);
+
+impl JsonObject {
+    pub fn into_inner(self) -> serde_json::Value {
+        self.0
+    }
+
+    /// Schema function consumed by the `rust-mcp-macros::JsonSchema` derive.
+    /// Returns a fully permissive schema (any JSON value satisfies it) so the
+    /// fields that wrap heterogeneous JSON — e.g. `data` (array), `posterior`
+    /// (object), `features` (object), `feature_ranges` (object) — all
+    /// validate cleanly against draft 2020-12. Empty `{}` is the canonical
+    /// "anything" schema and is accepted by Anthropic's strict validator.
+    pub fn json_schema() -> serde_json::Map<String, serde_json::Value> {
+        serde_json::Map::new()
+    }
+}
+
 // Tool: List all available agents
 #[macros::mcp_tool(
     name = "list_agents",
@@ -165,9 +201,9 @@ pub struct FermiFitMarginalTool {
 #[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
 pub struct FermiFitConditionalTool {
     /// Training data as JSON array of `{features: {name: f64}, outcome: f64, weight: f64}`.
-    pub data: serde_json::Value,
+    pub data: JsonObject,
     /// Regression configuration as JSON. Required field: `feature_names: [...]`.
-    pub config: serde_json::Value,
+    pub config: JsonObject,
 }
 
 #[macros::mcp_tool(
@@ -177,9 +213,9 @@ pub struct FermiFitConditionalTool {
 #[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
 pub struct FermiPredictTool {
     /// Posterior JSON as returned by fermi_fit_conditional.
-    pub posterior: serde_json::Value,
+    pub posterior: JsonObject,
     /// Query feature values as JSON object `{name: f64}`.
-    pub features: serde_json::Value,
+    pub features: JsonObject,
 }
 
 #[macros::mcp_tool(
@@ -188,9 +224,9 @@ pub struct FermiPredictTool {
 )]
 #[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
 pub struct FermiInputSensitivityTool {
-    pub posterior: serde_json::Value,
+    pub posterior: JsonObject,
     /// `{feature_name: [lo, hi]}` over which to compute sensitivity.
-    pub feature_ranges: serde_json::Value,
+    pub feature_ranges: JsonObject,
     #[serde(default)]
     pub n_samples: Option<u32>,
 }
@@ -201,9 +237,9 @@ pub struct FermiInputSensitivityTool {
 )]
 #[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
 pub struct FermiCompareScenariosTool {
-    pub posterior: serde_json::Value,
-    pub a: serde_json::Value,
-    pub b: serde_json::Value,
+    pub posterior: JsonObject,
+    pub a: JsonObject,
+    pub b: JsonObject,
 }
 
 #[macros::mcp_tool(
@@ -212,8 +248,8 @@ pub struct FermiCompareScenariosTool {
 )]
 #[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
 pub struct FermiProbExceedsTool {
-    pub posterior: serde_json::Value,
-    pub features: serde_json::Value,
+    pub posterior: JsonObject,
+    pub features: JsonObject,
     pub threshold: f64,
 }
 
@@ -223,10 +259,11 @@ pub struct FermiProbExceedsTool {
 )]
 #[derive(Debug, serde::Deserialize, serde::Serialize, macros::JsonSchema)]
 pub struct FermiOptimiseForTargetTool {
-    pub posterior: serde_json::Value,
-    pub fixed_features: serde_json::Value,
+    pub posterior: JsonObject,
+    pub fixed_features: JsonObject,
     pub free_feature: String,
-    pub search_range: (f64, f64),
+    /// 2-element `[lo, hi]` over which to search for `free_feature`.
+    pub search_range: Vec<f64>,
     pub target_threshold: f64,
 }
 
@@ -716,9 +753,9 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let data: Vec<WeightedSample> = serde_json::from_value(tool.data)
+                let data: Vec<WeightedSample> = serde_json::from_value(tool.data.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid data: {}", e)))?;
-                let config: RegressionConfig = serde_json::from_value(tool.config)
+                let config: RegressionConfig = serde_json::from_value(tool.config.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid config: {}", e)))?;
 
                 let posterior = bayesops_fit_conditional(&data, &config)
@@ -741,10 +778,10 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
                 let features: std::collections::HashMap<String, f64> =
-                    serde_json::from_value(tool.features)
+                    serde_json::from_value(tool.features.into_inner())
                         .map_err(|e| CallToolError::from_message(format!("invalid features: {}", e)))?;
 
                 let fitted = posterior.predict(&features)
@@ -765,10 +802,10 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
                 let feature_ranges: std::collections::HashMap<String, (f64, f64)> =
-                    serde_json::from_value(tool.feature_ranges)
+                    serde_json::from_value(tool.feature_ranges.into_inner())
                         .map_err(|e| CallToolError::from_message(format!("invalid feature_ranges: {}", e)))?;
                 let n = tool.n_samples.unwrap_or(256u32);
 
@@ -786,11 +823,11 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
-                let a: std::collections::HashMap<String, f64> = serde_json::from_value(tool.a)
+                let a: std::collections::HashMap<String, f64> = serde_json::from_value(tool.a.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid scenario a: {}", e)))?;
-                let b: std::collections::HashMap<String, f64> = serde_json::from_value(tool.b)
+                let b: std::collections::HashMap<String, f64> = serde_json::from_value(tool.b.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid scenario b: {}", e)))?;
 
                 let comp = posterior.compare_scenarios(&a, &b)
@@ -807,9 +844,9 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
-                let features: std::collections::HashMap<String, f64> = serde_json::from_value(tool.features)
+                let features: std::collections::HashMap<String, f64> = serde_json::from_value(tool.features.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid features: {}", e)))?;
 
                 let probability = posterior.prob_exceeds(&features, tool.threshold)
@@ -826,15 +863,25 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior)
+                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
-                let fixed: std::collections::HashMap<String, f64> = serde_json::from_value(tool.fixed_features)
+                let fixed: std::collections::HashMap<String, f64> = serde_json::from_value(tool.fixed_features.into_inner())
                     .map_err(|e| CallToolError::from_message(format!("invalid fixed_features: {}", e)))?;
+
+                // search_range comes in as a 2-element Vec<f64> for schema friendliness;
+                // convert back to the (lo, hi) tuple the backend expects.
+                if tool.search_range.len() != 2 {
+                    return Err(CallToolError::from_message(format!(
+                        "search_range must have exactly 2 elements [lo, hi], got {}",
+                        tool.search_range.len()
+                    )));
+                }
+                let search_range = (tool.search_range[0], tool.search_range[1]);
 
                 let result = posterior.optimise_for_target(
                     &fixed,
                     &tool.free_feature,
-                    tool.search_range,
+                    search_range,
                     tool.target_threshold,
                 )
                 .map_err(|e| CallToolError::from_message(e.to_string()))?;
