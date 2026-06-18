@@ -1,6 +1,6 @@
 {
   "forecast_id": "949f5764-5b11-4cc5-978f-798a65cc66e8",
-  "current_version": 3,
+  "current_version": 4,
   "predicted_probability": 0.022262280389574975,
   "inside_view_explanation": "Raw model output: 0.02 (no base rate for normalization) Most influential: squad_quality (31%), institutional_capacity (18%), tactical_efficiency (15%).",
   "forecast_confidence": 0.5333333333333333,
@@ -20,6 +20,12 @@
     {
       "version": 3,
       "timestamp": "2026-06-18 11:21",
+      "probability": 0.022262280389574975,
+      "change_summary": "2.2% (→), 6 drivers, 4 evidence, 4 agents"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-06-18 11:22",
       "probability": 0.022262280389574975,
       "change_summary": "2.2% (→), 6 drivers, 4 evidence, 4 agents"
     }
