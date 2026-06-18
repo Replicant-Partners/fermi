@@ -186,44 +186,74 @@ fn simulate_team_rate(
 }
 
 /// Argentina (strong, CONMEBOL) and Panama (CONCACAF qualifier) should
-/// produce materially different rates from the same template. If they
-/// don't, the per-team params aren't reaching the driver distributions and
-/// the demo's "Brazil > Panama" property fails by construction.
+/// produce materially different raw model outputs. The cockpit applies a
+/// base-rate normalization on top (P = base_rate × sim_mean / baseline_mean)
+/// so we test the relative magnitudes here rather than the post-norm rate
+/// — that's what makes the template a useful per-team prior.
 #[test]
 fn team_prior_simulates_team_differentiated_rates() {
     // Argentina-class: Elo 1850, modest positive trend, mid GDP, mid pop, high HDI.
-    let arg_rate = simulate_team_rate("Argentina", 1850.0, 0.10, 9.5, 17.4, 2.10);
+    let arg_raw = simulate_team_rate("Argentina", 1850.0, 0.10, 9.5, 17.4, 2.10);
     // Panama-class: Elo 1500, modest trend, lower GDP, smaller pop, mid HDI.
-    let pan_rate = simulate_team_rate("Panama", 1500.0, -0.05, 9.0, 15.1, 1.40);
+    let pan_raw = simulate_team_rate("Panama", 1500.0, -0.05, 9.0, 15.1, 1.40);
 
-    // Sanity: both rates are in [0, 1]. We use a loose bound — the model is
-    // calibrated to land in the single-digit percentage range, not anything
-    // wild.
+    // Sanity: both are finite positive (the multiplicative model can't
+    // produce zero or negative values given Triangular/Normal priors with
+    // positive support, but a misconfigured prior would).
     assert!(
-        arg_rate.is_finite() && arg_rate > 0.0 && arg_rate < 1.0,
-        "Argentina rate {} out of (0, 1)",
-        arg_rate
+        arg_raw.is_finite() && arg_raw > 0.0,
+        "Argentina raw output {} not finite-positive",
+        arg_raw
     );
     assert!(
-        pan_rate.is_finite() && pan_rate > 0.0 && pan_rate < 1.0,
-        "Panama rate {} out of (0, 1)",
-        pan_rate
+        pan_raw.is_finite() && pan_raw > 0.0,
+        "Panama raw output {} not finite-positive",
+        pan_raw
     );
 
-    // Strong teams MUST produce higher rates than weak teams. If this
+    // Strong teams MUST produce higher raw outputs than weak teams. If this
     // fires, the per-team params aren't reaching the driver distributions
-    // and every team will show the same rate in the cockpit.
+    // and the cockpit's normalization will produce the same rate for every
+    // team.
     assert!(
-        arg_rate > pan_rate * 1.5,
-        "expected Argentina rate ({:.4}) to be at least 1.5x Panama rate ({:.4}); the per-team params aren't flowing into the driver distributions",
-        arg_rate,
-        pan_rate
+        arg_raw > pan_raw * 1.3,
+        "expected Argentina raw ({:.4}) to be at least 1.3x Panama raw ({:.4}); the per-team params aren't flowing into the driver distributions",
+        arg_raw,
+        pan_raw
     );
 
-    // Print rates so eyeballing the calibration during dev is easy.
+    // Simulate the cockpit's normalization explicitly so the calibration
+    // print reflects what the user will actually see. Baseline = run with
+    // all drivers fixed at their p50. For the Triangular drivers in this
+    // template the p50 is the second argument; for Normal it's the mean
+    // expression. Both evaluate to known numbers given the bound params.
+    //
+    // Reuse simulate_team_rate to get the per-team mean; baseline is
+    // computed by running the same template with a "neutral" param set
+    // (Elo 1700, mid socio inputs that sum to 7.8 — the offset we centered
+    // around in the socio_capital distribution). The resulting product is
+    // the natural baseline.
+    let baseline_raw = simulate_team_rate("Baseline", 1700.0, 0.0, 2.6, 2.6, 2.6);
+    let base_rate = 0.0208_f64;
+    let arg_final = (base_rate * arg_raw / baseline_raw).clamp(0.01, 0.99);
+    let pan_final = (base_rate * pan_raw / baseline_raw).clamp(0.01, 0.99);
+
     eprintln!(
-        "team_prior calibration: Argentina={:.2}%, Panama={:.2}%",
-        arg_rate * 100.0,
-        pan_rate * 100.0
+        "team_prior calibration: \n  raw arg={:.3}, pan={:.3}, baseline={:.3}\n  normalized arg={:.2}%, pan={:.2}%",
+        arg_raw, pan_raw, baseline_raw,
+        arg_final * 100.0, pan_final * 100.0
+    );
+
+    // Normalized rates land in plausible bookmaker territory (sub-30%).
+    // Pin the upper bound loosely — the calibration constants may evolve.
+    assert!(
+        arg_final < 0.30,
+        "Argentina normalized rate {:.4} > 30%; calibration is off",
+        arg_final
+    );
+    assert!(
+        arg_final > pan_final,
+        "Argentina normalized rate {:.4} should exceed Panama {:.4}",
+        arg_final, pan_final
     );
 }

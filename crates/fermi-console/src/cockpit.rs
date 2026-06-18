@@ -5360,7 +5360,12 @@ impl CockpitState {
 
     pub fn publish_forecast(&mut self, visibility: String, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
-        self.cached_fpl = generate_fpl_text(&self.program);
+        // Same guard as run_simulation — never regenerate cached_fpl from
+        // the AST if the loaded FPL is richer (factor blocks, agents,
+        // params, learnable(), feeds_from). Otherwise publishing a
+        // workspace-backed forecast would push a stripped 2-driver shell
+        // to the server.
+        self.regenerate_cached_fpl_if_safe();
 
         let question = self
             .program
@@ -5387,49 +5392,121 @@ impl CockpitState {
             },
         });
 
+        // ── Branch: update an existing forecast vs create a new one ───
+        //
+        // Without this branch every Save creates a duplicate row. Opening a
+        // workspace-backed forecast (e.g. ARG, forecast_id pre-set) and
+        // hitting Save produced a second 'Will Argentina win...' forecast
+        // with no workspace_id, no base_rate, and probability stuck at 2%
+        // — exactly the noisy duplicate the user saw.
+        //
+        // The decision rule is simple: if we know the forecast_id, PUT
+        // updates to that row. Otherwise it's a genuinely-new draft, POST
+        // to create. The PUT path uses UpdateForecastRequest which accepts
+        // partial updates so we only ship the fields that may have moved.
         self.publish_status = Some("Publishing…".into());
         cx.notify();
 
-        let req = CreateForecastRequest {
-            question_text: question,
-            predicted_probability: self.predicted_probability,
-            domain: None,
-            resolution_criteria: self.program.question().and_then(|q| q.resolution_criteria.clone()),
-            target_date: self.program.question().and_then(|q| q.target_date.clone()),
-            confidence_interval_low: self.sim_results.as_ref().map(|s| s.p5),
-            confidence_interval_high: self.sim_results.as_ref().map(|s| s.p95),
-            fpl_source: Some(self.cached_fpl.clone()),
-            simulation_results: self.sim_results.as_ref().map(|s| {
-                serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 })
-            }),
-            drivers: None,
-            evidence: None,
-            visibility: Some(visibility),
-            tags: None,
-            portfolio_id: None,
-            status: Some("active".into()),
-        };
-
         let api = self.api.clone();
-        cx.spawn(
-            async move |this, cx| match api.create_forecast(&req).await {
-                Ok(resp) => {
-                    let fid = resp
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+        let fpl = self.cached_fpl.clone();
+        let prob = self.predicted_probability;
+        let res_crit = self.program.question().and_then(|q| q.resolution_criteria.clone());
+        let target_date = self.program.question().and_then(|q| q.target_date.clone());
+        let ci_low = self.sim_results.as_ref().map(|s| s.p5);
+        let ci_high = self.sim_results.as_ref().map(|s| s.p95);
+        let sim_results_json = self.sim_results.as_ref().map(|s| {
+            serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 })
+        });
+        let existing_fid = self.forecast_id.clone();
+
+        cx.spawn(async move |this, cx| {
+            let outcome: Result<(String, bool), String> = if let Some(fid) = existing_fid {
+                // PUT — update the existing row, preserve workspace_id /
+                // tags / portfolio memberships that the create payload
+                // wouldn't carry. Build the JSON payload by hand because
+                // the client's update_forecast takes a loose JsonValue —
+                // we only ship the fields that may have moved.
+                let mut updates = serde_json::Map::new();
+                updates.insert("question_text".into(), serde_json::json!(question));
+                updates.insert("predicted_probability".into(), serde_json::json!(prob));
+                updates.insert("fpl_source".into(), serde_json::json!(fpl));
+                updates.insert("visibility".into(), serde_json::json!(visibility));
+                updates.insert("status".into(), serde_json::json!("active"));
+                if let Some(ref s) = res_crit {
+                    updates.insert("resolution_criteria".into(), serde_json::json!(s));
+                }
+                if let Some(ref s) = target_date {
+                    updates.insert("target_date".into(), serde_json::json!(s));
+                }
+                if let Some(v) = ci_low {
+                    updates.insert("confidence_interval_low".into(), serde_json::json!(v));
+                }
+                if let Some(v) = ci_high {
+                    updates.insert("confidence_interval_high".into(), serde_json::json!(v));
+                }
+                if let Some(ref v) = sim_results_json {
+                    updates.insert("simulation_results".into(), v.clone());
+                }
+                let body = serde_json::Value::Object(updates);
+                api.update_forecast(&fid, &body)
+                    .await
+                    .map(|_| (fid, false))
+                    .map_err(|e| e.to_string())
+            } else {
+                // POST — first-time publish.
+                let req = CreateForecastRequest {
+                    question_text: question,
+                    predicted_probability: prob,
+                    domain: None,
+                    resolution_criteria: res_crit,
+                    target_date,
+                    confidence_interval_low: ci_low,
+                    confidence_interval_high: ci_high,
+                    fpl_source: Some(fpl),
+                    simulation_results: sim_results_json,
+                    drivers: None,
+                    evidence: None,
+                    visibility: Some(visibility),
+                    tags: None,
+                    portfolio_id: None,
+                    status: Some("active".into()),
+                };
+                api.create_forecast(&req)
+                    .await
+                    .map(|resp| {
+                        let fid = resp
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        (fid, true)
+                    })
+                    .map_err(|e| e.to_string())
+            };
+
+            match outcome {
+                Ok((fid, created)) => {
                     this.update(cx, |state, cx| {
                         state.forecast_id = Some(fid.clone());
-                        state.publish_status =
-                            Some(format!("Published v{}", state.current_version));
+                        state.publish_status = Some(if created {
+                            format!("Published v{}", state.current_version)
+                        } else {
+                            format!("Updated v{}", state.current_version)
+                        });
                         state.messages.push(AssistantMessage {
                             node: "publish".into(),
                             kind: MessageKind::Info,
-                            text: format!(
-                                "Forecast published as v{} (ID: {})",
-                                state.current_version, fid
-                            ),
+                            text: if created {
+                                format!(
+                                    "Forecast published as v{} (ID: {})",
+                                    state.current_version, fid
+                                )
+                            } else {
+                                format!(
+                                    "Forecast updated to v{} (ID: {})",
+                                    state.current_version, fid
+                                )
+                            },
                         });
                         // Load any existing schedules now that we have a forecast_id
                         state.load_schedules(cx);
@@ -5444,8 +5521,8 @@ impl CockpitState {
                     })
                     .ok();
                 }
-            },
-        )
+            }
+        })
         .detach();
     }
 }

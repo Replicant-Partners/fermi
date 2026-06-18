@@ -156,12 +156,20 @@ agent fixture_context_agent {
 
 // ─── Model ────────────────────────────────────────────────────────────
 //
-// Multiplicative product of all six drivers, scaled by the base rate
-// (1/48 ≈ 0.0208). Posterior rate = base_rate * product(drivers). For an
-// average-team draw the product is ~1.0 so the rate sits near base. Strong
-// teams produce products in the 4–8x range, lifting the rate into single-
-// to low-double-digit territory consistent with bookmaker prices.
+// Pure multiplicative product over the six drivers. NO base-rate scalar
+// in the model expression: the cockpit's run_simulation normalization
+// (cockpit.rs ~line 4297) computes `P = base_rate × (sim_mean /
+// baseline_mean)`, where baseline_mean is a deterministic execution with
+// every driver fixed at its p50. Folding the base rate into the model
+// here would cancel out — the cockpit would divide it out via the
+// baseline and multiply it back in, leaving the rate stuck at base_rate
+// regardless of the per-team driver tilt.
+//
+// For a "field-strength" team the product lands near 1.0 → P ≈ base
+// rate. Strong teams produce products in the 3–6x range, lifting the
+// rate to single- to low-double-digit percentages. Calibrated against
+// the spec's worked-example numbers (§6 step 7: 22% → 26%).
 
-model: 0.0208 * socio_capital * institutional_capacity * dynamic_performance * squad_quality * tactical_efficiency * fixture_context
+model: socio_capital * institutional_capacity * dynamic_performance * squad_quality * tactical_efficiency * fixture_context
 
 simulate 10000 iterations
