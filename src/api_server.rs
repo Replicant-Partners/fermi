@@ -891,9 +891,12 @@ async fn ensure_critical_schema(db: &PgPool) {
               RETURN NEW; \
           END; \
           $$"),
-        ("forecast_spacetime.trigger",
-         "DROP TRIGGER IF EXISTS trg_forecast_spacetime ON public.fermi_forecast_updates; \
-          CREATE TRIGGER trg_forecast_spacetime \
+        // Drop + create as two separate sqlx execute() calls because the
+        // sqlx::query layer doesn't run multi-statement strings.
+        ("forecast_spacetime.trigger_drop",
+         "DROP TRIGGER IF EXISTS trg_forecast_spacetime ON public.fermi_forecast_updates"),
+        ("forecast_spacetime.trigger_create",
+         "CREATE TRIGGER trg_forecast_spacetime \
               AFTER INSERT ON public.fermi_forecast_updates \
               FOR EACH ROW EXECUTE FUNCTION public.fn_forecast_spacetime_on_update()"),
     ];
