@@ -1,167 +1,181 @@
-// TEAM_PRIOR — Tournament win probability prior for a single national team.
-//
-// Six factor-derived drivers, each with its own sparkline prior, in a
-// multiplicative model. Aligned to docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md
-// and docs/fermi/BAYESOPS_CONTRACT.md:
-//
-//   - Each FPL `driver` is a factor-derived metric. Cockpit renders one
-//     sparkline per driver (R-2). BayesOps refits the LEARNABLE ones from
-//     accumulated match observations (R-1).
-//   - Each `agent` block owns the inputs of one or more drivers, publishes
-//     evidence to the cockpit, and (for learnable drivers) is the human-
-//     readable provenance for the observation stream.
-//   - The model expression is a simple multiplicative product over the six
-//     drivers. The Cobb-Douglas elasticities the older template carried as
-//     `learnable()` exponents are deferred — they need cockpit AST work
-//     before they round-trip safely (see CACHED_FPL guard in cockpit.rs).
-//
-// The per-team params (gdp_per_capita_log, elo_current, etc.) are bound at
-// instantiation time by respawn_aligned.py / refresh_fpl.py. The driver
-// distributions reference those params directly so each team's posterior
-// MC pulls from a distribution centered on its own data.
-
-param team_id: string
-param team_name: string
-param confederation: string
-param group: string
-param is_host: bool
-param elo_current: real
-param elo_trend: real
-param gdp_per_capita_log: real
-param population_log: real
-param hdi_logit: real
-
-question "Will Argentina win the 2026 FIFA World Cup?" {
-    base_rate {
-        reference_class: "FIFA World Cup winners 1930–2022"
-        // 1/48 ≈ 0.0208 — uniform prior across the 48-team field. Each team
-        // starts with an equal share before factor-derived drivers move the
-        // probability up or down. The cockpit's "outside view" pane reads
-        // this; without it the inside-view divergence panel can't render.
-        historical_frequency: 2.08%
-        sample_size: 22
-        source: "FIFA tournament archive — 22 prior World Cups, 8 distinct winners"
-        reasoning: "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via socio_capital, institutional_capacity, dynamic_performance, squad_quality, tactical_efficiency, fixture_context."
-        generated_by: human
-    }
-}
-
-// ─── Drivers ──────────────────────────────────────────────────────────
-//
-// Six drivers. Calibrated so the multiplicative product over a typical
-// "field-strength" team lands near 1.0 — Argentina-class teams (high Elo +
-// host-adjacent CONMEBOL) come in around 1.5–2.5; minnows around 0.3–0.6.
-// The per-team rate is then product * base_rate (1/48 ≈ 0.021). After 6
-// drivers multiply against that base rate, top teams should produce
-// posterior probabilities in the 5–15% range — the spec's worked example
-// numbers (line 309: 22% → 26% after a fit) bracket this.
+question "Will Argentina win the 2026 FIFA World Cup?"
 
 driver socio_capital continuous {
-    distribution: triangular(
-        0.6 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0,
-        0.85 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0,
-        1.15 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0
-    )
+    distribution: triangular(0.8, 1, 1.2)
     rationale: "Macro capacity for footballing investment: GDP, population, HDI."
 }
 
 driver institutional_capacity continuous {
-    distribution: triangular(0.75, 1.0, 1.3)
+    distribution: triangular(0.75, 1, 1.3)
     rationale: "Federation strength, league development, player pipeline depth."
 }
 
 driver dynamic_performance continuous {
-    distribution: normal(0.85 + 0.30 * (elo_current - 1700) / 300, 0.20)
+    distribution: triangular(0.8, 1, 1.2)
     learnable: true
     rationale: "Recent form and Elo trajectory — refits as match outcomes accumulate."
-    feeds_from: {
-        source: "upstream_resolutions",
-        extractor: "scalar_field_value",
-        config: {
-            path: "goal_differential"
-        }
-    }
 }
 
 driver squad_quality continuous {
-    distribution: triangular(0.7, 1.0, 1.35)
+    distribution: triangular(0.7, 1, 1.35)
     learnable: true
     rationale: "Top-flight league penetration + market-value concentration; updates as injuries / form are reported."
-    feeds_from: {
-        source: "upstream_resolutions",
-        extractor: "binary_winner_id_match",
-        config: {
-            winner_field: "winner_team_id",
-            match_value: "${workspace.entity_id}"
-        }
-    }
 }
 
 driver tactical_efficiency continuous {
-    distribution: triangular(0.8, 1.0, 1.25)
+    distribution: triangular(0.8, 1, 1.25)
     learnable: true
     rationale: "Shot conversion, defensive duels, pressing intensity — observable per-match."
-    feeds_from: {
-        source: "upstream_resolutions",
-        extractor: "scalar_field_value",
-        config: {
-            path: "shot_conversion_rate"
-        }
-    }
 }
 
 driver fixture_context continuous {
-    distribution: triangular(0.9, 1.0, 1.1)
+    distribution: triangular(0.9, 1, 1.1)
     rationale: "Per-fixture context: venue, climate, rest, altitude. Volatile, refreshed per match."
 }
 
-// ─── Agents ───────────────────────────────────────────────────────────
-//
-// Per BAYESOPS_CONTRACT.md §3, one curated agent per factor family. Each
-// agent's `driver_refs` declares which drivers it researches — the cockpit
-// uses this to attribute evidence and the refit hook uses it to attribute
-// observation streams to fits.
+evidence macro_data_agent_0 {
+    source: "Agent: macro_data_agent"
+    summary: "# SOCIOECONOMIC CAPITAL (X1) — ARGENTINA, 2026 FIFA WORLD CUP
 
-agent macro_data_agent {
-    type: "research"
-    query: "GDP per capita, population, HDI for Argentina (2024–2026 latest available)"
-    executor: "llm"
-    driver_refs: ["socio_capital"]
-    schedule: every 1 month
+## CORE INDICATORS
+
+**[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$12,667** (Trading Economics, World Bank source)  
+- Log₁₀ transformation: log₁₀(12,667) = **4.103**
+
+**[INDICATOR]** Population (2024, World Bank SP.POP.TOTL): **45,696,159** (45.7 million)  
+- Log₁₀ transformation: log₁₀(45.7) = **1.660**
+
+**[INDICATOR]** HDI (2023, UNDP Human Development Report 2025, Table 1): **0.865**  
+- Logit transformation: log(0.865 / (1 - 0.865)) = log(0.865 / 0.135) = log(6.407) = **1.857**
+
+**[DATA AGE]** All three indicators are current: GDP/capita and population from 2024 World Bank data; HDI from UNDP HDR 2025 (published May 2025, covering 2023 data). Argentina ranks **47th globally** in HDI (Very High Human Development category).
+
+---
+
+## FIELD BASELINE — 2026 WORLD CUP (48 TEAMS)
+
+**[BASELINE]** The 2026 World Cup field spans extreme socioeconomic diversity:
+- **Richest participants**: USA ($53,202), Switzerland, Norway, Qatar (all >$60k GDP/capita)
+- **Poorest participants**: DR Congo ($752), Haiti (~$1,800), Curaçao (small-island economy)
+- **Per-capita range**: 71× gap between richest and poorest (World Data Lab analysis)
+
+**[BASELINE]** Estimated field **median GDP per capita**: ~$15,000–$18,000  
+- Upper tercile (16 teams): Advanced economies (Western Europe, North America, Japan, South Korea, Australia) — GDP/capita >$30k
+- Middle tercile (16 teams): Upper-middle-income (Argentina, Brazil, Mexico, Uruguay, Saudi Arabia, Iran, Türkiye) — GDP/capita $8k–$25k
+- Lower tercile (16 teams): Lower-middle and low-income (North/Sub-Saharan Africa, Central America, Oceania minnows) — GDP/capita <$8k
+
+**[BASELINE]** Estimated field **median HDI**: ~0.78–0.82 (High Human Development)  
+- Argentina's 0.865 places it in the **upper quartile** of the tournament field
+
+**[BASELINE]** Estimated field **median population (log)**: ~1.5–1.7 (30–50 million)  
+- Argentina at 45.7M (log 1.660) sits near the field median
+
+---
+
+## FACTOR TRANSFORMATION
+
+**[TRANSFORM]** Using standard X1 (Socioeconomic Capital) factor weights:
+- **40% GDP/capita (log)**: 0.40 × 4.103 = 1.641
+- **30% Population (log)**: 0.30 × 1.660 = 0.498
+- **30% HDI (logit)**: 0.30 × 1.857 = 0.557
+
+**[TRANSFORM]** Raw factor score: 1.641 + 0.498 + 0.557 = **2.696**
+
+**[TRANSFORM]** Standardization vs. WC 2026 field baseline:
+- Field median raw score (estimated): ~2.50 (based on median GDP/capita log ~4.20, pop log ~1.60, HDI logit ~1.30)
+- Argentina deviation: +0.20 standard deviations above field median
+- **Argentina sits in the 60th–65th percentile** of the tournament's socioeconomic distribution
+
+**[TRANSFORM]** Key insight: Argentina's **HDI (0.865) significantly exceeds** the field median (~0.78), driven by high educational attainment (18.8 years expected schooling) and life expectancy (77.4 years). However, its **GDP/capita ($12,667) is below** the field median (~$16k), reflecting recent economic volatility and currency depreciation.
+
+---
+
+## MULTIPLIER OUTPUT
+
+**[MULTIPLIER]** Suggested p50: **1.05** (p5: 0.92, p95: 1.18) — Argentina's socioeconomic profile sits modestly above the 2026 World Cup field median, driven by strong human development indicators (HDI 0.865, 47th globally) that offset below-median GDP per capita ($12,667). The country's 45.7M population provides a large talent pool comparable to Spain, while educational infrastructure supports elite athlete development. However, economic instability limits the multiplier effect relative to wealthier European/North American competitors."
+    relevance: 0.5p
+    date: 2026-06-18
 }
 
-agent football_institution_agent {
-    type: "research"
-    query: "Player registration, top-flight league revenue, confederation coefficient for Argentina"
-    executor: "llm"
-    driver_refs: ["institutional_capacity"]
-    schedule: every 1 month
+evidence football_institution_agent_0 {
+    source: "Agent: football_institution_agent"
+    summary: "# ARGENTINA INSTITUTIONAL CAPACITY (X2) — FACTOR ANALYSIS
+
+## FINDINGS
+
+[PENETRATION] **Argentina registered players: 2,658,811 total (331,811 registered + 2,327,000 unregistered) per FIFA/Wikipedia data** — Population 46.06M (2024) yields **5,770 total players per 100k** or **720 registered players per 100k**. The registered rate is comparable to major European nations; total participation (including informal) is exceptionally high, reflecting deep cultural embedding of football.
+
+[LEAGUE REVENUE] **Liga Profesional Argentina estimated annual sponsorship revenue: $28.16M (2024, GlobalData)**. This is sponsorship only; total league revenue likely $150-200M range when broadcast/matchday included. River Plate alone generates $115M matchday revenue (Sports Value). **Log10(~$175M) ≈ 8.24** — substantially below top European leagues (Premier League ~$7B, log10 ≈ 9.85) but competitive within CONMEBOL and ahead of most AFC/CONCACAF leagues.
+
+[CONFEDERATION] **CONMEBOL member; confederation coefficient ≈ 0.92-0.95** (second only to UEFA). Evidence: (1) Historical World Cup inter-confederation record shows CONMEBOL 59% win rate vs UEFA's 65% (2006 data, representative); (2) Copa Libertadores winners competitive in Club World Cup — Botafogo 2024 victory ended 13-year drought but demonstrates parity; (3) CONMEBOL awarded 6 slots vs UEFA's 12 in 2025 Club World Cup, reflecting ~50% UEFA strength at club level; (4) Argentina clubs (Boca, River, Racing) dominate Libertadores historically, maintaining high confederation performance.
+
+[INSTITUTIONAL SIGNAL] **Argentina produces 2,000+ professional players in foreign leagues (2023, Statista)** — second globally only to Brazil. This export rate far exceeds demographic share, indicating institutional efficiency in talent conversion. Youth academy infrastructure: AFA expanding with $10M Miami facility + U.S. academy network (2023-2024); domestic academy system (Boca, River, Independiente, Newell's) has 60+ year track record of elite production. **Professional player density: 128,694 global professionals (FIFA 2023) with Argentina contributing ~1.6% despite 0.6% of global population** — 2.7x overperformance.
+
+[DATA AGE] Player registration data from FIFA/Wikipedia (sourced to FIFA Big Count methodology, likely 2020-2023 vintage). League revenue from GlobalData 2024 report. Confederation metrics from 2020-2024 club competition results. All data current within 1-4 years.
+
+[INSTITUTIONAL EFFICIENCY] Argentina's **720 registered players per 100k is 3.5x the global median (~200/100k)** and comparable to Uruguay (highest per-capita producer). The **2.7x professional export overperformance** combined with **CONMEBOL's 0.92-0.95 confederation strength** (vs AFC 0.65, CONCACAF 0.65) creates a structural institutional advantage. However, **league revenue weakness** (8.24 vs European 9.5-9.8 log scale) limits domestic development ceiling relative to top UEFA nations.
+
+---
+
+## [MULTIPLIER] Suggested p50: **1.15** (p5: **0.95**, p95: **1.40**) 
+
+**Rationale:** Argentina's institutional capacity significantly exceeds its economic scale (X1). The 720 registered players/100k penetration rate, 2.7x professional export overperformance, and CONMEBOL's 0.92-0.95 confederation strength justify a material X2 boost. However, modest domestic league revenue ($175M vs $7B+ for top UEFA leagues) prevents the extreme multipliers seen in small high-penetration UEFA nations (Iceland 1.35+). The p50 of 1.15 reflects Argentina as a **high-efficiency converter** of socioeconomic resources into football talent, with institutions punching ~15% above the global median for a country of its GDP/population profile."
+    relevance: 0.5p
+    date: 2026-06-18
 }
 
-agent football_analyst {
-    type: "research"
-    query: "Latest Elo rating, last 5 matches form, key player availability, market value distribution for Argentina"
-    executor: "llm"
-    driver_refs: ["dynamic_performance", "squad_quality", "tactical_efficiency"]
-    schedule: every 1 week
+evidence football_analyst_0 {
+    source: "Agent: football_analyst"
+    summary: "Now let me compile comprehensive tactical efficiency evidence for Argentina's 2026 World Cup prospects.
+
+---
+
+## TACTICAL EFFICIENCY EVIDENCE FOR ARGENTINA — 2026 FIFA WORLD CUP
+
+### FACTOR X5 — TACTICAL EFFICIENCY ANALYSIS
+
+**[BASE RATE]** World Cup winners historically demonstrate: shot conversion rate >15%, defensive duel win rate >55%, set-piece efficiency >0.35 goals/game, and possession efficiency >82% pass completion. Argentina's 2022 WC winning campaign: 16.7% conversion, 57% duels won, 0.41 set-piece goals/game.
+
+**[SHOT CONVERSION RATE]** Copa America 2024: Argentina scored 9 goals from 9 total shots on target across 6 matches = **100% shots-on-target conversion rate** (extraordinary efficiency). Total shots: 19 vs Canada (opener), 11 vs Canada (semi) = 30 shots across 2 measured matches, 12 on target, 4 goals = **33.3% shot-on-target conversion**. xG data: 3.02 xG vs 2 goals (Canada opener) = 66% xG conversion; 2.20 xG vs 2 goals (Canada semi) = 91% xG conversion. Lautaro Martínez at WC 2026: 21.9% shot conversion rate (Squawka), 36 international goals — elite finishing instincts. Julián Álvarez: 7.11 FotMob rating 2025/26 LaLiga, 8 goals + 4 assists in 1,902 minutes = 0.38 goals/90 + 0.19 assists/90 = **0.57 G+A/90** (high efficiency).
+
+**[DEFENSIVE DUEL WIN PCT]** Copa America 2024 player data: Nicolás Tagliafico 21 duels won from 40 total = **52.5% duel win rate** (left-back). Limited granular defensive duel data from API, but web sources confirm: \"Defensively, the squad is exceptionally disciplined. During their recent qualifying campaign, they restricted opponents to an average of just **6.56 shots per match**\" (World Soccer Talk, June 2026). Argentina conceded **only 1 goal in 6 Copa America 2024 matches** (0.17 goals/game), with 5 clean sheets = **83.3% clean sheet rate**. Emiliano Martínez: goals prevented +0.95 (vs Canada opener) — elite shot-stopping. Defensive structure: 4-4-2 out of possession (Squawka analysis) creates two compact banks, frustrating opposition attacks. Cristian Romero + Lisandro Martínez central partnership: Premier League-tested, high-intensity defensive dueling.
+
+**[PRESSING INTENSITY]** Julián Álvarez described as \"a pressing machine that sets the defensive tone from the front\" (FIFA World Cup News, May 2026). Rodrigo De Paul: \"bodyguard\" role for Messi, covers vast spaces on the right, high work rate. Scaloni's 4-4-2 defensive shape: compact, disciplined pressing triggers. No precise PPDA data available from API, but tactical analysis confirms: \"Argentina soundly beat Brazil with a 4-1 thrashing in Buenos Aires back in 2025\" — dominance suggests effective pressing vs elite opposition. Pass completion: **85% vs Canada (semi)**, **91% vs Canada (opener)** — controlled possession indicates measured pressing (not ultra-high press, but intelligent pressure application). Estimated PPDA: **9-11 range** (moderate-to-high press, not Bielsa-style ultra-press but effective).
+
+**[SET PIECE EFFICIENCY]** Copa America 2024: 38.46% of Argentina's goals scored in 106-120' minute band (extra time/late goals) = **5 of 13 total goals** (includes penalties). Set-piece goals data incomplete in API, but tactical analysis notes: \"Argentina were not using their set pieces to create close-range headers for their big center backs like so many of their teams are now, but they were as consistent in looking for a shooting chance for Enzo Fernández on the edge of the box\" (CBS Sports, June 2026). Penalty efficiency: **80% conversion rate** (4/5 scored, 1 missed) in Copa America 2024. Corner kicks: 7 vs Canada (opener), 2 vs Canada (semi) — moderate corner generation. **Estimated set-piece goal rate: 0.30-0.35 goals/game** (slightly below elite threshold but compensated by open-play efficiency).
+
+**[FORMATION & TACTICAL FLEXIBILITY]** Primary formation: **4-4-2** (5 of 6 Copa America 2024 matches), with 4-3-3 variant (1 match). Scaloni's adaptability: \"regularly drops into a 4-4-2 out of possession to create two banks of four\" (Squawka). Tactical balance: industrious midfielders (De Paul, Mac Allister, Enzo Fernández) shield Messi from defensive duties while maintaining possession control. Fullbacks: attacking (Tagliafico 4 key passes in Copa America 2024) but disciplined in recovery. **Pass completion 85-91%** = elite ball retention. Possession: 51-64% in measured matches = controlled, not possession-obsessed.
+
+**[RECENT FORM & MOMENTUM]** Copa America 2024: **Won tournament** (6 matches: 5W-1D-0L). Form string: **WWWDWW** = unbeaten in last 6 competitive matches. Goals for: 1.5/game average (9 in 6 matches). Goals against: **0.17/game** (1 in 6 matches). Failed to score: **0 matches** = 100% scoring rate. xG efficiency: consistently meeting or exceeding xG (2.20 xG → 2 goals; 3.02 xG → 2 goals). Defensive solidity: \"just 10 goals conceded across 18 games\" in recent qualifying (0.56 goals/game). Tournament experience: **Back-to-back Copa America titles (2021, 2024)** + **World Cup 2022** = elite tournament mentality.
+
+**[X5 SIGNAL]** Shot conversion rate 21.9% (Messi WC2026), 33.3% shots-on-target conversion (Copa America 2024 sample). Defensive duel win rate estimated 52-57% (Tagliafico sample + team defensive metrics). Pressing intensity moderate-high (PPDA ~9-11 estimated), with intelligent triggers via Álvarez + De Paul work rate. Set-piece efficiency 0.30-0.35 goals/game (penalty conversion 80%, corner-to-goal conversion moderate). **Aggregate X5 score: Argentina ranks in top quartile globally across all four tactical efficiency sub-factors.**
+
+**[FACTOR]** Argentina's tactical efficiency is elite-tier: (1) **Shot conversion** — Lautaro + Messi finishing at 20%+ rate, xG consistently met/exceeded; (2) **Defensive duels** — 83.3% clean sheet rate in Copa America 2024, 0.17 goals conceded/game, Premier League-caliber CB pairing; (3) **Pressing** — Álvarez sets high-intensity tone, De Paul covers vast ground, 4-4-2 defensive shape frustrates attacks; (4) **Set pieces** — 80% penalty conversion, Enzo Fernández edge-of-box shooting threat, moderate corner efficiency. **Strongest discriminator: defensive solidity** (1 goal conceded in 6 Copa America matches). **Weakest link: set-piece goal generation from corners** (relies more on open-play efficiency).
+
+**[MULTIPLIER]** Suggested p50: **1.20** (p5: 0.90, p95: 1.55) — Factor-mode: Argentina's X5 tactical efficiency is 20% above World Cup field median, driven primarily by elite defensive organization (0.17 GA/game Copa America 2024), high shot conversion (21.9% Messi, 33% team SOT%), and intelligent pressing system. Defensive solidity + finishing efficiency are the key tactical edges that elevate Argentina's tournament win probability.
+
+---
+
+### SUMMARY OF KEY TACTICAL EFFICIENCY METRICS
+
+| **Metric** | **Argentina 2024-2026** | **WC Winner Benchmark** | **Assessment** |
+|------------|-------------------------|-------------------------|----------------|
+| Shot Conversion Rate | 21.9% (Messi), 33% (SOT%) | >15% | ✅ **Elite** |
+| Defensive Duel Win % | 52-57% (estimated) | >55% | ✅ **At/Above Threshold** |
+| Pressing Intensity (PPDA) | ~9-11 (estimated) | 8-12 (effective range) | ✅ **Effective** |
+| Set-Piece Goals/Game | 0.30-0.35 (estimated) | >0.35 | ⚠️ **Slightly Below** |
+| Clean Sheet Rate | 83.3% (Copa America 2024) | 50-60% typical | ✅ **Exceptional** |
+| Goals Conceded/Game | 0.17 (Copa America 2024) | <0.8 | ✅ **Elite** |
+| Pass Completion % | 85-91% | >82% | ✅ **Elite** |
+| xG Conversion Efficiency | 66-91% (sample matches) | 80-100% | ✅ **Strong** |
+
+**CONFIDENCE:** 0.85 — High confidence in defensive metrics (Copa America 2024 hard data: 1 goal conceded in 6 matches). Moderate confidence in pressing intensity (estimated from tactical analysis, no direct PPDA data). Shot conversion data robust (Messi 21.9%, team 33% SOT%). Set-piece data incomplete but triangulated from multiple sources.
+
+**RELEVANCE:** 0.95 — Tactical efficiency (X5) is a **primary discriminator** for World Cup success. Argentina's defensive solidity (0.17 GA/game) and finishing efficiency (21.9% conversion) are **directly predictive** of deep tournament runs. The 4-4-2 defensive shape and Álvarez pressing intensity are **proven in tournament conditions** (Copa America 2024 title)."
+    relevance: 0.5p
+    date: 2026-06-18
 }
 
-agent fixture_context_agent {
-    type: "research"
-    query: "Upcoming fixtures for Argentina: venue, climate, rest days, altitude, opponent travel burden"
-    executor: "llm"
-    driver_refs: ["fixture_context"]
-    schedule: every 3 days
-}
-
-// ─── Model ────────────────────────────────────────────────────────────
-//
-// Multiplicative product of all six drivers, scaled by the base rate
-// (1/48 ≈ 0.0208). Posterior rate = base_rate * product(drivers). For an
-// average-team draw the product is ~1.0 so the rate sits near base. Strong
-// teams produce products in the 4–8x range, lifting the rate into single-
-// to low-double-digit territory consistent with bookmaker prices.
-
-model: 0.0208 * socio_capital * institutional_capacity * dynamic_performance * squad_quality * tactical_efficiency * fixture_context
+model: ((((((0.0208 * socio_capital) * institutional_capacity) * dynamic_performance) * squad_quality) * tactical_efficiency) * fixture_context)
 
 simulate 10000 iterations
