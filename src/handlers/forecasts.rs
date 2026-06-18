@@ -1436,6 +1436,16 @@ pub async fn list_portfolio_forecasts_handler(
         }
     }
 
+    // Enriched projection: include metadata.polymarket so the console can
+    // compute Fermi-vs-crowd divergence inline (the dashboard's
+    // "biggest opportunity" sort), updated_at so we can show recent
+    // activity, tags for grouping/filtering, and the COUNT of recent
+    // forecast updates so the operator can see which rows have moved
+    // recently without opening each one.
+    //
+    // Subquery (n_recent_updates) is bounded by a 7-day window so the
+    // count means "how active is this forecast lately", not "how
+    // hand-tuned in total".
     let rows = sqlx::query(
         "SELECT f.id,
                 f.question_text,
@@ -1445,7 +1455,13 @@ pub async fn list_portfolio_forecasts_handler(
                 f.actual_outcome,
                 f.resolved_at,
                 f.visibility,
-                pf.added_at
+                f.updated_at,
+                f.metadata,
+                f.tags,
+                pf.added_at,
+                (SELECT COUNT(*) FROM fermi_forecast_updates u
+                 WHERE u.forecast_id = f.id
+                   AND u.created_at > NOW() - INTERVAL '7 days') AS n_recent_updates
          FROM fermi_portfolio_forecasts pf
          JOIN fermi_forecasts f ON f.id = pf.forecast_id
          WHERE pf.portfolio_id = $1
@@ -1459,24 +1475,47 @@ pub async fn list_portfolio_forecasts_handler(
     let forecasts: Vec<JsonValue> = rows
         .iter()
         .map(|r| {
+            // Defensive try_get on every column — a single bad row should
+            // never bring down the response.
+            let prob: Option<f64> = r.try_get::<Option<f32>, _>("predicted_probability")
+                .ok().flatten().map(|v| v as f64);
+            let metadata: Option<JsonValue> = r.try_get("metadata").ok();
+            // Extract Polymarket fields once so the row can carry the
+            // crowd price (last_market_price) and the divergence vs the
+            // Fermi probability inline — saves a per-row PM API call on
+            // the client.
+            let (pm_price, pm_url, pm_volume_24h, pm_divergence_pp) = match metadata.as_ref()
+                .and_then(|m| m.get("polymarket"))
+            {
+                Some(pm) => {
+                    let price = pm.get("last_market_price").and_then(|v| v.as_f64());
+                    let url = pm.get("pm_url").and_then(|v| v.as_str()).map(String::from);
+                    let vol = pm.get("last_volume_24h").and_then(|v| v.as_f64());
+                    let div = match (prob, price) {
+                        (Some(p), Some(c)) => Some((p - c) * 100.0),
+                        _ => None,
+                    };
+                    (price, url, vol, div)
+                }
+                None => (None, None, None, None),
+            };
             json!({
-                "id":                   r.get::<String, _>("id"),
-                "question_text":        r.get::<String, _>("question_text"),
-                // REAL columns → f32 in sqlx; cast to f64 at the JSON
-                // boundary. Empirically the WC fleet has rows with NULL
-                // predicted_probability (some spawn paths left the column
-                // unset even though the schema declares NOT NULL — likely a
-                // pre-fix bind silently coerced to NULL). Treat it as
-                // Option<f32> here so a bad row degrades to null in the
-                // response instead of panicking the handler.
-                "predicted_probability":r.get::<Option<f32>, _>("predicted_probability").map(|v| v as f64),
-                "status":               r.get::<String, _>("status"),
-                "brier_score":          r.get::<Option<f32>, _>("brier_score").map(|v| v as f64),
-                "actual_outcome":       r.get::<Option<bool>, _>("actual_outcome"),
-                "resolved_at":          r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at")
-                                         .map(|d| d.to_rfc3339()),
-                "visibility":           r.get::<String, _>("visibility"),
-                "added_at":             r.get::<chrono::DateTime<chrono::Utc>, _>("added_at").to_rfc3339(),
+                "id":                   r.try_get::<String, _>("id").ok(),
+                "question_text":        r.try_get::<String, _>("question_text").ok(),
+                "predicted_probability":prob,
+                "status":               r.try_get::<String, _>("status").ok(),
+                "brier_score":          r.try_get::<Option<f32>, _>("brier_score").ok().flatten().map(|v| v as f64),
+                "actual_outcome":       r.try_get::<Option<bool>, _>("actual_outcome").ok().flatten(),
+                "resolved_at":          r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at").ok().flatten().map(|d| d.to_rfc3339()),
+                "visibility":           r.try_get::<String, _>("visibility").ok(),
+                "updated_at":           r.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok().map(|d| d.to_rfc3339()),
+                "added_at":             r.try_get::<chrono::DateTime<chrono::Utc>, _>("added_at").ok().map(|d| d.to_rfc3339()),
+                "tags":                 r.try_get::<Vec<String>, _>("tags").ok(),
+                "n_recent_updates":     r.try_get::<i64, _>("n_recent_updates").ok(),
+                "pm_market_price":      pm_price,
+                "pm_url":               pm_url,
+                "pm_volume_24h":        pm_volume_24h,
+                "pm_divergence_pp":     pm_divergence_pp,
             })
         })
         .collect();

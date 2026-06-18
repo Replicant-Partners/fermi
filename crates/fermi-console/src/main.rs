@@ -10,8 +10,8 @@ mod composer;
 mod text_input;
 
 use api::client::{
-    ApiClient, ApiConfig, ApiError, CalibrationData, CreatePortfolioRequest, Forecast,
-    ForecastQuery, LeaderboardEntry, LeaderboardQuery, LeaderboardResponse, MyStats,
+    ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest, Forecast,
+    ForecastQuery, LeaderboardEntry, LeaderboardQuery, MyStats,
     PatchPortfolioRequest, Portfolio, PortfolioForecast, PortfolioStats,
 };
 use std::collections::{HashMap, HashSet};
@@ -197,6 +197,44 @@ enum Panel {
     Leaderboard,
 }
 
+/// Ordering options for the portfolio detail's forecast list. Each maps to
+/// a sort key on `PortfolioForecast` so the operator can find what they're
+/// looking for without scrolling 48 rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PortfolioSortMode {
+    /// fermi_forecasts.updated_at desc — find what you've worked on lately.
+    RecentActivity,
+    /// |pm_divergence_pp| desc — biggest delta from the crowd first.
+    /// Drives the "where's the opportunity?" question.
+    BiggestPmDelta,
+    /// n_recent_updates desc — which rows have moved recently.
+    BiggestMovement,
+    /// predicted_probability desc — leaderboard / favourites.
+    HighestProb,
+    /// alphabetical question_text — old default.
+    Alphabetical,
+}
+
+impl PortfolioSortMode {
+    fn label(self) -> &'static str {
+        match self {
+            PortfolioSortMode::RecentActivity => "Recent",
+            PortfolioSortMode::BiggestPmDelta => "vs Crowd",
+            PortfolioSortMode::BiggestMovement => "Movement",
+            PortfolioSortMode::HighestProb => "Highest",
+            PortfolioSortMode::Alphabetical => "A→Z",
+        }
+    }
+
+    const ALL: &'static [PortfolioSortMode] = &[
+        PortfolioSortMode::RecentActivity,
+        PortfolioSortMode::BiggestPmDelta,
+        PortfolioSortMode::BiggestMovement,
+        PortfolioSortMode::HighestProb,
+        PortfolioSortMode::Alphabetical,
+    ];
+}
+
 impl Panel {
     fn label(&self) -> &'static str {
         match self {
@@ -368,6 +406,13 @@ struct FermiConsole {
     portfolio_rename_id: Option<String>,
     portfolio_rename_input: Entity<TextInput>,
     portfolio_confirm_delete_id: Option<String>,
+    /// Sort mode for the portfolio detail's forecast rows.
+    portfolio_sort_mode: PortfolioSortMode,
+    /// Free-text filter for the portfolio detail. The entity owns the
+    /// source-of-truth string; render reads it live with
+    /// `portfolio_filter_input.read(cx).text()`. Matches case-insensitively
+    /// against question_text + tags.
+    portfolio_filter_input: Entity<TextInput>,
 
     // Commit sheet (shown on ⌘P before publishing)
     commit_sheet_showing: bool,
@@ -423,6 +468,14 @@ impl FermiConsole {
                 .with_label("Rename Portfolio")
         });
 
+        // Inline search box at the top of the portfolio detail. Free-text
+        // matches against question_text + tags, lower-cased.
+        let portfolio_filter_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("Filter forecasts (team, tag, free text)…")
+                .with_label("Filter")
+        });
+
         let mut console = Self {
             active_panel: Panel::Dashboard,
             focus_handle: cx.focus_handle(),
@@ -475,6 +528,8 @@ impl FermiConsole {
             portfolio_rename_id: None,
             portfolio_rename_input,
             portfolio_confirm_delete_id: None,
+            portfolio_sort_mode: PortfolioSortMode::RecentActivity,
+            portfolio_filter_input,
             commit_sheet_showing: false,
             commit_sheet_visibility: "private".into(),
             commit_sheet_question: String::new(),
@@ -2720,13 +2775,92 @@ impl FermiConsole {
                                         input.set_text(&q.text, cx);
                                     });
                                 }
+
+                                // ── Hydrate accumulated research from
+                                //    fermi_forecasts.evidence ────────────
+                                //
+                                // The FPL template ships agent + driver
+                                // skeletons but no evidence. As agents run,
+                                // process_agent_evidence pushes the
+                                // accumulated evidence list to
+                                // fermi_forecasts.evidence JSONB via
+                                // push_research_state_to_server. On open
+                                // we merge that back into the AST so
+                                // research survives across sessions.
+                                //
+                                // Dedup by id: an evidence stmt that ALSO
+                                // appears in the loaded FPL (rare for the
+                                // WC template, common for hand-authored
+                                // local FPLs) takes precedence over the
+                                // server copy with the same id.
+                                let mut n_hydrated = 0usize;
+                                if let Some(serde_json::Value::Array(arr)) = forecast.evidence.as_ref().map(|v| v.clone()) {
+                                    let existing_ids: std::collections::HashSet<String> = cockpit
+                                        .program
+                                        .evidence_items()
+                                        .iter()
+                                        .map(|e| e.id.clone())
+                                        .collect();
+                                    for raw in arr {
+                                        let Some(id) = raw.get("id").and_then(|v| v.as_str()) else { continue };
+                                        if existing_ids.contains(id) {
+                                            continue;
+                                        }
+                                        let ev = fermi::ast::EvidenceStmt {
+                                            id: id.to_string(),
+                                            source: raw
+                                                .get("source")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("unknown")
+                                                .to_string(),
+                                            summary: raw
+                                                .get("summary")
+                                                .and_then(|v| v.as_str())
+                                                .map(String::from),
+                                            url: raw
+                                                .get("url")
+                                                .and_then(|v| v.as_str())
+                                                .map(String::from),
+                                            relevance: raw
+                                                .get("relevance")
+                                                .and_then(|v| v.as_f64()),
+                                            date: raw
+                                                .get("date")
+                                                .and_then(|v| v.as_str())
+                                                .map(String::from),
+                                            strength: raw
+                                                .get("strength")
+                                                .and_then(|v| v.as_f64()),
+                                            key_findings: raw
+                                                .get("key_findings")
+                                                .and_then(|v| v.as_array())
+                                                .map(|a| {
+                                                    a.iter()
+                                                        .filter_map(|v| v.as_str().map(String::from))
+                                                        .collect()
+                                                })
+                                                .unwrap_or_default(),
+                                        };
+                                        cockpit.program.add_evidence(ev);
+                                        n_hydrated += 1;
+                                    }
+                                }
+
                                 cockpit.messages.push(crate::cockpit::AssistantMessage {
                                     node: "load".into(),
                                     kind: crate::cockpit::MessageKind::Info,
-                                    text: format!(
-                                        "Loaded forecast ({} bytes FPL).",
-                                        fpl_text.as_ref().map(String::len).unwrap_or(0)
-                                    ),
+                                    text: if n_hydrated > 0 {
+                                        format!(
+                                            "Loaded forecast ({} bytes FPL, {} evidence restored from server).",
+                                            fpl_text.as_ref().map(String::len).unwrap_or(0),
+                                            n_hydrated
+                                        )
+                                    } else {
+                                        format!(
+                                            "Loaded forecast ({} bytes FPL).",
+                                            fpl_text.as_ref().map(String::len).unwrap_or(0)
+                                        )
+                                    },
                                 });
                             }
                             None if fpl_text.is_some() => {
@@ -3296,12 +3430,150 @@ impl FermiConsole {
                                                 .child("No forecasts in this portfolio yet."),
                                         )
                                     })
-                                    // Forecast rows
+                                    // Search + sort toolbar + enriched rows
                                     .when(!is_loading && !forecasts.is_empty(), move |el| {
-                                        el.children(forecasts.into_iter().map(|f| {
+                                        // Read live from the input entity. We don't keep
+                                        // portfolio_filter_text in sync via on_change because
+                                        // the entity already owns the source-of-truth string —
+                                        // pulling it at render time keeps wiring minimal and
+                                        // avoids a callback that would need a weak handle to
+                                        // FermiConsole anyway.
+                                        let filter_text = self
+                                            .portfolio_filter_input
+                                            .read(cx)
+                                            .text()
+                                            .to_string();
+                                        let active_sort = self.portfolio_sort_mode;
+
+                                        // Filter by free-text (question + tags).
+                                        let lc_filter = filter_text.to_lowercase();
+                                        let mut filtered: Vec<PortfolioForecast> = forecasts
+                                            .into_iter()
+                                            .filter(|f| {
+                                                if lc_filter.is_empty() { return true; }
+                                                let q_match = f.question_text.to_lowercase().contains(&lc_filter);
+                                                let tag_match = f
+                                                    .tags
+                                                    .as_ref()
+                                                    .map(|t| t.iter().any(|tag| tag.to_lowercase().contains(&lc_filter)))
+                                                    .unwrap_or(false);
+                                                q_match || tag_match
+                                            })
+                                            .collect();
+
+                                        // Sort by the active mode. Ties broken by question_text so
+                                        // the order is stable across renders.
+                                        filtered.sort_by(|a, b| {
+                                            use std::cmp::Ordering::*;
+                                            let cmp = match active_sort {
+                                                PortfolioSortMode::RecentActivity => {
+                                                    // Lex compare on RFC3339 timestamps works since
+                                                    // they're zero-padded. Reverse for desc.
+                                                    b.updated_at.cmp(&a.updated_at)
+                                                }
+                                                PortfolioSortMode::BiggestPmDelta => {
+                                                    let av = a.pm_divergence_pp.map(f64::abs).unwrap_or(-1.0);
+                                                    let bv = b.pm_divergence_pp.map(f64::abs).unwrap_or(-1.0);
+                                                    bv.partial_cmp(&av).unwrap_or(Equal)
+                                                }
+                                                PortfolioSortMode::BiggestMovement => {
+                                                    let av = a.n_recent_updates.unwrap_or(0);
+                                                    let bv = b.n_recent_updates.unwrap_or(0);
+                                                    bv.cmp(&av)
+                                                }
+                                                PortfolioSortMode::HighestProb => {
+                                                    let av = a.predicted_probability.unwrap_or(0.0);
+                                                    let bv = b.predicted_probability.unwrap_or(0.0);
+                                                    bv.partial_cmp(&av).unwrap_or(Equal)
+                                                }
+                                                PortfolioSortMode::Alphabetical => {
+                                                    a.question_text.cmp(&b.question_text)
+                                                }
+                                            };
+                                            if cmp != Equal { cmp } else { a.question_text.cmp(&b.question_text) }
+                                        });
+
+                                        let shown_count = filtered.len();
+                                        let total_count_for_summary = self
+                                            .portfolio_forecasts
+                                            .get(&pid)
+                                            .map(|v| v.len())
+                                            .unwrap_or(0);
+                                        let pid_for_filter = pid.clone();
+
+                                        // Toolbar: filter input + sort buttons + count
+                                        let mut toolbar = div()
+                                            .px(px(14.0))
+                                            .py(px(8.0))
+                                            .border_b_1()
+                                            .border_color(theme::fg_faint())
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(theme::fg_faint())
+                                                    .child("🔍"),
+                                            )
+                                            .child(
+                                                div().flex_grow().child(
+                                                    self.portfolio_filter_input.clone(),
+                                                ),
+                                            );
+                                        for mode in PortfolioSortMode::ALL.iter().copied() {
+                                            let is_active = mode == active_sort;
+                                            let pid_for_sort = pid_for_filter.clone();
+                                            toolbar = toolbar.child(
+                                                div()
+                                                    .id(SharedString::from(format!(
+                                                        "pf-sort-{:?}",
+                                                        mode
+                                                    )))
+                                                    .px(px(8.0))
+                                                    .py(px(2.0))
+                                                    .rounded(px(4.0))
+                                                    .border_1()
+                                                    .border_color(
+                                                        if is_active { theme::cyan() } else { theme::fg_faint() }
+                                                    )
+                                                    .text_size(px(10.0))
+                                                    .text_color(
+                                                        if is_active { theme::cyan() } else { theme::fg_dim() }
+                                                    )
+                                                    .text_size(px(10.0))
+                                                    .text_color(
+                                                        if is_active { theme::cyan() } else { theme::fg_dim() }
+                                                    )
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(theme::bg_hover()))
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.portfolio_sort_mode = mode;
+                                                        // Keep selected portfolio focused; just
+                                                        // re-render with the new sort.
+                                                        let _ = &pid_for_sort;
+                                                        cx.notify();
+                                                    }))
+                                                    .child(mode.label()),
+                                            );
+                                        }
+                                        toolbar = toolbar.child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(theme::fg_faint())
+                                                .child(format!(
+                                                    "{}/{}",
+                                                    shown_count, total_count_for_summary
+                                                )),
+                                        );
+
+                                        let el = el.child(toolbar);
+
+                                        el.children(filtered.into_iter().map(|f| {
                                             let fid = f.id.clone();
                                             let pid_rm = pid.clone();
-                                            let prob_pct = (f.predicted_probability * 100.0).round() as u32;
+                                            let prob_val = f.predicted_probability.unwrap_or(0.0);
+                                            let prob_pct = (prob_val * 100.0).round() as u32;
                                             let prob_color = if prob_pct >= 70 { theme::CYAN }
                                                 else if prob_pct >= 40 { theme::BLUE }
                                                 else { theme::FG_DIM };
@@ -3313,6 +3585,30 @@ impl FermiConsole {
                                             let brier_str = f.brier_score
                                                 .map(|b| format!("{:.3}", b))
                                                 .unwrap_or_default();
+
+                                            let recent_str = f
+                                                .updated_at
+                                                .as_deref()
+                                                .map(|t| format_relative_time(t))
+                                                .unwrap_or_else(|| "—".into());
+                                            let pm_str = f
+                                                .pm_market_price
+                                                .map(|p| format!("crowd {:.0}%", p * 100.0));
+                                            let delta_str = f.pm_divergence_pp.map(|d| {
+                                                let sign = if d >= 0.0 { "+" } else { "" };
+                                                format!("Δ {}{:.1}pp", sign, d)
+                                            });
+                                            // Hsla (not the u32 const) so it slots straight
+                                                // into .text_color without another rgb() hop.
+                                                let delta_color = match f.pm_divergence_pp {
+                                                Some(d) if d.abs() >= 10.0 => theme::gold(),
+                                                Some(d) if d.abs() >= 3.0 => theme::cyan(),
+                                                Some(_) => theme::fg_dim(),
+                                                None => theme::fg_faint(),
+                                            };
+                                            let movement_str = f.n_recent_updates.and_then(|n| {
+                                                if n > 0 { Some(format!("{}× 7d", n)) } else { None }
+                                            });
 
                                             let fid_click = fid.clone();
                                             div()
@@ -3326,25 +3622,37 @@ impl FermiConsole {
                                                 .gap(px(8.0))
                                                 .cursor_pointer()
                                                 .hover(|s| s.bg(theme::bg_hover()))
-                                                // Clicking the row (anywhere except the explicit ✕
-                                                // remove button, which has its own listener and
-                                                // stops the bubble) drills into the cockpit. This
-                                                // is the path that lets a user go from "I see
-                                                // 48 forecasts in WC sims" to "I'm staring at
-                                                // Argentina's FPL and Trajectory" in one click.
                                                 .on_click(cx.listener(move |this, _event, _window, cx| {
                                                     this.open_forecast(&fid_click, cx);
                                                 }))
-                                                // Question text
+                                                // Question text (wider truncate so team prior
+                                                // names fit comfortably alongside the new
+                                                // status fields).
                                                 .child(
                                                     div()
                                                         .flex_grow()
                                                         .overflow_hidden()
                                                         .text_size(px(11.0))
                                                         .text_color(theme::fg())
-                                                        .child(truncate(&f.question_text, 52)),
+                                                        .child(truncate(&f.question_text, 60)),
                                                 )
-                                                // Probability pill
+                                                // Recent activity (relative time)
+                                                .child(
+                                                    div()
+                                                        .text_size(px(10.0))
+                                                        .text_color(theme::fg_faint())
+                                                        .child(recent_str),
+                                                )
+                                                // Movement chip (count in last 7 days)
+                                                .when(movement_str.is_some(), move |el| {
+                                                    el.child(
+                                                        div()
+                                                            .text_size(px(10.0))
+                                                            .text_color(rgb(theme::BLUE))
+                                                            .child(movement_str.unwrap()),
+                                                    )
+                                                })
+                                                // Fermi probability pill
                                                 .child(
                                                     div()
                                                         .px(px(6.0))
@@ -3356,7 +3664,26 @@ impl FermiConsole {
                                                         .font_weight(FontWeight::SEMIBOLD)
                                                         .child(format!("{}%", prob_pct)),
                                                 )
-                                                // Status badge
+                                                // Polymarket crowd pill (when linked)
+                                                .when(pm_str.is_some(), move |el| {
+                                                    el.child(
+                                                        div()
+                                                            .text_size(px(10.0))
+                                                            .text_color(theme::fg_dim())
+                                                            .child(pm_str.unwrap()),
+                                                    )
+                                                })
+                                                // PM delta (color-graded: gold for big gaps)
+                                                .when(delta_str.is_some(), move |el| {
+                                                    el.child(
+                                                        div()
+                                                            .text_size(px(10.0))
+                                                            .text_color(delta_color)
+                                                            .font_weight(FontWeight::SEMIBOLD)
+                                                            .child(delta_str.unwrap()),
+                                                    )
+                                                })
+                                                // Status badge (compact)
                                                 .child(
                                                     div()
                                                         .text_size(px(10.0))
@@ -3372,7 +3699,9 @@ impl FermiConsole {
                                                             .child(brier_str),
                                                     )
                                                 })
-                                                // Remove button
+                                                // Remove button — explicit ✕ stays at the
+                                                // far right with its own click handler so the
+                                                // row's whole-row click can drill into the cockpit.
                                                 .child(
                                                     div()
                                                         .id(SharedString::from(format!("rm-pf-{}", fid)))
@@ -5720,6 +6049,45 @@ fn truncate(s: &str, max_len: usize) -> String {
     } else {
         format!("{}…", &s[..max_len - 1])
     }
+}
+
+/// Render an RFC3339 timestamp as a compact "now / 5m / 3h / 2d / 4w / 8mo / 2y"
+/// relative string for portfolio rows. Falls back to "—" on parse failure
+/// rather than poisoning the whole list with a panic.
+fn format_relative_time(rfc3339: &str) -> String {
+    let parsed = chrono::DateTime::parse_from_rfc3339(rfc3339);
+    let Ok(t) = parsed else {
+        return "—".into();
+    };
+    let now = chrono::Utc::now();
+    let delta = now.signed_duration_since(t.with_timezone(&chrono::Utc));
+    let secs = delta.num_seconds();
+    if secs < 0 {
+        // Clock skew or future-dated row. Don't show "-3m" — just say "now".
+        return "now".into();
+    }
+    if secs < 60 {
+        return "now".into();
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{}m", mins);
+    }
+    let hours = mins / 60;
+    if hours < 24 {
+        return format!("{}h", hours);
+    }
+    let days = hours / 24;
+    if days < 7 {
+        return format!("{}d", days);
+    }
+    if days < 30 {
+        return format!("{}w", days / 7);
+    }
+    if days < 365 {
+        return format!("{}mo", days / 30);
+    }
+    format!("{}y", days / 365)
 }
 
 /// Render the expanded detail panel for a forecast.

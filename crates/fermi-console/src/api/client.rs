@@ -303,13 +303,42 @@ pub struct RecentResolution {
 pub struct PortfolioForecast {
     pub id: String,
     pub question_text: String,
-    pub predicted_probability: f64,
+    // Tolerate null on broken legacy rows. Without `default` the whole
+    // forecast deserialization fails and the portfolio detail goes blank.
+    #[serde(default)]
+    pub predicted_probability: Option<f64>,
     pub status: String,
     pub brier_score: Option<f64>,
     pub actual_outcome: Option<bool>,
     pub resolved_at: Option<String>,
     pub visibility: Option<String>,
     pub added_at: String,
+    /// Last server-side write to fermi_forecasts.updated_at — used to sort
+    /// "recently active" in the portfolio detail view.
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    /// Free-form tag list (e.g. wc2026, group-l, conmebol) — drives the
+    /// portfolio detail's filter/search panel.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    /// COUNT of fermi_forecast_updates rows in the last 7 days. Higher
+    /// means the forecast has been moving recently.
+    #[serde(default)]
+    pub n_recent_updates: Option<i64>,
+    /// Polymarket crowd price (0.0–1.0), pulled from
+    /// metadata.polymarket.last_market_price when the forecast is linked.
+    #[serde(default)]
+    pub pm_market_price: Option<f64>,
+    /// Polymarket URL for click-through.
+    #[serde(default)]
+    pub pm_url: Option<String>,
+    /// Polymarket 24h volume — useful for ranking "high-conviction" markets.
+    #[serde(default)]
+    pub pm_volume_24h: Option<f64>,
+    /// (Fermi - crowd) in percentage points. Positive = Fermi sees more
+    /// probability than the market. Drives the "biggest opportunity" sort.
+    #[serde(default)]
+    pub pm_divergence_pp: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
