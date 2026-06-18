@@ -1,6 +1,24 @@
 // TEAM_PRIOR — Tournament win probability prior for a single national team.
-// Six orthogonal factors with Cobb-Douglas response function.
-// Parameterized: instantiated per team from data CSV.
+//
+// Six factor-derived drivers, each with its own sparkline prior, in a
+// multiplicative model. Aligned to docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md
+// and docs/fermi/BAYESOPS_CONTRACT.md:
+//
+//   - Each FPL `driver` is a factor-derived metric. Cockpit renders one
+//     sparkline per driver (R-2). BayesOps refits the LEARNABLE ones from
+//     accumulated match observations (R-1).
+//   - Each `agent` block owns the inputs of one or more drivers, publishes
+//     evidence to the cockpit, and (for learnable drivers) is the human-
+//     readable provenance for the observation stream.
+//   - The model expression is a simple multiplicative product over the six
+//     drivers. The Cobb-Douglas elasticities the older template carried as
+//     `learnable()` exponents are deferred — they need cockpit AST work
+//     before they round-trip safely (see CACHED_FPL guard in cockpit.rs).
+//
+// The per-team params (gdp_per_capita_log, elo_current, etc.) are bound at
+// instantiation time by respawn_aligned.py / refresh_fpl.py. The driver
+// distributions reference those params directly so each team's posterior
+// MC pulls from a distribution centered on its own data.
 
 param team_id: string
 param team_name: string
@@ -15,97 +33,47 @@ param hdi_logit: real
 
 question "Will {team_name} win the 2026 FIFA World Cup?"
 
-// Factor inputs are standardized into roughly the same band as the X_k
-// noise (sigma = sqrt(variance_share) ≈ 0.2-0.5) so the deterministic signal
-// is comparable to stochastic. The executor adds +1.0 to each factor before
-// substitution, so a deterministic contribution of ~0 means "neutral team",
-// negative means "below the field", positive means "above".
+// ─── Drivers ──────────────────────────────────────────────────────────
 //
-// Calibration constants (Elo-mean=1700, Elo-spread=300, socio-shift=4.0,
-// socio-scale=2.0) are chosen so each factor's deterministic component is
-// roughly O(1) — comparable in scale to its noise term (sigma =
-// sqrt(variance_share)). They are frozen at instantiation; BayesOps owns
-// updates to the learnable elasticities, not these scaling constants.
-// Polymarket sits outside this model as a base-rate divergence reference.
+// Six drivers. Calibrated so the multiplicative product over a typical
+// "field-strength" team lands near 1.0 — Argentina-class teams (high Elo +
+// host-adjacent CONMEBOL) come in around 1.5–2.5; minnows around 0.3–0.6.
+// The per-team rate is then product * base_rate (1/48 ≈ 0.021). After 6
+// drivers multiply against that base rate, top teams should produce
+// posterior probabilities in the 5–15% range — the spec's worked example
+// numbers (line 309: 22% → 26% after a fit) bracket this.
 
-factor X1 "Socioeconomic Capital" {
-    inputs: gdp_per_capita_log, population_log, hdi_logit
-    // Center the weighted socio sum (empirical range across confederations
-    // is ~[2.27, 2.94] with mean ~2.6) and scale so cross-confederation
-    // spread maps to roughly [-0.5, +0.5] in factor-space — comparable to
-    // X1's noise sigma = sqrt(0.25) = 0.5. UEFA lands near +0.4, CAF near
-    // -0.5, with CONMEBOL/CONCACAF/AFC clustered in between.
-    formulation: (0.4 * gdp_per_capita_log + 0.3 * population_log + 0.3 * hdi_logit - 2.6) / 0.7
-    variance_share: 0.25
-    update: static
+driver socio_capital continuous {
+    distribution: triangular(
+        0.6 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0,
+        0.85 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0,
+        1.15 + 0.4 * (gdp_per_capita_log + population_log + hdi_logit - 7.8) / 4.0
+    )
+    rationale: "Macro capacity for footballing investment: GDP, population, HDI."
 }
 
-factor X2 "Institutional Capacity" {
-    inputs: player_penetration_rate, league_revenue_log, confederation_coefficient
-    formulation: residual(0.4 * player_penetration_rate + 0.3 * league_revenue_log + 0.3 * confederation_coefficient, X1)
-    variance_share: 0.20
-    update: static
+driver institutional_capacity continuous {
+    distribution: triangular(0.75, 1.0, 1.3)
+    rationale: "Federation strength, league development, player pipeline depth."
 }
 
-factor X3 "Dynamic Performance Signal" {
-    inputs: elo_current, elo_trend, goal_difference, pass_completion, xg_delta
-    // Z-score Elo against tournament-quality field (mean=1700, sd=300) and
-    // mix in the remaining covariates (currently 0 until data fetch lands —
-    // they fall out of the deterministic component and only contribute via
-    // X3's noise term).
-    formulation: residual(0.50 * (elo_current - 1700) / 300 + 0.10 * elo_trend + 0.15 * goal_difference + 0.10 * pass_completion + 0.15 * xg_delta, X1, X2)
-    variance_share: 0.25
-    update: per_match
-}
-
-factor X4 "Squad Quality Index" {
-    inputs: market_value_concentration, top5_league_pct, squad_depth_score, avg_age_adjusted
-    formulation: residual(0.25 * market_value_concentration + 0.30 * top5_league_pct + 0.25 * squad_depth_score + 0.20 * avg_age_adjusted, X1, X2, X3)
-    variance_share: 0.15
-    update: per_match
-}
-
-factor X5 "Tactical Efficiency" {
-    inputs: shot_conversion_rate, defensive_duel_win_pct, pressing_intensity, set_piece_efficiency
-    formulation: residual(0.25 * shot_conversion_rate + 0.25 * defensive_duel_win_pct + 0.25 * pressing_intensity + 0.25 * set_piece_efficiency, X1, X2, X3, X4)
-    variance_share: 0.10
-    update: per_match
-}
-
-factor X6 "Exogenous Context" {
-    inputs: host_status, climate_delta, rest_days, altitude_delta
-    formulation: residual(0.4 * host_status + 0.2 * climate_delta + 0.2 * rest_days + 0.2 * altitude_delta, X1, X2, X3, X4, X5)
-    variance_share: 0.05
-    update: per_fixture
-}
-
-estimate tournament_strength as: learnable(1.0, 0.2) * (X1 ^ learnable(0.25, 0.05)) * (X2 ^ learnable(0.20, 0.05)) * (X3 ^ learnable(0.25, 0.05)) * (X4 ^ learnable(0.15, 0.05)) * (X5 ^ learnable(0.10, 0.05)) * exp(learnable(0.05, 0.02) * X6)
-
-// ─── BayesOps learnable drivers (Spec 23) ──────────────────────────────
-//
-// These drivers sit alongside the factor model. They give the BayesOps
-// R-1 refit hook concrete observation streams to fit, separate from the
-// factor-model elasticities (which use the params.<owner>_lN contract).
-//
-// won_rate: binary win/loss outcome per resolved match.
-//   - Cold-start prior: Beta-like uniform in (0,1) via Triangular(0.2, 0.5, 0.8)
-//   - Observations: 1.0 on win, 0.0 on loss, drawn from upstream resolution
-//     outcomes whose winner_team_id matches this workspace's entity.
-//   - After K matches: posterior tightens around the team's actual win rate.
-//
-// form_signal: continuous goal differential per resolved match (real-valued).
-//   - Cold-start prior: centered at zero with moderate spread.
-//   - Observations: outcome.goal_differential (positive = team scored more
-//     than conceded that match).
-//   - After K matches: posterior reflects recent form trend.
-//
-// Both drivers are sourced from upstream resolutions via the workspace
-// dependency graph (workspace_dependencies). The Spec 23 R-1 refit hook
-// fires on every resolution upstream of this workspace.
-
-driver won_rate continuous {
-    distribution: triangular(0.2, 0.5, 0.8)
+driver dynamic_performance continuous {
+    distribution: normal(0.85 + 0.30 * (elo_current - 1700) / 300, 0.20)
     learnable: true
+    rationale: "Recent form and Elo trajectory — refits as match outcomes accumulate."
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "scalar_field_value",
+        config: {
+            path: "goal_differential"
+        }
+    }
+}
+
+driver squad_quality continuous {
+    distribution: triangular(0.7, 1.0, 1.35)
+    learnable: true
+    rationale: "Top-flight league penetration + market-value concentration; updates as injuries / form are reported."
     feeds_from: {
         source: "upstream_resolutions",
         extractor: "binary_winner_id_match",
@@ -116,67 +84,71 @@ driver won_rate continuous {
     }
 }
 
-driver form_signal continuous {
-    distribution: normal(0.0, 1.0)
+driver tactical_efficiency continuous {
+    distribution: triangular(0.8, 1.0, 1.25)
     learnable: true
+    rationale: "Shot conversion, defensive duels, pressing intensity — observable per-match."
     feeds_from: {
         source: "upstream_resolutions",
         extractor: "scalar_field_value",
         config: {
-            path: "goal_differential"
+            path: "shot_conversion_rate"
         }
     }
 }
 
-// ─── Research agents (BAYESOPS_CONTRACT.md §3, table) ──────────────────
+driver fixture_context continuous {
+    distribution: triangular(0.9, 1.0, 1.1)
+    rationale: "Per-fixture context: venue, climate, rest, altitude. Volatile, refreshed per match."
+}
+
+// ─── Agents ───────────────────────────────────────────────────────────
 //
-// Each factor X_k has a designated curated agent that owns its inputs.
-// `driver_refs` here points at the two learnable BayesOps drivers — the
-// agents publish evidence into those streams, which then feed the R-1
-// refit hook. The factor inputs themselves are param-bound at workspace
-// instantiation (CSV from respawn_aligned.py), so the agents' real job is
-// to keep those values fresh as the tournament progresses, not to bind
-// them on first run.
-//
-// Without these blocks the cockpit's Drivers panel renders "⚠ No agents
-// — assign one" on every driver, which makes the workspace look empty
-// even though `workspace_agents` has the same four hires at the
-// runtime-membership layer.
+// Per BAYESOPS_CONTRACT.md §3, one curated agent per factor family. Each
+// agent's `driver_refs` declares which drivers it researches — the cockpit
+// uses this to attribute evidence and the refit hook uses it to attribute
+// observation streams to fits.
 
 agent macro_data_agent {
     type: "research"
-    query: "GDP per capita, population, HDI for {team_name}"
+    query: "GDP per capita, population, HDI for {team_name} (2024–2026 latest available)"
     executor: "llm"
-    driver_refs: ["won_rate", "form_signal"]
+    driver_refs: ["socio_capital"]
     schedule: every 1 month
 }
 
 agent football_institution_agent {
     type: "research"
-    query: "Player registration, league revenue, confederation strength for {team_name}"
+    query: "Player registration, top-flight league revenue, confederation coefficient for {team_name}"
     executor: "llm"
-    driver_refs: ["won_rate", "form_signal"]
+    driver_refs: ["institutional_capacity"]
     schedule: every 1 month
 }
 
 agent football_analyst {
     type: "research"
-    query: "Elo rating, recent form, squad quality, tactical metrics for {team_name}"
+    query: "Latest Elo rating, last 5 matches form, key player availability, market value distribution for {team_name}"
     executor: "llm"
-    driver_refs: ["won_rate", "form_signal"]
+    driver_refs: ["dynamic_performance", "squad_quality", "tactical_efficiency"]
     schedule: every 1 week
 }
 
 agent fixture_context_agent {
     type: "research"
-    query: "Venue, weather, rest days, altitude for {team_name} upcoming fixtures"
+    query: "Upcoming fixtures for {team_name}: venue, climate, rest days, altitude, opponent travel burden"
     executor: "llm"
-    driver_refs: ["won_rate", "form_signal"]
+    driver_refs: ["fixture_context"]
     schedule: every 3 days
 }
 
-output tournament_win_probability: derived
-output reach_final_probability: derived
-output reach_semifinal_probability: derived
+// ─── Model ────────────────────────────────────────────────────────────
+//
+// Multiplicative product of all six drivers, scaled by the base rate
+// (1/48 ≈ 0.0208). Posterior rate = base_rate * product(drivers). For an
+// average-team draw the product is ~1.0 so the rate sits near base. Strong
+// teams produce products in the 4–8x range, lifting the rate into single-
+// to low-double-digit territory consistent with bookmaker prices.
+
+model: 0.0208 * socio_capital * institutional_capacity * dynamic_performance * squad_quality * tactical_efficiency * fixture_context
 
 simulate 10000 iterations

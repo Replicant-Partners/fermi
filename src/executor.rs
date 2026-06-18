@@ -409,6 +409,21 @@ impl Executor {
             // Sample from each driver
             let mut ctx = EvaluationContext::new();
 
+            // Bind `param name: type` declarations into the eval context so
+            // driver distributions, the model expression, and any other
+            // expression in the program can reference them as plain
+            // identifiers (e.g. `normal((elo_current - 1700) / 300, 0.3)`).
+            //
+            // Without this the simple-path executor (no factor blocks) fails
+            // with `Undefined variable: elo_current` the moment a driver's
+            // prior is parameterised — which is the entire point of the
+            // team-prior template's per-team calibration. The factor-model
+            // path at execute_factor_model() already does this; we mirror it
+            // here so both paths behave consistently with respect to params.
+            for (name, value) in &self.params {
+                ctx.set(name.clone(), *value);
+            }
+
             // Sample continuous drivers (or use fixed value if specified)
             for (name, dist) in &continuous_drivers {
                 let sample = if let Some(&fixed_value) = self.fixed_drivers.get(name) {

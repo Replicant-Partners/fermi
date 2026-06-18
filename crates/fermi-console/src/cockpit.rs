@@ -4665,11 +4665,30 @@ impl CockpitState {
 
     /// Returns true when cached_fpl contains constructs that the
     /// cockpit AST + `generate_fpl_text` cannot round-trip.
+    ///
+    /// Today the emitter only knows about question + driver + evidence +
+    /// model + simulate. Anything else (param declarations, agent blocks,
+    /// factor / estimate / learnable() expressions) gets silently dropped
+    /// if we round-trip through the AST. The team-prior template uses
+    /// `param`, `agent`, and `feeds_from` — and previous template revisions
+    /// used `factor` / `estimate` / `learnable()` — so the guard checks
+    /// for any of them.
     pub(crate) fn cached_fpl_is_richer_than_ast(fpl: &str) -> bool {
-        !fpl.is_empty()
-            && (fpl.contains("factor ")
-                || fpl.contains("estimate ")
-                || fpl.contains("learnable("))
+        if fpl.is_empty() {
+            return false;
+        }
+        // Use line-start matching where possible to avoid false positives
+        // from prose ("the macro factor agent reads..."). agent / param at
+        // line start is unambiguously a statement keyword.
+        let has_top_level = |kw: &str| {
+            fpl.starts_with(kw) || fpl.contains(&format!("\n{}", kw))
+        };
+        has_top_level("agent ")
+            || has_top_level("param ")
+            || has_top_level("factor ")
+            || has_top_level("estimate ")
+            || fpl.contains("learnable(")
+            || fpl.contains("feeds_from")
     }
 
     // ═══════════════════════════════════════════════════════════════
