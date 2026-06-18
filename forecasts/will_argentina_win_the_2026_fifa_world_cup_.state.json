@@ -1,9 +1,9 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 2,
-  "predicted_probability": 0.02187775820493698,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "current_version": 3,
+  "predicted_probability": 0.020772103092517015,
+  "inside_view_explanation": "Starting from a 2.1% base rate, our model slightly confirms the probability to 2.1%. The key factors are: socio_capital, institutional_capacity, dynamic_performance. Most influential: squad_quality (34%), institutional_capacity (21%), tactical_efficiency (15%).",
+  "forecast_confidence": 0.4783333333333332,
   "versions": [
     {
       "version": 1,
@@ -16,9 +16,22 @@
       "timestamp": "2026-06-18 12:28",
       "probability": 0.02187775820493698,
       "change_summary": "2.2% (→), 6 drivers, 4 evidence"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-06-18 12:28",
+      "probability": 0.020772103092517015,
+      "change_summary": "2.1% (→), 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.9986588025248566,
+    "median": 0.9763806053418604,
+    "p5": 0.6583962790395732,
+    "p95": 1.4121462283277162,
+    "std_dev": 0.22987173819129017,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
