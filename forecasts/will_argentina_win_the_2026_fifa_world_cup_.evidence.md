@@ -1,8 +1,51 @@
 # Will Argentina win the 2026 FIFA World Cup?
 
-**Probability:** 2.2% · **Version:** v2 · **Updated:** 2026-06-18 11:20 UTC
+**Probability:** 2.2% · **Version:** v3 · **Updated:** 2026-06-18 11:21 UTC
 
-**Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 7
+**Confidence:** Medium (53%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 7
+
+---
+
+## Inside View
+
+**Probability: 2.2%**
+
+Raw model output: 0.02 (no base rate for normalization) Most influential: squad_quality (31%), institutional_capacity (18%), tactical_efficiency (15%).
+
+**Forecast Confidence:** Medium (53%)
+
+---
+
+## Simulation Distribution
+
+**10000 iterations** · p5 = 1.5% · median = 2.2% · p95 = 3.1% · σ = 0.005
+
+```
+▁▂▃▅▇███▆▅▄▃▂▂▁▁▁▁▁▁
+```
+
+| Bin center | Count | % of sims |
+|---|---|---|
+| 1.0% | 21 | 0.2% |
+| 1.2% | 118 | 1.2% |
+| 1.4% | 370 | 3.7% |
+| 1.6% | 767 | 7.7% |
+| 1.8% | 1154 | 11.5% |
+| 1.9% | 1385 | 13.9% |
+| 2.1% | 1435 | 14.3% |
+| 2.3% | 1344 | 13.4% |
+| 2.5% | 1070 | 10.7% |
+| 2.7% | 819 | 8.2% |
+| 2.8% | 570 | 5.7% |
+| 3.0% | 423 | 4.2% |
+| 3.2% | 220 | 2.2% |
+| 3.4% | 142 | 1.4% |
+| 3.6% | 88 | 0.9% |
+| 3.7% | 36 | 0.4% |
+| 3.9% | 18 | 0.2% |
+| 4.1% | 11 | 0.1% |
+| 4.3% | 6 | 0.1% |
+| 4.5% | 3 | 0.0% |
 
 ---
 
@@ -12,8 +55,9 @@
 |---|---|---|---|---|
 | v1 | 2026-06-18 11:19 | 2.2% | — | Initial: 2.2%, 6 drivers, 4 evidence |
 | v2 | 2026-06-18 11:20 | 2.2% | — | 2.2% (→), 6 drivers, 4 evidence, 3 agents |
+| v3 | 2026-06-18 11:21 | 2.2% | — | 2.2% (→), 6 drivers, 4 evidence, 4 agents |
 
-**Model line:** ```▁▁``` (range 2.2% – 2.2%)
+**Model line:** ```▁▁█``` (range 2.2% – 2.2%)
 
 ---
 
@@ -38,7 +82,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.75 | 1.00 | 1.30 |  |
+| 0.80 | 1.00 | 1.30 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -520,118 +564,96 @@ However, I can provide the institutional infrastructure assessment for Argentina
 - **fixture_context_agent_fixture_context** (schedule: every 1 Week)  
   Query: _For the forecast: "Will Argentina win the 2026 FIFA World Cup?" Research evidence for the 'fixture_context' driver. Current estimate: p5=0.90, p50=1.00, p95=1.10 PROVIDE: 1. Key data points relevant to this driver (with sources and dates) 2. Historical base rate or comparable precedent 3. Suggested p50 multiplier adjustment based on your findings 4. Confidence (0.0-1.0) in your assessment Context: Per-fixture context: venue, climate, rest, altitude. Volatile, refreshed per match. Be specific and quantitative — numbers, percentages, named sources._
 
-### Evidence (1) — Partial quality (50%)
+### Evidence (1) — Strong quality (70%)
 
-#### Agent: fixture_context_agent — relevance 50% · quality ●●○ Med (50%) · 2026-06-18
+#### Agent: fixture_context_agent — relevance 50% · quality ●●● High (70%) · 2026-06-18
 
-Perfect! Now I have comprehensive data. Let me compile the Factor X6 (Exogenous Context) analysis for Argentina at the 2026 World Cup.
+# FIXTURE CONTEXT ANALYSIS: ARGENTINA AT 2026 FIFA WORLD CUP
 
----
+## KEY DATA POINTS
 
-## FACTOR X6 (EXOGENOUS CONTEXT) — ARGENTINA AT 2026 FIFA WORLD CUP
+[HOST] **Non-host status**: Argentina is NOT a co-host (USA/Canada/Mexico are). Host_status = 0. Historical data shows host nations have ~26% win rate vs ~5% baseline (FutbolUpdate, 2024), and >90% advance from group stage when playing all group matches at home (CAWC Soccer 2026). Argentina receives NO host advantage.
 
-### [HOST] Host status: 0 (Argentina is NOT a host nation)
+[CLIMATE] **Climate delta: MODERATE DISADVANTAGE**
+- **Argentina baseline**: Buenos Aires (31m elevation) has hot, humid summers with temperatures 25-30°C (77-86°F) and high humidity (Britannica, 2026; SA Vacations, 2024)
+- **Group J venues**: 
+  - Match 1 (June 16): Kansas City, MO (Arrowhead Stadium, 257m elevation)
+  - Match 2 (June 22): Arlington, TX (AT&T Stadium, 184m elevation)  
+  - Match 3 (June 27): Location TBD from fixture list
+- **Dallas/Arlington June climate**: Average highs 95°F (35°C), humidity 60-67%, heat index 107.6°F/42°C (Climate-Data.org, Weather Atlas 2026)
+- **Climate delta assessment**: Argentine players are acclimated to humid subtropical conditions similar to southeastern US. Temperature differential is minimal (~5°C). Climate_delta ≈ 0.15 (slight disadvantage due to extreme heat index in Texas venues, but within tolerance range for South American teams).
 
-Argentina plays as a visiting nation. The 2026 World Cup is co-hosted by USA, Canada, and Mexico. Argentina's group-stage fixtures are all in the United States (Kansas City and Dallas). **Host status = 0.**
+[REST DAYS] **Standard group-stage schedule: NEUTRAL**
+- Group J runs June 16-27, 2026 (Wikipedia, 2026)
+- Match 1: June 16 vs Algeria (Kansas City)
+- Match 2: June 22 vs Austria (Arlington) — **6 rest days**
+- Match 3: June 27 vs Jordan — **5 rest days**
+- **Assessment**: Both intervals exceed the 3-day threshold for full recovery. FIFA 2026 format provides "balanced rest time between competing teams" (Bleacher Report, 2026). Rest_days normalized score ≈ 0.85 (above baseline, no congestion penalty).
 
-Historical evidence: Host nations reach the semi-finals in 52% of tournaments (11 of 21 World Cups), far exceeding baseline expectations. Host advantage is estimated at **+0.3 to +0.5 implied Elo points** in group stages. Argentina receives **no host boost** and may face modest crowd disadvantage in US venues (though Argentine diaspora support in major US cities partially mitigates this).
+[ALTITUDE] **Minimal altitude delta: NEUTRAL TO SLIGHT ADVANTAGE**
+- **Argentina training base**: Buenos Aires at 31m above sea level (Elevation.city); most Argentine domestic venues <100m
+- **Group J venues**: Kansas City 257m, Arlington 184m — effectively sea level
+- **Comparison**: Argentina regularly plays CONMEBOL qualifiers at extreme altitude (La Paz 3,600m, Quito 2,850m per ESPN 2023). North American venues represent ZERO altitude challenge.
+- **Altitude_delta**: -0.05 (slight advantage — opponents may include European teams less altitude-adapted, while Argentina is altitude-resilient from CONMEBOL experience)
 
----
+[TOURNAMENT AVG] **Exogenous context across tournament progression**
+- If Argentina advances (high probability as defending champions in moderate Group J), knockout venues span 16 US/Canada/Mexico cities
+- Mexico City Estadio Azteca (2,200m) hosts some knockout matches — Argentina has proven altitude performance
+- Most knockout venues are temperate, sea-level locations (Miami, LA, NYC area)
+- No systematic environmental headwinds beyond group stage
 
-### [CLIMATE] Climate delta: Moderate disadvantage (climate_delta ≈ 0.35)
+## HISTORICAL BASE RATE
 
-**Argentina's home climate baseline:**
-- Buenos Aires (primary training base): 25m elevation, temperate/humid subtropical
-- June (Argentine winter): 8–13°C average, moderate humidity 60–70%
-- Argentine players train in mild winter conditions domestically
+**Non-host defending champions**: 
+- 1962 Brazil (Chile WC): Won again
+- 1966 Brazil (England WC): Group stage exit
+- 1990 Argentina (Italy WC): Runners-up
+- 1994 Germany (USA WC): Quarter-finals
+- 1998 Brazil (France WC): Runners-up
+- 2002 France (Korea/Japan WC): Group stage exit
+- 2010 Italy (South Africa WC): Group stage exit
+- 2014 Spain (Brazil WC): Group stage exit
+- 2018 Germany (Russia WC): Group stage exit
 
-**2026 World Cup venue climate (June):**
-- **Kansas City (June 16):** 25°C average, **69–72% humidity**
-- **Dallas (June 22 & 27):** 34°C average high (94°F), **60–67% humidity**, heat index up to **42°C (107.6°F)**
+**Pattern**: Defending champions WITHOUT host advantage show high variance. Recent trend (2002-2018) shows 4/5 failed to reach semi-finals. However, Argentina's specific fixture context (neutral climate, zero altitude challenge, adequate rest) removes typical environmental penalties.
 
-**Climate delta assessment:**
-Argentina's squad will face a **+20–25°C temperature jump** from their domestic winter to North American summer, particularly in Dallas. While many Argentine players are based in European clubs (acclimatized to temperate climates), the **Dallas heat in late June** represents a significant physiological stressor.
+## MULTIPLIER ASSESSMENT
 
-Research from FIFA medical studies shows teams from temperate climates underperform by **~0.2 xG/90** in 35°C+ conditions. Dallas in late June routinely exceeds this threshold. Argentina's two Dallas fixtures (June 22 & 27) carry elevated heat-stress risk.
+**Factor decomposition**:
+- Host status: 0.00 (no advantage, but also no away-team penalty in neutral North America)
+- Climate delta: -0.05 (marginal disadvantage in Texas heat, offset by subtropical acclimation)
+- Rest days: +0.10 (optimal 5-6 day intervals, no congestion)
+- Altitude delta: +0.05 (sea-level venues favor Argentina's altitude-resilient squad)
 
-**Climate_delta score: 0.35** (moderate disadvantage; 0 = perfect match, 1 = maximum mismatch).
+**Net exogenous context effect**: +0.10 relative to field-average team
 
----
+The current prior (p50=1.00) assumes neutral exogenous context. Argentina faces SLIGHTLY FAVORABLE conditions: no host disadvantage in a co-hosted tournament, climate within tolerance, excellent rest schedule, and zero altitude challenge despite being altitude-proven.
 
-### [REST DAYS] Rest-day schedule: Favorable (rest_days ≈ 0.70 normalized)
+[MULTIPLIER] Suggested p50: **1.05** (p5: 0.95, p95: 1.15) — Argentina faces marginally favorable exogenous conditions with no systematic environmental headwinds; the slight uplift reflects optimal rest scheduling and altitude neutrality, offset by non-host status in a host-advantaged tournament.
 
-**Argentina's group-stage schedule:**
-- **June 16:** vs Algeria (Kansas City)
-- **June 22:** vs Austria (Dallas) — **6 rest days**
-- **June 27:** vs Jordan (Dallas) — **5 rest days**
+## CONFIDENCE ASSESSMENT
 
-**Knockout-stage rest (if Argentina advances):**
-- Round of 32: June 28 or later — **1–2 rest days** minimum
-- Round of 16: July 4+ — **6–7 rest days** typical
+**Confidence: 0.75**
 
-**Rest-day analysis:**
-Argentina benefits from **6 and 5 rest days** between group matches, well above the FIFA-recommended 3-day minimum. Research shows:
-- <3 rest days: **−10–15% xG creation** (fixture congestion penalty)
-- 3–5 rest days: baseline performance
-- 5+ rest days: **no further performance gain** (plateau effect)
+**Rationale**: High confidence in venue/altitude data (verified through multiple sources), moderate confidence in climate impact (well-documented but team-specific acclimation varies), and moderate confidence in rest-day effects (FIFA research is robust but 2026's 48-team format is untested at scale). The p5-p95 range reflects uncertainty around how Argentina's specific squad composition handles June heat in Texas venues.
 
-Argentina's group-stage rest is **optimal**. Knockout-stage rest depends on bracket position but follows standard 2026 format (adequate recovery windows built in).
+**Key findings:**
 
-**Rest_days score: 0.70** (favorable; 0 = severe congestion, 1 = maximum rest).
-
----
-
-### [ALTITUDE] Altitude delta: Negligible advantage (altitude_delta ≈ +0.05)
-
-**Argentina's baseline altitude:**
-- Buenos Aires: **25–31m** above sea level
-- Most Argentine training facilities: <100m elevation
-
-**2026 World Cup venue altitudes:**
-- **Kansas City (Arrowhead Stadium):** **257m** (843 ft)
-- **Dallas (AT&T Stadium):** **184m** (604 ft)
-
-**Altitude delta: +150–230m** (negligible)
-
-Both venues are near sea level. Argentina faces **no altitude disadvantage**. If Argentina advances deep into the knockout stage, potential venues include:
-- **Mexico City (Estadio Azteca): 2,240m** — significant altitude, but Argentina would not play there unless reaching later knockout rounds, and all teams face the same challenge.
-
-For group-stage and early knockout rounds, altitude is a **non-factor**.
-
-**Altitude_delta score: +0.05** (negligible; positive sign indicates Argentina's low-altitude baseline is matched by venue altitudes, no disadvantage).
-
----
-
-### [TOURNAMENT AVG] Tournament-wide exogenous context for Argentina
-
-Synthesizing across the four inputs:
-
-1. **Host status = 0:** Argentina receives no home advantage; plays in neutral-to-hostile US venues (though Argentine diaspora provides some support).
-2. **Climate delta = 0.35:** Moderate disadvantage, especially in Dallas late-June heat. Two of three group matches in high-heat conditions.
-3. **Rest days = 0.70:** Favorable. Optimal recovery windows in group stage; standard knockout-stage rest.
-4. **Altitude delta = +0.05:** Negligible. All group venues near sea level.
-
-**Net assessment:** Argentina faces a **modest exogenous headwind** driven primarily by climate (Dallas heat). This is partially offset by favorable rest-day scheduling. The absence of host advantage is neutral (Argentina never expected it). Altitude is irrelevant.
-
----
-
-### [MULTIPLIER] Suggested p50: **0.88** (p5: 0.75, p95: 1.05) — Climate disadvantage (Dallas heat) dominates; rest-day advantage provides partial offset but does not fully neutralize the thermal stressor.
-
-**Rationale:**
-- **Climate penalty:** Dallas June heat (34°C+, 107°F heat index) is a documented performance suppressant for temperate-climate teams. Argentina plays **2 of 3 group matches** in Dallas. Expected impact: **−0.15 to −0.20 multiplier** on exogenous factor.
-- **Rest-day boost:** +0.05 to +0.10 multiplier (favorable scheduling).
-- **Host/altitude:** Neutral (0 adjustment).
-
-**Net multiplier: 0.88** (12% exogenous headwind relative to field-median conditions). The p5–p95 range reflects uncertainty in:
-- Argentine players' heat acclimatization (many play in hot-weather leagues; some do not).
-- Venue climate control (AT&T Stadium is a retractable-roof facility; air conditioning may mitigate heat).
-- Match timing (evening kickoffs reduce heat exposure).
-
-If Argentina advances past the group stage, exogenous conditions **normalize** (knockout venues are geographically diverse; climate/rest advantages/disadvantages average out across the bracket). This multiplier applies primarily to **group-stage performance** and early knockout rounds.
-
----
-
-**FACTOR X6 MULTIPLIER: 0.88** — Argentina faces a modest exogenous disadvantage, driven by climate mismatch in Dallas. This is a **tournament-averaged prior**; specific fixture conditions (kickoff time, roof status, opponent rest days) may shift the multiplier ±0.10 in individual matches.
+- [HOST] **Non-host status**: Argentina is NOT a co-host (USA/Canada/Mexico are). Host_status = 0. Historical data shows host nations have ~26% win rate vs ~5% baseline (FutbolUpdate, 2024), and >90% advance from group stage when playing all group matches at home (CAWC Soccer 2026). Argentina receives NO host advantage.
+- **Argentina baseline**: Buenos Aires (31m elevation) has hot, humid summers with temperatures 25-30°C (77-86°F) and high humidity (Britannica, 2026; SA Vacations, 2024)
+- **Group J venues**:
+- Match 1 (June 16): Kansas City, MO (Arrowhead Stadium, 257m elevation)
+- Match 2 (June 22): Arlington, TX (AT&T Stadium, 184m elevation)
+- Match 3 (June 27): Location TBD from fixture list
+- **Dallas/Arlington June climate**: Average highs 95°F (35°C), humidity 60-67%, heat index 107.6°F/42°C (Climate-Data.org, Weather Atlas 2026)
+- **Climate delta assessment**: Argentine players are acclimated to humid subtropical conditions similar to southeastern US. Temperature differential is minimal (~5°C). Climate_delta ≈ 0.15 (slight disadvantage due to extreme heat index in Texas venues, but within tolerance range for South American teams).
+- Group J runs June 16-27, 2026 (Wikipedia, 2026)
+- Match 1: June 16 vs Algeria (Kansas City)
+- Match 2: June 22 vs Austria (Arlington) — **6 rest days**
+- Match 3: June 27 vs Jordan — **5 rest days**
+- **Assessment**: Both intervals exceed the 3-day threshold for full recovery. FIFA 2026 format provides "balanced rest time between competing teams" (Bleacher Report, 2026). Rest_days normalized score ≈ 0.85 (above baseline, no congestion penalty).
+- **Argentina training base**: Buenos Aires at 31m above sea level (Elevation.city); most Argentine domestic venues <100m
+- **Group J venues**: Kansas City 257m, Arlington 184m — effectively sea level
 
 ---
 
@@ -895,116 +917,94 @@ However, I can provide the institutional infrastructure assessment for Argentina
 - However, **economic instability** (currency crises, inflation) has weakened the domestic league's ability to retain talent. Most elite players export to Europe early, reducing the domestic league's competitive quality relative to its institutional depth.
 - [DATA AGE]** Player registration data: FIFA Big Count (last comprehensive update ~2020–2023, exact year unclear from Wikipedia citation). League revenue: 2018 peak figures; 2024 estimates extrapolated. Confederation performance: 2025 Club World Cup (recent). All data sources are within 1–3 years; no critical staleness.
 
-### Agent: fixture_context_agent — relevance 50% · quality ●●○ Med (50%)
+### Agent: fixture_context_agent — relevance 50% · quality ●●● High (70%)
 
-Perfect! Now I have comprehensive data. Let me compile the Factor X6 (Exogenous Context) analysis for Argentina at the 2026 World Cup.
+# FIXTURE CONTEXT ANALYSIS: ARGENTINA AT 2026 FIFA WORLD CUP
 
----
+## KEY DATA POINTS
 
-## FACTOR X6 (EXOGENOUS CONTEXT) — ARGENTINA AT 2026 FIFA WORLD CUP
+[HOST] **Non-host status**: Argentina is NOT a co-host (USA/Canada/Mexico are). Host_status = 0. Historical data shows host nations have ~26% win rate vs ~5% baseline (FutbolUpdate, 2024), and >90% advance from group stage when playing all group matches at home (CAWC Soccer 2026). Argentina receives NO host advantage.
 
-### [HOST] Host status: 0 (Argentina is NOT a host nation)
+[CLIMATE] **Climate delta: MODERATE DISADVANTAGE**
+- **Argentina baseline**: Buenos Aires (31m elevation) has hot, humid summers with temperatures 25-30°C (77-86°F) and high humidity (Britannica, 2026; SA Vacations, 2024)
+- **Group J venues**: 
+  - Match 1 (June 16): Kansas City, MO (Arrowhead Stadium, 257m elevation)
+  - Match 2 (June 22): Arlington, TX (AT&T Stadium, 184m elevation)  
+  - Match 3 (June 27): Location TBD from fixture list
+- **Dallas/Arlington June climate**: Average highs 95°F (35°C), humidity 60-67%, heat index 107.6°F/42°C (Climate-Data.org, Weather Atlas 2026)
+- **Climate delta assessment**: Argentine players are acclimated to humid subtropical conditions similar to southeastern US. Temperature differential is minimal (~5°C). Climate_delta ≈ 0.15 (slight disadvantage due to extreme heat index in Texas venues, but within tolerance range for South American teams).
 
-Argentina plays as a visiting nation. The 2026 World Cup is co-hosted by USA, Canada, and Mexico. Argentina's group-stage fixtures are all in the United States (Kansas City and Dallas). **Host status = 0.**
+[REST DAYS] **Standard group-stage schedule: NEUTRAL**
+- Group J runs June 16-27, 2026 (Wikipedia, 2026)
+- Match 1: June 16 vs Algeria (Kansas City)
+- Match 2: June 22 vs Austria (Arlington) — **6 rest days**
+- Match 3: June 27 vs Jordan — **5 rest days**
+- **Assessment**: Both intervals exceed the 3-day threshold for full recovery. FIFA 2026 format provides "balanced rest time between competing teams" (Bleacher Report, 2026). Rest_days normalized score ≈ 0.85 (above baseline, no congestion penalty).
 
-Historical evidence: Host nations reach the semi-finals in 52% of tournaments (11 of 21 World Cups), far exceeding baseline expectations. Host advantage is estimated at **+0.3 to +0.5 implied Elo points** in group stages. Argentina receives **no host boost** and may face modest crowd disadvantage in US venues (though Argentine diaspora support in major US cities partially mitigates this).
+[ALTITUDE] **Minimal altitude delta: NEUTRAL TO SLIGHT ADVANTAGE**
+- **Argentina training base**: Buenos Aires at 31m above sea level (Elevation.city); most Argentine domestic venues <100m
+- **Group J venues**: Kansas City 257m, Arlington 184m — effectively sea level
+- **Comparison**: Argentina regularly plays CONMEBOL qualifiers at extreme altitude (La Paz 3,600m, Quito 2,850m per ESPN 2023). North American venues represent ZERO altitude challenge.
+- **Altitude_delta**: -0.05 (slight advantage — opponents may include European teams less altitude-adapted, while Argentina is altitude-resilient from CONMEBOL experience)
 
----
+[TOURNAMENT AVG] **Exogenous context across tournament progression**
+- If Argentina advances (high probability as defending champions in moderate Group J), knockout venues span 16 US/Canada/Mexico cities
+- Mexico City Estadio Azteca (2,200m) hosts some knockout matches — Argentina has proven altitude performance
+- Most knockout venues are temperate, sea-level locations (Miami, LA, NYC area)
+- No systematic environmental headwinds beyond group stage
 
-### [CLIMATE] Climate delta: Moderate disadvantage (climate_delta ≈ 0.35)
+## HISTORICAL BASE RATE
 
-**Argentina's home climate baseline:**
-- Buenos Aires (primary training base): 25m elevation, temperate/humid subtropical
-- June (Argentine winter): 8–13°C average, moderate humidity 60–70%
-- Argentine players train in mild winter conditions domestically
+**Non-host defending champions**: 
+- 1962 Brazil (Chile WC): Won again
+- 1966 Brazil (England WC): Group stage exit
+- 1990 Argentina (Italy WC): Runners-up
+- 1994 Germany (USA WC): Quarter-finals
+- 1998 Brazil (France WC): Runners-up
+- 2002 France (Korea/Japan WC): Group stage exit
+- 2010 Italy (South Africa WC): Group stage exit
+- 2014 Spain (Brazil WC): Group stage exit
+- 2018 Germany (Russia WC): Group stage exit
 
-**2026 World Cup venue climate (June):**
-- **Kansas City (June 16):** 25°C average, **69–72% humidity**
-- **Dallas (June 22 & 27):** 34°C average high (94°F), **60–67% humidity**, heat index up to **42°C (107.6°F)**
+**Pattern**: Defending champions WITHOUT host advantage show high variance. Recent trend (2002-2018) shows 4/5 failed to reach semi-finals. However, Argentina's specific fixture context (neutral climate, zero altitude challenge, adequate rest) removes typical environmental penalties.
 
-**Climate delta assessment:**
-Argentina's squad will face a **+20–25°C temperature jump** from their domestic winter to North American summer, particularly in Dallas. While many Argentine players are based in European clubs (acclimatized to temperate climates), the **Dallas heat in late June** represents a significant physiological stressor.
+## MULTIPLIER ASSESSMENT
 
-Research from FIFA medical studies shows teams from temperate climates underperform by **~0.2 xG/90** in 35°C+ conditions. Dallas in late June routinely exceeds this threshold. Argentina's two Dallas fixtures (June 22 & 27) carry elevated heat-stress risk.
+**Factor decomposition**:
+- Host status: 0.00 (no advantage, but also no away-team penalty in neutral North America)
+- Climate delta: -0.05 (marginal disadvantage in Texas heat, offset by subtropical acclimation)
+- Rest days: +0.10 (optimal 5-6 day intervals, no congestion)
+- Altitude delta: +0.05 (sea-level venues favor Argentina's altitude-resilient squad)
 
-**Climate_delta score: 0.35** (moderate disadvantage; 0 = perfect match, 1 = maximum mismatch).
+**Net exogenous context effect**: +0.10 relative to field-average team
 
----
+The current prior (p50=1.00) assumes neutral exogenous context. Argentina faces SLIGHTLY FAVORABLE conditions: no host disadvantage in a co-hosted tournament, climate within tolerance, excellent rest schedule, and zero altitude challenge despite being altitude-proven.
 
-### [REST DAYS] Rest-day schedule: Favorable (rest_days ≈ 0.70 normalized)
+[MULTIPLIER] Suggested p50: **1.05** (p5: 0.95, p95: 1.15) — Argentina faces marginally favorable exogenous conditions with no systematic environmental headwinds; the slight uplift reflects optimal rest scheduling and altitude neutrality, offset by non-host status in a host-advantaged tournament.
 
-**Argentina's group-stage schedule:**
-- **June 16:** vs Algeria (Kansas City)
-- **June 22:** vs Austria (Dallas) — **6 rest days**
-- **June 27:** vs Jordan (Dallas) — **5 rest days**
+## CONFIDENCE ASSESSMENT
 
-**Knockout-stage rest (if Argentina advances):**
-- Round of 32: June 28 or later — **1–2 rest days** minimum
-- Round of 16: July 4+ — **6–7 rest days** typical
+**Confidence: 0.75**
 
-**Rest-day analysis:**
-Argentina benefits from **6 and 5 rest days** between group matches, well above the FIFA-recommended 3-day minimum. Research shows:
-- <3 rest days: **−10–15% xG creation** (fixture congestion penalty)
-- 3–5 rest days: baseline performance
-- 5+ rest days: **no further performance gain** (plateau effect)
+**Rationale**: High confidence in venue/altitude data (verified through multiple sources), moderate confidence in climate impact (well-documented but team-specific acclimation varies), and moderate confidence in rest-day effects (FIFA research is robust but 2026's 48-team format is untested at scale). The p5-p95 range reflects uncertainty around how Argentina's specific squad composition handles June heat in Texas venues.
 
-Argentina's group-stage rest is **optimal**. Knockout-stage rest depends on bracket position but follows standard 2026 format (adequate recovery windows built in).
+**Key findings:**
 
-**Rest_days score: 0.70** (favorable; 0 = severe congestion, 1 = maximum rest).
-
----
-
-### [ALTITUDE] Altitude delta: Negligible advantage (altitude_delta ≈ +0.05)
-
-**Argentina's baseline altitude:**
-- Buenos Aires: **25–31m** above sea level
-- Most Argentine training facilities: <100m elevation
-
-**2026 World Cup venue altitudes:**
-- **Kansas City (Arrowhead Stadium):** **257m** (843 ft)
-- **Dallas (AT&T Stadium):** **184m** (604 ft)
-
-**Altitude delta: +150–230m** (negligible)
-
-Both venues are near sea level. Argentina faces **no altitude disadvantage**. If Argentina advances deep into the knockout stage, potential venues include:
-- **Mexico City (Estadio Azteca): 2,240m** — significant altitude, but Argentina would not play there unless reaching later knockout rounds, and all teams face the same challenge.
-
-For group-stage and early knockout rounds, altitude is a **non-factor**.
-
-**Altitude_delta score: +0.05** (negligible; positive sign indicates Argentina's low-altitude baseline is matched by venue altitudes, no disadvantage).
-
----
-
-### [TOURNAMENT AVG] Tournament-wide exogenous context for Argentina
-
-Synthesizing across the four inputs:
-
-1. **Host status = 0:** Argentina receives no home advantage; plays in neutral-to-hostile US venues (though Argentine diaspora provides some support).
-2. **Climate delta = 0.35:** Moderate disadvantage, especially in Dallas late-June heat. Two of three group matches in high-heat conditions.
-3. **Rest days = 0.70:** Favorable. Optimal recovery windows in group stage; standard knockout-stage rest.
-4. **Altitude delta = +0.05:** Negligible. All group venues near sea level.
-
-**Net assessment:** Argentina faces a **modest exogenous headwind** driven primarily by climate (Dallas heat). This is partially offset by favorable rest-day scheduling. The absence of host advantage is neutral (Argentina never expected it). Altitude is irrelevant.
-
----
-
-### [MULTIPLIER] Suggested p50: **0.88** (p5: 0.75, p95: 1.05) — Climate disadvantage (Dallas heat) dominates; rest-day advantage provides partial offset but does not fully neutralize the thermal stressor.
-
-**Rationale:**
-- **Climate penalty:** Dallas June heat (34°C+, 107°F heat index) is a documented performance suppressant for temperate-climate teams. Argentina plays **2 of 3 group matches** in Dallas. Expected impact: **−0.15 to −0.20 multiplier** on exogenous factor.
-- **Rest-day boost:** +0.05 to +0.10 multiplier (favorable scheduling).
-- **Host/altitude:** Neutral (0 adjustment).
-
-**Net multiplier: 0.88** (12% exogenous headwind relative to field-median conditions). The p5–p95 range reflects uncertainty in:
-- Argentine players' heat acclimatization (many play in hot-weather leagues; some do not).
-- Venue climate control (AT&T Stadium is a retractable-roof facility; air conditioning may mitigate heat).
-- Match timing (evening kickoffs reduce heat exposure).
-
-If Argentina advances past the group stage, exogenous conditions **normalize** (knockout venues are geographically diverse; climate/rest advantages/disadvantages average out across the bracket). This multiplier applies primarily to **group-stage performance** and early knockout rounds.
-
----
-
-**FACTOR X6 MULTIPLIER: 0.88** — Argentina faces a modest exogenous disadvantage, driven by climate mismatch in Dallas. This is a **tournament-averaged prior**; specific fixture conditions (kickoff time, roof status, opponent rest days) may shift the multiplier ±0.10 in individual matches.
+- [HOST] **Non-host status**: Argentina is NOT a co-host (USA/Canada/Mexico are). Host_status = 0. Historical data shows host nations have ~26% win rate vs ~5% baseline (FutbolUpdate, 2024), and >90% advance from group stage when playing all group matches at home (CAWC Soccer 2026). Argentina receives NO host advantage.
+- **Argentina baseline**: Buenos Aires (31m elevation) has hot, humid summers with temperatures 25-30°C (77-86°F) and high humidity (Britannica, 2026; SA Vacations, 2024)
+- **Group J venues**:
+- Match 1 (June 16): Kansas City, MO (Arrowhead Stadium, 257m elevation)
+- Match 2 (June 22): Arlington, TX (AT&T Stadium, 184m elevation)
+- Match 3 (June 27): Location TBD from fixture list
+- **Dallas/Arlington June climate**: Average highs 95°F (35°C), humidity 60-67%, heat index 107.6°F/42°C (Climate-Data.org, Weather Atlas 2026)
+- **Climate delta assessment**: Argentine players are acclimated to humid subtropical conditions similar to southeastern US. Temperature differential is minimal (~5°C). Climate_delta ≈ 0.15 (slight disadvantage due to extreme heat index in Texas venues, but within tolerance range for South American teams).
+- Group J runs June 16-27, 2026 (Wikipedia, 2026)
+- Match 1: June 16 vs Algeria (Kansas City)
+- Match 2: June 22 vs Austria (Arlington) — **6 rest days**
+- Match 3: June 27 vs Jordan — **5 rest days**
+- **Assessment**: Both intervals exceed the 3-day threshold for full recovery. FIFA 2026 format provides "balanced rest time between competing teams" (Bleacher Report, 2026). Rest_days normalized score ≈ 0.85 (above baseline, no congestion penalty).
+- **Argentina training base**: Buenos Aires at 31m above sea level (Elevation.city); most Argentine domestic venues <100m
+- **Group J venues**: Kansas City 257m, Arlington 184m — effectively sea level
 
 ---
 
@@ -1038,4 +1038,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v2 · 2026-06-18 11:20 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v3 · 2026-06-18 11:21 UTC_
