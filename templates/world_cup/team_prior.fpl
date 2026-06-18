@@ -31,7 +31,20 @@ param gdp_per_capita_log: real
 param population_log: real
 param hdi_logit: real
 
-question "Will {team_name} win the 2026 FIFA World Cup?"
+question "Will {team_name} win the 2026 FIFA World Cup?" {
+    base_rate {
+        reference_class: "FIFA World Cup winners 1930–2022"
+        // 1/48 ≈ 0.0208 — uniform prior across the 48-team field. Each team
+        // starts with an equal share before factor-derived drivers move the
+        // probability up or down. The cockpit's "outside view" pane reads
+        // this; without it the inside-view divergence panel can't render.
+        historical_frequency: 2.08%
+        sample_size: 22
+        source: "FIFA tournament archive — 22 prior World Cups, 8 distinct winners"
+        reasoning: "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via socio_capital, institutional_capacity, dynamic_performance, squad_quality, tactical_efficiency, fixture_context."
+        generated_by: human
+    }
+}
 
 // ─── Drivers ──────────────────────────────────────────────────────────
 //

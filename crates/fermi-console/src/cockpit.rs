@@ -4611,6 +4611,49 @@ impl CockpitState {
                         log::info!("[workspace] Published outputs to {}", ws);
                     });
                 }
+
+                // ── Persist sim result to the server-side forecast ─────
+                //
+                // POST /api/forecasts/:id/update-probability writes a new
+                // fermi_forecast_updates row, which the spacetime trigger
+                // (migration 149) propagates into forecast_spacetime — the
+                // table the Trajectory tab reads from. Without this every
+                // sim run only updated cockpit-local state and the dashboard
+                // probability + Trajectory tab stayed frozen at the cold-
+                // start prior (2% for every team).
+                //
+                // Spec 23 §6 step 7: "The next time the editor runs the
+                // forecast (manually or on schedule), the executor uses the
+                // new posterior. The rate becomes 26%. fermi_forecast_updates
+                // records the revision." — this is the wire.
+                if let Some(ref fid) = self.forecast_id {
+                    let api = self.api.clone();
+                    let fid = fid.clone();
+                    let new_prob = self.predicted_probability;
+                    let reason = format!(
+                        "Local Monte Carlo simulation: mean={:.4}, p5={:.4}, p95={:.4} ({} iterations)",
+                        results.mean, results.p5, results.p95, results.iterations
+                    );
+                    tokio::spawn(async move {
+                        let req = crate::api::client::UpdateProbabilityRequest {
+                            new_probability: new_prob,
+                            reason: Some(reason),
+                            agent_id: None,
+                            evidence_added: None,
+                        };
+                        match api.update_probability(&fid, &req).await {
+                            Ok(_) => log::info!(
+                                "[sim-persist] forecast {} probability persisted to {:.4}",
+                                fid, new_prob
+                            ),
+                            Err(e) => log::warn!(
+                                "[sim-persist] update_probability failed for {}: {} — \
+                                 dashboard + trajectory will show stale value until next sim",
+                                fid, e
+                            ),
+                        }
+                    });
+                }
             }
             Err(e) => {
                 self.sim_error = Some(format!("Execution error: {:?}", e));

@@ -124,6 +124,22 @@ fn team_prior_template_parses() {
         );
     }
 
+    // Outside view: the question must carry a base_rate. Without it the
+    // cockpit's outside-view pane has nothing to render and the inside-view
+    // divergence indicator can't compute. Per spec §6 step 1.
+    let q = program
+        .question()
+        .expect("template must declare a question");
+    let br = q
+        .base_rate
+        .as_ref()
+        .expect("question must declare a base_rate for the outside view");
+    assert!(
+        (br.historical_frequency - 0.0208).abs() < 0.001,
+        "expected base_rate.historical_frequency ≈ 0.0208 (1/48), got {}",
+        br.historical_frequency
+    );
+
     // The model expression must exist (so simulate has something to evaluate)
     // and must reference all six drivers — otherwise simulation will report
     // "Undefined variable: foo" or silently drop a factor.

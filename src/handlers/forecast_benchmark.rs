@@ -727,6 +727,11 @@ pub async fn forecast_timeline_handler(
     let workspace_id: Option<uuid::Uuid> = forecast.try_get("workspace_id").ok().flatten();
 
     // ── 1. Rate revisions from forecast_spacetime ──────────────────
+    //
+    // Every column read goes through try_get. Anything else (plain .get,
+    // direct type ascription) panics on type mismatch or null — which axum
+    // catches as a 502 with no diagnostic. The handler MUST degrade
+    // gracefully on any single bad row.
     let revisions: Vec<Value> = sqlx::query(
         "SELECT revision_seq, predicted_probability, previous_probability,
                 revision_trigger, revision_reason, triggering_agent,
@@ -740,30 +745,34 @@ pub async fn forecast_timeline_handler(
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|row| {
-        let ts: chrono::DateTime<chrono::Utc> = row.get("revision_ts");
-        json!({
+    .filter_map(|row| {
+        let ts = row
+            .try_get::<chrono::DateTime<chrono::Utc>, _>("revision_ts")
+            .ok()?;
+        Some(json!({
             "kind": "rate_revision",
             "ts": ts.to_rfc3339(),
-            "revision_seq": row.get::<i32, _>("revision_seq"),
-            "predicted_probability": row.get::<f32, _>("predicted_probability"),
+            "revision_seq": row.try_get::<i32, _>("revision_seq").ok(),
+            "predicted_probability": row.try_get::<f32, _>("predicted_probability").ok(),
             "previous_probability": row.try_get::<Option<f32>, _>("previous_probability").ok().flatten(),
             "revision_trigger": row.try_get::<Option<String>, _>("revision_trigger").ok().flatten(),
             "reason": row.try_get::<Option<String>, _>("revision_reason").ok().flatten(),
             "triggering_agent": row.try_get::<Option<String>, _>("triggering_agent").ok().flatten(),
             "evidence_delta": row.try_get::<Option<Value>, _>("evidence_delta").ok().flatten(),
-        })
+        }))
     })
     .collect();
 
     // Build the rate series — what the chart traces. Includes the initial
     // probability so consumers always have at least one point.
     let initial_prob: Option<f32> = forecast.try_get("predicted_probability").ok();
+    let created = forecast
+        .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+        .ok();
     let mut rate_series: Vec<Value> = Vec::new();
-    if let Some(p) = initial_prob {
-        let created: chrono::DateTime<chrono::Utc> = forecast.get("created_at");
+    if let (Some(p), Some(c)) = (initial_prob, created) {
         rate_series.push(json!({
-            "ts": created.to_rfc3339(),
+            "ts": c.to_rfc3339(),
             "rate": p,
         }));
     }
@@ -788,27 +797,31 @@ pub async fn forecast_timeline_handler(
         .await
         .unwrap_or_default()
         .into_iter()
-        .map(|row| {
-            let ts: chrono::DateTime<chrono::Utc> = row.get("fitted_at");
+        .filter_map(|row| {
+            // Defensive try_get on every column — a single bad row would
+            // otherwise panic the whole handler.
+            let ts = row
+                .try_get::<chrono::DateTime<chrono::Utc>, _>("fitted_at")
+                .ok()?;
             let rate_before: Option<f64> = row.try_get("rate_before").ok().flatten();
             let rate_after: Option<f64> = row.try_get("rate_after").ok().flatten();
             let delta_pp = match (rate_before, rate_after) {
                 (Some(b), Some(a)) => Some((a - b).abs() * 100.0),
                 _ => None,
             };
-            json!({
+            Some(json!({
                 "kind": "bayesops_fit",
                 "ts": ts.to_rfc3339(),
-                "snapshot_id": row.get::<uuid::Uuid, _>("snapshot_id"),
-                "driver_name": row.get::<String, _>("driver_name"),
-                "decision": row.get::<String, _>("decision"),
-                "n_observations": row.get::<i32, _>("n_observations"),
-                "n_eff": row.get::<f64, _>("n_eff"),
-                "ci_width": row.get::<f64, _>("ci_width"),
+                "snapshot_id": row.try_get::<uuid::Uuid, _>("snapshot_id").ok(),
+                "driver_name": row.try_get::<String, _>("driver_name").ok(),
+                "decision": row.try_get::<String, _>("decision").ok(),
+                "n_observations": row.try_get::<i32, _>("n_observations").ok(),
+                "n_eff": row.try_get::<f64, _>("n_eff").ok(),
+                "ci_width": row.try_get::<f64, _>("ci_width").ok(),
                 "rate_before": rate_before,
                 "rate_after": rate_after,
                 "delta_pp": delta_pp,
-            })
+            }))
         })
         .collect()
     } else {
@@ -834,34 +847,31 @@ pub async fn forecast_timeline_handler(
         .await
         .unwrap_or_default()
         .into_iter()
-        .map(|row| {
-            let ts: chrono::DateTime<chrono::Utc> = row.get("created_at");
-            let msg_type: String = row.get("message_type");
+        .filter_map(|row| {
+            let ts = row
+                .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                .ok()?;
+            let msg_type: String = row.try_get("message_type").ok()?;
             let metadata: Value = row.try_get("metadata").unwrap_or(Value::Null);
-            // Detect the event sub-kind from message_type + metadata.event
-            // (the convention the resolution + refit + bayesops handlers
-            // all use).
             let kind = match msg_type.as_str() {
                 "execution_result" => "agent_run".to_string(),
-                "system_event" => {
-                    metadata
-                        .get("event")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "system_event".to_string())
-                }
+                "system_event" => metadata
+                    .get("event")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "system_event".to_string()),
                 other => other.to_string(),
             };
-            json!({
+            Some(json!({
                 "kind": kind,
                 "ts": ts.to_rfc3339(),
-                "message_id": row.get::<uuid::Uuid, _>("message_id"),
-                "sender_type": row.get::<String, _>("sender_type"),
-                "sender_id": row.get::<String, _>("sender_id"),
+                "message_id": row.try_get::<uuid::Uuid, _>("message_id").ok(),
+                "sender_type": row.try_get::<String, _>("sender_type").ok(),
+                "sender_id": row.try_get::<String, _>("sender_id").ok(),
                 "sender_name": row.try_get::<Option<String>, _>("sender_name").ok().flatten(),
-                "content": row.get::<String, _>("content"),
+                "content": row.try_get::<String, _>("content").ok(),
                 "metadata": metadata,
-            })
+            }))
         })
         .collect()
     } else {
@@ -880,14 +890,16 @@ pub async fn forecast_timeline_handler(
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|row| {
-        let ts: chrono::DateTime<chrono::Utc> = row.get("observation_time");
-        json!({
+    .filter_map(|row| {
+        let ts = row
+            .try_get::<chrono::DateTime<chrono::Utc>, _>("observation_time")
+            .ok()?;
+        Some(json!({
             "ts": ts.to_rfc3339(),
-            "market_price": row.get::<f32, _>("market_price"),
+            "market_price": row.try_get::<f32, _>("market_price").ok(),
             "volume_total": row.try_get::<Option<f32>, _>("volume_total").ok().flatten(),
             "pm_event_id": row.try_get::<Option<String>, _>("pm_event_id").ok().flatten(),
-        })
+        }))
     })
     .collect();
 
