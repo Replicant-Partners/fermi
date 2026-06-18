@@ -2438,8 +2438,106 @@ impl CockpitState {
                         .await;
                 });
             }
+
+            // ── Persist evidence to the server-side forecast row ─────
+            //
+            // Without this, every agent run only mutates the local AST.
+            // Reopening the forecast pulls fpl_source from the server
+            // (which has no evidence baked in — the WC team_prior
+            // template only declares drivers/agents/params/feeds_from),
+            // re-parses into a fresh Program, and all the research
+            // disappears.
+            //
+            // Push the full evidence + agent set to fermi_forecasts as
+            // JSONB. The serializer already returns these fields on GET,
+            // so open_forecast can read them back. Drivers stay
+            // template-defined; we update predicted_probability via the
+            // dedicated /update-probability endpoint elsewhere.
+            self.push_research_state_to_server();
         }
     }
+
+    /// Push the cockpit's current `program.evidence_items()` and
+    /// `program.agents()` lists to the server-side `fermi_forecasts.evidence`
+    /// and `agents_used` JSONB columns. Fire-and-forget; failures log but
+    /// don't block the UI.
+    ///
+    /// This is the persistence wire for accumulated agent research. It runs
+    /// after every successful agent completion (in `process_agent_evidence`)
+    /// so reopening the forecast restores the work, not just the FPL skeleton.
+    fn push_research_state_to_server(&self) {
+        let Some(ref fid) = self.forecast_id else {
+            // No forecast_id yet — operator hasn't published. The legacy
+            // local-disk save path (Ctrl+S) covers this case via
+            // forecasts/<name>.state.json.
+            return;
+        };
+
+        // Serialize evidence items by hand because EvidenceStmt doesn't
+        // derive Serialize on the upstream ast crate. Same shape the GET
+        // serializer would write back so the round-trip is symmetric.
+        let evidence_json: Vec<serde_json::Value> = self
+            .program
+            .evidence_items()
+            .iter()
+            .map(|ev| {
+                serde_json::json!({
+                    "id": ev.id,
+                    "source": ev.source,
+                    "summary": ev.summary,
+                    "url": ev.url,
+                    "relevance": ev.relevance,
+                    "date": ev.date,
+                    "strength": ev.strength,
+                    "key_findings": ev.key_findings,
+                })
+            })
+            .collect();
+
+        // Same for agents_used. We capture every agent the program
+        // currently declares, with the union of driver_refs each owns.
+        let agents_used_json: Vec<serde_json::Value> = self
+            .program
+            .agents()
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "name": a.name,
+                    "agent_type": a.agent_type,
+                    "query": a.query,
+                    "driver_refs": a.driver_refs,
+                })
+            })
+            .collect();
+
+        // Build a partial-update body. Only ship evidence + agents_used;
+        // everything else stays whatever the server last knew. The PUT
+        // handler uses COALESCE per column so absent keys leave the
+        // existing values untouched.
+        let body = serde_json::json!({
+            "evidence": evidence_json,
+            "agents_used": agents_used_json,
+        });
+
+        let api = self.api.clone();
+        let fid = fid.clone();
+        let n_evidence = evidence_json.len();
+        let n_agents = agents_used_json.len();
+        tokio::spawn(async move {
+            match api.update_forecast(&fid, &body).await {
+                Ok(_) => log::info!(
+                    "[research-persist] forecast {} → {} evidence, {} agents",
+                    fid, n_evidence, n_agents
+                ),
+                Err(e) => log::warn!(
+                    "[research-persist] update_forecast failed for {}: {} \
+                     — research will be lost if you close before publishing",
+                    fid, e
+                ),
+            }
+        });
+    }
+
     fn mark_agent_failed(&mut self, agent_name: &str, error: &str) {
         if let Some(run) = self
             .agent_runs
