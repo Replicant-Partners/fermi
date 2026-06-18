@@ -696,9 +696,15 @@ pub async fn forecast_timeline_handler(
     let pool = &state.db;
 
     // ── Forecast + auth ──────────────────────────────────────────────
+    //
+    // owner_id is declared TEXT in migration 094 but production has been
+    // observed returning it as UUID — likely an ALTER somewhere outside
+    // the migrations history. Cast to text in the projection so sqlx
+    // decodes it as String regardless of the underlying column type.
     let forecast = sqlx::query(
-        "SELECT id, owner_id, team_id, workspace_id, question_text,
-                predicted_probability, fpl_source, created_at, resolved_at
+        "SELECT id, owner_id::text AS owner_id, team_id, workspace_id,
+                question_text, predicted_probability, fpl_source,
+                created_at, resolved_at
          FROM fermi_forecasts WHERE id = $1",
     )
     .bind(&forecast_id)
@@ -707,9 +713,8 @@ pub async fn forecast_timeline_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
 
-    let owner_id: String = forecast.get("owner_id");
+    let owner_id: String = forecast.try_get("owner_id").unwrap_or_default();
     if owner_id != user_id && !principal.can_admin() {
-        // Same softened gate as forecast_spacetime_handler.
         let team_id: Option<uuid::Uuid> = forecast.try_get("team_id").ok().flatten();
         let allowed = match team_id {
             Some(tid) => fermi_auth::teams::get_member_role(pool, tid, &user_id)
