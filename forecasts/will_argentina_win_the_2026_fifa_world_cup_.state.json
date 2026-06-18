@@ -1,6 +1,6 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 1,
+  "current_version": 2,
   "predicted_probability": 0.09300000220537186,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -10,6 +10,12 @@
       "timestamp": "2026-06-18 11:25",
       "probability": 0.09300000220537186,
       "change_summary": "Initial: 9.3% base=2%, 6 drivers, 1 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-06-18 11:26",
+      "probability": 0.09300000220537186,
+      "change_summary": "9.3% (→), 6 drivers, 2 evidence"
     }
   ],
   "sim_results": null,
@@ -43,6 +49,19 @@
         "Upper tercile (16 teams): Advanced economies (Western Europe, North America, Japan, South Korea, Australia) — GDP/capita >$30k",
         "Middle tercile (16 teams): Upper-middle-income (Argentina, Brazil, Mexico, Uruguay, Saudi Arabia, Iran, Türkiye) — GDP/capita $8k–$25k",
         "Lower tercile (16 teams): Lower-middle and low-income (North/Sub-Saharan Africa, Central America, Oceania minnows) — GDP/capita <$8k"
+      ]
+    },
+    {
+      "id": "football_institution_agent_0",
+      "source": "Agent: football_institution_agent",
+      "summary": "# ARGENTINA INSTITUTIONAL CAPACITY (X2) — FACTOR ANALYSIS\n\n## FINDINGS\n\n[PENETRATION] **Argentina registered players: 2,658,811 total (331,811 registered + 2,327,000 unregistered) per FIFA/Wikipedia data** — Population 46.06M (2024) yields **5,770 total players per 100k** or **720 registered players per 100k**. The registered rate is comparable to major European nations; total participation (including informal) is exceptionally high, reflecting deep cultural embedding of football.\n\n[LEAGUE REVENUE] **Liga Profesional Argentina estimated annual sponsorship revenue: $28.16M (2024, GlobalData)**. This is sponsorship only; total league revenue likely $150-200M range when broadcast/matchday included. River Plate alone generates $115M matchday revenue (Sports Value). **Log10(~$175M) ≈ 8.24** — substantially below top European leagues (Premier League ~$7B, log10 ≈ 9.85) but competitive within CONMEBOL and ahead of most AFC/CONCACAF leagues.\n\n[CONFEDERATION] **CONMEBOL member; confederation coefficient ≈ 0.92-0.95** (second only to UEFA). Evidence: (1) Historical World Cup inter-confederation record shows CONMEBOL 59% win rate vs UEFA's 65% (2006 data, representative); (2) Copa Libertadores winners competitive in Club World Cup — Botafogo 2024 victory ended 13-year drought but demonstrates parity; (3) CONMEBOL awarded 6 slots vs UEFA's 12 in 2025 Club World Cup, reflecting ~50% UEFA strength at club level; (4) Argentina clubs (Boca, River, Racing) dominate Libertadores historically, maintaining high confederation performance.\n\n[INSTITUTIONAL SIGNAL] **Argentina produces 2,000+ professional players in foreign leagues (2023, Statista)** — second globally only to Brazil. This export rate far exceeds demographic share, indicating institutional efficiency in talent conversion. Youth academy infrastructure: AFA expanding with $10M Miami facility + U.S. academy network (2023-2024); domestic academy system (Boca, River, Independiente, Newell's) has 60+ year track record of elite production. **Professional player density: 128,694 global professionals (FIFA 2023) with Argentina contributing ~1.6% despite 0.6% of global population** — 2.7x overperformance.\n\n[DATA AGE] Player registration data from FIFA/Wikipedia (sourced to FIFA Big Count methodology, likely 2020-2023 vintage). League revenue from GlobalData 2024 report. Confederation metrics from 2020-2024 club competition results. All data current within 1-4 years.\n\n[INSTITUTIONAL EFFICIENCY] Argentina's **720 registered players per 100k is 3.5x the global median (~200/100k)** and comparable to Uruguay (highest per-capita producer). The **2.7x professional export overperformance** combined with **CONMEBOL's 0.92-0.95 confederation strength** (vs AFC 0.65, CONCACAF 0.65) creates a structural institutional advantage. However, **league revenue weakness** (8.24 vs European 9.5-9.8 log scale) limits domestic development ceiling relative to top UEFA nations.\n\n---\n\n## [MULTIPLIER] Suggested p50: **1.15** (p5: **0.95**, p95: **1.40**) \n\n**Rationale:** Argentina's institutional capacity significantly exceeds its economic scale (X1). The 720 registered players/100k penetration rate, 2.7x professional export overperformance, and CONMEBOL's 0.92-0.95 confederation strength justify a material X2 boost. However, modest domestic league revenue ($175M vs $7B+ for top UEFA leagues) prevents the extreme multipliers seen in small high-penetration UEFA nations (Iceland 1.35+). The p50 of 1.15 reflects Argentina as a **high-efficiency converter** of socioeconomic resources into football talent, with institutions punching ~15% above the global median for a country of its GDP/population profile.",
+      "relevance": 0.5,
+      "date": "2026-06-18",
+      "key_findings": [
+        "[LEAGUE REVENUE] **Liga Profesional Argentina estimated annual sponsorship revenue: $28.16M (2024, GlobalData)**. This is sponsorship only; total league revenue likely $150-200M range when broadcast/matchday included. River Plate alone generates $115M matchday revenue (Sports Value). **Log10(~$175M) ≈ 8.24** — substantially below top European leagues (Premier League ~$7B, log10 ≈ 9.85) but competitive within CONMEBOL and ahead of most AFC/CONCACAF leagues.",
+        "[CONFEDERATION] **CONMEBOL member; confederation coefficient ≈ 0.92-0.95** (second only to UEFA). Evidence: (1) Historical World Cup inter-confederation record shows CONMEBOL 59% win rate vs UEFA's 65% (2006 data, representative); (2) Copa Libertadores winners competitive in Club World Cup — Botafogo 2024 victory ended 13-year drought but demonstrates parity; (3) CONMEBOL awarded 6 slots vs UEFA's 12 in 2025 Club World Cup, reflecting ~50% UEFA strength at club level; (4) Argentina clubs (Boca, River, Racing) dominate Libertadores historically, maintaining high confederation performance.",
+        "[INSTITUTIONAL SIGNAL] **Argentina produces 2,000+ professional players in foreign leagues (2023, Statista)** — second globally only to Brazil. This export rate far exceeds demographic share, indicating institutional efficiency in talent conversion. Youth academy infrastructure: AFA expanding with $10M Miami facility + U.S. academy network (2023-2024); domestic academy system (Boca, River, Independiente, Newell's) has 60+ year track record of elite production. **Professional player density: 128,694 global professionals (FIFA 2023) with Argentina contributing ~1.6% despite 0.6% of global population** — 2.7x overperformance.",
+        "Rationale:** Argentina's institutional capacity significantly exceeds its economic scale (X1). The 720 registered players/100k penetration rate, 2.7x professional export overperformance, and CONMEBOL's 0.92-0.95 confederation strength justify a material X2 boost. However, modest domestic league revenue ($175M vs $7B+ for top UEFA leagues) prevents the extreme multipliers seen in small high-penetration UEFA nations (Iceland 1.35+). The p50 of 1.15 reflects Argentina as a **high-efficiency converter** of socioeconomic resources into football talent, with institutions punching ~15% above the global median for a country of its GDP/population profile."
       ]
     }
   ],

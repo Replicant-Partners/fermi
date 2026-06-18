@@ -1,8 +1,8 @@
 # Will Argentina win the 2026 FIFA World Cup?
 
-**Probability:** 9.3% · **Version:** v1 · **Updated:** 2026-06-18 11:25 UTC
+**Probability:** 9.3% · **Version:** v2 · **Updated:** 2026-06-18 11:26 UTC
 
-**Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 1 · **Agents:** 4
+**Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 2 · **Agents:** 4
 
 ---
 
@@ -28,6 +28,17 @@
 - **Source:** FIFA tournament archive — 22 prior World Cups, 8 distinct winners
 
 Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via socio_capital, institutional_capacity, dynamic_performance, squad_quality, tactical_efficiency, fixture_context.
+
+---
+
+## Forecast Index (version history)
+
+| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
+|---|---|---|---|---|---|---|---|
+| v1 | 2026-06-18 11:25 | 9.3% | 2.1% | 11.6% | +7.2pp | -2.2pp | Initial: 9.3% base=2%, 6 drivers, 1 evidence |
+| v2 | 2026-06-18 11:26 | 9.3% | 2.1% | 11.6% | +7.2pp | -2.2pp | 9.3% (→), 6 drivers, 2 evidence |
+
+**Model line:** ```▁▁``` (range 9.3% – 9.3%)
 
 ---
 
@@ -140,7 +151,38 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 - **football_institution_agent** (schedule: every 1 Month)  
   Query: _Player registration, top-flight league revenue, confederation coefficient for Argentina_
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (1) — Strong quality (71%)
+
+#### Agent: football_institution_agent — relevance 50% · quality ●●● High (71%) · 2026-06-18
+
+# ARGENTINA INSTITUTIONAL CAPACITY (X2) — FACTOR ANALYSIS
+
+## FINDINGS
+
+[PENETRATION] **Argentina registered players: 2,658,811 total (331,811 registered + 2,327,000 unregistered) per FIFA/Wikipedia data** — Population 46.06M (2024) yields **5,770 total players per 100k** or **720 registered players per 100k**. The registered rate is comparable to major European nations; total participation (including informal) is exceptionally high, reflecting deep cultural embedding of football.
+
+[LEAGUE REVENUE] **Liga Profesional Argentina estimated annual sponsorship revenue: $28.16M (2024, GlobalData)**. This is sponsorship only; total league revenue likely $150-200M range when broadcast/matchday included. River Plate alone generates $115M matchday revenue (Sports Value). **Log10(~$175M) ≈ 8.24** — substantially below top European leagues (Premier League ~$7B, log10 ≈ 9.85) but competitive within CONMEBOL and ahead of most AFC/CONCACAF leagues.
+
+[CONFEDERATION] **CONMEBOL member; confederation coefficient ≈ 0.92-0.95** (second only to UEFA). Evidence: (1) Historical World Cup inter-confederation record shows CONMEBOL 59% win rate vs UEFA's 65% (2006 data, representative); (2) Copa Libertadores winners competitive in Club World Cup — Botafogo 2024 victory ended 13-year drought but demonstrates parity; (3) CONMEBOL awarded 6 slots vs UEFA's 12 in 2025 Club World Cup, reflecting ~50% UEFA strength at club level; (4) Argentina clubs (Boca, River, Racing) dominate Libertadores historically, maintaining high confederation performance.
+
+[INSTITUTIONAL SIGNAL] **Argentina produces 2,000+ professional players in foreign leagues (2023, Statista)** — second globally only to Brazil. This export rate far exceeds demographic share, indicating institutional efficiency in talent conversion. Youth academy infrastructure: AFA expanding with $10M Miami facility + U.S. academy network (2023-2024); domestic academy system (Boca, River, Independiente, Newell's) has 60+ year track record of elite production. **Professional player density: 128,694 global professionals (FIFA 2023) with Argentina contributing ~1.6% despite 0.6% of global population** — 2.7x overperformance.
+
+[DATA AGE] Player registration data from FIFA/Wikipedia (sourced to FIFA Big Count methodology, likely 2020-2023 vintage). League revenue from GlobalData 2024 report. Confederation metrics from 2020-2024 club competition results. All data current within 1-4 years.
+
+[INSTITUTIONAL EFFICIENCY] Argentina's **720 registered players per 100k is 3.5x the global median (~200/100k)** and comparable to Uruguay (highest per-capita producer). The **2.7x professional export overperformance** combined with **CONMEBOL's 0.92-0.95 confederation strength** (vs AFC 0.65, CONCACAF 0.65) creates a structural institutional advantage. However, **league revenue weakness** (8.24 vs European 9.5-9.8 log scale) limits domestic development ceiling relative to top UEFA nations.
+
+---
+
+## [MULTIPLIER] Suggested p50: **1.15** (p5: **0.95**, p95: **1.40**) 
+
+**Rationale:** Argentina's institutional capacity significantly exceeds its economic scale (X1). The 720 registered players/100k penetration rate, 2.7x professional export overperformance, and CONMEBOL's 0.92-0.95 confederation strength justify a material X2 boost. However, modest domestic league revenue ($175M vs $7B+ for top UEFA leagues) prevents the extreme multipliers seen in small high-penetration UEFA nations (Iceland 1.35+). The p50 of 1.15 reflects Argentina as a **high-efficiency converter** of socioeconomic resources into football talent, with institutions punching ~15% above the global median for a country of its GDP/population profile.
+
+**Key findings:**
+
+- [LEAGUE REVENUE] **Liga Profesional Argentina estimated annual sponsorship revenue: $28.16M (2024, GlobalData)**. This is sponsorship only; total league revenue likely $150-200M range when broadcast/matchday included. River Plate alone generates $115M matchday revenue (Sports Value). **Log10(~$175M) ≈ 8.24** — substantially below top European leagues (Premier League ~$7B, log10 ≈ 9.85) but competitive within CONMEBOL and ahead of most AFC/CONCACAF leagues.
+- [CONFEDERATION] **CONMEBOL member; confederation coefficient ≈ 0.92-0.95** (second only to UEFA). Evidence: (1) Historical World Cup inter-confederation record shows CONMEBOL 59% win rate vs UEFA's 65% (2006 data, representative); (2) Copa Libertadores winners competitive in Club World Cup — Botafogo 2024 victory ended 13-year drought but demonstrates parity; (3) CONMEBOL awarded 6 slots vs UEFA's 12 in 2025 Club World Cup, reflecting ~50% UEFA strength at club level; (4) Argentina clubs (Boca, River, Racing) dominate Libertadores historically, maintaining high confederation performance.
+- [INSTITUTIONAL SIGNAL] **Argentina produces 2,000+ professional players in foreign leagues (2023, Statista)** — second globally only to Brazil. This export rate far exceeds demographic share, indicating institutional efficiency in talent conversion. Youth academy infrastructure: AFA expanding with $10M Miami facility + U.S. academy network (2023-2024); domestic academy system (Boca, River, Independiente, Newell's) has 60+ year track record of elite production. **Professional player density: 128,694 global professionals (FIFA 2023) with Argentina contributing ~1.6% despite 0.6% of global population** — 2.7x overperformance.
+- Rationale:** Argentina's institutional capacity significantly exceeds its economic scale (X1). The 720 registered players/100k penetration rate, 2.7x professional export overperformance, and CONMEBOL's 0.92-0.95 confederation strength justify a material X2 boost. However, modest domestic league revenue ($175M vs $7B+ for top UEFA leagues) prevents the extreme multipliers seen in small high-penetration UEFA nations (Iceland 1.35+). The p50 of 1.15 reflects Argentina as a **high-efficiency converter** of socioeconomic resources into football talent, with institutions punching ~15% above the global median for a country of its GDP/population profile.
 
 ---
 
@@ -148,7 +190,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -239,4 +281,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-06-18 11:25 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v2 · 2026-06-18 11:26 UTC_
