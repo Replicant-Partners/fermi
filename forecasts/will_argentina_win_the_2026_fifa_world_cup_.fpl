@@ -11,7 +11,7 @@ driver institutional_capacity continuous {
 }
 
 driver dynamic_performance continuous {
-    distribution: triangular(0.5, 0.7, 1.3)
+    distribution: triangular(0.5, 0.7, 1.5)
     learnable: true
     rationale: "Recent form and Elo trajectory — refits as match outcomes accumulate."
 }
