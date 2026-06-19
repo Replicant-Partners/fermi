@@ -1,0 +1,110 @@
+{
+  "forecast_id": "1bc38d64-e05e-47ac-b26c-872cecee3821",
+  "current_version": 1,
+  "predicted_probability": 0.11451416128962665,
+  "inside_view_explanation": "Inside view: model evaluates to 11.5% (p5=8.4%, p95=15.0%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-06-19 01:28",
+      "probability": 0.11451416128962665,
+      "change_summary": "Initial: 11.5% base=2%, 6 drivers, 1 evidence"
+    }
+  ],
+  "sim_results": {
+    "mean": 0.11451416128962665,
+    "median": 0.11309063382964674,
+    "p5": 0.08395644367611917,
+    "p95": 0.15037217556107413,
+    "std_dev": 0.02014535096626186,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+  },
+  "evidence": [
+    {
+      "id": "macro_data_agent_0",
+      "source": "Agent: macro_data_agent",
+      "summary": "Perfect! Now I have the complete list of 48 qualified teams. Let me compile the evidence for France and calculate the field baseline.\n\n---\n\n## SOCIOECONOMIC CAPITAL (X1) EVIDENCE — FRANCE (FRA)\n\n### Core Indicators (2024 data)\n\n**[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$39,441** current US$; log₁₀ ≈ **4.596**  \nSource: Trading Economics / World Bank, 2024 release\n\n**[INDICATOR]** GDP per capita PPP (2024, World Bank NY.GDP.PCAP.PP.CD): **$61,322** international $; log₁₀ ≈ **4.788**  \nSource: Trading Economics / World Bank, 2024 release\n\n**[INDICATOR]** Population (2024, World Bank SP.POP.TOTL): **68.52 million**; log₁₀ ≈ **1.836**  \nSource: Trading Economics / World Bank, 2024 release (68,516,699 total)\n\n**[INDICATOR]** HDI (2023, UNDP Human Development Report): **0.920**; logit = log(0.920 / 0.080) ≈ **2.451**  \nSource: UNDP HDR 2025 release (data year 2023); TheGlobalEconomy.com\n\n---\n\n### Field Baseline — World Cup 2026 (48 teams)\n\n**[BASELINE]** WC 2026 field composition: 48 qualified nations spanning extreme economic diversity  \n- **Richest** (GDP/capita PPP): Switzerland (~$94k), Norway (~$89k), USA (~$81k), Qatar (~$115k)  \n- **Poorest** (GDP/capita PPP): DR Congo (~$752), Haiti (~$3.1k), Senegal (~$3.7k)  \n- **Range**: 71× gap between USA and DR Congo (per Politico/World Data Lab analysis)\n\n**[BASELINE]** Estimated field **median GDP per capita** (current US$): **~$12,000–15,000**  \n- Log₁₀ median ≈ **4.08–4.18** (mid-range estimate: **4.13**)  \n- France at $39,441 (log 4.596) sits in the **top quartile** (75th–85th percentile)\n\n**[BASELINE]** Estimated field **median population**: **~20–30 million**  \n- Log₁₀ median ≈ **1.30–1.48** (mid-range estimate: **1.39**)  \n- France at 68.5M (log 1.836) is **above median** but below giants (USA 343M, Brazil 217M, Mexico 128M)\n\n**[BASELINE]** Estimated field **median HDI**: **~0.75–0.80** (mix of \"high\" and \"very high\" development)  \n- Logit median ≈ **1.10–1.39** (mid-range estimate: **1.25**)  \n- France at 0.920 (logit 2.451) is in the **top decile** (very high development tier)\n\n---\n\n### Transform Calculation\n\nUsing the standard X1 (Socioeconomic Capital) composite:\n\n**[TRANSFORM]** X1 = 0.4 · GDP_log + 0.3 · Pop_log + 0.3 · HDI_logit  \n= 0.4 · 4.596 + 0.3 · 1.836 + 0.3 · 2.451  \n= 1.838 + 0.551 + 0.735  \n= **3.124**\n\n**[TRANSFORM]** Field median X1 (estimated):  \n= 0.4 · 4.13 + 0.3 · 1.39 + 0.3 · 1.25  \n= 1.652 + 0.417 + 0.375  \n= **2.444**\n\n**[TRANSFORM]** France deviation from field median:  \nΔ = 3.124 − 2.444 = **+0.680** (standardized units)  \n= **+0.97 standard deviations** above field mean (assuming σ ≈ 0.70 for WC field)\n\n---\n\n### Multiplier Recommendation\n\nFrance's socioeconomic profile is **substantially above** the World Cup 2026 field median across all three dimensions:\n- **GDP/capita**: top quartile (312% of world average per Trading Economics)\n- **Population**: above median, large talent pool (68.5M vs. field median ~25M)\n- **HDI**: top decile (0.920, \"very high\" development tier)\n\nThis translates to:\n- **Stronger youth development infrastructure** (academies, coaching, facilities)\n- **Greater professional league depth** (Ligue 1 + diaspora in top European leagues)\n- **Higher baseline athletic participation** and nutrition standards\n\n**[MULTIPLIER]** Suggested p50: **1.15** (p5: **1.05**, p95: **1.28**) — France's GDP/capita ($39k, log 4.60), population (68.5M, log 1.84), and HDI (0.920, logit 2.45) all exceed WC 2026 field medians by 0.7–1.0 SD, lifting socioeconomic capital factor materially above baseline\n\n---\n\n### Data Quality Note\n\n**[DATA AGE]** All indicators current as of 2024 (GDP, population) or 2023 (HDI, latest UNDP release). World Bank and UNDP official sources. Field baseline is **estimated** from published ranges (Investec, World Data Lab, Politico analyses of WC 2026 field); precise median would require full 48-country dataset but directional confidence is high given France's clear top-quartile position.",
+      "relevance": 0.5,
+      "date": "2026-06-19",
+      "key_findings": [
+        "[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$39,441** current US$; log₁₀ ≈ **4.596**",
+        "[INDICATOR]** GDP per capita PPP (2024, World Bank NY.GDP.PCAP.PP.CD): **$61,322** international $; log₁₀ ≈ **4.788**",
+        "[INDICATOR]** Population (2024, World Bank SP.POP.TOTL): **68.52 million**; log₁₀ ≈ **1.836**",
+        "[INDICATOR]** HDI (2023, UNDP Human Development Report): **0.920**; logit = log(0.920 / 0.080) ≈ **2.451**",
+        "[BASELINE]** WC 2026 field composition: 48 qualified nations spanning extreme economic diversity",
+        "**Richest** (GDP/capita PPP): Switzerland (~$94k), Norway (~$89k), USA (~$81k), Qatar (~$115k)",
+        "**Poorest** (GDP/capita PPP): DR Congo (~$752), Haiti (~$3.1k), Senegal (~$3.7k)",
+        "**Range**: 71× gap between USA and DR Congo (per Politico/World Data Lab analysis)",
+        "[BASELINE]** Estimated field **median GDP per capita** (current US$): **~$12,000–15,000**",
+        "Log₁₀ median ≈ **4.08–4.18** (mid-range estimate: **4.13**)",
+        "France at $39,441 (log 4.596) sits in the **top quartile** (75th–85th percentile)",
+        "[BASELINE]** Estimated field **median population**: **~20–30 million**",
+        "Log₁₀ median ≈ **1.30–1.48** (mid-range estimate: **1.39**)",
+        "France at 68.5M (log 1.836) is **above median** but below giants (USA 343M, Brazil 217M, Mexico 128M)",
+        "[BASELINE]** Estimated field **median HDI**: **~0.75–0.80** (mix of \"high\" and \"very high\" development)"
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "name": "macro_data_agent",
+      "agent_type": "research",
+      "query": "GDP per capita, population, HDI for France (2024–2026 latest available)",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "socio_capital"
+      ]
+    },
+    {
+      "name": "football_institution_agent",
+      "agent_type": "research",
+      "query": "Player registration, top-flight league revenue, confederation coefficient for France",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "institutional_capacity"
+      ]
+    },
+    {
+      "name": "football_analyst",
+      "agent_type": "research",
+      "query": "Latest Elo rating, last 5 matches form, key player availability, market value distribution for France",
+      "schedule": "Some(Every { interval: 1, unit: Week })",
+      "driver_refs": [
+        "dynamic_performance",
+        "squad_quality",
+        "tactical_efficiency"
+      ]
+    },
+    {
+      "name": "fixture_context_agent",
+      "agent_type": "research",
+      "query": "Upcoming fixtures for France: venue, climate, rest days, altitude, opponent travel burden",
+      "schedule": "Some(Every { interval: 3, unit: Day })",
+      "driver_refs": [
+        "fixture_context"
+      ]
+    }
+  ],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "30615",
+    "market_id": "558936",
+    "question": "Will France win the 2026 FIFA World Cup?",
+    "market_price": 0.1845,
+    "volume_24h": 2700069.494961026,
+    "liquidity": null,
+    "confidence": "Very High",
+    "price_change_1w": null,
+    "url": "https://polymarket.com/event/world-cup-winner",
+    "price_history": []
+  },
+  "workspace_id": "6ad9e6f1-0019-4cdd-af6a-29351f23dabc"
+}
