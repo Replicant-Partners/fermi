@@ -3008,36 +3008,71 @@ impl CockpitState {
         } else {
             format!("every {}h", new_interval_hours)
         };
+        // Retry the upsert up to 3 times with exponential backoff —
+        // observed 502s on this endpoint during cadence flips are
+        // typically transient (Railway under load / metrics-trigger
+        // contention). Without retry the user sees a red 'Failed to
+        // update X' and has to click again, which is bad UX for a
+        // batch-of-six cadence flip.
         cx.spawn(async move |this, cx| {
-            match api.upsert_forecast_schedule(&fid, &req).await {
-                Ok(_) => {
-                    this.update(cx, |state, cx| {
-                        state.messages.push(AssistantMessage {
-                            node: format!("driver:{}", req.driver_name),
-                            kind: MessageKind::Info,
-                            text: format!(
-                                "Updated {} → {} ({}).",
-                                req.agent_id, req.driver_name, label
-                            ),
-                        });
-                        state.load_schedules(cx);
-                        cx.notify();
-                    })
-                    .ok();
-                }
-                Err(e) => {
-                    log::warn!("[schedule] change_interval failed: {}", e);
-                    this.update(cx, |state, cx| {
-                        state.messages.push(AssistantMessage {
-                            node: "schedule".into(),
-                            kind: MessageKind::Error,
-                            text: format!("Failed to update {}: {}", req.agent_id, e),
-                        });
-                        cx.notify();
-                    })
-                    .ok();
+            const MAX_ATTEMPTS: u32 = 3;
+            let mut last_err: Option<String> = None;
+            for attempt in 0..MAX_ATTEMPTS {
+                match api.upsert_forecast_schedule(&fid, &req).await {
+                    Ok(_) => {
+                        this.update(cx, |state, cx| {
+                            state.messages.push(AssistantMessage {
+                                node: format!("driver:{}", req.driver_name),
+                                kind: MessageKind::Info,
+                                text: format!(
+                                    "Updated {} → {} ({}){}.",
+                                    req.agent_id,
+                                    req.driver_name,
+                                    label,
+                                    if attempt > 0 {
+                                        format!(" [retry #{}]", attempt)
+                                    } else {
+                                        String::new()
+                                    }
+                                ),
+                            });
+                            state.load_schedules(cx);
+                            cx.notify();
+                        })
+                        .ok();
+                        return;
+                    }
+                    Err(e) => {
+                        last_err = Some(e.to_string());
+                        log::warn!(
+                            "[schedule] change_interval attempt {} failed: {}",
+                            attempt + 1,
+                            e
+                        );
+                        // Exponential backoff: 250ms, 750ms, 1750ms.
+                        if attempt + 1 < MAX_ATTEMPTS {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                250 * (3u64.pow(attempt)),
+                            ))
+                            .await;
+                        }
+                    }
                 }
             }
+            this.update(cx, |state, cx| {
+                state.messages.push(AssistantMessage {
+                    node: "schedule".into(),
+                    kind: MessageKind::Error,
+                    text: format!(
+                        "Failed to update {} after {} attempts: {}",
+                        req.agent_id,
+                        MAX_ATTEMPTS,
+                        last_err.unwrap_or_default()
+                    ),
+                });
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
@@ -11743,14 +11778,37 @@ fn render_schedules_tab(
                                             .child(label),
                                     )
                                     .child(div().flex_grow())
-                                    // Cadence buttons — Daily / Weekly /
-                                    // Monthly. Active cadence highlighted in
-                                    // gold so the operator can see the
-                                    // current value at a glance. Clicking a
-                                    // different cadence calls
+                                    // Cadence buttons — On-demand / Daily /
+                                    // Weekly / Monthly. Active cadence
+                                    // highlighted in gold; clicking a
+                                    // different value calls
                                     // change_schedule_interval, which re-
-                                    // upserts the schedule with the new
-                                    // interval_hours.
+                                    // upserts with the new interval_hours.
+                                    //
+                                    // interval_hours = 0 is the on-demand
+                                    // mode: schedule is saved (so Run Now
+                                    // works) but auto-fire is disabled —
+                                    // server sets next_run_at to a far-
+                                    // future sentinel so the overdue check
+                                    // never matches.
+                                    .child({
+                                        let sid_o = sched.id.clone();
+                                        let is_active = sched.interval_hours == 0;
+                                        div()
+                                            .id(ElementId::Name(format!("schedules-tab-o-{}", sid_o).into()))
+                                            .text_size(px(10.0))
+                                            .text_color(if is_active { rgb(theme::GOLD) } else { rgb(theme::FG_DIM) })
+                                            .px(px(6.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.change_schedule_interval(&sid_o, 0, cx);
+                                            }))
+                                            .child("On-demand")
+                                    })
                                     .child({
                                         let sid_d = sched.id.clone();
                                         let is_active = sched.interval_hours == 24;

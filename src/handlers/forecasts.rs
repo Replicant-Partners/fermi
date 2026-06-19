@@ -1906,11 +1906,24 @@ pub async fn upsert_forecast_schedule_handler(
         _ => {}
     }
 
-    if req.interval_hours < 1 || req.interval_hours > 8760 {
-        return Err((StatusCode::BAD_REQUEST, "interval_hours must be 1–8760".into()));
+    // interval_hours = 0 is the "on-demand only" cadence: the schedule is
+    // saved (so the operator can fire it via Run Now without re-typing the
+    // query) but the overdue-driven auto-fire never triggers because
+    // next_run_at is set to the year-3000 sentinel.
+    if req.interval_hours < 0 || req.interval_hours > 8760 {
+        return Err((StatusCode::BAD_REQUEST, "interval_hours must be 0–8760".into()));
     }
 
-    let next_run_at = chrono::Utc::now() + chrono::Duration::hours(req.interval_hours as i64);
+    let next_run_at = if req.interval_hours == 0 {
+        // Sentinel: never overdue. Keeping it as a real timestamp (rather
+        // than NULL) avoids a column-nullability migration; the load
+        // path's overdue check (next_run_at <= NOW()) just never matches.
+        chrono::DateTime::parse_from_rfc3339("3000-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    } else {
+        chrono::Utc::now() + chrono::Duration::hours(req.interval_hours as i64)
+    };
 
     let row = sqlx::query(
         "INSERT INTO fermi_forecast_schedules
