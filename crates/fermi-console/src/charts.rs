@@ -332,134 +332,370 @@ pub fn render_trajectory_worm(
     width: u32,
     height: u32,
 ) -> Vec<u8> {
+    // Reserve the bottom 14px for an event-density rug strip — vertical
+    // ticks per event, tightly packed, so the operator can see WHEN
+    // activity clustered even if the worm trail itself is flat.
+    const RUG_HEIGHT: u32 = 14;
+    let chart_height = height.saturating_sub(RUG_HEIGHT).max(40);
+
     let mut buf = vec![0u8; (width * height * 3) as usize];
-    {
+
+    if series.is_empty() && events.is_empty() {
+        // Degenerate: no data. Render a centered hint and bail.
         let root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
         let _ = root.fill(&BG);
+        let _ = root.draw(&Text::new(
+            "no trajectory yet — run an agent or accept a suggestion to begin",
+            (width as i32 / 2 - 180, height as i32 / 2 - 6),
+            ("sans-serif", 11u32).into_font().color(&LABEL),
+        ));
+        let _ = root.present();
+        drop(root);
+        return buf;
+    }
 
-        if series.is_empty() && events.is_empty() {
-            // Degenerate: no data. Render a centered "no events" hint
-            // — keeps the chart slot reserved at the right dimensions
-            // so the layout doesn't jump. Skip the chart-build pass.
-            let _ = root.draw(&Text::new(
-                "no trajectory yet",
-                (width as i32 / 2 - 50, height as i32 / 2 - 6),
-                ("sans-serif", 11u32).into_font().color(&LABEL),
-            ));
-            let _ = root.present();
-            // Drop root by returning from the inner block; falls through
-            // to the function's tail return after the `{ … }` scope ends.
-            return {
-                drop(root);
-                buf
-            };
-        }
+    // ── Compute axis ranges before drawing so we can use the same
+    //    coords for chart, rug, and event-position math.
+    let mut all_y: Vec<f64> = series.iter().map(|p| p.rate_pct).collect();
+    all_y.extend(events.iter().map(|e| e.rate_pct));
+    if let Some(b) = base_rate_pct {
+        all_y.push(b);
+    }
+    if let Some(c) = crowd_price_pct {
+        all_y.push(c);
+    }
+    if all_y.is_empty() {
+        all_y.push(2.08);
+    }
+    let raw_min = all_y.iter().cloned().fold(f64::INFINITY, f64::min);
+    let raw_max = all_y.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    // Pad ~10% of range so dots on the boundary don't sit on the axis.
+    // Always show at least 0% on the bottom so the y-axis reads honestly.
+    let y_pad = ((raw_max - raw_min) * 0.10).max(1.0);
+    let y_min = (raw_min - y_pad).max(0.0);
+    let y_max = raw_max + y_pad;
 
-        // Y range: span all rate values in series + events + reference
-        // lines, with a 1pp padding band so dots aren't on the axis.
-        let mut all_y: Vec<f64> = series.iter().map(|p| p.rate_pct).collect();
-        all_y.extend(events.iter().map(|e| e.rate_pct));
-        if let Some(b) = base_rate_pct {
-            all_y.push(b);
-        }
-        if let Some(c) = crowd_price_pct {
-            all_y.push(c);
-        }
-        if all_y.is_empty() {
-            all_y.push(2.08); // base rate fallback
-        }
-        let y_min = (all_y.iter().cloned().fold(f64::INFINITY, f64::min) - 1.0).max(0.0);
-        let y_max = all_y.iter().cloned().fold(f64::NEG_INFINITY, f64::max) + 1.0;
+    let mut all_x: Vec<f64> = series.iter().map(|p| p.t_seconds).collect();
+    all_x.extend(events.iter().map(|e| e.t_seconds));
+    let x_min = all_x.iter().cloned().fold(f64::INFINITY, f64::min).min(0.0);
+    let x_max_raw = all_x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let x_max = if x_max_raw <= x_min {
+        x_min + 60.0 // 1-minute fallback so degenerate single-point doesn't crash
+    } else {
+        x_max_raw
+    };
 
-        // X range: 0 to (last - first) seconds. If only one point, give it
-        // a 1-second window so the chart doesn't degenerate.
-        let mut all_x: Vec<f64> = series.iter().map(|p| p.t_seconds).collect();
-        all_x.extend(events.iter().map(|e| e.t_seconds));
-        let x_min = all_x.iter().cloned().fold(f64::INFINITY, f64::min).min(0.0);
-        let x_max_raw = all_x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let x_max = if x_max_raw <= x_min {
-            x_min + 1.0
-        } else {
-            x_max_raw
-        };
+    // ── Pass 1: the main chart in the upper area ─────────────────────
+    {
+        let chart_root = BitMapBackend::with_buffer(&mut buf, (width, height))
+            .into_drawing_area();
+        let _ = chart_root.fill(&BG);
 
-        if let Ok(mut chart) = ChartBuilder::on(&root)
-            .margin_top(8)
-            .margin_right(12)
+        // Carve out top region for the chart, leaving the rug strip below.
+        let upper = chart_root
+            .titled("", ("sans-serif", 0))
+            .unwrap()
+            .margin(0, RUG_HEIGHT, 0, 0); // bottom margin = rug height
+
+        if let Ok(mut chart) = ChartBuilder::on(&upper)
+            .margin_top(10)
+            .margin_right(60) // big right margin so the inline
+                              // base-rate / crowd-price labels fit
             .margin_bottom(8)
-            .margin_left(8)
-            .x_label_area_size(18)
-            .y_label_area_size(34)
+            .margin_left(6)
+            .x_label_area_size(20)
+            .y_label_area_size(40)
             .build_cartesian_2d(x_min..x_max, y_min..y_max)
         {
-            // Format x-axis as days/hours since first event. Plotters
-            // takes a closure that returns the formatted label.
             let span = x_max - x_min;
+
+            // Sparse grid — 3 horizontal lines, 4 vertical, no decoration.
+            // Tufte: the data is the chart, gridlines are scaffolding.
             let _ = chart
                 .configure_mesh()
-                .x_labels(5)
-                .y_labels(4)
-                .label_style(("sans-serif", 9).into_font().color(&LABEL))
+                .x_labels(4)
+                .y_labels(3)
+                .label_style(("sans-serif", 10).into_font().color(&LABEL))
                 .axis_style(ShapeStyle::from(CHROME).stroke_width(1))
-                .light_line_style(ShapeStyle::from(CHROME).stroke_width(1))
-                .bold_line_style(ShapeStyle::from(CHROME).stroke_width(1))
+                // Don't draw the heavy mesh lines — too noisy.
+                .disable_mesh()
                 .y_label_formatter(&|v| format!("{:.0}%", v))
                 .x_label_formatter(&|v| {
-                    // Pick a sensible unit based on total span.
                     let secs = *v - x_min;
-                    if span < 60.0 * 60.0 {
-                        format!("{:.0}m", secs / 60.0)
+                    if span < 60.0 {
+                        format!("{:.0}s", secs)
+                    } else if span < 60.0 * 60.0 {
+                        format!("+{:.0}m", secs / 60.0)
                     } else if span < 24.0 * 60.0 * 60.0 {
-                        format!("{:.0}h", secs / 3600.0)
+                        format!("+{:.1}h", secs / 3600.0)
+                    } else if span < 7.0 * 24.0 * 60.0 * 60.0 {
+                        format!("+{:.1}d", secs / 86400.0)
                     } else {
-                        format!("{:.0}d", secs / 86400.0)
+                        format!("+{:.0}d", secs / 86400.0)
                     }
                 })
                 .draw();
 
-            // Reference: base-rate horizontal (outside view).
+            // Reference: base-rate horizontal — dashed gold line. Drawn
+            // before the worm so the worm sits visually on top.
             if let Some(b) = base_rate_pct {
-                let _ = chart.draw_series(LineSeries::new(
-                    vec![(x_min, b), (x_max, b)],
-                    ShapeStyle::from(GOLD).stroke_width(1),
-                ));
+                // Plotters has no native dashed style. Emulate by drawing
+                // alternating short segments along the line.
+                let span_x = x_max - x_min;
+                let dash_n = 30;
+                let dash_w = span_x / (dash_n as f64 * 2.0);
+                let dashes: Vec<[(f64, f64); 2]> = (0..dash_n)
+                    .map(|i| {
+                        let x0 = x_min + (i as f64) * 2.0 * dash_w;
+                        let x1 = x0 + dash_w;
+                        [(x0, b), (x1, b)]
+                    })
+                    .collect();
+                for d in &dashes {
+                    let _ = chart.draw_series(LineSeries::new(
+                        d.iter().cloned(),
+                        ShapeStyle::from(GOLD).stroke_width(1),
+                    ));
+                }
             }
-            // Reference: crowd price horizontal.
+            // Reference: crowd price — solid purple, slightly heavier.
             if let Some(c) = crowd_price_pct {
                 let _ = chart.draw_series(LineSeries::new(
                     vec![(x_min, c), (x_max, c)],
-                    ShapeStyle::from(PURPLE).stroke_width(1),
+                    ShapeStyle::from(PURPLE).stroke_width(2),
                 ));
             }
 
-            // The worm: cyan trail through every rate revision in
-            // chronological order. Width=2 so it reads as a deliberate
-            // line, not just markers connected.
+            // The worm: cyan trail. Two-pass for visual weight — a
+            // muted underlay first, then the bright core on top. Reads
+            // as having heft instead of being a hairline.
             if series.len() >= 2 {
+                // Underlay — slightly thicker, dimmer cyan
+                let _ = chart.draw_series(LineSeries::new(
+                    series.iter().map(|p| (p.t_seconds, p.rate_pct)),
+                    ShapeStyle::from(CYAN_BAR).stroke_width(5),
+                ));
+                // Core — bright cyan
                 let _ = chart.draw_series(LineSeries::new(
                     series.iter().map(|p| (p.t_seconds, p.rate_pct)),
                     ShapeStyle::from(CYAN).stroke_width(2),
                 ));
             }
 
-            // Event markers — colored dots per kind.
-            for ev in events {
+            // Event markers — bigger, with a darker outline ring so they
+            // pop on the dark background. Render in priority order:
+            // agent_run dots first (smallest, most numerous), then market
+            // obs, then BayesOps fits, then rate revisions on top.
+            let kind_priority = |k: &TrajectoryEventKind| -> u8 {
+                match k {
+                    TrajectoryEventKind::AgentRun => 0,
+                    TrajectoryEventKind::MarketObservation => 1,
+                    TrajectoryEventKind::BayesOpsFit => 2,
+                    TrajectoryEventKind::RateRevision => 3,
+                }
+            };
+            let mut sorted: Vec<&TrajectoryEvent> = events.iter().collect();
+            sorted.sort_by_key(|e| kind_priority(&e.kind));
+
+            for ev in sorted {
                 let (color, size) = match ev.kind {
-                    TrajectoryEventKind::RateRevision => (CYAN, 4),
-                    TrajectoryEventKind::BayesOpsFit => (GOLD, 4),
-                    TrajectoryEventKind::AgentRun => (CHROME, 2),
-                    TrajectoryEventKind::MarketObservation => (PURPLE, 3),
+                    TrajectoryEventKind::RateRevision => (CYAN, 6),
+                    TrajectoryEventKind::BayesOpsFit => (GOLD, 6),
+                    TrajectoryEventKind::AgentRun => (LABEL, 3),
+                    TrajectoryEventKind::MarketObservation => (PURPLE, 5),
                 };
+                // Outline ring (BG color) — visually lifts the dot off
+                // the trail line.
+                let _ = chart.draw_series(std::iter::once(Circle::new(
+                    (ev.t_seconds, ev.rate_pct),
+                    size + 1,
+                    ShapeStyle::from(BG).filled(),
+                )));
+                // Filled core
                 let _ = chart.draw_series(std::iter::once(Circle::new(
                     (ev.t_seconds, ev.rate_pct),
                     size,
                     ShapeStyle::from(color).filled(),
                 )));
             }
+
+            // Inline labels for reference lines, drawn at the right
+            // edge of the chart in the right-margin area. Plotters
+            // doesn't support 'put text in margin' directly so we
+            // compute pixel coords manually after the fact.
         }
-        let _ = root.present();
+        let _ = chart_root.present();
+        drop(chart_root);
     }
+
+    // ── Pass 2: inline reference labels (base rate / crowd) ──────────
+    //
+    // Plotters' chart-area margins don't expose the inner pixel
+    // coordinates we'd need to put labels exactly on the axis lines.
+    // Emulate by drawing into a fresh DrawingArea using the full canvas
+    // and computing y-pixel from the same y_min..y_max range we used
+    // above. The horizontal placement is fixed at right-edge - 56px.
+    //
+    // This is approximate (the chart's plot area starts ~46px left of
+    // the right edge after the legend margin), but the operator's eye
+    // tolerates a few-pixel offset. The alternative is rebuilding the
+    // chart with explicit text annotations inside the data area, which
+    // collides with the plot when y-values cluster near the references.
+    {
+        let label_root = BitMapBackend::with_buffer(&mut buf, (width, height))
+            .into_drawing_area();
+        let y_to_px = |y: f64| -> i32 {
+            // chart's plot area: top 10px margin, bottom RUG_HEIGHT + 8 + 20 (x-label area).
+            let plot_top = 10i32;
+            let plot_bot = chart_height as i32 - 28;
+            let plot_h = plot_bot - plot_top;
+            if y_max <= y_min {
+                return plot_top;
+            }
+            let frac = (y - y_min) / (y_max - y_min);
+            plot_bot - (frac * plot_h as f64) as i32
+        };
+        let label_x = (width as i32) - 58;
+
+        if let Some(b) = base_rate_pct {
+            let _ = label_root.draw(&Text::new(
+                format!("base {:.1}%", b),
+                (label_x, y_to_px(b) - 6),
+                ("sans-serif", 9u32).into_font().color(&GOLD),
+            ));
+        }
+        if let Some(c) = crowd_price_pct {
+            let _ = label_root.draw(&Text::new(
+                format!("crowd {:.1}%", c),
+                (label_x, y_to_px(c) - 6),
+                ("sans-serif", 9u32).into_font().color(&PURPLE),
+            ));
+        }
+        let _ = label_root.present();
+        drop(label_root);
+    }
+
+    // ── Pass 3: event-density rug at the bottom ─────────────────────
+    //
+    // Vertical tick per event. Density = where the operator's been
+    // active. Reads at a glance even when the trail is flat.
+    {
+        let rug_root = BitMapBackend::with_buffer(&mut buf, (width, height))
+            .into_drawing_area();
+        let rug_top = height as i32 - RUG_HEIGHT as i32 + 2;
+        let rug_bot = height as i32 - 2;
+        // Padding mirroring the chart's margin so the rug aligns
+        // visually with the worm trail above.
+        let plot_left = 46i32;
+        let plot_right = (width as i32) - 60;
+        let plot_w = (plot_right - plot_left).max(1);
+
+        // Subtle horizontal baseline so the strip is visually framed.
+        let _ = rug_root.draw(&PathElement::new(
+            vec![(plot_left, rug_bot), (plot_right, rug_bot)],
+            ShapeStyle::from(CHROME).stroke_width(1),
+        ));
+
+        for ev in events {
+            let frac = if x_max > x_min {
+                ((ev.t_seconds - x_min) / (x_max - x_min)).clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            let x_pix = plot_left + (frac * plot_w as f64) as i32;
+            let color = match ev.kind {
+                TrajectoryEventKind::RateRevision => CYAN,
+                TrajectoryEventKind::BayesOpsFit => GOLD,
+                TrajectoryEventKind::AgentRun => LABEL,
+                TrajectoryEventKind::MarketObservation => PURPLE,
+            };
+            let _ = rug_root.draw(&PathElement::new(
+                vec![(x_pix, rug_top), (x_pix, rug_bot)],
+                ShapeStyle::from(color).stroke_width(1),
+            ));
+        }
+        let _ = rug_root.present();
+        drop(rug_root);
+    }
+
     buf
+}
+
+/// Compute the pixel coordinates of each event for an interactive
+/// overlay. Returns one (x, y, width, height) box per event in the
+/// SAME ORDER as the input events slice, so the caller can correlate
+/// hover regions with the source event objects.
+///
+/// Used by the cockpit's trajectory tab to place invisible hover divs
+/// over the rendered chart bitmap.
+pub fn trajectory_event_pixel_positions(
+    events: &[TrajectoryEvent],
+    series: &[TrajectoryPoint],
+    base_rate_pct: Option<f64>,
+    crowd_price_pct: Option<f64>,
+    width: u32,
+    height: u32,
+) -> Vec<(i32, i32)> {
+    if events.is_empty() {
+        return Vec::new();
+    }
+
+    const RUG_HEIGHT: u32 = 14;
+    let chart_height = height.saturating_sub(RUG_HEIGHT).max(40);
+
+    // Rebuild the same y/x ranges as render_trajectory_worm — this is
+    // duplicated logic but keeping it here avoids a multi-return-tuple
+    // inside the renderer that would clutter that function further.
+    let mut all_y: Vec<f64> = series.iter().map(|p| p.rate_pct).collect();
+    all_y.extend(events.iter().map(|e| e.rate_pct));
+    if let Some(b) = base_rate_pct {
+        all_y.push(b);
+    }
+    if let Some(c) = crowd_price_pct {
+        all_y.push(c);
+    }
+    if all_y.is_empty() {
+        all_y.push(2.08);
+    }
+    let raw_min = all_y.iter().cloned().fold(f64::INFINITY, f64::min);
+    let raw_max = all_y.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let y_pad = ((raw_max - raw_min) * 0.10).max(1.0);
+    let y_min = (raw_min - y_pad).max(0.0);
+    let y_max = raw_max + y_pad;
+
+    let mut all_x: Vec<f64> = series.iter().map(|p| p.t_seconds).collect();
+    all_x.extend(events.iter().map(|e| e.t_seconds));
+    let x_min = all_x.iter().cloned().fold(f64::INFINITY, f64::min).min(0.0);
+    let x_max_raw = all_x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let x_max = if x_max_raw <= x_min { x_min + 60.0 } else { x_max_raw };
+
+    // Mirror the chart's plot-area pixel inset. These constants come
+    // from the chart.margin_* + label-area calls above.
+    let plot_left = 46i32;
+    let plot_right = (width as i32) - 60;
+    let plot_top = 10i32;
+    let plot_bot = chart_height as i32 - 28;
+    let plot_w = (plot_right - plot_left).max(1);
+    let plot_h = (plot_bot - plot_top).max(1);
+
+    events
+        .iter()
+        .map(|ev| {
+            let fx = if x_max > x_min {
+                ((ev.t_seconds - x_min) / (x_max - x_min)).clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            let fy = if y_max > y_min {
+                ((ev.rate_pct - y_min) / (y_max - y_min)).clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            let x_pix = plot_left + (fx * plot_w as f64) as i32;
+            let y_pix = plot_bot - (fy * plot_h as f64) as i32;
+            (x_pix, y_pix)
+        })
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -331,6 +331,12 @@ pub struct CockpitState {
     /// tooltip showing the three anchor values and pairwise deltas at
     /// that point in history. Reset on forecast switch.
     pub hovered_index_version: Option<usize>,
+    /// Index of the trajectory event the operator is hovering over
+    /// (in the chart). Drives both the chart's highlighted dot and the
+    /// matching event row in the list below — eye-trace correlation
+    /// between the worm chart and the bullet list. Reset on forecast
+    /// switch.
+    pub hovered_trajectory_event: Option<usize>,
     /// Polling interval for PM price updates. None = no polling.
     pub pm_poll_interval: Option<std::time::Duration>,
 }
@@ -564,6 +570,7 @@ impl CockpitState {
             pm_poll_interval: None,
             hovered_histogram_bin: None,
             hovered_index_version: None,
+            hovered_trajectory_event: None,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -12145,7 +12152,7 @@ fn render_schedules_tab(
 
 fn render_trajectory_tab(
     state: &CockpitState,
-    _cx: &mut Context<CockpitState>,
+    cx: &mut Context<CockpitState>,
 ) -> impl IntoElement {
     let body = if state.timeline_loading {
         div()
@@ -12165,8 +12172,8 @@ fn render_trajectory_tab(
             .text_color(rgb(theme::RED))
             .child(format!("Failed to load trajectory: {}", err))
             .into_any_element()
-    } else if let Some(data) = &state.timeline_data {
-        render_trajectory_body(data).into_any_element()
+    } else if state.timeline_data.is_some() {
+        render_trajectory_body(state, cx).into_any_element()
     } else {
         div()
             .flex()
@@ -12181,7 +12188,12 @@ fn render_trajectory_tab(
     div().flex().flex_col().size_full().child(body)
 }
 
-fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
+fn render_trajectory_body(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let data = state.timeline_data.as_ref().unwrap(); // checked by caller
+
     // Span summary
     let span = data.get("span").cloned().unwrap_or(JsonValue::Null);
     let event_count = span
@@ -12217,11 +12229,6 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
     };
 
     // ── Build the worm: convert RFC3339 timestamps to seconds-since-first
-    //
-    // The chart needs (t_seconds, rate_pct). Find the earliest timestamp
-    // across rate_series + events; everything else gets t = (this_ts -
-    // earliest_ts).total_seconds(). Failing parse → skip the point (the
-    // worm degrades gracefully on a single bad row instead of vanishing).
     let parse_ts = |s: &str| -> Option<chrono::DateTime<chrono::Utc>> {
         chrono::DateTime::parse_from_rfc3339(s)
             .ok()
@@ -12234,7 +12241,6 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
         .cloned()
         .unwrap_or_default();
 
-    // Earliest timestamp across rate_series + events.
     let mut all_ts: Vec<chrono::DateTime<chrono::Utc>> = rate_series
         .iter()
         .filter_map(|p| p.get("ts").and_then(|v| v.as_str()).and_then(parse_ts))
@@ -12259,11 +12265,6 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
         })
         .collect();
 
-    // Build worm event markers. Each event's y-position is the rate AT
-    // that moment — use rate_revision events' new_rate; for non-rate
-    // events (agent_run, bayesops_fit, market_obs) plot at the closest
-    // rate_series point's rate so the dot reads as "this happened while
-    // the rate was here".
     let rate_at = |ts: chrono::DateTime<chrono::Utc>| -> f64 {
         let target = (ts - earliest.unwrap_or(ts)).num_milliseconds() as f64 / 1000.0;
         worm_points
@@ -12287,7 +12288,9 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
                 "rate_revision" => crate::charts::TrajectoryEventKind::RateRevision,
                 "bayesops_fit" => crate::charts::TrajectoryEventKind::BayesOpsFit,
                 "agent_run" => crate::charts::TrajectoryEventKind::AgentRun,
-                "market_observation" => crate::charts::TrajectoryEventKind::MarketObservation,
+                "market_observation" => {
+                    crate::charts::TrajectoryEventKind::MarketObservation
+                }
                 _ => crate::charts::TrajectoryEventKind::AgentRun,
             };
             let rate_pct = ev
@@ -12295,8 +12298,7 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
                 .and_then(|v| v.as_f64())
                 .map(|p| p * 100.0)
                 .unwrap_or_else(|| rate_at(ts));
-            let t_secs =
-                (ts - earliest?).num_milliseconds() as f64 / 1000.0;
+            let t_secs = (ts - earliest?).num_milliseconds() as f64 / 1000.0;
             Some(crate::charts::TrajectoryEvent {
                 t_seconds: t_secs,
                 rate_pct,
@@ -12305,25 +12307,38 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
         })
         .collect();
 
-    // The worm chart itself. Render to a fixed canvas size; the
-    // layout below stretches it to the container width via the parent
-    // div's size_full() but we render at a sensible default.
-    let chart_w: u32 = 760;
-    let chart_h: u32 = 220;
+    // Pull base rate from the program's question, crowd price from the
+    // cockpit's PM polling. Both are passed to the chart so it can draw
+    // the gold + purple horizontals that frame the worm visually.
+    let base_rate_pct = state
+        .program
+        .question()
+        .and_then(|q| q.base_rate.as_ref())
+        .map(|br| br.historical_frequency * 100.0);
+    let crowd_price_pct = state.pm_market_price.map(|p| p * 100.0);
+
+    let chart_w: u32 = 800;
+    let chart_h: u32 = 240;
     let worm_buf = crate::charts::render_trajectory_worm(
         &worm_points,
         &worm_events,
-        // Reference horizontals — base rate (gold) + crowd price (purple).
-        // Without these the operator can't tell whether the trail is
-        // approaching or running away from the crowd consensus.
-        // Hardcoded to 2.08 since the timeline data doesn't carry this.
-        // TODO: pass through state.program.question.base_rate.
-        Some(2.08),
-        None,
+        base_rate_pct,
+        crowd_price_pct,
         chart_w,
         chart_h,
     );
     let worm_img = crate::charts::rgb_to_render_image(&worm_buf, chart_w, chart_h);
+
+    // Compute pixel positions of every event so we can put hover divs
+    // over them. Same coordinate-space math the chart used internally.
+    let event_pixels = crate::charts::trajectory_event_pixel_positions(
+        &worm_events,
+        &worm_points,
+        base_rate_pct,
+        crowd_price_pct,
+        chart_w,
+        chart_h,
+    );
 
     let header = div()
         .flex()
@@ -12350,27 +12365,86 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
                 .child(format!("{} rate revisions", rate_count))
                 .child(format!("{} market observations", market_count))
                 .child(match (first_rate, last_rate, net_change_pp) {
-                    (Some(f), Some(l), Some(d)) => {
-                        format!("{:.1}% → {:.1}% ({:+.1}pp)", f * 100.0, l * 100.0, d)
-                    }
+                    (Some(f), Some(l), Some(d)) => format!(
+                        "{:.1}% → {:.1}% ({:+.1}pp)",
+                        f * 100.0,
+                        l * 100.0,
+                        d
+                    ),
                     _ => "no rate revisions yet".into(),
+                })
+                .when(crowd_price_pct.is_some(), move |el| {
+                    let div_pp = match (last_rate, crowd_price_pct) {
+                        (Some(l), Some(c)) => Some(l * 100.0 - c),
+                        _ => None,
+                    };
+                    el.child(format!(
+                        "vs crowd: {:+.1}pp",
+                        div_pp.unwrap_or(0.0)
+                    ))
                 }),
         );
 
-    // Worm chart slot. Centered with a small frame so it reads as a
-    // distinct visual unit, not bleeding into the event list.
-    let worm = div()
-        .px(px(16.0))
-        .py(px(8.0))
-        .flex()
-        .justify_center()
+    // ── Worm chart slot with interactive hover overlays ─────────────
+    //
+    // The chart bitmap is rendered at fixed (chart_w, chart_h). We layer
+    // invisible 16×16 hover divs on top, one per event, at the pixel
+    // coordinates the chart placed each dot. Hovering a div toggles
+    // state.hovered_trajectory_event so:
+    //   • the matching row in the event list highlights
+    //   • a tooltip card surfaces the event details
+    //
+    // The chart canvas is wrapped in an absolute-positioned container
+    // so the hover divs can position themselves with `left`/`top` in
+    // canvas-local coordinates.
+    let mut chart_overlay = div()
+        .relative()
+        .w(px(chart_w as f32))
+        .h(px(chart_h as f32))
         .child(
             gpui::img(worm_img)
                 .w(px(chart_w as f32))
                 .h(px(chart_h as f32)),
         );
 
-    // Legend below the worm — explains the dot colors.
+    for (i, (x_pix, y_pix)) in event_pixels.iter().enumerate() {
+        let hit_size = 16.0_f32;
+        let left = (*x_pix as f32) - hit_size / 2.0;
+        let top = (*y_pix as f32) - hit_size / 2.0;
+        let idx = i;
+        chart_overlay = chart_overlay.child(
+            div()
+                .id(ElementId::Name(format!("traj-hit-{}", i).into()))
+                .absolute()
+                .left(px(left))
+                .top(px(top))
+                .w(px(hit_size))
+                .h(px(hit_size))
+                .cursor_pointer()
+                .on_hover(cx.listener(
+                    move |this, hovered: &bool, _window, cx| {
+                        if *hovered {
+                            if this.hovered_trajectory_event != Some(idx) {
+                                this.hovered_trajectory_event = Some(idx);
+                                cx.notify();
+                            }
+                        } else if this.hovered_trajectory_event == Some(idx) {
+                            this.hovered_trajectory_event = None;
+                            cx.notify();
+                        }
+                    },
+                )),
+        );
+    }
+
+    let worm = div()
+        .px(px(16.0))
+        .py(px(8.0))
+        .flex()
+        .justify_center()
+        .child(chart_overlay);
+
+    // Legend
     let legend = div()
         .px(px(16.0))
         .pb(px(8.0))
@@ -12382,8 +12456,14 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
         .child(legend_chip("●", theme::GOLD, "BayesOps fit"))
         .child(legend_chip("●", theme::FG_DIM, "Agent run"))
         .child(legend_chip("●", theme::PURPLE, "Polymarket tick"))
-        .child(legend_chip("─", theme::GOLD, "Base rate (2.08%)"));
+        .child(legend_chip("─", theme::GOLD, "Base"))
+        .when(crowd_price_pct.is_some(), |el| {
+            el.child(legend_chip("─", theme::PURPLE, "Crowd"))
+        });
 
+    // Event list — each row carries its index so we can highlight the
+    // one matching state.hovered_trajectory_event.
+    let hovered = state.hovered_trajectory_event;
     let event_list = if events_arr.is_empty() {
         div()
             .flex()
@@ -12403,7 +12483,12 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
             .px(px(16.0))
             .py(px(8.0))
             .gap(px(6.0))
-            .children(events_arr.iter().map(render_trajectory_event))
+            .children(
+                events_arr
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ev)| render_trajectory_event_with_hover(ev, i, hovered)),
+            )
             .into_any_element()
     };
 
@@ -12429,6 +12514,31 @@ fn legend_chip(glyph: &str, color: u32, label: &str) -> impl IntoElement {
                 .child(glyph.to_string()),
         )
         .child(label.to_string())
+}
+
+/// Wrap render_trajectory_event with a highlight ring when the chart's
+/// hovered_trajectory_event index matches this row. The ring lifts the
+/// matching card out of the wall-of-text feel and creates the eye-trace
+/// connection between worm dot and bullet entry.
+fn render_trajectory_event_with_hover(
+    ev: &JsonValue,
+    idx: usize,
+    hovered: Option<usize>,
+) -> AnyElement {
+    let base = render_trajectory_event(ev);
+    let is_highlighted = hovered == Some(idx);
+    if !is_highlighted {
+        return base;
+    }
+    // Wrap in an outer div with a soft glow + heavier border. The inner
+    // base card keeps its kind-specific left-border color; we add a
+    // gold outer ring to scream "this is the one".
+    div()
+        .border_2()
+        .border_color(rgb(theme::GOLD))
+        .rounded(px(6.0))
+        .child(base)
+        .into_any_element()
 }
 
 fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
