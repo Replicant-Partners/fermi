@@ -391,11 +391,14 @@ pub fn render_trajectory_worm(
             .into_drawing_area();
         let _ = chart_root.fill(&BG);
 
-        // Carve out top region for the chart, leaving the rug strip below.
-        let upper = chart_root
-            .titled("", ("sans-serif", 0))
-            .unwrap()
-            .margin(0, RUG_HEIGHT, 0, 0); // bottom margin = rug height
+        // Carve out top region for the chart, leaving the rug strip
+        // below. We previously used `.titled("", ...)` here but that
+        // requires the font system to load a font just to render an
+        // empty title, and panics on Linux/macOS systems where plotters'
+        // default 'sans-serif' alias isn't registered. Use margin()
+        // directly on the drawing area instead — same end result, no
+        // font lookup. (The rest of the charts in this file do this.)
+        let upper = chart_root.margin(0, 0, 0, RUG_HEIGHT as i32);
 
         if let Ok(mut chart) = ChartBuilder::on(&upper)
             .margin_top(10)
