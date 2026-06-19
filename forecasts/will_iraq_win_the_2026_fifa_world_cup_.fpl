@@ -1,0 +1,239 @@
+// TEAM_PRIOR — Tournament win probability prior for a single national team.
+//
+// Six factor-derived drivers, each with its own per-team Triangular
+// distribution defined by (p5, p50, p95) bound at workspace
+// instantiation. All distribution parameters live in
+// workspace_outputs.params, populated by:
+//   - spawn-time backfill from the per-team seed table
+//     (scripts/world_cup/backfill_socio_params.py + the new triples
+//     backfill).
+//   - agent → "Apply" flow: when an agent's evidence shifts our view of
+//     a driver, the operator accepts and the params get updated.
+//   - BayesOps R-1: learnable drivers refit their distribution from
+//     observation streams; the fitted distribution is written to
+//     params.<driver>_fitted and the executor uses it in place of the
+//     (p5, p50, p95) prior.
+//
+// Design contract (Option 2 — domain-neutral):
+//   The `model:` expression IS the forecast quantity. The cockpit's
+//   run_simulation takes the Monte Carlo mean directly. No normalization,
+//   no rescaling, no implicit base_rate multiply. This means the FPL
+//   itself carries the base rate scalar (0.0208 ≈ 1/48) inside the model
+//   expression — that's the operator's responsibility, not the cockpit's.
+//
+// Aligned to:
+//   docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md
+//   docs/fermi/BAYESOPS_CONTRACT.md
+//
+// Per-driver confidence shows up structurally as the spread (p95 - p5).
+// Wider spread = lower confidence; tighter spread = higher confidence.
+// Agents writing back to these params encode their certainty in the
+// triple they produce, not in a separate scalar.
+
+// ─── Per-team scalar inputs (kept for reference / future use) ─────────
+//
+// These are written by the spawn script + backfill. The driver
+// distributions no longer reference them directly — instead each driver
+// uses its own (p5, p50, p95) triple computed from these inputs by the
+// seed-table backfill. We keep them declared so the workspace params
+// view shows the underlying scalars, and so any custom analysis (e.g.
+// the Trajectory tab's evidence cards) can show "Argentina's GDPpc is
+// $12,667" alongside the driver distribution.
+
+param team_id: string
+param team_name: string
+param confederation: string
+param group: string
+param is_host: bool
+param elo_current: real
+param elo_trend: real
+param gdp_per_capita_log: real
+param population_log: real
+param hdi_logit: real
+
+// ─── Per-driver distribution triples ──────────────────────────────────
+//
+// (p5, p50, p95) per driver. Bound by the seed-table backfill at
+// instantiation. Each triple encodes:
+//   - p50: the operator's best estimate of where this team sits on the
+//          driver's [0, 2] strength axis (1.0 = neutral / average team)
+//   - p5..p95: the realistic range given evidence quality. Width = our
+//              uncertainty about the team on this dimension.
+
+param socio_p5: real
+param socio_p50: real
+param socio_p95: real
+
+param institutional_p5: real
+param institutional_p50: real
+param institutional_p95: real
+
+param dynamic_p5: real
+param dynamic_p50: real
+param dynamic_p95: real
+
+param squad_p5: real
+param squad_p50: real
+param squad_p95: real
+
+param tactical_p5: real
+param tactical_p50: real
+param tactical_p95: real
+
+param fixture_p5: real
+param fixture_p50: real
+param fixture_p95: real
+
+question "Will Iraq win the 2026 FIFA World Cup?" {
+    base_rate {
+        reference_class: "FIFA World Cup winners 1930–2022"
+        // 1/48 ≈ 2.08% — uniform prior across the 48-team field. The
+        // cockpit's outside view pane reads this and the trajectory
+        // shows the divergence between this baseline and the model's
+        // current inside view.
+        historical_frequency: 2.08%
+        sample_size: 22
+        source: "FIFA tournament archive — 22 prior World Cups"
+        reasoning: "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+        generated_by: human
+    }
+}
+
+// ─── Drivers ──────────────────────────────────────────────────────────
+//
+// Six drivers, each parameterized by its own (p5, p50, p95) triple.
+// `learnable: true` means BayesOps refits the distribution from the
+// declared observation source as match results accumulate.
+
+driver socio_capital continuous {
+    distribution: triangular(socio_p5, socio_p50, socio_p95)
+    rationale: "Macro capacity for footballing investment: GDP, population, HDI."
+}
+
+driver institutional_capacity continuous {
+    distribution: triangular(institutional_p5, institutional_p50, institutional_p95)
+    rationale: "Federation strength, league development, player pipeline depth."
+}
+
+driver dynamic_performance continuous {
+    distribution: triangular(dynamic_p5, dynamic_p50, dynamic_p95)
+    learnable: true
+    rationale: "Recent form and Elo trajectory — refits as match outcomes accumulate."
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "scalar_field_value",
+        config: {
+            path: "goal_differential"
+        }
+    }
+}
+
+driver squad_quality continuous {
+    distribution: triangular(squad_p5, squad_p50, squad_p95)
+    learnable: true
+    rationale: "Top-flight league penetration + market value concentration."
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "binary_winner_id_match",
+        config: {
+            winner_field: "winner_team_id",
+            match_value: "${workspace.entity_id}"
+        }
+    }
+}
+
+driver tactical_efficiency continuous {
+    distribution: triangular(tactical_p5, tactical_p50, tactical_p95)
+    learnable: true
+    rationale: "Shot conversion, defensive duels, pressing intensity."
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "scalar_field_value",
+        config: {
+            path: "shot_conversion_rate"
+        }
+    }
+}
+
+driver fixture_context continuous {
+    distribution: triangular(fixture_p5, fixture_p50, fixture_p95)
+    rationale: "Per-fixture context: venue, climate, rest, altitude."
+}
+
+// ─── Agents ───────────────────────────────────────────────────────────
+//
+// Per BAYESOPS_CONTRACT.md §3, one curated agent per factor family. Each
+// agent's `driver_refs` declares which drivers it researches.
+
+agent macro_data_agent {
+    type: "research"
+    query: "GDP per capita, population, HDI for Iraq (2024–2026 latest available)"
+    executor: "llm"
+    driver_refs: ["socio_capital"]
+    schedule: every 1 month
+}
+
+agent football_institution_agent {
+    type: "research"
+    query: "Player registration, top-flight league revenue, confederation coefficient for Iraq"
+    executor: "llm"
+    driver_refs: ["institutional_capacity"]
+    schedule: every 1 month
+}
+
+agent football_analyst {
+    type: "research"
+    query: "Latest Elo rating, last 5 matches form, key player availability, market value distribution for Iraq"
+    executor: "llm"
+    driver_refs: ["dynamic_performance", "squad_quality", "tactical_efficiency"]
+    schedule: every 1 week
+}
+
+agent fixture_context_agent {
+    type: "research"
+    query: "Upcoming fixtures for Iraq: venue, climate, rest days, altitude, opponent travel burden"
+    executor: "llm"
+    driver_refs: ["fixture_context"]
+    schedule: every 3 days
+}
+
+// ─── Model ────────────────────────────────────────────────────────────
+//
+// Cobb-Douglas weighted product. 0.0208 ≈ 1/48 is the uniform prior
+// across the 48-team field; the per-driver exponents express each
+// factor's predictive weight on tournament outcomes:
+//
+//   socio_capital            ^ 0.5   (slow-moving structural; small effect)
+//   institutional_capacity   ^ 0.5   (slow-moving; small effect)
+//   dynamic_performance      ^ 1.8   (DOMINANT — recent form, Elo)
+//   squad_quality            ^ 1.5   (high — the talent on the pitch)
+//   tactical_efficiency      ^ 1.2   (moderate — game-to-game volatile)
+//   fixture_context          ^ 0.3   (small per-tournament effect)
+//
+//   sum = 5.8 ≈ 6 → neutral teams (all p50=1.0) still produce ≈ base_rate.
+//
+// The exponents matter because the equal-weighted version produced too
+// flat a spread (top-4 avg ~10% vs Polymarket ~13%, no signal-to-noise
+// for the demo). With these weights:
+//   ARG:   6 driver p50s → product ≈ 4.5 → rate ≈ 9%   (PM ≈11.6%)
+//   FRA:   p50s slightly higher → rate ≈ 11.5%        (PM ≈18.5%)
+//   CUW:   weak across the board → rate ≈ 0.2%        (clamps to 1%)
+//
+// Calibrated so the operator's seed is realistic-but-conservative —
+// leaving room for agent research and BayesOps refits to lift specific
+// teams toward the bookmaker price as evidence accumulates. The whole
+// point of the demo is watching the model close the gap to the crowd.
+//
+// The sim returns this expression's mean directly — the cockpit takes
+// it as the predicted_probability without further transformation
+// (Option 2: model expression IS the forecast).
+
+model: 0.0208
+       * (socio_capital ^ 0.5)
+       * (institutional_capacity ^ 0.5)
+       * (dynamic_performance ^ 1.8)
+       * (squad_quality ^ 1.5)
+       * (tactical_efficiency ^ 1.2)
+       * (fixture_context ^ 0.3)
+
+simulate 10000 iterations

@@ -1,0 +1,78 @@
+{
+  "forecast_id": "44e13047-0aeb-433a-b156-8114591478c0",
+  "current_version": 1,
+  "predicted_probability": 0.019999999552965164,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-06-19 01:41",
+      "probability": 0.019999999552965164,
+      "change_summary": "Initial: 2.0% base=2%, 6 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+  },
+  "evidence": [],
+  "agents": [
+    {
+      "name": "macro_data_agent",
+      "agent_type": "research",
+      "query": "GDP per capita, population, HDI for Iraq (2024–2026 latest available)",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "socio_capital"
+      ]
+    },
+    {
+      "name": "football_institution_agent",
+      "agent_type": "research",
+      "query": "Player registration, top-flight league revenue, confederation coefficient for Iraq",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "institutional_capacity"
+      ]
+    },
+    {
+      "name": "football_analyst",
+      "agent_type": "research",
+      "query": "Latest Elo rating, last 5 matches form, key player availability, market value distribution for Iraq",
+      "schedule": "Some(Every { interval: 1, unit: Week })",
+      "driver_refs": [
+        "dynamic_performance",
+        "squad_quality",
+        "tactical_efficiency"
+      ]
+    },
+    {
+      "name": "fixture_context_agent",
+      "agent_type": "research",
+      "query": "Upcoming fixtures for Iraq: venue, climate, rest days, altitude, opponent travel burden",
+      "schedule": "Some(Every { interval: 3, unit: Day })",
+      "driver_refs": [
+        "fixture_context"
+      ]
+    }
+  ],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "30615",
+    "market_id": "558982",
+    "question": "Will Iraq win the 2026 FIFA World Cup?",
+    "market_price": 0.0005,
+    "volume_24h": 190065.15,
+    "liquidity": null,
+    "confidence": "High",
+    "price_change_1w": null,
+    "url": "https://polymarket.com/event/world-cup-winner",
+    "price_history": []
+  },
+  "workspace_id": "f47eda15-8780-4039-8ff1-af7346282646"
+}
