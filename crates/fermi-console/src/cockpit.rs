@@ -2976,6 +2976,72 @@ impl CockpitState {
         .detach();
     }
 
+    /// Change the cadence of an already-persisted schedule. The
+    /// upsert_forecast_schedule endpoint is keyed by
+    /// (forecast_id, agent_id, driver_name), so re-upserting with a
+    /// different interval_hours updates the row in place. Used by the
+    /// Schedules tab's per-row Daily/Weekly buttons so the operator can
+    /// adjust cadence without dropping into the Edit panel.
+    pub fn change_schedule_interval(
+        &mut self,
+        schedule_id: &str,
+        new_interval_hours: i32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(sched) = self.schedules.iter().find(|s| s.id == schedule_id).cloned() else {
+            return;
+        };
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        let api = self.api.clone();
+        let req = UpsertScheduleRequest {
+            agent_id: sched.agent_id.clone(),
+            driver_name: sched.driver_name.clone(),
+            query: sched.query.clone(),
+            interval_hours: new_interval_hours,
+        };
+        let label = if new_interval_hours >= 168 {
+            format!("every {} week", new_interval_hours / 168)
+        } else if new_interval_hours >= 24 {
+            format!("every {} day", new_interval_hours / 24)
+        } else {
+            format!("every {}h", new_interval_hours)
+        };
+        cx.spawn(async move |this, cx| {
+            match api.upsert_forecast_schedule(&fid, &req).await {
+                Ok(_) => {
+                    this.update(cx, |state, cx| {
+                        state.messages.push(AssistantMessage {
+                            node: format!("driver:{}", req.driver_name),
+                            kind: MessageKind::Info,
+                            text: format!(
+                                "Updated {} → {} ({}).",
+                                req.agent_id, req.driver_name, label
+                            ),
+                        });
+                        state.load_schedules(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!("[schedule] change_interval failed: {}", e);
+                    this.update(cx, |state, cx| {
+                        state.messages.push(AssistantMessage {
+                            node: "schedule".into(),
+                            kind: MessageKind::Error,
+                            text: format!("Failed to update {}: {}", req.agent_id, e),
+                        });
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Batch-save every FPL-declared schedule draft that isn't yet
     /// persisted. Sequential upserts (not concurrent) so the messages
     /// surface in order and a partial failure doesn't leave the user
@@ -3668,30 +3734,36 @@ impl CockpitState {
             let d_rationale = driver.rationale.clone().unwrap_or_default();
             let d_unit = driver.unit.clone().unwrap_or_default();
             let d_type = driver.driver_type.clone();
-            let d_p5 = driver
+            // For parameterized distributions (Triangular(Identifier(p5_name),
+            // Identifier(p50_name), Identifier(p95_name)) — what the
+            // post-Option-2 WC template uses) the AST literal is just the
+            // identifier name. We have to look up the actual numeric
+            // value in self.workspace_params, which gets populated by
+            // load_workspace_params on workspace mount + after every
+            // Apply / BayesOps accept. For literal-args distributions
+            // (legacy hand-authored FPLs) we still read directly via
+            // expr_to_f64.
+            let resolve = |expr: &Expression| -> f64 {
+                match expr {
+                    Expression::Number(n) => *n,
+                    Expression::Identifier(param_name) => self
+                        .workspace_params
+                        .get(param_name)
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0),
+                    _ => 0.0,
+                }
+            };
+            let (d_p5, d_p50, d_p95) = driver
                 .distribution
                 .as_ref()
                 .map(|d| match d {
-                    Distribution::Triangular { p5, .. } => expr_to_f64(p5),
-                    _ => 0.0,
+                    Distribution::Triangular { p5, p50, p95 } => {
+                        (resolve(p5), resolve(p50), resolve(p95))
+                    }
+                    _ => (0.0, 0.0, 0.0),
                 })
-                .unwrap_or(0.0);
-            let d_p50 = driver
-                .distribution
-                .as_ref()
-                .map(|d| match d {
-                    Distribution::Triangular { p50, .. } => expr_to_f64(p50),
-                    _ => 0.0,
-                })
-                .unwrap_or(0.0);
-            let d_p95 = driver
-                .distribution
-                .as_ref()
-                .map(|d| match d {
-                    Distribution::Triangular { p95, .. } => expr_to_f64(p95),
-                    _ => 0.0,
-                })
-                .unwrap_or(0.0);
+                .unwrap_or((0.0, 0.0, 0.0));
             let d_prob = driver.probability.unwrap_or(0.5);
             let d_impact = driver.impact_multiplier.unwrap_or(1.3);
 
@@ -4158,6 +4230,19 @@ impl CockpitState {
         }
 
         self.pending_suggestions.retain(|s| s.id != sug.id);
+
+        // If the operator has the affected driver focused in the Edit
+        // panel, repopulate its p5/p50/p95 fields with the new values
+        // so the panel reflects what just happened. Without this the
+        // panel keeps showing the old triple (or — worse — "0.00" from
+        // the unresolved Identifier expression) and the user thinks the
+        // Apply didn't take.
+        if let FocusedNode::Driver(ref focused_name) = self.focused_node.clone() {
+            if focused_name == &sug.driver_name {
+                self.populate_editor_from_driver(focused_name, cx);
+            }
+        }
+
         cx.notify();
 
         // Auto-fire a sim so the predicted_probability + trajectory
@@ -4282,10 +4367,17 @@ impl CockpitState {
         }
 
         self.pending_suggestions.retain(|s| s.id != sug.id);
+
+        // Refresh the Edit panel if the affected driver is focused.
+        if let FocusedNode::Driver(ref focused_name) = self.focused_node.clone() {
+            if focused_name == &sug.driver_name {
+                self.populate_editor_from_driver(focused_name, cx);
+            }
+        }
+
         cx.notify();
 
-        // Auto-sim — same rationale as the parameterized path. Keeps
-        // the Apply UX responsive.
+        // Auto-sim — same rationale as the parameterized path.
         self.run_simulation(cx);
     }
 
@@ -7981,13 +8073,25 @@ fn render_driver_card(
                         .text_color(rgb(theme::FG))
                         .font_weight(FontWeight::SEMIBOLD)
                         .min_w(px(0.0))
-                        .child(
-                            driver
+                        // overflow_hidden + truncate the long names
+                        // ('dynamic_performance' wraps to two lines without
+                        // this and breaks the card header layout).
+                        .overflow_hidden()
+                        .child({
+                            let raw = driver
                                 .display_name
                                 .as_deref()
-                                .unwrap_or(&driver.name)
-                                .to_string(),
-                        ),
+                                .unwrap_or(&driver.name);
+                            // Soft cap at 22 chars so 'institutional_capacity'
+                            // and 'tactical_efficiency' fit alongside the
+                            // type/learnable chips without truncation
+                            // ellipsis kicking in.
+                            if raw.chars().count() > 22 {
+                                format!("{}…", raw.chars().take(21).collect::<String>())
+                            } else {
+                                raw.to_string()
+                            }
+                        }),
                 )
                 .child(
                     div()
@@ -11161,6 +11265,25 @@ fn render_simulation_section(_state: &CockpitState) -> impl IntoElement {
 }
 
 fn render_stat(label: &str, value: f64, color: u32) -> impl IntoElement {
+    // Format precision adapts to magnitude. Probability stats are
+    // typically in [0.001, 0.99], so {:.1} truncates everything below 5%
+    // to "0.0". For non-probability forecasts (counts in the 100s,
+    // magnitudes in the millions) the same precision is too tight.
+    // Pick the format dynamically:
+    //   |v| < 0.001  → "0.000" (don't show "0.0e0" garbage)
+    //   |v| < 1.0    → 3 decimals (probabilities: "0.087")
+    //   |v| < 100    → 2 decimals (mid-range: "12.34")
+    //   else         → integer-style with thousands separators
+    let av = value.abs();
+    let formatted = if av < 0.001 && av > 0.0 {
+        format!("{:.4}", value)
+    } else if av < 1.0 {
+        format!("{:.3}", value)
+    } else if av < 100.0 {
+        format!("{:.2}", value)
+    } else {
+        format!("{:.1}", value)
+    };
     div()
         .flex()
         .flex_col()
@@ -11176,7 +11299,7 @@ fn render_stat(label: &str, value: f64, color: u32) -> impl IntoElement {
                 .text_size(px(13.0))
                 .text_color(rgb(color))
                 .font_weight(FontWeight::BOLD)
-                .child(format!("{:.1}", value)),
+                .child(formatted),
         )
 }
 
@@ -11620,6 +11743,68 @@ fn render_schedules_tab(
                                             .child(label),
                                     )
                                     .child(div().flex_grow())
+                                    // Cadence buttons — Daily / Weekly /
+                                    // Monthly. Active cadence highlighted in
+                                    // gold so the operator can see the
+                                    // current value at a glance. Clicking a
+                                    // different cadence calls
+                                    // change_schedule_interval, which re-
+                                    // upserts the schedule with the new
+                                    // interval_hours.
+                                    .child({
+                                        let sid_d = sched.id.clone();
+                                        let is_active = sched.interval_hours == 24;
+                                        div()
+                                            .id(ElementId::Name(format!("schedules-tab-d-{}", sid_d).into()))
+                                            .text_size(px(10.0))
+                                            .text_color(if is_active { rgb(theme::GOLD) } else { rgb(theme::FG_DIM) })
+                                            .px(px(6.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.change_schedule_interval(&sid_d, 24, cx);
+                                            }))
+                                            .child("Daily")
+                                    })
+                                    .child({
+                                        let sid_w = sched.id.clone();
+                                        let is_active = sched.interval_hours == 168;
+                                        div()
+                                            .id(ElementId::Name(format!("schedules-tab-w-{}", sid_w).into()))
+                                            .text_size(px(10.0))
+                                            .text_color(if is_active { rgb(theme::GOLD) } else { rgb(theme::FG_DIM) })
+                                            .px(px(6.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.change_schedule_interval(&sid_w, 168, cx);
+                                            }))
+                                            .child("Weekly")
+                                    })
+                                    .child({
+                                        let sid_m = sched.id.clone();
+                                        let is_active = sched.interval_hours == 720;
+                                        div()
+                                            .id(ElementId::Name(format!("schedules-tab-m-{}", sid_m).into()))
+                                            .text_size(px(10.0))
+                                            .text_color(if is_active { rgb(theme::GOLD) } else { rgb(theme::FG_DIM) })
+                                            .px(px(6.0))
+                                            .py(px(3.0))
+                                            .rounded(px(3.0))
+                                            .bg(rgb(theme::BG))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                this.change_schedule_interval(&sid_m, 720, cx);
+                                            }))
+                                            .child("Monthly")
+                                    })
                                     .child(
                                         div()
                                             .id(ElementId::Name(
