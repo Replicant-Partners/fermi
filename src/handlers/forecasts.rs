@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 use fermi::gas::charge_gas;
+use fermi_auth::visibility::is_team_member;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
 // ═══════════════════════════════════════════════════════════════════
@@ -332,21 +333,20 @@ pub async fn get_forecast_handler(
     let team_id: Option<Uuid> = row.try_get("team_id").ok();
 
     if owner_id != user_id && visibility == "private" {
-        // Check team membership if team_id is set
-        if let Some(tid) = team_id {
-            let is_member = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
-            )
-            .bind(tid)
-            .bind(&user_id)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(false);
-
-            if !is_member {
-                return Err((StatusCode::FORBIDDEN, "Access denied".into()));
-            }
-        } else {
+        // Team-membership fallback (Spec 24 §3.2 Wave 1).
+        //
+        // The previous inline query bound `team_members.user_id = $2`, but
+        // the column is `member_id` (verified against prod schema 2026-06-19
+        // and migration 009:40). That branch silently returned false for
+        // every caller. We now delegate to the canonical helper so this
+        // handler stays in sync with workspaces and any future caller.
+        let granted = match team_id {
+            Some(tid) => is_team_member(pool, tid, &user_id)
+                .await
+                .unwrap_or(false),
+            None => false,
+        };
+        if !granted {
             return Err((StatusCode::FORBIDDEN, "Access denied".into()));
         }
     }
