@@ -1,4 +1,4 @@
-//! Forecast ACL regression tests (Spec 24 §3.2 Wave 1).
+//! Forecast/portfolio ACL & PATCH regression tests (Spec 24 §3.2 Wave 1).
 //!
 //! Run with: `cargo test --test forecast_acl -- --ignored --test-threads=1`
 //! Requires `DATABASE_URL` (the deployed Neon DB — see `.env`).
@@ -10,10 +10,18 @@
 //!      `team_members.user_id` but the actual column is `member_id`. The
 //!      team-fallback branch was therefore dead — team members never gained
 //!      access to a private forecast even when `fermi_forecasts.team_id`
-//!      pointed at their team. This test asserts the canonical helper
+//!      pointed at their team. We assert the canonical helper
 //!      `fermi_auth::visibility::is_team_member` (which the handler now
 //!      delegates to) returns `true` for an actual team member and `false`
 //!      for a stranger.
+//!
+//!   2. `patch_portfolio_handler` accepted only `title`/`description` —
+//!      every other field was silently dropped at the serde layer.
+//!      `PatchPortfolioRequest` now carries `domain`, `visibility`, and
+//!      `team_id`, and the SQL UPDATE COALESCEs them. We assert a portfolio
+//!      flips from `private` to `public` (and gains a `team_id`) after the
+//!      handler's UPDATE, and that an all-null PATCH leaves every column
+//!      unchanged.
 //!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
@@ -194,4 +202,203 @@ async fn is_team_member_does_not_cross_teams() {
 
     cleanup(&pool, team_a).await;
     cleanup(&pool, team_b).await;
+}
+
+// ─── PATCH /api/portfolios/:id (Spec 24 §3.2 Wave 1 #2) ──────────────
+
+/// Borrow an arbitrary existing user's UUID. `fermi_portfolios.owner_id`
+/// has an FK to `users(id)` (verified 2026-06-19), so a synthetic UUID
+/// would fail to insert. We don't mutate the user — only point at it as
+/// owner of a throwaway test portfolio.
+async fn pick_existing_user_id(pool: &PgPool) -> Uuid {
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM users LIMIT 1")
+        .fetch_one(pool)
+        .await
+        .expect(
+            "no users in DB — the test borrows an existing users.id to satisfy \
+             the fermi_portfolios.owner_id FK",
+        )
+}
+
+/// Insert a minimal portfolio row owned by `owner_id`, returning its id.
+/// `team_id` starts NULL; visibility starts 'private'.
+async fn insert_test_portfolio(pool: &PgPool, owner_id: Uuid, suffix: &str) -> String {
+    let pid = format!("acl-pf-{}", suffix);
+    sqlx::query(
+        "INSERT INTO fermi_portfolios
+            (id, title, description, owner_id, visibility, notebook_ids, metadata)
+         VALUES ($1, $2, $3, $4, 'private', '{}', '{}'::jsonb)",
+    )
+    .bind(&pid)
+    .bind(format!("ACL Test Portfolio {}", suffix))
+    .bind(Some("created by tests/forecast_acl.rs — safe to delete"))
+    .bind(owner_id)
+    .execute(pool)
+    .await
+    .expect("insert fermi_portfolios row");
+    pid
+}
+
+async fn delete_test_portfolio(pool: &PgPool, portfolio_id: &str) {
+    let _ = sqlx::query("DELETE FROM fermi_portfolios WHERE id = $1")
+        .bind(portfolio_id)
+        .execute(pool)
+        .await;
+}
+
+/// Run the EXACT SQL UPDATE that `patch_portfolio_handler` ships
+/// (`src/handlers/forecasts.rs`). Lifting the query verbatim is the
+/// honest way to cover the bug fix without constructing `AppState`,
+/// which is `pub(crate)` and therefore unreachable from `tests/`. If the
+/// handler's SQL drifts, this test must drift with it — that is the
+/// intended pressure.
+async fn run_patch_portfolio_sql(
+    pool: &PgPool,
+    portfolio_id: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    domain: Option<&str>,
+    visibility: Option<&str>,
+    team_id: Option<Uuid>,
+) {
+    sqlx::query(
+        "UPDATE fermi_portfolios
+         SET title       = COALESCE($2, title),
+             description = COALESCE($3, description),
+             domain      = COALESCE($4, domain),
+             visibility  = COALESCE($5, visibility),
+             team_id     = COALESCE($6, team_id),
+             updated_at  = NOW()
+         WHERE id = $1",
+    )
+    .bind(portfolio_id)
+    .bind(title)
+    .bind(description)
+    .bind(domain)
+    .bind(visibility)
+    .bind(team_id)
+    .execute(pool)
+    .await
+    .expect("patch UPDATE");
+}
+
+/// Snapshot of the columns the PATCH path can touch. Used to assert
+/// "all-null PATCH leaves everything unchanged."
+#[derive(Debug, PartialEq, Eq)]
+struct PortfolioSnapshot {
+    title: String,
+    description: Option<String>,
+    domain: Option<String>,
+    visibility: String,
+    team_id: Option<Uuid>,
+}
+
+async fn snapshot_portfolio(pool: &PgPool, portfolio_id: &str) -> PortfolioSnapshot {
+    let row = sqlx::query_as::<
+        _,
+        (String, Option<String>, Option<String>, String, Option<Uuid>),
+    >(
+        "SELECT title, description, domain, visibility, team_id
+         FROM fermi_portfolios WHERE id = $1",
+    )
+    .bind(portfolio_id)
+    .fetch_one(pool)
+    .await
+    .expect("snapshot SELECT");
+    PortfolioSnapshot {
+        title: row.0,
+        description: row.1,
+        domain: row.2,
+        visibility: row.3,
+        team_id: row.4,
+    }
+}
+
+/// PATCH with `visibility='public'` flips the column.
+/// PATCH with `team_id=Some(X)` populates a previously-NULL team.
+/// Together they prove the bug fix: pre-fix, both fields would have been
+/// silently dropped at the serde layer (PatchPortfolioRequest didn't
+/// declare them), and the SQL UPDATE didn't reference them.
+#[tokio::test]
+#[ignore]
+async fn patch_portfolio_persists_visibility_and_team_id() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let pid = insert_test_portfolio(&pool, owner, &suffix).await;
+    let team_id = insert_test_team(&pool, &suffix).await;
+
+    // Sanity: pre-PATCH state is the documented insert default.
+    let before = snapshot_portfolio(&pool, &pid).await;
+    assert_eq!(before.visibility, "private");
+    assert_eq!(before.team_id, None);
+    assert_eq!(before.domain, None);
+
+    run_patch_portfolio_sql(
+        &pool,
+        &pid,
+        None,
+        None,
+        Some("test-domain"),
+        Some("public"),
+        Some(team_id),
+    )
+    .await;
+
+    let after = snapshot_portfolio(&pool, &pid).await;
+    assert_eq!(after.visibility, "public", "visibility must flip to public");
+    assert_eq!(after.team_id, Some(team_id), "team_id must be set");
+    assert_eq!(after.domain.as_deref(), Some("test-domain"));
+    // title + description were not in the PATCH; they must be unchanged.
+    assert_eq!(after.title, before.title);
+    assert_eq!(after.description, before.description);
+
+    delete_test_portfolio(&pool, &pid).await;
+    cleanup(&pool, team_id).await;
+}
+
+/// All-null PATCH (every Option = None) is a no-op.
+/// This proves COALESCE preserves the existing value — the standard PATCH
+/// contract everywhere else in ABW.
+#[tokio::test]
+#[ignore]
+async fn patch_portfolio_with_all_null_is_noop() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let pid = insert_test_portfolio(&pool, owner, &suffix).await;
+
+    // Establish a non-default state so the all-null PATCH actually has
+    // something to (not) erase.
+    let team_id = insert_test_team(&pool, &suffix).await;
+    run_patch_portfolio_sql(
+        &pool,
+        &pid,
+        Some("Renamed for noop test"),
+        None,
+        Some("noop-domain"),
+        Some("shared"),
+        Some(team_id),
+    )
+    .await;
+    let baseline = snapshot_portfolio(&pool, &pid).await;
+
+    run_patch_portfolio_sql(&pool, &pid, None, None, None, None, None).await;
+    let after = snapshot_portfolio(&pool, &pid).await;
+
+    assert_eq!(
+        after, baseline,
+        "all-null PATCH must leave every column unchanged"
+    );
+
+    delete_test_portfolio(&pool, &pid).await;
+    cleanup(&pool, team_id).await;
 }

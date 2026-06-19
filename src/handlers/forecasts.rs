@@ -118,14 +118,6 @@ pub struct CreatePortfolioRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdatePortfolioRequest {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub domain: Option<String>,
-    pub visibility: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct PortfolioForecastRequest {
     pub forecast_id: String,
 }
@@ -1362,9 +1354,23 @@ pub async fn delete_portfolio_handler(
 pub struct PatchPortfolioRequest {
     pub title: Option<String>,
     pub description: Option<String>,
+    /// Spec 24 §3.2 Wave 1. Mirrors `CreatePortfolioRequest` so a portfolio's
+    /// domain/visibility/team_id can change without requiring delete + recreate.
+    /// Standard PATCH semantics: missing-or-null = unchanged. Use a
+    /// dedicated "clear" mechanism (TBD) if the operator ever needs to
+    /// detach a team explicitly. Until then, COALESCE preserves the old value.
+    pub domain: Option<String>,
+    pub visibility: Option<String>,
+    pub team_id: Option<String>,
 }
 
 /// PATCH /api/portfolios/:id
+///
+/// Spec 24 §3.2 Wave 1: extended to actually persist `domain`, `visibility`,
+/// and `team_id`. The previous handler accepted only `title`/`description`
+/// — any other field on the wire was silently dropped at the serde layer.
+/// That made the dishonest "Team" tile in the console commit sheet
+/// undetectable: PATCH would 200 even though nothing changed.
 pub async fn patch_portfolio_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -1387,16 +1393,50 @@ pub async fn patch_portfolio_handler(
         None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
     }
 
+    // Validate visibility up front: the DB CHECK constraint will reject any
+    // other value with a 500-shaped error, but a 400 with a clear message is
+    // the polite contract for a PATCH-time client mistake.
+    if let Some(ref v) = req.visibility {
+        if !matches!(v.as_str(), "private" | "shared" | "public") {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("invalid visibility '{}': expected private|shared|public", v),
+            ));
+        }
+    }
+
+    // team_id arrives as a string on the wire (Option<String>) so the JSON
+    // shape stays uniform with CreatePortfolioRequest. Parse to UUID before
+    // binding — fermi_portfolios.team_id is `uuid` in prod (verified
+    // 2026-06-19). A bad uuid is a 400, not a 500.
+    let team_id_uuid: Option<Uuid> = match req.team_id.as_deref() {
+        Some(s) => Some(
+            Uuid::parse_str(s).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid team_id '{}': {}", s, e),
+                )
+            })?,
+        ),
+        None => None,
+    };
+
     sqlx::query(
         "UPDATE fermi_portfolios
          SET title       = COALESCE($2, title),
              description = COALESCE($3, description),
+             domain      = COALESCE($4, domain),
+             visibility  = COALESCE($5, visibility),
+             team_id     = COALESCE($6, team_id),
              updated_at  = NOW()
          WHERE id = $1",
     )
     .bind(&portfolio_id)
     .bind(&req.title)
     .bind(&req.description)
+    .bind(&req.domain)
+    .bind(&req.visibility)
+    .bind(team_id_uuid)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
