@@ -2837,6 +2837,11 @@ impl CockpitState {
                                 ),
                             });
                         }
+                        // Auto-persist any FPL-declared schedules that aren't
+                        // yet on the server. Runs after the schedules list is
+                        // populated so the dedup check inside
+                        // fpl_declared_schedule_drafts works correctly.
+                        state.auto_persist_fpl_schedules(cx);
                         cx.notify();
                     })
                     .ok();
@@ -3148,6 +3153,68 @@ impl CockpitState {
     //
     // Called on workspace-mount, after every refit, and whenever a
     // `bayesops_fit_pending` event lands in the workspace messages.
+
+    /// On workspace mount, after `load_schedules` populates
+    /// `self.schedules`, automatically persist any FPL-declared
+    /// agent×driver pair that doesn't yet have a server-side schedule
+    /// row. Persisted with `interval_hours = 0` (On-demand) so the
+    /// operator opts in to autonomous runs explicitly via the cadence
+    /// buttons — the FPL's declared cadence becomes a *suggestion* rather
+    /// than an obligation.
+    ///
+    /// Without this auto-persist, the operator's first action on every
+    /// new workspace was clicking "Save" six times in the Schedules tab,
+    /// which adds zero information (the FPL already declared which
+    /// agents own which drivers).
+    ///
+    /// Idempotent: fpl_declared_schedule_drafts excludes pairs already
+    /// persisted, so this is a no-op on the second mount.
+    pub fn auto_persist_fpl_schedules(&mut self, cx: &mut Context<Self>) {
+        let drafts = self.fpl_declared_schedule_drafts();
+        if drafts.is_empty() {
+            return;
+        }
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        let api = self.api.clone();
+        let n = drafts.len();
+        cx.spawn(async move |this, cx| {
+            let mut saved = 0usize;
+            for draft in &drafts {
+                let req = UpsertScheduleRequest {
+                    agent_id: draft.agent_id.clone(),
+                    driver_name: draft.driver_name.clone(),
+                    query: draft.query.clone(),
+                    // On-demand: server stores the row but next_run_at is
+                    // a year-3000 sentinel so the overdue check never
+                    // fires. Operator picks Daily/Weekly/Monthly per row
+                    // when they want autonomous runs.
+                    interval_hours: 0,
+                };
+                if api.upsert_forecast_schedule(&fid, &req).await.is_ok() {
+                    saved += 1;
+                }
+            }
+            this.update(cx, |state, cx| {
+                if saved > 0 {
+                    state.messages.push(AssistantMessage {
+                        node: "schedule".into(),
+                        kind: MessageKind::Info,
+                        text: format!(
+                            "Pre-loaded {}/{} agent×driver schedules from FPL (On-demand). \
+                             Use the cadence buttons in the Schedules tab to enable autonomous runs.",
+                            saved, n
+                        ),
+                    });
+                }
+                state.load_schedules(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
 
     /// Fetch the workspace's `params` output from the server and store it
     /// on `self.workspace_params`. Called on workspace mount, after every
@@ -3851,6 +3918,19 @@ impl CockpitState {
         self.focused_node = FocusedNode::Driver(name.to_string());
 
         self.populate_editor_from_driver(name, cx);
+
+        // Auto-switch to the Edit tab. The previous behaviour required an
+        // extra click to see the populated p5/p50/p95 + suggestions + agent
+        // controls, which made driver-clicks feel half-wired. The Edit tab
+        // is the canonical destination for "I picked a driver, show me what
+        // matters about it" — auto-routing here matches operator intent.
+        //
+        // Exception: if the user is mid-trajectory or mid-Wiki review, we
+        // still switch — they explicitly clicked a driver, which is a stronger
+        // signal than "stay on the current tab." The prior tab is one click
+        // away if they want it back.
+        self.right_tab = RightTab::Edit;
+
         cx.notify();
     }
 
@@ -9881,6 +9961,19 @@ fn render_driver_editor_and_evidence(
                     .child(rationale_text),
             )
         })
+        // ── PINNED: pending agent suggestions for this driver ───────
+        //
+        // Suggestions are the action-required gate that turns research
+        // into model change: an agent runs, says 'p50 should move from
+        // 1.42 to 1.55', the operator accepts, the driver's prior shifts,
+        // and the next sim reflects the change. Without these visible,
+        // research is just text in the evidence pane — nothing happens.
+        //
+        // Pinned at the top (right under the header / rationale) rather
+        // than buried under the evidence list. The render is identical
+        // to the legacy block at line ~10426, just placed earlier so
+        // it's always above the fold.
+        .child(render_pinned_suggestions(state, name, cx))
         // Editor fields
         .child(
             div()
@@ -10410,144 +10503,10 @@ fn render_driver_editor_and_evidence(
                     })),
             )
         })
-        // ── Pending suggestions for this driver ───────────────────
-        .child({
-            let driver_suggestions: Vec<&EvidenceSuggestion> = state
-                .pending_suggestions
-                .iter()
-                .filter(|s| s.driver_name == name)
-                .collect();
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(4.0))
-                .when(!driver_suggestions.is_empty(), |el| {
-                    el.mt(px(8.0))
-                        .pt(px(8.0))
-                        .border_t_1()
-                        .border_color(rgb(theme::GOLD))
-                        .child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(rgb(theme::GOLD))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(format!(
-                                    "💡 Suggested Adjustments ({})",
-                                    driver_suggestions.len()
-                                )),
-                        )
-                        .children(driver_suggestions.iter().map(|sug| {
-                            let accept_id = sug.id.clone();
-                            let reject_id = sug.id.clone();
-                            let delta_pct =
-                                (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0;
-                            let (arrow, delta_color) = if delta_pct > 0.0 {
-                                ("↑", theme::GREEN)
-                            } else {
-                                ("↓", theme::RED)
-                            };
-
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(4.0))
-                                .px(px(10.0))
-                                .py(px(8.0))
-                                .rounded(px(6.0))
-                                .bg(rgb(0x2A2518))
-                                .border_1()
-                                .border_color(rgb(theme::GOLD))
-                                // Agent name + change summary
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .child(
-                                            div()
-                                                .text_size(px(11.0))
-                                                .text_color(rgb(theme::FG))
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .child(format!(
-                                                    "{} suggests:",
-                                                    base_agent_name(&sug.agent_name)
-                                                )),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(12.0))
-                                                .text_color(rgb(delta_color))
-                                                .font_weight(FontWeight::BOLD)
-                                                .child(format!(
-                                                    "p50 {:.2} → {:.2} ({}{:.0}%)",
-                                                    sug.current_p50,
-                                                    sug.suggested_p50,
-                                                    arrow,
-                                                    delta_pct.abs()
-                                                )),
-                                        ),
-                                )
-                                // Reasoning
-                                .child(
-                                    div()
-                                        .text_size(px(10.0))
-                                        .text_color(rgb(theme::FG_DIM))
-                                        .min_w(px(0.0))
-                                        .child(sug.reasoning.chars().take(150).collect::<String>()),
-                                )
-                                // Accept / Reject buttons
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap(px(8.0))
-                                        .mt(px(4.0))
-                                        .child(
-                                            div()
-                                                .id(ElementId::Name(
-                                                    format!("accept-{}", sug.id).into(),
-                                                ))
-                                                .px(px(14.0))
-                                                .py(px(4.0))
-                                                .rounded(px(4.0))
-                                                .bg(rgb(theme::GREEN))
-                                                .text_color(rgb(theme::BG_DEEP))
-                                                .text_size(px(11.0))
-                                                .font_weight(FontWeight::BOLD)
-                                                .cursor_pointer()
-                                                .hover(|s| s.opacity(0.8))
-                                                .on_click(cx.listener(
-                                                    move |this, _event, _window, cx| {
-                                                        this.accept_suggestion(&accept_id, cx);
-                                                    },
-                                                ))
-                                                .child("✓ Accept"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id(ElementId::Name(
-                                                    format!("reject-{}", sug.id).into(),
-                                                ))
-                                                .px(px(14.0))
-                                                .py(px(4.0))
-                                                .rounded(px(4.0))
-                                                .bg(rgb(theme::BG_ELEVATED))
-                                                .border_1()
-                                                .border_color(rgb(theme::RED))
-                                                .text_color(rgb(theme::RED))
-                                                .text_size(px(11.0))
-                                                .cursor_pointer()
-                                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                                .on_click(cx.listener(
-                                                    move |this, _event, _window, cx| {
-                                                        this.reject_suggestion(&reject_id, cx);
-                                                    },
-                                                ))
-                                                .child("✗ Reject"),
-                                        ),
-                                )
-                        }))
-                })
-        })
+        // (Pending suggestions used to render here; moved to a pinned
+        // block at the top of the panel via render_pinned_suggestions —
+        // see the call near the start of this function. Keeping this
+        // comment so the next sweep knows there isn't a render gap.)
         // ── Add manual evidence ───────────────────────────────────
         .child(
             div()
@@ -11297,6 +11256,172 @@ fn render_forecast_index(
 fn render_simulation_section(_state: &CockpitState) -> impl IntoElement {
     // Simulation results now rendered in render_forecast_index above drivers
     div()
+}
+
+/// Render the pinned "Suggested Adjustments" block that lives at the top
+/// of the Edit panel — pulled out of render_driver_editor_and_evidence so
+/// it stays above the fold instead of being buried under evidence.
+///
+/// Each suggestion card carries:
+///   - the agent name + driver_name
+///   - p50 transition (current → suggested) with arrow + percent change
+///   - a 150-char excerpt of the agent's reasoning
+///   - Accept / Reject buttons
+///
+/// Accept fires accept_suggestion which:
+///   1. Updates workspace_outputs.params (Path A) or AST literals (Path B).
+///   2. Refreshes the Edit panel inputs to show new values.
+///   3. Auto-runs the simulation.
+///
+/// Returns an empty element when there are no pending suggestions for the
+/// driver — keeps the layout stable when the section is empty.
+fn render_pinned_suggestions(
+    state: &CockpitState,
+    name: &str,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let driver_suggestions: Vec<&EvidenceSuggestion> = state
+        .pending_suggestions
+        .iter()
+        .filter(|s| s.driver_name == name)
+        .collect();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .when(!driver_suggestions.is_empty(), |el| {
+            el.mt(px(4.0))
+                .pt(px(8.0))
+                .pb(px(8.0))
+                .px(px(10.0))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(rgb(theme::GOLD))
+                .bg(rgb(0x1F1A0E))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::GOLD))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .mb(px(4.0))
+                        .child(format!(
+                            "💡 Suggested Adjustments ({}) — review to apply",
+                            driver_suggestions.len()
+                        )),
+                )
+                .children(driver_suggestions.iter().map(|sug| {
+                    let accept_id = sug.id.clone();
+                    let reject_id = sug.id.clone();
+                    let delta_pct =
+                        (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0;
+                    let (arrow, delta_color) = if delta_pct > 0.0 {
+                        ("↑", theme::GREEN)
+                    } else {
+                        ("↓", theme::RED)
+                    };
+
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .px(px(10.0))
+                        .py(px(8.0))
+                        .mt(px(4.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(0x2A2518))
+                        .border_1()
+                        .border_color(rgb(theme::GOLD))
+                        // Agent name + change summary
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(theme::FG))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(format!(
+                                            "{} suggests:",
+                                            base_agent_name(&sug.agent_name)
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(delta_color))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(format!(
+                                            "p50 {:.2} → {:.2} ({}{:.0}%)",
+                                            sug.current_p50,
+                                            sug.suggested_p50,
+                                            arrow,
+                                            delta_pct.abs()
+                                        )),
+                                ),
+                        )
+                        // Reasoning excerpt
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .min_w(px(0.0))
+                                .child(sug.reasoning.chars().take(150).collect::<String>()),
+                        )
+                        // Accept / Reject buttons
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(8.0))
+                                .mt(px(4.0))
+                                .child(
+                                    div()
+                                        .id(ElementId::Name(
+                                            format!("accept-pinned-{}", sug.id).into(),
+                                        ))
+                                        .px(px(14.0))
+                                        .py(px(4.0))
+                                        .rounded(px(4.0))
+                                        .bg(rgb(theme::GREEN))
+                                        .text_color(rgb(theme::BG_DEEP))
+                                        .text_size(px(11.0))
+                                        .font_weight(FontWeight::BOLD)
+                                        .cursor_pointer()
+                                        .hover(|s| s.opacity(0.8))
+                                        .on_click(cx.listener(
+                                            move |this, _event, _window, cx| {
+                                                this.accept_suggestion(&accept_id, cx);
+                                            },
+                                        ))
+                                        .child("✓ Apply"),
+                                )
+                                .child(
+                                    div()
+                                        .id(ElementId::Name(
+                                            format!("reject-pinned-{}", sug.id).into(),
+                                        ))
+                                        .px(px(14.0))
+                                        .py(px(4.0))
+                                        .rounded(px(4.0))
+                                        .bg(rgb(theme::BG_ELEVATED))
+                                        .border_1()
+                                        .border_color(rgb(theme::RED))
+                                        .text_color(rgb(theme::RED))
+                                        .text_size(px(11.0))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                        .on_click(cx.listener(
+                                            move |this, _event, _window, cx| {
+                                                this.reject_suggestion(&reject_id, cx);
+                                            },
+                                        ))
+                                        .child("✗ Reject"),
+                                ),
+                        )
+                }))
+        })
 }
 
 fn render_stat(label: &str, value: f64, color: u32) -> impl IntoElement {
@@ -12057,8 +12182,7 @@ fn render_trajectory_tab(
 }
 
 fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
-    // Span summary at the top — "1 rate revision, 3 BayesOps fits, 12
-    // agent runs, 4 market polls."
+    // Span summary
     let span = data.get("span").cloned().unwrap_or(JsonValue::Null);
     let event_count = span
         .get("event_count")
@@ -12073,7 +12197,7 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
 
-    // Rate series: current and earliest values for the header
+    // Rate series for the worm
     let rate_series = data
         .get("rate_series")
         .and_then(|v| v.as_array())
@@ -12091,6 +12215,115 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
         (Some(f), Some(l)) => Some((l - f) * 100.0),
         _ => None,
     };
+
+    // ── Build the worm: convert RFC3339 timestamps to seconds-since-first
+    //
+    // The chart needs (t_seconds, rate_pct). Find the earliest timestamp
+    // across rate_series + events; everything else gets t = (this_ts -
+    // earliest_ts).total_seconds(). Failing parse → skip the point (the
+    // worm degrades gracefully on a single bad row instead of vanishing).
+    let parse_ts = |s: &str| -> Option<chrono::DateTime<chrono::Utc>> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|t| t.with_timezone(&chrono::Utc))
+    };
+
+    let events_arr = data
+        .get("events")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Earliest timestamp across rate_series + events.
+    let mut all_ts: Vec<chrono::DateTime<chrono::Utc>> = rate_series
+        .iter()
+        .filter_map(|p| p.get("ts").and_then(|v| v.as_str()).and_then(parse_ts))
+        .collect();
+    all_ts.extend(
+        events_arr
+            .iter()
+            .filter_map(|e| e.get("ts").and_then(|v| v.as_str()).and_then(parse_ts)),
+    );
+    let earliest = all_ts.iter().min().cloned();
+
+    let worm_points: Vec<crate::charts::TrajectoryPoint> = rate_series
+        .iter()
+        .filter_map(|p| {
+            let ts = parse_ts(p.get("ts")?.as_str()?)?;
+            let rate = p.get("rate")?.as_f64()?;
+            let t_secs = (ts - earliest?).num_milliseconds() as f64 / 1000.0;
+            Some(crate::charts::TrajectoryPoint {
+                t_seconds: t_secs,
+                rate_pct: rate * 100.0,
+            })
+        })
+        .collect();
+
+    // Build worm event markers. Each event's y-position is the rate AT
+    // that moment — use rate_revision events' new_rate; for non-rate
+    // events (agent_run, bayesops_fit, market_obs) plot at the closest
+    // rate_series point's rate so the dot reads as "this happened while
+    // the rate was here".
+    let rate_at = |ts: chrono::DateTime<chrono::Utc>| -> f64 {
+        let target = (ts - earliest.unwrap_or(ts)).num_milliseconds() as f64 / 1000.0;
+        worm_points
+            .iter()
+            .min_by(|a, b| {
+                (a.t_seconds - target)
+                    .abs()
+                    .partial_cmp(&(b.t_seconds - target).abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|p| p.rate_pct)
+            .unwrap_or(2.08)
+    };
+
+    let worm_events: Vec<crate::charts::TrajectoryEvent> = events_arr
+        .iter()
+        .filter_map(|ev| {
+            let ts = parse_ts(ev.get("ts")?.as_str()?)?;
+            let kind_str = ev.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let kind = match kind_str {
+                "rate_revision" => crate::charts::TrajectoryEventKind::RateRevision,
+                "bayesops_fit" => crate::charts::TrajectoryEventKind::BayesOpsFit,
+                "agent_run" => crate::charts::TrajectoryEventKind::AgentRun,
+                "market_observation" => crate::charts::TrajectoryEventKind::MarketObservation,
+                _ => crate::charts::TrajectoryEventKind::AgentRun,
+            };
+            let rate_pct = ev
+                .get("predicted_probability")
+                .and_then(|v| v.as_f64())
+                .map(|p| p * 100.0)
+                .unwrap_or_else(|| rate_at(ts));
+            let t_secs =
+                (ts - earliest?).num_milliseconds() as f64 / 1000.0;
+            Some(crate::charts::TrajectoryEvent {
+                t_seconds: t_secs,
+                rate_pct,
+                kind,
+            })
+        })
+        .collect();
+
+    // The worm chart itself. Render to a fixed canvas size; the
+    // layout below stretches it to the container width via the parent
+    // div's size_full() but we render at a sensible default.
+    let chart_w: u32 = 760;
+    let chart_h: u32 = 220;
+    let worm_buf = crate::charts::render_trajectory_worm(
+        &worm_points,
+        &worm_events,
+        // Reference horizontals — base rate (gold) + crowd price (purple).
+        // Without these the operator can't tell whether the trail is
+        // approaching or running away from the crowd consensus.
+        // Hardcoded to 2.08 since the timeline data doesn't carry this.
+        // TODO: pass through state.program.question.base_rate.
+        Some(2.08),
+        None,
+        chart_w,
+        chart_h,
+    );
+    let worm_img = crate::charts::rgb_to_render_image(&worm_buf, chart_w, chart_h);
 
     let header = div()
         .flex()
@@ -12124,14 +12357,34 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
                 }),
         );
 
-    // Event list
-    let events = data
-        .get("events")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    // Worm chart slot. Centered with a small frame so it reads as a
+    // distinct visual unit, not bleeding into the event list.
+    let worm = div()
+        .px(px(16.0))
+        .py(px(8.0))
+        .flex()
+        .justify_center()
+        .child(
+            gpui::img(worm_img)
+                .w(px(chart_w as f32))
+                .h(px(chart_h as f32)),
+        );
 
-    let event_list = if events.is_empty() {
+    // Legend below the worm — explains the dot colors.
+    let legend = div()
+        .px(px(16.0))
+        .pb(px(8.0))
+        .flex()
+        .gap(px(14.0))
+        .text_size(px(10.0))
+        .text_color(rgb(theme::FG_DIM))
+        .child(legend_chip("●", theme::CYAN, "Apply / rate revision"))
+        .child(legend_chip("●", theme::GOLD, "BayesOps fit"))
+        .child(legend_chip("●", theme::FG_DIM, "Agent run"))
+        .child(legend_chip("●", theme::PURPLE, "Polymarket tick"))
+        .child(legend_chip("─", theme::GOLD, "Base rate (2.08%)"));
+
+    let event_list = if events_arr.is_empty() {
         div()
             .flex()
             .items_center()
@@ -12150,7 +12403,7 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
             .px(px(16.0))
             .py(px(8.0))
             .gap(px(6.0))
-            .children(events.iter().map(render_trajectory_event))
+            .children(events_arr.iter().map(render_trajectory_event))
             .into_any_element()
     };
 
@@ -12159,7 +12412,23 @@ fn render_trajectory_body(data: &JsonValue) -> impl IntoElement {
         .flex_col()
         .size_full()
         .child(header)
+        .child(worm)
+        .child(legend)
         .child(event_list)
+}
+
+/// Small color-swatch + label pair for the trajectory legend.
+fn legend_chip(glyph: &str, color: u32, label: &str) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .child(
+            div()
+                .text_color(rgb(color))
+                .child(glyph.to_string()),
+        )
+        .child(label.to_string())
 }
 
 fn render_trajectory_event(ev: &JsonValue) -> AnyElement {

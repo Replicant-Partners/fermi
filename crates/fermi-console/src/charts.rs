@@ -39,6 +39,35 @@ pub struct IndexPoint {
     pub crowd_price: Option<f64>,  // Polymarket crowd-implied probability
 }
 
+/// One point on the trajectory worm. `t_seconds` is seconds since the
+/// trajectory's first timestamp (or epoch if degenerate); `rate_pct` is
+/// the inside-view probability at that moment, in 0–100 scale.
+pub struct TrajectoryPoint {
+    pub t_seconds: f64,
+    pub rate_pct: f64,
+}
+
+/// One marker on the trajectory worm — an event that happened at a
+/// specific time and (optionally) moved the rate. The renderer draws a
+/// colored dot at (t_seconds, rate_pct_at_event) so the operator can see
+/// when each Apply / BayesOps fit / agent run / market tick happened.
+pub struct TrajectoryEvent {
+    pub t_seconds: f64,
+    pub rate_pct: f64,         // y-position of the dot
+    pub kind: TrajectoryEventKind,
+}
+
+pub enum TrajectoryEventKind {
+    /// A rate revision (Apply, schedule rerun, etc.) — cyan dot, larger.
+    RateRevision,
+    /// A BayesOps fitted-distribution accept — gold dot.
+    BayesOpsFit,
+    /// An agent run that didn't directly move the rate — small grey dot.
+    AgentRun,
+    /// A Polymarket observation — purple dot.
+    MarketObservation,
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Index Chart — Inside vs Outside vs Crowd price over time
 //
@@ -271,6 +300,161 @@ pub fn render_distribution_sparkline_on(
                         ShapeStyle::from(GREEN).stroke_width(1),
                     )));
                 }
+            }
+        }
+        let _ = root.present();
+    }
+    buf
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Trajectory Worm — rate over time with event markers
+//
+// Tells the story of how a forecast evolved. The trail (cyan line)
+// connects every rate revision in chronological order. Event markers
+// sit at (t, rate-at-event) showing what caused the rate to move:
+//   • Apply → cyan dot (larger)
+//   • BayesOps fit → gold dot
+//   • Agent run → small grey dot (research happened, may not have moved rate)
+//   • Market obs → purple dot (crowd price snapshot)
+//
+// Reference lines: gold horizontal at outside-view base rate; purple
+// horizontal at the latest Polymarket crowd price (if linked). The
+// operator's eye tracks: did my model walk toward, away from, or past
+// the crowd price?
+// ═══════════════════════════════════════════════════════════════════
+
+pub fn render_trajectory_worm(
+    series: &[TrajectoryPoint],
+    events: &[TrajectoryEvent],
+    base_rate_pct: Option<f64>,
+    crowd_price_pct: Option<f64>,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let mut buf = vec![0u8; (width * height * 3) as usize];
+    {
+        let root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
+        let _ = root.fill(&BG);
+
+        if series.is_empty() && events.is_empty() {
+            // Degenerate: no data. Render a centered "no events" hint
+            // — keeps the chart slot reserved at the right dimensions
+            // so the layout doesn't jump. Skip the chart-build pass.
+            let _ = root.draw(&Text::new(
+                "no trajectory yet",
+                (width as i32 / 2 - 50, height as i32 / 2 - 6),
+                ("sans-serif", 11u32).into_font().color(&LABEL),
+            ));
+            let _ = root.present();
+            // Drop root by returning from the inner block; falls through
+            // to the function's tail return after the `{ … }` scope ends.
+            return {
+                drop(root);
+                buf
+            };
+        }
+
+        // Y range: span all rate values in series + events + reference
+        // lines, with a 1pp padding band so dots aren't on the axis.
+        let mut all_y: Vec<f64> = series.iter().map(|p| p.rate_pct).collect();
+        all_y.extend(events.iter().map(|e| e.rate_pct));
+        if let Some(b) = base_rate_pct {
+            all_y.push(b);
+        }
+        if let Some(c) = crowd_price_pct {
+            all_y.push(c);
+        }
+        if all_y.is_empty() {
+            all_y.push(2.08); // base rate fallback
+        }
+        let y_min = (all_y.iter().cloned().fold(f64::INFINITY, f64::min) - 1.0).max(0.0);
+        let y_max = all_y.iter().cloned().fold(f64::NEG_INFINITY, f64::max) + 1.0;
+
+        // X range: 0 to (last - first) seconds. If only one point, give it
+        // a 1-second window so the chart doesn't degenerate.
+        let mut all_x: Vec<f64> = series.iter().map(|p| p.t_seconds).collect();
+        all_x.extend(events.iter().map(|e| e.t_seconds));
+        let x_min = all_x.iter().cloned().fold(f64::INFINITY, f64::min).min(0.0);
+        let x_max_raw = all_x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let x_max = if x_max_raw <= x_min {
+            x_min + 1.0
+        } else {
+            x_max_raw
+        };
+
+        if let Ok(mut chart) = ChartBuilder::on(&root)
+            .margin_top(8)
+            .margin_right(12)
+            .margin_bottom(8)
+            .margin_left(8)
+            .x_label_area_size(18)
+            .y_label_area_size(34)
+            .build_cartesian_2d(x_min..x_max, y_min..y_max)
+        {
+            // Format x-axis as days/hours since first event. Plotters
+            // takes a closure that returns the formatted label.
+            let span = x_max - x_min;
+            let _ = chart
+                .configure_mesh()
+                .x_labels(5)
+                .y_labels(4)
+                .label_style(("sans-serif", 9).into_font().color(&LABEL))
+                .axis_style(ShapeStyle::from(CHROME).stroke_width(1))
+                .light_line_style(ShapeStyle::from(CHROME).stroke_width(1))
+                .bold_line_style(ShapeStyle::from(CHROME).stroke_width(1))
+                .y_label_formatter(&|v| format!("{:.0}%", v))
+                .x_label_formatter(&|v| {
+                    // Pick a sensible unit based on total span.
+                    let secs = *v - x_min;
+                    if span < 60.0 * 60.0 {
+                        format!("{:.0}m", secs / 60.0)
+                    } else if span < 24.0 * 60.0 * 60.0 {
+                        format!("{:.0}h", secs / 3600.0)
+                    } else {
+                        format!("{:.0}d", secs / 86400.0)
+                    }
+                })
+                .draw();
+
+            // Reference: base-rate horizontal (outside view).
+            if let Some(b) = base_rate_pct {
+                let _ = chart.draw_series(LineSeries::new(
+                    vec![(x_min, b), (x_max, b)],
+                    ShapeStyle::from(GOLD).stroke_width(1),
+                ));
+            }
+            // Reference: crowd price horizontal.
+            if let Some(c) = crowd_price_pct {
+                let _ = chart.draw_series(LineSeries::new(
+                    vec![(x_min, c), (x_max, c)],
+                    ShapeStyle::from(PURPLE).stroke_width(1),
+                ));
+            }
+
+            // The worm: cyan trail through every rate revision in
+            // chronological order. Width=2 so it reads as a deliberate
+            // line, not just markers connected.
+            if series.len() >= 2 {
+                let _ = chart.draw_series(LineSeries::new(
+                    series.iter().map(|p| (p.t_seconds, p.rate_pct)),
+                    ShapeStyle::from(CYAN).stroke_width(2),
+                ));
+            }
+
+            // Event markers — colored dots per kind.
+            for ev in events {
+                let (color, size) = match ev.kind {
+                    TrajectoryEventKind::RateRevision => (CYAN, 4),
+                    TrajectoryEventKind::BayesOpsFit => (GOLD, 4),
+                    TrajectoryEventKind::AgentRun => (CHROME, 2),
+                    TrajectoryEventKind::MarketObservation => (PURPLE, 3),
+                };
+                let _ = chart.draw_series(std::iter::once(Circle::new(
+                    (ev.t_seconds, ev.rate_pct),
+                    size,
+                    ShapeStyle::from(color).filled(),
+                )));
             }
         }
         let _ = root.present();
