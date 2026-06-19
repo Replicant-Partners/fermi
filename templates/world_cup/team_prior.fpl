@@ -199,20 +199,41 @@ agent fixture_context_agent {
 
 // ─── Model ────────────────────────────────────────────────────────────
 //
-// Multiplicative product of all six drivers, scaled by the base rate.
-// 0.0208 ≈ 1/48 is the uniform prior across the 48-team field; the
-// product of the six drivers shifts the rate up or down per team.
+// Cobb-Douglas weighted product. 0.0208 ≈ 1/48 is the uniform prior
+// across the 48-team field; the per-driver exponents express each
+// factor's predictive weight on tournament outcomes:
 //
-// For an "average team" (each driver's p50 ≈ 1.0) the product ≈ 1.0 and
-// the rate ≈ base. For Argentina-class teams (p50s in 1.05–1.43 range)
-// the product reaches 1.5–3.5, lifting the rate to 3–7%. For minnows
-// (p50s in 0.4–0.7 range) the product compresses below 0.5, dropping
-// the rate to ~1%.
+//   socio_capital            ^ 0.5   (slow-moving structural; small effect)
+//   institutional_capacity   ^ 0.5   (slow-moving; small effect)
+//   dynamic_performance      ^ 1.8   (DOMINANT — recent form, Elo)
+//   squad_quality            ^ 1.5   (high — the talent on the pitch)
+//   tactical_efficiency      ^ 1.2   (moderate — game-to-game volatile)
+//   fixture_context          ^ 0.3   (small per-tournament effect)
+//
+//   sum = 5.8 ≈ 6 → neutral teams (all p50=1.0) still produce ≈ base_rate.
+//
+// The exponents matter because the equal-weighted version produced too
+// flat a spread (top-4 avg ~10% vs Polymarket ~13%, no signal-to-noise
+// for the demo). With these weights:
+//   ARG:   6 driver p50s → product ≈ 4.5 → rate ≈ 9%   (PM ≈11.6%)
+//   FRA:   p50s slightly higher → rate ≈ 11.5%        (PM ≈18.5%)
+//   CUW:   weak across the board → rate ≈ 0.2%        (clamps to 1%)
+//
+// Calibrated so the operator's seed is realistic-but-conservative —
+// leaving room for agent research and BayesOps refits to lift specific
+// teams toward the bookmaker price as evidence accumulates. The whole
+// point of the demo is watching the model close the gap to the crowd.
 //
 // The sim returns this expression's mean directly — the cockpit takes
 // it as the predicted_probability without further transformation
-// (Option 2 of the design discussion: model expression IS the forecast).
+// (Option 2: model expression IS the forecast).
 
-model: 0.0208 * socio_capital * institutional_capacity * dynamic_performance * squad_quality * tactical_efficiency * fixture_context
+model: 0.0208
+       * (socio_capital ^ 0.5)
+       * (institutional_capacity ^ 0.5)
+       * (dynamic_performance ^ 1.8)
+       * (squad_quality ^ 1.5)
+       * (tactical_efficiency ^ 1.2)
+       * (fixture_context ^ 0.3)
 
 simulate 10000 iterations

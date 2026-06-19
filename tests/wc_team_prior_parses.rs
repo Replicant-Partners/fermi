@@ -230,26 +230,33 @@ fn team_prior_simulates_team_differentiated_rates() {
     eprintln!("───────────────────────────────────────────");
     eprintln!();
 
-    // ARG should land in a realistic top-team range (3–15%) — bracketing
-    // the Polymarket 11.6% from below since the model is conservative
-    // without elasticities.
+    // ARG should land in a realistic top-team range (4–18%) bracketing
+    // Polymarket's ~11.6% from below. Cobb-Douglas elasticities lift
+    // top teams meaningfully — the lower bound of 4% catches the
+    // pre-elasticities flat-spread regression where top teams capped
+    // around 6.5% regardless of input.
     assert!(
-        (0.03..0.15).contains(&arg),
-        "Argentina rate {:.4} outside [3%, 15%] — recalibrate seed",
+        (0.04..0.18).contains(&arg),
+        "Argentina rate {:.4} outside [4%, 18%] — recalibrate seed",
         arg
     );
 
-    // PAN should land in the lower mid-tier (1–4%).
+    // PAN should land below 2.5%; with elasticities the bottom tier
+    // amplifies, so we accept rates as low as 0.1% (clamps to 1% in
+    // the cockpit display anyway).
     assert!(
-        (0.005..0.04).contains(&pan),
-        "Panama rate {:.4} outside [0.5%, 4%]",
+        (0.001..0.025).contains(&pan),
+        "Panama rate {:.4} outside [0.1%, 2.5%]",
         pan
     );
 
-    // Strong > weak: ARG should be at least 2× PAN.
+    // Strong > weak: with Cobb-Douglas elasticities ARG should now
+    // dominate PAN by at least 5× (vs the equal-weight version which
+    // was only 2× because all drivers contributed equally).
     assert!(
-        arg > pan * 2.0,
-        "Argentina rate ({:.4}) should be >2x Panama ({:.4})",
+        arg > pan * 5.0,
+        "Argentina rate ({:.4}) should be >5x Panama ({:.4}) under \
+         Cobb-Douglas elasticities",
         arg, pan
     );
 }

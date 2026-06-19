@@ -2368,17 +2368,35 @@ impl CockpitState {
                     if let Some(dn) = driver_name {
                         // Read the driver's current center across all the
                         // distribution shapes our templates use (not just
-                        // Triangular). For expression-typed args the
-                        // literal isn't available — fall back to 1.0 so
-                        // the comparison test below still has a finite
-                        // anchor and the suggestion gets shown rather than
-                        // silently filtered.
-                        let current_p50 = self
+                        // Triangular). Two layers:
+                        //
+                        //   1. If the driver's distribution is parameterized
+                        //      (Triangular(Identifier, Identifier, Identifier))
+                        //      read the current p50 from workspace_params.
+                        //      That's the source of truth for parameterized
+                        //      WC drivers — the AST literal would just be
+                        //      "socio_p50" the identifier.
+                        //
+                        //   2. Otherwise fall back to the AST literal (legacy
+                        //      hand-authored FPLs) or 1.0 if even that isn't
+                        //      a Number expression.
+                        let driver_dist = self
                             .program
                             .driver(&dn)
-                            .and_then(|d| d.distribution.as_ref())
-                            .map(distribution_center_or_default)
-                            .unwrap_or(1.0);
+                            .and_then(|d| d.distribution.as_ref());
+
+                        let current_p50 = match driver_dist {
+                            Some(Distribution::Triangular {
+                                p50: Expression::Identifier(p50_name),
+                                ..
+                            }) => self
+                                .workspace_params
+                                .get(p50_name)
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(1.0),
+                            Some(d) => distribution_center_or_default(d),
+                            None => 1.0,
+                        };
 
                         // Only create suggestion if meaningfully different (>1% change)
                         if (suggested - current_p50).abs() / current_p50.max(0.01) > 0.01 {
@@ -3952,152 +3970,323 @@ impl CockpitState {
             .iter()
             .find(|s| s.id == suggestion_id)
             .cloned();
-        if let Some(sug) = sug {
-            // ── Mutate the driver distribution to reflect the agent's
-            //    suggested center value ────────────────────────────────
-            //
-            // Previously this only fired on Triangular distributions and
-            // computed a `ratio = suggested / expr_to_f64(old_p50)` to
-            // scale p95. That broke in two ways on the WC team_prior:
-            //
-            //   (1) `dynamic_performance` is `normal(mean_expr, 0.20)`,
-            //       so the Triangular match arm silently no-op'd and the
-            //       suggestion appeared accepted without moving anything.
-            //
-            //   (2) Other drivers use `triangular(0.6 + 0.4*(...), ...)`
-            //       — expression args, not Number literals. expr_to_f64
-            //       returns 0.0 for any non-Number expression, so the
-            //       ratio went to inf/0 and p95 got rewritten to garbage.
-            //
-            // The simpler, correct shape: write the suggested center
-            // directly. If the driver was a Triangular with literal args,
-            // also re-derive p5/p95 around the new center using the same
-            // half-width the original literals carried so the spread
-            // shape is preserved. If the literals were expressions (or
-            // it's a Normal), we just rewrite the center and leave the
-            // original spread expression alone — accepting the price
-            // that BayesOps will refit the spread on its own loop.
-            if let Some(driver) = self.program.driver_mut(&sug.driver_name) {
-                if let Some(ref mut dist) = driver.distribution {
-                    match dist {
-                        Distribution::Triangular { p5, p50, p95 } => {
-                            let new_center = sug.suggested_p50;
-                            // Try to preserve the original spread when both
-                            // p5 and p95 were literals. Otherwise just
-                            // pin the center; spread stays as the
-                            // expression that was there.
-                            let lo = match p5 {
-                                Expression::Number(n) => Some(*n),
-                                _ => None,
-                            };
-                            let hi = match p95 {
-                                Expression::Number(n) => Some(*n),
-                                _ => None,
-                            };
-                            let old_center = match p50 {
-                                Expression::Number(n) => Some(*n),
-                                _ => None,
-                            };
-                            *p50 = Expression::Number(new_center);
-                            if let (Some(lo_v), Some(hi_v), Some(c_v)) = (lo, hi, old_center) {
-                                let half_lo = c_v - lo_v;
-                                let half_hi = hi_v - c_v;
-                                *p5 = Expression::Number(new_center - half_lo);
-                                *p95 = Expression::Number(new_center + half_hi);
-                            }
+        let Some(sug) = sug else {
+            return;
+        };
+
+        // ── Detect template shape: parameterized vs literal ────────────
+        //
+        // Two distinct mutation paths depending on how the driver
+        // declares its distribution:
+        //
+        //   Path A (parameterized)  —  triangular(socio_p5, socio_p50, socio_p95)
+        //       The distribution's args are Identifier expressions
+        //       referencing `param X: real` declarations. The actual
+        //       values live in workspace_outputs.params and are bound
+        //       per-team at sim time. Mutating the AST literals would
+        //       break the parameterization (it'd replace the Identifier
+        //       node with a Number, severing the link to the per-team
+        //       value, AND the next workspace-params load would wipe
+        //       the local change anyway).
+        //
+        //       Right thing: write the new center to
+        //       workspace_outputs.params[<param-name>], proportionally
+        //       shift p5 and p95 to preserve spread shape, then
+        //       refresh load_workspace_params so the next sim picks it
+        //       up. The AST stays clean.
+        //
+        //   Path B (literal)  —  triangular(0.6, 1.0, 1.4) with Number args
+        //       Old-style template, no per-team parameterization. Mutate
+        //       the literals in-place (preserved from the previous
+        //       implementation for non-WC templates).
+        //
+        // The WC team_prior post-Option-2 redesign uses Path A
+        // exclusively. Generic / hand-authored templates may still use
+        // Path B.
+        let driver_dist_shape = self
+            .program
+            .driver(&sug.driver_name)
+            .and_then(|d| d.distribution.as_ref())
+            .cloned();
+
+        let param_names: Option<(String, String, String)> = match &driver_dist_shape {
+            Some(Distribution::Triangular { p5, p50, p95 }) => {
+                match (p5, p50, p95) {
+                    (
+                        Expression::Identifier(p5_name),
+                        Expression::Identifier(p50_name),
+                        Expression::Identifier(p95_name),
+                    ) => Some((p5_name.clone(), p50_name.clone(), p95_name.clone())),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+
+        if let Some((p5_name, p50_name, p95_name)) = param_names {
+            // ── Path A: parameterized → write through to workspace params
+            self.apply_suggestion_to_workspace_params(
+                sug,
+                &p5_name,
+                &p50_name,
+                &p95_name,
+                cx,
+            );
+        } else {
+            // ── Path B: literal-args distribution, mutate AST directly
+            self.apply_suggestion_to_ast_literals(sug, cx);
+        }
+    }
+
+    /// Path A: parameterized driver — write the suggested center to
+    /// workspace_outputs.params via PUT, proportionally shifting p5/p95
+    /// to preserve the original spread shape. Refresh
+    /// `self.workspace_params` so the next sim picks up the new triple.
+    ///
+    /// Without proportional shift, accepting a +20% suggestion on
+    /// `socio_p50` leaves `socio_p5` and `socio_p95` unchanged — the
+    /// distribution becomes asymmetric and the operator's "wider spread =
+    /// less confident" intuition breaks. We preserve the half-widths
+    /// (p50 − p5) and (p95 − p50) computed from the existing triple,
+    /// then shift everything by the delta.
+    fn apply_suggestion_to_workspace_params(
+        &mut self,
+        sug: EvidenceSuggestion,
+        p5_name: &str,
+        p50_name: &str,
+        p95_name: &str,
+        cx: &mut Context<Self>,
+    ) {
+        // Read current triple values from workspace_params (loaded on
+        // open). Falls back to a sane default if any are missing — we
+        // don't want a partial backfill to dead-end the Apply path.
+        let cur_p5 = self
+            .workspace_params
+            .get(p5_name)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(sug.current_p50 - 0.20);
+        let cur_p50 = self
+            .workspace_params
+            .get(p50_name)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(sug.current_p50);
+        let cur_p95 = self
+            .workspace_params
+            .get(p95_name)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(sug.current_p50 + 0.20);
+
+        let new_p50 = sug.suggested_p50;
+        let half_lo = (cur_p50 - cur_p5).max(0.05); // preserve lower half-width
+        let half_hi = (cur_p95 - cur_p50).max(0.05); // preserve upper half-width
+        let new_p5 = (new_p50 - half_lo).max(0.01);
+        let new_p95 = (new_p50 + half_hi).max(new_p5 + 0.05);
+
+        // Update local cache so the next Ctrl+R uses the new triple
+        // immediately (cockpit's run_simulation reads self.workspace_params).
+        self.workspace_params
+            .insert(p5_name.to_string(), serde_json::json!(new_p5));
+        self.workspace_params
+            .insert(p50_name.to_string(), serde_json::json!(new_p50));
+        self.workspace_params
+            .insert(p95_name.to_string(), serde_json::json!(new_p95));
+
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", sug.driver_name),
+            kind: MessageKind::Info,
+            text: format!(
+                "✓ Accepted: {} ({:.2} → {:.2}) — spread preserved [{:.2}, {:.2}] (from {})",
+                p50_name,
+                cur_p50,
+                new_p50,
+                new_p5,
+                new_p95,
+                base_agent_name(&sug.agent_name)
+            ),
+        });
+
+        // Persist server-side: PUT the merged params object so the next
+        // workspace-params reload (or another operator on another
+        // machine) gets the same triple. Fire-and-forget; the local
+        // cache is already updated.
+        if let Some(ref ws_id) = self.workspace_id {
+            let api = self.api.clone();
+            let ws = ws_id.clone();
+            let merged = self.workspace_params.clone();
+            let driver_name = sug.driver_name.clone();
+            let agent_name = base_agent_name(&sug.agent_name);
+            let content = format!(
+                "**Param update** on driver `{}`:\n- {}: {:.3} → {:.3}\n- {}: {:.3} → {:.3}\n- {}: {:.3} → {:.3}\n- Source: {} evidence\n- Rationale: {}",
+                driver_name,
+                p5_name, cur_p5, new_p5,
+                p50_name, cur_p50, new_p50,
+                p95_name, cur_p95, new_p95,
+                agent_name,
+                sug.reasoning.chars().take(200).collect::<String>(),
+            );
+            let meta = serde_json::json!({
+                "cost_class": "event_append",
+                "fermi_action": "update_params",
+                "driver": driver_name,
+                "p5_name": p5_name,
+                "p50_name": p50_name,
+                "p95_name": p95_name,
+                "previous_p50": cur_p50,
+                "updated_p50": new_p50,
+            });
+            tokio::spawn(async move {
+                let value = serde_json::Value::Object(merged);
+                if let Err(e) = api.set_workspace_output(&ws, "params", &value).await {
+                    log::warn!(
+                        "[apply→params] PUT failed for {}: {} — local cache has the new triple, \
+                         next workspace-params reload will revert it",
+                        ws, e
+                    );
+                }
+                let _ = api
+                    .post_workspace_message(
+                        &ws,
+                        "user",
+                        "fermi_console",
+                        Some("Fermi Console"),
+                        &content,
+                        "system_event",
+                        Some(&meta),
+                    )
+                    .await;
+            });
+        }
+
+        self.pending_suggestions.retain(|s| s.id != sug.id);
+        cx.notify();
+
+        // Auto-fire a sim so the predicted_probability + trajectory
+        // update immediately. Without this the operator has to manually
+        // Ctrl+R to see the consequence of their accept, which makes the
+        // Apply feel unresponsive — especially in batch (apply 4 of 6
+        // pending suggestions and the dashboard stays frozen until the
+        // last manual sim).
+        self.run_simulation(cx);
+    }
+
+    /// Path B: legacy distribution-literal mutation. Used by hand-authored
+    /// FPLs whose drivers carry Number-typed bounds rather than param
+    /// references. Preserves the previous behaviour byte-for-byte so we
+    /// don't regress non-WC forecasts.
+    fn apply_suggestion_to_ast_literals(
+        &mut self,
+        sug: EvidenceSuggestion,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(driver) = self.program.driver_mut(&sug.driver_name) {
+            if let Some(ref mut dist) = driver.distribution {
+                match dist {
+                    Distribution::Triangular { p5, p50, p95 } => {
+                        let new_center = sug.suggested_p50;
+                        let lo = match p5 {
+                            Expression::Number(n) => Some(*n),
+                            _ => None,
+                        };
+                        let hi = match p95 {
+                            Expression::Number(n) => Some(*n),
+                            _ => None,
+                        };
+                        let old_center = match p50 {
+                            Expression::Number(n) => Some(*n),
+                            _ => None,
+                        };
+                        *p50 = Expression::Number(new_center);
+                        if let (Some(lo_v), Some(hi_v), Some(c_v)) = (lo, hi, old_center) {
+                            let half_lo = c_v - lo_v;
+                            let half_hi = hi_v - c_v;
+                            *p5 = Expression::Number(new_center - half_lo);
+                            *p95 = Expression::Number(new_center + half_hi);
                         }
-                        Distribution::Normal { mean, .. } => {
-                            // Replace the center expression with the
-                            // suggested literal; stddev untouched. The
-                            // template's normal(0.85 + 0.30 * (elo-1700)/300,
-                            // 0.20) becomes normal(<suggested>, 0.20). On
-                            // re-render of the FPL tab the operator can see
-                            // their override.
-                            *mean = Expression::Number(sug.suggested_p50);
+                    }
+                    Distribution::Normal { mean, .. } => {
+                        *mean = Expression::Number(sug.suggested_p50);
+                    }
+                    Distribution::Lognormal { median, .. } => {
+                        *median = Expression::Number(sug.suggested_p50);
+                    }
+                    Distribution::Uniform { low, high } => {
+                        let lo = match low {
+                            Expression::Number(n) => Some(*n),
+                            _ => None,
+                        };
+                        let hi = match high {
+                            Expression::Number(n) => Some(*n),
+                            _ => None,
+                        };
+                        if let (Some(lo_v), Some(hi_v)) = (lo, hi) {
+                            let half = (hi_v - lo_v) / 2.0;
+                            *low = Expression::Number(sug.suggested_p50 - half);
+                            *high = Expression::Number(sug.suggested_p50 + half);
                         }
-                        Distribution::Lognormal { median, .. } => {
-                            *median = Expression::Number(sug.suggested_p50);
-                        }
-                        Distribution::Uniform { low, high } => {
-                            // Re-center: pin the midpoint to suggested,
-                            // preserve half-width if both bounds are
-                            // literals.
-                            let lo = match low {
-                                Expression::Number(n) => Some(*n),
-                                _ => None,
-                            };
-                            let hi = match high {
-                                Expression::Number(n) => Some(*n),
-                                _ => None,
-                            };
-                            if let (Some(lo_v), Some(hi_v)) = (lo, hi) {
-                                let half = (hi_v - lo_v) / 2.0;
-                                *low = Expression::Number(sug.suggested_p50 - half);
-                                *high = Expression::Number(sug.suggested_p50 + half);
-                            }
-                        }
-                        Distribution::Beta { .. } => {
-                            // Beta parameter mapping isn't a simple "set the
-                            // center" — alpha/beta interact with min/max.
-                            // Skip for now; surface to the user instead of
-                            // silently dropping their click.
-                            self.messages.push(AssistantMessage {
-                                node: format!("driver:{}", sug.driver_name),
-                                kind: MessageKind::Warning,
-                                text: format!(
-                                    "Beta distributions don't support direct p50 override yet. \
-                                     Edit the driver manually or wait for BayesOps to refit."
-                                ),
-                            });
-                            return;
-                        }
+                    }
+                    Distribution::Beta { .. } => {
+                        self.messages.push(AssistantMessage {
+                            node: format!("driver:{}", sug.driver_name),
+                            kind: MessageKind::Warning,
+                            text: "Beta distributions don't support direct p50 override yet."
+                                .into(),
+                        });
+                        return;
                     }
                 }
             }
-            self.messages.push(AssistantMessage {
-                node: format!("driver:{}", sug.driver_name),
-                kind: MessageKind::Info,
-                text: format!(
-                    "✓ Accepted: p50 {:.2} → {:.2} (from {})",
-                    sug.current_p50,
-                    sug.suggested_p50,
-                    base_agent_name(&sug.agent_name)
-                ),
-            });
-
-            // ── Log distribution update to workspace ──────────────
-            if let Some(ref ws_id) = self.workspace_id {
-                let api = self.api.clone();
-                let ws = ws_id.clone();
-                let content = format!(
-                    "**Distribution update** on driver `{}`:\n- p50: {:.3} → {:.3} ({:+.1}%)\n- Source: {} evidence\n- Rationale: {}",
-                    sug.driver_name,
-                    sug.current_p50,
-                    sug.suggested_p50,
-                    (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0,
-                    base_agent_name(&sug.agent_name),
-                    sug.reasoning.chars().take(200).collect::<String>(),
-                );
-                let meta = serde_json::json!({
-                    "cost_class": "event_append",
-                    "fermi_action": "update_distribution",
-                    "driver": sug.driver_name,
-                    "previous_p50": sug.current_p50,
-                    "updated_p50": sug.suggested_p50,
-                });
-                tokio::spawn(async move {
-                    let _ = api
-                        .post_workspace_message(
-                            &ws, "user", "fermi_console", Some("Fermi Console"),
-                            &content, "system_event", Some(&meta),
-                        )
-                        .await;
-                });
-            }
-
-            self.pending_suggestions.retain(|s| s.id != suggestion_id);
-            cx.notify();
         }
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{}", sug.driver_name),
+            kind: MessageKind::Info,
+            text: format!(
+                "✓ Accepted: p50 {:.2} → {:.2} (from {})",
+                sug.current_p50,
+                sug.suggested_p50,
+                base_agent_name(&sug.agent_name)
+            ),
+        });
+
+        if let Some(ref ws_id) = self.workspace_id {
+            let api = self.api.clone();
+            let ws = ws_id.clone();
+            let content = format!(
+                "**Distribution update** on driver `{}`:\n- p50: {:.3} → {:.3} ({:+.1}%)\n- Source: {} evidence\n- Rationale: {}",
+                sug.driver_name,
+                sug.current_p50,
+                sug.suggested_p50,
+                (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0,
+                base_agent_name(&sug.agent_name),
+                sug.reasoning.chars().take(200).collect::<String>(),
+            );
+            let meta = serde_json::json!({
+                "cost_class": "event_append",
+                "fermi_action": "update_distribution",
+                "driver": sug.driver_name,
+                "previous_p50": sug.current_p50,
+                "updated_p50": sug.suggested_p50,
+            });
+            tokio::spawn(async move {
+                let _ = api
+                    .post_workspace_message(
+                        &ws,
+                        "user",
+                        "fermi_console",
+                        Some("Fermi Console"),
+                        &content,
+                        "system_event",
+                        Some(&meta),
+                    )
+                    .await;
+            });
+        }
+
+        self.pending_suggestions.retain(|s| s.id != sug.id);
+        cx.notify();
+
+        // Auto-sim — same rationale as the parameterized path. Keeps
+        // the Apply UX responsive.
+        self.run_simulation(cx);
     }
 
     /// Reject a pending p50 suggestion — discards it.
