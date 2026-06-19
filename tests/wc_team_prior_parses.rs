@@ -1,15 +1,17 @@
-//! Verify the live team-prior FPL parses cleanly and the simulator
-//! recognizes all the variables it references.
+//! Verify the WC team_prior FPL parses, has the expected structure,
+//! and produces team-differentiated rates from realistic per-team triples.
 //!
-//! Cross-checks that
-//!   (a) the lexer + parser accept the rendered template, and
-//!   (b) the program's variable namespace covers everything the
-//!       `estimate tournament_strength as: ...` expression and any
-//!       `factor X_n` formulations reference.
-//!
-//! Catches the regression where executor reports `Undefined variable: foo`
-//! because a factor formulation references `goal_difference` but no
-//! `param goal_difference` exists.
+//! Pinned design contract (post Option-2 redesign):
+//!   - Six factor-derived drivers, each declared as
+//!     `triangular(<driver>_p5, <driver>_p50, <driver>_p95)` with the
+//!     triple bound from workspace_outputs.params at sim time.
+//!   - Three drivers are `learnable: true` with feeds_from for R-1 refit.
+//!   - Four curated agents, one per factor family; every driver is
+//!     referenced by at least one agent's `driver_refs`.
+//!   - The model expression carries the base rate (0.0208) inline and
+//!     is the multiplicative product of the six drivers — Option 2 of
+//!     the design discussion: model expression IS the forecast quantity,
+//!     no normalization downstream.
 
 use fermi::executor::Executor;
 use fermi::lexer::Lexer;
@@ -23,20 +25,6 @@ fn render(team_name: &str) -> String {
     ARG_TEMPLATE.replace("{team_name}", team_name)
 }
 
-/// Locks the team-prior FPL template's shape against the spec
-/// (docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md + BAYESOPS_CONTRACT.md):
-///
-///   - Six factor-derived drivers, each with its own sparkline-able
-///     distribution. Four are learnable (refit by R-1), two are static
-///     inputs that the agents refresh on a schedule.
-///   - Four curated research agents, one per factor family, each owning
-///     the drivers it researches via `driver_refs`.
-///   - Every learnable driver carries a `feeds_from` extractor declaration
-///     so the refit hook knows where to read observations from.
-///   - A `model:` expression — simple multiplicative product over the
-///     six drivers, scaled by the per-team base rate. (The Cobb-Douglas
-///     elasticities the older template carried via `learnable()` are
-///     deferred until the cockpit AST supports them.)
 #[test]
 fn team_prior_template_parses() {
     let src = render("Argentina");
@@ -63,7 +51,7 @@ fn team_prior_template_parses() {
             driver_names
         );
     }
-    // No leftover BayesOps-stream pseudo-drivers from the v0.7.0 template.
+    // No leftover BayesOps-stream pseudo-drivers from earlier templates.
     for bad in &["won_rate", "form_signal"] {
         assert!(
             !driver_names.contains(bad),
@@ -72,8 +60,8 @@ fn team_prior_template_parses() {
         );
     }
 
-    // Three learnable drivers per spec — dynamic_performance + squad_quality
-    // + tactical_efficiency. Each must have a feeds_from extractor for R-1.
+    // Exactly three learnable drivers — dynamic_performance, squad_quality,
+    // tactical_efficiency. Each must have a feeds_from extractor for R-1.
     let drivers_vec = program.drivers();
     let learnable_drivers: Vec<_> = drivers_vec.iter().filter(|d| d.learnable).collect();
     assert_eq!(
@@ -109,9 +97,7 @@ fn team_prior_template_parses() {
         );
     }
 
-    // Every driver should be referenced by at least one agent, so the
-    // cockpit's "⚠ No agents" warning never fires on a freshly-instantiated
-    // workspace.
+    // Every driver should be referenced by at least one agent.
     for d in program.drivers() {
         let referenced = program
             .agents()
@@ -124,9 +110,7 @@ fn team_prior_template_parses() {
         );
     }
 
-    // Outside view: the question must carry a base_rate. Without it the
-    // cockpit's outside-view pane has nothing to render and the inside-view
-    // divergence indicator can't compute. Per spec §6 step 1.
+    // Outside view: the question must carry a base_rate.
     let q = program
         .question()
         .expect("template must declare a question");
@@ -140,9 +124,9 @@ fn team_prior_template_parses() {
         br.historical_frequency
     );
 
-    // The model expression must exist (so simulate has something to evaluate)
-    // and must reference all six drivers — otherwise simulation will report
-    // "Undefined variable: foo" or silently drop a factor.
+    // The model expression must reference all six drivers and contain the
+    // 0.0208 base rate scalar (Option 2: model owns the rate, no
+    // post-processing).
     let model = program
         .model()
         .expect("template must have a `model:` expression");
@@ -155,105 +139,117 @@ fn team_prior_template_parses() {
             model_text
         );
     }
+    assert!(
+        model_text.contains("0.0208"),
+        "model expression must contain the 0.0208 base rate scalar; \
+         the cockpit no longer multiplies it in post-hoc (model dump: {})",
+        model_text
+    );
 }
 
-/// Bind the per-team params that the FPL declares and return the Monte
-/// Carlo mean rate. The values are representative of the dataset (Elo /
-/// GDP / HDI ranges seen in the WC fleet).
+/// Bind a per-team triple set into the executor and return the Monte
+/// Carlo mean. Mirrors what the cockpit's load_workspace_params does at
+/// runtime — the params come from workspace_outputs.params, which the
+/// backfill script populates.
 fn simulate_team_rate(
     team_name: &str,
-    elo_current: f64,
-    elo_trend: f64,
-    gdp_per_capita_log: f64,
-    population_log: f64,
-    hdi_logit: f64,
+    socio: (f64, f64, f64),
+    institutional: (f64, f64, f64),
+    dynamic: (f64, f64, f64),
+    squad: (f64, f64, f64),
+    tactical: (f64, f64, f64),
+    fixture: (f64, f64, f64),
 ) -> f64 {
     let src = render(team_name);
     let tokens = Lexer::new(&src).tokenize().expect("tokenize");
     let program = Parser::new(tokens).parse().expect("parse");
 
-    let mut exec = Executor::new(5_000);
-    exec.set_param("elo_current", elo_current);
-    exec.set_param("elo_trend", elo_trend);
-    exec.set_param("gdp_per_capita_log", gdp_per_capita_log);
-    exec.set_param("population_log", population_log);
-    exec.set_param("hdi_logit", hdi_logit);
-    // String params left as defaults — the model expression doesn't touch
-    // them. is_host coerces to 0.0/1.0 via the executor; default = 0.0.
+    let mut exec = Executor::new(10_000);
+    // Driver-distribution triples — the design's whole point: every
+    // driver's prior comes from the per-team backfill, not a hardcoded
+    // template literal.
+    exec.set_param("socio_p5", socio.0);
+    exec.set_param("socio_p50", socio.1);
+    exec.set_param("socio_p95", socio.2);
+    exec.set_param("institutional_p5", institutional.0);
+    exec.set_param("institutional_p50", institutional.1);
+    exec.set_param("institutional_p95", institutional.2);
+    exec.set_param("dynamic_p5", dynamic.0);
+    exec.set_param("dynamic_p50", dynamic.1);
+    exec.set_param("dynamic_p95", dynamic.2);
+    exec.set_param("squad_p5", squad.0);
+    exec.set_param("squad_p50", squad.1);
+    exec.set_param("squad_p95", squad.2);
+    exec.set_param("tactical_p5", tactical.0);
+    exec.set_param("tactical_p50", tactical.1);
+    exec.set_param("tactical_p95", tactical.2);
+    exec.set_param("fixture_p5", fixture.0);
+    exec.set_param("fixture_p50", fixture.1);
+    exec.set_param("fixture_p95", fixture.2);
+    // The other params (elo_current, gdp_per_capita_log, etc.) aren't
+    // referenced by any driver distribution any more — they're kept in
+    // the FPL only as metadata. We don't need to bind them for the sim
+    // to succeed.
 
     let results = exec.execute(&program).expect("execute");
     results.mean
 }
 
-/// Argentina (strong, CONMEBOL) and Panama (CONCACAF qualifier) should
-/// produce materially different raw model outputs. The cockpit applies a
-/// base-rate normalization on top (P = base_rate × sim_mean / baseline_mean)
-/// so we test the relative magnitudes here rather than the post-norm rate
-/// — that's what makes the template a useful per-team prior.
+/// Argentina (top-tier, defending champion) and Panama (CONCACAF mid-tier)
+/// must produce materially different rates. With Option 2 the rate IS
+/// the simulation mean, so this test asserts directly on the rate range
+/// instead of the raw product.
 #[test]
 fn team_prior_simulates_team_differentiated_rates() {
-    // Argentina-class: Elo 1850, modest positive trend, mid GDP, mid pop, high HDI.
-    let arg_raw = simulate_team_rate("Argentina", 1850.0, 0.10, 9.5, 17.4, 2.10);
-    // Panama-class: Elo 1500, modest trend, lower GDP, smaller pop, mid HDI.
-    let pan_raw = simulate_team_rate("Panama", 1500.0, -0.05, 9.0, 15.1, 1.40);
-
-    // Sanity: both are finite positive (the multiplicative model can't
-    // produce zero or negative values given Triangular/Normal priors with
-    // positive support, but a misconfigured prior would).
-    assert!(
-        arg_raw.is_finite() && arg_raw > 0.0,
-        "Argentina raw output {} not finite-positive",
-        arg_raw
+    // ARG: triples derived from the agent reports + public data
+    // (Transfermarkt, Elo, World Bank) in the design discussion.
+    let arg = simulate_team_rate(
+        "Argentina",
+        (1.23, 1.43, 1.63),  // socio (high HDI, mid GDP)
+        (0.75, 1.05, 1.35),  // institutional (CONMEBOL strong, league weak)
+        (1.09, 1.27, 1.45),  // dynamic (Elo 2115, defending champion)
+        (1.10, 1.30, 1.50),  // squad (Transfermarkt €807M, top-7)
+        (1.05, 1.25, 1.45),  // tactical (recent xG +1.2, trophy form)
+        (0.90, 1.05, 1.20),  // fixture (favourable Group J)
     );
-    assert!(
-        pan_raw.is_finite() && pan_raw > 0.0,
-        "Panama raw output {} not finite-positive",
-        pan_raw
-    );
-
-    // Strong teams MUST produce higher raw outputs than weak teams. If this
-    // fires, the per-team params aren't reaching the driver distributions
-    // and the cockpit's normalization will produce the same rate for every
-    // team.
-    assert!(
-        arg_raw > pan_raw * 1.3,
-        "expected Argentina raw ({:.4}) to be at least 1.3x Panama raw ({:.4}); the per-team params aren't flowing into the driver distributions",
-        arg_raw,
-        pan_raw
+    // PAN: low across the board, wider spreads (less data).
+    let pan = simulate_team_rate(
+        "Panama",
+        (0.80, 1.00, 1.20),  // socio
+        (0.50, 0.80, 1.10),  // institutional (small federation)
+        (0.55, 0.75, 0.95),  // dynamic (Elo ~1730)
+        (0.45, 0.65, 0.85),  // squad (limited Big-5 presence)
+        (0.55, 0.75, 0.95),  // tactical
+        (0.85, 1.00, 1.15),  // fixture
     );
 
-    // Simulate the cockpit's normalization explicitly so the calibration
-    // print reflects what the user will actually see. Baseline = run with
-    // all drivers fixed at their p50. For the Triangular drivers in this
-    // template the p50 is the second argument; for Normal it's the mean
-    // expression. Both evaluate to known numbers given the bound params.
-    //
-    // Reuse simulate_team_rate to get the per-team mean; baseline is
-    // computed by running the same template with a "neutral" param set
-    // (Elo 1700, mid socio inputs that sum to 7.8 — the offset we centered
-    // around in the socio_capital distribution). The resulting product is
-    // the natural baseline.
-    let baseline_raw = simulate_team_rate("Baseline", 1700.0, 0.0, 2.6, 2.6, 2.6);
-    let base_rate = 0.0208_f64;
-    let arg_final = (base_rate * arg_raw / baseline_raw).clamp(0.01, 0.99);
-    let pan_final = (base_rate * pan_raw / baseline_raw).clamp(0.01, 0.99);
+    eprintln!();
+    eprintln!("─── team_prior calibration ────────────────");
+    eprintln!("  Argentina rate: {:.2}%", arg * 100.0);
+    eprintln!("  Panama rate:    {:.2}%", pan * 100.0);
+    eprintln!("───────────────────────────────────────────");
+    eprintln!();
 
-    eprintln!(
-        "team_prior calibration: \n  raw arg={:.3}, pan={:.3}, baseline={:.3}\n  normalized arg={:.2}%, pan={:.2}%",
-        arg_raw, pan_raw, baseline_raw,
-        arg_final * 100.0, pan_final * 100.0
+    // ARG should land in a realistic top-team range (3–15%) — bracketing
+    // the Polymarket 11.6% from below since the model is conservative
+    // without elasticities.
+    assert!(
+        (0.03..0.15).contains(&arg),
+        "Argentina rate {:.4} outside [3%, 15%] — recalibrate seed",
+        arg
     );
 
-    // Normalized rates land in plausible bookmaker territory (sub-30%).
-    // Pin the upper bound loosely — the calibration constants may evolve.
+    // PAN should land in the lower mid-tier (1–4%).
     assert!(
-        arg_final < 0.30,
-        "Argentina normalized rate {:.4} > 30%; calibration is off",
-        arg_final
+        (0.005..0.04).contains(&pan),
+        "Panama rate {:.4} outside [0.5%, 4%]",
+        pan
     );
+
+    // Strong > weak: ARG should be at least 2× PAN.
     assert!(
-        arg_final > pan_final,
-        "Argentina normalized rate {:.4} should exceed Panama {:.4}",
-        arg_final, pan_final
+        arg > pan * 2.0,
+        "Argentina rate ({:.4}) should be >2x Panama ({:.4})",
+        arg, pan
     );
 }

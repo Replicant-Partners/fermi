@@ -4766,107 +4766,94 @@ impl CockpitState {
                     self.load_bayesops_state(cx);
                 }
 
-                // ── Update inside view from simulation ────────────
-                // Update inside view from simulation
-                // ── Normalize simulation output to probability ────
-                // The simulation produces a raw model output. For probability
-                // forecasts (has base_rate), we normalize deterministically:
+                // ── Take the simulation result as authoritative ────
                 //
-                // 1. Compute baseline: run model with all drivers at p50
-                // 2. Compute ratio: sim_mean / baseline
-                // 3. P = base_rate × ratio, clamped to [0.01, 0.99]
+                // Design contract (Option 2): the FPL `model:` expression is
+                // the quantity being forecast. Whatever it evaluates to IS
+                // the output. The cockpit is a Monte Carlo runner + viewer,
+                // not a transformer.
                 //
-                // This uses the executor deterministically — no LLM involved.
-                let base_rate = self
+                // For binary-question forecasts, the operator's responsibility
+                // is to write a model expression that produces a probability:
+                //   model: 0.0208 * socio * institutional * dynamic * squad * ...
+                // The base_rate (0.0208 here) is part of the model the
+                // operator declared. The cockpit doesn't re-multiply it in.
+                //
+                // For non-probability forecasts (counts, magnitudes, durations)
+                // the model expression returns whatever it returns and the
+                // distribution is shown to the operator unrescaled. We only
+                // clamp into [0,1] when the question carries a base_rate
+                // (signalling "this is a probability forecast"); otherwise
+                // we accept whatever value the executor produces.
+                let is_probability_forecast = self
                     .program
                     .question()
                     .and_then(|q| q.base_rate.as_ref())
-                    .map(|br| br.historical_frequency)
-                    .unwrap_or(0.0);
+                    .is_some();
 
-                if base_rate > 0.0 {
-                    // Compute baseline (all drivers at p50/median)
-                    let mut fixed_drivers = std::collections::HashMap::new();
-                    for driver in self.program.drivers() {
-                        match driver.driver_type {
-                            DriverType::Continuous => {
-                                if let Some(Distribution::Triangular { ref p50, .. }) =
-                                    driver.distribution
-                                {
-                                    fixed_drivers.insert(driver.name.clone(), expr_to_f64(p50));
-                                }
-                            }
-                            DriverType::Binary => {
-                                // Binary at expected value: probability * impact + (1-p) * 1.0
-                                let p = driver.probability.unwrap_or(0.5);
-                                let m = driver.impact_multiplier.unwrap_or(1.0);
-                                fixed_drivers.insert(driver.name.clone(), p * m + (1.0 - p) * 1.0);
-                            }
-                            _ => {}
-                        }
+                if is_probability_forecast {
+                    // Lower clamp at 0.01 (1%) so the dashboard never
+                    // displays a meaningless 0%; upper clamp at 0.99 to
+                    // mirror the legacy behaviour and avoid dashboard
+                    // edge cases. Mean below 0.01 is still a real model
+                    // signal — log it so calibration work has access.
+                    if results.mean < 0.01 || results.mean > 0.99 {
+                        log::info!(
+                            "[sim] Mean {:.4} clamped to display range [0.01, 0.99]; \
+                             raw mean preserved in results.",
+                            results.mean
+                        );
                     }
-
-                    let mut baseline_executor =
-                        ::fermi::executor::Executor::with_fixed_drivers(1, fixed_drivers);
-                    let baseline = baseline_executor.execute(&parsed);
-                    let baseline_mean = baseline.as_ref().map(|r| r.mean).unwrap_or(results.mean);
-
-                    // Normalize: P = base_rate × (sim_mean / baseline_mean)
-                    let ratio = if baseline_mean.abs() > 0.001 {
-                        results.mean / baseline_mean
-                    } else {
-                        1.0
-                    };
-                    log::info!("[sim] Normalization: base_rate={:.4} sim_mean={:.4} baseline_mean={:.4} ratio={:.4} → P={:.4}",
-                        base_rate, results.mean, baseline_mean, ratio, (base_rate * ratio).clamp(0.01, 0.99));
-                    self.predicted_probability = (base_rate * ratio).clamp(0.01, 0.99);
-
-                    // Build narrative explanation
-                    let direction = if ratio > 1.05 {
-                        "increases"
-                    } else if ratio < 0.95 {
-                        "decreases"
-                    } else {
-                        "confirms"
-                    };
-                    let strength = if (ratio - 1.0).abs() > 0.3 {
-                        "significantly"
-                    } else if (ratio - 1.0).abs() > 0.1 {
-                        "moderately"
-                    } else {
-                        "slightly"
-                    };
-
-                    // Find the most influential drivers from the sensitivity analysis
-                    let top_drivers: Vec<String> = self
-                        .program
-                        .drivers()
-                        .iter()
-                        .take(3)
-                        .map(|d| d.display_name.as_deref().unwrap_or(&d.name).to_string())
-                        .collect();
-
-                    self.inside_view_explanation = format!(
-                        "Starting from a {:.1}% base rate, our model {} {} the probability to {:.1}%. \
-                         The key factors are: {}.",
-                        base_rate * 100.0,
-                        strength,
-                        direction,
-                        self.predicted_probability * 100.0,
-                        top_drivers.join(", "),
-                    );
+                    self.predicted_probability = results.mean.clamp(0.01, 0.99);
                 } else {
-                    // No base rate — use raw mean or clamp
-                    if results.mean >= 0.0 && results.mean <= 1.0 {
-                        self.predicted_probability = results.mean;
-                    } else {
-                        self.predicted_probability = 0.5;
-                    }
-                    self.inside_view_explanation = format!(
-                        "Raw model output: {:.2} (no base rate for normalization)",
-                        results.mean
-                    );
+                    // Non-probability forecast: just take the mean. The
+                    // distribution surfaces in the histogram + p5/p95
+                    // displays and the operator interprets it in domain
+                    // terms (count, magnitude, duration).
+                    self.predicted_probability = results.mean;
                 }
+                log::info!(
+                    "[sim] Taken: mean={:.4}  display={:.4}  is_probability={}",
+                    results.mean,
+                    self.predicted_probability,
+                    is_probability_forecast
+                );
+
+                // Build narrative explanation. With Option 2 there's no
+                // ratio-vs-baseline story — instead we describe the mean +
+                // its spread, citing the most influential drivers.
+                let top_drivers: Vec<String> = self
+                    .program
+                    .drivers()
+                    .iter()
+                    .take(3)
+                    .map(|d| d.display_name.as_deref().unwrap_or(&d.name).to_string())
+                    .collect();
+
+                self.inside_view_explanation = if is_probability_forecast {
+                    let base_rate = self
+                        .program
+                        .question()
+                        .and_then(|q| q.base_rate.as_ref())
+                        .map(|br| br.historical_frequency)
+                        .unwrap_or(0.0);
+                    format!(
+                        "Inside view: model evaluates to {:.1}% (p5={:.1}%, p95={:.1}%). \
+                         Outside view (base rate): {:.1}%. Key drivers: {}.",
+                        self.predicted_probability * 100.0,
+                        results.p5 * 100.0,
+                        results.p95 * 100.0,
+                        base_rate * 100.0,
+                        top_drivers.join(", "),
+                    )
+                } else {
+                    format!(
+                        "Inside view: model evaluates to {:.3} (p5={:.3}, p95={:.3}). \
+                         Key drivers: {}.",
+                        results.mean, results.p5, results.p95,
+                        top_drivers.join(", "),
+                    )
+                };
                 // ── Fermi interprets the result ───────────────────
                 let base_rate = self
                     .program
