@@ -441,11 +441,26 @@ pub async fn list_forecasts_handler(
     let mut bind_idx = 0u32;
     let mut binds: Vec<String> = Vec::new();
 
-    // Default: show own forecasts + shared/public
+    // Default scope: own forecasts + shared/public + team-shared.
+    //
+    // Spec 24 §3.2 Wave 1: a private forecast with `team_id` set was invisible
+    // to its own team because the WHERE clause never consulted team_members.
+    // get_forecast_handler (post-Step-1) honours team membership; without this
+    // matching branch, list and detail disagreed — operators saw 404s on
+    // forecasts that were perfectly accessible if they typed the URL.
+    //
+    // The `${X}` is the same bind as the owner check (text user_id), used
+    // here against `team_members.member_id` (also text — no cast). The
+    // partial `idx_forecasts_team(team_id) WHERE team_id IS NOT NULL` and
+    // the `team_members` PK keep this index-fast.
     bind_idx += 1;
     conditions.push(format!(
-        "(f.owner_id = ${}::uuid OR f.visibility IN ('shared', 'public'))",
-        bind_idx
+        "(f.owner_id = ${idx}::uuid \
+          OR f.visibility IN ('shared', 'public') \
+          OR (f.team_id IS NOT NULL \
+              AND EXISTS (SELECT 1 FROM team_members m \
+                          WHERE m.team_id = f.team_id AND m.member_id = ${idx})))",
+        idx = bind_idx
     ));
     binds.push(user_id.clone());
 
@@ -1088,7 +1103,11 @@ pub async fn list_portfolios_handler(
                  JOIN fermi_forecasts f ON f.id = pf.forecast_id
                  WHERE pf.portfolio_id = p.id AND f.brier_score IS NOT NULL) AS avg_brier
          FROM fermi_portfolios p
-         WHERE p.owner_id = $1::uuid OR p.visibility IN ('shared', 'public')
+         WHERE p.owner_id = $1::uuid
+            OR p.visibility IN ('shared', 'public')
+            OR (p.team_id IS NOT NULL
+                AND EXISTS (SELECT 1 FROM team_members m
+                            WHERE m.team_id = p.team_id AND m.member_id = $1))
          ORDER BY p.updated_at DESC
          LIMIT $2 OFFSET $3",
     )
@@ -1136,9 +1155,12 @@ pub async fn portfolio_stats_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    // Verify access
+    // Verify access (Spec 24 §3.2 Wave 1: also honour team membership when
+    // the portfolio is private but linked to a team, mirroring
+    // get_forecast_handler).
     let portfolio = sqlx::query(
-        "SELECT owner_id::text AS owner_id, title, visibility, domain FROM fermi_portfolios WHERE id = $1",
+        "SELECT owner_id::text AS owner_id, title, visibility, domain, team_id
+         FROM fermi_portfolios WHERE id = $1",
     )
     .bind(&portfolio_id)
     .fetch_optional(pool)
@@ -1148,8 +1170,17 @@ pub async fn portfolio_stats_handler(
 
     let owner_id: String = portfolio.get("owner_id");
     let visibility: String = portfolio.get("visibility");
+    let team_id: Option<Uuid> = portfolio.try_get("team_id").ok();
     if owner_id != user_id && visibility == "private" {
-        return Err((StatusCode::FORBIDDEN, "Access denied".into()));
+        let granted = match team_id {
+            Some(tid) => is_team_member(pool, tid, &user_id)
+                .await
+                .unwrap_or(false),
+            None => false,
+        };
+        if !granted {
+            return Err((StatusCode::FORBIDDEN, "Access denied".into()));
+        }
     }
 
     // Aggregate stats
@@ -1456,9 +1487,12 @@ pub async fn list_portfolio_forecasts_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    // Allow access if owner OR portfolio is public/team
+    // Allow access if owner OR portfolio is shared/public OR caller is a
+    // member of the portfolio's team (Spec 24 §3.2 Wave 1, matching
+    // portfolio_stats_handler and get_forecast_handler).
     let portfolio = sqlx::query(
-        "SELECT owner_id::text AS owner_id, visibility FROM fermi_portfolios WHERE id = $1",
+        "SELECT owner_id::text AS owner_id, visibility, team_id
+         FROM fermi_portfolios WHERE id = $1",
     )
     .bind(&portfolio_id)
     .fetch_optional(pool)
@@ -1470,8 +1504,17 @@ pub async fn list_portfolio_forecasts_handler(
         Some(row) => {
             let owner: String = row.get("owner_id");
             let visibility: String = row.get("visibility");
+            let team_id: Option<Uuid> = row.try_get("team_id").ok();
             if owner != user_id && visibility == "private" {
-                return Err((StatusCode::FORBIDDEN, "Not your portfolio".into()));
+                let granted = match team_id {
+                    Some(tid) => is_team_member(pool, tid, &user_id)
+                        .await
+                        .unwrap_or(false),
+                    None => false,
+                };
+                if !granted {
+                    return Err((StatusCode::FORBIDDEN, "Not your portfolio".into()));
+                }
             }
         }
     }

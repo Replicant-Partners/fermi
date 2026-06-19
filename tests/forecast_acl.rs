@@ -23,6 +23,15 @@
 //!      handler's UPDATE, and that an all-null PATCH leaves every column
 //!      unchanged.
 //!
+//!   3. `list_forecasts_handler` and `list_portfolios_handler` ignored team
+//!      membership. A private forecast/portfolio with `team_id` set was
+//!      invisible to its own team — even though `get_forecast_handler`
+//!      (post-fix-#1) granted access if you typed the URL. List and detail
+//!      disagreed. The WHERE clauses now include a team_members EXISTS
+//!      branch matching the detail handler. We assert: list-as-owner sees
+//!      the row, list-as-team-member sees the row, list-as-stranger does
+//!      NOT.
+//!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
 
@@ -397,6 +406,207 @@ async fn patch_portfolio_with_all_null_is_noop() {
     assert_eq!(
         after, baseline,
         "all-null PATCH must leave every column unchanged"
+    );
+
+    delete_test_portfolio(&pool, &pid).await;
+    cleanup(&pool, team_id).await;
+}
+
+// ─── List handlers honour team membership (Spec 24 §3.2 Wave 1 #3) ───
+
+/// Borrow two distinct existing `users.id` values. Both `fermi_forecasts`
+/// and `fermi_portfolios` have an FK on `owner_id` to `users(id)`, so we
+/// need real ids. The pair is also the substrate for "owner vs team
+/// member" tests below.
+async fn pick_two_existing_user_ids(pool: &PgPool) -> (Uuid, Uuid) {
+    let rows = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM users ORDER BY created_at LIMIT 2",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("fetch two users.id");
+    assert!(
+        rows.len() >= 2,
+        "tests need at least two users in the DB to model owner + team member"
+    );
+    (rows[0], rows[1])
+}
+
+/// Insert a minimal forecast row owned by `owner_id` with the given
+/// `team_id` and `visibility`. Returns the auto-generated id.
+async fn insert_test_forecast(
+    pool: &PgPool,
+    owner_id: Uuid,
+    team_id: Option<Uuid>,
+    visibility: &str,
+    suffix: &str,
+) -> String {
+    let row = sqlx::query_scalar::<_, String>(
+        "INSERT INTO fermi_forecasts
+            (owner_id, question_text, predicted_probability, visibility, team_id, status)
+         VALUES ($1, $2, $3, $4, $5, 'active')
+         RETURNING id",
+    )
+    .bind(owner_id)
+    .bind(format!("ACL test forecast {}", suffix))
+    .bind(0.5_f32)
+    .bind(visibility)
+    .bind(team_id)
+    .fetch_one(pool)
+    .await
+    .expect("insert fermi_forecasts row");
+    row
+}
+
+async fn delete_test_forecast(pool: &PgPool, forecast_id: &str) {
+    let _ = sqlx::query("DELETE FROM fermi_forecasts WHERE id = $1")
+        .bind(forecast_id)
+        .execute(pool)
+        .await;
+}
+
+/// Run the EXACT WHERE clause that `list_forecasts_handler` ships, scoped
+/// to a single forecast id so the test is deterministic regardless of
+/// what else lives in the DB. Returns true if the row is visible to the
+/// caller.
+///
+/// The clause is lifted verbatim from src/handlers/forecasts.rs — if the
+/// handler drifts, this test must drift with it.
+async fn forecast_visible_to(
+    pool: &PgPool,
+    forecast_id: &str,
+    caller_user_id: &str,
+) -> bool {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fermi_forecasts f
+         WHERE f.id = $2
+           AND (f.owner_id = $1::uuid
+                OR f.visibility IN ('shared', 'public')
+                OR (f.team_id IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM team_members m
+                                WHERE m.team_id = f.team_id
+                                  AND m.member_id = $1)))",
+    )
+    .bind(caller_user_id)
+    .bind(forecast_id)
+    .fetch_one(pool)
+    .await
+    .expect("forecast visibility probe");
+    n == 1
+}
+
+/// Same shape against the portfolio list WHERE clause.
+async fn portfolio_visible_to(
+    pool: &PgPool,
+    portfolio_id: &str,
+    caller_user_id: &str,
+) -> bool {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fermi_portfolios p
+         WHERE p.id = $2
+           AND (p.owner_id = $1::uuid
+                OR p.visibility IN ('shared', 'public')
+                OR (p.team_id IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM team_members m
+                                WHERE m.team_id = p.team_id
+                                  AND m.member_id = $1)))",
+    )
+    .bind(caller_user_id)
+    .bind(portfolio_id)
+    .fetch_one(pool)
+    .await
+    .expect("portfolio visibility probe");
+    n == 1
+}
+
+/// A private forecast with `team_id` set is visible to the owner, to a
+/// member of that team, and NOT to a stranger.
+///
+/// Pre-fix, the team member's query returned 0 rows because the WHERE
+/// clause never consulted team_members. List/detail disagreed:
+/// `get_forecast_handler` (after Step 1) granted access if you typed the
+/// URL, but the row was missing from /api/forecasts.
+#[tokio::test]
+#[ignore]
+async fn list_forecasts_includes_team_private() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let (owner, member) = pick_two_existing_user_ids(&pool).await;
+    let team_id = insert_test_team(&pool, &suffix).await;
+    add_member(&pool, team_id, &member.to_string(), "member").await;
+    let fid = insert_test_forecast(
+        &pool,
+        owner,
+        Some(team_id),
+        "private",
+        &suffix,
+    )
+    .await;
+
+    let stranger = Uuid::new_v4().to_string();
+
+    assert!(
+        forecast_visible_to(&pool, &fid, &owner.to_string()).await,
+        "owner must see their own forecast"
+    );
+    assert!(
+        forecast_visible_to(&pool, &fid, &member.to_string()).await,
+        "team member must see the team's private forecast — \
+         this proves the team_members EXISTS branch in the WHERE clause"
+    );
+    assert!(
+        !forecast_visible_to(&pool, &fid, &stranger).await,
+        "stranger must NOT see a private forecast"
+    );
+
+    delete_test_forecast(&pool, &fid).await;
+    cleanup(&pool, team_id).await;
+}
+
+/// Same shape against `list_portfolios_handler`.
+#[tokio::test]
+#[ignore]
+async fn list_portfolios_includes_team_private() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let (owner, member) = pick_two_existing_user_ids(&pool).await;
+    let team_id = insert_test_team(&pool, &suffix).await;
+    add_member(&pool, team_id, &member.to_string(), "member").await;
+    let pid = insert_test_portfolio(&pool, owner, &suffix).await;
+    // Promote the just-inserted private/no-team portfolio to team-private,
+    // exercising the same UPDATE the new patch_portfolio_handler ships.
+    run_patch_portfolio_sql(
+        &pool,
+        &pid,
+        None,
+        None,
+        None,
+        None, // visibility stays 'private'
+        Some(team_id),
+    )
+    .await;
+
+    let stranger = Uuid::new_v4().to_string();
+
+    assert!(
+        portfolio_visible_to(&pool, &pid, &owner.to_string()).await,
+        "owner must see their own portfolio"
+    );
+    assert!(
+        portfolio_visible_to(&pool, &pid, &member.to_string()).await,
+        "team member must see the team's private portfolio"
+    );
+    assert!(
+        !portfolio_visible_to(&pool, &pid, &stranger).await,
+        "stranger must NOT see a private portfolio"
     );
 
     delete_test_portfolio(&pool, &pid).await;
