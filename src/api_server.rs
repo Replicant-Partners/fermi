@@ -777,11 +777,20 @@ async fn ensure_critical_schema(db: &PgPool) {
               agent_id TEXT, \
               evidence_added JSONB, \
               created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              revision_trigger TEXT CHECK ( \
-                  revision_trigger IS NULL OR revision_trigger IN ( \
-                      'initial', 'evidence_update', 'agent_correction', \
-                      'schedule_rerun', 'manual', 'bayesops_refit' \
-                  ) \
+              revision_trigger TEXT \
+          )"),
+        // Migration 150 adds 'cascade' to the legal revision_trigger
+        // values. Drop+recreate (PG can't ALTER CHECK in place).
+        ("fermi_forecast_updates.drop_old_check",
+         "ALTER TABLE public.fermi_forecast_updates \
+          DROP CONSTRAINT IF EXISTS fermi_forecast_updates_revision_trigger_check"),
+        ("fermi_forecast_updates.add_check",
+         "ALTER TABLE public.fermi_forecast_updates \
+          ADD CONSTRAINT fermi_forecast_updates_revision_trigger_check \
+          CHECK ( \
+              revision_trigger IS NULL OR revision_trigger IN ( \
+                  'initial', 'evidence_update', 'agent_correction', \
+                  'schedule_rerun', 'manual', 'bayesops_refit', 'cascade' \
               ) \
           )"),
         ("fermi_forecast_updates.idx_forecast",
@@ -790,6 +799,30 @@ async fn ensure_critical_schema(db: &PgPool) {
         ("fermi_forecast_updates.idx_time",
          "CREATE INDEX IF NOT EXISTS idx_forecast_updates_time \
           ON public.fermi_forecast_updates(created_at)"),
+
+        // ── 150: forecast_relationships — declarable inter-forecast
+        //    dependencies. See src/handlers/relationships.rs.
+        ("forecast_relationships.table",
+         "CREATE TABLE IF NOT EXISTS public.forecast_relationships ( \
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
+              kind TEXT NOT NULL, \
+              forecast_ids TEXT[] NOT NULL, \
+              parameters JSONB NOT NULL DEFAULT '{}'::jsonb, \
+              description TEXT, \
+              owner_id TEXT NOT NULL, \
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+              archived_at TIMESTAMPTZ \
+          )"),
+        ("forecast_relationships.idx_kind",
+         "CREATE INDEX IF NOT EXISTS idx_relationships_kind \
+          ON public.forecast_relationships(kind)"),
+        ("forecast_relationships.idx_owner",
+         "CREATE INDEX IF NOT EXISTS idx_relationships_owner \
+          ON public.forecast_relationships(owner_id)"),
+        ("forecast_relationships.idx_forecast_ids",
+         "CREATE INDEX IF NOT EXISTS idx_relationships_forecast_ids \
+          ON public.forecast_relationships USING gin (forecast_ids)"),
 
         ("forecast_commitments.table",
          "CREATE TABLE IF NOT EXISTS public.forecast_commitments ( \
