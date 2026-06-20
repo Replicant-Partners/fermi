@@ -233,7 +233,9 @@ Generic invite primitive scoped to forecasts/portfolios *and* teams. We use
 one table with a polymorphic target so the console has one notification list.
 
 ```sql
--- migrations/150_forecast_invites.sql
+-- migrations/151_forecast_invites.sql
+-- (150 was taken by forecast_relationships in a parallel feature; we
+--  start at 151 to leave its number alone.)
 CREATE TABLE IF NOT EXISTS forecast_invites (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     -- What the invite grants access to.
@@ -285,7 +287,7 @@ Rationale:
 `object_shares.object_type` already includes `'forecast'`. We add `'portfolio'`:
 
 ```sql
--- migrations/151_object_shares_portfolio.sql
+-- migrations/152_object_shares_portfolio.sql
 ALTER TABLE object_shares
     DROP CONSTRAINT IF EXISTS object_shares_object_type_check;
 ALTER TABLE object_shares
@@ -311,9 +313,10 @@ No schema change; `notifications.type` is already free-form `TEXT`.
 
 | File | Purpose |
 | --- | --- |
-| `150_forecast_invites.sql` | New invite table. |
-| `151_object_shares_portfolio.sql` | Add `'portfolio'` to `object_type` CHECK. |
-| `152_forecasts_team_id_index_fix.sql` | Confirm partial index exists; backfill any missing. |
+| `151_forecast_invites.sql` | New invite table. |
+| `152_object_shares_portfolio.sql` | Add `'portfolio'` to `object_type` CHECK. |
+| `153_forecasts_team_id_index_fix.sql` | Confirm partial index exists; backfill any missing. |
+| `154_forecasts_object_shares_backfill.sql` | Wave-2 backfill (see §3.2 step 5). |
 
 Each must also be added to the explicit migration list at
 `src/api_server.rs:421-680` (per project convention — they don't auto-run).
@@ -372,7 +375,7 @@ Once Sprint 2's invite/share endpoints exist and start writing
 `fermi_auth::visibility::can_access`. To preserve the `team_id` signal
 during cutover:
 
-5. One-shot data migration `152_forecasts_object_shares_backfill.sql`:
+5. One-shot data migration `154_forecasts_object_shares_backfill.sql`:
    `INSERT INTO object_shares (object_type, object_id, share_type,
    share_target, permission, granted_by) SELECT 'forecast', id::text, 'team',
    team_id::text, 'edit', owner_id::text FROM fermi_forecasts WHERE team_id
@@ -670,8 +673,10 @@ team (which was the documented intent all along).
 
 ### Sprint 2 — Server: shares + invites endpoints [≈ 3–4 days]
 
-- Migrations 150–152 (forecast_invites, object_shares CHECK extension,
-  team_id → object_shares backfill per §3.2 step 5).
+- Migrations 151, 152, 153, 154 (forecast_invites, object_shares CHECK
+  extension, team_id index fix, team_id → object_shares backfill per
+  §3.2 step 5). Migration 150 was taken by `forecast_relationships`
+  during Sprint 1; we start one number higher to keep the timeline tidy.
 - Wave 2 ACL switch: replace inline ACL with
   `fermi_auth::visibility::can_view` / `can_edit` / `can_admin`. List
   WHERE-clauses extended with the `object_shares` union.
@@ -751,7 +756,7 @@ forecast is in their portfolio. Inviter sees `invite_accepted` notification.
 
 - **PgBouncer transaction-mode hazards** on multi-statement migrations
   (callouts at `migrations/119_teams_mission_defensive.sql:8-12`). We adopt
-  the defensive single-`DO`-block pattern for migration 151.
+  the defensive single-`DO`-block pattern for migration 152.
 - **Schema drift on `owner_id`**: any new FK we declare must match prod's
   actual UUID-shaped column even though `094` says `TEXT`. Migration 150
   declares `inviter_id TEXT REFERENCES users(user_id)`; prod schema is

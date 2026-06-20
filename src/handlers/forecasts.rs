@@ -1529,6 +1529,13 @@ pub async fn list_portfolio_forecasts_handler(
     // Subquery (n_recent_updates) is bounded by a 7-day window so the
     // count means "how active is this forecast lately", not "how
     // hand-tuned in total".
+    //
+    // Spec 24 §3.2 Wave 1 #4: also COUNT object_shares rows so the
+    // console can render the visibility badge correctly (🔒 vs 🔗 vs
+    // 👥 vs 🌐) without a per-row second roundtrip. Always 0 today —
+    // Sprint 2 is when /api/forecasts/:id/shares starts producing rows.
+    // idx_object_shares_object(object_type, object_id) is in place so
+    // the subquery is index-fast even at scale.
     let rows = sqlx::query(
         "SELECT f.id,
                 f.question_text,
@@ -1541,10 +1548,14 @@ pub async fn list_portfolio_forecasts_handler(
                 f.updated_at,
                 f.metadata,
                 f.tags,
+                f.team_id,
                 pf.added_at,
                 (SELECT COUNT(*) FROM fermi_forecast_updates u
                  WHERE u.forecast_id = f.id
-                   AND u.created_at > NOW() - INTERVAL '7 days') AS n_recent_updates
+                   AND u.created_at > NOW() - INTERVAL '7 days') AS n_recent_updates,
+                (SELECT COUNT(*) FROM object_shares s
+                 WHERE s.object_type = 'forecast'
+                   AND s.object_id = f.id) AS share_count
          FROM fermi_portfolio_forecasts pf
          JOIN fermi_forecasts f ON f.id = pf.forecast_id
          WHERE pf.portfolio_id = $1
@@ -1594,7 +1605,9 @@ pub async fn list_portfolio_forecasts_handler(
                 "updated_at":           r.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok().map(|d| d.to_rfc3339()),
                 "added_at":             r.try_get::<chrono::DateTime<chrono::Utc>, _>("added_at").ok().map(|d| d.to_rfc3339()),
                 "tags":                 r.try_get::<Vec<String>, _>("tags").ok(),
+                "team_id":              r.try_get::<Option<Uuid>, _>("team_id").ok().flatten().map(|u| u.to_string()),
                 "n_recent_updates":     r.try_get::<i64, _>("n_recent_updates").ok(),
+                "share_count":          r.try_get::<i64, _>("share_count").ok(),
                 "pm_market_price":      pm_price,
                 "pm_url":               pm_url,
                 "pm_volume_24h":        pm_volume_24h,

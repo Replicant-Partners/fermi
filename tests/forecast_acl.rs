@@ -32,6 +32,12 @@
 //!      the row, list-as-team-member sees the row, list-as-stranger does
 //!      NOT.
 //!
+//!   4. `list_portfolio_forecasts_handler`'s enriched projection now ships
+//!      `share_count` (COUNT of `object_shares` for the forecast) so the
+//!      console can render the visibility badge correctly without a second
+//!      roundtrip. We assert: a fresh row reports 0; after inserting one
+//!      `object_shares` row, it reports 1.
+//!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
 
@@ -611,4 +617,93 @@ async fn list_portfolios_includes_team_private() {
 
     delete_test_portfolio(&pool, &pid).await;
     cleanup(&pool, team_id).await;
+}
+
+// ─── share_count in portfolio-list projection (Spec 24 §3.2 Wave 1 #4) ───
+
+/// Probe the `share_count` subquery exactly as
+/// `list_portfolio_forecasts_handler` ships it. If the SQL drifts in the
+/// handler, this test must drift with it — same pressure as the other
+/// verbatim-SQL probes.
+async fn share_count_for_forecast(pool: &PgPool, forecast_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM object_shares s
+         WHERE s.object_type = 'forecast'
+           AND s.object_id = $1",
+    )
+    .bind(forecast_id)
+    .fetch_one(pool)
+    .await
+    .expect("share_count probe")
+}
+
+/// Insert one `object_shares` row pointing at `forecast_id`, granting
+/// `permission` to a synthetic user share_target. Returns the share id
+/// for cleanup.
+async fn insert_test_share(
+    pool: &PgPool,
+    forecast_id: &str,
+    share_target: &str,
+    permission: &str,
+) -> Uuid {
+    sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         VALUES ('forecast', $1, 'user', $2, $3, $2)
+         RETURNING id",
+    )
+    .bind(forecast_id)
+    .bind(share_target)
+    .bind(permission)
+    .fetch_one(pool)
+    .await
+    .expect("insert object_shares row")
+}
+
+async fn delete_test_share(pool: &PgPool, share_id: Uuid) {
+    let _ = sqlx::query("DELETE FROM object_shares WHERE id = $1")
+        .bind(share_id)
+        .execute(pool)
+        .await;
+}
+
+/// A freshly-inserted forecast has zero shares. Adding one
+/// `object_shares` row bumps the count to 1. Sprint 4's badge logic
+/// keys off this field directly.
+#[tokio::test]
+#[ignore]
+async fn share_count_reflects_object_shares_rows() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+
+    assert_eq!(
+        share_count_for_forecast(&pool, &fid).await,
+        0,
+        "fresh forecast must have zero shares"
+    );
+
+    let target = format!("acl-share-target-{}", suffix);
+    let share_id = insert_test_share(&pool, &fid, &target, "view").await;
+
+    assert_eq!(
+        share_count_for_forecast(&pool, &fid).await,
+        1,
+        "share_count must reflect the inserted object_shares row"
+    );
+
+    delete_test_share(&pool, share_id).await;
+
+    assert_eq!(
+        share_count_for_forecast(&pool, &fid).await,
+        0,
+        "share_count must drop back to zero after revocation"
+    );
+
+    delete_test_forecast(&pool, &fid).await;
 }

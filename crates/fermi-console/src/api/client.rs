@@ -339,6 +339,17 @@ pub struct PortfolioForecast {
     /// probability than the market. Drives the "biggest opportunity" sort.
     #[serde(default)]
     pub pm_divergence_pp: Option<f64>,
+    /// UUID of the team this forecast is shared with, if any. When set
+    /// AND visibility=='private', the row is "team-shared" — drives the
+    /// 👥 badge in the portfolio detail (Spec 24 §3.5.6).
+    #[serde(default)]
+    pub team_id: Option<String>,
+    /// COUNT of `object_shares` rows targeting this forecast. Spec 24
+    /// §3.2 Wave 1 #4: ships the wire format ahead of need so the
+    /// console badge logic doesn't require a second backend pass once
+    /// Sprint 2 starts producing share rows. Always 0 today.
+    #[serde(default)]
+    pub share_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
